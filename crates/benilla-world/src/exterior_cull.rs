@@ -1,34 +1,32 @@
 //! The exterior scene draws only through the doorways the camera can see.
 //!
-//! The reference's scene driver `0x681070` branches at `0x681101` on the camera's map object
-//! `[0xc7b748]` (0 outdoors). Outdoors (`0x6811ca`) it runs the populate walk `0x682fa0` once, on
-//! the full-screen rect `{0, 0, 1, 1}` ([`ExteriorWindows::Unrestricted`]); inside (`0x681120`) it
-//! runs it once per window of the portal flood's worklist (`[0xcbe320]` of them, copied to
-//! `0xc7cb7c`), the frustum narrowed to each, and `0x681199` skips it at zero, so a sealed room
-//! draws no exterior. `0x682fa0` is the only producer of ADT terrain (`0x683bf0`), ADT doodads
-//! (`0x683700`), the second placement walk (`0x683340`), world WMOs (`0x6856c0`), liquid
-//! (`0x683ab0`) and the far band (`0x683040`).
+//! The reference culls the outdoor scene once per frame in `CWorldScene::CullSortTable`
+//! (`0x79a790`), inside the frustum `CWorldScene::FrustumSet` (`0x790af0`) narrows to one screen
+//! rect. Outdoors the rect is the full screen ([`ExteriorWindows::Unrestricted`]). From inside a
+//! building it is the union of every portal view whose far side is outdoors
+//! (`CWorldScene::MergeIntoFrustumRect` `0x790ad0`, `CPortalView::Merge`); with none, the sort table
+//! is cleared and no exterior draws: a sealed room. The rect takes no size gate.
 //!
-//! Bodies ride the same walk: `0x683dd0` elects every scene object each frame, and pass 2
-//! (`0x710c50`, `[model+0x50] = 0`) is neither drawn nor ticked. Outdoor objects reach pass 1 only
-//! through `0x683340` (inside `0x682fa0`), which frustum-tests each one, so a sealed room sends
-//! them all to pass 2 (`0x680390`). An object in a WMO group rides `0x6834e0`, which submits a
-//! group's members only while the group renders, frustum-testing each: an in-room body draws when
-//! its room, or one a portal hop away (our doorway-straddle guard), is in the PVS and its box is
-//! in view. `WOW_NO_DRAW_ELECTION=1` keeps only the window leg. The horizon-occlusion term
-//! (`0x686000`) is not built.
+//! In that frustum, map chunks, WMO groups, liquid and the far band are tested on their boxes
+//! (`CWorldScene::FrustumCull(CAaBox*)` `0x78fb20`), and doodads and entities on their bounding
+//! spheres, once each: `CWorldScene::CullDoodadsExterior` (`0x799980`) through
+//! `CWorldScene::FrustumCull(center, radius)` (`0x791120`), `CWorldScene::CullDoodads`
+//! (`0x7987a0`) and `CWorldScene::CullEntitys` (`0x793060`). A body in a WMO room rides its
+//! building's group walk instead (`CWorldScene::CullEntitysInterior` `0x793270`), drawn when its
+//! room, or one a portal hop away (our doorway-straddle guard), is in the PVS and its sphere is
+//! in view. `WOW_NO_DRAW_ELECTION=1` keeps only the window leg. The occlusion buffer and
+//! volumes (`CWorldOcclusion`) are not built.
 //!
-//! Per window the reference bilerps the camera's corner rays (`0xc7bcd8`) into 6 planes
-//! (`0x6865f0`→`0x686640`): a sub-frustum over the portal chain's screen-space AABB, tested per
-//! object on the whole AABB (`0x682f40`), with no scissor or clip plane. Here the rect is a scale
-//! and offset on clip space, and [`Frustum::from_clip_from_world`] extracts the same planes.
+//! The rect is a scale and offset on clip space, and [`Frustum::from_clip_from_world`] extracts
+//! the same planes the reference bilerps from its corner rays.
 //!
-//! Terrain is tagged per 33.333 yd MCNK cell: a 533 yd tile around the camera reaches every
-//! window's side of the view. The far band keeps its whole-tile box, the reference's far tier.
+//! Terrain is tagged per 33.333 yd MCNK cell, the reference's chunk grain. The far band keeps its
+//! whole-tile box.
 //!
-//! Deviation: the reference tests one AABB per object, but a doodad placement has no root entity
-//! here, so its submeshes are tested one by one, and a submesh outside a doorway's window drops
-//! where the reference draws the doodad whole. A body has a root and is tested once.
+//! A doodad placement has no root entity here, so each of its parts takes the placement's sphere
+//! ([`crate::model_fade::DoodadFade::sphere`]) and the placement draws whole. Deviation: the
+//! retained static pass gates a whole 133 yd cell on its box (`static_gx::cull`), as one baked
+//! draw cannot drop single placements; its admitted set contains the reference's.
 
 use bevy::camera::primitives::{Aabb, Frustum};
 use bevy::camera::visibility::VisibilitySystems;
@@ -36,10 +34,6 @@ use bevy::prelude::*;
 
 use crate::view::WorldCamera;
 use crate::wmo_portal::{ExteriorWindows, Rect, WmoPvsSet};
-
-/// The open-world walk drops a window narrower than this in either axis: `0x682fa0` tests against
-/// `[0x8029d0]`, 0.01 of a 0..1 screen, which is 0.02 in NDC.
-const MIN_WINDOW_NDC: f32 = 0.02;
 
 /// Tag for exterior scene content, gated by the window worklist: ADT terrain cells, ADT doodad
 /// placements, the WDL far band, world WMO placements and open-world liquid, each on the drawn
@@ -54,7 +48,7 @@ pub struct ExteriorScene;
 pub struct ExteriorCullSet;
 
 /// What the cull did on its last run: `windows` is the worklist it read (`None` outdoors),
-/// `frusta` how many survived [`MIN_WINDOW_NDC`], `tested`/`hidden` how many tagged objects it
+/// `frusta` whether their merge built a volume (0 or 1), `tested`/`hidden` how many tagged objects it
 /// reached and rejected. An object drawn through a wall while `hidden == tested` is one the cull
 /// never reached.
 #[derive(Resource, Default, Clone, Copy)]
@@ -96,11 +90,9 @@ impl Plugin for ExteriorCullPlugin {
     }
 }
 
-/// The sub-frustum for one NDC window rect, with no width gate: the reference builds one volume
-/// per window for both the open-world walk (the copy at `0xc7cb7c`, for `0x682fa0`) and the
-/// building's own Pass 2 (`0x682930`, for `0x6b3b20`), and only the walk rejects a narrow window
-/// ([`scene_window_frustum`]). The rect is a scale and offset on clip space with depth untouched,
-/// so the extracted planes bound the window at the camera's own near and far.
+/// The sub-frustum for one NDC window rect: a scale and offset on clip space with depth
+/// untouched, so the extracted planes bound the window at the camera's own near and far. The
+/// exterior walk and the building's own pass build theirs alike.
 pub(crate) fn window_frustum(rect: Rect, clip_from_world: &Mat4) -> Frustum {
     let [x0, y0, x1, y1] = rect;
     let (w, h) = (x1 - x0, y1 - y0);
@@ -114,29 +106,30 @@ pub(crate) fn window_frustum(rect: Rect, clip_from_world: &Mat4) -> Frustum {
     Frustum::from_clip_from_world(&(rect_to_ndc * *clip_from_world))
 }
 
-/// [`window_frustum`] behind the open-world walk's entry gate: `0x682fa0` returns before touching a
-/// bucket unless both extents are `>= [0x8029d0]` (0.01 of the 0..1 screen, 0.02 NDC), so a
-/// narrower window draws no terrain, doodad, world WMO, liquid, far band or outdoor unit. The
-/// shared builder `0x682930` has no compares, and Pass 2's body `[0x6b3c73, 0x6b3d6f)` none on the
-/// rect, so a window too narrow for the open world still draws the building's own shell.
-pub(crate) fn scene_window_frustum(rect: Rect, clip_from_world: &Mat4) -> Option<Frustum> {
-    let [x0, y0, x1, y1] = rect;
-    if x1 - x0 < MIN_WINDOW_NDC || y1 - y0 < MIN_WINDOW_NDC {
-        return None;
-    }
-    Some(window_frustum(rect, clip_from_world))
+/// The exterior rect from inside a building: the union of the outdoor windows, as
+/// `CPortalView::Merge` folds each into `frustumPortalView`. `None` with no window, or one that
+/// collapsed to no area, which would extract a frustum of NaN planes.
+fn merged_window(rects: &[Rect]) -> Option<Rect> {
+    let merged = rects
+        .iter()
+        .copied()
+        .reduce(|[a0, b0, a1, b1], [c0, d0, c1, d1]| {
+            [a0.min(c0), b0.min(d0), a1.max(c1), b1.max(d1)]
+        })?;
+    let [x0, y0, x1, y1] = merged;
+    (x1 > x0 && y1 > y0).then_some(merged)
 }
 
-/// This frame's exterior gate: the window worklist as clip volumes, built once and asked per
+/// This frame's exterior gate: the merged window as a clip volume, built once and asked per
 /// object by [`apply_exterior_cull`] and by the owners that fold it into their own verdict
 /// (`model_render::visibility`, the particle and static-geometry culls).
 pub enum ExteriorGate {
-    /// Outdoors, the outside leg (`0x6811ca`): the ordinary frustum is the window, so the gate
-    /// admits everything and leaves each object to its other owners.
+    /// Outdoors: the ordinary frustum is the window, so the gate admits everything and leaves
+    /// each object to its other owners.
     Open,
-    /// Indoors: an object draws only where a sub-frustum admits it. Empty admits nothing, the
-    /// sealed room (`0x681199`'s skip), and must never fail open.
-    Windows(Vec<Frustum>),
+    /// Indoors: an object draws only where the merged window admits it. `None` admits nothing,
+    /// the sealed room, and must never fail open.
+    Window(Option<Frustum>),
 }
 
 impl ExteriorGate {
@@ -153,43 +146,56 @@ impl ExteriorGate {
             return Self::Open;
         };
         let clip_from_world = proj.get_clip_from_view() * cam_t.to_matrix().inverse();
-        Self::Windows(
-            rects
-                .iter()
-                .filter_map(|r| scene_window_frustum(*r, &clip_from_world))
-                .collect(),
-        )
+        Self::Window(merged_window(rects).map(|r| window_frustum(r, &clip_from_world)))
     }
 
-    /// Whole AABB, per object, as the reference's `0x682f40`: a doodad straddling the doorway edge
-    /// draws whole. No `Aabb` (a mesh still loading, or nothing drawn) is admitted: a missing bound
-    /// is a timing gap, and blanking on it would flicker the world as tiles stream in.
+    /// The box test, `CWorldScene::FrustumCull(CAaBox*)` (`0x78fb20`): terrain cells, WMO groups,
+    /// liquid, the far band. No `Aabb` (a mesh still loading, or nothing drawn) is admitted: a
+    /// missing bound is a timing gap, and blanking on it would flicker the world as tiles stream
+    /// in.
     pub(crate) fn admits(&self, gt: &GlobalTransform, aabb: Option<&Aabb>) -> bool {
         match (self, aabb) {
             (Self::Open, _) | (_, None) => true,
-            (Self::Windows(frusta), Some(aabb)) => {
-                let world_from_local = gt.affine();
-                frusta
-                    .iter()
-                    .any(|f| f.intersects_obb(aabb, &world_from_local, true, true))
-            }
+            (Self::Window(frustum), Some(aabb)) => frustum
+                .as_ref()
+                .is_some_and(|f| f.intersects_obb(aabb, &gt.affine(), true, true)),
         }
     }
 
-    /// The same test for a world-space bounding sphere, the particle lane's form (`EmitterFade`'s
-    /// `[rec+0x68]` fade sphere, the owner doodad's bound), through its box, which is looser and so
-    /// never hides what the sphere would admit.
+    /// The sphere test, `CWorldScene::FrustumCull(center, radius)` (`0x791120`): a doodad
+    /// placement or a body, once each, on its world bounding sphere.
     pub(crate) fn admits_sphere(&self, center: Vec3, radius: f32) -> bool {
-        let aabb = Aabb::from_min_max(center - Vec3::splat(radius), center + Vec3::splat(radius));
-        self.admits(&GlobalTransform::IDENTITY, Some(&aabb))
+        match self {
+            Self::Open => true,
+            Self::Window(frustum) => frustum.as_ref().is_some_and(|f| {
+                f.intersects_sphere(
+                    &bevy::camera::primitives::Sphere {
+                        center: center.into(),
+                        radius,
+                    },
+                    true,
+                )
+            }),
+        }
     }
 
     fn frusta(&self) -> usize {
         match self {
-            Self::Open => 0,
-            Self::Windows(f) => f.len(),
+            Self::Window(Some(_)) => 1,
+            Self::Open | Self::Window(None) => 0,
         }
     }
+}
+
+/// A body's world bounding sphere: the circumsphere of its model-space box, scaled with it.
+/// Deviation: the reference's entity sphere is the model header's (`CM2Model::GetBoundingSphere`
+/// `0x4f5e80`); the game hands the world the idle animation's box instead.
+fn body_sphere(gt: &GlobalTransform, bound: &Aabb) -> (Vec3, f32) {
+    let scale = gt.affine().matrix3.x_axis.length();
+    (
+        gt.transform_point(Vec3::from(bound.center)),
+        Vec3::from(bound.half_extents).length() * scale,
+    )
 }
 
 /// What [`apply_exterior_cull`] reads per object.
@@ -251,10 +257,10 @@ fn trace_body(
 #[derive(Resource)]
 pub(crate) struct CullTrace;
 
-/// What the body leg reads per net body: one whole-object test on its root (`0x682f40`), which
+/// What the body leg reads per net body: one sphere test on its root ([`body_sphere`]), which
 /// takes the whole visual with it (gear, mount, rider, billboard cards). A room claim
-/// ([`crate::wmo_portal::UnitWmoRoom`]) rides `0x6834e0` with its building, no claim rides
-/// `0x683340` in the window walk; a body not yet rayed has none and reads as outdoors.
+/// ([`crate::wmo_portal::UnitWmoRoom`]) rides `CullEntitysInterior` with its building, no claim
+/// rides `CullEntitys` in the exterior walk; a body not yet rayed has none and reads as outdoors.
 type ElectedBody = (
     Entity,
     &'static GlobalTransform,
@@ -283,17 +289,23 @@ fn apply_exterior_cull(
     let no_election =
         *no_election.get_or_insert_with(|| std::env::var_os("WOW_NO_DRAW_ELECTION").is_some());
     let gate = ExteriorGate::build(&windows, cam.iter().next());
-    // The view volume as the outside leg's `{0,0,1,1}` window (`0x6811ff`): an out-of-frustum
-    // body is elected to pass 2. Built from this frame's camera transform, not the `Frustum`
-    // component, which may not be refreshed yet; no camera admits.
-    let full_view = cam.iter().next().and_then(|(cam_t, proj)| {
+    // The view volume as the outdoor rect `{0,0,1,1}`: an out-of-frustum body is culled. Built
+    // from this frame's camera transform, not the `Frustum` component, which may not be refreshed
+    // yet; no camera admits.
+    let full_view = cam.iter().next().map(|(cam_t, proj)| {
         let clip_from_world = proj.get_clip_from_view() * cam_t.to_matrix().inverse();
-        scene_window_frustum([-1.0, -1.0, 1.0, 1.0], &clip_from_world)
+        window_frustum([-1.0, -1.0, 1.0, 1.0], &clip_from_world)
     });
-    let in_view = |gt: &GlobalTransform, bound: &Aabb| {
-        full_view
-            .as_ref()
-            .is_none_or(|f| f.intersects_obb(bound, &gt.affine(), true, true))
+    let in_view = |(center, radius): (Vec3, f32)| {
+        full_view.as_ref().is_none_or(|f| {
+            f.intersects_sphere(
+                &bevy::camera::primitives::Sphere {
+                    center: center.into(),
+                    radius,
+                },
+                true,
+            )
+        })
     };
     let (mut tested, mut hidden, mut unbounded) = (0usize, 0usize, 0usize);
     let (mut liquid, mut liquid_hidden) = (0usize, 0usize);
@@ -325,19 +337,21 @@ fn apply_exterior_cull(
         // `UnitWmoRoom::default()` does: the claim lands a frame or two after spawn, and admitting
         // in the gap would draw every streaming mob through a sealed ceiling.
         let in_room = room.is_some_and(|r| r.room().is_some());
+        let (center, radius) = body_sphere(gt, bound);
         let admitted = if no_election {
             // The lever: the window leg alone, in-room bodies exempt.
-            in_room || gate.admits(gt, Some(bound))
+            in_room || gate.admits_sphere(center, radius)
         } else if in_room {
-            // The sibling producer `0x6834e0`: drawn iff its room or a one-hop neighbour is in the
-            // PVS and its box is in view; `room_pvs_visible` fails open at every resolve seam.
-            crate::wmo_portal::room_pvs_visible(room, &instances, &wmos) && in_view(gt, bound)
+            // `CullEntitysInterior`: drawn iff its room or a one-hop neighbour is in the PVS and
+            // its sphere is in view; `room_pvs_visible` fails open at every resolve seam.
+            crate::wmo_portal::room_pvs_visible(room, &instances, &wmos)
+                && in_view((center, radius))
         } else {
-            // The exterior walk: outdoors the full-screen window, indoors the portal windows,
-            // already sub-frusta of the view.
+            // `CullEntitys`: outdoors the full-screen rect, indoors the merged window, already a
+            // sub-frustum of the view.
             match &gate {
-                ExteriorGate::Open => in_view(gt, bound),
-                ExteriorGate::Windows(_) => gate.admits(gt, Some(bound)),
+                ExteriorGate::Open => in_view((center, radius)),
+                ExteriorGate::Window(_) => gate.admits_sphere(center, radius),
             }
         };
         trace_body(
@@ -446,39 +460,52 @@ mod tests {
         );
     }
 
-    /// `0x682fa0`'s entry rejects a window under `[0x8029d0]`, non-strictly; the reject also keeps
-    /// a collapsed rect from building a frustum of NaN planes.
+    /// `CPortalView::Merge` folds the windows into one rect; a window collapsed to no area, or
+    /// none at all, admits nothing rather than building a frustum of NaN planes.
     #[test]
-    fn the_scene_walk_drops_a_window_under_a_hundredth_of_the_screen() {
-        assert!(scene_window_frustum([0.5, -1.0, 0.5, 1.0], &clip_from_world()).is_none());
-        assert!(scene_window_frustum([-1.0, 0.2, 1.0, 0.2001], &clip_from_world()).is_none());
-        // `>= 0.01` of a 0..1 screen passes: the client's `jnp` is parity, not a strict `>`.
-        assert!(
-            scene_window_frustum([0.0, -1.0, -1.0 + MIN_WINDOW_NDC, 1.0], &clip_from_world())
-                .is_none(),
-            "a rect with a NEGATIVE extent is nonsense and must not build a frustum"
+    fn the_windows_merge_into_one_rect() {
+        assert_eq!(
+            merged_window(&[[0.1, -0.5, 0.3, 0.2], [-0.8, -0.2, -0.6, 0.9]]),
+            Some([-0.8, -0.5, 0.3, 0.9])
         );
-        assert!(
-            scene_window_frustum([0.0, -1.0, MIN_WINDOW_NDC, 1.0], &clip_from_world()).is_some()
-        );
+        assert_eq!(merged_window(&[]), None);
+        assert_eq!(merged_window(&[[0.5, -1.0, 0.5, 1.0]]), None);
+        // No size gate: a sliver still bounds a real volume.
+        assert!(merged_window(&[[0.0, -1.0, 0.01, 1.0]]).is_some());
     }
 
-    /// `0x682930` has no compares, so Pass 2 draws the building's shell through a window the open
-    /// world rejects: `[0.001, 0.02)` NDC, above the recursion's collapse guard (`0x6b44b1`).
+    /// The gap between two doorways is inside the merged window: the reference culls one rect.
     #[test]
-    fn pass_twos_builder_takes_a_window_the_scene_walk_rejects() {
-        let narrow = [0.0, -1.0, 0.01, 1.0];
-        assert!(scene_window_frustum(narrow, &clip_from_world()).is_none());
-        let f = window_frustum(narrow, &clip_from_world());
-        // fov 90 / aspect 1, so NDC x = world x / -z: the sliver's axis at z = -10 is x = 0.05.
-        assert!(
-            admits(&f, Vec3::new(0.05, 0.0, -10.0)),
-            "the sliver still bounds a real volume: a point straight down its axis is inside"
+    fn two_doorways_admit_the_wall_between_them() {
+        let gate = ExteriorGate::Window(
+            merged_window(&[[-0.9, -1.0, -0.7, 1.0], [0.7, -1.0, 0.9, 1.0]])
+                .map(|r| window_frustum(r, &clip_from_world())),
         );
+        assert!(gate.admits_sphere(Vec3::new(0.0, 0.0, -10.0), 0.1));
         assert!(
-            !admits(&f, Vec3::new(5.0, 0.0, -10.0)),
-            "…and it is still a sliver: NDC x = 0.5 is far outside it"
+            !gate.admits_sphere(Vec3::new(0.0, 0.0, 10.0), 0.1),
+            "behind the eye"
         );
+        assert!(!ExteriorGate::Window(None).admits_sphere(Vec3::new(0.0, 0.0, -10.0), 0.1));
+    }
+
+    /// A placement straddling the window's edge: its sphere reaches in while its box does not,
+    /// and the sphere decides.
+    #[test]
+    fn a_doodad_straddling_the_window_edge_is_kept_on_its_sphere() {
+        // The window's left edge is NDC x = 0.1: at z = -10 that is world x = 1.0.
+        let gate = ExteriorGate::Window(Some(window_frustum(
+            [0.1, -1.0, 1.0, 1.0],
+            &clip_from_world(),
+        )));
+        let center = Vec3::new(0.0, 0.0, -10.0);
+        let box_half = Vec3::splat(0.6);
+        assert!(!gate.admits(
+            &GlobalTransform::IDENTITY,
+            Some(&Aabb::from_min_max(center - box_half, center + box_half))
+        ));
+        // The model's sphere radius, larger than the box's half side, as an authored one is.
+        assert!(gate.admits_sphere(center, 1.2));
     }
 
     /// One `apply_exterior_cull` run: each body's verdict in spawn order, and the counters.
@@ -553,7 +580,7 @@ mod tests {
     }
 
     /// Two bodies dead ahead in a sealed room: only the room claim separates the one the exterior
-    /// walk never submits from the one `0x6834e0` submits with its building.
+    /// walk never submits from the one `CullEntitysInterior` submits with its building.
     #[test]
     fn a_sealed_room_hides_the_outdoor_body_and_keeps_the_one_in_a_room() {
         let ahead = Vec3::new(0.0, 0.0, -50.0);

@@ -123,6 +123,7 @@ fn the_shape_ignores_edge_on_correct_and_degenerate_batches() {
         combiner: None,
         uvs2: Vec::new(),
         sort: None,
+        hit_test: false,
     };
 
     assert!(

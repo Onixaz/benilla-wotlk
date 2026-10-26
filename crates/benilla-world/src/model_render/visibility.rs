@@ -215,9 +215,15 @@ pub(super) fn apply_model_visibility(
         let mat_factor = mat_anim.map_or(1.0, |m| m.current);
 
         // Inside a WMO, exterior content draws only through a portal window; untagged content
-        // (units, GameObjects) and the camera's own building are exempt.
+        // (units, GameObjects) and the camera's own building are exempt. A doodad part takes its
+        // placement's sphere, so the placement draws whole; anything else its own box.
         let own_building = group_vis.is_some_and(|gv| Some(gv.instance) == own_instance);
-        let exterior_ok = !exterior || own_building || gate.admits(&xf, aabb);
+        let exterior_ok = !exterior
+            || own_building
+            || match fade.and_then(|f| f.sphere) {
+                Some((center, radius)) => gate.admits_sphere(center, radius),
+                None => gate.admits(&xf, aabb),
+            };
 
         // A billboard card draws only while its model does, by the owner's last-frame verdict.
         // Entity-lane cards only: a placement's card is `ExteriorScene` and gated above. An

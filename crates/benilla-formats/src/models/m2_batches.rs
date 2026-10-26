@@ -362,6 +362,10 @@ pub fn parse_m2_render_submeshes(
             Some(6) => ModelBlend::Mod2x,
             Some(_) => ModelBlend::Blend,
         };
+        // The mouse trace's mode-1 batch filter (`0x81db2d`-`0x81db81`).
+        let hit_test = batch.material_layer == 0
+            && batch.flags & 0x08 == 0
+            && material.is_none_or(|m| m.blend_mode.bits() == 0 || m.flags.bits() & 0x20 != 0);
         // Blend modes 3 (NoAlphaAdd) and 4 (Add) add the batch's colour (glow cards, coronae).
         let additive = matches!(material.map(|m| m.blend_mode.bits()), Some(3) | Some(4));
         // Render flag 0x04: two-sided; without it the reference culls back faces.
@@ -565,6 +569,7 @@ pub fn parse_m2_render_submeshes(
             sub.rgb_anim = rgb_anim.clone();
             sub.rgb_seq = rgb_seq.clone();
             sub.combiner = combiner.clone();
+            sub.hit_test = hit_test;
             sub.sort = Some(BatchSort {
                 model_depth: model.global_flags & 0x10 != 0,
                 priority_plane: batch.priority_plane(),

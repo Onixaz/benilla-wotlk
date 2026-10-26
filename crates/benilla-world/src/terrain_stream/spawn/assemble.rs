@@ -344,6 +344,7 @@ pub fn spawn_model_entities(
                         .then(|| crate::static_gx::GxFadeSeed {
                             size: fade.size,
                             local_center,
+                            radius: fade.radius,
                             stat_mesh: stat_mesh.clone(),
                             aabb: *stat_aabb,
                             cutout: cutout.clone(),
@@ -388,6 +389,7 @@ pub fn spawn_model_entities(
                         .then(|| crate::static_gx::GxFadeSeed {
                             size: fade.size,
                             local_center,
+                            radius: fade.radius,
                             stat_mesh: stat_mesh.clone(),
                             aabb: *stat_aabb,
                             cutout: cutout.clone(),
@@ -622,6 +624,7 @@ pub fn spawn_model_entities(
                     fade: DoodadFade {
                         size: fade.size,
                         local_center: Vec3::ZERO,
+                        sphere: Some((fade.center, fade.radius)),
                         cutout,
                         blend,
                     },
@@ -748,6 +751,7 @@ pub fn spawn_model_entities(
             commands.entity(entity).insert(DoodadFade {
                 size: fade.size,
                 local_center: fade_center,
+                sphere: (!entity_hosted).then_some((fade.center, fade.radius)),
                 cutout,
                 blend,
             });

@@ -794,6 +794,7 @@ fn warm_quad(colors: bool, skinned: bool, uv2: bool) -> RenderSubmesh {
         } else {
             Vec::new()
         },
+        hit_test: false,
     }
 }
 

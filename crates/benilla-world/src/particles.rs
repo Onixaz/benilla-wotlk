@@ -974,7 +974,7 @@ pub(crate) mod tests {
         use crate::exterior_cull::ExteriorGate;
         let mut w = World::new();
         let (here, elsewhere) = (w.spawn_empty().id(), w.spawn_empty().id());
-        let sealed = ExteriorGate::Windows(Vec::new());
+        let sealed = ExteriorGate::Window(None);
         let fade = |instance| EmitterFade {
             radius: 2.0,
             size: 4.0,

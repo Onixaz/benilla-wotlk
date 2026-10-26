@@ -20,6 +20,10 @@ pub struct DoodadFade {
     pub(crate) size: f32,
     /// The model-local bounding-box centre the fade measures to, not the origin.
     pub(crate) local_center: Vec3,
+    /// The placement's world bounding sphere `(centre, radius)`, which the exterior window tests
+    /// once for all its parts (`CWorldScene::FrustumCull` `0x791120`); `None` on a part that
+    /// moves, which takes its own box.
+    pub(crate) sphere: Option<(Vec3, f32)>,
     /// The steady material, in the submesh's authored blend mode.
     pub(crate) cutout: Handle<WowModelMaterial>,
     /// Its `AlphaMode::Blend` twin, drawn only while feathering.

@@ -813,9 +813,7 @@ fn compute_pvs_traced<T: FloodTrace>(
     // (`0x6b3c87`), so a sealed room draws no exterior shell. Per window, each `0x8` group inside a
     // frustum clipped to that window (`0x6b3d13`/`0x6b3d22`) is flooded from, not merely marked
     // (`0x6b3d39 call 0x6b41c0`), the walk carrying the window's rect on. The sub-frustum is
-    // `crate::exterior_cull::window_frustum` without its narrowness reject, which gates the scene
-    // walk `0x682fa0` and not the volume builder `0x682930`: a doorway too narrow to admit a
-    // hillside still admits a wall.
+    // `crate::exterior_cull::window_frustum`.
     if flood.windows.len() > WORKLIST_CAP {
         trace.worklist_over_cap(flood.windows.len());
     }

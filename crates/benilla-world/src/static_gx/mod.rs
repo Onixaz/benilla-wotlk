@@ -176,6 +176,8 @@ struct GxFader {
     local_center: Vec3,
     /// World box centre, which the scan measures the camera's distance to.
     center: Vec3,
+    /// The world bounding-sphere radius about [`Self::center`].
+    radius: f32,
     /// Band edges from [`crate::model_fade::fade_band`], for the cell ring test only.
     near: f32,
     far: f32,
@@ -356,6 +358,9 @@ pub struct GxFadeSeed {
     pub size: f32,
     /// Model-local bbox centre; the fade distance is measured to its world image.
     pub local_center: Vec3,
+    /// The placement's world bounding-sphere radius, about the centre's world image: its exiled
+    /// entities' exterior test.
+    pub radius: f32,
     pub stat_mesh: Handle<Mesh>,
     pub aabb: Option<bevy::camera::primitives::Aabb>,
     pub cutout: Handle<benilla_assets::materials::WowModelMaterial>,
@@ -550,6 +555,7 @@ impl StaticGx {
                 size: seed.size,
                 local_center: seed.local_center,
                 center: b.transform.transform_point(seed.local_center),
+                radius: seed.radius,
                 near,
                 far,
                 room,
@@ -860,6 +866,7 @@ mod tests {
         let mk_seed = || GxFadeSeed {
             size: 0.8,
             local_center: Vec3::ZERO,
+            radius: 1.0,
             stat_mesh: Handle::default(),
             aabb: None,
             cutout: Handle::default(),
@@ -953,6 +960,7 @@ mod tests {
         GxFadeSeed {
             size: 0.8,
             local_center: Vec3::ZERO,
+            radius: 1.0,
             stat_mesh: Handle::default(),
             aabb: None,
             cutout: Handle::default(),
@@ -1041,6 +1049,7 @@ mod tests {
         a.fade = Some(GxFadeSeed {
             size: 0.8,
             local_center: Vec3::ZERO,
+            radius: 1.0,
             stat_mesh: Handle::default(),
             aabb: None,
             cutout: Handle::default(),

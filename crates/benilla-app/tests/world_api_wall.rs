@@ -110,6 +110,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("final_pass::FinalPassTarget", "record"),
     ("instance_tint::InstanceTintMirrors", "record"),
     ("instance_tint::InstanceTints", "record"),
+    ("interact::DoodadOccluders", "record"),
     ("interact::PickMesh", "record"),
     ("interact::WorldObject", "record"),
     ("interact::WorldPick", "record"),
