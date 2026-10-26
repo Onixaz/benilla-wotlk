@@ -30,9 +30,11 @@ pub(super) fn apply_model_visibility(
         With<WorldCamera>,
     >,
     // Scene edges the per-part skip cannot read off its own row: a portal set changing (a
-    // building's asset lands frames after its spawn) and any owner's inherited verdict flipping.
+    // building's asset lands frames after its spawn) and any card owner's inherited verdict
+    // flipping. An owner is a model root or a rig joint, never a part, so the ~29k part rows of a
+    // city stay out of the scan.
     new_portals: Query<(), Changed<WmoPortalInstance>>,
-    owner_flips: Query<(), Changed<InheritedVisibility>>,
+    owner_flips: Query<(), (Changed<InheritedVisibility>, Without<ModelPart>)>,
     // A far-side mark the classifier strips under a still camera must un-skip its part.
     mut unmarked: RemovedComponents<super::FarSideOfWater>,
     instances: Query<&WmoPortalInstance>,
@@ -123,7 +125,7 @@ pub(super) fn apply_model_visibility(
             (batch_sort, parent),
         )| {
             if scene_still
-                && !unmarked.contains(&entity)
+                && (unmarked.is_empty() || !unmarked.contains(&entity))
                 && !xf.is_changed()
                 && !group_vis.as_ref().is_some_and(|g| g.is_changed())
                 && !mat_anim.as_ref().is_some_and(|a| a.is_changed())
