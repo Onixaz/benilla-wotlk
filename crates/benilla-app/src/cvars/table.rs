@@ -107,7 +107,7 @@ pub(crate) enum Reference {
 }
 
 /// A row whose default is the reference's own registered string.
-const fn same(name: &'static str, default: &'static str) -> Registered {
+pub(super) const fn same(name: &'static str, default: &'static str) -> Registered {
     Registered {
         name,
         default,
@@ -169,9 +169,12 @@ pub(crate) fn registered_pairs() -> impl Iterator<Item = (&'static str, &'static
     registered_rows().map(|r| (r.name, r.default))
 }
 
-/// [`REGISTERED`], then [`REGISTERED_WOTLK`].
+/// [`REGISTERED`], then [`REGISTERED_WOTLK`], then the camera's generated tuning rows.
 pub(crate) fn registered_rows() -> impl Iterator<Item = &'static Registered> {
-    REGISTERED.iter().chain(REGISTERED_WOTLK)
+    REGISTERED
+        .iter()
+        .chain(REGISTERED_WOTLK)
+        .chain(super::camera_tuning::ROWS.iter())
 }
 
 /// The rows 3.3.5a registers and 1.12.1 has no name for, each with a reader in the 3.3.5a stock
@@ -461,6 +464,93 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // The login screen's remembered account (`0x401ba7`, flags 0x40): hidden from Lua, which
     // reaches it through `GetSavedAccountName`/`SetSavedAccountName`.
     same("accountName", "").hidden(),
+    // The rest of `CGGameUI::RegisterGameCVars` (`0x51d9b0`), `0x51da34`-`0x51f41b` in site order,
+    // each at its registered string; flags 0x20 are per character. The stock interface reads and
+    // writes them; the engine readers of `autoStand`, `autoDismount`, `autoUnshift`,
+    // `unitHighlights` and `threatWorldText` have no counterpart here.
+    same("autoStand", "1").per_account(),
+    same("autoDismount", "1").per_account(),
+    same("autoUnshift", "1").per_account(),
+    same("alwaysCompareItems", "0").per_account(),
+    same("minimapPortalMax", "99").per_character(),
+    same("showQuestTrackingTooltips", "1").per_character(),
+    same("questLogCollapseFilter", "0").per_character(),
+    same("advancedWatchFrame", "0").per_account(),
+    same("watchFrameIgnoreCursor", "0").per_account(),
+    same("watchFrameBaseAlpha", "0").per_account(),
+    same("watchFrameState", "0").per_account(),
+    same("showQuestObjectivesOnMap", "1").per_character(),
+    // `0x51e04f`, "" with flags 0x110: the completed tutorials in order, which
+    // `CGTutorial::SaveFlaggedTutorials` (`0x530300`) writes and `LoadFlaggedTutorials`
+    // (`0x5303a0`) reads; no host reader here.
+    same("flaggedTutorials", "").per_account(),
+    same("worldMapOpacity", "0").per_character(),
+    same("guildShowOffline", "1").per_account(),
+    same("lfgAutoFill", "0").per_account(),
+    same("lfgAutoJoin", "0").per_account(),
+    same("friendsViewButtons", "0").per_character(),
+    same("friendsSmallView", "0").per_character(),
+    same("fctAllSpellMechanics", "0").per_account(),
+    // `0x51e7ac`, "0.5": `PartyFrame.xml`'s `VARIABLES_LOADED` arm sets the opacity slider from it.
+    same("partyBackgroundOpacity", "0.5").per_account(),
+    same("unitHighlights", "1").per_account(),
+    same("enablePVPNotifyAFK", "1").per_account(),
+    // `0x51ed69`: "%d" of 3, every trainer service shown.
+    same("serviceTypeFilter", "3").per_account(),
+    same("autojoinPartyVoice", "1").per_account(),
+    same("autojoinBGVoice", "0").per_account(),
+    same("combatLogOn", "1").per_character(),
+    same("showBattlefieldMinimap", "0").per_character(),
+    same("talentFrameShown", "0").per_account(),
+    same("auctionDisplayOnCharacter", "0").per_account(),
+    same("addFriendInfoShown", "0").per_account(),
+    same("pendingInviteInfoShown", "0").per_account(),
+    // `0x51ef6c`, `0x51ef8f`, `0x51efaf`: the clock's source and its alarm, minutes past midnight
+    // and the message, which `TimeManagerFrame_OnLoad` reads (`Blizzard_TimeManager.lua:33-37`).
+    same("timeMgrUseLocalTime", "0").per_account(),
+    same("timeMgrAlarmTime", "0").per_account(),
+    same("timeMgrAlarmMessage", "").per_account(),
+    same("predictedHealth", "1").per_account(),
+    same("predictedPower", "1").per_account(),
+    same("threatWorldText", "1").per_account(),
+    same("autoCompleteResortNamesOnRecency", "1").per_account(),
+    same("autoCompleteWhenEditingFromCenter", "1").per_account(),
+    same("autoCompleteUseContext", "1").per_account(),
+    same("colorChatNamesByClass", "0").per_account(),
+    same("miniWorldMap", "0").per_character(),
+    same("dontShowEquipmentSetsOnItems", "0").per_account(),
+    // The rest of `CameraRegisterCVars` (`0x5fd910`), `0x5fd964`-`0x5fe2a7`, all flags 0x10 but
+    // the vehicle distance's 0x20. No host reader: the follow rig keeps its own model.
+    same("cameraSavedVehicleDistance", "-1.0").per_character(),
+    same("mouseInvertYaw", "0").per_account(),
+    same("cameraDistanceMoveSpeed", "8.33").per_account(),
+    same("cameraFoVSmoothSpeed", "0.5").per_account(),
+    same("cameraDistanceSmoothSpeed", "8.33").per_account(),
+    same("cameraHeightSmoothSpeed", "1.2").per_account(),
+    same("cameraFlyingMountHeightSmoothSpeed", "2.0").per_account(),
+    same("cameraViewBlendStyle", "1").per_account(),
+    same("camerasmooth", "1").per_account(),
+    same("cameraSmoothPitch", "1").per_account(),
+    same("cameraSmoothYaw", "1").per_account(),
+    same("cameraCustomViewSmoothing", "0").per_account(),
+    same("cameraHeightIgnoreStandState", "0").per_account(),
+    same("cameraDive", "1").per_account(),
+    same("cameraSurfacePitch", "0.0").per_account(),
+    same("cameraSubmergePitch", "18.0").per_account(),
+    same("cameraSurfaceFinalPitch", "5.0").per_account(),
+    same("cameraSubmergeFinalPitch", "5.0").per_account(),
+    same("cameraPitchSmoothMin", "0.0").per_account(),
+    same("cameraPitchSmoothMax", "30.0").per_account(),
+    same("cameraYawSmoothMin", "0.0").per_account(),
+    same("cameraYawSmoothMax", "0.0").per_account(),
+    same("cameraSmoothTimeMin", "0.1").per_account(),
+    same("cameraSmoothTimeMax", "2.0").per_account(),
+    // `0x7f3a10`: "%d" of the locale's ceiling, 2 on enUS; the blood spurt reads it
+    // (`creature_anim::blood`).
+    same("violenceLevel", "2").per_account(),
+    // `SI2::RegisterSoundEngineCVars` (`0x4d11cf`, "0"): the Voice panel's self-mute and its
+    // binding's toggle (`VoiceChat.lua`).
+    same("VoiceChatSelfMute", "0"),
 ];
 
 /// The host-backed CVars, one row per knob that has a reader: a host knob, or a Lua consumer

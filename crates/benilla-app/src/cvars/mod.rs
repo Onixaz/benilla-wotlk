@@ -31,6 +31,9 @@ use bevy::prelude::*;
 use crate::ui_script::VmMemo;
 use benilla_ui::script::{SeededCvar, UiScript};
 
+mod camera_tuning;
+#[cfg(test)]
+mod stock_census_tests;
 mod table;
 pub(crate) mod wtf;
 #[cfg(test)]
@@ -1084,7 +1087,7 @@ mod tests {
                 _ => ours == theirs,
             }
         }
-        for row in REGISTERED.iter().chain(table::REGISTERED_WOTLK) {
+        for row in registered_rows() {
             let name = row.name;
             match &row.reference {
                 Reference::Same(value) => assert!(

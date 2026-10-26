@@ -14,11 +14,19 @@ use super::spell_visual::FxSlot;
 use super::spell_visual::SpellVisuals;
 use super::{SpellKitFx, SwingImpact, SwingMessage};
 
-/// The gore level, the client's `violenceLevel` (0 none, 1 green, 2 true colors). The reference
-/// defaults it to its region's maximum (`0x6c5aa0`, from the table at `0x86c3f8`, which the setter
-/// `0x6c5af0` also clamps to): 2 for enUS, 1 only for koKR, whose blood turns green. Fixed here,
-/// not a CVar row: `cvars::REGISTERED` holds only the knobs a settings page wires.
-const VIOLENCE_LEVEL: usize = 2;
+/// The gore level's ceiling, `s_maxViolenceLevel[locale]` (`0xaf4e14`): 2 for enUS, 1 for koKR and
+/// zhCN, whose blood turns green. `violenceLevel` (0 none, 1 green, 2 true colors) registers at it
+/// (`0x7f3a10`).
+const MAX_VIOLENCE_LEVEL: usize = 2;
+
+/// `violenceLevel` as `ViolenceLevelChanged` (`0x7f39b0`) holds it: a value outside `[0, max]`
+/// reads as the ceiling.
+fn violence_level(cvars: Option<&crate::cvars::Cvars>) -> usize {
+    match cvars.and_then(|c| c.num("violenceLevel")).map(|v| v as i64) {
+        Some(level) if (0..=MAX_VIOLENCE_LEVEL as i64).contains(&level) => level as usize,
+        _ => MAX_VIOLENCE_LEVEL,
+    }
+}
 
 /// The victim attachments the spurt hangs on, `0xf` front and `0x10` back (`0x625010`).
 const ATTACH_FRONT: u16 = 15;
@@ -54,6 +62,7 @@ pub(super) fn blood_spurts(
     creatures: Option<Res<crate::entities::Creatures>>,
     blood: Option<Res<BloodTables>>,
     visuals: Option<Res<SpellVisuals>>,
+    cvars: Option<Res<crate::cvars::Cvars>>,
     mut fx: MessageWriter<SpellKitFx>,
 ) {
     let (Some(creatures), Some(blood), Some(visuals)) = (creatures, blood, visuals) else {
@@ -114,7 +123,7 @@ pub(super) fn blood_spurts(
         let large = swing.hit_info & benilla_protocol::messages::hit_info::LARGE_BLOOD != 0;
         let Some((effect, path)) = blood
             .0
-            .effect_id(blood_id, VIOLENCE_LEVEL, front, large)
+            .effect_id(blood_id, violence_level(cvars.as_deref()), front, large)
             .and_then(|id| visuals.0.effect_path(id).map(|path| (id, path)))
         else {
             info!("blood: dropped — no effect for blood {blood_id} (front {front}, large {large})");
@@ -144,4 +153,23 @@ fn swing_attacker<'a>(
     swing: &SwingMessage,
 ) -> Option<&'a Transform> {
     transforms.get(swing.attacker).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{violence_level, MAX_VIOLENCE_LEVEL};
+    use crate::cvars::Cvars;
+
+    /// `ViolenceLevelChanged` (`0x7f39b0`): a level inside `[0, max]` holds, anything else reads
+    /// as the ceiling, as does a missing registry.
+    #[test]
+    fn the_violence_level_holds_inside_its_ceiling() {
+        assert_eq!(violence_level(None), MAX_VIOLENCE_LEVEL);
+        let mut cvars = Cvars::default();
+        assert_eq!(violence_level(Some(&cvars)), MAX_VIOLENCE_LEVEL);
+        for (value, level) in [("0", 0), ("1", 1), ("2", 2), ("3", 2), ("-1", 2)] {
+            cvars.set("violenceLevel", value);
+            assert_eq!(violence_level(Some(&cvars)), level, "violenceLevel {value}");
+        }
+    }
 }

@@ -200,12 +200,28 @@ fn the_frame_answers_only_the_events_that_name_its_own_unit() {
     s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
     assert!(s.eval::<bool>("return PetFrame:IsVisible()").unwrap());
 
-    s.set_unit("pet", Some(pet("Grimjaw", 5, 45, 80, 0)));
-    s.fire_event("UNIT_HEALTH", vec![ScriptValue::Str("player".into())]);
+    // At `predictedHealth`'s registered "1" the bar reads `UnitHealth` on its OnUpdate
+    // (UnitFrame.lua:211-212), with no event at all.
+    s.set_unit("pet", Some(pet("Grimjaw", 40, 45, 80, 0)));
+    s.tick(0.1);
     assert_eq!(
         s.eval::<f64>("return PetFrameHealthBar:GetValue()")
             .unwrap(),
-        72.0,
+        40.0,
+        "the predicted bar follows the pet's health each frame"
+    );
+
+    // Off, `VARIABLES_LOADED` puts the bar back on `UNIT_HEALTH` (UnitFrame.lua:234-240), which
+    // only an event naming the pet moves.
+    s.run("SetCVar('predictedHealth', '0')").unwrap();
+    s.fire_event("VARIABLES_LOADED", vec![]);
+    s.set_unit("pet", Some(pet("Grimjaw", 5, 45, 80, 0)));
+    s.fire_event("UNIT_HEALTH", vec![ScriptValue::Str("player".into())]);
+    s.tick(0.1);
+    assert_eq!(
+        s.eval::<f64>("return PetFrameHealthBar:GetValue()")
+            .unwrap(),
+        40.0,
         "a UNIT_HEALTH for \"player\" is not the pet's event"
     );
     s.fire_event("UNIT_HEALTH", vec![ScriptValue::Str("pet".into())]);
