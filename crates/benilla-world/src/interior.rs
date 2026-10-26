@@ -22,7 +22,7 @@ use crate::model_fade::{PendingAppearFade, RenderFade};
 use crate::terrain_stream::{
     fold_interior_probe, interior_light_up, PropLobeLight, TerrainStreamer,
 };
-use crate::wmo_portal::{indoor_verdict_at, IndoorVerdict, WmoPortalInstance};
+use crate::wmo_portal::{IndoorVerdict, WmoPortalInstance};
 use benilla_assets::materials::WowModelMaterial;
 
 /// Squared distance (yd²) before a re-test: an epsilon, since the reference re-runs a unit's
@@ -351,6 +351,7 @@ pub fn classify_entity_interior(
     // Anchors with no part to ask, the tripwire for a fade lockout creeping back.
     let mut n_fade_blocked = 0usize;
     let mut resolve_us = 0.0f32;
+    let mut buildings: Option<Vec<crate::wmo_portal::VerdictBuilding<'_, Entity>>> = None;
     for (
         anchor,
         anchor_t,
@@ -436,11 +437,13 @@ pub fn classify_entity_interior(
         n_resolved += 1;
         let _r = std::time::Instant::now();
         let (attach, attach_at) = attach_anchor(containment, bake_center, anchor_t);
+        // The buildings, prepared once for every verdict this frame (~200 resident in a city).
+        let buildings = buildings
+            .get_or_insert_with(|| crate::wmo_portal::verdict_buildings(&wmos, instances.iter()));
         let (law, room) = resolve_anchor_law(
             &mut commands,
             &mut probes,
-            &wmos,
-            &instances,
+            buildings,
             &streamer,
             &adt_tiles,
             &lighting,
@@ -701,8 +704,7 @@ fn attach_anchor(
 fn resolve_anchor_law(
     commands: &mut Commands,
     probes: &mut PropProbes,
-    wmos: &Assets<WmoModel>,
-    instances: &Query<(Entity, &WmoPortalInstance)>,
+    buildings: &[crate::wmo_portal::VerdictBuilding<'_, Entity>],
     streamer: &TerrainStreamer,
     adt_tiles: &Assets<AdtTile>,
     lighting: &crate::lighting::WowLighting,
@@ -714,14 +716,8 @@ fn resolve_anchor_law(
     bake_center: Option<Vec3>,
     seated: Option<u16>,
 ) -> (AppliedLaw, Option<crate::wmo_portal::WmoRoom>) {
-    let (verdict, claimed) = indoor_verdict_at(
-        wmos,
-        instances.iter(),
-        streamer,
-        adt_tiles,
-        attach_at,
-        attach,
-    );
+    let (verdict, claimed) =
+        crate::wmo_portal::indoor_verdict_among(buildings, streamer, adt_tiles, attach_at, attach);
     // An outdoor-class WMO surface (street, deck, porch) sets the node's skip-shadow bit: the lit
     // 2.5 target with no MCSH beneath, which `entity_shade` reads.
     let on_wmo = matches!(verdict, IndoorVerdict::OutdoorsOnWmo);
