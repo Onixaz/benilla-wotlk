@@ -28,7 +28,7 @@
 
 mod dots;
 
-pub(super) use dots::{emit_object_blips, emit_party_dots, BlipWorld, SelfTracking};
+pub(super) use dots::{emit_object_blips, emit_party_dots, BlipWorld, ClassMemo, SelfTracking};
 
 use bevy::ecs::system::NonSendMut;
 use bevy::math::Rect;
@@ -189,7 +189,8 @@ pub(super) type TrackedCandidates<'w, 's> = Query<
         &'static Guid,
         &'static NetEntity,
         &'static GlobalTransform,
-        Option<&'static ObjectStore>,
+        // A `Ref`, so a still object's classification can be kept ([`ClassMemo`]).
+        Option<Ref<'static, ObjectStore>>,
         Option<&'static crate::ui_taxi::FlightMasterStatus>,
     ),
     Without<Embodied>,

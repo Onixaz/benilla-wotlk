@@ -99,6 +99,41 @@ pub(in crate::minimap) struct BlipWorld<'a> {
     pub(in crate::minimap) group: &'a crate::ui_party::GroupState,
 }
 
+/// What an object's classification was computed from: its store's change tick, its flight-master
+/// flag, and the stamp of everything else [`BlipWorld::classify`] reads.
+type ClassKey = (Option<bevy::ecs::change_detection::Tick>, bool, u64);
+
+/// Last frame's classifications by guid: an object whose key stands keeps its class, so a crowd
+/// standing still is not re-classified every frame; the map keeps only the frame's candidates.
+#[derive(Default)]
+pub(in crate::minimap) struct ClassMemo {
+    last: HashMap<u64, (ClassKey, Option<Classified>)>,
+    next: HashMap<u64, (ClassKey, Option<Classified>)>,
+}
+
+impl ClassMemo {
+    /// Start a frame: last frame's classes become the ones to reuse.
+    pub(in crate::minimap) fn begin(&mut self) {
+        std::mem::swap(&mut self.last, &mut self.next);
+        self.next.clear();
+    }
+
+    /// `guid`'s class under `key`, computed by `classify` only when the key moved.
+    fn classified(
+        &mut self,
+        guid: u64,
+        key: ClassKey,
+        classify: impl FnOnce() -> Option<Classified>,
+    ) -> Option<Classified> {
+        let class = match self.last.get(&guid) {
+            Some(&(k, c)) if k == key => c,
+            _ => classify(),
+        };
+        self.next.insert(guid, (key, class));
+        class
+    }
+}
+
 /// A classified object: its blip, and whether the tooltip adds its title.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::minimap) struct Classified {
@@ -327,7 +362,11 @@ pub(in crate::minimap) fn emit_object_blips(
     candidates: &TrackedCandidates,
     icons: &Handle<Image>,
     player_indoors: bool,
-    indoors_at: impl Fn(Vec3) -> bool,
+    // By the object's guid and feet, so a caller can keep a still object's verdict.
+    mut indoors_at: impl FnMut(u64, Vec3) -> bool,
+    // Last frame's classifications, kept for an object whose store and world stamp stand.
+    memo: &mut ClassMemo,
+    world_stamp: u64,
     quads: &mut UiQuads,
     hover: &mut Vec<ObjectHover>,
 ) -> [u16; 16] {
@@ -339,17 +378,25 @@ pub(in crate::minimap) fn emit_object_blips(
             continue;
         }
         let unknown_fm = fm.is_some_and(|s| !s.known);
-        let Some(c) = world.classify(guid.0, net.kind, store, unknown_fm) else {
+        let key = (
+            store.as_ref().map(|s| s.last_changed()),
+            unknown_fm,
+            world_stamp,
+        );
+        let classified = memo.classified(guid.0, key, || {
+            world.classify(guid.0, net.kind, store.as_deref(), unknown_fm)
+        });
+        let Some(c) = classified else {
             continue;
         };
-        let inside = indoors_at(tf.translation());
+        let inside = indoors_at(guid.0, tf.translation());
         if player_indoors && !inside {
             continue;
         }
         let grey = !player_indoors && inside;
         let title = c
             .titled
-            .then(|| store.and_then(|s| s.0.object_entry()))
+            .then(|| store.as_ref().and_then(|s| s.0.object_entry()))
             .flatten()
             .and_then(|e| world.names.creature_subname(e))
             .map(str::to_string);
@@ -430,3 +477,34 @@ pub(in crate::minimap) fn emit_party_dots(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod class_memo_tests {
+    use super::{Blip, ClassMemo, Classified};
+    use bevy::ecs::change_detection::Tick;
+
+    /// A still object classifies once; its store's tick, its flight-master flag or the world
+    /// stamp moving classifies it again.
+    #[test]
+    fn a_still_object_keeps_its_class_until_a_key_moves() {
+        let mut memo = ClassMemo::default();
+        let calls = std::cell::Cell::new(0);
+        let frame = |memo: &mut ClassMemo, key: (Option<Tick>, bool, u64)| {
+            memo.begin();
+            memo.classified(9, key, || {
+                calls.set(calls.get() + 1);
+                Some(Classified::from(Blip::FriendlyNpc))
+            })
+        };
+        let key = (Some(Tick::new(5)), false, 1);
+        assert_eq!(frame(&mut memo, key), Some(Blip::FriendlyNpc.into()));
+        frame(&mut memo, key);
+        assert_eq!(calls.get(), 1, "still: classified once");
+        frame(&mut memo, (Some(Tick::new(6)), false, 1));
+        assert_eq!(calls.get(), 2, "its store moved");
+        frame(&mut memo, (Some(Tick::new(6)), false, 2));
+        assert_eq!(calls.get(), 3, "the world moved");
+        frame(&mut memo, (Some(Tick::new(6)), true, 2));
+        assert_eq!(calls.get(), 4, "its flight-master flag moved");
+    }
+}

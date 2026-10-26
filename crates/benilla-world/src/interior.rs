@@ -39,7 +39,7 @@ pub struct WmoResidency {
 
 impl WmoResidency {
     /// Bumped whenever the resident set changes.
-    pub(crate) fn generation(&self) -> u32 {
+    pub fn generation(&self) -> u32 {
         self.generation
     }
 
