@@ -698,9 +698,10 @@ pub(super) fn tick_anim_materials(
     mut lifecycle: MessageReader<AssetEvent<benilla_assets::materials::WowModelMaterial>>,
 ) {
     // Read before any early return, so no frame's deaths are missed.
-    let gc = lifecycle.read().fold(false, |any, e| {
-        any || matches!(e, AssetEvent::Unused { .. } | AssetEvent::Removed { .. })
-    });
+    let mut gc = false;
+    for e in lifecycle.read() {
+        gc |= matches!(e, AssetEvent::Unused { .. } | AssetEvent::Removed { .. });
+    }
     if uv_reg.0.is_empty() && tint_reg.0.is_empty() {
         // Marked parts beside an empty registry mean this lane is dead, not that nothing animates.
         if parts.iter().next().is_some() {
