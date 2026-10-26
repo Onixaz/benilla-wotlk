@@ -333,6 +333,19 @@ impl Loader<'_> {
         None
     }
 
+    /// Whether `inherits=` names a registered element template, each name matched
+    /// case-insensitively, as `framexml::expand` looks it up.
+    pub(super) fn names_template(&self, inherits: &str) -> bool {
+        let model = self.model();
+        let templates = model.framexml_templates.borrow();
+        crate::framexml::inherit_names(inherits)
+            .into_iter()
+            .any(|name| {
+                templates.contains_key(name)
+                    || templates.keys().any(|k| k.eq_ignore_ascii_case(name))
+            })
+    }
+
     /// Whether `name` is a registered font object: the reference's flat, case-insensitive lookup
     /// (`0x783870`, `SStrCmpI`), with no template walk.
     pub(super) fn is_font_object(&self, name: &str) -> bool {
@@ -346,12 +359,18 @@ impl Loader<'_> {
     pub(super) fn apply_fontstring_font(&mut self, region: &Element, wrapper: &Table, dbg: &str) {
         if let Some(name) = region.attr("inherits") {
             // The expanded element keeps the instance's `inherits=`, a template's name, so the
-            // chain is walked to its font object. An unresolved name passes through unchanged:
-            // `SetFontObject("")` would clear the font object where a bad name warns.
-            let resolved = self
-                .font_object_through_templates(name)
-                .unwrap_or_else(|| name.to_string());
-            if let Err(e) = wrapper.call_method::<()>("SetFontObject", resolved) {
+            // chain is walked to its font object. 12340 (`0x4873e0`) loads a name that is no font
+            // object as the template's XML, so a template chain with no font object is already
+            // in the expansion and its `font=` lands below. Any other name passes through
+            // unchanged: `SetFontObject("")` would clear the font object where a bad name warns.
+            let resolved = match self.font_object_through_templates(name) {
+                Some(font) => Some(font),
+                None if self.names_template(name) => None,
+                None => Some(name.to_string()),
+            };
+            if let Some(Err(e)) =
+                resolved.map(|font| wrapper.call_method::<()>("SetFontObject", font))
+            {
                 self.warn_once(
                     &format!("fontobj:{name}"),
                     format!("{dbg}: <FontString inherits=\"{name}\">: {e}"),

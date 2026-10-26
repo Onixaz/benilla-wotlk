@@ -2415,6 +2415,45 @@ mod region_template_tests {
             "the font survives BOTH hops — template inheritance must not drop it"
         );
     }
+
+    /// A virtual FontString template that carries its own file font and no font object, inherited
+    /// inside a frame template (`Blizzard_DebugTools.xml`'s `EventTraceTimeFont`): 12340 loads the
+    /// template's XML onto the string (`0x4873e0`), so it draws in the template's file and height
+    /// and nothing asks for a font object of that name.
+    #[test]
+    fn a_fontstring_template_with_a_file_font_needs_no_font_object() {
+        let s = UiScript::new().unwrap();
+        let doc = parse(
+            r#"<Ui>
+                <FontString name="TimeFontTemplate" font="Fonts\ARIALN.TTF" virtual="true">
+                    <FontHeight><AbsValue val="10"/></FontHeight>
+                </FontString>
+                <Button name="RowTemplate" virtual="true">
+                    <Size><AbsDimension x="100" y="16"/></Size>
+                    <Layers><Layer level="ARTWORK">
+                        <FontString name="$parentTime" inherits="TimeFontTemplate"/>
+                    </Layer></Layers>
+                </Button>
+                <Button name="Row1" inherits="RowTemplate"/>
+            </Ui>"#,
+        )
+        .unwrap();
+        let report = load(&s, &doc, &no_files);
+        assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+        assert!(
+            report
+                .warnings
+                .iter()
+                .all(|w| !w.contains("TimeFontTemplate")),
+            "no font-object lookup of a FontString template: {:?}",
+            report.warnings
+        );
+        assert_eq!(
+            s.eval::<(String, f32)>("local f, h = Row1Time:GetFont() return f, h")
+                .unwrap(),
+            ("Fonts\\ARIALN.TTF".to_string(), 10.0),
+        );
+    }
 }
 
 /// Chunk naming: the file and line a `<Script>` raise reports.
