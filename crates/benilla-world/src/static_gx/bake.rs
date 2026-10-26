@@ -60,6 +60,7 @@ pub(super) fn flush_static_gx(mut gx: ResMut<StaticGx>, mut meshes: ResMut<Asset
         wmos,
         props,
         world,
+        draw_epoch,
         ..
     } = &mut *gx;
     for (&cell, state) in cells.iter_mut() {
@@ -67,6 +68,7 @@ pub(super) fn flush_static_gx(mut gx: ResMut<StaticGx>, mut meshes: ResMut<Asset
             continue;
         }
         state.dirty = false;
+        *draw_epoch += 1;
         if state.items.is_empty() {
             world.cells.remove(&cell);
             continue;
@@ -91,6 +93,7 @@ pub(super) fn flush_static_gx(mut gx: ResMut<StaticGx>, mut meshes: ResMut<Asset
             continue;
         }
         state.dirty = false;
+        *draw_epoch += 1;
         if state.items.is_empty() {
             world.wmos.remove(&instance);
             continue;
@@ -118,6 +121,7 @@ pub(super) fn flush_static_gx(mut gx: ResMut<StaticGx>, mut meshes: ResMut<Asset
             continue;
         }
         state.dirty = false;
+        *draw_epoch += 1;
         if state.items.is_empty() {
             world.props.remove(&instance);
             continue;
