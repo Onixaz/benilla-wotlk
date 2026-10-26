@@ -113,6 +113,7 @@ pub mod bgwin;
 pub mod billboard;
 pub mod boot;
 pub mod build_id;
+pub mod card_store;
 pub mod clouds;
 pub mod clutter;
 pub mod collision;

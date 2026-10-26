@@ -53,6 +53,8 @@ impl PluginGroup for WorldPlugins {
             .add(crate::interact::InteractPlugin)
             // M2 billboard cards (glow halos, chains), faced to the camera each frame.
             .add(crate::billboard::BillboardPlugin)
+            // Fading world-static cards wait as records until the camera nears them.
+            .add(crate::card_store::plugin)
             // The ground-fx decal lane, which orders itself on the billboard place set.
             .add(crate::ground_fx::plugin)
             .add(crate::frame_pace::plugin)

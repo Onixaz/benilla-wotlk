@@ -137,6 +137,8 @@ pub fn spawn_model_entities(
     let mut lazy_parts: Vec<Entity> = Vec::new();
     // Every `continue` below leaves its batch's `None` in place.
     let mut by_batch: Vec<Option<Entity>> = vec![None; submeshes.len()];
+    // The fixed, fading cards that wait in the store rather than spawn (`crate::card_store`).
+    let mut stored: Vec<crate::card_store::StoredCard> = Vec::new();
     // Coplanar siblings ride one lane: two batches naming one skin section draw the same
     // triangles, which the reference draws from one vertex array under LEQUAL, so the later wins
     // exactly (`0x70c190`). Split across lanes, the two reach each vertex by different float
@@ -565,6 +567,46 @@ pub fn spawn_model_entities(
                     None => BillboardCard::new(info, transform),
                 },
             };
+            // A fixed card that fades out with distance, on the plain material lane, waits as a
+            // record; the store spawns this same bundle while the camera is in its range.
+            let storable = crate::card_store::enabled()
+                && card.follows().is_none()
+                && !entity_hosted
+                && sub.alpha_anim.is_none()
+                && crate::model_fade::fade_band(fade.size).is_some();
+            if storable {
+                stored.push(crate::card_store::StoredCard {
+                    mesh: stat_mesh.clone(),
+                    material: cutout.clone(),
+                    part: ModelPart {
+                        kind,
+                        blend: sub.blend,
+                    },
+                    why,
+                    pick: sub.geometry.clone(),
+                    tag: mesh_tag,
+                    card,
+                    sort: crate::model_render::M2BatchSort::card(
+                        &sub.geometry,
+                        sort_group,
+                        crate::model_render::SortOrigin::Fixed(transform.translation),
+                    ),
+                    aabb: *stat_aabb,
+                    pivot: transform.transform_point(info.pivot),
+                    fade: DoodadFade {
+                        size: fade.size,
+                        local_center: Vec3::ZERO,
+                        cutout,
+                        blend,
+                    },
+                    probe: probe_slot.is_some(),
+                    anim_mat: sub.uv_anim.as_ref().is_some_and(|a| a.period > 0.0)
+                        || sub.rgb_anim.as_ref().is_some_and(|a| a.period > 0.0)
+                        || seq_owner.is_some()
+                        || stage1.as_ref().is_some_and(|s| s.animates()),
+                });
+                continue;
+            }
             let mut card_entity = commands.spawn((
                 Mesh3d(stat_mesh.clone()),
                 MeshMaterial3d(cutout.clone()),
@@ -687,6 +729,20 @@ pub fn spawn_model_entities(
         // A following card despawns with its owner and must stay a world root: keep it out.
         if is_palette_billboard || sub.billboard.is_none() || card_owner.is_none() {
             out.push(entity);
+        }
+    }
+    if !stored.is_empty() {
+        // A model of cards alone keeps ribbons' fallback owner a real part: its cards spawn now.
+        let ribbons = m2.is_some_and(|(m, _)| !m.ribbons.is_empty());
+        if ribbons && out.is_empty() {
+            out.extend(stored.iter().map(|c| c.spawn(commands).id()));
+        } else {
+            // Last in the list, so no site that takes the first entity picks the holder.
+            out.push(
+                commands
+                    .spawn(crate::card_store::CardHolder::new(stored))
+                    .id(),
+            );
         }
     }
     // Animation runs while a submesh is drawn or, for a meshless host, while its gate admits it.
