@@ -46,7 +46,11 @@ fn the_glance_table_follows_visibility_destroy_and_slot_reuse() {
     assert_eq!(a.glance(child), None);
     assert_eq!(glance(&a, next), Some((true, FrameKind::MessageFrame)));
     for (h, f) in a.iter_frames() {
-        assert_eq!(a.is_visible(h), f.effective_visible, "glance agrees with the node");
+        assert_eq!(
+            a.is_visible(h),
+            f.effective_visible,
+            "glance agrees with the node"
+        );
     }
 }
 
