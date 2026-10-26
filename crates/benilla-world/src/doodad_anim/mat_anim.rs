@@ -694,7 +694,13 @@ pub(super) fn tick_anim_materials(
     mut drawn: Local<
         bevy::platform::collections::HashSet<AssetId<benilla_assets::materials::WowModelMaterial>>,
     >,
+    // A registered material can only die on a frame its store reports one unused or removed.
+    mut lifecycle: MessageReader<AssetEvent<benilla_assets::materials::WowModelMaterial>>,
 ) {
+    // Read before any early return, so no frame's deaths are missed.
+    let gc = lifecycle.read().fold(false, |any, e| {
+        any || matches!(e, AssetEvent::Unused { .. } | AssetEvent::Removed { .. })
+    });
     if uv_reg.0.is_empty() && tint_reg.0.is_empty() {
         // Marked parts beside an empty registry mean this lane is dead, not that nothing animates.
         if parts.iter().next().is_some() {
@@ -729,7 +735,7 @@ pub(super) fn tick_anim_materials(
     uv_reg.0.retain(|id, entry| {
         // Alive means either half holds it: a material parked by `model_render::lazy` is not in
         // the store, and registration happens once, at spawn.
-        if !crate::model_render::lazy::holds(&materials, *id) {
+        if gc && !crate::model_render::lazy::holds(&materials, *id) {
             for e in std::iter::once(&*entry).chain(entry.stage1.as_deref()) {
                 table.free(e.slot);
                 if let Some(a) = &e.affine {
@@ -753,7 +759,7 @@ pub(super) fn tick_anim_materials(
         true
     });
     tint_reg.0.retain(|id, entry| {
-        if !crate::model_render::lazy::holds(&materials, *id) {
+        if gc && !crate::model_render::lazy::holds(&materials, *id) {
             table.free(entry.slot);
             return false;
         }
@@ -1040,6 +1046,59 @@ mod delta_tests {
             affine: None,
             stage1: None,
         }
+    }
+
+    /// A registered material stands while any holder keeps it, and leaves the registry, freeing
+    /// its slot, once its last handle drops and the store reports it unused; the registry asks the
+    /// store only on such frames.
+    #[test]
+    fn a_dropped_material_leaves_the_registry() {
+        use benilla_assets::materials::WowModelMaterial;
+        use bevy::asset::AssetPlugin;
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+            .init_asset::<WowModelMaterial>()
+            .init_resource::<UvAnimMaterials>()
+            .init_resource::<TintAnimMaterials>()
+            .init_resource::<crate::mat_anim_table::MatAnimTable>()
+            .init_resource::<crate::model_render::FarSideTwins>()
+            .add_systems(Update, tick_anim_materials);
+        let handle = app
+            .world()
+            .resource::<Assets<WowModelMaterial>>()
+            .reserve_handle();
+        let id = handle.id();
+        let slot = app
+            .world_mut()
+            .resource_mut::<crate::mat_anim_table::MatAnimTable>()
+            .alloc()
+            .expect("a fresh table has room");
+        let mut entry = fx_entry(0.0);
+        entry.slot = slot;
+        app.world_mut()
+            .resource_mut::<UvAnimMaterials>()
+            .0
+            .insert(id, entry);
+        app.update();
+        app.update();
+        assert!(
+            app.world()
+                .resource::<UvAnimMaterials>()
+                .0
+                .contains_key(&id),
+            "a held material keeps its entry"
+        );
+        drop(handle);
+        for _ in 0..3 {
+            app.update();
+        }
+        assert!(
+            !app.world()
+                .resource::<UvAnimMaterials>()
+                .0
+                .contains_key(&id),
+            "the dropped material's entry is reaped"
+        );
     }
 
     /// A rotation-only loop: a quarter turn about Z over two seconds, in file slot 0 only.
