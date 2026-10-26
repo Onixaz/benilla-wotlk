@@ -42,6 +42,7 @@ impl WidgetArena {
             return;
         }
         self.frame_mut(h).unwrap().effective_visible = new_ev;
+        self.glances[h.index as usize].visible = new_ev;
         if new_ev {
             // Re-added at its bucket's tail, as the client does, and each descendant after it.
             self.resequence_to_tail(h);

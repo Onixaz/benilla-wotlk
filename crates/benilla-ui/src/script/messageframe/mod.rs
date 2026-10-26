@@ -248,10 +248,14 @@ impl UiScript {
             .ticked_kinds()
             .iter()
             .filter(|&&fh| {
-                model
-                    .arena
-                    .frame(fh)
-                    .is_some_and(|f| f.kind_state.message_lines().is_some() && f.effective_visible)
+                model.arena.glance(fh).is_some_and(|g| {
+                    g.visible
+                        && matches!(
+                            g.kind,
+                            crate::widget::FrameKind::MessageFrame
+                                | crate::widget::FrameKind::ScrollingMessageFrame
+                        )
+                })
             })
             .filter_map(|&fh| model.resolved.get(&fh).map(|&fr| (fh, fr)))
             .collect();

@@ -26,6 +26,31 @@ fn hide_show_toggles_effective_visibility_and_reports_changes() {
 }
 
 #[test]
+fn the_glance_table_follows_visibility_destroy_and_slot_reuse() {
+    let mut a = arena();
+    let root = a.create(FrameKind::Frame, None, None);
+    let child = a.create(FrameKind::Cooldown, None, Some(root));
+    let glance = |a: &WidgetArena, h| a.glance(h).map(|g| (g.visible, g.kind));
+    assert_eq!(glance(&a, child), Some((true, FrameKind::Cooldown)));
+
+    a.set_shown(root, false);
+    assert_eq!(glance(&a, child), Some((false, FrameKind::Cooldown)));
+    assert!(!a.is_visible(child));
+    a.set_shown(root, true);
+    assert!(a.is_visible(child));
+
+    a.destroy(child);
+    assert_eq!(a.glance(child), None);
+    // The freed slot's next tenant answers for its own handle only.
+    let next = a.create(FrameKind::MessageFrame, None, None);
+    assert_eq!(a.glance(child), None);
+    assert_eq!(glance(&a, next), Some((true, FrameKind::MessageFrame)));
+    for (h, f) in a.iter_frames() {
+        assert_eq!(a.is_visible(h), f.effective_visible, "glance agrees with the node");
+    }
+}
+
+#[test]
 fn mid_tree_hide_blocks_a_shown_grandchild() {
     let mut a = arena();
     let root = a.create(FrameKind::Frame, None, None);

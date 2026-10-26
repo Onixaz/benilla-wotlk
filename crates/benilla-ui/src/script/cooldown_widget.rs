@@ -110,12 +110,16 @@ pub(super) fn tick(lua: &Lua) {
         let hide: Vec<FrameHandle> = ticked
             .into_iter()
             .filter(|&h| {
+                let shown_cooldown = model
+                    .arena
+                    .glance(h)
+                    .is_some_and(|g| g.visible && g.kind == crate::widget::FrameKind::Cooldown);
+                if !shown_cooldown {
+                    return false;
+                }
                 let Some(f) = model.arena.frame_mut(h) else {
                     return false;
                 };
-                if !f.effective_visible {
-                    return false;
-                }
                 match &mut f.kind_state {
                     // Unarmed too: a shown `CreateFrame("Cooldown")` runs an empty flash and hides
                     // itself; only the paint waits for `SetCooldown`.

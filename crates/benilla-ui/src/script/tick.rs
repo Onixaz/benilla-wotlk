@@ -104,43 +104,40 @@ impl super::UiScript {
         let walk: Vec<(u32, bool, Option<FrameHandle>)> = {
             let mut model = self.model_mut();
             // `SetScript` keeps the OnUpdate list; a destroyed frame's handle compacts out here.
-            let shown = |h: FrameHandle| model.arena.frame(h).is_some_and(|f| f.effective_visible);
-            let mut frames: Vec<(FrameHandle, bool)> = model
-                .on_update_frames
-                .iter()
-                .copied()
-                .filter(|&h| shown(h))
-                .map(|h| (h, false))
-                .collect();
-            // The walk reaches every shown frame, not only those with a script, and an EditBox's
-            // update (`0x77a790`, vtable `+0x38`) flushes it whether or not it has an `OnUpdate`.
-            frames.extend(
-                model
-                    .arena
-                    .editbox_kinds()
-                    .iter()
-                    .copied()
-                    .filter(|&h| shown(h))
-                    .map(|h| (h, true)),
-            );
+            // Both reads go through the arena's glance table, never a frame node.
             if model
                 .on_update_frames
                 .iter()
-                .any(|&h| model.arena.frame(h).is_none())
+                .any(|&(h, _)| model.arena.glance(h).is_none())
             {
                 let arena = &model.arena;
-                let live: Vec<FrameHandle> = model
+                let live: Vec<(FrameHandle, u32)> = model
                     .on_update_frames
                     .iter()
                     .copied()
-                    .filter(|&h| arena.frame(h).is_some())
+                    .filter(|&(h, _)| arena.glance(h).is_some())
                     .collect();
                 model.on_update_frames = live;
             }
-            let mut walk: Vec<(u32, bool, Option<FrameHandle>)> = frames
-                .into_iter()
-                .map(|(h, editbox)| (model.frame_id(h), !editbox, editbox.then_some(h)))
+            let mut walk: Vec<(u32, bool, Option<FrameHandle>)> = model
+                .on_update_frames
+                .iter()
+                .filter(|&&(h, _)| model.arena.is_visible(h))
+                .map(|&(_, id)| (id, true, None))
                 .collect();
+            // The walk reaches every shown frame, not only those with a script, and an EditBox's
+            // update (`0x77a790`, vtable `+0x38`) flushes it whether or not it has an `OnUpdate`.
+            let boxes: Vec<FrameHandle> = model
+                .arena
+                .editbox_kinds()
+                .iter()
+                .copied()
+                .filter(|&h| model.arena.is_visible(h))
+                .collect();
+            for h in boxes {
+                let id = model.frame_id(h);
+                walk.push((id, false, Some(h)));
+            }
             // Creation order, by frame id: getters settle on demand, so a handler sees what an
             // earlier one did this sweep, and the order must be stable. The reference walks each
             // strata level's list of shown frames (`0x765650`). A box with an `OnUpdate` is
@@ -172,10 +169,17 @@ impl super::UiScript {
             );
         }
         let mut in_handlers = 0u64;
+        let sweep = match event::UpdateSweep::new(&self.lua) {
+            Ok(sweep) => Some(sweep),
+            Err(e) => {
+                self.push_error(e);
+                None
+            }
+        };
         for (id, on_update, editbox) in walk {
-            if on_update {
+            if let (true, Some(sweep)) = (on_update, &sweep) {
                 let before = tracing.then(|| self.visual_epoch());
-                if let Err(e) = event::fire_update_handler(&self.lua, id, elapsed) {
+                if let Err(e) = sweep.fire(&self.lua, id, elapsed) {
                     self.push_error(e);
                 }
                 if let Some(before) = before {
@@ -228,8 +232,8 @@ impl super::UiScript {
             .filter(|&h| {
                 model
                     .arena
-                    .frame(h)
-                    .is_some_and(|f| matches!(f.kind_state, crate::widget::KindState::Message(_)))
+                    .glance(h)
+                    .is_some_and(|g| g.kind == crate::widget::FrameKind::MessageFrame)
             })
             .map(|h| (h, Self::message_viewport_rows(&model, h)))
             .collect();
@@ -242,6 +246,13 @@ impl super::UiScript {
             }
         }
         for &h in &ticked {
+            let smf_kind = model
+                .arena
+                .glance(h)
+                .is_some_and(|g| g.kind == crate::widget::FrameKind::ScrollingMessageFrame);
+            if !smf_kind {
+                continue;
+            }
             let Some(frame) = model.arena.frame_mut(h) else {
                 continue;
             };
@@ -309,12 +320,12 @@ impl UiScript {
             let mut model = self.model_mut();
             let ticked: Vec<FrameHandle> = model.arena.ticked_kinds().to_vec();
             for h in ticked {
+                if !shown_pane(&model.arena, h) {
+                    continue;
+                }
                 let Some(f) = model.arena.frame_mut(h) else {
                     continue;
                 };
-                if !f.effective_visible {
-                    continue;
-                }
                 if let crate::widget::KindState::Model(m) = &mut f.kind_state {
                     m.clock_ms += dt_ms;
                 }
@@ -323,14 +334,14 @@ impl UiScript {
             if model
                 .on_update_model_frames
                 .iter()
-                .any(|&h| model.arena.frame(h).is_none())
+                .any(|&h| model.arena.glance(h).is_none())
             {
                 let arena = &model.arena;
                 let live: Vec<FrameHandle> = model
                     .on_update_model_frames
                     .iter()
                     .copied()
-                    .filter(|&h| arena.frame(h).is_some())
+                    .filter(|&h| arena.glance(h).is_some())
                     .collect();
                 model.on_update_model_frames = live;
             }
@@ -342,10 +353,10 @@ impl UiScript {
                 .iter()
                 .copied()
                 .filter(|&h| {
-                    model.arena.frame(h).is_some_and(|f| {
-                        f.effective_visible
-                            && matches!(&f.kind_state, crate::widget::KindState::Model(m) if m.path.is_some())
-                    })
+                    shown_pane(&model.arena, h)
+                        && model.arena.frame(h).is_some_and(|f| {
+                            matches!(&f.kind_state, crate::widget::KindState::Model(m) if m.path.is_some())
+                        })
                 })
                 .collect();
             let mut ids: Vec<u32> = frames.into_iter().map(|h| model.frame_id(h)).collect();
@@ -363,12 +374,12 @@ impl UiScript {
             let ticked: Vec<FrameHandle> = model.arena.ticked_kinds().to_vec();
             let mut due: Vec<FrameHandle> = Vec::new();
             for h in ticked {
+                if !shown_pane(&model.arena, h) {
+                    continue;
+                }
                 let Some(f) = model.arena.frame(h) else {
                     continue;
                 };
-                if !f.effective_visible {
-                    continue;
-                }
                 let crate::widget::KindState::Model(m) = &f.kind_state else {
                     continue;
                 };
@@ -403,4 +414,11 @@ impl UiScript {
             }
         }
     }
+}
+
+/// Whether `h` is a live, effectively visible model pane, off the arena's glance table.
+fn shown_pane(arena: &crate::widget::WidgetArena, h: FrameHandle) -> bool {
+    arena
+        .glance(h)
+        .is_some_and(|g| g.visible && g.kind.is_model())
 }

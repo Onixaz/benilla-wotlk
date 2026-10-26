@@ -180,8 +180,8 @@ pub(crate) struct Model {
 
     /// Which handlers each frame has; the closures themselves live in Lua's `REG_SCRIPTS` table.
     pub(crate) scripts: HashMap<FrameHandle, HashSet<&'static str>>,
-    /// Frames with an `OnUpdate` script, kept by `SetScript`; the tick sorts them by frame id.
-    pub(crate) on_update_frames: Vec<FrameHandle>,
+    /// Frames with an `OnUpdate` script and their ids, kept by `SetScript`; the tick sorts by id.
+    pub(crate) on_update_frames: Vec<(FrameHandle, u32)>,
     /// Frames with an `OnSizeChanged` script, kept by `SetScript`, for the resolve's size snapshot.
     pub(crate) on_size_changed_frames: Vec<FrameHandle>,
     /// Frames with an `OnUpdateModel` script, fired as a visible model pane paints (`0x76d1a0`).

@@ -135,6 +135,15 @@ pub use kinds::{
 
 // ── Frame and Region nodes ───────────────────────────────────────────────────────────────────
 
+/// A frame slot's few hot facts, mirrored from its node by the arena's mutators.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Glance {
+    generation: u32,
+    live: bool,
+    pub visible: bool,
+    pub kind: FrameKind,
+}
+
 /// A frame node, the modelled subset of `CSimpleFrame`. The `effective_*` fields and the tree
 /// links belong to the [`WidgetArena`] mutators: change state through them so it propagates.
 #[derive(Clone, Debug, PartialEq)]
@@ -267,6 +276,9 @@ pub struct WidgetArena {
     editbox_kinds: Vec<FrameHandle>,
     /// The live ScrollFrames, kept the same way, for the scroll-range pump.
     scroll_kinds: Vec<FrameHandle>,
+    /// Each frame slot's generation, kind and effective visibility, beside the arena: the per-tick
+    /// walks filter hundreds of rostered frames on these alone, without touching a frame node.
+    glances: Vec<Glance>,
     /// Bumped by every show or hide that changed what is visible, a frame's or a region's: a
     /// scroll child's span moves with it (`NotifyScrollParent` `0x48fea0`).
     visibility_epoch: u64,
@@ -313,6 +325,7 @@ impl WidgetArena {
             minimap_kinds: Vec::new(),
             editbox_kinds: Vec::new(),
             scroll_kinds: Vec::new(),
+            glances: Vec::new(),
             visibility_epoch: 0,
         }
     }
@@ -341,6 +354,21 @@ impl WidgetArena {
 
     pub fn scroll_kinds(&self) -> &[FrameHandle] {
         &self.scroll_kinds
+    }
+
+    /// A live frame's kind and effective visibility, read off the compact side table.
+    #[inline]
+    pub fn glance(&self, h: FrameHandle) -> Option<Glance> {
+        self.glances
+            .get(h.index as usize)
+            .copied()
+            .filter(|g| g.live && g.generation == h.generation)
+    }
+
+    /// Whether `h` is live and effectively visible ([`Self::glance`]).
+    #[inline]
+    pub fn is_visible(&self, h: FrameHandle) -> bool {
+        self.glance(h).is_some_and(|g| g.visible)
     }
 
     /// How many shows and hides have changed what is visible ([`Self::note_visibility_change`]).
@@ -543,8 +571,19 @@ impl WidgetArena {
                 | FrameKind::TabardModel
                 | FrameKind::Cooldown
         );
+        let visible = frame.effective_visible;
         let (index, generation) = self.frames.insert(frame);
         let handle = FrameHandle { index, generation };
+        let glance = Glance {
+            generation,
+            live: true,
+            visible,
+            kind,
+        };
+        match self.glances.get_mut(index as usize) {
+            Some(g) => *g = glance,
+            None => self.glances.push(glance),
+        }
         if ticked {
             self.ticked_kinds.push(handle);
         }
@@ -648,7 +687,9 @@ impl WidgetArena {
                 self.names.remove(&n);
             }
         }
-        self.frames.remove(h.index, h.generation);
+        if self.frames.remove(h.index, h.generation).is_some() {
+            self.glances[h.index as usize].live = false;
+        }
     }
 
     pub fn create_region(

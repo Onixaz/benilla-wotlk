@@ -57,15 +57,59 @@ pub(super) fn fire_event_handler(
     fire(lua, id, "OnEvent", Some(event), extra)
 }
 
-/// Fire a frame's `OnUpdate` with `arg1 = elapsed`.
-pub(super) fn fire_update_handler(lua: &Lua, id: u32, elapsed: f32) -> mlua::Result<()> {
-    fire(
-        lua,
-        id,
-        "OnUpdate",
-        None,
-        vec![Value::Number(f64::from(elapsed))],
-    )
+/// The `OnUpdate` sweep's handles, fetched once per tick rather than once per frame: a city's
+/// sweep fires a hundred handlers, and each registry and key lookup is a cold miss.
+pub(super) struct UpdateSweep {
+    scripts: Table,
+    wrappers: Table,
+    pcall: Function,
+    globals: Table,
+    this_key: mlua::String,
+    event_key: mlua::String,
+    on_update: mlua::String,
+}
+
+impl UpdateSweep {
+    pub(super) fn new(lua: &Lua) -> mlua::Result<UpdateSweep> {
+        Ok(UpdateSweep {
+            scripts: lua.named_registry_value(REG_SCRIPTS)?,
+            wrappers: lua.named_registry_value(super::REG_WRAPPERS)?,
+            pcall: super::stdlib::handler_pcall(lua)?,
+            globals: lua.globals(),
+            this_key: lua.create_string("this")?,
+            event_key: lua.create_string("event")?,
+            on_update: lua.create_string("OnUpdate")?,
+        })
+    }
+
+    /// Fire frame `id`'s `OnUpdate(self, elapsed)` with `this` set and `this`/`event` restored
+    /// after, as [`fire`] does; a no-op when the frame has none.
+    pub(super) fn fire(&self, lua: &Lua, id: u32, elapsed: f32) -> mlua::Result<()> {
+        let func: Function = match self.scripts.raw_get::<Value>(id)? {
+            Value::Table(per) => match per.raw_get::<Value>(&self.on_update)? {
+                Value::Function(f) => f,
+                _ => return Ok(()),
+            },
+            _ => return Ok(()),
+        };
+        let wrapper = match self.wrappers.raw_get::<Value>(id)? {
+            Value::Table(t) => t,
+            _ => frame_wrapper(lua, id)?,
+        };
+        let _fire = super::handler_prof::armed()
+            .then(|| super::handler_prof::Fire::open(lua, id, "OnUpdate"));
+        let g = &self.globals;
+        let saved_this: Value = g.get(&self.this_key)?;
+        let saved_event: Value = g.get(&self.event_key)?;
+        g.set(&self.this_key, wrapper.clone())?;
+        let outcome = self
+            .pcall
+            .call((func, wrapper, f64::from(elapsed)))
+            .and_then(super::stdlib::pcall_outcome);
+        g.set(&self.this_key, saved_this)?;
+        g.set(&self.event_key, saved_event)?;
+        outcome
+    }
 }
 
 /// Fire a handler that carries no `event` name (`OnEnter`, `OnClick`, `OnValueChanged`, ...), with

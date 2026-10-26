@@ -121,11 +121,20 @@ pub(super) fn protected_call(
     f: &mlua::Function,
     args: mlua::MultiValue,
 ) -> mlua::Result<()> {
-    let pcall: mlua::Function = lua.named_registry_value(REG_HANDLER_PCALL)?;
+    let pcall = handler_pcall(lua)?;
     let call: mlua::MultiValue = std::iter::once(Value::Function(f.clone()))
         .chain(args)
         .collect();
-    let (ok, err): (bool, Value) = pcall.call(call)?;
+    pcall_outcome(pcall.call(call)?)
+}
+
+/// [`protected_call`]'s `xpcall` wrapper, for a caller firing many handlers in one sweep.
+pub(super) fn handler_pcall(lua: &Lua) -> mlua::Result<mlua::Function> {
+    lua.named_registry_value(REG_HANDLER_PCALL)
+}
+
+/// The wrapper's `(ok, err)` as [`protected_call`]'s outcome.
+pub(super) fn pcall_outcome((ok, err): (bool, Value)) -> mlua::Result<()> {
     if ok {
         return Ok(());
     }

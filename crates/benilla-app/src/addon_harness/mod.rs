@@ -3490,6 +3490,65 @@ mod dependency_tests {
         }
     }
 
+    /// The in-world interface's per-frame `tick` cost, warm and cold: cold thrashes 64 MB between
+    /// ticks, as a city frame's world passes do, and a frame's UI work is mostly cache misses. The
+    /// empty-handler rows are the engine's own share: every `OnUpdate` swapped for a no-op.
+    #[test]
+    #[ignore = "instrument: cargo test -p benilla-app --lib tick_cost_bench -- --ignored --nocapture"]
+    fn tick_cost_bench() {
+        benilla_formats::wow_data_or_skip!();
+        const N: u32 = 2000;
+        const DT: f32 = 0.01;
+        let mut s = seated_vm();
+        for ev in ["PLAYER_LOGIN", "VARIABLES_LOADED", "PLAYER_ENTERING_WORLD"] {
+            s.fire_event(ev, Vec::new());
+        }
+        let mut junk = vec![0u64; 8 << 20];
+        // Mean microseconds per tick over `N` ticks after a warm-up, the thrash outside the clock.
+        let mut run = |s: &mut UiScript, cold: bool| {
+            for _ in 0..300 {
+                s.tick(DT);
+            }
+            s.profile_handlers(true, 0.0);
+            let mut ticked = std::time::Duration::ZERO;
+            for i in 0..N as usize {
+                if cold {
+                    for (j, v) in junk.iter_mut().enumerate().step_by(8) {
+                        *v = v.wrapping_add((i ^ j) as u64);
+                    }
+                }
+                let t = std::time::Instant::now();
+                s.tick(DT);
+                ticked += t.elapsed();
+            }
+            ticked.as_secs_f64() * 1e6 / f64::from(N)
+        };
+        for cold in [false, true] {
+            let us = run(&mut s, cold);
+            let rows = s.handler_profile();
+            let handlers: f64 = rows.iter().map(|r| r.self_us).sum::<f64>() / f64::from(N);
+            println!("[tick] cold={cold}: {us:.1} us/tick, handlers' self {handlers:.1}");
+            for r in rows.iter().take(8) {
+                let per = r.self_us / f64::from(N);
+                println!("[tick]   {per:>7.2} us  {}:{}", r.frame, r.script);
+            }
+        }
+        let swapped: i64 = s
+            .eval(
+                "local n, f, empty = 0, EnumerateFrames(), function() end
+                 while f do
+                   if f:GetScript('OnUpdate') then f:SetScript('OnUpdate', empty) n = n + 1 end
+                   f = EnumerateFrames(f)
+                 end
+                 return n",
+            )
+            .unwrap();
+        for cold in [false, true] {
+            let us = run(&mut s, cold);
+            println!("[tick] cold={cold}, {swapped} handlers emptied: {us:.1} us/tick");
+        }
+    }
+
     /// A VM shaped like the survey's, for the oracle tests below.
     fn seated_vm() -> UiScript {
         let mut script = UiScript::new().unwrap();
