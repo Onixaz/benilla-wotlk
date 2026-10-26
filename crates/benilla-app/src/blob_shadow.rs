@@ -164,8 +164,8 @@ fn update_shadows(
     unit_alpha: benilla_world::model_fade::UnitRenderAlpha,
     owners: Query<
         (
-            &Transform,
-            &ModelAnimations,
+            Ref<Transform>,
+            Ref<ModelAnimations>,
             Has<Embodied>,
             Option<&crate::entities::mount::MountChild>,
             // The exterior-scene election's verdict on the root, after propagation.
@@ -205,10 +205,24 @@ fn update_shadows(
             n_undrawn += 1;
             continue;
         }
+        // Settled: a shown shadow of an unmounted owner whose transform and model stand still, at
+        // the same alpha over the same surfaces, would rebuild to the same record (most units in a
+        // city stand). A rider reads its mount's model and scale, so it always rebuilds.
+        let alpha = unit_alpha.get(shadow.owner);
+        if key.shown
+            && mount_child.is_none()
+            && !unit.is_changed()
+            && !anims.is_changed()
+            && (key.alpha - alpha).abs() <= 1.0 / 255.0
+            && key.surfaces == surface_count
+        {
+            n_shown += 1;
+            continue;
+        }
         // Until the mount's model lands, the rider's own box stands in.
         let (anims, extra_scale) = match mount_child.and_then(|mc| mount_anims.get(mc.0).ok()) {
             Some((mnet, manims)) => (manims, mnet.scale),
-            None => (anims, 1.0),
+            None => (anims.into_inner(), 1.0),
         };
         // The box is `playableAnimationLookup[0]`'s sequence, Stand, fixed per model; `resolve(0)`
         // walks the same table, so a Stand-less model gets the reference's substitute.
@@ -235,9 +249,8 @@ fn update_shadows(
             n_degen += 1;
             continue;
         }
-        // The unit's render alpha from the root, which also tells a pending appear fade (zero)
-        // from a settled unit, and carries the first-person fade.
-        let alpha = unit_alpha.get(shadow.owner);
+        // The unit's render alpha from the root (read above), which also tells a pending appear fade
+        // (zero) from a settled unit, and carries the first-person fade.
         if alpha <= 0.0 {
             hide(&mut key, &mut verts);
             continue;
@@ -434,9 +447,12 @@ fn push_shadows(
 }
 
 /// Clear the record so the next eligible frame rebuilds.
-fn hide(key: &mut ShadowKey, verts: &mut ShadowVerts) {
-    key.shown = false;
-    verts.0.clear();
+fn hide(key: &mut Mut<ShadowKey>, verts: &mut Mut<ShadowVerts>) {
+    // An already hidden record is left unmarked.
+    if key.shown || !verts.0.is_empty() {
+        key.shown = false;
+        verts.0.clear();
+    }
 }
 
 /// Whether an input moved beyond noise: a millimetre, ~0.05°, under one colour step.
