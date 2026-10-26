@@ -203,20 +203,29 @@ impl UiQuad {
 
 impl UiQuad {
     /// The screen-space move taking `base` to `self` when that is all that changed: every other
-    /// field equal and the rect translated exactly, its size bit-equal. A clipped or cornered
-    /// quad never qualifies, as its geometry depends on where it is.
+    /// field equal and the rect the same size to [`PAN_SIZE_EPS`] (a rect rebuilt about a moving
+    /// centre drifts in its last bits). A clipped or cornered quad never qualifies, as its
+    /// geometry depends on where it is.
     pub(crate) fn moved_from(&self, base: &Self) -> Option<Vec2> {
         let moved = UiQuad {
             rect: base.rect,
             ..self.clone()
         };
-        let d = self.rect.min - base.rect.min;
         (moved == *base
             && self.clip.is_none()
             && self.corners.is_none()
-            && self.rect.max - base.rect.max == d)
-            .then_some(d)
+            && same_size(self.rect, base.rect))
+        .then(|| self.rect.min - base.rect.min)
     }
+}
+
+/// Logical pixels a panned quad's size may differ from its base by: the pan draws the base's size,
+/// a thousandth of a pixel off at most, which no frame can show.
+const PAN_SIZE_EPS: f32 = 1e-3;
+
+/// Whether two rects are one size to [`PAN_SIZE_EPS`].
+fn same_size(a: Rect, b: Rect) -> bool {
+    (a.size() - b.size()).abs().max_element() <= PAN_SIZE_EPS
 }
 
 /// The append lane's z bands, far below the scripted UI's keys (a [`benilla_ui::order::ZKey`]
@@ -799,7 +808,7 @@ fn pan_overlays(
         let Some(base) = pools.slot_base.get(slot as usize).copied().flatten() else {
             return false;
         };
-        if now.rect.size() != base.size() {
+        if !same_size(now.rect, base) {
             return false;
         }
         // Screen y-down to world y-up.
@@ -1820,6 +1829,19 @@ mod tests {
             (3.0, -2.0),
             "screen y-down, world y-up"
         );
+
+        // A blip rebuilt about its moving centre drifts in its size's last bits: still a pan.
+        let mut drifted = moved(5.0, 4.0);
+        drifted.rect.max.x += 1e-5;
+        app.world_mut().resource_mut::<UiQuads>().overlays = vec![drifted];
+        app.update();
+        assert!(
+            !app.world().resource::<UiMeshCost>().rebuilt,
+            "a drifted size still pans"
+        );
+        assert_eq!((pan_of(&mut app)[1].x, pan_of(&mut app)[1].y), (5.0, -4.0));
+        app.world_mut().resource_mut::<UiQuads>().overlays = vec![moved(3.0, 2.0)];
+        app.update();
 
         // A full rebuild of the same lanes lands the batch at the same place.
         app.world_mut().resource_mut::<UiQuads>().dirty = true;
