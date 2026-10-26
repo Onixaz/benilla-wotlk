@@ -88,6 +88,7 @@ struct ExtractedM2Sort {
 #[derive(Resource, Default)]
 struct M2Sorts(HashMap<MainEntity, ExtractedM2Sort>);
 
+#[allow(clippy::type_complexity)]
 fn extract_m2_sort(
     mut sorts: ResMut<M2Sorts>,
     // A parked part is never visible, so its tables are skipped whole.

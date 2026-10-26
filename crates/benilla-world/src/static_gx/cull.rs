@@ -140,6 +140,7 @@ fn memo_holds(memo: Option<(u64, u32, bool)>, epoch: u64, generation: u32) -> bo
 /// gate per cell (conservative: overdraw, never a hole), plus the portal PVS per WMO group, the
 /// camera's own building exempt from the gate. A re-admitted exile despawns and clears its kill
 /// bit in the same frame.
+#[allow(clippy::type_complexity)]
 pub(super) fn cull_cells(
     mut commands: Commands,
     mut gx: ResMut<StaticGx>,

@@ -135,6 +135,7 @@ pub(crate) struct ShadeDirtyRoots(bevy::ecs::entity::EntityHashSet);
 
 /// Flag the root above every part whose `MeshTag` changed; its own system, since the walk holds
 /// `&mut MeshTag`. The walk's own writes echo back for one frame, which then writes nothing.
+#[allow(clippy::type_complexity)]
 pub(crate) fn detect_shade_reclaims(
     changed_parts: Query<
         Entity,

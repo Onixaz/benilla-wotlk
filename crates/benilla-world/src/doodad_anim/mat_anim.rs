@@ -675,6 +675,7 @@ impl UvLoops {
 /// sampling is clock-indexed, so a re-appearing one has nothing to catch up. Drawn is
 /// `Visibility != Hidden` after `model_render::ModelVisSet`. Captures skip this, except the
 /// spell-effect lane ([`UvAnimEntry::instance_lane`]).
+#[allow(clippy::type_complexity)]
 pub(super) fn tick_anim_materials(
     time: Res<Time>,
     real: Res<Time<bevy::time::Real>>,
