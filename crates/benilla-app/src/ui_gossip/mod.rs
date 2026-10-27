@@ -5,8 +5,7 @@
 use std::collections::HashMap;
 
 use benilla_protocol::messages::{
-    quest_slot_state, select_greeting, GossipMenu as WireMenu, GossipOption, NpcTextBlock,
-    QuestOption, PLAYER_QUEST_LOG_SLOTS,
+    select_greeting, GossipMenu as WireMenu, GossipOption, NpcTextBlock, QuestOption,
 };
 use bevy::prelude::*;
 
@@ -247,18 +246,6 @@ const TYPE_FLAG_FORCE_GOSSIP: u32 = 0x0800_0000;
 /// The quest flag `GetGossipAvailableQuests` reads as `isDaily` (`0x58b423`).
 const QUEST_FLAG_DAILY: u32 = 0x1000;
 
-/// The quest ids whose log slot is complete, which `GetGossipActiveQuests` reads at call time.
-fn complete_quests(own: Option<&ObjectStore>) -> Vec<u32> {
-    let Some(own) = own else {
-        return Vec::new();
-    };
-    (0..PLAYER_QUEST_LOG_SLOTS)
-        .filter_map(|slot| own.0.player_quest_log(slot))
-        .filter(|s| s.quest_id != 0 && s.state & quest_slot_state::COMPLETE != 0)
-        .map(|s| s.quest_id)
-        .collect()
-}
-
 /// Push the menu into the VM and fire `GOSSIP_SHOW` or `GOSSIP_CLOSED` on a change.
 #[allow(clippy::too_many_arguments)]
 fn feed_gossip(
@@ -273,7 +260,6 @@ fn feed_gossip(
     mut last: Local<crate::ui_script::VmMemo<Option<GossipMenu>>>,
     mut last_name: Local<crate::ui_script::VmMemo<Option<String>>>,
     mut last_npc: Local<crate::ui_script::VmMemo<Option<u64>>>,
-    mut last_complete: Local<crate::ui_script::VmMemo<Vec<u32>>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -281,14 +267,6 @@ fn feed_gossip(
     let last = last.get(&script);
     let last_name = last_name.get(&script);
     let last_npc = last_npc.get(&script);
-    let last_complete = last_complete.get(&script);
-    // The log's completion is pushed apart from the menu, so a quest finishing while the menu is
-    // open answers at the next call without a `GOSSIP_SHOW`.
-    let complete = complete_quests(self_q.single().ok().map(|(s, _)| s));
-    if complete != *last_complete {
-        script.set_gossip_complete_quests(complete.clone());
-        *last_complete = complete;
-    }
     script.set_gossip_pending(state.text_pending());
     // The NPC's name rides `GOSSIP_SHOW` as arg1, and its landing alone re-fires the event; the
     // reference fires `GOSSIP_SHOW` bare (`0x58aef6`), and stock `GossipFrame.lua` titles with

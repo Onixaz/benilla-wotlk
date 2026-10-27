@@ -37,6 +37,13 @@ pub(crate) struct ItemRender {
     misses: ItemMisses,
 }
 
+impl ItemRender {
+    /// The tooltip the setter call runs on.
+    pub(crate) fn tooltip(&self) -> FrameHandle {
+        self.h
+    }
+}
+
 /// A setter call that missed, re-run when a record it missed lands. The re-run is skipped unless
 /// the tooltip still shows and still holds `drawn`, so a line Lua added or rewrote since is kept.
 #[derive(Clone, Debug)]

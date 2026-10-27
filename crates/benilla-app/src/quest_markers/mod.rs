@@ -525,7 +525,8 @@ impl Plugin for QuestMarkersPlugin {
         app.add_systems(
             Update,
             (
-                query_statuses,
+                // Before the unit feed, which reads the giver it writes for `"questnpc"`.
+                query_statuses.before(crate::ui_unit::UnitFeed),
                 sync_markers.after(crate::ui_quest::read_trivial_tracking),
                 build_markers,
                 pose_markers,

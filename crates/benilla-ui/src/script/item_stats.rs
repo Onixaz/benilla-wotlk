@@ -89,6 +89,9 @@ pub struct ItemTemplateView {
     /// `RandomProperty` (template `+0x1b8`): the item can roll a suffix, so a template tooltip
     /// prints `<Random enchantment>` (`0x52cc33`).
     pub random_property: u32,
+    /// The item a recipe teaches to make: a learn-spell (36) trigger whose taught spell creates
+    /// (24) an item; 0 for none. `IsDressableItem` dresses a pattern as its product.
+    pub recipe_creates: u32,
 }
 
 /// The player state the tooltip's red lines and the usable gate compare against.
@@ -384,6 +387,49 @@ fn parse_item_arg(v: &Value) -> mlua::Result<(i64, u32, u32, u32)> {
 }
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
+    // IsDressableItem(itemID | "name" | "link") (`0x517530`): 1 for a cached template with an
+    // InventoryType, or a recipe whose product has one; nil otherwise, an uncached one included.
+    lua.globals().set(
+        "IsDressableItem",
+        lua.create_function(|lua, arg: Value| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let id = match &arg {
+                Value::Integer(i) => *i as u32,
+                Value::Number(n) => *n as i64 as u32,
+                Value::String(s) => {
+                    let s = s.to_string_lossy();
+                    // `GetItemIDByName` (`0x709de0`): a link's id, else the cache's name index.
+                    if let Some(at) = s.find("item:") {
+                        let digits: String = s[at + 5..]
+                            .chars()
+                            .take_while(char::is_ascii_digit)
+                            .collect();
+                        digits.parse().unwrap_or(0)
+                    } else {
+                        model
+                            .item_templates
+                            .iter()
+                            .find(|(_, v)| v.name == s)
+                            .map_or(0, |(id, _)| *id)
+                    }
+                }
+                _ => 0,
+            };
+            let wearable = |id: u32| {
+                model
+                    .item_templates
+                    .get(&id)
+                    .is_some_and(|v| v.inventory_type != 0)
+            };
+            let dressable = model.item_templates.get(&id).is_some_and(|v| {
+                v.inventory_type != 0 || (v.recipe_creates != 0 && wearable(v.recipe_creates))
+            });
+            Ok(super::binding_abi::flag(dressable))
+        })?,
+    )?;
+
     // GetItemQualityColor(quality) → r, g, b, escapeString (`0x48dfb0`). 7 and up, or a negative
     // quality, answer Common (`0x52ad70`/`0x52ad90`: an unsigned `cmp ecx,7; jb`), so
     // `ITEM_QUALITY_COLORS[-1]` is white, the colour of an uncached loot row (`0x4c2435`).

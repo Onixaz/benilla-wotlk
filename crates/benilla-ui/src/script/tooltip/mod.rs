@@ -402,6 +402,7 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
         t.min_width_forced = false;
         // Clear drops the subject and unregisters its health watcher (`0x5300ad`, `0x53007c`).
         t.unit_guid = None;
+        t.item_id = 0;
         t.world_owned = false;
     }
     // New content replaces a spell or item render still waiting on its record.

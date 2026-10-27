@@ -36,7 +36,7 @@ impl Probe for QuestTimer {
     }
 
     fn on_event(&mut self, ev: &SessionEvent, _cx: &mut Ctx) -> Result<()> {
-        if let SessionEvent::ServerUnixTime { unix_time } = ev {
+        if let SessionEvent::ServerUnixTime { unix_time, .. } = ev {
             self.clock = Some((*unix_time, Instant::now()));
         }
         Ok(())
@@ -68,7 +68,7 @@ impl Probe for QuestTimer {
                                 sf.merge(fields);
                             }
                         }
-                        SessionEvent::ServerUnixTime { unix_time } => {
+                        SessionEvent::ServerUnixTime { unix_time, .. } => {
                             self.clock = Some((unix_time, Instant::now()));
                         }
                         _ => {}
@@ -121,7 +121,7 @@ impl Probe for QuestTimer {
         while Instant::now() < deadline {
             let Ok(msg) = session.recv() else { continue };
             for ev in decode(msg) {
-                if let SessionEvent::ServerUnixTime { unix_time } = ev {
+                if let SessionEvent::ServerUnixTime { unix_time, .. } = ev {
                     self.clock = Some((unix_time, Instant::now()));
                 }
             }

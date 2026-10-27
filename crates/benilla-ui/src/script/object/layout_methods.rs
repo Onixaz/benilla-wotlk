@@ -103,7 +103,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 model
                     .layout_inputs
                     .get(&h)
-                    .and_then(|i| i.anchors.get(idx))
+                    .and_then(|i| super::nth_point(&i.anchors, idx, |a| a.point))
                     .cloned()
             };
             let Some(a) = anchor else {
@@ -290,7 +290,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 /// current layout; a settled tree costs one epoch compare. Deviation: `OnSizeChanged` fires at the
 /// next `UiScript::resolve`, a tick after the reference's (`ApplyRect 0x76b580`), because running
 /// Lua handlers inside a binding risks a borrow panic or unbounded recursion.
-pub(super) fn settle(lua: &Lua) {
+pub(in crate::script) fn settle(lua: &Lua) {
     let mut model = crate::script::model_mut_of(lua);
     // A settle that solved nothing moved no rect: the mutation count stands (`ModelCell`).
     let quiet = model.epoch();

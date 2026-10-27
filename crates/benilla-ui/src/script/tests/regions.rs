@@ -1309,3 +1309,30 @@ fn set_text_with_the_held_string_writes_nothing() {
     assert_ne!(s.visual_epoch(), settled, "a new string is a write");
     assert_eq!(s.eval::<String>("return Clock:GetText()").unwrap(), "12:01");
 }
+
+/// A region's edge read after a size change answers the new layout, as a frame's does: the
+/// reference resolves a pending rect on read, and `QuestLogTitleButton_Resize` reads a title's
+/// right edge straight after `SetWidth` (`QuestLogFrame.lua:183-224`).
+#[test]
+fn a_region_edge_read_resolves_a_pending_size_change() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.run(
+        r#"
+        local f = CreateFrame("Frame", "Owner")
+        f:SetPoint("BOTTOMLEFT", 0, 0)
+        f:SetWidth(100); f:SetHeight(50)
+        local t = f:CreateTexture("Tex", "ARTWORK")
+        t:SetTexture("Interface\\Icon")
+        t:SetWidth(24); t:SetHeight(24)
+        t:SetPoint("LEFT", 4, 0)
+    "#,
+    )
+    .unwrap();
+    s.resolve();
+    assert_eq!(
+        s.eval::<(f32, f32)>("Tex:SetWidth(60) return Tex:GetRight(), select(1, Tex:GetCenter())")
+            .unwrap(),
+        (64.0, 34.0)
+    );
+}

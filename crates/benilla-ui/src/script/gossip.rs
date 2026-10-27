@@ -74,12 +74,6 @@ impl super::UiScript {
         set_field!(self, gossip_pending, pending);
     }
 
-    /// The quest ids whose log slot is complete, behind `GetGossipActiveQuests`'s `isComplete`.
-    /// Pushed apart from the menu, as the reference reads the log at call time.
-    pub fn set_gossip_complete_quests(&mut self, ids: Vec<u32>) {
-        set_field!(self, gossip_complete_quests, ids);
-    }
-
     /// Drain the selects queued since the last call: the 1-based option position, and the code
     /// for a coded option.
     pub fn take_gossip_selects(&mut self) -> Vec<(u32, Option<String>)> {
@@ -100,7 +94,7 @@ impl super::UiScript {
 /// The quest-trivial test (`0x58aba0`): a quest is grey when its level plus the player's grey
 /// margin falls below the player's level. The margin is the table at `0xa12fd0`, indexed by
 /// `level / 5` and 8 past its end: 4 below level 10, one more per ten levels, at most 8.
-fn quest_is_trivial(quest_level: i32, player_level: u32) -> bool {
+pub(super) fn quest_is_trivial(quest_level: i32, player_level: u32) -> bool {
     if quest_level == -1 {
         return false;
     }
@@ -228,7 +222,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .map(|q| {
                         let trivial = quest_is_trivial(q.level, player_level);
                         let flags = if active {
-                            let complete = model.gossip_complete_quests.contains(&q.quest_id);
+                            let complete =
+                                super::quest_log::quest_complete_at(&model.quest_log, q.quest_id);
                             [trivial, complete, false]
                         } else {
                             [trivial, q.daily, q.repeatable]
@@ -521,7 +516,17 @@ mod tests {
         ];
         s.set_gossip(Some(m));
         s.model_mut().player_req.level = 10;
-        s.set_gossip_complete_quests(vec![60]);
+        // Quest 60 is complete in the log, which `isComplete` reads (`0x58bcb0`).
+        s.set_quest_log(crate::script::QuestLogState {
+            entries: vec![crate::script::QuestLogEntryView {
+                quest_id: 60,
+                title: "Report Back".into(),
+                complete: 1,
+                ..Default::default()
+            }],
+            num_quests: 1,
+            ..Default::default()
+        });
 
         assert_eq!(
             s.eval::<i64>("return GetNumGossipAvailableQuests()")

@@ -76,25 +76,33 @@ fn query_time_asks_empty_and_decodes_the_server_wall_clock() {
         "CMSG_QUERY_TIME is a NullClientPacket"
     );
 
-    // 2026-08-13T12:00:00Z = 1_786_622_400 = 0x6a7db1c0: four distinct bytes.
+    // 2026-08-13T12:00:00Z = 1_786_622_400 = 0x6a7db1c0: four distinct bytes, then the reset
+    // 0x00012345 seconds away.
     assert_eq!(u32::from_le_bytes([0xc0, 0xb1, 0x7d, 0x6a]), 1_786_622_400);
-    let p = messages::parse_server(messages::opcode::SMSG_QUERY_TIME_RESPONSE, &hx("c0b17d6a"))
-        .unwrap();
+    let p = messages::parse_server(
+        messages::opcode::SMSG_QUERY_TIME_RESPONSE,
+        &hx("c0b17d6a45230100"),
+    )
+    .unwrap();
     assert!(matches!(
         p,
         ServerPacket::QueryTimeResponse {
-            unix_time: 1_786_622_400
+            unix_time: 1_786_622_400,
+            reset_in: 0x12345,
         }
     ));
     assert!(matches!(
         decode(p)[..],
         [SessionEvent::ServerUnixTime {
-            unix_time: 1_786_622_400
+            unix_time: 1_786_622_400,
+            reset_in: 0x12345,
         }]
     ));
 
+    // 1.12's four-byte body is short on 3.3.5a.
     assert!(
-        messages::parse_server(messages::opcode::SMSG_QUERY_TIME_RESPONSE, &hx("c0b17d")).is_err()
+        messages::parse_server(messages::opcode::SMSG_QUERY_TIME_RESPONSE, &hx("c0b17d6a"))
+            .is_err()
     );
 }
 

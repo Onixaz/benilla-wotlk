@@ -315,9 +315,10 @@ fn on_clock(In(ev): In<SessionEvent>, mut b: Bridge) {
             (packed, zone),
             &mut b.server_time,
         ),
-        SessionEvent::ServerUnixTime { unix_time } => {
-            server_unix_time(unix_time, &mut b.wall_clock)
-        }
+        SessionEvent::ServerUnixTime {
+            unix_time,
+            reset_in,
+        } => server_unix_time(unix_time, reset_in, &mut b.wall_clock),
         _ => {}
     }
 }
@@ -673,7 +674,7 @@ fn time_speed(
 
 /// `SMSG_QUERY_TIME_RESPONSE`: the server wall clock that absolute descriptor stamps (the
 /// timed-quest timer) are dated in; its skew against ours is logged once per session.
-fn server_unix_time(unix_time: u32, clock: &mut ServerWallClock) {
+fn server_unix_time(unix_time: u32, reset_in: u32, clock: &mut ServerWallClock) {
     if clock.0.is_none() {
         let local = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -684,7 +685,7 @@ fn server_unix_time(unix_time: u32, clock: &mut ServerWallClock) {
             local - i64::from(unix_time)
         );
     }
-    clock.sample(unix_time);
+    clock.sample(unix_time, reset_in);
 }
 
 /// `SMSG_INITIALIZE_FACTIONS`: the login reputation store.

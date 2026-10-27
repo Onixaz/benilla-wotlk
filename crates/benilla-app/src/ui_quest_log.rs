@@ -425,7 +425,11 @@ fn build_detail(
         reward_money,
         choices,
         rewards,
-        reward_spell: crate::ui_quest::reward_spell_view(template.reward_spell, spells),
+        reward_spell: crate::ui_quest::reward_spell_view(
+            template.reward_spell,
+            template.reward_spell_cast,
+            spells,
+        ),
         extras: Default::default(),
     }
 }
@@ -466,6 +470,9 @@ fn feed_server_clock(
         return;
     };
     script.set_server_unix_time(now);
+    if let Some(reset) = clock.quest_reset_unix() {
+        script.set_quest_reset_unix(reset);
+    }
 }
 
 /// The reference's header for `zoneOrSort` 0 (`0x84b4ec`). Only a cached template makes a header

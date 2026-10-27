@@ -6,6 +6,8 @@
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::flag;
+use super::gossip::quest_is_trivial;
+use super::GossipQuestRow;
 
 /// Which questgiver panel a [`QuestState`] is for, set from the wire packet.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,13 +44,17 @@ pub struct QuestItemView {
 
 /// The reward spell, `rewSpell` on the giver packets and `SMSG_QUEST_QUERY_RESPONSE`, as
 /// `GetRewardSpell` and `GetQuestLogRewardSpell` answer it; stock counts it as one more reward slot
-/// (`QuestFrame.lua:332`). `tradeskill` is the third return, `isTradeskillSpell`.
+/// (`QuestInfo.lua:281`). `tradeskill` is the third return, `isTradeskillSpell`, and `learned` the
+/// fourth, `isSpellLearned`.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QuestRewardSpell {
     pub spell_id: u32,
     pub name: Option<String>,
     pub texture: Option<String>,
     pub tradeskill: bool,
+    /// The spell cast at turn-in (`rewSpellCast`) teaches one: an effect of 36 or 57
+    /// (`0x58d670`, `0x5e4d10`).
+    pub learned: bool,
 }
 
 /// The rewards past items and money that 3.3.5a's quest frame and log both show, resolved by the
@@ -72,8 +78,9 @@ pub struct QuestState {
     pub panel: QuestPanel,
     // Greeting panel.
     pub greeting: String,
-    pub active_titles: Vec<String>,
-    pub available_titles: Vec<String>,
+    /// The greeting's rows in wire order, split active and available by icon as gossip's are
+    /// (`0x6d039a`); each list keeps its own order and 1-based indexes.
+    pub greeting_quests: Vec<GossipQuestRow>,
     // Detail, progress and reward panels.
     pub title: String,
     /// The text of whichever panel is live: quest, progress or reward.
@@ -109,8 +116,7 @@ impl Default for QuestState {
         QuestState {
             panel: QuestPanel::Detail,
             greeting: String::new(),
-            active_titles: Vec::new(),
-            available_titles: Vec::new(),
+            greeting_quests: Vec::new(),
             title: String::new(),
             body: String::new(),
             objectives: String::new(),
@@ -182,17 +188,14 @@ impl super::UiScript {
     }
 }
 
-/// `GetRewardSpell`'s three returns: `texture, name, isTradeskillSpell`, the third 1 or nil.
+/// `GetRewardSpell`'s four returns: `texture, name, isTradeskillSpell, isSpellLearned`, the last
+/// two 1 or nil.
 pub(super) fn reward_spell_returns(
     lua: &Lua,
     spell: Option<QuestRewardSpell>,
 ) -> mlua::Result<MultiValue> {
     let Some(sp) = spell else {
-        return Ok(MultiValue::from_vec(vec![
-            Value::Nil,
-            Value::Nil,
-            Value::Nil,
-        ]));
+        return Ok(MultiValue::from_vec(vec![Value::Nil; 4]));
     };
     let texture = match &sp.texture {
         Some(t) => Value::String(lua.create_string(t)?),
@@ -202,17 +205,39 @@ pub(super) fn reward_spell_returns(
         Some(n) => Value::String(lua.create_string(n)?),
         None => Value::Nil,
     };
-    let tradeskill = if sp.tradeskill {
-        Value::Integer(1)
-    } else {
-        Value::Nil
-    };
-    Ok(MultiValue::from_vec(vec![texture, name, tradeskill]))
+    Ok(MultiValue::from_vec(vec![
+        texture,
+        name,
+        flag(sp.tradeskill),
+        flag(sp.learned),
+    ]))
+}
+
+/// A reward spell's link (`CGTooltip::GetSpellLink` `0x61e4b0`), nil for none or for an id with no
+/// `Spell.dbc` row.
+pub(super) fn reward_spell_link(
+    lua: &Lua,
+    spell: Option<&QuestRewardSpell>,
+) -> mlua::Result<Value> {
+    match spell.and_then(|sp| Some((sp.spell_id, sp.name.as_deref()?))) {
+        Some((id, name)) => Ok(Value::String(
+            lua.create_string(format!("|cff71d5ff|Hspell:{id}|h[{name}]|h|r"))?,
+        )),
+        None => Ok(Value::Nil),
+    }
 }
 
 /// The icon an empty offer row answers: display 0 has no `ItemDisplayInfo` row, so the icon
 /// lookup falls back to the question mark (`0x5d88b0`, `0x847fe4`) under the icon folder.
 const EMPTY_ROW_ICON: &str = "Interface\\Icons\\INV_Misc_QuestionMark";
+
+/// The greeting rows of one list, active or available, in their 1-based order.
+fn greeting_rows(state: &QuestState, active: bool) -> impl Iterator<Item = &GossipQuestRow> {
+    state
+        .greeting_quests
+        .iter()
+        .filter(move |r| r.active == active)
+}
 
 /// The list `GetQuestItemInfo(type, index)` reads for `type`.
 pub(super) fn item_vec<'a>(state: &'a QuestState, kind: &str) -> Option<&'a Vec<QuestItemView>> {
@@ -262,9 +287,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })?,
         )
     }
-    install_count(lua, "GetNumActiveQuests", |q| q.active_titles.len() as i64)?;
+    install_count(lua, "GetNumActiveQuests", |q| {
+        greeting_rows(q, true).count() as i64
+    })?;
     install_count(lua, "GetNumAvailableQuests", |q| {
-        q.available_titles.len() as i64
+        greeting_rows(q, false).count() as i64
     })?;
     install_count(lua, "GetNumQuestChoices", |q| q.choices.len() as i64)?;
     install_count(lua, "GetNumQuestRewards", |q| q.rewards.len() as i64)?;
@@ -321,29 +348,123 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    fn install_title(lua: &Lua, name: &str, active: bool) -> mlua::Result<()> {
+    // ── The greeting's rows ──
+    // Each takes the 1-based row, raising its usage line on a non-number, and reads a row past the
+    // list as level 0: a nil title, never trivial, no flag. The level getters' usage lines carry
+    // the reference's doubled `GetGet`.
+    fn install_row<F>(
+        lua: &Lua,
+        name: &str,
+        usage: &'static str,
+        active: bool,
+        answer: F,
+    ) -> mlua::Result<()>
+    where
+        F: Fn(&Lua, Option<&GossipQuestRow>, &crate::script::Model) -> mlua::Result<MultiValue>
+            + 'static,
+    {
         lua.globals().set(
             name,
-            lua.create_function(move |lua, i: usize| {
-                let title = {
-                    let model = lua
-                        .app_data_ref::<crate::script::ModelCell>()
-                        .expect("model app_data");
-                    model.quest.as_ref().and_then(|q| {
-                        let v = if active {
-                            &q.active_titles
-                        } else {
-                            &q.available_titles
-                        };
-                        i.checked_sub(1).and_then(|n| v.get(n)).cloned()
-                    })
-                };
-                Ok(Value::String(lua.create_string(title.unwrap_or_default())?))
+            lua.create_function(move |lua, index: Value| {
+                // `(uint32)index - 1`, so 0 and below wrap past every row.
+                let i = super::binding_abi::number_arg(lua, index, usage)? as u32;
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                let row = i.checked_sub(1).and_then(|i| {
+                    model
+                        .quest
+                        .as_ref()
+                        .and_then(|q| greeting_rows(q, active).nth(i as usize))
+                });
+                answer(lua, row, &model)
             })?,
         )
     }
-    install_title(lua, "GetActiveTitle", true)?;
-    install_title(lua, "GetAvailableTitle", false)?;
+    fn one(v: Value) -> mlua::Result<MultiValue> {
+        Ok(MultiValue::from_vec(vec![v]))
+    }
+    fn title(lua: &Lua, row: Option<&GossipQuestRow>) -> mlua::Result<Value> {
+        match row {
+            Some(r) => Ok(Value::String(lua.create_string(&r.title)?)),
+            None => Ok(Value::Nil),
+        }
+    }
+    fn level(row: Option<&GossipQuestRow>) -> i32 {
+        row.map_or(0, |r| r.level)
+    }
+    fn trivial(row: Option<&GossipQuestRow>, model: &crate::script::Model) -> bool {
+        quest_is_trivial(level(row), model.player_req.level)
+    }
+    // `GetActiveTitle` (`0x58bed0`): the title, then `isComplete` as a boolean
+    // (`IsQuestCompleteAt` `0x58bcb0`).
+    install_row(
+        lua,
+        "GetActiveTitle",
+        "Usage: GetActiveTitle(index)",
+        true,
+        |lua, row, model| {
+            let complete = row
+                .is_some_and(|r| super::quest_log::quest_complete_at(&model.quest_log, r.quest_id));
+            Ok(MultiValue::from_vec(vec![
+                title(lua, row)?,
+                Value::Boolean(complete),
+            ]))
+        },
+    )?;
+    // `GetAvailableTitle` (`0x58be30`).
+    install_row(
+        lua,
+        "GetAvailableTitle",
+        "Usage: GetAvailableTitle(index)",
+        false,
+        |lua, row, _| one(title(lua, row)?),
+    )?;
+    // `GetActiveLevel` (`0x58c010`), `GetAvailableLevel` (`0x58bf70`).
+    install_row(
+        lua,
+        "GetActiveLevel",
+        "Usage: GetGetActiveLevel(index)",
+        true,
+        |_, row, _| one(Value::Integer(i64::from(level(row)))),
+    )?;
+    install_row(
+        lua,
+        "GetAvailableLevel",
+        "Usage: GetGetAvailableLevel(index)",
+        false,
+        |_, row, _| one(Value::Integer(i64::from(level(row)))),
+    )?;
+    // `IsActiveQuestTrivial` (`0x58d420`), `IsAvailableQuestTrivial` (`0x58d370`): 1 or nil.
+    install_row(
+        lua,
+        "IsActiveQuestTrivial",
+        "Usage: IsActiveQuestTrivial(index)",
+        true,
+        |_, row, model| one(flag(trivial(row, model))),
+    )?;
+    install_row(
+        lua,
+        "IsAvailableQuestTrivial",
+        "Usage: IsAvailableQuestTrivial(index)",
+        false,
+        |_, row, model| one(flag(trivial(row, model))),
+    )?;
+    // `GetAvailableQuestInfo` (`0x58dbc0`): isTrivial, isDaily (the `0x1000` flag) and
+    // isRepeatable, each 1 or nil.
+    install_row(
+        lua,
+        "GetAvailableQuestInfo",
+        "Usage: GetAvailableQuestInfo(index)",
+        false,
+        |_, row, model| {
+            Ok(MultiValue::from_vec(vec![
+                flag(trivial(row, model)),
+                flag(row.is_some_and(|r| r.daily)),
+                flag(row.is_some_and(|r| r.repeatable)),
+            ]))
+        },
+    )?;
 
     // GetQuestItemInfo(type, index) → name, texture, numItems, quality, isUsable (`0x501f80`): five
     // values, `isUsable` 1 or nil. A type other than `"reward"`, `"choice"` or `"required"` (any
@@ -429,7 +550,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetRewardSpell() (`0x501df0`): three nils without a spell.
+    // GetRewardSpell() (`0x58d670`): four nils without a spell.
     g.set(
         "GetRewardSpell",
         lua.create_function(|lua, ()| {
@@ -440,6 +561,19 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 model.quest.as_ref().and_then(|q| q.reward_spell.clone())
             };
             reward_spell_returns(lua, spell)
+        })?,
+    )?;
+    // `GetQuestSpellLink` (`0x58dab0`).
+    g.set(
+        "GetQuestSpellLink",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            reward_spell_link(
+                lua,
+                model.quest.as_ref().and_then(|q| q.reward_spell.as_ref()),
+            )
         })?,
     )?;
 
@@ -549,7 +683,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{QuestAction, QuestItemView, QuestPanel, QuestSelect, QuestState};
+    use super::{GossipQuestRow, QuestAction, QuestItemView, QuestPanel, QuestSelect, QuestState};
     use crate::script::UiScript;
 
     fn detail() -> QuestState {
@@ -712,26 +846,116 @@ mod tests {
     #[test]
     fn greeting_panel_lists_and_selects() {
         let mut s = UiScript::new().unwrap();
+        let row = |quest_id, title: &str, level, active| GossipQuestRow {
+            quest_id,
+            title: title.into(),
+            level,
+            active,
+            ..Default::default()
+        };
+        // Wire order interleaves the lists; each keeps its own 1-based order.
         s.set_quest(Some(QuestState {
             panel: QuestPanel::Greeting,
             greeting: "What can I do for you?".into(),
-            active_titles: vec!["Report to Goldshire".into()],
-            available_titles: vec!["A Threat Within".into(), "Kobold Camp Cleanup".into()],
+            greeting_quests: vec![
+                GossipQuestRow {
+                    daily: true,
+                    ..row(61, "A Threat Within", 7, false)
+                },
+                row(60, "Report to Goldshire", 3, true),
+                GossipQuestRow {
+                    repeatable: true,
+                    ..row(62, "Kobold Camp Cleanup", 9, false)
+                },
+                row(63, "Bounty on Murlocs", 9, true),
+            ],
             ..Default::default()
         }));
+        s.model_mut().player_req.level = 10;
         assert_eq!(
             s.eval::<String>("return GetGreetingText()").unwrap(),
             "What can I do for you?"
         );
-        assert_eq!(s.eval::<i64>("return GetNumActiveQuests()").unwrap(), 1);
+        assert_eq!(s.eval::<i64>("return GetNumActiveQuests()").unwrap(), 2);
         assert_eq!(s.eval::<i64>("return GetNumAvailableQuests()").unwrap(), 2);
-        assert_eq!(
-            s.eval::<String>("return GetActiveTitle(1)").unwrap(),
-            "Report to Goldshire"
-        );
         assert_eq!(
             s.eval::<String>("return GetAvailableTitle(2)").unwrap(),
             "Kobold Camp Cleanup"
+        );
+        assert!(s
+            .eval::<bool>("return GetAvailableTitle(3) == nil and GetAvailableTitle(0) == nil")
+            .unwrap());
+        // Level 3 at 10 is grey (3 + 5 < 10); level 9 is not.
+        assert_eq!(s.eval::<i64>("return GetActiveLevel(1)").unwrap(), 3);
+        assert_eq!(s.eval::<i64>("return GetAvailableLevel(9)").unwrap(), 0);
+        assert!(s
+            .eval::<bool>(
+                "return IsActiveQuestTrivial(1) == 1 and IsActiveQuestTrivial(2) == nil \
+                 and IsAvailableQuestTrivial(1) == nil"
+            )
+            .unwrap());
+        assert_eq!(s.arity("GetAvailableQuestInfo(1)").unwrap(), 3);
+        assert!(s
+            .eval::<bool>(
+                "local t1, d1, r1 = GetAvailableQuestInfo(1)\n\
+                 local t2, d2, r2 = GetAvailableQuestInfo(2)\n\
+                 return t1 == nil and d1 == 1 and r1 == nil and d2 == nil and r2 == 1"
+            )
+            .unwrap());
+        assert!(s
+            .run("GetActiveTitle('x')")
+            .unwrap_err()
+            .to_string()
+            .contains("Usage: GetActiveTitle(index)"));
+
+        // `isComplete` reads the log: quest 60's row is complete, and quest 63's holds no
+        // objective and has not failed (`0x58bcb0`).
+        s.set_quest_log(crate::script::QuestLogState {
+            entries: vec![
+                crate::script::QuestLogEntryView {
+                    quest_id: 60,
+                    complete: 1,
+                    objectives: vec![Default::default()],
+                    ..Default::default()
+                },
+                crate::script::QuestLogEntryView {
+                    quest_id: 63,
+                    ..Default::default()
+                },
+            ],
+            num_quests: 2,
+            ..Default::default()
+        });
+        assert_eq!(
+            s.eval::<(String, bool)>("return GetActiveTitle(1)")
+                .unwrap(),
+            ("Report to Goldshire".to_string(), true)
+        );
+        assert_eq!(
+            s.eval::<(String, bool)>("return GetActiveTitle(2)")
+                .unwrap(),
+            ("Bounty on Murlocs".to_string(), true)
+        );
+        s.set_quest_log(crate::script::QuestLogState {
+            entries: vec![crate::script::QuestLogEntryView {
+                quest_id: 63,
+                complete: -1,
+                ..Default::default()
+            }],
+            num_quests: 1,
+            ..Default::default()
+        });
+        assert!(
+            !s.eval::<(String, bool)>("return GetActiveTitle(2)")
+                .unwrap()
+                .1,
+            "a failed quest is not complete"
+        );
+        assert!(
+            !s.eval::<(String, bool)>("return GetActiveTitle(1)")
+                .unwrap()
+                .1,
+            "a quest off the log is not complete"
         );
 
         s.run("SelectActiveQuest(1)").unwrap();

@@ -662,16 +662,25 @@ pub(crate) struct ServerWallClock(pub(crate) Option<WallClockSample>);
 pub(crate) struct WallClockSample {
     /// The server's `time(nullptr)` at `received`.
     base_unix: u32,
+    /// The seconds to the daily quest reset at `received`.
+    reset_in: u32,
     received: Instant,
 }
 
 impl ServerWallClock {
     /// Take a fresh sample; it reads about RTT/2 behind, below a countdown's one-second grain.
-    pub(crate) fn sample(&mut self, unix_time: u32) {
+    pub(crate) fn sample(&mut self, unix_time: u32, reset_in: u32) {
         self.0 = Some(WallClockSample {
             base_unix: unix_time,
+            reset_in,
             received: Instant::now(),
         });
+    }
+
+    /// The daily quest reset in server unix seconds, as the sample placed it.
+    pub(crate) fn quest_reset_unix(&self) -> Option<f64> {
+        self.0
+            .map(|s| f64::from(s.base_unix) + f64::from(s.reset_in))
     }
 
     /// Server unix seconds now, fractional.

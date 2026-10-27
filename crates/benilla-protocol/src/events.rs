@@ -354,8 +354,9 @@ pub enum SessionEvent {
         zone: i32,
     },
     /// The server's wall clock in unix seconds (`SMSG_QUERY_TIME_RESPONSE`), the base of absolute
-    /// descriptor stamps: a timed quest's deadline is `time(nullptr) + limitTime`.
-    ServerUnixTime { unix_time: u32 },
+    /// descriptor stamps: a timed quest's deadline is `time(nullptr) + limitTime`. `reset_in` is the
+    /// seconds to the daily quest reset (`CGQuestLog::SetServerTime` `0x5dff40`).
+    ServerUnixTime { unix_time: u32, reset_in: u32 },
     /// The hearthstone bind (`SMSG_BINDPOINTUPDATE`): the AreaTable id the `$z` token names.
     BindPoint { area: u32 },
     /// `SMSG_GMTICKET_GETTICKET`: the status, and the ticket for status 6. The Help window re-polls

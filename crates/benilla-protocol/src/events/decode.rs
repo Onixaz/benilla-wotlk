@@ -852,8 +852,14 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             packed,
             zone,
         }],
-        ServerPacket::QueryTimeResponse { unix_time } => {
-            vec![SessionEvent::ServerUnixTime { unix_time }]
+        ServerPacket::QueryTimeResponse {
+            unix_time,
+            reset_in,
+        } => {
+            vec![SessionEvent::ServerUnixTime {
+                unix_time,
+                reset_in,
+            }]
         }
         ServerPacket::BindPoint { area, .. } => vec![SessionEvent::BindPoint { area }],
         ServerPacket::GmTicketAnswer { status, ticket } => {

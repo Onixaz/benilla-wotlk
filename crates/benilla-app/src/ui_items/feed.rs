@@ -267,7 +267,30 @@ fn template_view(
         sell_price: t.sell_price,
         item_set: t.item_set,
         random_property: t.random_property,
+        recipe_creates: recipe_creates(t, spells),
     }
+}
+
+/// The item a recipe teaches to make (`IsDressableItem` `0x517530`): a trigger spell whose first
+/// effect is learn-spell (36), teaching its trigger spell, or else the item's own learn-trigger
+/// (6) spell, whose first effect creates (24) an item.
+fn recipe_creates(t: &ItemInfo, spells: Option<&crate::ui_action::Spells>) -> u32 {
+    let Some(catalog) = spells.map(|s| &s.catalog) else {
+        return 0;
+    };
+    t.spells
+        .iter()
+        .filter_map(|s| catalog.get(s.spell_id))
+        .filter(|sd| sd.effects[0] == 36)
+        .find_map(|sd| {
+            let taught = match sd.effect_trigger_spell[0] {
+                0 => t.spells.iter().find(|s| s.trigger == 6)?.spell_id,
+                id => id,
+            };
+            let taught = catalog.get(taught).filter(|l| l.effects[0] == 24)?;
+            Some(taught.effect_item_type[0]).filter(|&id| id != 0)
+        })
+        .unwrap_or(0)
 }
 
 /// Answers the engine's set-id asks from `ItemSet.dbc`: member names from the template cache, each

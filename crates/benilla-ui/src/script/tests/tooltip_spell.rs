@@ -933,9 +933,10 @@ fn the_remaining_line_is_gated_on_until_cancelled_not_on_the_duration() {
     assert!(s.take_errors().is_empty());
 }
 
-/// `GetRewardSpell()` and `GetQuestLogRewardSpell()` answer `texture, name, isTradeskillSpell`,
-/// three nils when the quest teaches nothing, and `SetQuestRewardSpell()` and
-/// `SetQuestLogRewardSpell()` render that spell.
+/// `GetRewardSpell()` (`0x58d670`) and `GetQuestLogRewardSpell()` (`0x5e4d10`) answer `texture,
+/// name, isTradeskillSpell, isSpellLearned`, four nils when the quest teaches nothing, the link
+/// verbs a spell link or nil, and `SetQuestRewardSpell()` and `SetQuestLogRewardSpell()` render
+/// that spell.
 #[test]
 fn quest_reward_spell_getters_and_hovers() {
     let mut s = script();
@@ -952,12 +953,13 @@ fn quest_reward_spell_getters_and_hovers() {
     s.set_quest(Some(QuestState::default()));
     assert_eq!(
         s.arity("GetRewardSpell()").unwrap(),
-        3,
-        "three values on the empty path"
+        4,
+        "four values on the empty path"
     );
     assert!(s
         .eval::<bool>(
-            "local t, n, ts = GetRewardSpell() return t == nil and n == nil and ts == nil"
+            "local t, n, ts, l = GetRewardSpell() \
+             return t == nil and n == nil and ts == nil and l == nil and GetQuestSpellLink() == nil"
         )
         .unwrap());
     s.run(r#"TT:SetOwner(Q1, "ANCHOR_RIGHT"); TT:SetQuestRewardSpell()"#)
@@ -969,6 +971,7 @@ fn quest_reward_spell_getters_and_hovers() {
         name: Some("Fireball".into()),
         texture: Some("Interface\\Icons\\Spell_Fire_FlameBolt".into()),
         tradeskill: false,
+        learned: true,
     };
     s.set_quest(Some(QuestState {
         panel: QuestPanel::Reward,
@@ -976,13 +979,18 @@ fn quest_reward_spell_getters_and_hovers() {
         ..QuestState::default()
     }));
     assert_eq!(
-        s.eval::<(String, String, Option<i64>)>("return GetRewardSpell()")
+        s.eval::<(String, String, Option<i64>, Option<i64>)>("return GetRewardSpell()")
             .unwrap(),
         (
             "Interface\\Icons\\Spell_Fire_FlameBolt".to_string(),
             "Fireball".to_string(),
-            None
+            None,
+            Some(1)
         )
+    );
+    assert_eq!(
+        s.eval::<String>("return GetQuestSpellLink()").unwrap(),
+        "|cff71d5ff|Hspell:133|h[Fireball]|h|r"
     );
     s.run(r#"TT:SetOwner(Q1, "ANCHOR_RIGHT"); TT:SetQuestRewardSpell()"#)
         .unwrap();
@@ -1006,10 +1014,14 @@ fn quest_reward_spell_getters_and_hovers() {
     // The detail hangs on the row, so both readers go through the selection.
     s.run("SelectQuestLogEntry(1)").unwrap();
     assert_eq!(
-        s.eval::<(String, String, Option<i64>)>("return GetQuestLogRewardSpell()")
+        s.eval::<(String, String, Option<i64>, Option<i64>)>("return GetQuestLogRewardSpell()")
             .unwrap()
             .1,
         "Fireball"
+    );
+    assert_eq!(
+        s.eval::<String>("return GetQuestLogSpellLink()").unwrap(),
+        "|cff71d5ff|Hspell:133|h[Fireball]|h|r"
     );
     s.run(r#"TT:SetOwner(Q1, "ANCHOR_RIGHT"); TT:SetQuestLogRewardSpell()"#)
         .unwrap();
