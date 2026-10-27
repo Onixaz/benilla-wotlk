@@ -217,6 +217,9 @@ pub struct UnitState {
     /// `OBJECT_FIELD_GUID`, which `UnitIsUnit` and `UnitInParty` compare; 0 is unresolved, and
     /// two zeros never match.
     pub guid: u64,
+    /// A creature or vehicle whose template has type flag `0x4000`: `UnitGUID` (`0x60e630`)
+    /// shows its guid with the spawn counter, the low 24 bits, zeroed.
+    pub counter_hidden: bool,
     /// `GetRaidTargetIndex`: 0 none, else the mark 1..=8, from the group's raid-target board.
     pub raid_target: u8,
     /// Whether the player can attack the unit, `UnitCanAttack("player", unit)`, which the binding

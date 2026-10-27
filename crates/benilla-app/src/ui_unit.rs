@@ -971,6 +971,7 @@ pub(crate) fn enrich_unit(
         // No faction line for players: their factions have no reputation slot.
         return;
     }
+    state.counter_hidden = crate::combat_log::entries::shown_guid(guid, names) != guid;
     let Some(entry) = benilla_protocol::guid::entry(guid) else {
         return;
     };

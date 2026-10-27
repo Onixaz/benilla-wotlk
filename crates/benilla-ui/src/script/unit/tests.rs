@@ -74,6 +74,46 @@ fn spell_can_target_unit_answers_per_validated_token() {
         .unwrap());
 }
 
+/// `0x60e630`: `0x` and sixteen upper-case hex digits, nil for nobody, a counter-hidden
+/// creature's low 24 bits zeroed.
+#[test]
+fn unit_guid_formats_the_tokens_guid_or_answers_nil() {
+    const ME: u64 = 0x0000_0000_0000_0abc;
+    const MOB: u64 = 0xF130_0004_4E00_0A5C;
+    let mut s = UiScript::new().unwrap();
+    s.set_unit_guids(&UnitGuids {
+        player: ME,
+        target: MOB,
+        ..Default::default()
+    });
+    s.set_unit(
+        "player",
+        Some(UnitState {
+            exists: true,
+            guid: ME,
+            ..Default::default()
+        }),
+    );
+    let mob = |hidden: bool| UnitState {
+        exists: true,
+        guid: MOB,
+        counter_hidden: hidden,
+        ..Default::default()
+    };
+    s.set_unit("target", Some(mob(false)));
+    let guid = |s: &UiScript, token: &str| {
+        s.eval::<Option<String>>(&format!("return UnitGUID({token:?})"))
+            .unwrap()
+    };
+    assert_eq!(guid(&s, "player").as_deref(), Some("0x0000000000000ABC"));
+    assert_eq!(guid(&s, "TARGET").as_deref(), Some("0xF13000044E000A5C"));
+    assert_eq!(guid(&s, "focus"), None, "no focus, nil");
+    s.set_unit("target", Some(mob(true)));
+    assert_eq!(guid(&s, "target").as_deref(), Some("0xF13000044E000000"));
+    let err = s.run("UnitGUID()").expect_err("no token").to_string();
+    assert!(err.contains(r#"Usage: UnitGUID("unit")"#), "{err}");
+}
+
 #[test]
 fn unit_reaction_reports_the_scale_value_or_nil() {
     let mut s = UiScript::new().unwrap();

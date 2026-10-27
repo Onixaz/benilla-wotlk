@@ -335,8 +335,9 @@ impl PendingEntries {
     }
 }
 
-/// `0x74d210`: a creature with template type flag `0x4000` shows no spawn counter.
-fn shown_guid(guid: u64, names: &NameCache) -> u64 {
+/// `0x74d210`: a creature with template type flag `0x4000` shows no spawn counter, as in
+/// `UnitGUID` (`0x60e6e1`).
+pub(crate) fn shown_guid(guid: u64, names: &NameCache) -> u64 {
     if !matches!(family(guid), CREATURE | VEHICLE) {
         return guid;
     }

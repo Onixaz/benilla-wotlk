@@ -191,7 +191,7 @@ fn grant_level_refusal(model: &Model, token: &str) -> u8 {
 }
 
 /// A token or a roster name to its guid, as `Script_GetGUIDFromToken(…, false)` (`0x60abf0`).
-fn guid_of(model: &Model, unit: &str) -> Option<u64> {
+pub(super) fn guid_of(model: &Model, unit: &str) -> Option<u64> {
     if let Some(u) = model.unit(unit).filter(|u| u.exists) {
         return Some(u.guid);
     }
