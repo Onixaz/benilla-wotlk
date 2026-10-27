@@ -25,6 +25,8 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
    trace timestamps, byte-derived numbers, a numeric probe. A capture confirms an existence
    fact; it cannot measure time. Never search for a viewpoint: take the one simplest shot, and
    if it does not settle the question, hand over a precise script ("log in, look at X, does Y?").
+   Frame time is measured, and every performance A/B run, at Dalaran (map 571, 5842.4 595.6
+   650.7), the busiest place in the game.
 4. **Close the loop on the symptom.** A bug reported as seen is closed by reproducing it at the
    reported spot first, fixing, and showing the same instrument clean there plus one adjacent
    state. Green gates and an existing mechanism are never that evidence.
