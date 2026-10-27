@@ -783,9 +783,11 @@ fn stream_terrain(
         activity.tiles_spawned += 1;
 
         // Placements register by uniqueId; their ground shade resolves at spawn by a global lookup,
-        // since a doodad's origin may lie on another tile.
+        // since a doodad's origin may lie on another tile. A tile's doodads share a few dozen
+        // models, so each path is loaded once per tile.
+        let mut m2_handles: HashMap<&str, Handle<M2Model>> = HashMap::new();
         for d in &adt.doodads {
-            register_doodad(placements, &asset_server, d, (tx, ty));
+            register_doodad(placements, &asset_server, &mut m2_handles, d, (tx, ty));
             tile.placements.push(d.unique_id);
         }
         for w in &adt.wmos {
@@ -808,6 +810,7 @@ fn stream_terrain(
             let mut clutter_ents = Vec::new();
             scatter_tile_clutter(
                 &mut commands,
+                tile.handle.id(),
                 &adt.chunks,
                 tx as u32,
                 ty as u32,
@@ -934,18 +937,23 @@ fn tile_drop_disabled() -> bool {
     *ON.get_or_init(|| std::env::var_os("WOW_NO_TILE_DROP").is_some())
 }
 
-/// Register one M2 doodad placement, or bump its refcount if already known.
-fn register_doodad(
+/// Register one M2 doodad placement, or bump its refcount if already known; `handles` reuses the
+/// model's handle across the tile's placements.
+fn register_doodad<'a>(
     placements: &mut Placements,
     asset_server: &AssetServer,
-    d: &Doodad,
+    handles: &mut HashMap<&'a str, Handle<M2Model>>,
+    d: &'a Doodad,
     tile: (i32, i32),
 ) {
     if let Some(p) = placements.by_id.get_mut(&d.unique_id) {
         p.refs += 1;
         return;
     }
-    let handle: Handle<M2Model> = asset_server.load(m2_url(&d.model));
+    let handle = handles
+        .entry(d.model.as_str())
+        .or_insert_with(|| asset_server.load(m2_url(&d.model)))
+        .clone();
     placements.by_id.insert(
         d.unique_id,
         Placement {
@@ -1132,6 +1140,7 @@ fn rescatter_clutter(
         }
         scatter_tile_clutter(
             &mut commands,
+            tile.handle.id(),
             &adt.chunks,
             tx as u32,
             ty as u32,

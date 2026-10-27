@@ -1,7 +1,7 @@
-//! Ground clutter (`GroundEffect*.dbc`): the terrain streamer scatters each chunk's tufts at tile
-//! load, and a chunk's meshes exist only inside the detail-doodad horizon, `groundEffectDist`
-//! (`CWorld::detailDoodadDist`, read by `CMapChunk::RenderPrep 0x7d3fe0`), the reference's
-//! per-chunk `CDetailDoodadInst` build and unlink.
+//! Ground clutter (`GroundEffect*.dbc`): the terrain streamer registers each chunk that can carry
+//! tufts at tile load, and a chunk is scattered and meshed only inside the detail-doodad horizon,
+//! `groundEffectDist` (`CWorld::detailDoodadDist`, read by `CMapChunk::RenderPrep 0x7d3fe0`), the
+//! reference's per-chunk `CDetailDoodadInst` build and unlink.
 
 use std::collections::HashMap;
 
@@ -14,7 +14,7 @@ use crate::view::WorldCamera;
 use benilla_assets::coords::wow_to_bevy;
 use benilla_assets::materials::WowModelMaterial;
 use benilla_assets::LockRecover;
-use benilla_assets::{AssetSet, WorldAssets};
+use benilla_assets::{AdtTile, AssetSet, WorldAssets};
 use benilla_formats::{
     load_ground_effect_catalog, load_m2_mesh, scatter_ground_doodads, ChunkMesh,
     GroundDoodadPlacement, GroundEffectCatalog, ModelBlend, RenderSubmesh, SHADOW_MAP_SIZE,
@@ -176,16 +176,30 @@ pub(crate) struct ClutterGeometry(
     pub(crate) benilla_assets::SpatialCache<String, Vec<RenderSubmesh>>,
 );
 
-/// One MCNK chunk's scattered clutter, meshed only while inside the detail-doodad horizon.
+/// One MCNK chunk's clutter, scattered on its first build and meshed only while inside the
+/// detail-doodad horizon.
 #[derive(Component)]
 pub(crate) struct ClutterChunk {
     /// The chunk's terrain box grown by a tuft's height, in Bevy space. The gate measures to its
     /// nearest point, not its centre, so a chunk on relief is not built late.
     bounds: (Vec3, Vec3),
-    /// Placements by model path; each model merges into one mesh per submesh.
-    models: Vec<(String, Vec<ShadedPlacement>)>,
+    /// The chunk the tufts scatter from.
+    source: ClutterSource,
+    /// Placements by model path, each model merged into one mesh per submesh; `None` until the
+    /// first build scatters them.
+    models: Option<Vec<(String, Vec<ShadedPlacement>)>>,
     /// The built meshes, children of this entity; empty when not built.
     built: Vec<Entity>,
+}
+
+/// Where a [`ClutterChunk`] scatters from: its tile's ADT, its index there, the tile's grid
+/// position (the scatter's seed) and the density it was registered at.
+struct ClutterSource {
+    tile: AssetId<AdtTile>,
+    chunk: usize,
+    tile_x: u32,
+    tile_y: u32,
+    density: f32,
 }
 
 /// Slack (yd) past the fade reach, so a chunk is built before any of its grass can show.
@@ -254,9 +268,13 @@ struct ShadedPlacement {
     ground_normal: [f32; 3],
 }
 
-/// Scatter a tile's clutter into [`ClutterChunk`]s, tint and normal baked, building no meshes.
+/// Register a tile's [`ClutterChunk`]s, one per chunk that can carry tufts. Scattering waits for
+/// the chunk's first build, since only chunks inside the horizon are built, and the scatter is
+/// seeded per chunk, so it places the same tufts whenever it runs.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn scatter_tile_clutter(
     commands: &mut Commands,
+    tile: AssetId<AdtTile>,
     chunks: &[ChunkMesh],
     tile_x: u32,
     tile_y: u32,
@@ -264,22 +282,18 @@ pub(crate) fn scatter_tile_clutter(
     density: f32,
     entities: &mut Vec<Entity>,
 ) {
-    for chunk in chunks {
-        let mut by_model: HashMap<String, Vec<ShadedPlacement>> = HashMap::new();
-        for placement in scatter_ground_doodads(chunk, catalog, tile_x, tile_y, density) {
-            let tint = mcsh_tint_at(chunk, placement.position);
-            let ground_normal =
-                wow_to_bevy(terrain_normal_at(chunk, placement.position)).to_array();
-            by_model
-                .entry(placement.model.clone())
-                .or_default()
-                .push(ShadedPlacement {
-                    placement,
-                    tint,
-                    ground_normal,
-                });
-        }
-        if by_model.is_empty() {
+    if density <= 0.0 {
+        return;
+    }
+    for (index, chunk) in chunks.iter().enumerate() {
+        // `scatter_ground_doodads` places nothing on a short chunk or one whose layers resolve no
+        // effect, so those need no entity.
+        let has_effect = chunk
+            .layer_effect_ids
+            .iter()
+            .take(chunk.layer_textures.len())
+            .any(|&eid| catalog.effect(eid).is_some());
+        if chunk.positions.len() < 145 || !has_effect {
             continue;
         }
         let mut lo = Vec3::splat(f32::MAX);
@@ -294,12 +308,43 @@ pub(crate) fn scatter_tile_clutter(
             commands
                 .spawn(ClutterChunk {
                     bounds: (lo, hi),
-                    models: by_model.into_iter().collect(),
+                    source: ClutterSource {
+                        tile,
+                        chunk: index,
+                        tile_x,
+                        tile_y,
+                        density,
+                    },
+                    models: None,
                     built: Vec::new(),
                 })
                 .id(),
         );
     }
+}
+
+/// One chunk's tufts by model path, tint and normal baked.
+fn scatter_chunk(
+    chunk: &ChunkMesh,
+    catalog: &GroundEffectCatalog,
+    source: &ClutterSource,
+) -> Vec<(String, Vec<ShadedPlacement>)> {
+    let mut by_model: HashMap<String, Vec<ShadedPlacement>> = HashMap::new();
+    let placements =
+        scatter_ground_doodads(chunk, catalog, source.tile_x, source.tile_y, source.density);
+    for placement in placements {
+        let tint = mcsh_tint_at(chunk, placement.position);
+        let ground_normal = wow_to_bevy(terrain_normal_at(chunk, placement.position)).to_array();
+        by_model
+            .entry(placement.model.clone())
+            .or_default()
+            .push(ShadedPlacement {
+                placement,
+                tint,
+                ground_normal,
+            });
+    }
+    by_model.into_iter().collect()
 }
 
 /// Build one chunk's clutter: each model's instances merged into one mesh per submesh, every tuft's
@@ -433,6 +478,8 @@ pub(crate) fn stream_chunk_clutter(
     cam: Query<(&GlobalTransform, Option<&Projection>), With<WorldCamera>>,
     mut chunks: Query<(Entity, &mut ClutterChunk)>,
     cfg: Res<ClutterConfig>,
+    adts: Res<Assets<AdtTile>>,
+    clutter: Option<Res<GroundClutter>>,
     geometry: Option<ResMut<ClutterGeometry>>,
     assets: Option<ResMut<WorldAssets>>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -440,7 +487,7 @@ pub(crate) fn stream_chunk_clutter(
     mut materials: ResMut<Assets<WowModelMaterial>>,
 ) {
     // Both are absent without an install, and a hard `ResMut` would fail validation and panic.
-    let (Some(mut geometry), Some(mut assets)) = (geometry, assets) else {
+    let (Some(mut geometry), Some(mut assets), Some(clutter)) = (geometry, assets, clutter) else {
         return;
     };
     let Some((cam_tf, projection)) = cam.iter().next() else {
@@ -485,13 +532,29 @@ pub(crate) fn stream_chunk_clutter(
         let Ok((_, mut cc)) = chunks.get_mut(ent) else {
             continue;
         };
+        if cc.models.is_none() {
+            // The ADT leaves with its tile, which despawns this chunk in the same frame.
+            let Some(chunk) = adts
+                .get(cc.source.tile)
+                .and_then(|adt| adt.chunks.get(cc.source.chunk))
+            else {
+                continue;
+            };
+            let models = scatter_chunk(chunk, &clutter.catalog, &cc.source);
+            if models.is_empty() {
+                // Nothing to build, ever: the chunk leaves rather than take a build slot each frame.
+                commands.entity(ent).try_despawn();
+                continue;
+            }
+            cc.models = Some(models);
+        }
         if d2 < visible_d2 {
             late += 1;
             late_nearest = late_nearest.min(d2.sqrt());
         }
         let built = build_chunk_clutter(
             ent,
-            &cc.models,
+            cc.models.as_deref().unwrap_or_default(),
             cfg.alpha_ref,
             cfg.fade_far,
             &mut geometry,
