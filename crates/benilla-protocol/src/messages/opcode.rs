@@ -975,17 +975,17 @@ pub const MSG_MOVE_KNOCK_BACK: u16 = 0x00F1; // 241
 
 pub const CMSG_WHO: u16 = 0x0062; // 98
 pub const SMSG_WHO: u16 = 0x0063; // 99
-pub const CMSG_FRIEND_LIST: u16 = 0x0066; // 102
-pub const SMSG_FRIEND_LIST: u16 = 0x0067; // 103
+pub const CMSG_CONTACT_LIST: u16 = 0x0066; // 102
+pub const SMSG_CONTACT_LIST: u16 = 0x0067; // 103
 pub const SMSG_FRIEND_STATUS: u16 = 0x0068; // 104
 pub const CMSG_ADD_FRIEND: u16 = 0x0069; // 105
-/// Our LFG slots and comment, sent only from `0x4e8948`; nothing answers it. The name is the
-/// emulators'.
-pub const CMSG_SET_LOOKING_FOR_GROUP: u16 = 0x0200; // 512
 pub const CMSG_DEL_FRIEND: u16 = 0x006A; // 106
-pub const SMSG_IGNORE_LIST: u16 = 0x006B; // 107
+pub const CMSG_SET_CONTACT_NOTES: u16 = 0x006B; // 107
 pub const CMSG_ADD_IGNORE: u16 = 0x006C; // 108
 pub const CMSG_DEL_IGNORE: u16 = 0x006D; // 109
+/// The voice mute list's add and remove (`0x6b62c0`, `0x6b6410`).
+pub const CMSG_ADD_VOICE_IGNORE: u16 = 0x03DB; // 987
+pub const CMSG_DEL_VOICE_IGNORE: u16 = 0x03DC; // 988
 
 pub const CMSG_GUILD_QUERY: u16 = 0x0054; // 84
 pub const SMSG_GUILD_QUERY_RESPONSE: u16 = 0x0055; // 85

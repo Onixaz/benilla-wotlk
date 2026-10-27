@@ -5,12 +5,12 @@ use crate::wire::Vector3d;
 use super::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
     AuctionListPage, AuctionOwnerNotification, AuctionPendingSale, CastOutcome, ChannelNotify,
-    Character, ChatMessage, CorpseLocation, DamageShield, DifficultySet, DispelFailed,
-    EnchantmentLog, EnvironmentalDamageLog, ExplorationXp, FriendEntry, FriendStatusUpdate,
-    GameObjectQueryInfo, GmResponse, GmTicket, GossipMenu, GossipPoi, GroupDifficulties,
-    GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice, GuildInfo,
-    GuildQueryResponse, GuildRoster, InitWorldStates, InspectHonorStats, ItemInfo, ItemPushResult,
-    JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll, MailList,
+    Character, ChatMessage, ContactList, CorpseLocation, DamageShield, DifficultySet, DispelFailed,
+    EnchantmentLog, EnvironmentalDamageLog, ExplorationXp, FriendStatusUpdate, GameObjectQueryInfo,
+    GmResponse, GmTicket, GossipMenu, GossipPoi, GroupDifficulties, GroupLootInfo,
+    GroupMemberEntry, GuildCommandResult, GuildEventNotice, GuildInfo, GuildQueryResponse,
+    GuildRoster, InitWorldStates, InspectHonorStats, ItemInfo, ItemPushResult, JumpInfo,
+    LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll, MailList,
     MailResult, MailSender, MirrorTimerStart, MoveMode, Object, PartyKillLog, PartyMemberStatsInfo,
     PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList,
     PetitionShowSignatures, PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept,
@@ -1188,14 +1188,8 @@ pub enum ServerPacket {
     MirrorTimerStop {
         kind: u32,
     },
-    /// `SMSG_FRIEND_LIST`: the whole friend list, pushed at login and on `CMSG_FRIEND_LIST`.
-    FriendList {
-        friends: Vec<FriendEntry>,
-    },
-    /// `SMSG_IGNORE_LIST`: the whole ignore list, guids only.
-    IgnoreList {
-        guids: Vec<u64>,
-    },
+    /// `SMSG_CONTACT_LIST`: the lists its mask names, pushed at login and on `CMSG_CONTACT_LIST`.
+    ContactList(ContactList),
     /// `SMSG_FRIEND_STATUS`: an add or remove ack, or a friend's login or logout.
     FriendStatus(FriendStatusUpdate),
     /// `SMSG_WHO`: the `/who` answer, up to 49 rows plus the true match total.
@@ -1739,8 +1733,7 @@ impl ServerPacket {
             ServerPacket::MirrorTimerStart(..) => "SMSG_START_MIRROR_TIMER".into(),
             ServerPacket::MirrorTimerPause { .. } => "SMSG_PAUSE_MIRROR_TIMER".into(),
             ServerPacket::MirrorTimerStop { .. } => "SMSG_STOP_MIRROR_TIMER".into(),
-            ServerPacket::FriendList { .. } => "SMSG_FRIEND_LIST".into(),
-            ServerPacket::IgnoreList { .. } => "SMSG_IGNORE_LIST".into(),
+            ServerPacket::ContactList(_) => "SMSG_CONTACT_LIST".into(),
             ServerPacket::FriendStatus(..) => "SMSG_FRIEND_STATUS".into(),
             ServerPacket::WhoResults(..) => "SMSG_WHO".into(),
             ServerPacket::GuildQueryResponse(..) => "SMSG_GUILD_QUERY_RESPONSE".into(),

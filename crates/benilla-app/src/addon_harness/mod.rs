@@ -2774,7 +2774,6 @@ mod dependency_tests {
     /// A clean load is not a working addon: a raise from a `PLAYER_LOGIN` handler or from
     /// `OnUpdate` lands in `session_errors`, and `loaded` still counts load errors only.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_clean_load_is_not_a_working_addon() {
         let tmp =
             std::env::temp_dir().join(format!("benilla-harness-session-{}", std::process::id()));
@@ -2890,7 +2889,6 @@ mod dependency_tests {
     /// initialiser is gated on it (`Atlas.lua:326`). A dependency's own handler raising is the
     /// dependency's row, never its consumers', since those events fire outside the error mark.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn each_loaded_addon_gets_its_own_addon_loaded_event() {
         let tmp = std::env::temp_dir().join(format!(
             "benilla-harness-addonloaded-{}",
@@ -2973,7 +2971,6 @@ mod dependency_tests {
     /// `KTMAutoHider`'s `<OnLoad>` reads `KLHThreatMeter`'s GUI), and `EagerLib` initialises on its
     /// own event only.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_dependencys_addon_loaded_precedes_the_dependents_file_scope() {
         let tmp =
             std::env::temp_dir().join(format!("benilla-harness-eager-{}", std::process::id()));
@@ -3822,7 +3819,6 @@ mod dependency_tests {
     /// (`KTM_My.lua:721`). The contents come off the player's DBCs, so the reads are asserted, not
     /// the data.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_seated_session_answers_the_login_scoped_catalogues() {
         if benilla_formats::wow_data().is_none() {
             eprintln!("skipping: no WoW client data");

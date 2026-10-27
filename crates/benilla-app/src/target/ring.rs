@@ -838,7 +838,6 @@ mod tests {
     /// The emissary's rank stays neutral, which paints its bar yellow, while its plate category is
     /// friendly: the two run the reaction in opposite directions.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_plate_category_reproduces_the_reference_on_the_real_dbc() {
         use crate::net::{ObjectStore, Reputations};
         use benilla_protocol::ObjectFields;
@@ -897,7 +896,6 @@ mod tests {
     /// so a Stormwind unit reads the same to a Revered and an Exalted human, while the ladder
     /// itself, which the reputation pane reads, still reaches 7.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_reputation_rank_is_capped_at_revered() {
         use crate::net::ObjectStore;
         use crate::target::{stormwind_fixture, HUMAN_WARRIOR};
@@ -940,7 +938,6 @@ mod tests {
     /// Cenarion Circle, faction 609 with reputation slot 36: not at war, its NPCs are neither
     /// attackable nor, without a service bit, interactable, while the rank stays neutral.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_not_at_war_cenarion_circle_npc_takes_no_cursor_at_neutral() {
         use crate::net::{ObjectStore, Reputations};
         use benilla_protocol::ObjectFields;
@@ -1018,7 +1015,6 @@ mod tests {
     /// passes. Template 35, which vmangos's `.gm on` sets (`Player.cpp:2661`), is faction 31 with
     /// mask 0, so a GM-mode character leaves every player's friendly bucket while NPCs keep theirs.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_player_subject_category_on_the_real_dbc() {
         use crate::net::{ObjectStore, Reputations};
         use benilla_protocol::ObjectFields;
@@ -1080,7 +1076,6 @@ mod tests {
 
     /// `CanAttack`'s flag refusals (`0x6069b7`–`0x6069ff`) beat a hostile reaction.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_unattackable_flag_beats_a_hostile_reaction() {
         use crate::net::{ObjectStore, Reputations};
         use benilla_protocol::ObjectFields;

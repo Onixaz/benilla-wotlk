@@ -2470,9 +2470,28 @@ fn is_refer_a_friend_linked_reads_a_held_player_s_dynamic_flag() {
     // The object leg asks for a player object (type mask 0x10): a creature falls through.
     s.set_unit("target", Some(unit(false, true, 0x40)));
     assert!(!linked(&s, r#""target""#), "a creature is never linked");
-    // No object: the group and friend legs, not built, answer nothing.
+    // No object: the friend leg reads the friend's status bit 0x08 (`0x6d7612`).
     s.set_unit("target", Some(unit(true, false, 0x40)));
-    assert!(!linked(&s, r#""target""#), "an unheld player");
+    assert!(
+        !linked(&s, r#""target""#),
+        "an unheld player who is no friend"
+    );
+    let friend = |raf| crate::script::SocialState {
+        friends: vec![crate::script::FriendInfo {
+            guid: 2,
+            raf,
+            ..Default::default()
+        }],
+        ..Default::default()
+    };
+    s.set_social(friend(true));
+    assert!(linked(&s, r#""target""#), "an unheld, linked friend");
+    s.set_social(friend(false));
+    assert!(!linked(&s, r#""target""#), "a friend without the link");
+    // A held player answers its own flag and never reaches the friend leg.
+    s.set_social(friend(true));
+    s.set_unit("target", Some(unit(true, true, 0)));
+    assert!(!linked(&s, r#""target""#), "the held object decides");
     for arg in [r#""nobody""#, "nil", "5", "{}"] {
         assert!(
             s.eval::<bool>(&format!("return IsReferAFriendLinked({arg}) == nil"))

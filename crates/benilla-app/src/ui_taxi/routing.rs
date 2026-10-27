@@ -467,7 +467,6 @@ mod tests {
     /// The real Stormwind (2) to Sentinel Hill (4) hop, `TaxiPath` id 6 at 110 copper; with every
     /// node known, the ones Stormwind cannot route to are left out.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn build_nodes_classifies_a_real_known_hop() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("open chain");

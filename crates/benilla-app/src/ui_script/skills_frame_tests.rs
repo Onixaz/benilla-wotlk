@@ -192,7 +192,6 @@ fn a_single_rank_line_paints_gray_with_no_rank_text() {
 /// real DBCs, lists what the reference lists: four headers and fourteen lines, with no
 /// `Dual Wield`, `Tauren Racial` or `GENERIC (DND)`, though the server sends them.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_real_hunters_block_lists_exactly_what_the_reference_client_lists() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");

@@ -5,7 +5,6 @@
 use benilla_formats::{load_m2_mesh, open_chain};
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn tram_glass_batches_generate_their_texcoords() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");

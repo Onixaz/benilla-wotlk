@@ -852,14 +852,18 @@ mod tests {
     #[test]
     fn the_signon_condition_is_all_four_conjuncts() {
         let mut social = SocialState::default();
-        crate::ui_social::net::friend_list(
+        let contact = |guid, flags| benilla_protocol::messages::ContactEntry {
+            guid,
+            flags,
+            ..Default::default()
+        };
+        crate::ui_social::net::contact_list(
             &mut social,
-            vec![benilla_protocol::messages::FriendEntry {
-                guid: 7,
-                ..Default::default()
-            }],
+            benilla_protocol::messages::ContactList {
+                mask: 7,
+                contacts: vec![contact(7, 1), contact(9, 2)],
+            },
         );
-        crate::ui_social::net::ignore_list(&mut social, vec![9]);
         let on = GuildMemberNotify(true);
         let off = GuildMemberNotify(false);
         let me = Some(1);

@@ -17,10 +17,6 @@ use super::{
 /// power (`0x60ed72`, `0x60effd`).
 const OWN_POWER_TYPE: i64 = 7;
 
-/// `UNIT_DYNAMIC_FLAGS` bit 0x40, the Refer-a-Friend link `IsReferAFriendLinked` reads off a held
-/// player (`0x6d75bf`: `shr 6; and 1`).
-const UNIT_DYNFLAG_REFER_A_FRIEND: u32 = 0x40;
-
 /// `UnitPower`/`UnitPowerMax`: the token must pass `lua_isstring`, else the usage line raises. A
 /// numeric type goes through `lua_tointeger` (`0x84e070`, `fistp` at the default round-to-nearest)
 /// and outside `0..=7` answers 0; 7 or no type is the unit's display type. A held unit answers
@@ -202,11 +198,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // `IsReferAFriendLinked(unit)` (`0x51d1b0`): 1 or nil, never raising, and nil with no player
-    // object. The token resolves to a guid (`0x60c1c0`) and `0x6d7590` asks three places in turn:
-    // a held player object's `UNIT_DYNAMIC_FLAGS` bit 0x40 (`0x6d75b9`); else a group member's
-    // status bit 0x100 (`0x6d75e9`); else the friend list's status byte bit 0x08 (`0x6d7612`).
-    // Only the first is built: the group list and the friend list still arrive in 1.12.1's
-    // layouts, which carry neither bit (#190).
+    // object; the token resolves to a guid (`0x60c1c0`) that `IsRAFPlayer` (`0x6d7590`) asks.
     g.set(
         "IsReferAFriendLinked",
         lua.create_function(|lua, token: Value| {
@@ -217,15 +209,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
             if model.unit_guids.player == 0 {
                 return Ok(Value::Nil);
             }
-            let linked = token
-                .as_deref()
-                .and_then(|t| model.unit(t))
-                .is_some_and(|u| {
-                    u.has_object
-                        && u.is_player
-                        && u.dynamic_flags & UNIT_DYNFLAG_REFER_A_FRIEND != 0
-                });
-            Ok(flag(linked))
+            let unit = token.as_deref().and_then(|t| model.unit(t));
+            Ok(flag(crate::script::unit_menu::is_raf_player(&model, unit)))
         })?,
     )?;
 

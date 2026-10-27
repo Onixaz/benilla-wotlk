@@ -248,6 +248,7 @@ mod tests {
             fade: DoodadFade {
                 size: 0.5,
                 local_center: Vec3::ZERO,
+                sphere: None,
                 cutout: Handle::default(),
                 blend: Handle::default(),
             },

@@ -315,7 +315,6 @@ fn undercitys_upper_channels_do_not_submerge_the_rooms_below() {
 /// Undercity's Rogues' Quarter at `1414.08 53.00 -62.26`, 95 yd under Tirisfal's lake: the player,
 /// the camera eye and a unit all ask this one predicate.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_rogues_quarter_is_not_under_tirisfals_lake() {
     let feet = [1414.08_f32, 53.00, -62.26];
     let Some(scene) = liquid_scene("Azeroth", feet) else {

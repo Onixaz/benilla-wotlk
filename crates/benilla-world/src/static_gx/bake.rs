@@ -482,6 +482,7 @@ mod tests {
         let seed = || super::super::GxFadeSeed {
             size: 0.8,
             local_center: Vec3::ZERO,
+            radius: 1.0,
             stat_mesh: Handle::default(),
             aabb: None,
             cutout: Handle::default(),

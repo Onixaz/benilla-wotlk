@@ -1006,7 +1006,6 @@ fn an_addon_that_fails_to_load_without_raising_is_readable_in_the_error_log() {
 
 /// An error raised every frame is one log row with a count, not a flood of rows.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_repeating_error_is_one_row_with_a_count_not_a_flood() {
     let _l = ENV_LOCK
         .lock()

@@ -3,7 +3,7 @@
 //! races, classes and zones engine-side too, before Lua sees a row (`GetWhoInfo` `0x6b4a80`).
 
 use benilla_formats::{AreaTableCatalog, ChrClassNames, CreateRaceRow};
-use benilla_protocol::messages::WhoEntry;
+use benilla_protocol::messages::{contact_flag, friend_status, WhoEntry};
 use benilla_ui::script::{
     FriendInfo, SocialRequest, SocialState as VmSocial, UiScript, WhoInfo, WhoRecords,
 };
@@ -15,9 +15,8 @@ use crate::entities::CharCreate;
 use crate::names::NameCache;
 use crate::net::{ClientCommand, NetCommands};
 use crate::ui_action::{MessageSink, Shown, UiError};
-use crate::ui_unit::class_names;
 
-use super::{name_pushes, result_key, status_flag_key, SocialState};
+use super::{name_pushes, result_key, row_guid, status_flag_key, Friend, SocialState};
 
 /// The chat-routed `/who` templates (`PrintWho` `0x6b5030`, the count at `0x6b8912`). FrameXML
 /// never names them: the engine prints these lines itself. None is a message-catalog row, so they
@@ -75,7 +74,7 @@ pub(crate) fn feed_social(
     };
 
     // Everything that reads the VM's own string table, resolved under one borrow of it.
-    let (owed, friends, display_order) = {
+    let (owed, (friends, display_order, friends_named)) = {
         let get = |key: &str| script.lua().globals().get::<String>(key).ok();
         // Keyed, so the surface and the sound come from the catalog row (`ERR_FRIEND_ONLINE_SS`
         // plays `FRIENDJOINGAME`).
@@ -85,48 +84,63 @@ pub(crate) fn feed_social(
                 crate::ui_action::ui_error_text(e, &get).map(|text| Shown::keyed(e.key, text))
             })
             .collect();
-        let away = |status: u8| status_flag_key(status).and_then(&get).unwrap_or_default();
-        let (friends, display_order) = friend_rows(&social, &names, &commands, areas, &away);
-        (owed, friends, display_order)
+        let away = |connected: bool, status: u8| {
+            status_flag_key(connected, status)
+                .and_then(&get)
+                .unwrap_or_default()
+        };
+        let friends = friend_rows(
+            &social,
+            &names,
+            &commands,
+            (areas, who_names.classes),
+            &away,
+        );
+        (owed, friends)
     };
 
     // The owed lines first, so a friend's offline line lands before the update that clears their
     // zone.
     crate::ui_action::show_messages(&mut script, &mut sink, "ui_social", owed);
 
-    let (ignores, ignore_order) = ignore_rows(&social, &names, &commands);
+    let (ignores, ignore_order, ignores_named) = list_rows(&social.ignores, &names, &commands);
+    let (mutes, mute_order, mutes_named) = list_rows(&social.mutes, &names, &commands);
     let who = who_rows(&social, &who_names);
 
     let selected_friend = index_of(&display_order, social.selected_friend);
     let selected_ignore = index_of(&ignore_order, social.selected_ignore);
+    let selected_mute = index_of(&mute_order, social.selected_mute);
     social.display_order = display_order;
     social.ignore_display_order = ignore_order;
+    social.mute_display_order = mute_order;
 
     script.set_social(VmSocial {
         friends,
         selected_friend,
         ignores,
         selected_ignore,
+        mutes,
+        selected_mute,
         who,
         who_total: social.who_total,
         // The chain rides along: `SortWho` re-sorts inside the binding.
         who_sort: social.who_sort.clone(),
     });
 
+    // A changed list announces itself once every name on it has resolved, as `ReadPacket`
+    // (`0x6b7dd0`) holds each event until its pending-name count drains (`0x6b3d90`).
     let first = !fed.seeded;
     fed.seeded = true;
-    if social.friends_dirty || first {
-        social.friends_dirty = false;
-        let event = if std::mem::take(&mut social.friends_show_pending) {
-            "FRIENDLIST_SHOW"
-        } else {
-            "FRIENDLIST_UPDATE"
-        };
-        script.fire_event(event, Vec::new());
-    }
-    if social.ignores_dirty || first {
-        social.ignores_dirty = false;
-        script.fire_event("IGNORELIST_UPDATE", Vec::new());
+    let lists = &mut *social;
+    for (dirty, named, event) in [
+        (&mut lists.friends_dirty, friends_named, "FRIENDLIST_UPDATE"),
+        (&mut lists.ignores_dirty, ignores_named, "IGNORELIST_UPDATE"),
+        (&mut lists.mutes_dirty, mutes_named, "MUTELIST_UPDATE"),
+    ] {
+        if first || (*dirty && named) {
+            *dirty = false;
+            script.fire_event(event, Vec::new());
+        }
     }
     // `SMSG_WHO`'s two exits ([`WHO_CHAT_MAX`]); a sort fires its own event inside `SortWho`.
     if social.who_dirty {
@@ -219,82 +233,96 @@ fn who_lines(rows: &[WhoInfo], sent: u32, text: &dyn Fn(&str) -> String) -> Vec<
     lines
 }
 
-/// The friend rows sorted by name, and their guids in the same order for the drain.
+/// The friend rows in `QSortFriends` order (`0x6b3960`): online first, then by name with unnamed
+/// rows last; their guids in the same order for the drain; and whether every name resolved.
 fn friend_rows(
     social: &SocialState,
     names: &NameCache,
     commands: &NetCommands,
-    areas: Option<&AreaTableCatalog>,
-    away: &dyn Fn(u8) -> String,
-) -> (Vec<FriendInfo>, Vec<u64>) {
+    (areas, classes): (Option<&AreaTableCatalog>, &[ChrClassNames]),
+    away: &dyn Fn(bool, u8) -> String,
+) -> (Vec<FriendInfo>, Vec<u64>, bool) {
     let mut rows: Vec<(u64, FriendInfo)> = social
         .friends
         .iter()
-        .map(|entry| {
-            let name = names
-                .resolve(entry.guid, commands)
-                .map(str::to_string)
-                .unwrap_or_default();
-            let online = entry.is_online();
+        .map(|friend| {
+            let name = names.resolve(friend.guid, commands).map(str::to_string);
             (
-                entry.guid,
+                friend.guid,
                 FriendInfo {
+                    guid: friend.guid,
+                    class: friend_class(friend, names, classes),
+                    area: areas.and_then(|a| friend_area(a, friend.area)),
                     name,
-                    level: entry.level,
-                    // An offline friend has no class or zone on the wire; empty, the frame prints
-                    // its Offline template.
-                    class: online
-                        .then(|| class_names(entry.class as u8))
-                        .flatten()
-                        .map(|(display, _)| display.to_string())
-                        .unwrap_or_default(),
-                    area: online
-                        .then(|| areas.and_then(|a| a.name(entry.area)))
-                        .flatten()
-                        .unwrap_or_default()
-                        .to_string(),
-                    connected: online,
-                    status: away(entry.status),
+                    level: friend.level,
+                    connected: friend.connected,
+                    status: away(friend.connected, friend.status),
+                    note: (!friend.note.is_empty()).then(|| friend.note.clone()),
+                    raf: friend.status & friend_status::RAF != 0,
                 },
             )
         })
         .collect();
+    let named = rows.iter().all(|(_, row)| row.name.is_some());
 
-    // By name, unresolved rows last, so a pending name query parks no empty row on top.
     rows.sort_by(|(_, a), (_, b)| {
-        a.name
-            .is_empty()
-            .cmp(&b.name.is_empty())
-            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+        b.connected
+            .cmp(&a.connected)
+            .then_with(|| match (&a.name, &b.name) {
+                (Some(a), Some(b)) => a.to_lowercase().cmp(&b.to_lowercase()),
+                (a, b) => b.is_some().cmp(&a.is_some()),
+            })
     });
-    rows.into_iter().map(|(guid, row)| (row, guid)).unzip()
+    let (rows, order) = rows.into_iter().map(|(guid, row)| (row, guid)).unzip();
+    (rows, order, named)
 }
 
-/// The ignore rows: names only, same ordering rule.
-fn ignore_rows(
-    social: &SocialState,
+/// `GetFriendInfo`'s class (`0x6b4130`): with a `ChrClasses` row for the friend's class, the
+/// name-cache record's class in its gender, else the row's name; no row reads `UNKNOWN`.
+fn friend_class(friend: &Friend, names: &NameCache, classes: &[ChrClassNames]) -> Option<String> {
+    let row = classes.iter().find(|c| c.id == friend.class)?;
+    let shown = names
+        .player_traits(friend.guid)
+        .and_then(|(_, class, gender)| {
+            let cached = classes.iter().find(|c| c.id == u32::from(class))?;
+            Some(gendered(&cached.name, &cached.female, &cached.male, gender))
+        })
+        .unwrap_or(&row.name);
+    Some(shown.to_string())
+}
+
+/// `GetFriendInfo`'s zone: the area's name, or its parent zone's for a subzone, one hop.
+fn friend_area(areas: &AreaTableCatalog, area: u32) -> Option<String> {
+    let row = areas.get(area)?;
+    let shown = match row.zone_id {
+        0 => row,
+        parent => areas.get(parent).unwrap_or(row),
+    };
+    Some(shown.name.clone())
+}
+
+/// An ignore or mute list's names in `QSortIgnore` order (`0x6b3a60`): resolved names first, then
+/// by byte order (`SStrCmp`, case-sensitive); unresolved names are empty. Also the guids in that
+/// order and whether every name resolved.
+fn list_rows(
+    guids: &[u64],
     names: &NameCache,
     commands: &NetCommands,
-) -> (Vec<String>, Vec<u64>) {
-    let mut rows: Vec<(u64, String)> = social
-        .ignores
+) -> (Vec<String>, Vec<u64>, bool) {
+    let mut rows: Vec<(u64, Option<String>)> = guids
         .iter()
-        .map(|guid| {
-            (
-                *guid,
-                names
-                    .resolve(*guid, commands)
-                    .map(str::to_string)
-                    .unwrap_or_default(),
-            )
-        })
+        .map(|guid| (*guid, names.resolve(*guid, commands).map(str::to_string)))
         .collect();
-    rows.sort_by(|(_, a), (_, b)| {
-        a.is_empty()
-            .cmp(&b.is_empty())
-            .then_with(|| a.to_lowercase().cmp(&b.to_lowercase()))
+    let named = rows.iter().all(|(_, name)| name.is_some());
+    rows.sort_by(|(_, a), (_, b)| match (a, b) {
+        (Some(a), Some(b)) => a.cmp(b),
+        (a, b) => b.is_some().cmp(&a.is_some()),
     });
-    rows.into_iter().map(|(guid, name)| (name, guid)).unzip()
+    let (rows, order) = rows
+        .into_iter()
+        .map(|(guid, name)| (name.unwrap_or_default(), guid))
+        .unzip();
+    (rows, order, named)
 }
 
 /// The `/who` rows, resolved, then sorted by the chain as the reference sorts every answer
@@ -353,12 +381,11 @@ fn index_of(order: &[u64], guid: u64) -> u32 {
         .map_or(0, |i| i as u32 + 1)
 }
 
-/// Turn the Lua API's social intents into their sends. By-index intents resolve through the order
-/// the feed published, by-name ones through the resolved names, since the wire removes by guid.
+/// Turn the Lua API's social intents into their sends. A row resolves through the order the feed
+/// published, since the wire removes by guid.
 pub(super) fn drain_social(
     script: Option<NonSendMut<UiScript>>,
     mut social: ResMut<SocialState>,
-    names: Res<NameCache>,
     commands: Res<NetCommands>,
     areas: Option<Res<AreaTableRes>>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
@@ -370,64 +397,58 @@ pub(super) fn drain_social(
     if requests.is_empty() {
         return;
     }
+    let send = |command| {
+        let _ = commands.0.send(command);
+    };
     for request in requests {
         match request {
-            SocialRequest::RefreshFriends => {
-                social.friends_show_pending = true;
-                let _ = commands.0.send(ClientCommand::FriendListRequest);
-            }
-            SocialRequest::AddFriend(name) => {
-                // `0x5ae67c`: the Friends tutorial is acknowledged just before the send.
+            SocialRequest::RefreshFriends => send(ClientCommand::ContactList {
+                mask: contact_flag::FRIEND,
+            }),
+            SocialRequest::AddFriend { name, note } => {
+                // `0x6b540c`: the Friends tutorial is flagged just before the send.
                 if let Some(t) = tutorials.as_mut() {
                     t.write(crate::tutorial::TutorialEvent::Acknowledge {
                         id: crate::tutorial::id::FRIENDS,
                     });
                 }
-                let _ = commands.0.send(ClientCommand::AddFriend { name });
+                send(ClientCommand::AddFriend { name, note });
             }
-            SocialRequest::SetLookingForGroup { slots, comment } => {
-                let _ = commands
-                    .0
-                    .send(ClientCommand::SetLookingForGroup { slots, comment });
-            }
-            SocialRequest::RemoveFriendIndex(index) => {
-                if let Some(guid) = row_guid(&social.display_order, index) {
-                    let _ = commands.0.send(ClientCommand::DelFriend { guid });
+            SocialRequest::RemoveFriend(row) => {
+                if let Some(guid) = social.friend_at_row(row) {
+                    send(ClientCommand::DelFriend { guid });
                 }
             }
-            SocialRequest::RemoveFriendName(name) => {
-                if let Some(guid) = guid_named(&social.display_order, &name, &names) {
-                    let _ = commands.0.send(ClientCommand::DelFriend { guid });
+            SocialRequest::SetFriendNotes { row, note } => {
+                if let Some(guid) = social.friend_at_row(row) {
+                    social.set_note(guid, &note);
+                    send(ClientCommand::SetContactNotes { guid, note });
                 }
             }
-            SocialRequest::AddIgnore(name) => {
-                let _ = commands.0.send(ClientCommand::AddIgnore { name });
-            }
-            SocialRequest::DelIgnore(name) => {
-                if let Some(guid) = guid_named(&social.ignore_display_order, &name, &names) {
-                    let _ = commands.0.send(ClientCommand::DelIgnore { guid });
+            SocialRequest::AddIgnore(name) => send(ClientCommand::AddIgnore { name }),
+            SocialRequest::DelIgnore(row) => {
+                if let Some(guid) = row_guid(&social.ignore_display_order, row) {
+                    send(ClientCommand::DelIgnore { guid });
                 }
             }
-            SocialRequest::ToggleIgnore(name) => {
-                // `/ignore <name>`: un-ignore someone listed, else ignore them.
-                match guid_named(&social.ignore_display_order, &name, &names) {
-                    Some(guid) => {
-                        let _ = commands.0.send(ClientCommand::DelIgnore { guid });
-                    }
-                    None => {
-                        let _ = commands.0.send(ClientCommand::AddIgnore { name });
-                    }
+            SocialRequest::AddMute(name) => send(ClientCommand::AddMute { name }),
+            SocialRequest::DelMute(row) => {
+                if let Some(guid) = row_guid(&social.mute_display_order, row) {
+                    send(ClientCommand::DelMute { guid });
                 }
             }
-            SocialRequest::SelectFriend(index) => {
-                social.selected_friend = row_guid(&social.display_order, index).unwrap_or(0);
+            SocialRequest::SelectFriend(row) => {
+                social.selected_friend = social.friend_at_row(row).unwrap_or(0);
             }
-            SocialRequest::SelectIgnore(index) => {
-                social.selected_ignore = row_guid(&social.ignore_display_order, index).unwrap_or(0);
+            SocialRequest::SelectIgnore(row) => {
+                social.selected_ignore = row_guid(&social.ignore_display_order, row).unwrap_or(0);
+            }
+            SocialRequest::SelectMute(row) => {
+                social.selected_mute = row_guid(&social.mute_display_order, row).unwrap_or(0);
             }
             SocialRequest::Who(filter) => {
                 let request = super::who_query(&filter, areas.as_deref().map(|a| &a.0));
-                let _ = commands.0.send(ClientCommand::Who {
+                send(ClientCommand::Who {
                     request: Box::new(request),
                 });
             }
@@ -439,27 +460,10 @@ pub(super) fn drain_social(
     }
 }
 
-/// The guid at a 1-based display row.
-fn row_guid(order: &[u64], index: u32) -> Option<u64> {
-    usize::try_from(index.checked_sub(1)?)
-        .ok()
-        .and_then(|i| order.get(i))
-        .copied()
-}
-
-/// The guid of the listed player called `name`, case-insensitively.
-fn guid_named(order: &[u64], name: &str, names: &NameCache) -> Option<u64> {
-    order.iter().copied().find(|guid| {
-        names
-            .peek(*guid)
-            .is_some_and(|n| n.eq_ignore_ascii_case(name))
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use benilla_protocol::messages::{friend_status, WhoResults};
+    use benilla_protocol::messages::WhoResults;
 
     fn entry(name: &str, level: u32, guild: &str) -> WhoEntry {
         WhoEntry {
@@ -728,22 +732,37 @@ mod tests {
     }
 
     #[test]
-    fn an_offline_row_carries_no_class_or_zone() {
-        let entry = benilla_protocol::messages::FriendEntry {
-            guid: 7,
-            status: friend_status::OFFLINE,
-            area: 12,
-            level: 60,
-            class: 4,
-        };
-        // The class resolution `friend_rows` uses.
-        let online = entry.is_online();
-        assert!(!online);
-        let class = online
-            .then(|| class_names(entry.class as u8))
-            .flatten()
-            .map(|(d, _)| d.to_string())
-            .unwrap_or_default();
-        assert_eq!(class, "");
+    fn the_away_tag_and_zone_follow_get_friend_info() {
+        let areas = AreaTableCatalog::from_rows(
+            [
+                (1519, "Stormwind City", 0),
+                (5148, "Trade District", 1519),
+                (77, "Orphan", 9),
+            ]
+            .into_iter()
+            .map(|(id, name, zone_id)| {
+                (
+                    id,
+                    benilla_formats::AreaTableRow {
+                        map_id: 0,
+                        zone_id,
+                        explore_flag: 0,
+                        flags: 0,
+                        faction_group_mask: 0,
+                        exploration_level: 0,
+                        name: name.to_string(),
+                    },
+                )
+            })
+            .collect(),
+        );
+        assert_eq!(friend_area(&areas, 5148).as_deref(), Some("Stormwind City"));
+        assert_eq!(friend_area(&areas, 1519).as_deref(), Some("Stormwind City"));
+        assert_eq!(
+            friend_area(&areas, 77).as_deref(),
+            Some("Orphan"),
+            "a missing parent"
+        );
+        assert_eq!(friend_area(&areas, 0), None, "no row reads UNKNOWN");
     }
 }

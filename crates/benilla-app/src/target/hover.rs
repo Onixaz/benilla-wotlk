@@ -18,45 +18,57 @@ use crate::ui_script::PointerOverUi;
 use benilla_world::billboard::BillboardCard;
 use benilla_world::collision::PickOccluder;
 use benilla_world::interact::{
-    ray_mesh_bounds, ray_posed_mesh, CreaturePickPart, GoPickPart, PickParts,
+    ray_mesh_bounds, ray_posed_mesh, CreaturePickPart, DoodadOccluders, GoPickPart, PickParts,
 };
 use benilla_world::view::WorldCamera;
 
 use super::{Hovered, HoveredObject, PickOcclusion};
 
-/// Trace this frame's world hit, the reference's `CWorld::Intersect` leg of the scene trace
-/// (`0x480df0`), through the [`PickOccluder`] set: terrain, the WMO walk-bake faces (about the
-/// `0x84` reject mask) and static doodad hulls. Net entities are the object trace, not occluders,
-/// so a chest never occludes itself. The picks run unbounded and compare against it after.
+/// Trace this frame's world hit, the world leg of `CGWorldFrame::HitTest` (`0x4f9930`, flags
+/// `0x1000124`): the [`PickOccluder`] colliders (terrain, WMO faces), then the drawn doodads
+/// nearer than that ([`DoodadOccluders`]). Net entities are the object trace, not occluders, so a
+/// chest never occludes itself. The picks run unbounded and compare against it after. Aimed as the
+/// picks are: the OS pointer, else the hover probe's aim.
 pub(super) fn update_pick_occlusion(
     camera: Query<(&Camera, &GlobalTransform), With<WorldCamera>>,
     window: Query<&Window, With<PrimaryWindow>>,
     spatial: avian3d::prelude::SpatialQuery,
     occluders: Query<(), With<PickOccluder>>,
+    doodads: DoodadOccluders,
     mut occlusion: ResMut<PickOcclusion>,
 ) {
     *occlusion = PickOcclusion::default();
     let (Ok((camera, cam_tf)), Ok(window)) = (camera.single(), window.single()) else {
         return;
     };
-    let Some(cursor) = window.cursor_position() else {
+    // The probe's aim as the GameObject pick published it last frame: steady for a fixed point
+    // and a held lock.
+    let Some(cursor) = window.cursor_position().or_else(|| {
+        super::hover_probe::armed()
+            .then(super::hover_probe::now)
+            .flatten()
+    }) else {
         return;
     };
     let Ok(ray) = camera.viewport_to_world(cam_tf, cursor) else {
         return;
     };
     occlusion.ray = Some(ray.direction);
-    if let Some(hit) = spatial.cast_ray_predicate(
-        ray.origin,
-        ray.direction,
-        f32::MAX,
-        true,
-        // The mask that reaches every `PickOccluder` collider; the marker picks the set within it.
-        &benilla_world::collision::WorldCollision::body_filter(),
-        &|e| occluders.contains(e),
-    ) {
-        occlusion.distance = hit.distance;
-        occlusion.point = Some(ray.origin + *ray.direction * hit.distance);
+    let world = spatial
+        .cast_ray_predicate(
+            ray.origin,
+            ray.direction,
+            f32::MAX,
+            true,
+            // The mask that reaches every `PickOccluder` collider; the marker picks the set within.
+            &benilla_world::collision::WorldCollision::body_filter(),
+            &|e| occluders.contains(e),
+        )
+        .map_or(f32::INFINITY, |hit| hit.distance);
+    let distance = doodads.cast(ray, world).unwrap_or(world);
+    if distance.is_finite() {
+        occlusion.distance = distance;
+        occlusion.point = Some(ray.origin + *ray.direction * distance);
     }
 }
 

@@ -115,6 +115,81 @@ impl WorldPick<'_, '_> {
     }
 }
 
+/// The drawn doodads as the mouse trace's occluders: `CMap::VectorIntersectDoodadDefs`
+/// (`0x7a2760`) under `CGWorldFrame::HitTest`'s flags `0x1000124` (`0x4f9930`) skips culled defs
+/// and tests the rest in mode 1, their drawn batches ([`benilla_formats::RenderSubmesh::hit_test`]),
+/// never their collision hulls. The entity parts, the static merge's blobs and the static pass
+/// each answer for what they drew.
+#[derive(bevy::ecs::system::SystemParam)]
+pub struct DoodadOccluders<'w, 's> {
+    #[allow(clippy::type_complexity)] // the part query, filtered to the static world
+    parts: Query<
+        'w,
+        's,
+        (
+            &'static PickMesh,
+            &'static WorldObject,
+            &'static GlobalTransform,
+            &'static ViewVisibility,
+            Option<&'static bevy::camera::primitives::Aabb>,
+        ),
+        (Without<GoPickPart>, Without<CreaturePickPart>),
+    >,
+    blobs: Query<
+        'w,
+        's,
+        (
+            &'static PickBlob,
+            &'static GlobalTransform,
+            &'static ViewVisibility,
+            Option<&'static bevy::camera::primitives::Aabb>,
+        ),
+    >,
+    gx: Option<Res<'w, crate::static_gx::StaticGx>>,
+}
+
+impl DoodadOccluders<'_, '_> {
+    /// The nearest drawn doodad hit along `ray` closer than `max`.
+    pub fn cast(&self, ray: Ray3d, max: f32) -> Option<f32> {
+        let (origin, dir) = (ray.origin, *ray.direction);
+        let entry = |aabb: Option<&bevy::camera::primitives::Aabb>, gt: &GlobalTransform| {
+            aabb.map_or(Some(0.0), |aabb| ray_mesh_bounds(origin, dir, aabb, gt))
+        };
+        let mut best = max;
+        for (mesh, object, gt, vis, aabb) in &self.parts {
+            if object.kind != ModelKind::Doodad || !mesh.0.hit_test || !vis.get() {
+                continue;
+            }
+            if entry(aabb, gt).is_some_and(|t| t < best) {
+                if let Some(hit) = ray_member(&mesh.0, gt.compute_transform(), ray) {
+                    best = best.min(hit.distance);
+                }
+            }
+        }
+        for (blob, gt, vis, aabb) in &self.blobs {
+            if !vis.get() || entry(aabb, gt).is_none_or(|t| t >= best) {
+                continue;
+            }
+            for m in blob.0.iter() {
+                if m.object.kind != ModelKind::Doodad || !m.geometry.hit_test {
+                    continue;
+                }
+                if let Some(hit) = ray_member(&m.geometry, m.transform, ray) {
+                    best = best.min(hit.distance);
+                }
+            }
+        }
+        if let Some(t) = self
+            .gx
+            .as_deref()
+            .and_then(|gx| gx.cast_doodad_occluders(ray, best))
+        {
+            best = best.min(t);
+        }
+        (best < max).then_some(best)
+    }
+}
+
 /// Registers the three world click messages.
 pub struct InteractPlugin;
 

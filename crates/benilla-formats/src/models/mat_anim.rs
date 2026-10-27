@@ -153,7 +153,6 @@ mod tests {
 
     /// The Stormwind mage portal's shimmer is transparency weight, 3 of its 4 tracks time-varying.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn mage_portal_bakes_a_time_varying_weight_loop() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");
@@ -634,7 +633,6 @@ mod tests {
 
     /// `AirElemental.m2`'s Death band fades the body to 0, and the parked clock must still read 0.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn air_elemental_death_leaves_no_opaque_body() {
         let data = crate::wow_data_or_skip!();
         let chain = crate::open_chain(&data).expect("open chain");

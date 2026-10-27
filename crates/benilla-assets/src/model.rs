@@ -960,7 +960,6 @@ mod tests {
     /// bones to the body with 50/50 seam rings: the card split refuses to lift them, and the
     /// palette faces them anyway, since `0x714260` reads no vertex data.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_welded_billboard_bone_still_reaches_the_palette_with_its_arm() {
         let data = benilla_formats::wow_data_or_skip!();
         let chain = benilla_formats::open_chain(&data).expect("open chain");

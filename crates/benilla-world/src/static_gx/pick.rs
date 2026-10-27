@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use bevy::prelude::*;
 
-use super::{FaderState, GxCell, StaticGx};
+use super::{FaderState, GxCell, GxItem, StaticGx};
 use crate::interact::{ray_member, ray_mesh_bounds, PickSource, RayHit, WorldObject};
 
 impl PickSource for StaticGx {
@@ -16,35 +16,7 @@ impl PickSource for StaticGx {
         // Broad phase, nearest box entry first as in the entity cast: the narrow walk stops once a
         // hit beats every remaining box.
         let mut candidates: Vec<(f32, &GxCell, usize)> = Vec::new();
-        for entry in &self.world.visible {
-            match entry {
-                super::render::GxDoodadVis::Cell(coord) => {
-                    let Some(cell) = self.cells.get(coord) else {
-                        continue;
-                    };
-                    gather(cell, origin, dir, &mut candidates, |cell, i| {
-                        // A fader draws here only while Steady; exiled, its entities answer.
-                        match cell.items[i].fader {
-                            Some(uid) => matches!(
-                                cell.faders.get(&uid).map(|f| &f.state),
-                                Some(FaderState::Steady)
-                            ),
-                            None => true,
-                        }
-                    });
-                }
-                super::render::GxDoodadVis::Prop(instance, sets) => {
-                    let Some(region) = self.props.get(instance) else {
-                        continue;
-                    };
-                    gather(region, origin, dir, &mut candidates, |region, i| {
-                        region.items[i].prop.as_ref().is_some_and(|p| {
-                            sets.drawn.get(usize::from(p.set)).copied().unwrap_or(false)
-                        })
-                    });
-                }
-            }
-        }
+        self.gather_doodads(origin, dir, &mut candidates, |_| true);
         for (instance, groups) in &self.world.visible_wmos {
             let Some(region) = self.wmos.get(instance) else {
                 continue;
@@ -69,6 +41,70 @@ impl PickSource for StaticGx {
             if let Some(hit) = ray_member(&item.geometry, item.transform, ray) {
                 best = best.min(hit.distance);
                 out.push((item.object.clone(), hit));
+            }
+        }
+    }
+}
+
+impl StaticGx {
+    /// The nearest drawn doodad batch the mouse trace tests along `ray`, closer than `max`: the
+    /// doodad leg of `CMap::VectorIntersectDoodadDefs` (`0x7a2760`) under the mouse flags, which
+    /// skips culled defs (`0x1000000`) and tests the rest by their drawn geometry (mode 1).
+    pub fn cast_doodad_occluders(&self, ray: Ray3d, max: f32) -> Option<f32> {
+        let (origin, dir) = (ray.origin, *ray.direction);
+        let mut candidates: Vec<(f32, &GxCell, usize)> = Vec::new();
+        self.gather_doodads(origin, dir, &mut candidates, |item| item.geometry.hit_test);
+        candidates.sort_unstable_by(|a, b| a.0.total_cmp(&b.0));
+        let mut best = max;
+        for (entry, cell, i) in candidates {
+            if best <= entry {
+                break;
+            }
+            let item = &cell.items[i];
+            if let Some(hit) = ray_member(&item.geometry, item.transform, ray) {
+                best = best.min(hit.distance);
+            }
+        }
+        (best < max).then_some(best)
+    }
+
+    /// The drawn doodad items (cells and WMO props) whose box `ray` enters and `keep` admits.
+    fn gather_doodads<'a>(
+        &'a self,
+        origin: Vec3,
+        dir: Vec3,
+        candidates: &mut Vec<(f32, &'a GxCell, usize)>,
+        keep: impl Fn(&GxItem) -> bool,
+    ) {
+        for entry in &self.world.visible {
+            match entry {
+                super::render::GxDoodadVis::Cell(coord) => {
+                    let Some(cell) = self.cells.get(coord) else {
+                        continue;
+                    };
+                    gather(cell, origin, dir, candidates, |cell, i| {
+                        keep(&cell.items[i])
+                            // A fader draws here only while Steady; exiled, its entities answer.
+                            && match cell.items[i].fader {
+                                Some(uid) => matches!(
+                                    cell.faders.get(&uid).map(|f| &f.state),
+                                    Some(FaderState::Steady)
+                                ),
+                                None => true,
+                            }
+                    });
+                }
+                super::render::GxDoodadVis::Prop(instance, sets) => {
+                    let Some(region) = self.props.get(instance) else {
+                        continue;
+                    };
+                    gather(region, origin, dir, candidates, |region, i| {
+                        keep(&region.items[i])
+                            && region.items[i].prop.as_ref().is_some_and(|p| {
+                                sets.drawn.get(usize::from(p.set)).copied().unwrap_or(false)
+                            })
+                    });
+                }
             }
         }
     }
@@ -109,6 +145,7 @@ mod tests {
     use super::*;
     use crate::interact::PickSource;
     use benilla_formats::ModelBlend;
+    use benilla_formats::RenderSubmesh;
 
     /// Cast straight down through `tri([0,0,0])`, which bakes into the Bevy XZ plane at y = 0 over
     /// x, z in [-1, 0].
@@ -149,6 +186,7 @@ mod tests {
         b.fade = Some(GxFadeSeed {
             size: 0.8,
             local_center: Vec3::ZERO,
+            radius: 1.0,
             stat_mesh: Handle::default(),
             aabb: None,
             cutout: Handle::default(),
@@ -171,5 +209,41 @@ mod tests {
             cast(&gx).is_empty(),
             "exiled: the entity half owns the answer",
         );
+    }
+
+    /// The mouse occluder takes a drawn doodad batch the trace tests, nearer than the cap, and
+    /// skips one the trace leaves out (a blended leaf without material flag `0x20`).
+    #[test]
+    fn the_occluder_cast_takes_only_hit_test_batches() {
+        let ray = Ray3d::new(Vec3::new(-0.3, 5.0, -0.3), Dir3::NEG_Y);
+        let mut gx = StaticGx::default();
+        let solid = Arc::new(RenderSubmesh {
+            hit_test: true,
+            ..(*tri([0.0; 3])).clone()
+        });
+        let leaf = tri([0.0, 0.0, 2.0]); // WoW z 2 is Bevy y 2, between the ray and the rack
+        let (rack, bush) = (object(1), object(2));
+        assert!(gx.divert(batch_of(
+            &rack,
+            &solid,
+            Vec3::ZERO,
+            None,
+            ModelBlend::Opaque
+        )));
+        assert!(gx.divert(batch_of(&bush, &leaf, Vec3::ZERO, None, ModelBlend::Blend)));
+        assert_eq!(
+            gx.cast_doodad_occluders(ray, f32::MAX),
+            None,
+            "nothing drawn"
+        );
+        gx.world.visible.push(GxDoodadVis::Cell((0, 0)));
+        assert_eq!(gx.cast_doodad_occluders(ray, f32::MAX), Some(5.0));
+        assert_eq!(
+            gx.cast_doodad_occluders(ray, 4.0),
+            None,
+            "a world hit nearer than the doodad already wins",
+        );
+        // The leaf lies 2 nearer on the same ray: the inspector names it, the occluder looks past.
+        assert_eq!(cast(&gx).len(), 2);
     }
 }

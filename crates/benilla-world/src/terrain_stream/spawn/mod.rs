@@ -410,9 +410,9 @@ pub(super) fn spawn_loaded_placements(
                         mode,
                     );
                     // ADT doodads are exterior scene: from inside a WMO they draw only through a
-                    // portal window (`0x683700`, fed only by the per-window walk `0x682fa0`).
-                    // Deviation: tagged per submesh, where the reference tests the whole object,
-                    // because a placement has no root entity to carry the bound.
+                    // portal window (`CWorldScene::CullDoodadsExterior` `0x799980`). Tagged per
+                    // submesh, as a placement has no root entity, each testing the placement's
+                    // sphere (`DoodadFade::sphere`).
                     if !matches!(mode, SpawnMode::DivertOnly) {
                         entity_tail(
                             &mut commands,
@@ -442,9 +442,8 @@ pub(super) fn spawn_loaded_placements(
                         });
                     // The entity phase above; the hull and lights below stay while it sleeps.
                     let first_kept = ents.len();
-                    // The collision hull, welded into the owner tile's batch, which carries the
-                    // `PickOccluder` clamp. A hull-less model (a tree canopy) stays pick-through,
-                    // as the reference's world trace tests only collision-flagged doodads.
+                    // The collision hull, welded into the owner tile's batch: the body's and the
+                    // camera's, never the mouse pick's, which tests the drawn batches.
                     if let Some((verts, tris)) = (!doodad_bodies_disabled())
                         .then(|| placement_collider_data(m.collision.as_ref(), &p.transform))
                         .flatten()
@@ -452,13 +451,10 @@ pub(super) fn spawn_loaded_placements(
                         if hull_weld_disabled() {
                             ents.push(
                                 commands
-                                    .spawn((
-                                        PendingCollider::new(
-                                            build_collider_task(verts, tris),
-                                            None,
-                                            !doodad_hulls_bare(),
-                                        ),
-                                        PickOccluder,
+                                    .spawn(PendingCollider::new(
+                                        build_collider_task(verts, tris),
+                                        None,
+                                        !doodad_hulls_bare(),
                                     ))
                                     .id(),
                             );
@@ -697,8 +693,8 @@ pub(super) fn spawn_loaded_placements(
                                     ),
                                     // The walk faces take the selection ring (floors, steps).
                                     GroundDecalSurface,
-                                    // Clamps the mouse pick. The reference's occluder faces are
-                                    // MOPY reject-mask 0x84; the walk bake (0x04) is the nearest.
+                                    // Clamps the mouse pick, standing in for the trace's own
+                                    // face set (the deviation on `PickOccluder`).
                                     PickOccluder,
                                 ))
                                 .id(),
@@ -947,7 +943,8 @@ pub(super) fn spawn_loaded_placements(
             let first_kept = ents.len();
             ents.extend(kept);
             // Solid to body and camera iff it has a collision hull, like a map doodad; welded per
-            // placement, as every prop despawns with its building.
+            // placement, as every prop despawns with its building. The mouse pick tests its drawn
+            // batches instead.
             if let Some((verts, tris)) = (!doodad_bodies_disabled())
                 .then(|| placement_collider_data(m.collision.as_ref(), &d.transform))
                 .flatten()
@@ -955,13 +952,10 @@ pub(super) fn spawn_loaded_placements(
                 if hull_weld_disabled() {
                     ents.push(
                         commands
-                            .spawn((
-                                PendingCollider::new(
-                                    build_collider_task(verts, tris),
-                                    None,
-                                    !doodad_hulls_bare(),
-                                ),
-                                PickOccluder,
+                            .spawn(PendingCollider::new(
+                                build_collider_task(verts, tris),
+                                None,
+                                !doodad_hulls_bare(),
                             ))
                             .id(),
                     );

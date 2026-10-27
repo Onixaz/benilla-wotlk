@@ -795,7 +795,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn registered_dbc_schemas_dump_the_shipped_tables() {
         let data = crate::wow_data_or_skip!();
         let mut chain = open_chain(&data).expect("open chain");

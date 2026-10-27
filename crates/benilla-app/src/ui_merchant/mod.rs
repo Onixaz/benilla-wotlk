@@ -1094,7 +1094,6 @@ mod tests {
     /// at Honored with a PvP-flagged vendor and honor rank byte 8, 0.2 comes off each item before
     /// its rounding, and the undiscounted total is not what the VM reads.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_repair_all_total_takes_the_merchants_discount() {
         use benilla_protocol::field::{
             FIELD_PLAYER_INV_SLOT_HEAD, FIELD_UNIT_FACTIONTEMPLATE, FIELD_UNIT_FLAGS,

@@ -296,7 +296,7 @@ fn a_3_3_5a_move_relay_carries_its_pitch_and_1_12_1_flags() {
 
 #[test]
 fn a_3_3_5a_body_with_no_decoder_yet_is_refused_not_read_as_1_12_1() {
-    assert!(messages::parse_server_with_tail(opcode::SMSG_FRIEND_LIST, &[0; 64]).is_err());
+    assert!(messages::parse_server_with_tail(opcode::SMSG_COMPRESSED_MOVES, &[0; 64]).is_err());
 }
 
 #[test]

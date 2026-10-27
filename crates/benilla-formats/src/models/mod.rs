@@ -130,6 +130,7 @@ fn remap_submesh(
             combiner: None,
             uvs2: Vec::new(),
             sort: None,
+            hit_test: false,
         },
         globals,
     )

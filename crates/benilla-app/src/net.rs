@@ -2108,20 +2108,23 @@ pub(crate) enum ClientCommand {
         arbiter: u64,
     },
     // ── Social ── (added by name, removed by guid)
-    /// `CMSG_FRIEND_LIST`: `ShowFriends()`.
-    FriendListRequest,
-    /// `CMSG_ADD_FRIEND`.
+    /// `CMSG_CONTACT_LIST`: `ShowFriends()`, for the lists `mask` names.
+    ContactList {
+        mask: u32,
+    },
+    /// `CMSG_ADD_FRIEND`, with the friend's note.
     AddFriend {
         name: String,
-    },
-    /// `CMSG_SET_LOOKING_FOR_GROUP`, only when the commit changed something.
-    SetLookingForGroup {
-        slots: [u32; 3],
-        comment: String,
+        note: String,
     },
     /// `CMSG_DEL_FRIEND`.
     DelFriend {
         guid: u64,
+    },
+    /// `CMSG_SET_CONTACT_NOTES`.
+    SetContactNotes {
+        guid: u64,
+        note: String,
     },
     /// `CMSG_ADD_IGNORE`.
     AddIgnore {
@@ -2129,6 +2132,14 @@ pub(crate) enum ClientCommand {
     },
     /// `CMSG_DEL_IGNORE`.
     DelIgnore {
+        guid: u64,
+    },
+    /// `CMSG_ADD_VOICE_IGNORE`: `AddMute`.
+    AddMute {
+        name: String,
+    },
+    /// `CMSG_DEL_VOICE_IGNORE`.
+    DelMute {
         guid: u64,
     },
     /// `CMSG_CHAT_IGNORED`: the server still delivers ignored chat, so the client drops it and

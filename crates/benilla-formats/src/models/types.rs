@@ -362,6 +362,10 @@ pub struct RenderSubmesh {
     pub uvs2: Vec<[f32; 2]>,
     /// The M2 batch's transparent sort key ([`BatchSort`]); `None` on WMO.
     pub sort: Option<BatchSort>,
+    /// The mouse trace's doodad test takes this batch (`CM2Scene::HitTestGeometry` `0x81daf0`,
+    /// mode 1): material layer 0, batch flag `0x08` clear, and an opaque material or one flagged
+    /// `0x20`. M2 only.
+    pub hit_test: bool,
 }
 
 /// An M2 batch's place in the transparent order. `CM2Scene::Animate` (`0x821a20`) fills each
@@ -550,6 +554,7 @@ impl Default for RenderSubmesh {
             combiner: None,
             uvs2: Vec::new(),
             sort: None,
+            hit_test: false,
         }
     }
 }

@@ -1451,7 +1451,6 @@ mod tests {
     /// With the install: the ghost bed is `GhostState.wav` and the water bed the underwater loop
     /// at its own row's volume, each a file the chain opens.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_install_s_ghost_and_water_beds_are_the_donotrename_rows() {
         let data = benilla_formats::wow_data_or_skip!();
         let mut chain = benilla_formats::open_chain(&data).expect("chain");

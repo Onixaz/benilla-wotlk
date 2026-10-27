@@ -129,8 +129,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "IsHarmfulSpell",
     "IsHelpfulItem",
     "IsHelpfulSpell",
-    "IsIgnored",
-    "IsIgnoredOrMuted",
     "IsIndoors",
     "IsItemInRange",
     "IsLeftAltKeyDown",

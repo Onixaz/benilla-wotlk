@@ -305,7 +305,7 @@ pub fn parse_server_with_tail(opcode: u16, body: &[u8]) -> io::Result<(ServerPac
 /// The opcodes whose 3.3.5a body is known to differ from the layout their arm reads and has no
 /// 3.3.5a decoder yet: each failed or left bytes unread against AzerothCore, and
 /// `SMSG_COMPRESSED_MOVES`, which AzerothCore never sends, frames its records unverified.
-const UNDECODED: [u16; 2] = [opcode::SMSG_FRIEND_LIST, opcode::SMSG_COMPRESSED_MOVES];
+const UNDECODED: [u16; 1] = [opcode::SMSG_COMPRESSED_MOVES];
 
 /// The opcode dispatch; `cursor` advances past what the arm read only on success.
 fn parse_server_body(
@@ -1748,12 +1748,7 @@ fn parse_server_body(
         opcode::SMSG_STOP_MIRROR_TIMER => ServerPacket::MirrorTimerStop {
             kind: mirror_timer::read_stop_mirror_timer(&mut r)?,
         },
-        opcode::SMSG_FRIEND_LIST => ServerPacket::FriendList {
-            friends: social::read_friend_list(&mut r)?,
-        },
-        opcode::SMSG_IGNORE_LIST => ServerPacket::IgnoreList {
-            guids: social::read_ignore_list(&mut r)?,
-        },
+        opcode::SMSG_CONTACT_LIST => ServerPacket::ContactList(social::read_contact_list(&mut r)?),
         opcode::SMSG_FRIEND_STATUS => {
             ServerPacket::FriendStatus(social::read_friend_status(&mut r)?)
         }

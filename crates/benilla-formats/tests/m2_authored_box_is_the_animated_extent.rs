@@ -7,7 +7,6 @@ use benilla_formats::{open_chain, parse_m2_animations, parse_m2_bounds};
 const BIRD: &str = "World\\critter\\birds\\Bird01.m2";
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_birds_authored_box_covers_a_flight_path_its_bind_pose_never_hints_at() {
     let data = benilla_formats::wow_data_or_skip!();
     let chain = open_chain(&data).expect("open vanilla patch chain");

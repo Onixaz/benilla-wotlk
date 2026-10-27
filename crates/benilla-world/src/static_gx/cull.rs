@@ -105,6 +105,7 @@ fn spawn_exile(commands: &mut Commands, f: &GxFader, alpha: f32, admitted: bool)
             crate::model_fade::DoodadFade {
                 size: f.size,
                 local_center: f.local_center,
+                sphere: Some((f.center, f.radius)),
                 cutout: b.cutout.clone(),
                 blend: b.blend.clone(),
             },
@@ -444,6 +445,8 @@ pub(super) fn cull_cells(
                 continue;
             }
             // ADT doodads are exterior scene: from inside a WMO they draw only through a window.
+            // Deviation: the whole baked cell on its box, where the reference tests each
+            // placement's sphere; the admitted cell holds every placement the window reaches.
             if !gate.admits(
                 &GlobalTransform::from_translation(draw.origin),
                 Some(&draw.aabb),
@@ -729,6 +732,7 @@ mod tests {
         b.fade = Some(GxFadeSeed {
             size: 0.5, // fade level 0: the 25..30 yd band
             local_center: Vec3::ZERO,
+            radius: 1.0,
             stat_mesh: Handle::default(),
             aabb: None,
             cutout: Handle::default(),

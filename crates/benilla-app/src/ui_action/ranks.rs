@@ -115,7 +115,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_stale_rank_1_slot_moves_to_the_known_rank_and_persists() {
         let Some(data) = client_data() else { return };
         let (store, sent) = normalize(&data, &[spell_button(0, 1752)], &[11294]);
@@ -125,7 +124,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn every_wrong_rank_converges_and_the_right_one_stays_put() {
         let Some(data) = client_data() else { return };
         let buttons: Vec<ActionButton> = SS
@@ -144,7 +142,6 @@ mod tests {
 
     /// Fireball's ranks 1 and 2 (133, 143) carry no `forward_spellid`.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_unchained_caster_rank_is_left_alone() {
         let Some(data) = client_data() else { return };
         let (store, sent) = normalize(&data, &[spell_button(0, 133)], &[133, 143]);
@@ -153,7 +150,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn an_unknown_chain_leaves_the_slot_untouched() {
         let Some(data) = client_data() else { return };
         let (store, sent) = normalize(&data, &[spell_button(0, 1752)], &[]);
@@ -162,7 +158,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn macro_and_item_slots_are_never_walked() {
         let Some(data) = client_data() else { return };
         let buttons = [
@@ -184,7 +179,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_correct_bar_sends_nothing() {
         let Some(data) = client_data() else { return };
         // Rank 8 on the bar, plus the auto-attack (no `SkillLineAbility` row at all).

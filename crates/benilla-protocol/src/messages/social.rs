@@ -1,37 +1,38 @@
-//! The social family: friend list, ignore list and `/who` (0x62-0x6d). The 1.12 client holds 50
-//! friends and 25 ignores (the `FriendList` slot arrays at `+0x008` and `+0x650`), the vmangos
-//! limits too; FrameXML's `MAX_IGNORE = 50` is dead data.
+//! The social family: the contact list (friends, ignores and voice mutes in one packet) and
+//! `/who` (0x62-0x6d). The 3.3.5a client holds 100 friends, 50 ignores and 50 mutes (`FriendList`
+//! at `0xc28168`; `GetNumFriends` `0x6b34a0`, `GetNumIgnores` `0x6b3630`, `GetNumMutes`
+//! `0x6b3680`).
 
 use std::io::{self, Read};
 
 use crate::wire::{capacity_hint, read_cstring, read_u32_le, read_u64_le, read_u8};
 
-/// `SMSG_FRIEND_STATUS`'s result byte, vmangos `FriendsResult` (`SocialMgr.h:81-110`). The client
-/// (`0x5acab0`) prints each result's `ERR_*` string to the chat frame, not the red error line.
+/// `SMSG_FRIEND_STATUS`'s result byte, as `HandleStatus` (`0x6b73a0`) switches on it. Every result
+/// prints through `DisplayError` to the chat frame, not the red error line.
 pub mod friend_result {
-    /// `ERR_FRIEND_DB_ERROR`: the server's lookup failed.
+    /// `ERR_FRIEND_NOT_FOUND`, as [`NOT_FOUND`] (the emulators' `FRIEND_DB_ERROR`).
     pub const DB_ERROR: u8 = 0x00;
-    /// `ERR_FRIEND_LIST_FULL`: 50 friends already.
+    /// `ERR_FRIEND_LIST_FULL`.
     pub const LIST_FULL: u8 = 0x01;
-    /// `ERR_FRIEND_ONLINE_SS`: a friend just logged in (broadcast, not an ack).
+    /// `ERR_FRIEND_ONLINE_SS`: a friend logged in; the presence tail follows.
     pub const ONLINE: u8 = 0x02;
-    /// `ERR_FRIEND_OFFLINE_S`: a friend just logged out (broadcast).
+    /// `ERR_FRIEND_OFFLINE_S`: a friend logged out; no tail.
     pub const OFFLINE: u8 = 0x03;
-    /// `ERR_FRIEND_NOT_FOUND`: no character by that name.
+    /// `ERR_FRIEND_NOT_FOUND`.
     pub const NOT_FOUND: u8 = 0x04;
     /// `ERR_FRIEND_REMOVED_S`: the ack for `CMSG_DEL_FRIEND`.
     pub const REMOVED: u8 = 0x05;
-    /// `ERR_FRIEND_ADDED_S`, friend online: carries the online tail.
+    /// `ERR_FRIEND_ADDED_S`, friend online: the note, then the presence tail.
     pub const ADDED_ONLINE: u8 = 0x06;
-    /// `ERR_FRIEND_ADDED_S`, friend offline: no tail.
+    /// `ERR_FRIEND_ADDED_S`, friend offline: the note alone.
     pub const ADDED_OFFLINE: u8 = 0x07;
     /// `ERR_FRIEND_ALREADY_S`.
     pub const ALREADY: u8 = 0x08;
     /// `ERR_FRIEND_SELF`.
     pub const SELF: u8 = 0x09;
-    /// `ERR_FRIEND_WRONG_FACTION`: cross-faction friending, refused by config.
+    /// `ERR_FRIEND_WRONG_FACTION`.
     pub const ENEMY: u8 = 0x0A;
-    /// `ERR_IGNORE_FULL`: 25 ignores already.
+    /// `ERR_IGNORE_FULL`.
     pub const IGNORE_FULL: u8 = 0x0B;
     /// `ERR_IGNORE_SELF`.
     pub const IGNORE_SELF: u8 = 0x0C;
@@ -45,86 +46,138 @@ pub mod friend_result {
     pub const IGNORE_REMOVED: u8 = 0x10;
     /// `ERR_IGNORE_AMBIGUOUS`.
     pub const IGNORE_AMBIGUOUS: u8 = 0x11;
-    /// `ERR_FRIEND_ERROR` ("Unknown friend response from server."), vmangos `FRIEND_UNKNOWN`.
-    pub const UNKNOWN: u8 = 0x1A;
+    /// `ERR_VOICE_IGNORE_FULL`; 0x12-0x18 are the mute list's twins of 0x0b-0x11.
+    pub const MUTE_FULL: u8 = 0x12;
+    /// `ERR_VOICE_IGNORE_SELF`.
+    pub const MUTE_SELF: u8 = 0x13;
+    /// `ERR_VOICE_IGNORE_NOT_FOUND`.
+    pub const MUTE_NOT_FOUND: u8 = 0x14;
+    /// `ERR_VOICE_IGNORE_ALREADY_S`.
+    pub const MUTE_ALREADY: u8 = 0x15;
+    /// `ERR_VOICE_IGNORE_ADDED_S`: the ack for `CMSG_ADD_VOICE_IGNORE`.
+    pub const MUTE_ADDED: u8 = 0x16;
+    /// `ERR_VOICE_IGNORE_REMOVED_S`: the ack for `CMSG_DEL_VOICE_IGNORE`.
+    pub const MUTE_REMOVED: u8 = 0x17;
+    /// `ERR_VOICE_IGNORE_AMBIGUOUS`.
+    pub const MUTE_AMBIGUOUS: u8 = 0x18;
+    /// Shows nothing (`DisplayError` of the no-message id).
+    pub const SILENT: u8 = 0x19;
+    /// A friend's away flags changed: a `u8` presence follows; `FRIENDLIST_UPDATE`, no line.
+    pub const FLAGS_CHANGED: u8 = 0x1A;
+    /// A friend changed zone: a `u32` area follows; `FRIENDLIST_UPDATE`, no line.
+    pub const AREA_CHANGED: u8 = 0x1B;
 }
 
-/// A friend's presence byte, vmangos `FriendStatus` (`SocialMgr.h:36-43`).
+/// A contact entry's list bits (`ReadPacket` `0x6b7dd0`), also the list mask `SMSG_CONTACT_LIST`
+/// opens with and `CMSG_CONTACT_LIST` asks for.
+pub mod contact_flag {
+    /// On the friend list: the entry carries the presence tail.
+    pub const FRIEND: u32 = 0x1;
+    pub const IGNORED: u32 = 0x2;
+    /// On the voice mute list.
+    pub const MUTED: u32 = 0x4;
+}
+
+/// A friend's presence byte, a flag set: any bit is online (`m_connected = status != 0`).
 pub mod friend_status {
-    /// Offline: the entry carries no area/level/class.
     pub const OFFLINE: u8 = 0;
-    /// Online, no away flag.
-    pub const ONLINE: u8 = 1;
-    /// Online and flagged AFK.
-    pub const AFK: u8 = 2;
-    /// Online and flagged DND (`3` is unused by 1.12 vmangos).
-    pub const DND: u8 = 4;
+    pub const ONLINE: u8 = 0x1;
+    /// `GetFriendInfo` shows `CHAT_FLAG_AFK` (`0x6b4130`).
+    pub const AFK: u8 = 0x2;
+    /// `CHAT_FLAG_DND`, which outranks AFK.
+    pub const DND: u8 = 0x4;
+    /// Recruit-A-Friend: `GetFriendInfo`'s eighth return.
+    pub const RAF: u8 = 0x8;
 }
 
-/// One friend-list row. The name is not on the wire: the client resolves it through its name cache
-/// (`0x55f080`, filled by `CMSG_NAME_QUERY`) when it draws the row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub struct FriendEntry {
-    /// Always a player guid: vmangos rebuilds it as `ObjectGuid(HIGHGUID_PLAYER, lowguid)`.
+/// One `SMSG_CONTACT_LIST` entry. The name is not on the wire: the client resolves it through the
+/// name cache when it reads the entry.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ContactEntry {
     pub guid: u64,
-    /// A [`friend_status`]; when `OFFLINE`, the fields below were not sent and read as zero.
+    /// The [`contact_flag`] lists this player is on.
+    pub flags: u32,
+    /// The friend note, up to 511 bytes; empty for none.
+    pub note: String,
+    /// A [`friend_status`] set, read only for a friend; 0 offline.
     pub status: u8,
-    /// The friend's zone id (`AreaTable.dbc`).
+    /// The zone id (`AreaTable.dbc`), level and class, sent only for an online friend.
     pub area: u32,
     pub level: u32,
     pub class: u32,
 }
 
-impl FriendEntry {
-    /// Any of ONLINE/AFK/DND: the wire's own test for whether the area/level/class tail is sent.
-    pub fn is_online(&self) -> bool {
-        self.status != friend_status::OFFLINE
-    }
+/// `SMSG_CONTACT_LIST`: the lists `mask` names replaced by the entries on them.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ContactList {
+    /// The [`contact_flag`] lists this packet replaces; an entry's bits outside it are skipped.
+    pub mask: u32,
+    pub contacts: Vec<ContactEntry>,
 }
 
-/// Read `SMSG_FRIEND_LIST` (vmangos `Social.cpp`, client `0x5ae350`): a `u8` count, then per
-/// friend a `u64` guid, a `u8` status and, only if the status is non-zero, `u32` area/level/class.
-pub fn read_friend_list(r: &mut impl Read) -> io::Result<Vec<FriendEntry>> {
-    let count = read_u8(r)?;
-    // vmangos `SOCIALMGR_FRIEND_LIMIT` 50 (`SocialMgr.h:114`).
-    let mut friends = Vec::with_capacity(capacity_hint(count, 50));
+/// Read `SMSG_CONTACT_LIST` (`ReadPacket` `0x6b7dd0`): `u32` list mask, `u32` count, then per
+/// entry `u64` guid, `u32` flags, the note cstring and, for a friend, a `u8` status with `u32`
+/// area/level/class when it is non-zero. A trailing 16-byte module key is left unread.
+pub fn read_contact_list(r: &mut impl Read) -> io::Result<ContactList> {
+    let mask = read_u32_le(r)?;
+    let count = read_u32_le(r)?;
+    // 100 friends and 50 each of ignores and mutes.
+    let mut contacts = Vec::with_capacity(capacity_hint(count, 200));
     for _ in 0..count {
-        let mut entry = FriendEntry {
+        let mut entry = ContactEntry {
             guid: read_u64_le(r)?,
-            status: read_u8(r)?,
+            flags: read_u32_le(r)?,
+            note: read_cstring(r)?,
             ..Default::default()
         };
-        if entry.is_online() {
-            entry.area = read_u32_le(r)?;
-            entry.level = read_u32_le(r)?;
-            entry.class = read_u32_le(r)?;
+        if entry.flags & contact_flag::FRIEND != 0 {
+            entry.status = read_u8(r)?;
+            if entry.status != friend_status::OFFLINE {
+                entry.area = read_u32_le(r)?;
+                entry.level = read_u32_le(r)?;
+                entry.class = read_u32_le(r)?;
+            }
         }
-        friends.push(entry);
+        contacts.push(entry);
     }
-    Ok(friends)
+    Ok(ContactList { mask, contacts })
 }
 
-/// Read `SMSG_IGNORE_LIST` (vmangos `Social.cpp`): a `u8` count, then that many guids.
-pub fn read_ignore_list(r: &mut impl Read) -> io::Result<Vec<u64>> {
-    let count = read_u8(r)?;
-    (0..count).map(|_| read_u64_le(r)).collect()
-}
-
-/// `SMSG_FRIEND_STATUS`: one result about one player, with their whereabouts when online.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// `SMSG_FRIEND_STATUS`: one result about one player, with whatever tail its code carries.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FriendStatusUpdate {
-    /// A [`friend_result`] code, either an ack or a login/logout broadcast; the code says which.
+    /// A [`friend_result`] code, either an ack or a broadcast; the code says which.
     pub result: u8,
     /// The player the result is about; 0 for `NOT_FOUND`.
     pub guid: u64,
-    /// Present only for [`friend_result::ONLINE`] and [`friend_result::ADDED_ONLINE`].
+    /// The friend note, for the two `ADDED` codes.
+    pub note: Option<String>,
+    /// The presence tail, for [`friend_result::ONLINE`] and [`friend_result::ADDED_ONLINE`].
     pub online: Option<FriendOnline>,
+    /// The new presence byte of [`friend_result::FLAGS_CHANGED`].
+    pub status: Option<u8>,
+    /// The new zone of [`friend_result::AREA_CHANGED`].
+    pub area: Option<u32>,
 }
 
-/// The presence tail of an online `SMSG_FRIEND_STATUS`: the four fields a [`FriendEntry`] holds.
+impl FriendStatusUpdate {
+    /// A result with no tail.
+    pub fn bare(result: u8, guid: u64) -> Self {
+        Self {
+            result,
+            guid,
+            note: None,
+            online: None,
+            status: None,
+            area: None,
+        }
+    }
+}
+
+/// The presence tail of an online `SMSG_FRIEND_STATUS`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FriendOnline {
-    /// A [`friend_status`] (the vmangos `SUPPORTED_CLIENT_BUILD > CLIENT_BUILD_1_8_4` arm).
+    /// A [`friend_status`] set.
     pub status: u8,
     /// Zone id.
     pub area: u32,
@@ -132,26 +185,29 @@ pub struct FriendOnline {
     pub class: u32,
 }
 
-/// Read `SMSG_FRIEND_STATUS` (vmangos `SocialMgr::SendFriendStatus`, client `0x5add30`): `u8`
-/// result, `u64` guid, then the online tail when the result code says so, whatever the length.
+/// Read `SMSG_FRIEND_STATUS` (`0x6b86b0`, tails per code in `HandleStatus` `0x6b73a0`): `u8`
+/// result, `u64` guid, then the note for the two `ADDED` codes, the presence tail for `ONLINE` and
+/// `ADDED_ONLINE`, a `u8` for `FLAGS_CHANGED` and a `u32` for `AREA_CHANGED`.
 pub fn read_friend_status(r: &mut impl Read) -> io::Result<FriendStatusUpdate> {
-    let result = read_u8(r)?;
-    let guid = read_u64_le(r)?;
-    let online = matches!(result, friend_result::ONLINE | friend_result::ADDED_ONLINE)
-        .then(|| -> io::Result<FriendOnline> {
-            Ok(FriendOnline {
+    use friend_result as R;
+    let mut update = FriendStatusUpdate::bare(read_u8(r)?, read_u64_le(r)?);
+    if matches!(update.result, R::ADDED_ONLINE | R::ADDED_OFFLINE) {
+        update.note = Some(read_cstring(r)?);
+    }
+    match update.result {
+        R::ONLINE | R::ADDED_ONLINE => {
+            update.online = Some(FriendOnline {
                 status: read_u8(r)?,
                 area: read_u32_le(r)?,
                 level: read_u32_le(r)?,
                 class: read_u32_le(r)?,
-            })
-        })
-        .transpose()?;
-    Ok(FriendStatusUpdate {
-        result,
-        guid,
-        online,
-    })
+            });
+        }
+        R::FLAGS_CHANGED => update.status = Some(read_u8(r)?),
+        R::AREA_CHANGED => update.area = Some(read_u32_le(r)?),
+        _ => {}
+    }
+    Ok(update)
 }
 
 /// One `/who` hit; unlike a friend row, every field is on the wire.
@@ -270,15 +326,20 @@ pub fn who(request: &WhoRequest) -> Vec<u8> {
     body
 }
 
-/// Body of `CMSG_FRIEND_LIST`: empty. The `ShowFriends()` refresh; the list also arrives unasked
-/// at login (`CharacterHandler.cpp:527`).
-pub fn friend_list() -> Vec<u8> {
-    Vec::new()
+/// Body of `CMSG_CONTACT_LIST`: the [`contact_flag`] lists wanted; `ShowFriends()` asks for the
+/// friends alone (`0x6b44f0`). The whole list also arrives unasked at login.
+pub fn contact_list(mask: u32) -> Vec<u8> {
+    mask.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_ADD_FRIEND`: the name; the server normalises its case (`normalizePlayerName`).
-pub fn add_friend(name: &str) -> Vec<u8> {
-    cstring_body(name)
+/// Body of `CMSG_ADD_FRIEND` (`0x6b5400`): the name, kept to 304 bytes, then the note, to 511.
+pub fn add_friend(name: &str, note: &str) -> Vec<u8> {
+    let name = truncate_bytes(name, 304);
+    let note = truncate_bytes(note, 511);
+    let mut body = Vec::with_capacity(name.len() + note.len() + 2);
+    push_cstring(&mut body, name);
+    push_cstring(&mut body, note);
+    body
 }
 
 /// Body of `CMSG_DEL_FRIEND`: removal is by guid, not name.
@@ -286,9 +347,18 @@ pub fn del_friend(guid: u64) -> Vec<u8> {
     guid.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_ADD_IGNORE`: the name to ignore.
+/// Body of `CMSG_SET_CONTACT_NOTES` (`0x6b5540`): the guid, then the note as stored, to 511 bytes.
+pub fn set_contact_notes(guid: u64, note: &str) -> Vec<u8> {
+    let note = truncate_bytes(note, 511);
+    let mut body = Vec::with_capacity(8 + note.len() + 1);
+    body.extend_from_slice(&guid.to_le_bytes());
+    push_cstring(&mut body, note);
+    body
+}
+
+/// Body of `CMSG_ADD_IGNORE` (`0x6b5f70`): the name, kept to 255 bytes.
 pub fn add_ignore(name: &str) -> Vec<u8> {
-    cstring_body(name)
+    cstring_body(truncate_bytes(name, 255))
 }
 
 /// Body of `CMSG_DEL_IGNORE`: removal is by guid.
@@ -296,15 +366,26 @@ pub fn del_ignore(guid: u64) -> Vec<u8> {
     guid.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_SET_LOOKING_FOR_GROUP` (`0x4e88c0`): the three slot words as stored, then the
-/// comment cstring, always. The 1.12 client sends it only when a commit changed something.
-pub fn set_looking_for_group(slots: [u32; 3], comment: &str) -> Vec<u8> {
-    let mut body = Vec::with_capacity(12 + comment.len() + 1);
-    for slot in slots {
-        body.extend_from_slice(&slot.to_le_bytes());
+/// Body of `CMSG_ADD_VOICE_IGNORE` (`0x6b62c0`): the name, kept to 304 bytes.
+pub fn add_mute(name: &str) -> Vec<u8> {
+    cstring_body(truncate_bytes(name, 304))
+}
+
+/// Body of `CMSG_DEL_VOICE_IGNORE` (`0x6b6410`): by guid.
+pub fn del_mute(guid: u64) -> Vec<u8> {
+    guid.to_le_bytes().to_vec()
+}
+
+/// `SStrCopy` into a buffer of `max + 1`: at most `max` bytes, cut on a character boundary.
+fn truncate_bytes(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
     }
-    push_cstring(&mut body, comment);
-    body
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 fn cstring_body(s: &str) -> Vec<u8> {
@@ -322,89 +403,129 @@ fn push_cstring(body: &mut Vec<u8>, s: &str) {
 mod tests {
     use super::*;
 
+    /// One packet, three lists: an offline friend with a note, an online AFK friend, an ignore and
+    /// a mute, each entry's tail keyed on its own flags.
     #[test]
-    fn set_looking_for_group_is_three_words_and_a_cstring() {
-        let body = set_looking_for_group([0, 0, 0], "LF2M UBRS");
-        assert_eq!(&body[..12], &[0u8; 12]);
-        assert_eq!(&body[12..], b"LF2M UBRS\0");
-        assert_eq!(set_looking_for_group([1, 2, 3], ""), {
-            let mut v = vec![1u8, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0];
-            v.push(0);
-            v
-        });
-    }
-
-    #[test]
-    fn friend_list_tail_is_conditional_on_the_status_byte() {
-        let mut body = vec![2u8]; // count
-        body.extend_from_slice(&7u64.to_le_bytes()); // offline friend
+    fn the_contact_list_reads_each_entrys_tail_from_its_flags() {
+        let mut body = Vec::new();
+        body.extend_from_slice(&7u32.to_le_bytes()); // mask: all three lists
+        body.extend_from_slice(&4u32.to_le_bytes()); // count
+        body.extend_from_slice(&7u64.to_le_bytes());
+        body.extend_from_slice(&contact_flag::FRIEND.to_le_bytes());
+        body.extend_from_slice(b"raid healer\0");
         body.push(friend_status::OFFLINE);
-        body.extend_from_slice(&9u64.to_le_bytes()); // online friend
-        body.push(friend_status::AFK);
-        body.extend_from_slice(&12u32.to_le_bytes()); // area
-        body.extend_from_slice(&60u32.to_le_bytes()); // level
-        body.extend_from_slice(&11u32.to_le_bytes()); // class
+        body.extend_from_slice(&9u64.to_le_bytes());
+        body.extend_from_slice(&contact_flag::FRIEND.to_le_bytes());
+        body.push(0);
+        body.push(friend_status::ONLINE | friend_status::AFK);
+        body.extend_from_slice(&1519u32.to_le_bytes());
+        body.extend_from_slice(&80u32.to_le_bytes());
+        body.extend_from_slice(&6u32.to_le_bytes());
+        body.extend_from_slice(&11u64.to_le_bytes());
+        body.extend_from_slice(&contact_flag::IGNORED.to_le_bytes());
+        body.push(0);
+        body.extend_from_slice(&12u64.to_le_bytes());
+        body.extend_from_slice(&contact_flag::MUTED.to_le_bytes());
+        body.push(0);
 
-        let friends = read_friend_list(&mut &body[..]).unwrap();
+        let mut r = &body[..];
+        let list = read_contact_list(&mut r).unwrap();
+        assert!(r.is_empty(), "every byte read");
+        assert_eq!(list.mask, 7);
         assert_eq!(
-            friends,
+            list.contacts,
             vec![
-                FriendEntry {
+                ContactEntry {
                     guid: 7,
-                    status: friend_status::OFFLINE,
+                    flags: contact_flag::FRIEND,
+                    note: "raid healer".into(),
                     ..Default::default()
                 },
-                FriendEntry {
+                ContactEntry {
                     guid: 9,
-                    status: friend_status::AFK,
-                    area: 12,
-                    level: 60,
-                    class: 11,
+                    flags: contact_flag::FRIEND,
+                    status: friend_status::ONLINE | friend_status::AFK,
+                    area: 1519,
+                    level: 80,
+                    class: 6,
+                    ..Default::default()
+                },
+                ContactEntry {
+                    guid: 11,
+                    flags: contact_flag::IGNORED,
+                    ..Default::default()
+                },
+                ContactEntry {
+                    guid: 12,
+                    flags: contact_flag::MUTED,
+                    ..Default::default()
                 },
             ]
         );
-        assert!(!friends[0].is_online() && friends[1].is_online());
     }
 
     #[test]
-    fn ignore_list_is_a_counted_guid_array() {
-        let mut body = vec![2u8];
-        body.extend_from_slice(&0x1122u64.to_le_bytes());
-        body.extend_from_slice(&0x3344u64.to_le_bytes());
-        assert_eq!(
-            read_ignore_list(&mut &body[..]).unwrap(),
-            vec![0x1122, 0x3344]
-        );
-    }
-
-    #[test]
-    fn friend_status_tail_is_keyed_on_the_result_code() {
+    fn friend_status_tails_are_keyed_on_the_result_code() {
         let mut online = vec![friend_result::ONLINE];
         online.extend_from_slice(&9u64.to_le_bytes());
-        online.push(friend_status::DND);
+        online.push(friend_status::ONLINE | friend_status::DND);
         online.extend_from_slice(&1519u32.to_le_bytes());
         online.extend_from_slice(&60u32.to_le_bytes());
         online.extend_from_slice(&8u32.to_le_bytes());
         assert_eq!(
             read_friend_status(&mut &online[..]).unwrap(),
             FriendStatusUpdate {
-                result: friend_result::ONLINE,
-                guid: 9,
                 online: Some(FriendOnline {
-                    status: friend_status::DND,
+                    status: friend_status::ONLINE | friend_status::DND,
                     area: 1519,
                     level: 60,
                     class: 8,
                 }),
+                ..FriendStatusUpdate::bare(friend_result::ONLINE, 9)
             }
         );
+
+        // ADDED_ONLINE: the note comes before the presence tail.
+        let mut added = vec![friend_result::ADDED_ONLINE];
+        added.extend_from_slice(&9u64.to_le_bytes());
+        added.extend_from_slice(b"tank\0");
+        added.push(friend_status::ONLINE);
+        for v in [12u32, 10, 1] {
+            added.extend_from_slice(&v.to_le_bytes());
+        }
+        let mut r = &added[..];
+        let status = read_friend_status(&mut r).unwrap();
+        assert!(r.is_empty());
+        assert_eq!(status.note.as_deref(), Some("tank"));
+        assert_eq!(status.online.map(|o| o.level), Some(10));
+
+        let mut offline = vec![friend_result::ADDED_OFFLINE];
+        offline.extend_from_slice(&9u64.to_le_bytes());
+        offline.extend_from_slice(b"\0");
+        let status = read_friend_status(&mut &offline[..]).unwrap();
+        assert_eq!(status.note.as_deref(), Some(""));
+        assert_eq!(status.online, None);
+
+        let mut flags = vec![friend_result::FLAGS_CHANGED];
+        flags.extend_from_slice(&9u64.to_le_bytes());
+        flags.push(friend_status::ONLINE | friend_status::AFK);
+        assert_eq!(
+            read_friend_status(&mut &flags[..]).unwrap().status,
+            Some(friend_status::ONLINE | friend_status::AFK)
+        );
+
+        let mut area = vec![friend_result::AREA_CHANGED];
+        area.extend_from_slice(&9u64.to_le_bytes());
+        area.extend_from_slice(&4395u32.to_le_bytes());
+        assert_eq!(read_friend_status(&mut &area[..]).unwrap().area, Some(4395));
 
         let mut removed = vec![friend_result::REMOVED];
         removed.extend_from_slice(&9u64.to_le_bytes());
         removed.extend_from_slice(&[0xFF; 13]); // must be ignored, not parsed
-        let status = read_friend_status(&mut &removed[..]).unwrap();
-        assert_eq!(status.result, friend_result::REMOVED);
-        assert_eq!(status.online, None);
+        assert_eq!(
+            read_friend_status(&mut &removed[..]).unwrap(),
+            FriendStatusUpdate::bare(friend_result::REMOVED, 9)
+        );
     }
 
     #[test]
@@ -559,11 +680,21 @@ mod tests {
     }
 
     #[test]
-    fn the_add_and_del_bodies() {
-        assert_eq!(add_friend("Bob"), b"Bob\0");
+    fn the_contact_sends() {
+        assert_eq!(contact_list(contact_flag::FRIEND), 1u32.to_le_bytes());
+        assert_eq!(add_friend("Bob", ""), b"Bob\0\0");
+        assert_eq!(add_friend("Bob", "tank"), b"Bob\0tank\0");
+        assert_eq!(add_friend("Bob", &"n".repeat(600)).len(), 4 + 511 + 1);
         assert_eq!(add_ignore("Bob"), b"Bob\0");
+        assert_eq!(add_mute("Bob"), b"Bob\0");
         assert_eq!(del_friend(0xDEAD_BEEF), 0xDEAD_BEEFu64.to_le_bytes());
         assert_eq!(del_ignore(0xDEAD_BEEF), 0xDEAD_BEEFu64.to_le_bytes());
-        assert!(friend_list().is_empty());
+        assert_eq!(del_mute(0xDEAD_BEEF), 0xDEAD_BEEFu64.to_le_bytes());
+        let mut notes = 9u64.to_le_bytes().to_vec();
+        notes.extend_from_slice(b"healer\0");
+        assert_eq!(set_contact_notes(9, "healer"), notes);
+        // A cut never splits a character: 510 bytes of `n` then a two-byte `é`.
+        let long = format!("{}é", "n".repeat(510));
+        assert_eq!(set_contact_notes(9, &long).len(), 8 + 510 + 1);
     }
 }

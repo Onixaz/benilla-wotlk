@@ -362,6 +362,10 @@ pub fn parse_m2_render_submeshes(
             Some(6) => ModelBlend::Mod2x,
             Some(_) => ModelBlend::Blend,
         };
+        // The mouse trace's mode-1 batch filter (`0x81db2d`-`0x81db81`).
+        let hit_test = batch.material_layer == 0
+            && batch.flags & 0x08 == 0
+            && material.is_none_or(|m| m.blend_mode.bits() == 0 || m.flags.bits() & 0x20 != 0);
         // Blend modes 3 (NoAlphaAdd) and 4 (Add) add the batch's colour (glow cards, coronae).
         let additive = matches!(material.map(|m| m.blend_mode.bits()), Some(3) | Some(4));
         // Render flag 0x04: two-sided; without it the reference culls back faces.
@@ -565,6 +569,7 @@ pub fn parse_m2_render_submeshes(
             sub.rgb_anim = rgb_anim.clone();
             sub.rgb_seq = rgb_seq.clone();
             sub.combiner = combiner.clone();
+            sub.hit_test = hit_test;
             sub.sort = Some(BatchSort {
                 model_depth: model.global_flags & 0x10 != 0,
                 priority_plane: batch.priority_plane(),
@@ -756,7 +761,6 @@ mod tests {
     /// `TaurenMale.m2`'s type-8 fur, opaque core and alpha-cut two-sided fringe alike, surfaces as
     /// [`CharSkinSlot::SkinExtra`]; unmapped, it draws flat white.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn tauren_fur_batches_carry_the_skin_extra_slot() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -826,7 +830,6 @@ mod tests {
     /// `LShoulder_Plate_PVPAlliance_A_01.m2`'s spikes ride billboard bones through 50/50 seam rings
     /// that sit in the body's batch, so only a model-wide test sees the weld.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_welded_billboard_spike_is_never_split_into_a_card() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -858,7 +861,6 @@ mod tests {
 
     /// `Sword_2H_PVPAlliance_A_01.m2`'s hilt glows are 4-vertex quads wholly on their own bones.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_detached_glow_card_is_still_split_out() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -884,7 +886,6 @@ mod tests {
     /// The questgiver `?` bobs z 0.000 → −0.089 in anim 0 and +0.517 → +0.427 in anim 190, the
     /// raised bob the client arms under an overhead name (`0x6076c0`).
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn questionmark_marker_batch_carries_both_bob_loops() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");

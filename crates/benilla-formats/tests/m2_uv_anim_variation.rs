@@ -9,7 +9,6 @@ const BUBBLE: &str =
     "World\\KhazModan\\Blackrock\\PassiveDoodads\\BlackrockLavaBubbles\\BlackrockStatueLavaBubble.m2";
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_lava_bubble_keys_its_whole_uv_flipbook_in_variation_one() {
     let data = benilla_formats::wow_data_or_skip!();
     let chain = open_chain(&data).expect("open vanilla patch chain");
