@@ -57,13 +57,22 @@ impl super::UiScript {
     }
 }
 
-/// `CGPlayer_C::IsRAFPlayer` (`0x6d7590`), its held-player leg: `UNIT_DYNAMIC_FLAGS` bit 0x40. The
-/// group-record leg (status bit 0x100) and the friend-list leg are not built: the VM holds no
-/// roster record status, and the friend list carries no such bit.
-fn is_raf_player(unit: Option<&UnitState>) -> bool {
-    unit.is_some_and(|u| {
-        u.has_object && u.is_player && u.dynamic_flags & UNIT_DYNFLAG_REFER_A_FRIEND != 0
-    })
+/// `CGPlayer_C::IsRAFPlayer` (`0x6d7590`): a held player answers its `UNIT_DYNAMIC_FLAGS` bit 0x40
+/// (`0x6d75b9`), else a friend its status bit 0x08 (`0x6d7612`). The group-record leg between them
+/// (status bit 0x100, `0x6d75e9`) is not built: the VM holds no roster record status.
+pub(crate) fn is_raf_player(model: &Model, unit: Option<&UnitState>) -> bool {
+    let Some(unit) = unit else {
+        return false;
+    };
+    if unit.has_object && unit.is_player {
+        return unit.dynamic_flags & UNIT_DYNFLAG_REFER_A_FRIEND != 0;
+    }
+    unit.guid != 0
+        && model
+            .social
+            .friends
+            .iter()
+            .any(|f| f.guid == unit.guid && f.raf)
 }
 
 /// `CGPartyInfo::IsMember` or `IsGuidInMyRaid`: a party slot or a raid row holds the guid.
@@ -90,13 +99,13 @@ fn summon_friend_refusal(model: &Model, token: &str, now: f64) -> u8 {
     let Some(guid) = unit.map(|u| u.guid).filter(|&g| g != 0) else {
         return 8;
     };
-    if !is_raf_player(unit) {
+    if !is_raf_player(model, unit) {
         return 1;
     }
     if !in_my_group(model, guid) {
         return 9;
     }
-    // A RAF player answers only through its held object here, so the record leg is unreachable.
+    // The record leg for an unheld member (offline 13, the record's level) is not built.
     if unit.is_some_and(|u| u.level >= 61) {
         return 10;
     }
@@ -116,7 +125,7 @@ fn grant_level_refusal(model: &Model, token: &str) -> u8 {
     let Some(unit) = unit.filter(|u| u.has_object) else {
         return 4;
     };
-    if !is_raf_player(Some(unit)) {
+    if !is_raf_player(model, Some(unit)) {
         return 1;
     }
     let me = model.unit("player");
@@ -297,12 +306,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
-    // IsMuted(name) (`0x6b6cf0`): the friend list's mute list, which benilla does not keep.
-    g.set(
-        "IsMuted",
-        lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
-    )?;
-
     // CanGrantLevel(unit) (`0x51d230`): 1 when the player check answers 0, else nil.
     g.set(
         "CanGrantLevel",

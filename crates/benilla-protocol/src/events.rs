@@ -3,19 +3,19 @@
 use crate::messages::{
     ActionButton, AttackSwingError, AttackerState, AuctionBidderNotification, AuctionCommandTail,
     AuctionListPage, AuctionOwnerNotification, AuctionPendingSale, ChannelNoticeTail, Character,
-    CreateSpline, DamageShield, DifficultySet, DispelFailed, EnchantmentLog,
-    EnvironmentalDamageLog, ExplorationXp, FriendEntry, FriendStatusUpdate, GmResponse, GmTicket,
-    GossipMenu, GroupDifficulties, GroupLootInfo, GroupMemberEntry, GuildCommandResult,
-    GuildEventNotice, GuildInfo, GuildQueryResponse, GuildRoster, InspectHonorStats, ItemInfo,
-    ItemPushResult, JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon,
-    LootStartRoll, MailList, MailResult, MailSender, MirrorTimerStart, MonsterMoveFacing,
-    MoverState, ObjectFields, PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode,
-    PetSpells, PetitionQueryResponse, PetitionRename, PetitionShowList, PetitionShowSignatures,
-    PetitionSignResults, PvpCredit, QuestComplete, QuestConfirmAccept, QuestDetails,
-    QuestGiverList, QuestOfferReward, QuestRequestItems, QuestShareMsg, QuestTemplate,
-    SpellDamageLog, SpellEnergizeLog, SpellHealLog, SpellInstaKillLog, SpellLogExecute,
-    SpellLogMiss, SpellOutcomeLog, SpellRemoveLog, StabledPet, TaxiMask, TradeStatus,
-    TradeStatusExtended, TrainerSpell, TransportPose, VendorItem, WhoResults, XpGain,
+    ContactList, CreateSpline, DamageShield, DifficultySet, DispelFailed, EnchantmentLog,
+    EnvironmentalDamageLog, ExplorationXp, FriendStatusUpdate, GmResponse, GmTicket, GossipMenu,
+    GroupDifficulties, GroupLootInfo, GroupMemberEntry, GuildCommandResult, GuildEventNotice,
+    GuildInfo, GuildQueryResponse, GuildRoster, InspectHonorStats, ItemInfo, ItemPushResult,
+    JumpInfo, LevelUpInfo, LootAllPassed, LootItem, LootRoll, LootRollWon, LootStartRoll, MailList,
+    MailResult, MailSender, MirrorTimerStart, MonsterMoveFacing, MoverState, ObjectFields,
+    PartyKillLog, PartyMemberStatsInfo, PeriodicAuraLog, PetMode, PetSpells, PetitionQueryResponse,
+    PetitionRename, PetitionShowList, PetitionShowSignatures, PetitionSignResults, PvpCredit,
+    QuestComplete, QuestConfirmAccept, QuestDetails, QuestGiverList, QuestOfferReward,
+    QuestRequestItems, QuestShareMsg, QuestTemplate, SpellDamageLog, SpellEnergizeLog,
+    SpellHealLog, SpellInstaKillLog, SpellLogExecute, SpellLogMiss, SpellOutcomeLog,
+    SpellRemoveLog, StabledPet, TaxiMask, TradeStatus, TradeStatusExtended, TrainerSpell,
+    TransportPose, VendorItem, WhoResults, XpGain,
 };
 
 /// Coarse entity classification, free of wire types, carried on [`SessionEvent::ObjectCreate`].
@@ -1179,10 +1179,9 @@ pub enum SessionEvent {
     MirrorTimerPause { kind: u32, paused: bool },
     /// A mirror timer is over (`SMSG_STOP_MIRROR_TIMER`): refilled, or its condition ended.
     MirrorTimerStop { kind: u32 },
-    /// The whole friend list (`SMSG_FRIEND_LIST`), replacing what is held; no names on the wire.
-    FriendList { friends: Vec<FriendEntry> },
-    /// The whole ignore list (`SMSG_IGNORE_LIST`), replacing what is held; guids only.
-    IgnoreList { guids: Vec<u64> },
+    /// The contact lists (`SMSG_CONTACT_LIST`): each list its mask names, replaced whole; no names
+    /// on the wire.
+    ContactList(ContactList),
     /// A friend/ignore result (`SMSG_FRIEND_STATUS`): an add/remove ack or a friend's login or
     /// logout broadcast; the [`friend_result`](crate::messages::friend_result) code says which.
     FriendStatus(FriendStatusUpdate),

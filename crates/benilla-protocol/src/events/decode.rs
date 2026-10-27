@@ -705,8 +705,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::MirrorTimerPause { kind, paused }]
         }
         ServerPacket::MirrorTimerStop { kind } => vec![SessionEvent::MirrorTimerStop { kind }],
-        ServerPacket::FriendList { friends } => vec![SessionEvent::FriendList { friends }],
-        ServerPacket::IgnoreList { guids } => vec![SessionEvent::IgnoreList { guids }],
+        ServerPacket::ContactList(list) => vec![SessionEvent::ContactList(list)],
         ServerPacket::FriendStatus(status) => vec![SessionEvent::FriendStatus(status)],
         ServerPacket::WhoResults(results) => vec![SessionEvent::WhoResults(results)],
         ServerPacket::GuildQueryResponse(response) => {

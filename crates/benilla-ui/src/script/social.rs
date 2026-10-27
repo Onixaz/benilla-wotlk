@@ -1,26 +1,35 @@
-//! The social API: friends, ignores and `/who`. The app pushes a display-ready [`SocialState`]
-//! (the reference's formatter `0x5ae160` also resolves names engine-side) and drains the queued
-//! [`SocialRequest`]s. Selection is engine state in the reference (guids at FriendList `+0x648` and
-//! `+0x720`, read back by `0x5ad260` and `0x5ae510`), so a set changes the snapshot at once and
-//! queues the change for the app.
+//! The social API: friends, ignores, voice mutes and `/who` (`FriendList_Scripts`, registrar
+//! `0xad93d8`). The app pushes a display-ready [`SocialState`] (the reference resolves names, class
+//! and zone engine-side too) and drains the queued [`SocialRequest`]s. Selection is engine state in
+//! the reference (a guid per list, read back through `0x6b35e0`), so a set changes the snapshot at
+//! once and queues the change for the app.
 
 use mlua::{Lua, MultiValue, Value};
 
-use super::binding_abi::{bool_or_default, number_arg, string_arg};
+use super::binding_abi::{bool_or_default, number_arg, optional_string, string_arg};
+use super::get_text::global_text;
 use super::who_sort::WhoSortChain;
 
-/// One friend row in `GetFriendInfo`'s order; offline, the level is 0 and class and area empty.
+/// One friend row as `GetFriendInfo` (`0x6b4130`) answers it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FriendInfo {
-    /// From the name cache; empty while the name query is in flight.
-    pub name: String,
+    /// Not a Lua return: `IsRAFPlayer`'s friend leg finds the friend by guid (`0x6b3510`).
+    pub guid: u64,
+    /// From the name cache; `None` while the name query is in flight, which answers nil.
+    pub name: Option<String>,
     pub level: u32,
-    pub class: String,
-    /// The zone name, also empty when the id has no `AreaTable` row.
-    pub area: String,
+    /// The class name in the friend's gender; `None` with no `ChrClasses` row, which answers
+    /// `UNKNOWN`.
+    pub class: Option<String>,
+    /// The zone's name, its parent zone's for a subzone; `None` with no row answers `UNKNOWN`.
+    pub area: Option<String>,
     pub connected: bool,
-    /// The away tag the friends-list template takes: `""`, `"<AFK>"` or `"<DND>"`.
+    /// The away tag: `""`, `CHAT_FLAG_AFK` or `CHAT_FLAG_DND`'s text, DND first.
     pub status: String,
+    /// The note; `None` for an empty one, which answers nil.
+    pub note: Option<String>,
+    /// Recruit-A-Friend (presence bit 0x8), the eighth return.
+    pub raf: bool,
 }
 
 /// One `/who` row in `GetWhoInfo`'s order (`0x6b4a80`), names resolved; race comes before class,
@@ -54,13 +63,18 @@ pub struct WhoRecords {
 /// The social snapshot the app pushes whole; the default is a fresh login's.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SocialState {
-    /// In display order: the app sorts, as the reference's comparator `0x5ada00` does.
+    /// In display order: online first, then by name (`QSortFriends` `0x6b3960`).
     pub friends: Vec<FriendInfo>,
-    /// The selected friend, 1-based, 0 for none (`0x5ad260` returns the stored slot + 1).
+    /// The selected friend, 1-based, 0 for none (`GetSelectedFriend` `0x6b44b0`).
     pub selected_friend: u32,
+    /// The ignored players' names, sorted (`QSortIgnore` `0x6b3a60`); empty while a name query is
+    /// out, which `GetIgnoreName` answers as `UNKNOWN`.
     pub ignores: Vec<String>,
     /// The selected ignore, on the same scale.
     pub selected_ignore: u32,
+    /// The voice-muted players' names, as [`Self::ignores`].
+    pub mutes: Vec<String>,
+    pub selected_mute: u32,
     /// The last `/who` answer's rows, at most 50.
     pub who: Vec<WhoInfo>,
     /// The total match count, `GetNumWhoResults`'s second return; it can exceed `who.len()`.
@@ -69,29 +83,32 @@ pub struct SocialState {
     pub who_sort: WhoSortChain,
 }
 
-/// Outbound social intents, drained by the app.
+/// Outbound social intents, drained by the app. A row is 1-based in the order last pushed; the
+/// app turns it into the guid the wire takes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SocialRequest {
-    /// `ShowFriends()`: `CMSG_FRIEND_LIST`.
+    /// `ShowFriends()`: `CMSG_CONTACT_LIST` for the friend list.
     RefreshFriends,
-    /// `AddFriend(name)`.
-    AddFriend(String),
-    /// `RemoveFriend(index)`, from the friends frame's button.
-    RemoveFriendIndex(u32),
-    /// `RemoveFriend(name)`, from `/removefriend`; the app resolves either shape to the guid.
-    RemoveFriendName(String),
-    /// `AddIgnore(name)`.
+    /// `AddFriend(name[, note])`, or `AddOrRemoveFriend` for someone not listed.
+    AddFriend { name: String, note: String },
+    /// `RemoveFriend` by row or by name, or `AddOrRemoveFriend` for someone listed.
+    RemoveFriend(u32),
+    /// `SetFriendNotes`: the note, already stored and announced in the VM.
+    SetFriendNotes { row: u32, note: String },
+    /// `AddIgnore(name)`, or `AddOrDelIgnore` for someone not listed.
     AddIgnore(String),
-    /// `DelIgnore(name)`.
-    DelIgnore(String),
-    /// `AddOrDelIgnore(name)`, `/ignore`'s toggle; the app decides which, as it holds the list.
-    ToggleIgnore(String),
-    /// A changed `SetLookingForGroup`: slots and comment for `CMSG_SET_LOOKING_FOR_GROUP`.
-    SetLookingForGroup { slots: [u32; 3], comment: String },
+    /// `DelIgnore(name)`, or `AddOrDelIgnore` for someone listed.
+    DelIgnore(u32),
+    /// `AddMute(name)`, or `AddOrDelMute` for someone not listed.
+    AddMute(String),
+    /// `DelMute(name)`, or `AddOrDelMute` for someone listed.
+    DelMute(u32),
     /// `SetSelectedFriend(index)`, mirrored so the next push agrees.
     SelectFriend(u32),
     /// `SetSelectedIgnore(index)`.
     SelectIgnore(u32),
+    /// `SetSelectedMute(index)`.
+    SelectMute(u32),
     /// `SendWho(filter)`, the raw filter; parsing it needs the DBCs, so the app does it.
     Who(String),
     /// `SortWho(sortType)`, the raw argument; the binding has already sorted the snapshot.
@@ -112,6 +129,93 @@ impl super::UiScript {
     }
 }
 
+/// The friend array's slots (`FriendList` `+0x0`, 100 entries).
+const MAX_FRIENDS: usize = 100;
+/// The ignore and mute arrays' slots (`+0xd490`, `+0xd7c0`, 50 each).
+const MAX_IGNORES: usize = 50;
+
+/// `(uint32)lua_tonumber(L, 1) - 1`: the 0-based slot of a 1-based Lua index; 0, a negative and a
+/// fraction below 1 wrap past every list.
+fn slot(n: f64) -> Option<usize> {
+    let n = n.trunc();
+    (n >= 1.0 && n <= u32::MAX as f64).then(|| n as usize - 1)
+}
+
+/// A name match as `SStrCmpUTF8I` makes it: case-insensitive over the whole name.
+fn same_name(a: &str, b: &str) -> bool {
+    a.to_lowercase() == b.to_lowercase()
+}
+
+/// The first argument as `lua_isnumber` reads it, a numeric string included.
+fn number_of(lua: &Lua, v: &Value) -> Option<f64> {
+    lua.coerce_number(v.clone()).ok().flatten()
+}
+
+/// A list row's name as the `Get*Name` pair answers it (`0x6b4620`, `0x6b4760`): the cached name,
+/// else `UNKNOWN`, for a slot past the list too.
+fn listed_name(
+    lua: &Lua,
+    names: &[String],
+    index: Value,
+    usage: &'static str,
+) -> mlua::Result<String> {
+    let index = number_arg(lua, index, usage)?;
+    let name = slot(f64::from(index))
+        .filter(|&i| i <= MAX_IGNORES)
+        .and_then(|i| names.get(i))
+        .filter(|n| !n.is_empty());
+    Ok(match name {
+        Some(name) => name.clone(),
+        None => global_text(lua, "UNKNOWN"),
+    })
+}
+
+/// The 1-based row of the player named `name` in an ignore or mute list.
+fn row_named(names: &[String], name: &str) -> Option<u32> {
+    names
+        .iter()
+        .position(|n| !n.is_empty() && same_name(n, name))
+        .map(|i| i as u32 + 1)
+}
+
+/// The 1-based row of the friend named `name` (`GetFriendInfoByName` `0x6b3570`).
+fn friend_named(friends: &[FriendInfo], name: &str) -> Option<u32> {
+    friends
+        .iter()
+        .position(|f| f.name.as_deref().is_some_and(|n| same_name(n, name)))
+        .map(|i| i as u32 + 1)
+}
+
+/// Is the player a name or unit token names on `names`? `ChatTokenToGUID` (`0x4fb580`'s caller)
+/// tries the argument as a cached name, then as a unit token.
+fn token_listed(model: &crate::script::Model, names: &[String], token: &str) -> bool {
+    let listed = |name: &str| row_named(names, name).is_some();
+    listed(token)
+        || model
+            .unit(token)
+            .and_then(|u| u.name.as_deref())
+            .is_some_and(listed)
+}
+
+/// The `Is*` trio's shape (`0x6b6c60`, `0x6b6cf0`, `0x6b6d80`): 1 when listed, else nil, always
+/// one value.
+fn token_verb(
+    lua: &Lua,
+    token: Value,
+    lists: fn(&SocialState) -> [&[String]; 2],
+) -> mlua::Result<Value> {
+    let Some(token) = optional_string(lua, &token) else {
+        return Ok(Value::Nil);
+    };
+    let model = lua
+        .app_data_ref::<crate::script::ModelCell>()
+        .expect("model app_data");
+    let listed = lists(&model.social)
+        .iter()
+        .any(|names| token_listed(&model, names, &token));
+    Ok(super::binding_abi::flag(listed))
+}
+
 /// Register the social globals against the snapshot store.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
@@ -130,36 +234,55 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetFriendInfo(index) (`0x5ad060`): an index past the end answers nils, not an error;
-    // FrameXML tests `if ( not name )`.
+    // GetFriendInfo(index or name) (`0x6b4130`): eight values; an index (a numeric string too)
+    // past the list or an unlisted name answers nil, 0, UNKNOWN, UNKNOWN, nil, "", nil, nil.
     g.set(
         "GetFriendInfo",
-        lua.create_function(|lua, index: i64| {
+        lua.create_function(|lua, who: Value| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let Some(friend) = friend_at(&model.social.friends, index) else {
-                return Ok((
-                    Value::Nil,
-                    Value::Nil,
-                    Value::Nil,
-                    Value::Nil,
-                    Value::Nil,
-                    Value::Nil,
+            let friends = &model.social.friends;
+            let friend = if let Some(n) = number_of(lua, &who) {
+                slot(n)
+                    .filter(|&i| i <= MAX_FRIENDS)
+                    .and_then(|i| friends.get(i))
+            } else if let Value::String(name) = &who {
+                friend_named(friends, &name.to_string_lossy())
+                    .and_then(|row| friends.get(row as usize - 1))
+            } else {
+                return Err(mlua::Error::RuntimeError(
+                    "Usage: GetFriendInfo(index or name)".into(),
                 ));
             };
-            Ok((
-                Value::String(lua.create_string(&friend.name)?),
+            let text = |s: &str| lua.create_string(s).map(Value::String);
+            let unknown = global_text(lua, "UNKNOWN");
+            let Some(friend) = friend else {
+                return Ok(MultiValue::from_vec(vec![
+                    Value::Nil,
+                    Value::Integer(0),
+                    text(&unknown)?,
+                    text(&unknown)?,
+                    Value::Nil,
+                    text("")?,
+                    Value::Nil,
+                    Value::Nil,
+                ]));
+            };
+            let optional = |s: &Option<String>| match s {
+                Some(s) => text(s),
+                None => Ok(Value::Nil),
+            };
+            Ok(MultiValue::from_vec(vec![
+                optional(&friend.name)?,
                 Value::Integer(i64::from(friend.level)),
-                Value::String(lua.create_string(&friend.class)?),
-                Value::String(lua.create_string(&friend.area)?),
-                if friend.connected {
-                    Value::Integer(1)
-                } else {
-                    Value::Nil
-                },
-                Value::String(lua.create_string(&friend.status)?),
-            ))
+                text(friend.class.as_deref().unwrap_or(&unknown))?,
+                text(friend.area.as_deref().unwrap_or(&unknown))?,
+                super::binding_abi::flag(friend.connected),
+                text(&friend.status)?,
+                optional(&friend.note)?,
+                super::binding_abi::flag(friend.raf),
+            ]))
         })?,
     )?;
 
@@ -173,105 +296,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetSelectedFriend(index): set now, since `FriendsList_Update` reads it back in the same
-    // call, and queue it for the app.
+    // SetSelectedFriend(index) (`0x6b4400`): set now, since `FriendsList_Update` reads it back in
+    // the same call, and queue it for the app; an empty slot selects nobody.
     g.set(
         "SetSelectedFriend",
-        lua.create_function(|lua, index: i64| {
+        lua.create_function(|lua, index: Value| {
+            let index = number_arg(lua, index, "Usage: SetSelectedFriend(index)")?;
             let mut model = crate::script::model_mut_of(lua);
             let index = clamp_index(index, model.social.friends.len());
             model.social.selected_friend = index;
             model
                 .social_requests
                 .push(SocialRequest::SelectFriend(index));
-            Ok(())
-        })?,
-    )?;
-
-    // The LFG pair (`0x4e95d0`, `0x4e96b0`) is for addons: stock FrameXML's only calls sit inside
-    // an XML comment. GetLookingForGroup() → the three slot names, each nil as the pack below
-    // always stores 0, then the comment string.
-    g.set(
-        "GetLookingForGroup",
-        lua.create_function(|lua, ()| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            Ok(mlua::MultiValue::from_vec(vec![
-                Value::Nil,
-                Value::Nil,
-                Value::Nil,
-                Value::String(lua.create_string(&model.lfg_comment)?),
-            ]))
-        })?,
-    )?;
-    // SetLookingForGroup(type1, entry1, type2, entry2, type3, entry3, comment): the loop over the
-    // pairs ends at a non-number type or one >= 6. The stored word is `(type << 24) & entry`
-    // (`0x4e9713`), an AND every reader decodes as an OR, so an admissible pair stores 0; the
-    // per-type eligible-count check that also ends the reference's loop is not modelled. The
-    // comment is argument 7, read only when argument 4 passes `lua_isstring`, and keeps 127 bytes
-    // (`SStrCopy(…, 0x80)`). `CMSG_SET_LOOKING_FOR_GROUP` goes out only on a change.
-    g.set(
-        "SetLookingForGroup",
-        lua.create_function(|lua, args: mlua::MultiValue| {
-            let args: Vec<Value> = args.into_iter().collect();
-            let arg = |i: usize| args.get(i - 1).cloned().unwrap_or(Value::Nil);
-            let number = |v: &Value| match v {
-                Value::Integer(i) => Some(*i as f64),
-                Value::Number(n) => Some(*n),
-                Value::String(s) => s.to_str().ok().and_then(|s| s.trim().parse::<f64>().ok()),
-                _ => None,
-            };
-            let mut slots = [0u32; 3];
-            for (slot, i) in slots.iter_mut().zip([1usize, 3, 5]) {
-                let Some(ty) = number(&arg(i)) else { break };
-                let ty = ty.trunc();
-                if !(0.0..6.0).contains(&ty) {
-                    break;
-                }
-                let entry = number(&arg(i + 1)).unwrap_or(0.0).trunc();
-                // `&`, not `|`: the reference's own pack.
-                *slot = ((ty as u32) << 24) & (entry as i64 as u32);
-            }
-            let comment = match arg(4) {
-                Value::Integer(_) | Value::Number(_) | Value::String(_) => match arg(7) {
-                    Value::String(s) => Some(s.to_string_lossy()),
-                    Value::Integer(i) => Some(i.to_string()),
-                    Value::Number(n) => Some(n.to_string()),
-                    _ => None,
-                },
-                _ => None,
-            };
-            let mut model = crate::script::model_mut_of(lua);
-            let mut changed = false;
-            if model.lfg_slots != slots {
-                model.lfg_slots = slots;
-                changed = true;
-            }
-            if let Some(comment) = comment {
-                let mut kept: String = comment
-                    .chars()
-                    .take_while({
-                        let mut n = 0usize;
-                        move |c| {
-                            n += c.len_utf8();
-                            n <= 127
-                        }
-                    })
-                    .collect();
-                kept.shrink_to_fit();
-                if model.lfg_comment != kept {
-                    model.lfg_comment = kept;
-                    changed = true;
-                }
-            }
-            if changed {
-                let slots = model.lfg_slots;
-                let comment = model.lfg_comment.clone();
-                model
-                    .social_requests
-                    .push(SocialRequest::SetLookingForGroup { slots, comment });
-            }
             Ok(())
         })?,
     )?;
@@ -285,42 +321,107 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // AddFriend(name): a blank name is not sent, as vmangos drops it without a reply
-    // (`MiscHandler.cpp:468`).
+    // AddFriend(name[, note]) (`0x6b6af0`): sent as given, a blank name too; the note is read only
+    // when it passes `lua_isstring`.
     g.set(
         "AddFriend",
-        lua.create_function(|lua, name: String| {
-            if !name.trim().is_empty() {
-                let mut model = crate::script::model_mut_of(lua);
-                model.social_requests.push(SocialRequest::AddFriend(name));
+        lua.create_function(|lua, (name, note): (Value, Value)| {
+            if let Some(name) = optional_string(lua, &name) {
+                let note = optional_string(lua, &note).unwrap_or_default();
+                crate::script::model_mut_of(lua)
+                    .social_requests
+                    .push(SocialRequest::AddFriend { name, note });
             }
             Ok(())
         })?,
     )?;
 
-    // RemoveFriend(indexOrName): the friends frame passes a row, `/removefriend` a name.
+    // AddOrRemoveFriend(name[, note]) (`0x6b6e10`): removes a listed friend, else adds them.
+    g.set(
+        "AddOrRemoveFriend",
+        lua.create_function(|lua, (name, note): (Value, Value)| {
+            let Some(name) = optional_string(lua, &name) else {
+                return Ok(());
+            };
+            let note = optional_string(lua, &note).unwrap_or_default();
+            let mut model = crate::script::model_mut_of(lua);
+            let request = match friend_named(&model.social.friends, &name) {
+                Some(row) => SocialRequest::RemoveFriend(row),
+                None => SocialRequest::AddFriend { name, note },
+            };
+            model.social_requests.push(request);
+            Ok(())
+        })?,
+    )?;
+
+    // RemoveFriend(index or name) (`0x6b7bd0`): a row in the list, else nothing; an unlisted name
+    // prints `ERR_FRIEND_NOT_FOUND` locally (`0x6b6f00`).
     g.set(
         "RemoveFriend",
         lua.create_function(|lua, who: Value| {
-            let request = match who {
-                Value::Integer(i) if i >= 1 => Some(SocialRequest::RemoveFriendIndex(i as u32)),
-                Value::Number(n) if n >= 1.0 => Some(SocialRequest::RemoveFriendIndex(n as u32)),
-                Value::String(s) => {
-                    let name = s.to_str()?.to_string();
-                    (!name.trim().is_empty()).then_some(SocialRequest::RemoveFriendName(name))
+            let mut model = crate::script::model_mut_of(lua);
+            if let Some(n) = number_of(lua, &who) {
+                let row = slot(n).filter(|&i| i < model.social.friends.len());
+                if let Some(i) = row {
+                    model
+                        .social_requests
+                        .push(SocialRequest::RemoveFriend(i as u32 + 1));
                 }
-                _ => None,
+                return Ok(());
+            }
+            let Value::String(name) = &who else {
+                return Err(mlua::Error::RuntimeError(
+                    "Usage: RemoveFriend([\"name\"] or [index])".into(),
+                ));
             };
-            if let Some(request) = request {
-                let mut model = crate::script::model_mut_of(lua);
-                model.social_requests.push(request);
+            match friend_named(&model.social.friends, &name.to_string_lossy()) {
+                Some(row) => model.social_requests.push(SocialRequest::RemoveFriend(row)),
+                None => model.ui_errors.push("ERR_FRIEND_NOT_FOUND"),
             }
             Ok(())
         })?,
     )?;
 
-    // ── The ignore list ──
-    // GetNumIgnores(): CountIgnores `0x5ae550`, over the 25 slots at `+0x650`.
+    // SetFriendNotes(index or name, notes) (`0x6b7c90`): `SetNotes` (`0x6b5540`) stores the note
+    // (511 bytes), fires `FRIENDLIST_UPDATE` at once, then sends it; an unlisted name prints
+    // `ERR_FRIEND_NOT_FOUND`.
+    g.set(
+        "SetFriendNotes",
+        lua.create_function(|lua, (who, notes): (Value, Value)| {
+            const USAGE: &str = "Usage: SetFriendNotes([\"name\"] or [index], [\"notes\"])";
+            let notes = string_arg(lua, notes, USAGE)?;
+            {
+                let mut model = crate::script::model_mut_of(lua);
+                let row = if let Some(n) = number_of(lua, &who) {
+                    slot(n)
+                        .filter(|&i| i < model.social.friends.len())
+                        .map(|i| i as u32 + 1)
+                } else if let Value::String(name) = &who {
+                    let row = friend_named(&model.social.friends, &name.to_string_lossy());
+                    if row.is_none() {
+                        model.ui_errors.push("ERR_FRIEND_NOT_FOUND");
+                    }
+                    row
+                } else {
+                    return Err(mlua::Error::RuntimeError(USAGE.into()));
+                };
+                let Some(row) = row else {
+                    return Ok(());
+                };
+                let note = truncate_bytes(&notes, 511).to_string();
+                model.social.friends[row as usize - 1].note =
+                    (!note.is_empty()).then(|| note.clone());
+                model
+                    .social_requests
+                    .push(SocialRequest::SetFriendNotes { row, note });
+            }
+            super::tick::fire_event_into(lua, "FRIENDLIST_UPDATE", Vec::new());
+            Ok(())
+        })?,
+    )?;
+
+    // ── The ignore and mute lists ──
+    // GetNumIgnores() / GetNumMutes() (`0x6b4560`, `0x6b45c0`).
     g.set(
         "GetNumIgnores",
         lua.create_function(|lua, ()| {
@@ -330,20 +431,37 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(model.social.ignores.len() as i64)
         })?,
     )?;
-
     g.set(
-        "GetIgnoreName",
-        lua.create_function(|lua, index: i64| {
+        "GetNumMutes",
+        lua.create_function(|lua, ()| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let name = usize::try_from(index - 1)
-                .ok()
-                .and_then(|i| model.social.ignores.get(i));
-            Ok(match name {
-                Some(name) => Value::String(lua.create_string(name)?),
-                None => Value::Nil,
-            })
+            Ok(model.social.mutes.len() as i64)
+        })?,
+    )?;
+
+    g.set(
+        "GetIgnoreName",
+        lua.create_function(|lua, index: Value| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            listed_name(
+                lua,
+                &model.social.ignores,
+                index,
+                "Usage: GetIgnoreName(index)",
+            )
+        })?,
+    )?;
+    g.set(
+        "GetMuteName",
+        lua.create_function(|lua, index: Value| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            listed_name(lua, &model.social.mutes, index, "Usage: GetMuteName(index)")
         })?,
     )?;
 
@@ -355,29 +473,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetMuteStatus",
         lua.create_function(|lua, args: MultiValue| {
             let arg = match args.into_iter().next() {
-                Some(Value::String(s)) => s.to_string_lossy(),
-                Some(Value::Integer(n)) => n.to_string(),
-                Some(Value::Number(n)) => n.to_string(),
+                Some(v @ (Value::String(_) | Value::Integer(_) | Value::Number(_))) => v,
                 _ => return Ok(MultiValue::new()),
             };
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let listed = |name: &str| {
-                model
-                    .social
-                    .ignores
-                    .iter()
-                    .any(|i| i.eq_ignore_ascii_case(name))
-            };
-            let ignored = listed(&arg)
-                || model
-                    .unit(&arg)
-                    .and_then(|u| u.name.as_deref())
-                    .is_some_and(listed);
-            Ok(MultiValue::from_vec(vec![super::binding_abi::flag(
-                ignored,
-            )]))
+            let listed = token_verb(lua, arg, |s| [&s.ignores, &s.mutes])?;
+            Ok(MultiValue::from_vec(vec![listed]))
+        })?,
+    )?;
+
+    // IsIgnored / IsMuted / IsIgnoredOrMuted(token) (`0x6b6c60`, `0x6b6cf0`, `0x6b6d80`).
+    g.set(
+        "IsIgnored",
+        lua.create_function(|lua, token: Value| token_verb(lua, token, |s| [&s.ignores, &[]]))?,
+    )?;
+    g.set(
+        "IsMuted",
+        lua.create_function(|lua, token: Value| token_verb(lua, token, |s| [&s.mutes, &[]]))?,
+    )?;
+    g.set(
+        "IsIgnoredOrMuted",
+        lua.create_function(|lua, token: Value| {
+            token_verb(lua, token, |s| [&s.ignores, &s.mutes])
         })?,
     )?;
 
@@ -395,7 +511,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetSelectedIgnore / SetSelectedIgnore (`0x5ae630` / `0x5ae5f0`), as the friend pair.
+    // The selection pairs (`0x6b4a00`/`0x6b48a0`, `0x6b4a40`/`0x6b4950`), as the friend pair.
     g.set(
         "GetSelectedIgnore",
         lua.create_function(|lua, ()| {
@@ -407,7 +523,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     g.set(
         "SetSelectedIgnore",
-        lua.create_function(|lua, index: i64| {
+        lua.create_function(|lua, index: Value| {
+            let index = number_arg(lua, index, "Usage: SetSelectedIgnore(index)")?;
             let mut model = crate::script::model_mut_of(lua);
             let index = clamp_index(index, model.social.ignores.len());
             model.social.selected_ignore = index;
@@ -417,26 +534,107 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    g.set(
+        "GetSelectedMute",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(i64::from(model.social.selected_mute))
+        })?,
+    )?;
+    g.set(
+        "SetSelectedMute",
+        lua.create_function(|lua, index: Value| {
+            let index = number_arg(lua, index, "Usage: SetSelectedMute(index)")?;
+            let mut model = crate::script::model_mut_of(lua);
+            let index = clamp_index(index, model.social.mutes.len());
+            model.social.selected_mute = index;
+            model.social_requests.push(SocialRequest::SelectMute(index));
+            Ok(())
+        })?,
+    )?;
 
-    for (global, make) in [
-        ("AddIgnore", SocialRequest::AddIgnore as fn(String) -> _),
-        ("DelIgnore", SocialRequest::DelIgnore as fn(String) -> _),
-        (
-            "AddOrDelIgnore",
-            SocialRequest::ToggleIgnore as fn(String) -> _,
-        ),
-    ] {
-        g.set(
-            global,
-            lua.create_function(move |lua, name: String| {
-                if !name.trim().is_empty() {
-                    let mut model = crate::script::model_mut_of(lua);
-                    model.social_requests.push(make(name));
-                }
-                Ok(())
-            })?,
-        )?;
-    }
+    // AddIgnore(name) (`0x6b5f70`): someone listed prints `ERR_IGNORE_ALREADY_S` locally, anyone
+    // else is sent. AddMute (`0x6b62c0`) is its voice twin.
+    g.set(
+        "AddIgnore",
+        lua.create_function(|lua, name: Value| {
+            add_listed(
+                lua,
+                name,
+                |s| &s.ignores,
+                "ERR_IGNORE_ALREADY_S",
+                SocialRequest::AddIgnore,
+            )
+        })?,
+    )?;
+    g.set(
+        "AddMute",
+        lua.create_function(|lua, name: Value| {
+            add_listed(
+                lua,
+                name,
+                |s| &s.mutes,
+                "ERR_VOICE_IGNORE_ALREADY_S",
+                SocialRequest::AddMute,
+            )
+        })?,
+    )?;
+
+    // AddOrDelIgnore(name) (`0x6b5de0`): removes someone listed, else sends the add.
+    // AddOrDelMute (`0x6b6130`) is its voice twin.
+    g.set(
+        "AddOrDelIgnore",
+        lua.create_function(|lua, name: Value| {
+            toggle_listed(
+                lua,
+                name,
+                |s| &s.ignores,
+                SocialRequest::DelIgnore,
+                SocialRequest::AddIgnore,
+            )
+        })?,
+    )?;
+    g.set(
+        "AddOrDelMute",
+        lua.create_function(|lua, name: Value| {
+            toggle_listed(
+                lua,
+                name,
+                |s| &s.mutes,
+                SocialRequest::DelMute,
+                SocialRequest::AddMute,
+            )
+        })?,
+    )?;
+
+    // DelIgnore(name) (`0x6b7040`): someone unlisted prints `ERR_IGNORE_NOT_FOUND`. DelMute
+    // (`0x6b7120`) is its voice twin.
+    g.set(
+        "DelIgnore",
+        lua.create_function(|lua, name: Value| {
+            del_listed(
+                lua,
+                name,
+                |s| &s.ignores,
+                "ERR_IGNORE_NOT_FOUND",
+                SocialRequest::DelIgnore,
+            )
+        })?,
+    )?;
+    g.set(
+        "DelMute",
+        lua.create_function(|lua, name: Value| {
+            del_listed(
+                lua,
+                name,
+                |s| &s.mutes,
+                "ERR_VOICE_IGNORE_NOT_FOUND",
+                SocialRequest::DelMute,
+            )
+        })?,
+    )?;
 
     // ── /who ──
     // GetNumWhoResults() (`0x6b33d0`) → the kept rows, then the server's full match count.
@@ -533,23 +731,92 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The 1-based friend lookup `GetFriendInfo` does, `None` past either end.
-fn friend_at(friends: &[FriendInfo], index: i64) -> Option<&FriendInfo> {
-    usize::try_from(index - 1).ok().and_then(|i| friends.get(i))
+/// `AddIgnore`/`AddMute`: a listed name prints `already` with the listed spelling, else the add
+/// queues; a non-string sends nothing.
+fn add_listed(
+    lua: &Lua,
+    name: Value,
+    list: fn(&SocialState) -> &Vec<String>,
+    already: &'static str,
+    add: fn(String) -> SocialRequest,
+) -> mlua::Result<()> {
+    let Some(name) = optional_string(lua, &name) else {
+        return Ok(());
+    };
+    let mut model = crate::script::model_mut_of(lua);
+    match row_named(list(&model.social), &name) {
+        Some(row) => {
+            let listed = list(&model.social)[row as usize - 1].clone();
+            model.ui_errors_s.push((already, listed));
+        }
+        None => model.social_requests.push(add(name)),
+    }
+    Ok(())
+}
+
+/// `AddOrDelIgnore`/`AddOrDelMute`: the remove for a listed name, else the add.
+fn toggle_listed(
+    lua: &Lua,
+    name: Value,
+    list: fn(&SocialState) -> &Vec<String>,
+    del: fn(u32) -> SocialRequest,
+    add: fn(String) -> SocialRequest,
+) -> mlua::Result<()> {
+    let Some(name) = optional_string(lua, &name) else {
+        return Ok(());
+    };
+    let mut model = crate::script::model_mut_of(lua);
+    let request = match row_named(list(&model.social), &name) {
+        Some(row) => del(row),
+        None => add(name),
+    };
+    model.social_requests.push(request);
+    Ok(())
+}
+
+/// `DelIgnore`/`DelMute`: the remove for a listed name, else `missing` prints.
+fn del_listed(
+    lua: &Lua,
+    name: Value,
+    list: fn(&SocialState) -> &Vec<String>,
+    missing: &'static str,
+    del: fn(u32) -> SocialRequest,
+) -> mlua::Result<()> {
+    let Some(name) = optional_string(lua, &name) else {
+        return Ok(());
+    };
+    let mut model = crate::script::model_mut_of(lua);
+    match row_named(list(&model.social), &name) {
+        Some(row) => model.social_requests.push(del(row)),
+        None => model.ui_errors.push(missing),
+    }
+    Ok(())
 }
 
 /// A selection index in `1..=len`, else 0, nothing selected.
-fn clamp_index(index: i64, len: usize) -> u32 {
-    if index >= 1 && index <= len as i64 {
+fn clamp_index(index: i32, len: usize) -> u32 {
+    if index >= 1 && index as usize <= len {
         index as u32
     } else {
         0
     }
 }
 
+/// `SStrCopy` into a buffer of `max + 1`: at most `max` bytes, cut on a character boundary.
+fn truncate_bytes(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{SocialRequest, SocialState, WhoInfo};
+    use super::{FriendInfo, SocialRequest, SocialState, WhoInfo};
     use crate::script::UiScript;
 
     fn who(name: &str, level: u32, zone: &str) -> WhoInfo {
@@ -592,6 +859,279 @@ mod tests {
             ..Default::default()
         });
         s
+    }
+
+    fn friend(name: &str, level: u32, connected: bool) -> FriendInfo {
+        FriendInfo {
+            name: Some(name.to_string()),
+            level,
+            class: Some("Priest".to_string()),
+            area: Some("Dalaran".to_string()),
+            connected,
+            ..Default::default()
+        }
+    }
+
+    /// Two friends, one ignore and one mute, with `UNKNOWN` resolvable as the shipped string.
+    fn contacts() -> UiScript {
+        let mut s = UiScript::new().unwrap();
+        s.run(r#"UNKNOWN = "Unknown""#).unwrap();
+        s.set_social(SocialState {
+            friends: vec![
+                FriendInfo {
+                    status: "<AFK>".into(),
+                    note: Some("healer".into()),
+                    raf: true,
+                    ..friend("Galas", 80, true)
+                },
+                FriendInfo {
+                    class: None,
+                    area: None,
+                    ..friend("Erdrin", 0, false)
+                },
+            ],
+            ignores: vec!["Spammer".into()],
+            mutes: vec!["Loud".into()],
+            ..Default::default()
+        });
+        s
+    }
+
+    /// Eight values (`0x6b4130`); class and zone with no row read `UNKNOWN`, an empty note nil.
+    #[test]
+    fn get_friend_info_answers_eight_values_by_index_or_name() {
+        let s = contacts();
+        assert_eq!(s.arity("GetFriendInfo(1)").unwrap(), 8);
+        assert_eq!(
+            s.eval::<(String, i64, String, String, i64, String, String, i64)>(
+                "return GetFriendInfo(1)"
+            )
+            .unwrap(),
+            (
+                "Galas".into(),
+                80,
+                "Priest".into(),
+                "Dalaran".into(),
+                1,
+                "<AFK>".into(),
+                "healer".into(),
+                1
+            )
+        );
+        assert!(s
+            .eval::<bool>(
+                "local n, l, c, a, on, st, note, raf = GetFriendInfo('erdrin') \
+                 return n == 'Erdrin' and l == 0 and c == 'Unknown' and a == 'Unknown' \
+                 and on == nil and st == '' and note == nil and raf == nil"
+            )
+            .unwrap());
+        assert_eq!(
+            s.eval::<String>("return (GetFriendInfo('2'))").unwrap(),
+            "Erdrin",
+            "a numeric string is an index"
+        );
+        for miss in ["0", "3", "-1", "'Nobody'"] {
+            assert!(
+                s.eval::<bool>(&format!(
+                    "local n, l, c, a, on, st, note, raf = GetFriendInfo({miss}) \
+                     return select('#', GetFriendInfo({miss})) == 8 and n == nil and l == 0 \
+                     and c == 'Unknown' and a == 'Unknown' and on == nil and st == '' \
+                     and note == nil and raf == nil"
+                ))
+                .unwrap(),
+                "{miss}"
+            );
+        }
+        let err = s.run("GetFriendInfo()").unwrap_err().to_string();
+        assert!(err.contains("Usage: GetFriendInfo(index or name)"), "{err}");
+    }
+
+    #[test]
+    fn get_num_friends_counts_the_online_ones_too() {
+        let s = contacts();
+        assert_eq!(
+            s.eval::<(i64, i64)>("return GetNumFriends()").unwrap(),
+            (2, 1)
+        );
+    }
+
+    /// `RemoveFriend` (`0x6b7bd0`): a row or a listed name queues the row; an unlisted name prints
+    /// `ERR_FRIEND_NOT_FOUND`; a row past the list does nothing.
+    #[test]
+    fn remove_friend_takes_a_row_or_a_name() {
+        let mut s = contacts();
+        s.run("RemoveFriend(2) RemoveFriend('GALAS') RemoveFriend(3) RemoveFriend('Nobody')")
+            .unwrap();
+        assert_eq!(
+            s.take_social_requests(),
+            vec![
+                SocialRequest::RemoveFriend(2),
+                SocialRequest::RemoveFriend(1)
+            ]
+        );
+        assert_eq!(s.take_ui_errors(), vec!["ERR_FRIEND_NOT_FOUND"]);
+        let err = s.run("RemoveFriend()").unwrap_err().to_string();
+        assert!(
+            err.contains(r#"Usage: RemoveFriend(["name"] or [index])"#),
+            "{err}"
+        );
+    }
+
+    /// `AddFriend` sends even a blank name with its note; `AddOrRemoveFriend` removes a listed one.
+    #[test]
+    fn add_friend_carries_the_note_and_add_or_remove_toggles() {
+        let mut s = contacts();
+        s.run("AddFriend('Bruk', 'tank') AddFriend('') AddFriend(nil) AddOrRemoveFriend('galas') AddOrRemoveFriend('Bruk', 'dps')")
+            .unwrap();
+        assert_eq!(
+            s.take_social_requests(),
+            vec![
+                SocialRequest::AddFriend {
+                    name: "Bruk".into(),
+                    note: "tank".into()
+                },
+                SocialRequest::AddFriend {
+                    name: String::new(),
+                    note: String::new()
+                },
+                SocialRequest::RemoveFriend(1),
+                SocialRequest::AddFriend {
+                    name: "Bruk".into(),
+                    note: "dps".into()
+                },
+            ]
+        );
+    }
+
+    /// `SetNotes` (`0x6b5540`) stores the note and fires `FRIENDLIST_UPDATE` before it returns.
+    #[test]
+    fn set_friend_notes_stores_announces_and_queues() {
+        let mut s = contacts();
+        s.run(
+            r#"
+            seen = nil
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("FRIENDLIST_UPDATE")
+            f:SetScript("OnEvent", function() seen = select(7, GetFriendInfo(2)) end)
+            SetFriendNotes(2, "met in Dalaran")
+            "#,
+        )
+        .unwrap();
+        assert_eq!(s.eval::<String>("return seen").unwrap(), "met in Dalaran");
+        assert_eq!(
+            s.take_social_requests(),
+            vec![SocialRequest::SetFriendNotes {
+                row: 2,
+                note: "met in Dalaran".into()
+            }]
+        );
+        // An empty note reads nil; an unlisted name prints the not-found line.
+        s.run("SetFriendNotes('Galas', '') SetFriendNotes('Nobody', 'x')")
+            .unwrap();
+        assert!(s
+            .eval::<bool>("return select(7, GetFriendInfo(1)) == nil")
+            .unwrap());
+        assert_eq!(s.take_ui_errors(), vec!["ERR_FRIEND_NOT_FOUND"]);
+        let err = s.run("SetFriendNotes(1)").unwrap_err().to_string();
+        assert!(err.contains("Usage: SetFriendNotes"), "{err}");
+    }
+
+    /// `GetIgnoreName` answers `UNKNOWN` past the list (`0x6b4620`); `AddIgnore` of someone listed
+    /// prints `ERR_IGNORE_ALREADY_S` (`0x6b5f70`); `DelIgnore` of someone unlisted prints
+    /// `ERR_IGNORE_NOT_FOUND`; the mute verbs mirror them.
+    #[test]
+    fn the_ignore_and_mute_verbs_check_the_list_first() {
+        let mut s = contacts();
+        assert_eq!(
+            s.eval::<(String, String)>("return GetIgnoreName(1), GetIgnoreName(2)")
+                .unwrap(),
+            ("Spammer".into(), "Unknown".into())
+        );
+        assert_eq!(s.eval::<String>("return GetMuteName(1)").unwrap(), "Loud");
+        assert_eq!(
+            s.eval::<(i64, i64)>("return GetNumIgnores(), GetNumMutes()")
+                .unwrap(),
+            (1, 1)
+        );
+
+        s.run(
+            "AddIgnore('spammer') AddIgnore('Bruk') DelIgnore('Bruk') DelIgnore('Spammer') \
+             AddOrDelIgnore('SPAMMER') AddOrDelIgnore('Bruk') AddMute('Loud') DelMute('Bruk') \
+             AddOrDelMute('loud')",
+        )
+        .unwrap();
+        assert_eq!(
+            s.take_social_requests(),
+            vec![
+                SocialRequest::AddIgnore("Bruk".into()),
+                SocialRequest::DelIgnore(1),
+                SocialRequest::DelIgnore(1),
+                SocialRequest::AddIgnore("Bruk".into()),
+                SocialRequest::DelMute(1),
+            ]
+        );
+        assert_eq!(
+            s.take_ui_errors(),
+            vec!["ERR_IGNORE_NOT_FOUND", "ERR_VOICE_IGNORE_NOT_FOUND"]
+        );
+        assert_eq!(
+            s.take_ui_errors_s(),
+            vec![
+                ("ERR_IGNORE_ALREADY_S", "Spammer".to_string()),
+                ("ERR_VOICE_IGNORE_ALREADY_S", "Loud".to_string())
+            ]
+        );
+        let err = s.run("GetIgnoreName()").unwrap_err().to_string();
+        assert!(err.contains("Usage: GetIgnoreName(index)"), "{err}");
+    }
+
+    /// The `Is*` trio reads a name or a unit token and always answers one value.
+    #[test]
+    fn is_ignored_and_is_muted_read_a_name_or_a_token() {
+        let mut s = contacts();
+        s.set_unit(
+            "party1",
+            Some(crate::script::UnitState {
+                exists: true,
+                name: Some("Loud".into()),
+                ..Default::default()
+            }),
+        );
+        let ask =
+            |s: &UiScript, call: &str| s.eval::<Option<i64>>(&format!("return {call}")).unwrap();
+        assert_eq!(ask(&s, "IsIgnored('spammer')"), Some(1));
+        assert_eq!(ask(&s, "IsIgnored('party1')"), None);
+        assert_eq!(ask(&s, "IsMuted('party1')"), Some(1));
+        assert_eq!(ask(&s, "IsIgnoredOrMuted('party1')"), Some(1));
+        assert_eq!(ask(&s, "IsIgnoredOrMuted('Spammer')"), Some(1));
+        assert_eq!(ask(&s, "IsIgnoredOrMuted('Galas')"), None);
+        assert_eq!(s.arity("IsIgnored()").unwrap(), 1);
+    }
+
+    #[test]
+    fn the_selection_setters_raise_without_a_number_and_clamp() {
+        let mut s = contacts();
+        s.run("SetSelectedFriend(2) SetSelectedIgnore(5) SetSelectedMute('1')")
+            .unwrap();
+        assert_eq!(
+            s.eval::<(i64, i64, i64)>(
+                "return GetSelectedFriend(), GetSelectedIgnore(), GetSelectedMute()"
+            )
+            .unwrap(),
+            (2, 0, 1)
+        );
+        assert_eq!(
+            s.take_social_requests(),
+            vec![
+                SocialRequest::SelectFriend(2),
+                SocialRequest::SelectIgnore(0),
+                SocialRequest::SelectMute(1)
+            ]
+        );
+        for verb in ["SetSelectedFriend", "SetSelectedIgnore", "SetSelectedMute"] {
+            let err = s.run(&format!("{verb}()")).unwrap_err().to_string();
+            assert!(err.contains(&format!("Usage: {verb}(index)")), "{err}");
+        }
     }
 
     /// `GetMuteStatus` (`0x4fcdf0`): 1 for an ignored player named directly or through a unit
@@ -780,62 +1320,5 @@ mod tests {
                 .map(SocialRequest::SetWhoToUi)
                 .to_vec()
         );
-    }
-
-    #[test]
-    fn the_lfg_pair_stores_the_comment_and_sends_only_on_a_change() {
-        let mut s = UiScript::new().unwrap();
-        assert_eq!(s.arity("GetLookingForGroup()").unwrap(), 4);
-        assert!(s
-            .eval::<bool>(
-                "local a, b, c, d = GetLookingForGroup() return a == nil and b == nil and c == nil and d == \"\""
-            )
-            .unwrap());
-        // Three admissible pairs: every word packs to 0, so nothing changes or sends.
-        s.run("SetLookingForGroup(1, 3, 3, 12, 5, 0)").unwrap();
-        assert!(
-            s.take_social_requests().is_empty(),
-            "the AND pack stores zero"
-        );
-        // A comment behind the gate: argument 4 is a number, argument 7 the text.
-        s.run(r#"SetLookingForGroup(1, 3, 3, 12, 5, 0, "LF2M UBRS")"#)
-            .unwrap();
-        assert_eq!(
-            s.take_social_requests(),
-            vec![SocialRequest::SetLookingForGroup {
-                slots: [0; 3],
-                comment: "LF2M UBRS".into()
-            }]
-        );
-        assert_eq!(
-            s.eval::<String>("local _, _, _, comment = GetLookingForGroup() return comment")
-                .unwrap(),
-            "LF2M UBRS"
-        );
-        s.run(r#"SetLookingForGroup(1, 3, 3, 12, 5, 0, "LF2M UBRS")"#)
-            .unwrap();
-        assert!(s.take_social_requests().is_empty());
-        // Argument 4 nil: the comment at 7 is not read.
-        s.run(r#"SetLookingForGroup(1, 3, nil, nil, nil, nil, "ignored")"#)
-            .unwrap();
-        assert!(s.take_social_requests().is_empty());
-        assert_eq!(
-            s.eval::<String>("local _, _, _, comment = GetLookingForGroup() return comment")
-                .unwrap(),
-            "LF2M UBRS"
-        );
-        // 127 bytes kept of a longer comment (`SStrCopy` into the 0x80 buffer).
-        s.run(&format!(
-            r#"SetLookingForGroup(0, 0, 0, 0, 0, 0, "{}")"#,
-            "x".repeat(200)
-        ))
-        .unwrap();
-        assert_eq!(
-            s.eval::<String>("local _, _, _, comment = GetLookingForGroup() return comment")
-                .unwrap()
-                .len(),
-            127
-        );
-        assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 }

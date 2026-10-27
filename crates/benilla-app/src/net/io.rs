@@ -1961,14 +1961,16 @@ pub(super) fn writer_loop(
                     ClientCommand::SetPvp { state } => w.set_pvp(state),
                     ClientCommand::ToggleHelm => w.toggle_helm(),
                     ClientCommand::ToggleCloak => w.toggle_cloak(),
-                    ClientCommand::FriendListRequest => w.friend_list(),
-                    ClientCommand::AddFriend { name } => w.add_friend(&name),
-                    ClientCommand::SetLookingForGroup { slots, comment } => {
-                        w.set_looking_for_group(slots, &comment)
-                    }
+                    ClientCommand::ContactList { mask } => w.contact_list(mask),
+                    ClientCommand::AddFriend { name, note } => w.add_friend(&name, &note),
                     ClientCommand::DelFriend { guid } => w.del_friend(guid),
+                    ClientCommand::SetContactNotes { guid, note } => {
+                        w.set_contact_notes(guid, &note)
+                    }
                     ClientCommand::AddIgnore { name } => w.add_ignore(&name),
                     ClientCommand::DelIgnore { guid } => w.del_ignore(guid),
+                    ClientCommand::AddMute { name } => w.add_mute(&name),
+                    ClientCommand::DelMute { guid } => w.del_mute(guid),
                     ClientCommand::Who { request } => w.who(&request),
                     ClientCommand::ChatIgnored { guid } => w.chat_ignored(guid),
                     ClientCommand::GuildQuery { guild_id } => w.guild_query(guild_id),
