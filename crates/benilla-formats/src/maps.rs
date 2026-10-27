@@ -32,6 +32,8 @@ pub struct MapCatalog {
     icon_scales: HashMap<u32, f32>,
     /// The entrance (`+0x2c` map, `+0x30`/`+0x34` x and y), for maps with a non-zero one.
     entrances: HashMap<u32, (u32, f32, f32)>,
+    /// `MaxPlayers` (`+0x44`), for maps with a non-zero one.
+    max_players: HashMap<u32, u32>,
 }
 
 /// `Map.dbc` `Flags` bit: the map's difficulty can change inside it, `GetInstanceInfo`'s seventh
@@ -102,6 +104,12 @@ impl MapCatalog {
         self.entrances.iter().map(|(&k, &v)| (k, v))
     }
 
+    /// `MaxPlayers` (`+0x44`), the fallback `GetMaxPlayersForMap` (`0x634ab0`) takes when the
+    /// difficulty's `MapDifficulty` row sets none; 0 when unset.
+    pub fn max_players(&self, map_id: u32) -> u32 {
+        self.max_players.get(&map_id).copied().unwrap_or(0)
+    }
+
     pub fn len(&self) -> usize {
         self.dirs.len()
     }
@@ -143,6 +151,7 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
     let mut entrances = HashMap::new();
     let mut descriptions = HashMap::new();
     let mut icon_scales = HashMap::new();
+    let mut max_players = HashMap::new();
     for r in rs.records() {
         let Some(id) = u32_at(r, 0) else { continue };
         if let Some(dir) = str_at(&rs, r, 1) {
@@ -180,6 +189,10 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
                 entrances.insert(id, (m, x, y));
             }
         }
+        // `MaxPlayers`, eight columns past the loading screen (`+0x24` to `+0x44`).
+        if let Some(n) = at(8).filter(|&n| n != 0) {
+            max_players.insert(id, n);
+        }
     }
     Ok(MapCatalog {
         dirs,
@@ -190,6 +203,7 @@ pub fn load_map_catalog(chain: &mut Chain) -> Result<MapCatalog> {
         entrances,
         descriptions,
         icon_scales,
+        max_players,
     })
 }
 

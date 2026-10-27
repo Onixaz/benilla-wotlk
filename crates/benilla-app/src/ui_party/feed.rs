@@ -4,6 +4,7 @@
 
 use benilla_protocol::messages::{
     member_status, GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo, GROUP_MEMBER_ASSISTANT,
+    GROUP_MEMBER_MAIN_ASSIST, GROUP_MEMBER_MAIN_TANK,
 };
 use benilla_ui::script::{
     PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo, ScriptValue,
@@ -138,7 +139,10 @@ pub(super) fn feed_party(
     // The area under us, through the accessor `crate::area` uses: `terrain_stream::CurrentArea`
     // would cross the world-API wall (`tests/world_api_wall.rs`).
     here: benilla_world::world_point::WorldPoint,
-    map_catalog: Option<Res<benilla_assets::MapCatalogRes>>,
+    (map_catalog, difficulties): (
+        Option<Res<benilla_assets::MapCatalogRes>>,
+        Option<Res<crate::ui_transfer::MapDifficulties>>,
+    ),
     mut fed: Local<crate::ui_script::VmMemo<FedParty>>,
     mut chat: ResMut<crate::ui_chat::ChatLog>,
 ) {
@@ -149,7 +153,11 @@ pub(super) fn feed_party(
     let edges = FieldEdges::collect(&mut edges);
     // The ready-check summary lines the timeout tick composed, pushed as system chat ahead of the
     // gate: the tick runs on the frame clock, which the gate does not watch.
-    for line in script.take_ready_check_lines() {
+    for line in script
+        .take_ready_check_lines()
+        .into_iter()
+        .chain(script.take_party_lines())
+    {
         chat.push_event(crate::ui_chat::ChatEvent::text_only(
             crate::ui_chat::ChatEventKind::System,
             line,
@@ -289,7 +297,12 @@ pub(super) fn feed_party(
             .name(areas.0.top_zone(area).unwrap_or(area))
             .map(str::to_string)
     };
-    let raid = raid_roster(&group, me.as_ref(), &names, &zone_name);
+    // A member whose object we hold answers its level and death off the object (`0x573690`).
+    let held = |guid: u64| {
+        look.store(guid)
+            .map(|s| (s.0.unit_level().unwrap_or(0), s.0.unit_is_dead()))
+    };
+    let raid = raid_roster(&group, me.as_ref(), &names, &zone_name, &held);
     // The `RAID_ROSTER_UPDATE` key, taken before the roster moves into the snapshot.
     let raid_key: Vec<(u64, u32, u32, bool)> = raid
         .iter()
@@ -309,6 +322,11 @@ pub(super) fn feed_party(
         loot_threshold,
         real_party_members: group.real_party_members,
         real_raid_members: group.real_raid_members,
+        // `m_lootMaster` under master loot (method 2), which `GetRaidRosterInfo`'s isML compares.
+        loot_master_guid: group.loot.filter(|l| l.method == 2).map_or(0, |l| l.master),
+        member_assignments: std::array::from_fn(|i| {
+            slots.get(i).map_or(0, |m| member_assignments(m.flags))
+        }),
     };
     if fed.pushed_party.as_ref() != Some(&fresh) {
         gate.audit("feed_party", "the roster snapshot");
@@ -545,17 +563,35 @@ pub(super) fn feed_party(
 
     // ── UPDATE_INSTANCE_INFO ────────────────────────────────────────────────
     //
-    // The lockout list with its `Map.dbc` names resolved; a missing catalog shows the map id.
+    // The lockout list with the `Map.dbc` and `MapDifficulty.dbc` reads `GetSavedInstanceInfo`
+    // makes (`0x4ff2c0`) resolved; a map with no row answers the binding's miss tuple.
     let saved: Vec<SavedInstanceInfo> = group
         .saved_instances
         .iter()
-        .map(|e| SavedInstanceInfo {
-            name: map_catalog
-                .as_ref()
-                .and_then(|c| c.0.name(e.map))
-                .map_or_else(|| e.map.to_string(), str::to_string),
-            instance: e.instance,
-            reset: e.reset,
+        .map(|e| {
+            let maps = map_catalog.as_ref().map(|c| &c.0);
+            let row = difficulties.as_ref().and_then(|d| {
+                benilla_formats::find_map_difficulty(&d.0, e.map as i32, e.difficulty as i32)
+            });
+            // `GetMaxPlayersForMap` (`0x634ab0`): the difficulty row's count, else the map's.
+            let max_players = row
+                .map(|r| r.max_players)
+                .filter(|&n| n > 0)
+                .map_or_else(|| maps.map_or(0, |m| m.max_players(e.map)), |n| n as u32);
+            SavedInstanceInfo {
+                map: e.map,
+                name: maps.and_then(|m| m.name(e.map)).map(str::to_string),
+                instance: e.instance,
+                reset: e.reset,
+                difficulty: e.difficulty,
+                locked: e.locked,
+                extended: e.extended,
+                is_raid: maps.and_then(|m| m.instance_type(e.map)) == Some(2),
+                max_players,
+                difficulty_name: row
+                    .map(|r| script.engine_text(&r.difficulty_string))
+                    .unwrap_or_default(),
+            }
         })
         .collect();
     // The event follows the answer, as the reference signals once per packet. A fresh VM is
@@ -680,6 +716,7 @@ fn raid_roster(
     me: Option<&RaidSelf>,
     names: &NameCache,
     zone_name: &dyn Fn(u32) -> Option<String>,
+    held: &dyn Fn(u64) -> Option<(u32, bool)>,
 ) -> Vec<RaidMemberInfo> {
     if group.group_type != GROUPTYPE_RAID {
         return Vec::new();
@@ -703,7 +740,8 @@ fn raid_roster(
                zone: Option<String>,
                online: bool,
                ninth: bool,
-               class_byte: Option<u8>| {
+               class_byte: Option<u8>,
+               roles: u8| {
         let class = class_byte.and_then(crate::ui_unit::class_names);
         RaidMemberInfo {
             name,
@@ -717,6 +755,8 @@ fn raid_roster(
             zone,
             online,
             ninth,
+            assignments: member_assignments(flags),
+            roles,
         }
     };
     let mut roster = Vec::with_capacity(group.members.len() + 1);
@@ -731,27 +771,52 @@ fn raid_roster(
             true,
             me.dead,
             me.class,
+            group.own_roles,
         ));
     }
     for m in &group.members {
         let stats = group.stats.get(&m.guid);
-        let online = m.status & member_status::ONLINE != 0;
+        let held = held(m.guid);
+        let online = held.is_some() || m.status & member_status::ONLINE != 0;
+        // Held, the level and death are the object's and the zone is our own area; else the
+        // record's (`0x573690`).
+        let (level, zone, dead) = match held {
+            Some((level, dead)) => (level, me.and_then(|me| me.area).and_then(zone_name), dead),
+            None => (
+                stats.and_then(|s| s.level).map_or(0, u32::from),
+                stats
+                    .and_then(|s| s.zone)
+                    .and_then(|z| zone_name(u32::from(z))),
+                // The record arm needs both `DEAD` and `ONLINE`: an offline dead member is nil.
+                online && m.status & member_status::DEAD != 0,
+            ),
+        };
         roster.push(row(
             m.guid,
             m.name.clone(),
             m.flags,
-            stats.and_then(|s| s.level).map_or(0, u32::from),
-            stats
-                .and_then(|s| s.zone)
-                .and_then(|z| zone_name(u32::from(z))),
+            level,
+            zone,
             online,
-            // Return 9's cached arm needs both `0x4` and `0x1` in `[edi+0x18]`, vmangos's `DEAD`
-            // and `ONLINE` (`Group/Group.cpp:45-63`): an offline dead member answers nil.
-            online && m.status & member_status::DEAD != 0,
+            dead,
             names.player_traits(m.guid).map(|(_, class, _)| class),
+            m.roles,
         ));
     }
     roster
+}
+
+/// The folded member flags' main tank and main assist marks as the roster's assignment bits
+/// (`CGRaidMember::m_assignments`: main tank 0x2, main assist 0x4).
+fn member_assignments(flags: u8) -> u8 {
+    let mut bits = 0;
+    if flags & GROUP_MEMBER_MAIN_TANK != 0 {
+        bits |= 0x2;
+    }
+    if flags & GROUP_MEMBER_MAIN_ASSIST != 0 {
+        bits |= 0x4;
+    }
+    bits
 }
 
 /// One member's merged-view unit snapshot (see [`feed_party`]).
@@ -1069,13 +1134,27 @@ pub(super) fn drain_party(
                         .send(ClientCommand::GroupAssistantLeader { guid, grant });
                 }
             }
-            PartyRequest::UninviteRaid(index) => {
-                // By name, as 1.12 sent it; 3.3.5a's RaidFrame kicks through `UninviteUnit`.
-                if let Some(name) = raid_guid_at(&group, self_guid, index)
-                    .and_then(|g| raid_name_of(&group, self_guid, &names, g))
-                {
-                    let _ = commands.0.send(ClientCommand::GroupUninvite { name });
-                }
+            PartyRequest::PartyAssignment {
+                assignment,
+                set,
+                guid,
+            } => {
+                let _ = commands.0.send(ClientCommand::PartyAssignment {
+                    assignment,
+                    set,
+                    guid,
+                });
+            }
+            PartyRequest::SavedInstanceExtend {
+                map,
+                difficulty,
+                extend,
+            } => {
+                let _ = commands.0.send(ClientCommand::SavedInstanceExtend {
+                    map,
+                    difficulty,
+                    extend,
+                });
             }
             PartyRequest::ReadyCheckStart => {
                 let _ = commands.0.send(ClientCommand::ReadyCheckStart);
@@ -1114,7 +1193,6 @@ fn test_apply_local(
             | PartyRequest::ConvertToRaid
             | PartyRequest::SetSubgroup { .. }
             | PartyRequest::SwapSubgroup { .. }
-            | PartyRequest::UninviteRaid(_)
             | PartyRequest::AssistantLeader { .. }
     ) {
         group.count_list();
@@ -1236,16 +1314,6 @@ fn apply_test_intent(
             if let (Some(a), Some(b)) = (a, b) {
                 set_test_subgroup(group, self_guid, *index, b);
                 set_test_subgroup(group, self_guid, *other, a);
-            }
-            true
-        }
-        PartyRequest::UninviteRaid(index) => {
-            // Never our own row; the server ignores that too.
-            if let Some(guid) =
-                raid_guid_at(group, self_guid, *index).filter(|g| Some(*g) != self_guid)
-            {
-                group.members.retain(|m| m.guid != guid);
-                group.stats.remove(&guid);
             }
             true
         }
@@ -1526,8 +1594,11 @@ pub(crate) fn synthetic_raid(
         .map(
             |(map, reset, instance)| benilla_protocol::messages::RaidInstanceEntry {
                 map,
-                reset,
+                difficulty: 0,
                 instance,
+                locked: true,
+                extended: false,
+                reset,
             },
         )
         .collect(),
@@ -2096,9 +2167,10 @@ mod tests {
              over the list alone can never reach it"
         );
         let one = [SavedInstanceInfo {
-            name: "Molten Core".into(),
+            name: Some("Molten Core".into()),
             instance: 1234,
             reset: 86_400,
+            ..Default::default()
         }];
         assert!(saved_instances_moved(&one, 1, &fed));
     }
@@ -2230,7 +2302,7 @@ mod tests {
             class: Some(11),
         };
 
-        let roster = raid_roster(&group, Some(&me), &names, &zone);
+        let roster = raid_roster(&group, Some(&me), &names, &zone, &|_| None);
         assert_eq!(roster.len(), 3, "the player is spliced back in");
 
         // Row 1, us: leader (rank 2), subgroup stored 0, class off the descriptor.
@@ -2257,10 +2329,18 @@ mod tests {
         assert_eq!(roster[2].class, None);
         assert_eq!(roster[2].zone, None, "no stats packet, no zone");
 
+        // Held, the same member answers off the object: online, its level and death, our area.
+        let offline = roster[2].guid;
+        let held = move |guid: u64| (guid == offline).then_some((71, false));
+        let roster = raid_roster(&group, Some(&me), &names, &zone, &held);
+        assert!(roster[2].online && !roster[2].ninth);
+        assert_eq!(roster[2].level, 71);
+        assert_eq!(roster[2].zone.as_deref(), Some("Ironforge"), "our own area");
+
         // A party is not a raid: the list is empty, so `GetNumRaidMembers()` answers 0, while
         // `IsRaidLeader()` still answers 1.
         group.group_type = 0;
-        assert!(raid_roster(&group, Some(&me), &names, &zone).is_empty());
+        assert!(raid_roster(&group, Some(&me), &names, &zone, &|_| None).is_empty());
     }
 
     #[test]
@@ -2377,26 +2457,6 @@ mod tests {
             (group.ready_check, group.ready_check_requests),
             (ticket, requests + 1)
         );
-
-        let n = group.members.len();
-        assert!(test_apply_local(
-            &mut group,
-            &PartyRequest::UninviteRaid(1),
-            me,
-            None
-        ));
-        assert_eq!(
-            group.members.len(),
-            n,
-            "row 1 is us; the server would refuse too"
-        );
-        assert!(test_apply_local(
-            &mut group,
-            &PartyRequest::UninviteRaid(3),
-            me,
-            None
-        ));
-        assert_eq!(group.members.len(), n - 1);
     }
 
     /// The sends of the 12340 party verbs (`0x51a6e0`, `0x51a7a0`, `0x573e10`), own name refused.

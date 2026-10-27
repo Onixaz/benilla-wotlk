@@ -1948,6 +1948,16 @@ pub(super) fn writer_loop(
                     ClientCommand::GroupSwapSubGroup { name, other } => {
                         w.group_swap_sub_group(&name, &other)
                     }
+                    ClientCommand::PartyAssignment {
+                        assignment,
+                        set,
+                        guid,
+                    } => w.party_assignment(assignment, set, guid),
+                    ClientCommand::SavedInstanceExtend {
+                        map,
+                        difficulty,
+                        extend,
+                    } => w.set_saved_instance_extend(map, difficulty, extend),
                     ClientCommand::GroupAssistantLeader { guid, grant } => {
                         w.group_assistant_leader(guid, grant)
                     }

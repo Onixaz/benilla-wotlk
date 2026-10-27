@@ -850,6 +850,10 @@ pub const SMSG_AREA_SPIRIT_HEALER_TIME: u16 = 0x02E4; // 740
 /// Right-click a meeting stone (GameObject type 23): `u64` guid, sent by `0x4c9ff0`. A stone never
 /// sends [`CMSG_GAMEOBJ_USE`], which vmangos ignores for type 23 (`GameObject.cpp:1836`).
 pub const CMSG_MEETINGSTONE_JOIN: u16 = 0x0292; // 658
+/// The 3.3.5a meaning of 0x292: a saved lockout's extend toggle (`0x50dc10`).
+pub const CMSG_SET_SAVED_INSTANCE_EXTEND: u16 = 0x0292; // 658
+/// A main tank or main assist set or cleared (`0x6d7200`).
+pub const MSG_PARTY_ASSIGNMENT: u16 = 0x038E; // 910
 /// `CancelMeetingStoneRequest()`: empty, party leader only; the server's `0x295` reply clears the
 /// state. The name is the emulators'; the number is the client's.
 pub const CMSG_MEETINGSTONE_LEAVE: u16 = 0x0293; // 659

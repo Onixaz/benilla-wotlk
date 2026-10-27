@@ -145,4 +145,25 @@ impl WorldWriter {
             &messages::request_raid_info(),
         )
     }
+
+    /// `CMSG_SET_SAVED_INSTANCE_EXTEND`: extend or release a saved lockout.
+    pub fn set_saved_instance_extend(
+        &mut self,
+        map: u32,
+        difficulty: u32,
+        extend: bool,
+    ) -> Result<()> {
+        self.send(
+            opcode::CMSG_SET_SAVED_INSTANCE_EXTEND,
+            &messages::set_saved_instance_extend(map, difficulty, extend),
+        )
+    }
+
+    /// `MSG_PARTY_ASSIGNMENT`: set or clear a member's main tank or main assist mark.
+    pub fn party_assignment(&mut self, assignment: u8, set: bool, guid: u64) -> Result<()> {
+        self.send(
+            opcode::MSG_PARTY_ASSIGNMENT,
+            &messages::party_assignment(assignment, set, guid),
+        )
+    }
 }

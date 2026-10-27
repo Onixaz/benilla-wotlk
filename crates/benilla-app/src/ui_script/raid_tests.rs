@@ -32,7 +32,8 @@ fn row(
 ) -> RaidMemberInfo {
     RaidMemberInfo {
         name: name.to_string(),
-        guid: 0xF000 + u64::from(subgroup) * 16 + name.len() as u64,
+        // Unique per name, so no two rows share a token's guid.
+        guid: name.bytes().fold(0xF000u64, |g, b| g * 31 + u64::from(b)),
         rank,
         subgroup: subgroup - 1,
         level: 60,
@@ -41,11 +42,33 @@ fn row(
         zone: Some("Molten Core".to_string()),
         online,
         ninth: dead,
+        assignments: 0,
+        roles: 0,
     }
 }
 
-/// Pushes a roster, its `raidN` snapshots and its event, as `ui_party`'s `feed_party` does.
+/// Pushes a roster, its `raidN` snapshots and its event, as `ui_party`'s `feed_party` does. Row 1
+/// is us: the player snapshot takes its guid, so `raid1` and `"player"` are one unit.
 fn push_raid(s: &mut UiScript, raid: Vec<RaidMemberInfo>) {
+    if let Some(me) = raid.first() {
+        s.set_unit(
+            "player",
+            Some(benilla_ui::script::UnitState {
+                exists: true,
+                name: Some(me.name.clone()),
+                guid: me.guid,
+                level: me.level,
+                is_player: true,
+                player_controlled: true,
+                is_connected: true,
+                class: me.class.clone(),
+                class_file: me.class_file.clone(),
+                faction_group: Some("Alliance".into()),
+                faction_group_localized: Some("Alliance".into()),
+                ..Default::default()
+            }),
+        );
+    }
     for i in 1..=40usize {
         let snap = raid.get(i - 1).map(|r| benilla_ui::script::UnitState {
             exists: true,
@@ -75,14 +98,17 @@ fn push_raid(s: &mut UiScript, raid: Vec<RaidMemberInfo>) {
     s.set_party(PartyState {
         members,
         leader_index: 0,
-        leader_guid: 0, // the player leads; their guid is unset in this fixture
-        own_guid: 0,
+        // Row 1 is us, and we lead.
+        leader_guid: raid.first().map_or(0, |r| r.guid),
+        own_guid: raid.first().map_or(0, |r| r.guid),
         raid,
         loot_method: "group".into(),
         master_looter: None,
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        loot_master_guid: 0,
+        member_assignments: [0; 4],
     });
     s.fire_event("RAID_ROSTER_UPDATE", Vec::new());
 }
@@ -159,15 +185,14 @@ fn hiding_the_window_closes_the_raid_info_panel() {
 
 // ── The not-in-a-raid state ──────────────────────────────────────────────────────────────────────
 
-/// Out of a raid the pane is the blurb and Convert To Raid, live only for a party's leader
-/// (`RaidFrame.lua:62-69`).
+/// Out of a raid the pane is the not-in-raid blurb and Convert To Raid, live only for a party
+/// leader of level 10 or more outside LFG restrictions (`RaidFrame_Update`, `RaidFrame.lua:64-72`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn convert_to_raid_is_live_only_for_a_party_leader() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     open_raid_tab(&mut s);
-    assert!(visible(&s, "RaidFrameRaidDescription"), "solo: the blurb");
+    assert!(visible(&s, "RaidFrameNotInRaid"), "solo: the blurb");
     assert!(visible(&s, "RaidFrameConvertToRaidButton"));
     assert_eq!(
         s.eval::<i64>("return RaidFrameConvertToRaidButton:IsEnabled()")
@@ -179,7 +204,6 @@ fn convert_to_raid_is_live_only_for_a_party_leader() {
         !visible(&s, "RaidFrameReadyCheckButton"),
         "and no raid verbs"
     );
-    assert!(!visible(&s, "RaidFrameAddMemberButton"));
 
     // A party we lead: `leader_index == 0` with members.
     s.set_party(PartyState {
@@ -219,13 +243,14 @@ fn convert_to_raid_is_live_only_for_a_party_leader() {
         0,
         "a party member cannot"
     );
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 // ── The grid ─────────────────────────────────────────────────────────────────────────────────────
 
 /// Row order and slot order differ; every drag, kick and menu action addresses a row by row index.
+/// The rank shows as an icon, not text (`RaidGroupFrame_Update`, `Blizzard_RaidUI.lua:398-407`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_grid_seats_each_row_in_its_own_subgroups_next_free_slot() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -250,27 +275,31 @@ fn the_grid_seats_each_row_in_its_own_subgroups_next_free_slot() {
             .unwrap(),
         "RaidGroup3Slot4"
     );
-    // The slot knows its occupant, which the drop reads to choose move or swap.
     assert_eq!(
         s.eval::<String>("return RaidGroup2Slot1.button").unwrap(),
         "RaidGroupButton5"
     );
 
     assert_eq!(text_of(&s, "RaidGroupButton1Name"), "Me");
+    let rank_icon = |s: &UiScript, row: u32| {
+        s.eval::<String>(&format!(
+            "return (RaidGroupButton{row}RankTexture:GetTexture() or ''):lower()"
+        ))
+        .unwrap()
+    };
     assert_eq!(
-        text_of(&s, "RaidGroupButton1Rank"),
-        "(L)",
-        "the leader token"
+        rank_icon(&s, 1),
+        "interface\\groupframe\\ui-group-leadericon",
+        "the leader's crown"
     );
     assert_eq!(
-        text_of(&s, "RaidGroupButton2Rank"),
-        "(A)",
-        "the assistant token"
+        rank_icon(&s, 2),
+        "interface\\groupframe\\ui-group-assistanticon",
+        "the assistant's icon"
     );
-    assert_eq!(
-        text_of(&s, "RaidGroupButton3Rank"),
-        "",
-        "and a plain member has none"
+    assert!(
+        !visible(&s, "RaidGroupButton3Rank"),
+        "a plain member shows no rank frame"
     );
     assert_eq!(text_of(&s, "RaidGroupButton1Level"), "60");
 
@@ -287,7 +316,8 @@ fn the_grid_seats_each_row_in_its_own_subgroups_next_free_slot() {
     push_raid(&mut s, Vec::new());
     assert!(!visible(&s, "RaidGroup1"));
     assert!(!visible(&s, "RaidGroupButton1"));
-    assert!(visible(&s, "RaidFrameRaidDescription"));
+    assert!(visible(&s, "RaidFrameNotInRaid"));
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 /// Offline grey is tested first, then dead red, then the class colour, on all three columns
@@ -414,10 +444,10 @@ fn a_units_level_repaints_its_row_and_its_health_repaints_nothing() {
 
 // ── The management buttons ───────────────────────────────────────────────────────────────────────
 
-/// Out of a raid both hide, sharing a seat with Convert To Raid (`Blizzard_RaidUI.lua:653-672`).
+/// The Ready Check button is a leader's or an officer's (`RaidFrameReadyCheckButton_Update`,
+/// `Blizzard_RaidUI.lua:1502-1508`); out of a raid it hides with the grid.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn ready_check_is_the_leaders_and_add_member_is_everyones() {
+fn ready_check_is_for_the_leader_and_the_officers() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     open_raid_tab(&mut s);
@@ -426,34 +456,55 @@ fn ready_check_is_the_leaders_and_add_member_is_everyones() {
         visible(&s, "RaidFrameReadyCheckButton"),
         "we lead, so we may ask"
     );
-    assert!(visible(&s, "RaidFrameAddMemberButton"));
     assert!(
         !visible(&s, "RaidFrameConvertToRaidButton"),
         "already a raid"
     );
-    assert!(!visible(&s, "RaidFrameRaidDescription"));
+    assert!(!visible(&s, "RaidFrameNotInRaid"));
 
     s.run("RaidFrameReadyCheckButton:Click()").unwrap();
     assert!(s
         .take_party_requests()
         .contains(&PartyRequest::ReadyCheckStart));
 
-    let raid = twelve();
+    // Member 1 leads now and we are a plain member: no button.
+    let mut raid = twelve();
+    raid[0].rank = 0;
+    raid[1].rank = 2;
+    let me = raid[0].guid;
     s.set_party(PartyState {
         members: vec![PartyMemberInfo {
             name: "Member1".into(),
             guid: raid[1].guid,
         }],
         leader_index: 1,
-        raid,
+        leader_guid: raid[1].guid,
+        own_guid: me,
+        raid: raid.clone(),
         ..Default::default()
     });
     s.fire_event("RAID_ROSTER_UPDATE", Vec::new());
     assert!(!visible(&s, "RaidFrameReadyCheckButton"));
+
+    // Promoted to assistant, we may ask again (`IsRaidOfficer`, `0x573b00`).
+    raid[0].rank = 1;
+    s.set_party(PartyState {
+        members: vec![PartyMemberInfo {
+            name: "Member1".into(),
+            guid: raid[1].guid,
+        }],
+        leader_index: 1,
+        leader_guid: raid[1].guid,
+        own_guid: me,
+        raid,
+        ..Default::default()
+    });
+    s.fire_event("RAID_ROSTER_UPDATE", Vec::new());
     assert!(
-        visible(&s, "RaidFrameAddMemberButton"),
-        "but Add Member still shows"
+        visible(&s, "RaidFrameReadyCheckButton"),
+        "an assistant asks too"
     );
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 // ── The drag ─────────────────────────────────────────────────────────────────────────────────────
@@ -546,14 +597,17 @@ fn left_clicking_a_row_does_nothing() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The RAID menu's rank rules re-read the row's rank by row index (`UnitPopup.lua:382-401`).
+/// The RAID menu's rank rules (`UnitPopup.lua:725-776`): promote for a plain member, demote for
+/// an assistant, main tank and assist for anyone not already marked, and no lead or kick for the
+/// leader's own row.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_row_menu_offers_the_rank_verbs_by_rank() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     open_raid_tab(&mut s);
-    push_raid(&mut s, twelve());
+    let mut raid = twelve();
+    raid[3].assignments = 0x2; // row 4 is the main tank
+    push_raid(&mut s, raid);
 
     s.run("RaidGroupButton3:Click(\"RightButton\")").unwrap();
     assert!(
@@ -563,7 +617,7 @@ fn the_row_menu_offers_the_rank_verbs_by_rank() {
     let shown = |s: &UiScript, key: &str| {
         s.eval::<bool>(&format!(
             "for i = 1, UIDROPDOWNMENU_MAXBUTTONS do \
-                 local b = getglobal(\"DropDownList1Button\"..i) \
+                 local b = _G[\"DropDownList1Button\"..i] \
                  if b and b:IsShown() and b.value == \"{key}\" then return true end \
              end return false"
         ))
@@ -575,6 +629,8 @@ fn the_row_menu_offers_the_rank_verbs_by_rank() {
     );
     assert!(!shown(&s, "RAID_DEMOTE"), "and cannot be demoted from one");
     assert!(shown(&s, "RAID_LEADER"), "and can be handed the lead");
+    assert!(shown(&s, "RAID_MAINTANK"));
+    assert!(shown(&s, "RAID_MAINASSIST"));
     assert!(shown(&s, "RAID_REMOVE"));
 
     // Row 2 is the assistant: demote, not promote.
@@ -583,6 +639,13 @@ fn the_row_menu_offers_the_rank_verbs_by_rank() {
     assert!(shown(&s, "RAID_DEMOTE"));
     assert!(!shown(&s, "RAID_PROMOTE"));
 
+    // Row 4 is already the main tank (`GetRaidRosterInfo`'s tenth return).
+    s.run("HideDropDownMenu(1) RaidGroupButton4:Click(\"RightButton\")")
+        .unwrap();
+    assert!(!shown(&s, "RAID_MAINTANK"));
+    assert!(shown(&s, "RAID_MAINASSIST"));
+    assert!(shown(&s, "RAID_DEMOTE"), "a marked member can be cleared");
+
     s.run("HideDropDownMenu(1) RaidGroupButton1:Click(\"RightButton\")")
         .unwrap();
     assert!(!shown(&s, "RAID_LEADER"));
@@ -590,20 +653,23 @@ fn the_row_menu_offers_the_rank_verbs_by_rank() {
         !shown(&s, "RAID_REMOVE"),
         "the leader cannot be kicked, not even by themself"
     );
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Three verbs go by name and the kick by row index (`UnitPopup.lua:624-631`).
+/// The verbs by name (`UnitPopup.lua:1330-1348`): promote, the main tank mark through
+/// `SetPartyAssignment`, and the kick through `UninviteUnit`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_menu_verbs_queue_the_right_requests() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     open_raid_tab(&mut s);
-    push_raid(&mut s, twelve());
+    let raid = twelve();
+    let member2 = raid[2].guid;
+    push_raid(&mut s, raid);
     let click = |s: &UiScript, key: &str| {
         s.run(&format!(
             "for i = 1, UIDROPDOWNMENU_MAXBUTTONS do \
-                 local b = getglobal(\"DropDownList1Button\"..i) \
+                 local b = _G[\"DropDownList1Button\"..i] \
                  if b and b:IsShown() and b.value == \"{key}\" then b:Click() return end \
              end error(\"{key} not shown\")"
         ))
@@ -621,34 +687,60 @@ fn the_menu_verbs_queue_the_right_requests() {
 
     s.run("HideDropDownMenu(1) RaidGroupButton3:Click(\"RightButton\")")
         .unwrap();
+    click(&s, "RAID_MAINTANK");
+    assert_eq!(
+        s.take_party_requests(),
+        vec![PartyRequest::PartyAssignment {
+            assignment: 0,
+            set: true,
+            guid: member2
+        }]
+    );
+
+    s.run("HideDropDownMenu(1) RaidGroupButton3:Click(\"RightButton\")")
+        .unwrap();
     click(&s, "RAID_REMOVE");
     assert_eq!(
         s.take_party_requests(),
-        vec![PartyRequest::UninviteRaid(3)],
-        "the kick goes by ROW INDEX, which is what the reference passes"
+        vec![PartyRequest::UninviteUnit {
+            unit: "Member2".into(),
+            reason: String::new()
+        }]
     );
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 // ── Raid Info ────────────────────────────────────────────────────────────────────────────────────
 
+fn lockout(name: &str, instance: u64, reset: u32, difficulty_name: &str) -> SavedInstanceInfo {
+    SavedInstanceInfo {
+        map: 533,
+        name: Some(name.into()),
+        instance,
+        reset,
+        difficulty: 1,
+        locked: true,
+        extended: false,
+        is_raid: true,
+        max_players: 25,
+        difficulty_name: difficulty_name.into(),
+    }
+}
+
+/// `RaidInfoFrame_Update` (`RaidFrame.lua:84-155`): a row per lockout with its difficulty and the
+/// time left through `SecondsToTime`; an expired lock greys out; past the list the rows hide.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_raid_info_panel_lists_the_saved_lockouts() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     open_raid_tab(&mut s);
-    // The first `UPDATE_INSTANCE_INFO` only arms `RaidFrame.hasRaidInfo` (`RaidFrame.lua:43-47`).
+    // The first `UPDATE_INSTANCE_INFO` only arms `RaidFrame.hasRaidInfo` (`RaidFrame.lua:46-50`).
     s.fire_event("UPDATE_INSTANCE_INFO", Vec::new());
     s.set_saved_instances(vec![
+        lockout("Naxxramas", 1234, 3 * 86_400, "25 Player"),
         SavedInstanceInfo {
-            name: "Molten Core".into(),
-            instance: 1234,
-            reset: 3 * 86_400,
-        },
-        SavedInstanceInfo {
-            name: "Onyxia's Lair".into(),
-            instance: 77,
-            reset: 3_600,
+            locked: false,
+            ..lockout("The Eye of Eternity", 77, 3_600, "10 Player")
         },
     ]);
     s.fire_event("UPDATE_INSTANCE_INFO", Vec::new());
@@ -657,25 +749,33 @@ fn the_raid_info_panel_lists_the_saved_lockouts() {
             .unwrap(),
         1
     );
-    // The rows live inside the flyout, so `IsVisible` is false until it opens.
     s.run("RaidInfoFrame:Show()").unwrap();
-    assert!(visible(&s, "RaidInfoInstance1"));
-    assert!(visible(&s, "RaidInfoInstance2"));
-    assert!(
-        !visible(&s, "RaidInfoInstance3"),
-        "rows past the list stay away"
+    let row = |s: &UiScript, i: u32| {
+        s.eval::<(String, String, String, bool)>(&format!(
+            "local b = RaidInfoScrollFrameButton{i} \
+             return b.name:GetText() or '', b.difficulty:GetText() or '', \
+             b.reset:GetText() or '', b:IsVisible()"
+        ))
+        .unwrap()
+    };
+    let (name, difficulty, reset, shown) = row(&s, 1);
+    assert!(shown);
+    assert_eq!(
+        (name.as_str(), difficulty.as_str()),
+        ("Naxxramas", "25 Player")
     );
-    assert_eq!(text_of(&s, "RaidInfoInstance1Name"), "Molten Core");
-    assert_eq!(text_of(&s, "RaidInfoInstance1ID"), "1234");
     assert!(
-        text_of(&s, "RaidInfoInstance1Reset").starts_with("Resets in 3 Days"),
-        "the reset is a REMAINING duration through SecondsToTime, not a timestamp: {:?}",
-        text_of(&s, "RaidInfoInstance1Reset")
+        reset.starts_with("3 Days"),
+        "the reset is a remaining duration through SecondsToTime: {reset:?}"
     );
+    let (name, _, reset, shown) = row(&s, 2);
+    assert!(shown);
     assert!(
-        !visible(&s, "RaidInfoScrollFrameScrollBar"),
-        "four rows fit, so two need no bar"
+        name.contains("The Eye of Eternity") && name.starts_with("|cff808080"),
+        "an expired lock is grey: {name:?}"
     );
+    assert!(reset.starts_with("|cff808080"), "{reset:?}");
+    assert!(!row(&s, 3).3, "rows past the list stay away");
 
     s.set_saved_instances(Vec::new());
     s.fire_event("UPDATE_INSTANCE_INFO", Vec::new());
@@ -684,30 +784,18 @@ fn the_raid_info_panel_lists_the_saved_lockouts() {
             .unwrap(),
         0
     );
-    // The stale row stays, as in the reference: `RaidInfoFrame_Update` wraps its row loop in
-    // `if ( savedInstances > 0 )` (`RaidFrame.lua:94`), so a count of zero never reaches the
-    // `Hide()`. The dead button keeps the flyout from reopening onto it.
-    assert!(
-        visible(&s, "RaidInfoInstance1"),
-        "the reference leaves the last row standing when the count hits zero"
-    );
-
-    assert!(visible(&s, "RaidInfoFrame"));
-    s.run("RaidFrameRaidInfoButton:GetScript(\"OnClick\")()")
-        .unwrap();
-    assert!(!visible(&s, "RaidInfoFrame"), "and closes it again");
+    assert!(!row(&s, 1).3, "an empty list hides every row");
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 /// An ordinary session gets two empty answers, for `PLAYER_ENTERING_WORLD`'s `RequestRaidInfo` and
 /// the pane's OnShow; the first arms the latch, the second disables the button.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_player_with_no_lockouts_loses_the_raid_info_button_on_the_second_answer() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     open_raid_tab(&mut s);
 
-    // Answer one only arms the latch; `RaidFrame_OnLoad` leaves the button as it loaded.
     s.fire_event("UPDATE_INSTANCE_INFO", Vec::new());
     assert_eq!(
         s.eval::<i64>("return RaidFrame.hasRaidInfo or 0").unwrap(),
@@ -722,15 +810,6 @@ fn a_player_with_no_lockouts_loses_the_raid_info_button_on_the_second_answer() {
         0,
         "an empty lockout list is a dead button"
     );
-
-    // As in the reference, the row loop never runs (`RaidFrame.lua:94`), so the rows keep the
-    // visibility `RaidFrame.xml` declares; only a frame shown by hand reaches them.
-    s.run("RaidInfoFrame:Show()").unwrap();
-    assert!(
-        visible(&s, "RaidInfoInstance1") && visible(&s, "RaidInfoInstance10"),
-        "with no lockouts the reference's update never runs, so the XML's own rows stand"
-    );
-    s.run("RaidInfoFrame:Hide()").unwrap();
 
     // The button is dead to a real click through the pointer, not merely drawn grey.
     let (bx, by) = {
@@ -751,54 +830,40 @@ fn a_player_with_no_lockouts_loses_the_raid_info_button_on_the_second_answer() {
     );
 }
 
-/// Past four lockouts `RaidInfoFrame_Update` seats the bar at `(8, -3)` off the scroll frame
-/// (`RaidFrame.lua:108-110`), centred on the trough art, not at the template's `(6, -16)`.
+/// The list is a `HybridScrollFrame` (`RaidInfoScrollFrame_OnLoad`, `RaidFrame.lua:157-161`):
+/// more lockouts than rows scroll, and a scroll re-seats the rows on the later lockouts.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_scroll_bar_is_seated_on_the_trough_the_panel_draws_behind_it() {
+fn the_lockout_list_scrolls_past_its_rows() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     open_raid_tab(&mut s);
     s.fire_event("UPDATE_INSTANCE_INFO", Vec::new());
     s.set_saved_instances(
-        (1..=6)
-            .map(|i| SavedInstanceInfo {
-                name: format!("Instance {i}"),
-                instance: 1000 + i,
-                reset: i * 3_600,
-            })
+        (1..=12)
+            .map(|i| lockout(&format!("Instance {i}"), 1000 + i, i as u32 * 3_600, ""))
             .collect(),
     );
     s.fire_event("UPDATE_INSTANCE_INFO", Vec::new());
-    s.run("RaidInfoFrame:Show()").unwrap();
+    s.run("RaidInfoFrame:Show() RaidInfoFrame_Update()")
+        .unwrap();
+    let rows: i64 = s.eval("return #RaidInfoScrollFrame.buttons").unwrap();
+    assert!(rows < 12, "fewer rows ({rows}) than lockouts");
     assert!(
-        visible(&s, "RaidInfoScrollFrameScrollBar"),
-        "six lockouts do not fit in four rows"
+        s.eval::<f64>("return RaidInfoScrollFrame.range").unwrap() > 0.0,
+        "so the frame has a range to scroll"
     );
-
-    let mid_x = |s: &UiScript, f: &str| -> f32 {
-        let l: f32 = s.eval(&format!("return {f}:GetLeft()")).unwrap();
-        let r: f32 = s.eval(&format!("return {f}:GetRight()")).unwrap();
-        (l + r) / 2.0
+    let first = |s: &UiScript| {
+        s.eval::<String>("return RaidInfoScrollFrameButton1.name:GetText()")
+            .unwrap()
     };
-    let top = |s: &UiScript, f: &str| -> f32 { s.eval(&format!("return {f}:GetTop()")).unwrap() };
-
-    let bar = mid_x(&s, "RaidInfoScrollFrameScrollBar");
-    let trough = mid_x(&s, "RaidInfoScrollFrameTop");
-    assert!(
-        (bar - trough).abs() < 0.01,
-        "the bar rides the middle of its trough: bar {bar} vs trough {trough}"
-    );
-    assert!(
-        (top(&s, "RaidInfoScrollFrameScrollBar") - (top(&s, "RaidInfoScrollFrame") - 3.0)).abs()
-            < 0.01,
-        "and hangs 3 px under the frame's top, not the template's 16"
-    );
-    // The up arrow rides above the bar, so the re-seat lifts it into the trough's cap.
-    assert!(
-        top(&s, "RaidInfoScrollFrameScrollBarScrollUpButton") > top(&s, "RaidInfoScrollFrame"),
-        "the up arrow clears the scroll frame, where the template left it 13 px inside"
-    );
+    assert_eq!(first(&s), "Instance 1");
+    s.run(
+        "local h = RaidInfoScrollFrame.buttons[1]:GetHeight() \
+         RaidInfoScrollFrame.scrollBar:SetValue(h * 2)",
+    )
+    .unwrap();
+    assert_eq!(first(&s), "Instance 3", "two rows down");
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 // ── The ready check ──────────────────────────────────────────────────────────────────────────────
@@ -806,7 +871,7 @@ fn the_scroll_bar_is_seated_on_the_trough_the_panel_draws_behind_it() {
 /// `READY_CHECK` opens the popup naming the leader; Yes calls `ConfirmReadyCheck(1)`, No calls it
 /// with no argument (`Blizzard_RaidUI.xml:710`, `:728`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+#[ignore = "the 3.3.5a ready check wire is not built (#361)"]
 fn the_ready_check_popup_opens_and_answers() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();

@@ -386,6 +386,8 @@ fn left_clicking_the_player_frame_targets_self() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        loot_master_guid: 0,
+        member_assignments: [0; 4],
     });
     s.mouse_button(cx as f32, cy as f32, "RightButton", true);
     s.mouse_button(cx as f32, cy as f32, "RightButton", false);
@@ -473,6 +475,8 @@ fn raid_mark_clicks_through_the_nested_level() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        loot_master_guid: 0,
+        member_assignments: [0; 4],
     });
     s.resolve();
 
@@ -1184,6 +1188,8 @@ fn the_party_art_paints_over_the_bars() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        loot_master_guid: 0,
+        member_assignments: [0; 4],
     });
     s.fire_event("PARTY_MEMBERS_CHANGED", vec![]);
     s.resolve();
@@ -1791,6 +1797,8 @@ fn the_player_frame_wears_the_leader_and_master_looter_icons() {
         loot_threshold: 2,
         real_party_members: 0,
         real_raid_members: 0,
+        loot_master_guid: 0,
+        member_assignments: [0; 4],
     };
 
     s.set_party(party(0, None, "group"));

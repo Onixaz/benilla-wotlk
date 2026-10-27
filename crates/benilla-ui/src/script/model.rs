@@ -288,6 +288,8 @@ pub(crate) struct Model {
     pub(crate) refer_a_friend: unit_menu::ReferAFriendState,
     /// Party and loot-method calls (`AcceptGroup`, `InviteUnit`, `SetLootMethod`, …) queued.
     pub(crate) party_requests: Vec<party::PartyRequest>,
+    /// System chat lines the party bindings composed, drained by the app.
+    pub(crate) party_lines: Vec<String>,
     /// The ready-check deadline and the unanswered flags the timeout tick reads.
     pub(crate) ready_check: party::ReadyCheckState,
     /// Saved raid lockouts from `SMSG_RAID_INSTANCE_INFO`, which outlive any roster change.
@@ -1268,6 +1270,7 @@ impl Model {
             lfg_restricted: false,
             refer_a_friend: Default::default(),
             party_requests: Vec::new(),
+            party_lines: Vec::new(),
             ready_check: party::ReadyCheckState::default(),
             saved_instances: Vec::new(),
             raid_selection: 0,

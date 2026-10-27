@@ -71,6 +71,45 @@ fn in_my_group(model: &Model, guid: u64) -> bool {
     model.unit_guids.party.contains(&guid) || model.party.raid.iter().any(|m| m.guid == guid)
 }
 
+/// `MAINTANK` or `MAINASSIST`, case-insensitively, to its assignment bit; a non-string raises
+/// `usage`, another string `invalid`.
+fn assignment_flag(
+    lua: &Lua,
+    assignment: Value,
+    usage: &'static str,
+    invalid: &'static str,
+) -> mlua::Result<u8> {
+    let assignment = string_arg(lua, assignment, usage)?;
+    if assignment.eq_ignore_ascii_case("MAINTANK") {
+        Ok(super::party::ASSIGNMENT_MAIN_TANK)
+    } else if assignment.eq_ignore_ascii_case("MAINASSIST") {
+        Ok(super::party::ASSIGNMENT_MAIN_ASSIST)
+    } else {
+        Err(mlua::Error::runtime(invalid))
+    }
+}
+
+/// A group member's assignment bits: their raid row's, else their party slot's.
+fn assignments_of(model: &Model, guid: u64) -> u8 {
+    if let Some(m) = model.party.raid.iter().find(|m| m.guid == guid) {
+        return m.assignments;
+    }
+    model
+        .party
+        .members
+        .iter()
+        .position(|m| m.guid == guid)
+        .map_or(0, |i| model.party.member_assignments[i.min(3)])
+}
+
+fn flag_value(b: bool) -> Value {
+    if b {
+        Value::Integer(1)
+    } else {
+        Value::Nil
+    }
+}
+
 /// The spell's book slot is cooling down, as `Spell_C_GetSpellCooldown` answers non-zero.
 fn spell_cooling(model: &Model, spell: u32, now: f64) -> bool {
     model
@@ -247,25 +286,108 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "CanExitVehicle",
         lua.create_function(|_, ()| Ok(Value::Nil))?,
     )?;
-    // GetPartyAssignment (`0x52cf60`): the folded roster keeps no tank or assist marks.
+    // GetPartyAssignment("assignment" [, member [, exact]]) (`0x52cf60`): with a member, 1 or nil
+    // for them (a member outside the group prints `ERR_TARGET_NOT_IN_GROUP_S` and answers
+    // nothing); without, every raid row (or party slot) holding the assignment.
     g.set(
         "GetPartyAssignment",
-        lua.create_function(|lua, assignment: Value| {
-            let assignment = string_arg(
+        lua.create_function(|lua, (assignment, member): (Value, Value)| {
+            let flag = assignment_flag(
                 lua,
                 assignment,
                 "Usage: GetPartyAssignment(\"assignment\" [,\"raidmember\"] [,exactMatch])",
+                "GetPartyAssignment(): Invalid party assignment",
             )?;
-            if !assignment.eq_ignore_ascii_case("MAINTANK")
-                && !assignment.eq_ignore_ascii_case("MAINASSIST")
-            {
-                return Err(mlua::Error::runtime(
-                    "GetPartyAssignment(): Invalid party assignment",
-                ));
+            let named = optional_string(lua, &member);
+            let mut model = crate::script::model_mut_of(lua);
+            if let Some(name) = named {
+                let Some(guid) = guid_of(&model, &name).filter(|&g| in_my_group(&model, g)) else {
+                    model.ui_errors_s.push(("ERR_TARGET_NOT_IN_GROUP_S", name));
+                    return Ok(MultiValue::new());
+                };
+                let held = assignments_of(&model, guid) & flag != 0;
+                return Ok(MultiValue::from_vec(vec![flag_value(held)]));
             }
-            Ok(Value::Nil)
+            let rows: Vec<Value> = if model.party.raid.is_empty() {
+                (0..4)
+                    .filter(|&i| model.party.member_assignments[i] & flag != 0)
+                    .map(|i| Value::Integer(i as i64 + 1))
+                    .collect()
+            } else {
+                model
+                    .party
+                    .raid
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, m)| m.assignments & flag != 0)
+                    .map(|(i, _)| Value::Integer(i as i64 + 1))
+                    .collect()
+            };
+            Ok(MultiValue::from_vec(rows))
         })?,
     )?;
+    // SetPartyAssignment / ClearPartyAssignment("assignment" [, member [, exact]]) (`0x52e1b0`,
+    // `0x52e400`): ungrouped prints `ERR_NOT_IN_GROUP`, a member who neither leads nor holds a
+    // raid rank prints `ERR_NOT_LEADER`, an unmatched name prints `ERR_UNIT_NOT_FOUND`; else
+    // `MSG_PARTY_ASSIGNMENT` goes out.
+    for (binding, set) in [
+        ("SetPartyAssignment", true),
+        ("ClearPartyAssignment", false),
+    ] {
+        g.set(
+            binding,
+            lua.create_function(move |lua, (assignment, member): (Value, Value)| {
+                let mut model = crate::script::model_mut_of(lua);
+                if model.party.members.is_empty() && model.party.raid.is_empty() {
+                    model.ui_errors.push("ERR_NOT_IN_GROUP");
+                    return Ok(());
+                }
+                let own = model.party.own_guid;
+                let leads = own != 0 && model.party.leader_guid == own;
+                let officer = model.party.raid.iter().any(|m| m.guid == own && m.rank > 0);
+                if !leads && !officer {
+                    model.ui_errors.push("ERR_NOT_LEADER");
+                    return Ok(());
+                }
+                drop(model);
+                let usage = if set {
+                    "Usage: SetPartyAssignment(\"assignment\" [,\"raidmember\"] [,exactMatch])"
+                } else {
+                    "Usage: ClearPartyAssignment(\"assignment\" [,\"raidmember\"] [,exactMatch])"
+                };
+                let flag = assignment_flag(lua, assignment, usage, "Invalid Party assignment")?;
+                let named = optional_string(lua, &member);
+                let mut model = crate::script::model_mut_of(lua);
+                let guid = match named {
+                    Some(name) => {
+                        match guid_of(&model, &name).filter(|&g| in_my_group(&model, g)) {
+                            Some(guid) => guid,
+                            None => {
+                                let error =
+                                    if name.is_empty() || name.eq_ignore_ascii_case("target") {
+                                        "ERR_GENERIC_NO_TARGET"
+                                    } else {
+                                        "ERR_UNIT_NOT_FOUND"
+                                    };
+                                model.ui_errors.push(error);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    None => 0,
+                };
+                let assignment = u8::from(flag == super::party::ASSIGNMENT_MAIN_ASSIST);
+                model
+                    .party_requests
+                    .push(super::party::PartyRequest::PartyAssignment {
+                        assignment,
+                        set,
+                        guid,
+                    });
+                Ok(())
+            })?,
+        )?;
+    }
 
     // ── Voice chat, which benilla does not run ─────────────────────────────────────────────────
     // IsVoiceChatEnabled() (`0x4fcbf0`): nil with the voice system down.

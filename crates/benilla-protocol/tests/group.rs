@@ -840,9 +840,23 @@ fn ready_check_smsg_shapes() {
     }
 }
 
-/// `CMSG_REQUEST_RAID_INFO` is empty; `SMSG_RAID_INSTANCE_INFO` (vmangos `Player::SendRaidInfo`)
-/// is a `u32` count of 12-byte rows. A zero count still decodes to an event: its arrival is what
+/// `CMSG_REQUEST_RAID_INFO` is empty; `SMSG_RAID_INSTANCE_INFO` (`0x501030`) is a `u32` count of
+/// 22-byte rows. A zero count still decodes to an event: its arrival is what
 /// disables the Raid Info button.
+/// The two 3.3.5a raid sends: the lockout extend toggle (`0x50dc10`) and a party assignment
+/// (`0x6d7200`).
+#[test]
+fn saved_instance_extend_and_party_assignment_bodies() {
+    assert_eq!(
+        messages::set_saved_instance_extend(533, 1, true),
+        hx("150200000100000001")
+    );
+    assert_eq!(
+        messages::party_assignment(1, false, 0x0600_0000_0000_002a),
+        hx("01002a00000000000006")
+    );
+}
+
 #[test]
 fn raid_instance_info_wire() {
     assert_eq!(
@@ -863,17 +877,34 @@ fn raid_instance_info_wire() {
 
     let body = hx(concat!(
         "02000000", // count
-        "99010000", "80510100", "d2040000", // map 409, 86400 s, instance 1234
-        "f9000000", "100e0000", "4d000000", // map 249, 3600 s, instance 77
+        // map 533, difficulty 1, instance 0x0000_0001_0000_04d2, locked, not extended, 86400 s
+        "15020000",
+        "01000000",
+        "d204000001000000",
+        "01",
+        "00",
+        "80510100",
+        // map 249, difficulty 0, instance 77, expired, extended, 3600 s
+        "f9000000",
+        "00000000",
+        "4d00000000000000",
+        "00",
+        "01",
+        "100e0000",
     ));
-    let p = messages::parse_server(opcode::SMSG_RAID_INSTANCE_INFO, &body).unwrap();
+    let (p, tail) =
+        messages::parse_server_with_tail(opcode::SMSG_RAID_INSTANCE_INFO, &body).unwrap();
+    assert_eq!(tail, 0, "every byte read");
     match &p {
         ServerPacket::RaidInstanceInfo { entries } => {
             assert_eq!(entries.len(), 2);
-            assert_eq!(entries[0].map, 409);
+            assert_eq!(entries[0].map, 533);
+            assert_eq!(entries[0].difficulty, 1);
+            assert_eq!(entries[0].instance, 0x1_0000_04d2);
+            assert!(entries[0].locked && !entries[0].extended);
             assert_eq!(entries[0].reset, 86_400);
-            assert_eq!(entries[0].instance, 1234);
             assert_eq!(entries[1].map, 249);
+            assert!(!entries[1].locked && entries[1].extended);
             assert_eq!(entries[1].reset, 3_600);
             assert_eq!(entries[1].instance, 77);
         }

@@ -769,18 +769,24 @@ pub fn ready_check_answer(ready: bool) -> Vec<u8> {
     vec![u8::from(ready)]
 }
 
-/// One `SMSG_RAID_INSTANCE_INFO` row, a permanent raid lockout (vmangos `Player::SendRaidInfo`).
+/// One `SMSG_RAID_INSTANCE_INFO` row, a saved lockout (`OnRaidInstanceInfo` `0x501030`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RaidInstanceEntry {
     /// `Map.dbc` id; the name shown is the client's own lookup.
     pub map: u32,
+    /// The difficulty, 0-based.
+    pub difficulty: u32,
+    /// The 64-bit instance id; `GetSavedInstanceInfo` returns its low and high halves.
+    pub instance: u64,
+    pub locked: bool,
+    pub extended: bool,
     /// Seconds until the lockout resets.
     pub reset: u32,
-    /// The instance id, `GetSavedInstanceInfo`'s second return.
-    pub instance: u32,
 }
 
-/// Read `SMSG_RAID_INSTANCE_INFO`; the count is authoritative, so a short body is an error.
+/// Read `SMSG_RAID_INSTANCE_INFO` (`0x501030`): a `u32` count, then per row `u32` map, `u32`
+/// difficulty, `u64` instance, `u8` locked, `u8` extended, `u32` reset. The count is
+/// authoritative, so a short body is an error.
 pub(super) fn read_raid_instance_info(r: &mut &[u8]) -> io::Result<Vec<RaidInstanceEntry>> {
     let count = read_u32_le(r)?;
     // 1024 caps the preallocation far above any real lockout list.
@@ -788,11 +794,33 @@ pub(super) fn read_raid_instance_info(r: &mut &[u8]) -> io::Result<Vec<RaidInsta
     for _ in 0..count {
         out.push(RaidInstanceEntry {
             map: read_u32_le(r)?,
+            difficulty: read_u32_le(r)?,
+            instance: read_u64_le(r)?,
+            locked: read_u8(r)? != 0,
+            extended: read_u8(r)? != 0,
             reset: read_u32_le(r)?,
-            instance: read_u32_le(r)?,
         });
     }
     Ok(out)
+}
+
+/// `CMSG_SET_SAVED_INSTANCE_EXTEND` body (`0x50dc10`): `u32` map, `u32` difficulty, `u8` extend.
+pub fn set_saved_instance_extend(map: u32, difficulty: u32, extend: bool) -> Vec<u8> {
+    let mut body = Vec::with_capacity(9);
+    body.extend_from_slice(&map.to_le_bytes());
+    body.extend_from_slice(&difficulty.to_le_bytes());
+    body.push(u8::from(extend));
+    body
+}
+
+/// `MSG_PARTY_ASSIGNMENT` body (`0x6d7200`): `u8` assignment (0 main tank, 1 main assist), `u8`
+/// set, `u64` member.
+pub fn party_assignment(assignment: u8, set: bool, guid: u64) -> Vec<u8> {
+    let mut body = Vec::with_capacity(10);
+    body.push(assignment);
+    body.push(u8::from(set));
+    body.extend_from_slice(&guid.to_le_bytes());
+    body
 }
 
 /// `CMSG_REQUEST_RAID_INFO` body: empty (vmangos `HandleRequestRaidInfoOpcode`).

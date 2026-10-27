@@ -42,7 +42,6 @@ const BEYOND_REFERENCE: &[&str] = &[
     "TargetByName",
     "ToggleMouseMove",
     "TutorialsEnabled",
-    "UninviteFromRaid",
     "UnitIsCivilian",
     "UnitIsPlusMob",
 ];

@@ -17,7 +17,7 @@ struct TransferAborts(Vec<(u32, u8, Option<u8>)>);
 
 /// `MapDifficulty.dbc`, for the difficulty refusal's own message; empty without client data.
 #[derive(Resource, Default)]
-struct MapDifficulties(Vec<MapDifficulty>);
+pub(crate) struct MapDifficulties(pub(crate) Vec<MapDifficulty>);
 
 pub(crate) struct UiTransferPlugin;
 

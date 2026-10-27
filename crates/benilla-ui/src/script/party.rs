@@ -21,32 +21,45 @@ pub struct PartyMemberInfo {
     pub guid: u64,
 }
 
-/// One saved raid lockout, `GetSavedInstanceInfo`'s three returns, from `SMSG_RAID_INSTANCE_INFO`
-/// with the `Map.dbc` name resolved by the app ([`UiScript::set_saved_instances`]).
+/// One saved lockout from `SMSG_RAID_INSTANCE_INFO` (`0x501030`), with the `Map.dbc` and
+/// `MapDifficulty.dbc` reads `GetSavedInstanceInfo` (`0x4ff2c0`) makes resolved by the app
+/// ([`UiScript::set_saved_instances`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SavedInstanceInfo {
-    /// The `Map.dbc` name, e.g. `"Molten Core"`.
-    pub name: String,
-    pub instance: u32,
-    /// Seconds until the lockout resets.
+    /// The `Map.dbc` id, which `SetSavedInstanceExtend` sends back.
+    pub map: u32,
+    /// The `Map.dbc` name; `None` with no row, which answers the miss tuple.
+    pub name: Option<String>,
+    pub instance: u64,
+    /// Seconds until the lockout resets, as the server sent them.
     pub reset: u32,
+    /// The difficulty, stored 0-based and exposed 1-based.
+    pub difficulty: u32,
+    pub locked: bool,
+    pub extended: bool,
+    /// `Map.dbc` `InstanceType` is 2.
+    pub is_raid: bool,
+    /// `GetMaxPlayersForMap` over the difficulty.
+    pub max_players: u32,
+    /// The `MapDifficulty` row's difficulty string through `GetText`; empty with no row.
+    pub difficulty_name: String,
 }
 
-/// One raid roster row, `GetRaidRosterInfo`'s nine returns in push order (`0x4bb560`). The
-/// binding, not the row, applies the subgroup's +1 and the offline zone.
+/// One raid roster row, `GetRaidRosterInfo`'s fourteen returns in push order (`0x573690`). The
+/// binding, not the row, applies the subgroup's +1, the offline zone and the master-looter test.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct RaidMemberInfo {
-    /// Return 1, from the name cache (`0x4bb5ee`). Empty means not cached, which the reference
-    /// answers with the miss tuple, as for an empty slot (`0x4bb5f8 je 0x4bb7b9`).
+    /// Return 1, from the name cache. Empty means not cached, which the reference answers with the
+    /// miss tuple, as for an empty slot (`0x573690`).
     pub name: String,
     /// The identity `UnitInRaid` matches a token against; `0` never matches, as the reference's
-    /// membership test rejects a zero guid (`0x4baee0`).
+    /// membership test rejects a zero guid (`0x60ca20`).
     pub guid: u64,
-    /// Return 2, exposed as stored (`0x4bb607 fild [edi+0xc]`): 0 member, 1 assistant, 2 leader,
+    /// Return 2, exposed as stored (`m_rank`): 0 member, 1 assistant, 2 leader,
     /// the convention addons read (`ChatLog.lua:351-353`).
     pub rank: u32,
     /// Return 3, stored 0-based as the wire's `GroupMemberEntry::flags` bits 0-2 carry it; the
-    /// binding exposes it 1-based (`0x4bb61a inc eax`).
+    /// binding exposes it 1-based.
     pub subgroup: u32,
     /// Return 4, `0` until an object or a stats packet carries it, as in the reference's third arm.
     pub level: u32,
@@ -63,6 +76,11 @@ pub struct RaidMemberInfo {
     /// below, or an unstreamed one whose roster status (`[+0x18]`) has both `0x1` and `0x4`,
     /// vmangos's `ONLINE` and `DEAD`, from which the app fills it. Addons read it as `isDead`.
     pub ninth: bool,
+    /// The member's assignment bits, main tank 0x2 and main assist 0x4: return 10's role and
+    /// `GetPartyAssignment`'s source (`m_assignments`).
+    pub assignments: u8,
+    /// The LFG role bits, tank 0x2, healer 0x4, damage 0x8: returns 12 to 14.
+    pub roles: u8,
 }
 
 /// The party and raid roster snapshot the app pushes whole when it changes
@@ -101,6 +119,12 @@ pub struct PartyState {
     /// battleground, which a battleground's list leaves as it was (`0x6d8d42`-`0x6d8d84`).
     pub real_party_members: u32,
     pub real_raid_members: u32,
+    /// The master looter's guid (`CGPartyInfo::m_lootMaster`), 0 unless the method is master
+    /// loot: `GetRaidRosterInfo`'s eleventh return.
+    pub loot_master_guid: u64,
+    /// The party slots' assignment bits (`CGPartyInfo::m_memberAssignments`), as
+    /// [`RaidMemberInfo::assignments`].
+    pub member_assignments: [u8; 4],
 }
 
 /// Outbound party and raid intents, drained by the app ([`UiScript::take_party_requests`]) into
@@ -144,9 +168,19 @@ pub enum PartyRequest {
     SwapSubgroup { index: u32, other: u32 },
     /// `PromoteToAssistant(name)` / `DemoteAssistant(name)` (`CMSG_GROUP_ASSISTANT_LEADER`).
     AssistantLeader { name: String, grant: bool },
-    /// `UninviteFromRaid(index)`: a 1-based raid row the app resolves to the name
-    /// `CMSG_GROUP_UNINVITE` takes.
-    UninviteRaid(u32),
+    /// `SetPartyAssignment`/`ClearPartyAssignment` (`MSG_PARTY_ASSIGNMENT`, `0x6d7200`): 0 main
+    /// tank, 1 main assist, set or clear, on the member's guid (0 with no name given).
+    PartyAssignment {
+        assignment: u8,
+        set: bool,
+        guid: u64,
+    },
+    /// `SetSavedInstanceExtend(index, extend)` (`CMSG_SET_SAVED_INSTANCE_EXTEND`, `0x50dc10`).
+    SavedInstanceExtend {
+        map: u32,
+        difficulty: u32,
+        extend: bool,
+    },
     /// `DoReadyCheck()`, leader only (`MSG_RAID_READY_CHECK`, empty body).
     ReadyCheckStart,
     /// `ConfirmReadyCheck(ready)` (`MSG_RAID_READY_CHECK`, one byte).
@@ -227,6 +261,11 @@ impl super::UiScript {
         drain_field!(self, ready_check.lines)
     }
 
+    /// Drain the system lines the party bindings composed (`SetSavedInstanceExtend`'s lock line).
+    pub fn take_party_lines(&mut self) -> Vec<String> {
+        drain_field!(self, party_lines)
+    }
+
     /// Drain the party/loot intents queued since the last call.
     pub fn take_party_requests(&mut self) -> Vec<PartyRequest> {
         drain_field!(self, party_requests)
@@ -238,8 +277,8 @@ impl super::UiScript {
     }
 }
 
-/// Whether the player leads the group. `IsRaidLeader` (`0x4bb8c0`) and `IsPartyLeader`
-/// (`0x4e9130`) both compare the cached leader guid (`[0xbc75f8]`, `[0xbc75fc]`) with the player's
+/// Whether the player leads the group. `IsRaidLeader` (`0x573a60`) and `IsPartyLeader`
+/// (`0x52ccd0`) both compare the cached leader guid (`[0xbc75f8]`, `[0xbc75fc]`) with the player's
 /// own (`0x468550`) and read no raid flag, so `IsRaidLeader()` is true for a party leader.
 fn leads_the_group(model: &Model) -> bool {
     // Stand-in for that compare: `leader_index` is `0` when we lead but also when ungrouped, where
@@ -249,44 +288,43 @@ fn leads_the_group(model: &Model) -> bool {
     !model.party.members.is_empty() && model.party.leader_index == 0
 }
 
-/// `GetRaidRosterInfo`'s values for one row, or the miss tuple for `None`. Nine on every path
-/// (`0x4bb560`, every return `mov eax,9`): out of range, an empty slot and a name-cache miss all
-/// reach `0x4bb7b9`, which pushes `nil, 0, 1, 1` and five `nil`s. Takes the row by value because
-/// every arm re-enters Lua, and a callback drops its `app_data` borrow before that.
-fn raid_roster_info(lua: &Lua, row: Option<RaidMemberInfo>) -> mlua::Result<MultiValue> {
+/// `GetRaidRosterInfo`'s fourteen values for one row, or the miss tuple for `None`: out of range,
+/// an empty slot and a name-cache miss push `nil, 0, 1, 1` and ten `nil`s (`0x573690`). Takes the
+/// row by value because every arm re-enters Lua.
+fn raid_roster_info(
+    lua: &Lua,
+    row: Option<RaidMemberInfo>,
+    loot_master: u64,
+) -> mlua::Result<MultiValue> {
     let Some(m) = row else {
-        return Ok(MultiValue::from_vec(vec![
-            Value::Nil,
-            Value::Integer(0),
-            Value::Integer(1),
-            Value::Integer(1),
-            Value::Nil,
-            Value::Nil,
-            Value::Nil,
-            Value::Nil,
-            Value::Nil,
-        ]));
+        let mut miss = vec![Value::Nil; 14];
+        miss[1] = Value::Integer(0);
+        miss[2] = Value::Integer(1);
+        miss[3] = Value::Integer(1);
+        return Ok(MultiValue::from_vec(miss));
     };
     let opt_str = |s: &Option<String>| match s {
         Some(s) => lua.create_string(s).map(Value::String),
         None => Ok(Value::Nil),
     };
-    // Return 7: the zone while online, else the `PLAYER_OFFLINE` global read from the VM
-    // (`0x703bf0`), so a translated GlobalStrings.lua translates it; a missing global pushes `nil`
-    // (`0x6f3890`).
+    // Return 7: the zone while online, else the `PLAYER_OFFLINE` text (`0x573690`).
     let zone = if m.online {
         opt_str(&m.zone)?
     } else {
-        match lua.globals().get::<Value>("PLAYER_OFFLINE") {
-            Ok(v @ Value::String(_)) => v,
-            _ => Value::Nil,
-        }
+        Value::String(lua.create_string(super::get_text::global_text(lua, "PLAYER_OFFLINE"))?)
     };
     let flag = |b: bool| if b { Value::Integer(1) } else { Value::Nil };
+    // Return 10: main tank outranks main assist.
+    let role = if m.assignments & ASSIGNMENT_MAIN_TANK != 0 {
+        Value::String(lua.create_string("MAINTANK")?)
+    } else if m.assignments & ASSIGNMENT_MAIN_ASSIST != 0 {
+        Value::String(lua.create_string("MAINASSIST")?)
+    } else {
+        Value::Nil
+    };
     Ok(MultiValue::from_vec(vec![
         lua.create_string(&m.name).map(Value::String)?,
         Value::Integer(i64::from(m.rank)),
-        // Stored 0-based, exposed 1-based (`0x4bb61a inc eax`).
         Value::Integer(i64::from(m.subgroup) + 1),
         Value::Integer(i64::from(m.level)),
         opt_str(&m.class)?,
@@ -294,8 +332,18 @@ fn raid_roster_info(lua: &Lua, row: Option<RaidMemberInfo>) -> mlua::Result<Mult
         zone,
         flag(m.online),
         flag(m.ninth),
+        role,
+        // Return 11: master loot names this member (`m_lootMethod == 2`).
+        flag(loot_master != 0 && loot_master == m.guid),
+        flag(m.roles & 0x2 != 0),
+        flag(m.roles & 0x4 != 0),
+        flag(m.roles & 0x8 != 0),
     ]))
 }
+
+/// A member's assignment bits (`CGRaidMember::m_assignments`): main tank, main assist.
+pub(crate) const ASSIGNMENT_MAIN_TANK: u8 = 0x2;
+pub(crate) const ASSIGNMENT_MAIN_ASSIST: u8 = 0x4;
 
 /// Register the party and raid globals.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -343,28 +391,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetRaidRosterInfo(index) → name, rank, subgroup, level, class, fileName, zone, online and an
-    // unnamed ninth, 1-based. Its only raise is a non-number argument (`0x4bb582 call 0x6f34d0`,
-    // `0x4bb591 call 0x6f4940`, usage string `0x8474a0`).
+    // GetRaidRosterInfo(index) (`0x573690`) → name, rank, subgroup, level, class, fileName, zone,
+    // online, isDead, role, isML, tank, healer, damage; its only raise is a non-number argument.
     g.set(
         "GetRaidRosterInfo",
         lua.create_function(|lua, index: Value| {
             let index = number_arg(lua, index, "Usage: GetRaidRosterInfo(index)")?;
-            let row = {
+            let (row, loot_master) = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                // One unsigned compare after the decrement (`0x4bb5bb dec eax`, `0x4bb5be jae`)
-                // catches an index of 0 or below and one past the count; `dec` wraps, and
-                // `wrapping_sub` keeps that true of `i32::MIN`.
-                usize::try_from(index.wrapping_sub(1))
+                // One unsigned compare after the decrement catches 0 and below and one past the
+                // count; a name-cache miss shares the miss arm.
+                let row = usize::try_from(index.wrapping_sub(1))
                     .ok()
                     .and_then(|i| model.party.raid.get(i))
-                    // A name-cache miss shares that same arm (`0x4bb5f8 je 0x4bb7b9`).
                     .filter(|m| !m.name.is_empty())
-                    .cloned()
+                    .cloned();
+                (row, model.party.loot_master_guid)
             };
-            raid_roster_info(lua, row)
+            raid_roster_info(lua, row, loot_master)
         })?,
     )?;
 
@@ -589,19 +635,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // IsRaidOfficer() → always nil: its reference body (`0x4bb910`) is untraced. So the RaidFrame
-    // enables its add-member button for the leader only, where the reference also enables it for
-    // an assistant.
+    // IsRaidOfficer() (`0x573b00`) → 1 when our own raid row holds a rank, else nil.
     g.set(
         "IsRaidOfficer",
-        lua.create_function(|_, ()| Ok(Value::Nil))?,
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let own = model.party.own_guid;
+            let officer = own != 0 && model.party.raid.iter().any(|m| m.guid == own && m.rank > 0);
+            Ok(if officer {
+                Value::Integer(1)
+            } else {
+                Value::Nil
+            })
+        })?,
     )?;
 
     // ── The raid-management verbs ────────────────────────────────────────────
-    // Each only marshals its arguments into a client call or a send (`ConvertToRaid 0x4bbc90`,
-    // `SetRaidSubgroup 0x4bb990`, `SwapRaidSubgroup 0x4bbb00`, `PromoteToAssistant 0x4bbd20`,
-    // `RequestRaidInfo 0x4a1850`, `GetSavedInstanceInfo 0x4a1920`, `UninviteFromRaid 0x48a580`,
-    // `SetRaidRosterSelection 0x4bb820`), so the verbs here queue a request.
+    // Each only marshals its arguments into a client call or a send (`PromoteToAssistant`
+    // `0x573ef0`, `RequestRaidInfo` `0x500be0`), so the verbs here queue a request.
     g.set(
         "ConvertToRaid",
         lua.create_function(|lua, ()| {
@@ -650,17 +703,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
-    g.set(
-        "UninviteFromRaid",
-        lua.create_function(|lua, index: Value| {
-            let index = number_arg(lua, index, "Usage: UninviteFromRaid(index)")?;
-            let mut model = crate::script::model_mut_of(lua);
-            model
-                .party_requests
-                .push(PartyRequest::UninviteRaid(index.max(0) as u32));
-            Ok(())
-        })?,
-    )?;
     g.set(
         "DoReadyCheck",
         lua.create_function(|lua, ()| {
@@ -755,8 +797,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetNumSavedInstances() / GetSavedInstanceInfo(index), 1-based over the pushed list; a miss
-    // returns nothing.
+    // GetNumSavedInstances() (`0x4fca50`) / GetSavedInstanceInfo(index) (`0x4ff2c0`): ten values;
+    // past the list or with no `Map.dbc` row, nil, 0, nil, 0, false, false, 0, false, 0, "".
     g.set(
         "GetNumSavedInstances",
         lua.create_function(|lua, ()| {
@@ -777,16 +819,86 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 usize::try_from(index.wrapping_sub(1))
                     .ok()
                     .and_then(|i| model.saved_instances.get(i))
+                    .filter(|r| r.name.is_some())
                     .cloned()
             };
-            Ok(match row {
-                Some(r) => MultiValue::from_vec(vec![
-                    Value::String(lua.create_string(&r.name)?),
-                    Value::Integer(i64::from(r.instance)),
-                    Value::Integer(i64::from(r.reset)),
-                ]),
-                None => MultiValue::new(),
-            })
+            let Some(r) = row else {
+                return Ok(MultiValue::from_vec(vec![
+                    Value::Nil,
+                    Value::Integer(0),
+                    Value::Nil,
+                    Value::Integer(0),
+                    Value::Boolean(false),
+                    Value::Boolean(false),
+                    Value::Integer(0),
+                    Value::Boolean(false),
+                    Value::Integer(0),
+                    Value::String(lua.create_string("")?),
+                ]));
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(r.name.as_deref().unwrap_or_default())?),
+                Value::Integer((r.instance & 0xFFFF_FFFF) as i64),
+                Value::Integer(i64::from(r.reset)),
+                Value::Integer(i64::from(r.difficulty) + 1),
+                Value::Boolean(r.locked),
+                Value::Boolean(r.extended),
+                Value::Integer((r.instance >> 32) as i64),
+                Value::Boolean(r.is_raid),
+                Value::Integer(i64::from(r.max_players)),
+                Value::String(lua.create_string(&r.difficulty_name)?),
+            ]))
+        })?,
+    )?;
+    // SetSavedInstanceExtend(index, extend) (`0x50dc10`): stores the flag, prints the lock line
+    // as system chat and sends the request; an index past the list does nothing.
+    g.set(
+        "SetSavedInstanceExtend",
+        lua.create_function(|lua, (index, extend): (Value, Value)| {
+            const USAGE: &str = "Usage: SetSavedInstanceExtend(index, extend)";
+            let Value::Boolean(extend) = extend else {
+                return Err(mlua::Error::RuntimeError(USAGE.into()));
+            };
+            let index = number_arg(lua, index, USAGE)?;
+            let template = super::get_text::global_text(
+                lua,
+                if extend {
+                    "RAID_INSTANCE_LOCK_EXTENDED"
+                } else {
+                    "RAID_INSTANCE_LOCK_NOT_EXTENDED"
+                },
+            );
+            let with_difficulty = super::get_text::global_text(lua, "DUNGEON_NAME_WITH_DIFFICULTY");
+            let mut model = crate::script::model_mut_of(lua);
+            let Some(row) = usize::try_from(index.wrapping_sub(1))
+                .ok()
+                .and_then(|i| model.saved_instances.get_mut(i))
+            else {
+                return Ok(());
+            };
+            row.extended = extend;
+            // `GetMapNameWithDifficulty` (`0x4fe070`): "Name (difficulty)" when the row has one.
+            let name = row.name.clone().unwrap_or_default();
+            let shown = if row.difficulty_name.is_empty() {
+                name
+            } else {
+                crate::strings::fill(
+                    &with_difficulty,
+                    &[
+                        crate::strings::Arg::S(&name),
+                        crate::strings::Arg::S(&row.difficulty_name),
+                    ],
+                )
+            };
+            let request = PartyRequest::SavedInstanceExtend {
+                map: row.map,
+                difficulty: row.difficulty,
+                extend,
+            };
+            let line = crate::strings::fill(&template, &[crate::strings::Arg::S(&shown)]);
+            model.party_lines.push(line);
+            model.party_requests.push(request);
+            Ok(())
         })?,
     )?;
 
@@ -924,6 +1036,8 @@ mod tests {
             loot_threshold: 2,
             real_party_members: 0,
             real_raid_members: 0,
+            loot_master_guid: 0,
+            member_assignments: [0; 4],
         }
     }
 
@@ -997,6 +1111,8 @@ mod tests {
             zone: Some("Molten Core".into()),
             online: true,
             ninth: false,
+            assignments: 0,
+            roles: 0,
         }
     }
 
@@ -1013,24 +1129,24 @@ mod tests {
         }
     }
 
-    /// Every return site in `0x4bb560` is `mov eax,9`, the miss arm `0x4bb7b9` included.
+    /// Every return site in `0x573690` pushes fourteen, the miss arm included.
     #[test]
-    fn get_raid_roster_info_returns_nine_values_on_every_path() {
+    fn get_raid_roster_info_returns_fourteen_values_on_every_path() {
         let mut s = UiScript::new().unwrap();
         s.set_party(ten_player_raid());
 
         for index in ["1", "10", "0", "-1", "41", "9999"] {
             assert_eq!(
                 s.arity(&format!("GetRaidRosterInfo({index})")).unwrap(),
-                9,
-                "index {index} must still be a nine-value answer"
+                14,
+                "index {index} must still be a fourteen-value answer"
             );
         }
         let s = UiScript::new().unwrap();
-        assert_eq!(s.arity("GetRaidRosterInfo(1)").unwrap(), 9);
+        assert_eq!(s.arity("GetRaidRosterInfo(1)").unwrap(), 14);
     }
 
-    /// `0x4bb7b9` pushes `nil, 0, 1, 1` and five nils.
+    /// The miss arm pushes `nil, 0, 1, 1` and ten nils (`0x573690`).
     #[test]
     fn get_raid_roster_info_misses_with_the_fixed_tuple() {
         let mut s = UiScript::new().unwrap();
@@ -1047,7 +1163,7 @@ mod tests {
         );
         assert!(e && f && g && h && i, "the last five are nil");
 
-        // An in-range member with no cached name takes the same arm (`0x4bb5f8 je 0x4bb7b9`).
+        // An in-range member with no cached name takes the same arm (`0x573690`).
         let mut party = ten_player_raid();
         party.raid[1].name = String::new();
         s.set_party(party);
@@ -1076,7 +1192,7 @@ mod tests {
             .unwrap();
         assert_eq!(name, "Me");
         assert_eq!(rank, 2, "as stored, no adjustment");
-        assert_eq!(subgroup, 1, "stored 0 → exposed 1 (`0x4bb61a inc eax`)");
+        assert_eq!(subgroup, 1, "stored 0 → exposed 1");
         assert_eq!(level, 60);
         assert_eq!((class.as_str(), file.as_str()), ("Warrior", "WARRIOR"));
         assert_eq!(zone, "Molten Core");
@@ -1090,7 +1206,7 @@ mod tests {
         );
     }
 
-    /// Return 8 goes nil on the same arm (`0x4bb705`).
+    /// Return 8 goes nil on the same arm (`0x573690`).
     #[test]
     fn get_raid_roster_info_puts_player_offline_in_the_zone_slot() {
         let mut s = UiScript::new().unwrap();
@@ -1107,7 +1223,7 @@ mod tests {
         assert_eq!(online, None);
     }
 
-    /// The raise at `0x4bb591` goes through `0x6f4940`, which never returns.
+    /// A non-number raises the usage error (`0x573690`).
     #[test]
     fn get_raid_roster_info_raises_only_on_a_non_number() {
         let s = UiScript::new().unwrap();
@@ -1117,7 +1233,7 @@ mod tests {
             "got {err}"
         );
         // A numeric string coerces (`lua_isnumber`) and does not raise.
-        assert_eq!(s.arity(r#"GetRaidRosterInfo("3")"#).unwrap(), 9);
+        assert_eq!(s.arity(r#"GetRaidRosterInfo("3")"#).unwrap(), 14);
     }
 
     /// The 1 is the constant double at `0x51637e`.
@@ -1138,8 +1254,8 @@ mod tests {
         assert!(s
             .eval::<bool>(r#"return UnitInRaid("mouseover") == nil"#)
             .unwrap());
-        // Nil for a missing, wrong-typed or unmatched token: `0x6f3690` gives NULL, `0x515970` maps
-        // it to guid 0, and `0x4baee0` rejects guid 0.
+        // Nil for a missing, wrong-typed or unmatched token: no guid, and `UnitInRaid` (`0x60ca20`)
+        // rejects guid 0.
         for call in ["UnitInRaid()", "UnitInRaid(nil)", r#"UnitInRaid("party3")"#] {
             assert!(
                 s.eval::<bool>(&format!("return {call} == nil")).unwrap(),
@@ -1155,7 +1271,7 @@ mod tests {
         }
     }
 
-    /// `0x4bb8c0` reads the same leader guid as `0x4e9130`, and no raid flag.
+    /// `IsRaidLeader` (`0x573a60`) reads the same leader guid as `IsPartyLeader` (`0x52ccd0`).
     #[test]
     fn is_raid_leader_is_true_for_a_party_leader() {
         let mut s = UiScript::new().unwrap();
@@ -1288,11 +1404,32 @@ mod tests {
         );
     }
 
-    /// Nil until `0x4bb910`'s body is traced; "rank >= 1" would be a guess.
+    /// `IsRaidOfficer` (`0x573b00`): our own raid row's rank above 0, nil outside a raid.
     #[test]
-    fn is_raid_officer_is_still_nil_and_that_is_a_missing_carve_not_a_missing_feature() {
-        let s = UiScript::new().unwrap();
+    fn is_raid_officer_reads_our_own_rows_rank() {
+        let mut s = UiScript::new().unwrap();
         assert!(s.eval::<bool>("return IsRaidOfficer() == nil").unwrap());
+        let mut state = ten_player_raid();
+        state.own_guid = state.raid[1].guid;
+        s.set_party(state.clone());
+        assert!(
+            s.eval::<bool>("return IsRaidOfficer() == nil").unwrap(),
+            "a plain member"
+        );
+        state.raid[1].rank = 1;
+        s.set_party(state.clone());
+        assert_eq!(
+            s.eval::<i64>("return IsRaidOfficer()").unwrap(),
+            1,
+            "an assistant"
+        );
+        state.own_guid = state.raid[0].guid;
+        s.set_party(state);
+        assert_eq!(
+            s.eval::<i64>("return IsRaidOfficer()").unwrap(),
+            1,
+            "the leader"
+        );
     }
 
     // ── The identity predicates ─────────────────────────────────────────────
@@ -1461,7 +1598,6 @@ mod tests {
             PromoteToLeader("Alice")
             PromoteToAssistant("Bob")
             DemoteAssistant("Bob")
-            UninviteFromRaid(9)
             DoReadyCheck()
             RequestRaidInfo()
             "#,
@@ -1485,7 +1621,6 @@ mod tests {
                     name: "Bob".into(),
                     grant: false
                 },
-                PartyRequest::UninviteRaid(9),
                 PartyRequest::ReadyCheckStart,
                 PartyRequest::RequestRaidInfo,
             ]
@@ -1511,42 +1646,132 @@ mod tests {
         );
     }
 
+    fn lockout(
+        map: u32,
+        name: &str,
+        instance: u64,
+        difficulty: u32,
+    ) -> crate::script::SavedInstanceInfo {
+        crate::script::SavedInstanceInfo {
+            map,
+            name: Some(name.into()),
+            instance,
+            reset: 86_400,
+            difficulty,
+            locked: true,
+            extended: false,
+            is_raid: true,
+            max_players: 25,
+            difficulty_name: "25 Player".into(),
+        }
+    }
+
+    /// Ten values (`0x4ff2c0`): the instance id in two halves, the difficulty 1-based.
     #[test]
-    fn saved_instance_info_reads_the_pushed_list() {
-        use crate::script::SavedInstanceInfo;
+    fn saved_instance_info_answers_ten_values() {
         let mut s = UiScript::new().unwrap();
         assert_eq!(s.eval::<i64>("return GetNumSavedInstances()").unwrap(), 0);
         s.set_saved_instances(vec![
-            SavedInstanceInfo {
-                name: "Molten Core".into(),
-                instance: 1234,
-                reset: 86_400,
-            },
-            SavedInstanceInfo {
-                name: "Onyxia's Lair".into(),
-                instance: 77,
-                reset: 3_600,
+            lockout(533, "Naxxramas", 0x2_0000_04d2, 1),
+            crate::script::SavedInstanceInfo {
+                name: None,
+                ..lockout(9999, "", 7, 0)
             },
         ]);
         assert_eq!(s.eval::<i64>("return GetNumSavedInstances()").unwrap(), 2);
-        let (name, id, reset) = s
-            .eval::<(String, i64, i64)>("return GetSavedInstanceInfo(1)")
-            .unwrap();
-        assert_eq!((name.as_str(), id, reset), ("Molten Core", 1234, 86_400));
-        assert_eq!(
-            s.eval::<String>("return GetSavedInstanceInfo(2)").unwrap(),
-            "Onyxia's Lair"
-        );
-        for miss in ["0", "3", "-1"] {
+        assert_eq!(s.arity("GetSavedInstanceInfo(1)").unwrap(), 10);
+        assert!(s
+            .eval::<bool>(
+                "local n, id, reset, diff, locked, ext, hi, raid, max, dname = GetSavedInstanceInfo(1)                  return n == 'Naxxramas' and id == 1234 and reset == 86400 and diff == 2                  and locked == true and ext == false and hi == 2 and raid == true and max == 25                  and dname == '25 Player'"
+            )
+            .unwrap());
+        // Past the list, or a map with no row.
+        for miss in ["0", "2", "3", "-1"] {
             assert!(
-                s.eval::<bool>(&format!("return GetSavedInstanceInfo({miss}) == nil"))
-                    .unwrap(),
+                s.eval::<bool>(&format!(
+                    "local n, id, reset, diff, locked, ext, hi, raid, max, dname = GetSavedInstanceInfo({miss})                      return select('#', GetSavedInstanceInfo({miss})) == 10 and n == nil and id == 0                      and reset == nil and diff == 0 and locked == false and ext == false and hi == 0                      and raid == false and max == 0 and dname == ''"
+                ))
+                .unwrap(),
                 "index {miss} is a miss"
             );
         }
+        let err = s
+            .run(r#"GetSavedInstanceInfo("x")"#)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("Usage: GetSavedInstanceInfo(index)"), "{err}");
+    }
+
+    /// `SetSavedInstanceExtend` (`0x50dc10`) flips the flag, prints the lock line with the
+    /// difficulty and queues the request; a non-boolean raises.
+    #[test]
+    fn set_saved_instance_extend_stores_prints_and_sends() {
+        let mut s = UiScript::new().unwrap();
+        s.run(
+            r#"RAID_INSTANCE_LOCK_EXTENDED = "Your instance lock for %s has been extended."
+               DUNGEON_NAME_WITH_DIFFICULTY = "%1$s (%2$s)""#,
+        )
+        .unwrap();
+        s.set_saved_instances(vec![lockout(533, "Naxxramas", 1234, 1)]);
+        s.run("SetSavedInstanceExtend(1, true) SetSavedInstanceExtend(5, true)")
+            .unwrap();
         assert!(s
-            .eval::<i64>(r#"return GetSavedInstanceInfo("x")"#)
-            .is_err());
+            .eval::<bool>("return select(6, GetSavedInstanceInfo(1)) == true")
+            .unwrap());
+        assert_eq!(
+            s.take_party_requests(),
+            vec![PartyRequest::SavedInstanceExtend {
+                map: 533,
+                difficulty: 1,
+                extend: true
+            }]
+        );
+        assert_eq!(
+            s.take_party_lines(),
+            vec!["Your instance lock for Naxxramas (25 Player) has been extended.".to_string()]
+        );
+        let err = s
+            .run("SetSavedInstanceExtend(1, 1)")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            err.contains("Usage: SetSavedInstanceExtend(index, extend)"),
+            "{err}"
+        );
+    }
+
+    /// Fourteen values (`0x573690`): role, master looter and the three LFG roles after isDead.
+    #[test]
+    fn raid_roster_info_answers_fourteen_values() {
+        let mut s = UiScript::new().unwrap();
+        let mut state = ten_player_raid();
+        state.raid[1].assignments = super::ASSIGNMENT_MAIN_TANK | super::ASSIGNMENT_MAIN_ASSIST;
+        state.raid[1].roles = 0x2 | 0x8;
+        state.raid[2].assignments = super::ASSIGNMENT_MAIN_ASSIST;
+        state.loot_master_guid = state.raid[2].guid;
+        s.set_party(state);
+        assert_eq!(s.arity("GetRaidRosterInfo(2)").unwrap(), 14);
+        assert!(s
+            .eval::<bool>(
+                "local r = {GetRaidRosterInfo(2)}                  return r[10] == 'MAINTANK' and r[11] == nil and r[12] == 1 and r[13] == nil and r[14] == 1"
+            )
+            .unwrap());
+        assert!(s
+            .eval::<bool>(
+                "local r = {GetRaidRosterInfo(3)} return r[10] == 'MAINASSIST' and r[11] == 1"
+            )
+            .unwrap());
+        assert!(s
+            .eval::<bool>(
+                "return select('#', GetRaidRosterInfo(99)) == 14 and select(2, GetRaidRosterInfo(99)) == 0"
+            )
+            .unwrap());
+        // `GetPartyAssignment` lists the rows, or answers for one member.
+        assert_eq!(
+            s.eval::<Vec<i64>>("return {GetPartyAssignment('MAINASSIST')}")
+                .unwrap(),
+            vec![2, 3]
+        );
     }
 
     #[test]
@@ -1620,6 +1845,8 @@ mod tests {
             loot_threshold: 2,
             real_party_members: 0,
             real_raid_members: 0,
+            loot_master_guid: 0,
+            member_assignments: [0; 4],
         }
     }
 

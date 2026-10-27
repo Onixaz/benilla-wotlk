@@ -2071,6 +2071,18 @@ pub(crate) enum ClientCommand {
         name: String,
         other: String,
     },
+    /// `MSG_PARTY_ASSIGNMENT`: set or clear a main tank (0) or main assist (1).
+    PartyAssignment {
+        assignment: u8,
+        set: bool,
+        guid: u64,
+    },
+    /// `CMSG_SET_SAVED_INSTANCE_EXTEND`.
+    SavedInstanceExtend {
+        map: u32,
+        difficulty: u32,
+        extend: bool,
+    },
     /// `CMSG_GROUP_ASSISTANT_LEADER`, leader only.
     GroupAssistantLeader {
         guid: u64,

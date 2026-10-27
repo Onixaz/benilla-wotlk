@@ -306,10 +306,11 @@ impl GroupState {
     /// The `party1..party4` slots: our own subgroup in packet order, at most four (`0x5e6baa`
     /// compares the flags under `0x7f`). A slot's member can change on any resync.
     pub fn party_slots(&self) -> impl Iterator<Item = &GroupMemberEntry> {
-        let own = self.own_flags & 0x7f;
+        // The subgroup bits alone: the folded assistant and assignment bits are no group.
+        let own = self.own_flags & GROUP_MEMBER_SUBGROUP;
         self.members
             .iter()
-            .filter(move |m| m.flags & 0x7f == own)
+            .filter(move |m| m.flags & GROUP_MEMBER_SUBGROUP == own)
             .take(4)
     }
 
@@ -626,8 +627,11 @@ mod tests {
 
         g.apply_raid_instance_info(vec![benilla_protocol::messages::RaidInstanceEntry {
             map: 409,
-            reset: 86_400,
+            difficulty: 0,
             instance: 7,
+            locked: true,
+            extended: false,
+            reset: 86_400,
         }]);
         assert_eq!(g.saved_instances_answers, 3);
         assert_eq!(g.saved_instances.len(), 1, "and the list is the new one");
@@ -786,8 +790,11 @@ mod tests {
     fn leaving_the_group_keeps_the_session_tickets() {
         let lockout = benilla_protocol::messages::RaidInstanceEntry {
             map: 409,
-            reset: 86_400,
+            difficulty: 0,
             instance: 7,
+            locked: true,
+            extended: false,
+            reset: 86_400,
         };
         let mut g = GroupState {
             in_group: true,
@@ -1087,6 +1094,14 @@ mod tests {
         g.apply_list(1, 0x00, vec![member("Alice", 1), m2, m3], 1, None, None);
         let slots: Vec<&str> = g.party_slots().map(|m| m.name.as_str()).collect();
         assert_eq!(slots, vec!["Alice", "Carol"]);
+        // A main tank or main assist mark is no subgroup either.
+        let mut m4 = member("Dave", 4);
+        m4.flags = benilla_protocol::messages::GROUP_MEMBER_MAIN_TANK;
+        let mut m5 = member("Erin", 5);
+        m5.flags = benilla_protocol::messages::GROUP_MEMBER_MAIN_ASSIST | 0x01;
+        g.apply_list(1, 0x00, vec![member("Alice", 1), m4, m5], 1, None, None);
+        let slots: Vec<&str> = g.party_slots().map(|m| m.name.as_str()).collect();
+        assert_eq!(slots, vec!["Alice", "Dave"]);
     }
 
     #[test]
