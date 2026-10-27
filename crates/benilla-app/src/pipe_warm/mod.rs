@@ -90,10 +90,22 @@ pub(crate) fn plugin(app: &mut App) {
     render_app.add_systems(Render, watch_pipelines.in_set(RenderSystems::Cleanup));
 }
 
-/// Tell the render thread a compile burst is on, so it leaves the frame-critical QoS band.
-fn publish_compile_burst(warm: Res<WarmPass>) {
+/// Tell the render thread a compile burst is on, so it leaves the frame-critical QoS band, and
+/// optimize the collider trees inline for its length: off macOS the compiles queue on the
+/// async-compute pool, and an optimize task behind them stalls every physics step that blocks on
+/// it (0.9 s of a Goldshire login). Outside a burst the task overlaps the step, which is faster.
+fn publish_compile_burst(
+    warm: Res<WarmPass>,
+    tree_opt: Option<ResMut<avian3d::collider_tree::ColliderTreeOptimization>>,
+) {
     let bursting = warm.spawned_at.is_some() && !warm.done;
     benilla_world::thread_qos::COMPILE_BURST.store(bursting, Ordering::Relaxed);
+    let use_async_tasks = !bursting;
+    if let Some(mut tree_opt) = tree_opt {
+        if tree_opt.use_async_tasks != use_async_tasks {
+            tree_opt.use_async_tasks = use_async_tasks;
+        }
+    }
 }
 
 /// Publish whether the frame is covered to the render world.
