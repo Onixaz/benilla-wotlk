@@ -152,9 +152,21 @@ impl HeightCache {
         if let Some(&y) = self.cells.get(&key) {
             return y;
         }
+        let y = Self::cast(key, cast_from_y, spatial, filter);
+        self.cells.insert(key, y);
+        y
+    }
+
+    /// One cell's downward ray from the cast plane, through the cell's centre.
+    fn cast(
+        key: (i32, i32),
+        cast_from_y: f32,
+        spatial: &SpatialQuery,
+        filter: &SpatialQueryFilter,
+    ) -> f32 {
         let cx = (key.0 as f32 + 0.5) * CELL;
         let cz = (key.1 as f32 + 0.5) * CELL;
-        let y = spatial
+        spatial
             .cast_ray(
                 Vec3::new(cx, cast_from_y, cz),
                 Dir3::NEG_Y,
@@ -162,9 +174,55 @@ impl HeightCache {
                 true,
                 filter,
             )
-            .map_or(cast_from_y - MISS_DEPTH, |hit| cast_from_y - hit.distance);
-        self.cells.insert(key, y);
-        y
+            .map_or(cast_from_y - MISS_DEPTH, |hit| cast_from_y - hit.distance)
+    }
+
+    /// Caches every cell of `keys` it lacks, casting their rays in parallel chunks: a cell's
+    /// height depends only on the cell and the plane, so the answers are [`Self::ground_y`]'s.
+    /// Read them back with [`Self::cached`]; `keys` is left holding the cells that were cast.
+    fn fill(
+        &mut self,
+        keys: &mut Vec<(i32, i32)>,
+        cast_from_y: f32,
+        spatial: &SpatialQuery,
+        filter: &SpatialQueryFilter,
+    ) {
+        if self.stale(cast_from_y) {
+            self.cells.clear();
+            self.cast_y = cast_from_y;
+        }
+        keys.sort_unstable();
+        keys.dedup();
+        keys.retain(|k| !self.cells.contains_key(k));
+        if keys.is_empty() {
+            return;
+        }
+        let heights: Vec<f32> = if keys.len() <= RAY_CHUNK {
+            keys.iter()
+                .map(|&k| Self::cast(k, cast_from_y, spatial, filter))
+                .collect()
+        } else {
+            bevy::tasks::ComputeTaskPool::get()
+                .scope(|s| {
+                    for chunk in keys.chunks(RAY_CHUNK) {
+                        s.spawn(async move {
+                            chunk
+                                .iter()
+                                .map(|&k| Self::cast(k, cast_from_y, spatial, filter))
+                                .collect::<Vec<f32>>()
+                        });
+                    }
+                })
+                .into_iter()
+                .flatten()
+                .collect()
+        };
+        self.cells.extend(keys.iter().copied().zip(heights));
+    }
+
+    /// A cell [`Self::fill`] cached this frame.
+    fn cached(&self, key: (i32, i32)) -> f32 {
+        self.cells[&key]
     }
 
     /// Whether the next [`Self::ground_y`] starts over: the cast plane moved a story, or the cache
@@ -191,6 +249,10 @@ impl HeightCache {
 /// Drops per parallel task in the drift: a step is a few nanoseconds, so a chunk this size keeps
 /// the dispatch cost small against the work (heavy rain holds ~17 k drops).
 const DRIFT_CHUNK: usize = 2048;
+
+/// Ground rays per parallel task in [`HeightCache::fill`], enough that a task outweighs its
+/// dispatch; a flight's new cells a frame then split a few ways.
+const RAY_CHUNK: usize = 64;
 
 /// The per-frame record count, `fistp(min(space, quota) − 0.5)` under x87 round-to-nearest-even
 /// (`0x6754cc`). The parity is load-bearing: at `space = 1` it is `RNE(0.5) = 0` forever, so a
@@ -290,16 +352,26 @@ pub(super) fn run_kind(
         let anchor = cam_pos + wind.vel * WIND_LEAD;
         let origin = Vec3::new(anchor.x, cam_pos.y, anchor.z);
         let w = density;
-        for _ in 0..n {
-            let r = [
-                rand01(rng),
-                rand01(rng),
-                rand01(rng),
-                rand01(rng),
-                rand01(rng),
-            ];
-            let (spawn, vel) = spawn_particle(kind, w, origin, wind.slab, r);
-            let land_y = heights.ground_y(spawn.x, spawn.z, cast_plane, spatial, filter);
+        let spawns: Vec<(Vec3, Vec3)> = (0..n)
+            .map(|_| {
+                let r = [
+                    rand01(rng),
+                    rand01(rng),
+                    rand01(rng),
+                    rand01(rng),
+                    rand01(rng),
+                ];
+                spawn_particle(kind, w, origin, wind.slab, r)
+            })
+            .collect();
+        let mut keys: Vec<_> = spawns
+            .iter()
+            .map(|(p, _)| HeightCache::key(p.x, p.z))
+            .collect();
+        heights.fill(&mut keys, cast_plane, spatial, filter);
+        for (spawn, vel) in spawns {
+            let cell = HeightCache::key(spawn.x, spawn.z);
+            let land_y = heights.cached(cell);
             // Ground at or above the spawn kills it at birth (`0x675051`).
             if land_y >= spawn.y {
                 continue;
@@ -308,7 +380,7 @@ pub(super) fn run_kind(
                 pos: spawn,
                 vel,
                 land_y,
-                cell: HeightCache::key(spawn.x, spawn.z),
+                cell,
                 age: 0.0,
             };
             if let Some(pk) = &mut pool.open {
@@ -324,7 +396,8 @@ pub(super) fn run_kind(
     // ===== activate: sealed packets replay from `baseTime` =====
     // A record whose instant passed while its packet was open appears mid-fall, on its new
     // cell's ground; one that already landed is skipped with no splash.
-    let drops = &mut pool.drops;
+    // Due records leave in the walk's order, with the moved ones' cells probed in one batch.
+    let mut due: Vec<(Drop, bool)> = Vec::new();
     for pk in &mut pool.sealed {
         let mut i = 0;
         while i < pk.records.len() {
@@ -335,20 +408,26 @@ pub(super) fn run_kind(
                 drop.pos += drop.vel * lag;
                 drop.age = lag;
                 let cell = HeightCache::key(drop.pos.x, drop.pos.z);
-                if cell != drop.cell {
-                    drop.cell = cell;
-                    drop.land_y =
-                        heights.ground_y(drop.pos.x, drop.pos.z, cast_plane, spatial, filter);
-                }
-                if drop.pos.y > drop.land_y {
-                    drops.push(drop);
-                }
+                let moved = cell != drop.cell;
+                drop.cell = cell;
+                due.push((drop, moved));
             } else {
                 i += 1;
             }
         }
     }
     pool.sealed.retain(|pk| !pk.records.is_empty());
+    let mut keys: Vec<_> = due.iter().filter(|d| d.1).map(|d| d.0.cell).collect();
+    heights.fill(&mut keys, cast_plane, spatial, filter);
+    let drops = &mut pool.drops;
+    for (mut drop, moved) in due {
+        if moved {
+            drop.land_y = heights.cached(drop.cell);
+        }
+        if drop.pos.y > drop.land_y {
+            drops.push(drop);
+        }
+    }
 
     // Rain leaves one patter per landing drop (`0x6754a0`). The reference skips it when the
     // ridden transport's `|v|² > 2` (`0x6755c2`, `mgr+0x5c`), never for running; here the gate
@@ -362,8 +441,8 @@ pub(super) fn run_kind(
     // ===== integrate + land =====
     // Landing tests the current cell's ground, a max from above: a drop drifting under cover
     // lands on the roof and splashes there, never on the floor below.
-    // Each drop moves alone and reads the cache, so the drift runs in parallel chunks; a drop
-    // whose new cell is not cached takes its ray after, serially, as rays fill the shared cache.
+    // Each drop moves alone and reads the cache, so the drift runs in parallel chunks; the drops
+    // whose new cell is not cached get their rays after, in one parallel batch.
     let misses: Vec<Vec<usize>> = {
         let heights = &*heights;
         bevy::tasks::ComputeTaskPool::get().scope(|s| {
@@ -387,9 +466,12 @@ pub(super) fn run_kind(
             }
         })
     };
-    for i in misses.into_iter().flatten() {
+    let misses: Vec<usize> = misses.into_iter().flatten().collect();
+    let mut keys: Vec<_> = misses.iter().map(|&i| pool.drops[i].cell).collect();
+    heights.fill(&mut keys, cast_plane, spatial, filter);
+    for i in misses {
         let d = &mut pool.drops[i];
-        d.land_y = heights.ground_y(d.pos.x, d.pos.z, cast_plane, spatial, filter);
+        d.land_y = heights.cached(d.cell);
     }
     let mut landed: Vec<Patter> = Vec::new();
     {
