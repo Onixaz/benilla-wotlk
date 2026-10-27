@@ -11,8 +11,14 @@ workspace = true
 [dependencies]
 # Bounds-checked byte readers and the allocation cap on the header, block table and sectors.
 benilla-bytes = { path = "../benilla-bytes" }
-# Inflate for the ZLIB (0x02) sector codec, on its pure-Rust miniz_oxide backend.
-flate2 = "1.1"
+# One-shot inflate for the ZLIB (0x02) sector codec, pure Rust: 1.5x miniz_oxide's over the
+# install's sectors. Called directly, not as flate2's backend, which would switch every flate2 user
+# in the binary and so the wire's deflate, which zlib-rs emits differently from zlib.
+zlib-rs = { version = "0.6", default-features = false, features = ["std"] }
 # Decompress for the BZIP2 (0x10) codec, which 3.3.5a's lichking.MPQ uses on single-unit files; on
 # its pure-Rust libbz2-rs-sys backend.
 bzip2 = "0.6"
+
+[dev-dependencies]
+# The tests' zlib sectors.
+flate2 = "1.1"

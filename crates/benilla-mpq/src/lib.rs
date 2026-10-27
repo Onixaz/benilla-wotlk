@@ -317,7 +317,8 @@ impl ArchiveFile {
         self.size as u64
     }
 
-    /// The whole file from its start, sector by sector.
+    /// The whole file from its start: a sectored file's compressed run is read in one call and
+    /// each sector inflated straight into its share of the output.
     fn read_all(mut self) -> Result<Vec<u8>> {
         if self.offsets.is_none() {
             self.file.seek(SeekFrom::Start(self.base))?;
@@ -326,63 +327,63 @@ impl ArchiveFile {
             return Ok(out);
         }
         let sector_count = self.size.div_ceil(self.sector_size);
+        let (first, last) = self.compressed_range(0, sector_count)?;
+        self.file.seek(SeekFrom::Start(self.base + first))?;
+        let mut run = vec![0u8; (last - first) as usize]; // proven <= avail by `compressed_range`
+        self.file.read_exact(&mut run)?;
+
         let mut out = Vec::with_capacity(capped(self.size, 1, self.avail));
         for i in 0..sector_count {
-            out.extend_from_slice(&self.decode_sector(i)?);
+            let (start, end) = self.compressed_range(i, i + 1)?;
+            let raw = &run[(start - first) as usize..(end - first) as usize];
+            let at = out.len();
+            out.resize(at + self.sector_want(i), 0);
+            inflate_sector(raw, &mut out[at..], self.implode_only, i, &self.name)?;
         }
         Ok(out)
     }
 
-    /// Sector `i` of a sectored file, read and decompressed to exactly its share of the file:
-    /// the sector size, or the remainder for the last. One that inflates short is refused, since
-    /// every later byte would shift into the gap.
-    fn decode_sector(&mut self, i: usize) -> Result<Vec<u8>> {
-        let want = (self.size - i * self.sector_size).min(self.sector_size);
+    /// Sector `i`'s share of the file: the sector size, or the remainder for the last.
+    fn sector_want(&self, i: usize) -> usize {
+        (self.size - i * self.sector_size).min(self.sector_size)
+    }
+
+    /// The compressed bytes of sectors `from..to`, from `base`: `from`'s start to `to`'s, each
+    /// sector inside the span checked in order and the whole held by the archive.
+    fn compressed_range(&self, from: usize, to: usize) -> Result<(u64, u64)> {
         let name = &self.name;
         let offsets = self.offsets.as_deref().unwrap_or_default();
-        let (Some(&start), Some(&end)) = (offsets.get(i), offsets.get(i + 1)) else {
+        let Some(span) = offsets.get(from..=to) else {
             return Err(Error::Corrupt(format!(
-                "{name}: sector {i} past the offset table"
+                "{name}: sector {} past the offset table",
+                to - 1
             )));
         };
-        let comp_len = u64::from(end)
-            .checked_sub(u64::from(start))
-            .ok_or_else(|| Error::Decompress(format!("{name}: sector {i} offsets reversed")))?
-            as usize;
-        let comp_cap = capped(comp_len, 1, self.avail);
-        if comp_cap < comp_len {
-            return Err(Error::Corrupt(format!(
-                "{name}: sector {i} length ({comp_len}) larger than the archive"
-            )));
-        }
-        if comp_len == 0 {
-            return Err(Error::Corrupt(format!("{name}: sector {i} is empty")));
-        }
-
-        self.file
-            .seek(SeekFrom::Start(self.base + u64::from(start)))?;
-        let mut raw = vec![0u8; comp_len]; // proven <= avail above
-        self.file.read_exact(&mut raw)?;
-
-        let out = if comp_len >= want {
-            // A sector that would not shrink is stored verbatim.
-            raw.truncate(want);
-            raw
-        } else if self.implode_only {
-            // IMPLODE sectors carry no method byte; 1.12.1 data has none.
-            decompress(0x08, &raw, want, name)?
-        } else {
-            // COMPRESS: the leading byte is the codec mask, the rest the payload.
-            let method = raw[0]; // non-empty: refused above
-            decompress(method, &raw[1..], want, name)?
-        };
-        // `decompress` stops at `want`, so only a short sector is left to refuse.
-        if out.len() != want {
+        if let Some(i) = span.windows(2).position(|w| w[1] < w[0]) {
+            let i = from + i;
             return Err(Error::Decompress(format!(
-                "{name}: sector {i} inflates to {} bytes, not {want}",
-                out.len()
+                "{name}: sector {i} offsets reversed"
             )));
         }
+        let (start, end) = (u64::from(span[0]), u64::from(span[span.len() - 1]));
+        let comp_len = (end - start) as usize;
+        if capped(comp_len, 1, self.avail) < comp_len {
+            return Err(Error::Corrupt(format!(
+                "{name}: sector {} length ({comp_len}) larger than the archive",
+                to - 1
+            )));
+        }
+        Ok((start, end))
+    }
+
+    /// Sector `i` of a sectored file, read and decompressed to exactly its share of the file.
+    fn decode_sector(&mut self, i: usize) -> Result<Vec<u8>> {
+        let (start, end) = self.compressed_range(i, i + 1)?;
+        self.file.seek(SeekFrom::Start(self.base + start))?;
+        let mut raw = vec![0u8; (end - start) as usize]; // proven <= avail above
+        self.file.read_exact(&mut raw)?;
+        let mut out = vec![0u8; self.sector_want(i)];
+        inflate_sector(&raw, &mut out, self.implode_only, i, &self.name)?;
         Ok(out)
     }
 
@@ -572,27 +573,63 @@ fn read_block_table(
         .collect())
 }
 
-/// Decompress one sector by its codec mask; 3.3.5a data uses zlib, and bzip2 on some single-unit
-/// files.
-fn decompress(method: u8, data: &[u8], expected: usize, name: &str) -> Result<Vec<u8>> {
+/// Sector `i`'s compressed bytes `raw` into `out`, which is exactly its share of the file. One
+/// that inflates short is refused, since every later byte would shift into the gap.
+fn inflate_sector(
+    raw: &[u8],
+    out: &mut [u8],
+    implode_only: bool,
+    i: usize,
+    name: &str,
+) -> Result<()> {
+    let want = out.len();
+    if raw.is_empty() {
+        return Err(Error::Corrupt(format!("{name}: sector {i} is empty")));
+    }
+    let n = if raw.len() >= want {
+        // A sector that would not shrink is stored verbatim.
+        out.copy_from_slice(&raw[..want]);
+        want
+    } else if implode_only {
+        // IMPLODE sectors carry no method byte; 1.12.1 data has none.
+        decompress(0x08, raw, out, name)?
+    } else {
+        // COMPRESS: the leading byte is the codec mask, the rest the payload.
+        decompress(raw[0], &raw[1..], out, name)?
+    };
+    // `decompress` stops at `out`'s end, so only a short sector is left to refuse.
+    if n != want {
+        return Err(Error::Decompress(format!(
+            "{name}: sector {i} inflates to {n} bytes, not {want}"
+        )));
+    }
+    Ok(())
+}
+
+/// Decompress one sector by its codec mask into `out`, returning the bytes written; 3.3.5a data
+/// uses zlib, and bzip2 on some single-unit files. Bounded by `out`: a sector inflating past
+/// its slot stops there.
+fn decompress(method: u8, data: &[u8], out: &mut [u8], name: &str) -> Result<usize> {
     match method {
         0x02 => {
-            use flate2::read::ZlibDecoder;
-            let mut out = Vec::with_capacity(expected);
-            // Bounded: a sector inflating past its slot would wrap the caller's next `want`.
-            ZlibDecoder::new(data)
-                .take(expected as u64)
-                .read_to_end(&mut out)
-                .map_err(|e| Error::Decompress(format!("{name}: zlib: {e}")))?;
-            Ok(out)
+            // One call over the whole sector; `BufError` is a full `out` or a cut stream.
+            use zlib_rs::{decompress_slice, InflateConfig, ReturnCode};
+            match decompress_slice(out, data, InflateConfig::default()) {
+                (done, ReturnCode::Ok | ReturnCode::BufError) => Ok(done.len()),
+                (_, rc) => Err(Error::Decompress(format!("{name}: zlib: {rc:?}"))),
+            }
         }
         0x10 => {
-            let mut out = Vec::with_capacity(expected);
-            bzip2::read::BzDecoder::new(data)
-                .take(expected as u64)
-                .read_to_end(&mut out)
-                .map_err(|e| Error::Decompress(format!("{name}: bzip2: {e}")))?;
-            Ok(out)
+            let mut z = bzip2::read::BzDecoder::new(data);
+            let mut n = 0;
+            while n < out.len() {
+                match z.read(&mut out[n..]) {
+                    Ok(0) => break,
+                    Ok(k) => n += k,
+                    Err(e) => return Err(Error::Decompress(format!("{name}: bzip2: {e}"))),
+                }
+            }
+            Ok(n)
         }
         other => Err(Error::Unsupported(format!(
             "{name}: sector codec 0x{other:02X} not yet implemented"
