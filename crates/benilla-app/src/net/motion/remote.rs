@@ -426,6 +426,7 @@ pub(in crate::net) fn extrapolate_remote_units(
                         },
                         water,
                         steep: false,
+                        step_start: None,
                     },
                 );
                 // No floor found: a remote has no fall election, so keep the packet's height and

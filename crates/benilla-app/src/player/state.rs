@@ -397,6 +397,9 @@ pub(crate) struct Player {
     /// standing, since the straight-down ground probe sees only the steep face; re-earned each
     /// frame.
     pub(super) steep_support: bool,
+    /// The feet height the climb in progress began at, the reference's `stepUpStartZ`
+    /// ([`super::mover::Support::step_start`]); `None` when not climbing.
+    pub(super) step_start: Option<f32>,
     /// A hover grant owes a jump: the reference's handler `0x61a620` calls `CMovement::Jump(0)`
     /// (`0x61a630`) before setting the flag, and its disable arm calls `StartFalling` (`0x61a637`).
     /// Latched for the take-off site, since our mover re-derives ground contact every frame and

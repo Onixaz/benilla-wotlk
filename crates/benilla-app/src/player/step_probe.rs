@@ -89,6 +89,11 @@ pub(super) fn watch(
     let dir_h = horiz_vel / speed;
     let feet_y = from.y - CAPSULE_HEIGHT * 0.5;
     let cast = |c: Vec3, disp: Vec3| world.cast_body(capsule, c, disp, SKIN_WIDTH);
+    let floor = |c: Vec3, len: f32| {
+        world
+            .ray_body(c, Dir3::NEG_Y, len)
+            .map(|h| (h.distance, h.normal.y))
+    };
 
     // WoW coordinates, as `.go xyz` takes them, and Bevy's, as the rest of the report uses.
     let feet_wow = benilla_assets::coords::bevy_to_wow(Vec3::new(from.x, feet_y, from.z));
@@ -149,7 +154,16 @@ pub(super) fn watch(
     let rungs: Vec<String> = std::iter::once(wanted)
         .chain(LADDER)
         .map(|adv| {
-            let v = step_up(&cast, from, dir_h, adv.max(wanted), adv, STEP_UP_HEIGHT).verdict;
+            let v = step_up(
+                &cast,
+                &floor,
+                from,
+                dir_h,
+                adv.max(wanted),
+                adv,
+                STEP_UP_HEIGHT,
+            )
+            .verdict;
             // `fwd`, the raised sweep's reach, tells a steep floor from a stop at head height.
             let tag = match v {
                 StepVerdict::NoFace => "no-face".to_string(),

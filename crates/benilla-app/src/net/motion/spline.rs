@@ -746,6 +746,7 @@ fn clamp_unit(
                 // Per-frame state the memo does not keep; the path's next sample corrects a
                 // miss on a steep face.
                 steep: false,
+                step_start: None,
             },
         );
         // A sweep that finds no floor holds the server's pose, as `grounded_y` does: the step's
