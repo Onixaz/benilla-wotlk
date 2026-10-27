@@ -241,11 +241,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UnitGUID",
         lua.create_function(|lua, token: Value| {
-            let token = crate::script::binding_abi::string_arg(
-                lua,
-                token,
-                r#"Usage: UnitGUID("unit")"#,
-            )?;
+            let token =
+                crate::script::binding_abi::string_arg(lua, token, r#"Usage: UnitGUID("unit")"#)?;
             // `0x60e630`: the token, or a roster name, to its guid (`0x60abf0` with `false`); 0
             // and the no-focus sentinel read nil, anything else `0x` and sixteen upper-case hex
             // digits (`0x74d0d0`), a counter-hidden creature's low 24 bits zeroed.
