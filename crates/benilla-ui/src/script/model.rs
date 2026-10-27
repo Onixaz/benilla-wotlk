@@ -319,7 +319,7 @@ pub(crate) struct Model {
     pub(crate) guild: guild::GuildState,
     /// The rank editor's unsaved edits, apart from `guild` so a push cannot discard them.
     pub(crate) guild_control: guild::GuildRankEdit,
-    /// Guild calls (`GuildInviteByName`, `GuildSetMOTD`, `GuildControlSaveRank`, …) queued.
+    /// Guild calls (`GuildInvite`, `GuildSetMOTD`, `GuildControlSaveRank`, …) queued.
     pub(crate) guild_requests: Vec<guild::GuildRequest>,
     /// The guild bank as the app pushes it.
     pub(crate) guild_bank: super::guild_bank::GuildBankView,

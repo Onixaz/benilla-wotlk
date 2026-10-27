@@ -2193,12 +2193,13 @@ pub(crate) enum ClientCommand {
     GuildMotd {
         motd: String,
     },
-    /// `CMSG_GUILD_RANK`: name and rights always together. Rank 0's rights are forced to all; a
-    /// name over `messages::GUILD_RANK_MAX_LENGTH` gets the session kicked.
+    /// `CMSG_GUILD_RANK`: a rank's rights, name and bank half together (`0x5cb21a`).
     GuildRank {
         rank_id: u32,
         rights: u32,
         name: String,
+        gold_per_day: u32,
+        tabs: [(u32, u32); benilla_protocol::messages::GUILD_BANK_TABS],
     },
     /// `CMSG_GUILD_ADD_RANK`: appended at the bottom.
     GuildAddRank {

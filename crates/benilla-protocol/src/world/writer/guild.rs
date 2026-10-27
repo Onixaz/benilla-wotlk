@@ -95,13 +95,18 @@ impl WorldWriter {
         self.send(opcode::CMSG_GUILD_MOTD, &messages::guild_motd(motd))
     }
 
-    /// `CMSG_GUILD_RANK`: a rank's name and rights together, with no partial form. Guild master
-    /// only; rank 0 always gets all rights, and a name over [`messages::GUILD_RANK_MAX_LENGTH`]
-    /// gets the session kicked by vmangos, so the caller caps it.
-    pub fn guild_rank(&mut self, rank_id: u32, rights: u32, name: &str) -> Result<()> {
+    /// `CMSG_GUILD_RANK`: a rank's rights, name and bank half together, with no partial form.
+    pub fn guild_rank(
+        &mut self,
+        rank_id: u32,
+        rights: u32,
+        name: &str,
+        gold_per_day: u32,
+        tabs: &[(u32, u32); messages::GUILD_BANK_TABS],
+    ) -> Result<()> {
         self.send(
             opcode::CMSG_GUILD_RANK,
-            &messages::guild_rank(rank_id, rights, name),
+            &messages::guild_rank(rank_id, rights, name, gold_per_day, tabs),
         )
     }
 

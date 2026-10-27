@@ -1,27 +1,22 @@
 //! The guild bindings: roster, ranks, notes, MOTD and the membership verbs. The app pushes a
 //! display-ready [`GuildState`] ([`UiScript::set_guild`]) that joins two caches: the roster (MOTD,
 //! info text, rank rights, members) and the guild query (the name and ten rank names). Each verb
-//! queues a [`GuildRequest`] the app drains ([`UiScript::take_guild_requests`]).
+//! queues a [`GuildRequest`] the app drains ([`UiScript::take_guild_requests`]). 12340's table is
+//! `GuildInfoRegisterScriptFunctions` (`0x5ca380`, registrar `0xad0840`).
 //!
-//! Two index bases: a roster `rankIndex` is 0-based with 0 the guild master
-//! (`FriendsFrame.lua:338`, `:393-398`), while the `GuildControl*` family is 1-based, driven by
-//! the dropdown IDs (`FriendsFrame.lua:820-822`, `:855-857`, `:866-868`).
+//! Two index bases: a roster `rankIndex` is 0-based with 0 the guild master, while the
+//! `GuildControl*` family is 1-based, driven by the dropdown IDs (`FriendsFrame.lua:1760-1780`).
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi;
 use super::Model;
 
-/// The thirteen rank rights in `GuildControlGetRankFlags`' return order, which is also the
-/// checkbox order and `GuildControlSetRankFlag`'s index: only position ties a flag to its checkbox
-/// (`FriendsFrame.lua:874-884`). The labels are `GUILDCONTROL_OPTION1..13`
-/// (`GlobalStrings.lua:2036-2048`).
-///
-/// Not bit order: Promote and Demote (5, 6) are `0x80` and `0x100`, above Invite and Remove
-/// (7, 8) at `0x10` and `0x20`, so `1 << (i - 1)` is wrong for nine of the thirteen. The bits are
-/// vmangos `GuildRankRights` (`Guild/Guild.h:56-74`) without the `GR_RIGHT_EMPTY` `0x40` it ORs
-/// into each; `0x40`, `0x400` and `0x800` are none of the thirteen.
-pub const RANK_RIGHT_BITS: [u32; 13] = [
+/// The seventeen rank rights in `GuildControlGetRankFlags`' return order, which is also
+/// `GuildControlSetRankFlag`'s index and the `GuildControlPopupFrameCheckbox<i>` order
+/// (`FriendsFrame.lua:1782-1793`): 12340's `{mask, enabled}` table at `0xad07b8`. Not bit order:
+/// Promote and Demote (5, 6) are `0x80` and `0x100`, above Invite and Remove (7, 8).
+pub const RANK_RIGHT_BITS: [u32; 17] = [
     0x0000_0001, // 1  Guildchat Listen
     0x0000_0002, // 2  Guildchat Speak
     0x0000_0004, // 3  Officerchat Listen
@@ -35,10 +30,18 @@ pub const RANK_RIGHT_BITS: [u32; 13] = [
     0x0000_4000, // 11 View Officer Note
     0x0000_8000, // 12 Edit Officer Note
     0x0001_0000, // 13 Modify Guild Info
+    0x0002_0000, // 14 the deprecated flag, which has no checkbox
+    0x0004_0000, // 15 Withdraw Repair
+    0x0008_0000, // 16 Withdraw Gold
+    0x0010_0000, // 17 Create Guild Event
 ];
 
-/// `GR_RIGHT_WITHDRAW_REPAIR`, the bit `CanGuildBankRepair` tests (`0x5cc23a`).
-const WITHDRAW_REPAIR: u32 = 0x0004_0000;
+/// The three bank-tab rights `SetGuildBankTabPermissions` indexes, 1-based (`0xad07ac`): view,
+/// deposit, update text.
+const BANK_TAB_RIGHT_BITS: [u32; 3] = [0x1, 0x2, 0x4];
+
+/// The bank tabs a rank record carries (`0x5cb285`'s loop of 6).
+pub const BANK_TABS: usize = 6;
 
 /// One-based indices into [`RANK_RIGHT_BITS`], numbered as `GUILDCONTROL_OPTION<n>`.
 mod right {
@@ -51,18 +54,20 @@ mod right {
     pub(super) const VIEW_OFFICER_NOTE: usize = 11;
     pub(super) const EDIT_OFFICER_NOTE: usize = 12;
     pub(super) const MODIFY_GUILD_INFO: usize = 13;
+    pub(super) const WITHDRAW_REPAIR: usize = 15;
 }
 
-/// The fewest ranks: `GuildControlDelRank` refuses at it and the Remove button shows only above it
-/// (`FriendsFrame.lua:908`); vmangos `GUILD_RANKS_MIN_COUNT` (`Guild/Guild.h:31`).
+/// The fewest ranks: `GuildControlDelRank` sends only above it (`0x5cb3f0`).
 pub const MIN_RANKS: usize = 5;
-/// The most ranks: `GuildControlAddRank` refuses at it and the Add button disables there
-/// (`FriendsFrame.lua:887`); vmangos `GUILD_RANKS_MAX_COUNT` (`Guild/Guild.h:32`).
+/// The most ranks: `GuildControlAddRank` sends only below it (`0x5cb330`).
 pub const MAX_RANKS: usize = 10;
 
+/// The rank indices `GuildControlSetRank` loads, 0-based; past them it clears the selection
+/// (`0x5ca090`, `rank > 16`).
+const CONTROL_RANKS: u32 = 17;
+
 /// `GetGuildRosterLastOnline`'s four units, decomposed by the app from the wire's one `f32` of
-/// days offline. `GuildFrame_GetLastOnline` shows the largest non-zero unit, reading nil as 0
-/// (`FriendsFrame.lua:957-978`).
+/// days offline (`0x5cabb0`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LastOnline {
     pub years: u32,
@@ -71,34 +76,50 @@ pub struct LastOnline {
     pub hours: u32,
 }
 
-/// A unit's guild as `GetGuildInfo(unit)` reports it. `PLAYER_GUILDID` (191) and
-/// `PLAYER_GUILDRANK` (192) are public descriptor fields (vmangos
-/// `Objects/UpdateFields_1_12_1.h:121-122`), so every visible player carries one; the app names
-/// them through its guild query cache.
+/// A unit's guild as `GetGuildInfo(unit)` reports it. `PLAYER_GUILDID` and `PLAYER_GUILDRANK` are
+/// public descriptor fields, so every visible player carries one; the app names them through its
+/// guild query cache.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct UnitGuild {
     /// Never empty: an unresolved guild is `None`, as the binding takes the same nil path on a
-    /// cache miss as for no guild (`0x4c93d7 je 0x4c943c`).
+    /// cache miss as for no guild.
     pub name: String,
     pub rank_name: String,
     /// 0-based, 0 the guild master.
     pub rank_index: u32,
 }
 
-/// One guild rank: its name from the guild query, its rights from the roster.
+/// One guild rank: its name from the guild query, its rights and bank half from the roster
+/// (12340's 56-byte record at `0xc21e60`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GuildRankInfo {
     /// Empty until the guild query names it.
     pub name: String,
     /// Tested with [`RANK_RIGHT_BITS`].
     pub rights: u32,
-    /// The daily gold withdrawal in copper, which `CanWithdrawGuildBankMoney` needs nonzero.
+    /// The daily gold withdrawal: copper off the roster, and the gold amount
+    /// `SetGuildBankWithdrawLimit` stores in place until the next roster (`0x5cb6f4`).
     pub bank_money_per_day: u32,
-    /// Per bank tab: its rights and its daily item withdrawals (`0x5a41c0`, `0x5a41f0`).
+    /// Per bank tab: its rights and its daily item withdrawals.
     pub bank_tabs: Vec<(u32, u32)>,
 }
 
-/// One roster row resolved for display: `GetGuildRosterInfo`'s ten returns in order, then the
+impl GuildRankInfo {
+    /// Bank tab `tab` (0-based), zeros past the record.
+    fn tab(&self, tab: usize) -> (u32, u32) {
+        self.bank_tabs.get(tab).copied().unwrap_or_default()
+    }
+
+    /// A mutable bank tab, growing the record to [`BANK_TABS`] first.
+    fn tab_mut(&mut self, tab: usize) -> &mut (u32, u32) {
+        if self.bank_tabs.len() < BANK_TABS {
+            self.bank_tabs.resize(BANK_TABS, (0, 0));
+        }
+        &mut self.bank_tabs[tab]
+    }
+}
+
+/// One roster row resolved for display: `GetGuildRosterInfo`'s eleven returns in order, then the
 /// last-online time.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GuildMemberInfo {
@@ -109,9 +130,10 @@ pub struct GuildMemberInfo {
     /// 0-based, 0 the guild master; the `GuildControl*` family is 1-based.
     pub rank_index: u32,
     pub level: u32,
-    /// The localized class name. The roster carries class, level and zone for offline members too.
+    /// The localized class name in the member's gender; empty, answered nil, without a
+    /// `ChrClasses` row.
     pub class: String,
-    /// The zone name, empty when the id has no `AreaTable` row.
+    /// The zone name; empty, answered nil, without an `AreaTable` row.
     pub zone: String,
     /// The public note.
     pub note: String,
@@ -119,9 +141,11 @@ pub struct GuildMemberInfo {
     /// Note; the frame gates on `CanViewOfficerNote` instead.
     pub officer_note: String,
     pub online: bool,
-    /// The tenth return: `""`, `"<AFK>"` or `"<DND>"`. Only the status view reads it, to choose
-    /// between the Online label and the tag (`FriendsFrame.lua:541`, `:548-551`).
+    /// The tenth return: `""`, `CHAT_FLAG_AFK` or `CHAT_FLAG_DND`.
     pub status: String,
+    /// The eleventh return, `ChrClasses`' file name (`"WARRIOR"`); empty, answered nil, without a
+    /// row.
+    pub class_file: String,
     /// Meaningful only offline; the wire omits it for online members.
     pub last_online: LastOnline,
 }
@@ -130,7 +154,7 @@ pub struct GuildMemberInfo {
 /// is guildless.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GuildState {
-    /// `IsInGuild`, from the player's own `PLAYER_GUILDID` (191), so true before any roster.
+    /// `IsInGuild`, from the player's own `PLAYER_GUILDID`, so true before any roster.
     pub in_guild: bool,
     /// Only `SMSG_GUILD_QUERY_RESPONSE` carries it, so it is empty until that query answers.
     pub name: String,
@@ -148,13 +172,12 @@ pub struct GuildState {
     /// `GetGuildRosterLastOnline` and `SetGuildRosterSelection` index it 1-based.
     pub roster: Vec<GuildMemberInfo>,
     /// `GetNumGuildMembers()`, the UI's loop bound, which respects [`Self::show_offline`]. The
-    /// index-taking bindings bound against the full count (`[0xb73118]`) and never read the flag,
-    /// so an index past this still returns a real offline member.
+    /// index-taking bindings bound against the full count (`[0xc22ab0]`), so an index past this
+    /// still returns a real offline member.
     pub num_members: usize,
     /// Every rank, 0 the guild master; the length is `GuildControlGetNumRanks`.
     pub ranks: Vec<GuildRankInfo>,
-    /// The selected row, 1-based into [`Self::roster`], 0 for none (`FriendsFrame.lua:347` tests
-    /// `> 0`).
+    /// The selected row, 1-based into [`Self::roster`], 0 for none.
     pub selection: u32,
     /// Changes [`Self::num_members`] only, never [`Self::roster`].
     pub show_offline: bool,
@@ -168,14 +191,15 @@ pub struct GuildState {
 }
 
 /// The rank-control popup's staging buffer, kept out of [`GuildState`] so a push mid-edit does not
-/// discard unsaved checkbox clicks.
+/// discard unsaved checkbox clicks: 12340's `s_guildControlRank` (`0xad07a8`) and the `enabled`
+/// halves of the flag table.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GuildRankEdit {
     /// The 1-based rank `GuildControlSetRank` last loaded, 0 for none.
     pub rank: u32,
-    /// The thirteen staged checkboxes in [`RANK_RIGHT_BITS`] order, one slot per flag as the
-    /// binding stages them, so the save leaves every other bit of the live rights alone.
-    pub staged: [bool; 13],
+    /// The seventeen staged checkboxes in [`RANK_RIGHT_BITS`] order, one slot per flag, so the
+    /// save leaves every other bit of the live rights alone.
+    pub staged: [bool; 17],
 }
 
 /// Outbound guild intents, drained by the app ([`UiScript::take_guild_requests`]).
@@ -187,15 +211,15 @@ pub enum GuildRequest {
     Roster,
     /// `GuildInfo()`, the `/ginfo` query (`CMSG_GUILD_INFO`), answered as a chat line.
     Info,
-    /// `GuildInviteByName(name)`.
+    /// `GuildInvite(name)` (`CMSG_GUILD_INVITE`).
     Invite(String),
-    /// `GuildUninviteByName(name)` (`CMSG_GUILD_REMOVE`).
+    /// `GuildUninvite(name)` (`CMSG_GUILD_REMOVE`).
     Uninvite(String),
-    /// `GuildPromoteByName(name)`.
+    /// `GuildPromote(name)`.
     Promote(String),
-    /// `GuildDemoteByName(name)`.
+    /// `GuildDemote(name)`.
     Demote(String),
-    /// `GuildSetLeaderByName(name)`.
+    /// `GuildSetLeader(name)`.
     SetLeader(String),
     /// `AcceptGuild()`.
     Accept,
@@ -214,11 +238,15 @@ pub enum GuildRequest {
     SetPublicNote { index: u32, note: String },
     /// `GuildRosterSetOfficerNote(index, note)`.
     SetOfficerNote { index: u32, note: String },
-    /// `GuildControlSaveRank(name)` as one `CMSG_GUILD_RANK`; the rank is 0-based, as on the wire.
+    /// `GuildControlSaveRank(name)` as one `CMSG_GUILD_RANK` for the loaded rank (`0x5cb170`):
+    /// the rank 0-based, the folded rights, the scrubbed name, the withdraw limit times 10000 and
+    /// the six bank tabs' rights and withdrawals.
     SaveRank {
         rank_index: u32,
         rights: u32,
         name: String,
+        money_per_day: u32,
+        tabs: [(u32, u32); BANK_TABS],
     },
     /// `GuildControlAddRank(name)`.
     AddRank(String),
@@ -229,8 +257,8 @@ pub enum GuildRequest {
     /// `SetGuildRosterShowOffline(flag)`, mirrored so the next push agrees.
     SetShowOffline(bool),
     /// `SortGuildRoster(field)`: `"name"`, `"zone"`, `"level"`, `"class"`, `"rank"`, `"note"` or
-    /// `"online"`, the headers' `sortType`s (`FriendsFrame.xml:1895-1940`, `:2086-2131`). Sorting
-    /// is client-side: the app re-orders its roster and pushes it back.
+    /// `"online"`, the headers' `sortType`s. Sorting is client-side: the app re-orders its roster
+    /// and pushes it back.
     Sort(String),
 }
 
@@ -254,23 +282,20 @@ impl super::UiScript {
 }
 
 /// A roster row by 1-based index.
-fn member_at(roster: &[GuildMemberInfo], index: i64) -> Option<&GuildMemberInfo> {
+fn member_at(roster: &[GuildMemberInfo], index: i32) -> Option<&GuildMemberInfo> {
     usize::try_from(index)
         .ok()
         .and_then(|i| i.checked_sub(1))
         .and_then(|i| roster.get(i))
 }
 
-/// A flag argument: `nil`, `false` and `0` are off, anything else on. The reference reads both
-/// flags with `GetBoolOrDefault` (`0x6f1c10`, `binding_abi::bool_or_default`), which differs on
-/// strings and fractions; the FrameXML's checkbox states, `1` or `nil`, read the same in both.
-fn truthy(value: &Value) -> bool {
-    match value {
-        Value::Nil | Value::Boolean(false) => false,
-        Value::Integer(0) => false,
-        Value::Number(n) => *n != 0.0,
-        _ => true,
-    }
+/// A string return, nil when empty: the bindings push nil for a missing DBC row.
+fn string_or_nil(lua: &Lua, s: &str) -> mlua::Result<Value> {
+    Ok(if s.is_empty() {
+        Value::Nil
+    } else {
+        Value::String(lua.create_string(s)?)
+    })
 }
 
 /// Whether the player's own rank holds right `index`, 1-based into [`RANK_RIGHT_BITS`].
@@ -278,25 +303,35 @@ fn has_right(model: &Model, index: usize) -> bool {
     model.guild.in_guild && model.guild.rights & RANK_RIGHT_BITS[index - 1] != 0
 }
 
-/// The live rights of a 1-based rank, 0 for none or out of range. `GuildControlGetRankFlags` and
-/// `GuildControlSaveRank`'s fold both read this, never the staging buffer.
-fn live_rights(model: &Model, rank_one_based: u32) -> u32 {
-    (rank_one_based as usize)
+/// The rank record the control popup has loaded, `None` for none or past the guild's ranks.
+fn control_rank(model: &Model) -> Option<&GuildRankInfo> {
+    (model.guild_control.rank as usize)
         .checked_sub(1)
         .and_then(|i| model.guild.ranks.get(i))
-        .map(|r| r.rights)
-        .unwrap_or(0)
 }
 
-/// The rank-name gate `GuildControlSaveRank` (`0x4d20d0`) and `GuildControlAddRank` (`0x4d2210`)
-/// run before any packet: the name up to the first NUL must be 1 to 16 UTF-16 code units
-/// (`0x65b250`), untrimmed, and is sent as measured. vmangos kicks a name over 15 code points; the
-/// app caps that at the send (`ui_guild::feed::capped_rank_name`).
-fn gated_rank_name(name: &str) -> Option<&str> {
-    let c_name = name.split('\0').next().unwrap_or_default();
-    (1..=16)
-        .contains(&c_name.encode_utf16().count())
-        .then_some(c_name)
+/// The mutable rank record the control popup has loaded.
+fn control_rank_mut(model: &mut Model) -> Option<&mut GuildRankInfo> {
+    let rank = model.guild_control.rank as usize;
+    rank.checked_sub(1)
+        .and_then(move |i| model.guild.ranks.get_mut(i))
+}
+
+/// A rank name as the save and add verbs send it: `ScrubString(name, buf, 16, 64, 1)`, which
+/// strips pipes, cuts at a line break and keeps fifteen characters (`0x7e1830`).
+fn scrubbed_rank_name(name: &str) -> String {
+    super::calendar::scrub(name, 16, 64, true)
+}
+
+/// `TruncateNewLines` (`0x7e1640`): a CR, an LF, or a `\n` or `|n` escape ends the text.
+fn truncate_new_lines(text: &str) -> &str {
+    let bytes = text.as_bytes();
+    let cut = (0..bytes.len()).find(|&i| match bytes[i] {
+        b'\r' | b'\n' => true,
+        b'\\' | b'|' => bytes.get(i + 1) == Some(&b'n'),
+        _ => false,
+    });
+    cut.map_or(text, |i| &text[..i])
 }
 
 /// Register the guild globals.
@@ -305,16 +340,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ── Membership and identity ──────────────────────────────────────────────────────────────
     // CanGuildBankRepair() (`0x5cc200`): 1 while in a guild whose rank table gives our rank
-    // `GR_RIGHT_WITHDRAW_REPAIR` (`0x5cc23a`); it tests neither the bank's money nor the cost.
+    // Withdraw Repair; it tests neither the bank's money nor the cost.
     g.set(
         "CanGuildBankRepair",
         lua.create_function(|lua, ()| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(binding_abi::flag(
-                model.guild.in_guild && model.guild.rights & WITHDRAW_REPAIR != 0,
-            ))
+            Ok(binding_abi::flag(has_right(&model, right::WITHDRAW_REPAIR)))
         })?,
     )?;
     // GetGuildBankMoney() (`0x5a4440`) and GetGuildBankWithdrawMoney() (`0x5a44a0`): the two stored
@@ -338,8 +371,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // IsInGuild() (`0x516de0`) reads the player's own `PLAYER_GUILDID`, so it answers before any
-    // roster arrives.
+    // IsInGuild() reads the player's own `PLAYER_GUILDID`, so it answers before any roster.
     g.set(
         "IsInGuild",
         lua.create_function(|lua, ()| {
@@ -350,7 +382,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // IsGuildLeader() (`0x516e40`) takes no argument: whether the player is the guild master.
+    // IsGuildLeader() takes no argument: whether the player is the guild master.
     g.set(
         "IsGuildLeader",
         lua.create_function(|lua, ()| {
@@ -361,12 +393,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetGuildInfo(unit) → guildName, rankName, rankIndex (`0x4c9330`), per unit because the rank
-    // fields are public: it reads the unit snapshot, not the player's guild. The general resolver
-    // (`0x515940`) raises on an unrecognised token (`0x515c1a`); a recognised but unresolvable
-    // token, a non-player, a guildless player and an unarrived guild record all answer
-    // `nil, nil, 0`, the third the number 0 (`mov eax,3` on both legs). Stock
-    // `PaperDollFrame_SetGuild` calls it for `"player"` unguarded (`PaperDollFrame.lua:117`).
+    // GetGuildInfo(unit) → guildName, rankName, rankIndex, per unit because the rank fields are
+    // public: it reads the unit snapshot, not the player's guild. An unrecognised token raises; a
+    // recognised but unresolvable token, a non-player, a guildless player and an unarrived guild
+    // record all answer `nil, nil, 0`, the third the number 0.
     g.set(
         "GetGuildInfo",
         lua.create_function(|lua, unit: Option<String>| {
@@ -388,56 +418,67 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── The roster ───────────────────────────────────────────────────────────────────────────
-    // GetNumGuildMembers() (`0x4d1190`): the loop bound (`FriendsFrame.lua:446`), which respects
-    // show-offline, not the addressable range (`GuildState::num_members`).
+    // GetNumGuildMembers([all]) (`0x5ca130`): the online count unless show-offline or `all`
+    // (`GetBoolOrDefault(1, 0)`) asks for every member.
     g.set(
         "GetNumGuildMembers",
-        lua.create_function(|lua, ()| {
+        lua.create_function(|lua, args: MultiValue| {
+            let all = binding_abi::bool_or_default(args.front(), false);
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            Ok(model.guild.num_members as i64)
+            Ok(if all {
+                model.guild.roster.len()
+            } else {
+                model.guild.num_members
+            } as i64)
         })?,
     )?;
 
     // GetGuildRosterInfo(index) → name, rank, rankIndex, level, class, zone, note, officernote,
-    // online, status (`0x4d1200`). Ten returns: only the status view takes the tenth
-    // (`FriendsFrame.lua:541`), every other call site nine. Out of range answers ten nils rather
-    // than raising: `GuildStatus_Update` passes the selection, 0 when none, before testing it
-    // (`FriendsFrame.lua:344`, `:347`).
+    // online, status, classFileName (`0x5cc9c0`): eleven returns. Out of range answers
+    // `nil, nil, 0, 0, nil, nil, nil, nil, nil, "", nil` (`0x5ccc22`).
     g.set(
         "GetGuildRosterInfo",
-        lua.create_function(|lua, index: i64| {
+        lua.create_function(|lua, index: Value| {
+            let index = binding_abi::number_arg(lua, index, "Usage: GetGuildRosterInfo(index)")?;
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             let Some(m) = member_at(&model.guild.roster, index) else {
-                return Ok(MultiValue::from_vec(vec![Value::Nil; 10]));
+                let mut out = vec![Value::Nil; 11];
+                out[2] = Value::Integer(0);
+                out[3] = Value::Integer(0);
+                out[9] = Value::String(lua.create_string("")?);
+                return Ok(MultiValue::from_vec(out));
             };
             Ok(MultiValue::from_vec(vec![
                 Value::String(lua.create_string(&m.name)?),
                 Value::String(lua.create_string(&m.rank)?),
                 Value::Integer(i64::from(m.rank_index)),
                 Value::Integer(i64::from(m.level)),
-                Value::String(lua.create_string(&m.class)?),
-                Value::String(lua.create_string(&m.zone)?),
+                string_or_nil(lua, &m.class)?,
+                string_or_nil(lua, &m.zone)?,
                 Value::String(lua.create_string(&m.note)?),
                 Value::String(lua.create_string(&m.officer_note)?),
                 binding_abi::flag(m.online),
                 Value::String(lua.create_string(&m.status)?),
+                string_or_nil(lua, &m.class_file)?,
             ]))
         })?,
     )?;
 
-    // GetGuildRosterLastOnline(index) → years, months, days, hours (`0x4d14a0`), all 0 for an
-    // online member, whom the wire sends no time for.
+    // GetGuildRosterLastOnline(index) → years, months, days, hours (`0x5cabb0`): four nils for an
+    // online member or an index out of range.
     g.set(
         "GetGuildRosterLastOnline",
-        lua.create_function(|lua, index: i64| {
+        lua.create_function(|lua, index: Value| {
+            let index =
+                binding_abi::number_arg(lua, index, "Usage: GetGuildRosterLastOnline(index)")?;
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let Some(m) = member_at(&model.guild.roster, index) else {
+            let Some(m) = member_at(&model.guild.roster, index).filter(|m| !m.online) else {
                 return Ok((Value::Nil, Value::Nil, Value::Nil, Value::Nil));
             };
             let last = m.last_online;
@@ -470,9 +511,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetGuildRosterSelection() (`0x4d1890`) / SetGuildRosterSelection(index) (`0x4d1820`):
-    // 1-based, 0 for none. The setter writes the snapshot and queues the intent: the same Lua pass
-    // reads it back, and the app's state must follow so the next push agrees.
+    // GetGuildRosterSelection() (`0x5cafd0`) / SetGuildRosterSelection(index) (`0x5caf40`):
+    // 1-based, 0 for none; an index past the roster clears it. The setter writes the snapshot and
+    // queues the intent: the same Lua pass reads it back, and the app's state must follow.
     g.set(
         "GetGuildRosterSelection",
         lua.create_function(|lua, ()| {
@@ -484,18 +525,23 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     g.set(
         "SetGuildRosterSelection",
-        lua.create_function(|lua, index: i64| {
+        lua.create_function(|lua, index: Value| {
+            let index =
+                binding_abi::number_arg(lua, index, "Usage: SetGuildRosterSelection(index)")?;
             let mut model = crate::script::model_mut_of(lua);
             let len = model.guild.roster.len();
-            let index = u32::try_from(index.clamp(0, len as i64)).unwrap_or(0);
+            let index = u32::try_from(index)
+                .ok()
+                .filter(|i| (1..=len as u32).contains(i))
+                .unwrap_or(0);
             model.guild.selection = index;
             model.guild_requests.push(GuildRequest::Select(index));
             Ok(())
         })?,
     )?;
 
-    // GetGuildRosterShowOffline() (`0x4d1e30`) / SetGuildRosterShowOffline(flag): written in
-    // place and mirrored, as the selection is.
+    // GetGuildRosterShowOffline() (`0x5ca1e0`) / SetGuildRosterShowOffline(flag) (`0x5ca1b0`,
+    // `GetBoolOrDefault(1, 1)`): written in place and mirrored, as the selection is.
     g.set(
         "GetGuildRosterShowOffline",
         lua.create_function(|lua, ()| {
@@ -505,14 +551,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(binding_abi::flag(model.guild.show_offline))
         })?,
     )?;
-    // With no argument it turns show-offline on, unlike an explicit `nil`, hence `MultiValue`.
     g.set(
         "SetGuildRosterShowOffline",
         lua.create_function(|lua, args: MultiValue| {
-            let on = match args.into_iter().next() {
-                None => true,
-                Some(flag) => truthy(&flag),
-            };
+            let on = binding_abi::bool_or_default(args.front(), true);
             let mut model = crate::script::model_mut_of(lua);
             model.guild.show_offline = on;
             model.guild_requests.push(GuildRequest::SetShowOffline(on));
@@ -520,9 +562,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SortGuildRoster(field) (`0x4d1cb0`): the header's OnClick calls no `GuildStatus_Update` and
-    // no `GuildRoster` (`FriendsFrame.xml:442-446`), so the app re-orders and fires
-    // `GUILD_ROSTER_UPDATE` on the drain, without asking the server.
+    // SortGuildRoster(field) (`0x5cb000`): the app re-orders and fires `GUILD_ROSTER_UPDATE` on
+    // the drain, without asking the server.
     g.set(
         "SortGuildRoster",
         lua.create_function(|lua, field: String| {
@@ -532,7 +573,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // CloseGuildRoster() is `xor eax,eax; ret` in the reference: a no-op that sends nothing.
+    // CloseGuildRoster() (`0x8e5250`): a no-op that sends nothing.
     g.set("CloseGuildRoster", lua.create_function(|_, ()| Ok(()))?)?;
 
     // The argument-less verbs; the app throttles `GuildRoster()` (`GuildRequest::Roster`).
@@ -555,40 +596,39 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     }
 
     // ── The by-name verbs ────────────────────────────────────────────────────────────────────
-    // Five name-taking verbs (`0x48aef0`, `0x48afb0`, `0x48b050`, `0x48b0f0`, `0x48b190`). An empty
-    // or whitespace name is not sent. vmangos ignores an empty one without a reply, except an
-    // invite, which it answers with `ERR_GUILD_PLAYER_NOT_FOUND_S`
-    // (`Handlers/GuildHandler.cpp:77-83`).
+    // Five name-taking verbs (`0x522a20`-`0x522d60`): a missing name posts
+    // `ERR_COMMAND_NEEDS_TARGET` (`0x522ace`), one over 48 bytes raises, and any other is sent,
+    // the empty string included.
     for (global, make) in [
-        ("GuildInviteByName", GuildRequest::Invite as fn(String) -> _),
-        (
-            "GuildUninviteByName",
-            GuildRequest::Uninvite as fn(String) -> _,
-        ),
-        (
-            "GuildPromoteByName",
-            GuildRequest::Promote as fn(String) -> _,
-        ),
-        ("GuildDemoteByName", GuildRequest::Demote as fn(String) -> _),
-        (
-            "GuildSetLeaderByName",
-            GuildRequest::SetLeader as fn(String) -> _,
-        ),
+        ("GuildInvite", GuildRequest::Invite as fn(String) -> _),
+        ("GuildUninvite", GuildRequest::Uninvite as fn(String) -> _),
+        ("GuildPromote", GuildRequest::Promote as fn(String) -> _),
+        ("GuildDemote", GuildRequest::Demote as fn(String) -> _),
+        ("GuildSetLeader", GuildRequest::SetLeader as fn(String) -> _),
     ] {
         g.set(
             global,
-            lua.create_function(move |lua, name: String| {
-                if !name.trim().is_empty() {
-                    let mut model = crate::script::model_mut_of(lua);
-                    model.guild_requests.push(make(name));
+            lua.create_function(move |lua, name: Value| {
+                let Some(name) = lua.coerce_string(name)? else {
+                    crate::script::model_mut_of(lua)
+                        .ui_errors
+                        .push("ERR_COMMAND_NEEDS_TARGET");
+                    return Ok(());
+                };
+                if name.as_bytes().len() > 48 {
+                    return Err(mlua::Error::RuntimeError("Name too long".into()));
                 }
+                let name = name.to_string_lossy();
+                crate::script::model_mut_of(lua)
+                    .guild_requests
+                    .push(make(name));
                 Ok(())
             })?,
         )?;
     }
 
-    // GuildSetMOTD(text) (`0x48b270`) / SetGuildInfoText(text) (`0x4d2380`): an empty string is
-    // sent, and clears the text.
+    // GuildSetMOTD(text) / SetGuildInfoText(text) (`0x5cb820`): an empty string is sent, and
+    // clears the text.
     for (global, make) in [
         ("GuildSetMOTD", GuildRequest::SetMotd as fn(String) -> _),
         (
@@ -606,7 +646,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // GuildRosterSetPublicNote(index, note) (`0x4d15e0`) / GuildRosterSetOfficerNote (`0x4d1700`)
+    // GuildRosterSetPublicNote(index, note) (`0x5cad00`) / GuildRosterSetOfficerNote (`0x5cae20`)
     // take a roster row, which the app resolves to the name the wire carries.
     for (global, make) in [
         (
@@ -634,8 +674,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     }
 
     // ── The permission predicates ────────────────────────────────────────────────────────────
-    // Nine predicates, each one bit of the player's own rank's rights (`0x4d18c0`, `0x4d1930`,
-    // `0x4d19a0`, `0x4d1a10`, `0x4d1c40` among them).
+    // Nine predicates, each one bit of the player's own rank's rights (`0x5cbcf0`-`0x5cc170`).
     for (global, index) in [
         ("CanGuildPromote", right::PROMOTE),
         ("CanGuildDemote", right::DEMOTE),
@@ -673,7 +712,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── The rank-control popup ───────────────────────────────────────────────────────────────
-    // GuildControlGetNumRanks() (`0x4d1e60`): the guild's rank count.
+    // GuildControlGetNumRanks() (`0x5ca220`): the guild's rank count.
     g.set(
         "GuildControlGetNumRanks",
         lua.create_function(|lua, ()| {
@@ -684,10 +723,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GuildControlGetRankName(index) (`0x4d1e90`): 1-based, the dropdown's ID.
+    // GuildControlGetRankName(index) (`0x5ccc90`): 1-based, the dropdown's ID; `""` past the
+    // guild's ranks, and cut at a line break (`TruncateNewLines`).
     g.set(
         "GuildControlGetRankName",
-        lua.create_function(|lua, index: i64| {
+        lua.create_function(|lua, index: Value| {
+            let index =
+                binding_abi::number_arg(lua, index, "Usage: GuildControlGetRankName(index)")?;
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
@@ -695,41 +737,46 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .ok()
                 .and_then(|i| i.checked_sub(1))
                 .and_then(|i| model.guild.ranks.get(i))
-                .map(|r| r.name.as_str())
+                .map(|r| truncate_new_lines(&r.name))
                 .unwrap_or_default();
             lua.create_string(name)
         })?,
     )?;
 
-    // GuildControlSetRank(index) (`0x4d1fa0`): load a 1-based rank into the staging buffer, each
-    // slot seeded from its live rights. 0 clears the selection rather than loading rank 1, so a
-    // 0-based `rankIndex` passed by mistake loads nothing.
+    // GuildControlSetRank(index) (`0x5ca260` → `0x5ca090`): load a 1-based rank into the staging
+    // buffer, each slot seeded from its live rights; past seventeen, or 0, clears the selection.
     g.set(
         "GuildControlSetRank",
-        lua.create_function(|lua, index: i64| {
+        lua.create_function(|lua, index: Value| {
+            let index = binding_abi::number_arg(lua, index, "Usage: GuildControlSetRank(rank)")?;
             let mut model = crate::script::model_mut_of(lua);
-            let rank = u32::try_from(index).ok().filter(|i| *i >= 1).unwrap_or(0);
-            let rights = live_rights(&model, rank);
-            let mut staged = [false; 13];
+            let rank = u32::try_from(index)
+                .ok()
+                .filter(|i| (1..=CONTROL_RANKS).contains(i))
+                .unwrap_or(0);
+            model.guild_control.rank = rank;
+            let rights = control_rank(&model).map(|r| r.rights).unwrap_or(0);
+            let mut staged = [false; 17];
             for (slot, bit) in staged.iter_mut().zip(RANK_RIGHT_BITS) {
                 *slot = rights & bit != 0;
             }
-            model.guild_control = GuildRankEdit { rank, staged };
+            model.guild_control.staged = staged;
             Ok(())
         })?,
     )?;
 
-    // GuildControlGetRankFlags() (`0x4d1fe0`): thirteen returns in `RANK_RIGHT_BITS` order, from
-    // the loaded rank's live rights, never the staging buffer, so a click shows only once the save
-    // round-trips and a new roster lands. `GuildControlPopupFrame_OnLoad` calls it before any rank
-    // is loaded (`FriendsFrame.lua:801`), when all thirteen are nil.
+    // GuildControlGetRankFlags() (`0x5cc3e0`): seventeen returns in `RANK_RIGHT_BITS` order, from
+    // the loaded rank's live rights, never the staging buffer, all nil outside a guild.
     g.set(
         "GuildControlGetRankFlags",
         lua.create_function(|lua, ()| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let rights = live_rights(&model, model.guild_control.rank);
+            let rights = control_rank(&model)
+                .filter(|_| model.guild.in_guild)
+                .map(|r| r.rights)
+                .unwrap_or(0);
             Ok(MultiValue::from_vec(
                 RANK_RIGHT_BITS
                     .iter()
@@ -739,10 +786,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GuildControlSetRankFlag(index, enabled) (`0x4d2070`): stage one checkbox, 1 to 13.
+    // GuildControlSetRankFlag(index, enabled) (`0x5ca2b0`): stage one checkbox, 1 to 17, by
+    // `GetBoolOrDefault(2, 0)`.
     g.set(
         "GuildControlSetRankFlag",
-        lua.create_function(|lua, (index, enabled): (i64, Value)| {
+        lua.create_function(|lua, args: MultiValue| {
+            let mut args = args.into_iter();
+            let index = binding_abi::number_arg(
+                lua,
+                args.next().unwrap_or(Value::Nil),
+                "Usage: GuildControlSetRankFlag(index, enabled)",
+            )?;
+            let enabled = binding_abi::bool_or_default(args.next().as_ref(), false);
             let Some(slot) = usize::try_from(index)
                 .ok()
                 .and_then(|i| i.checked_sub(1))
@@ -751,71 +806,185 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             let mut model = crate::script::model_mut_of(lua);
-            model.guild_control.staged[slot] = truthy(&enabled);
+            model.guild_control.staged[slot] = enabled;
             Ok(())
         })?,
     )?;
 
-    // GuildControlSaveRank(name) (`0x4d20d0`): the edit box's name (`FriendsFrame.lua:839`) and the
-    // staged flags as one `CMSG_GUILD_RANK` for the loaded rank. A name failing `gated_rank_name`
-    // is a silent no-op; vmangos stores an empty one (`Handlers/GuildHandler.cpp:586`). The fold
-    // sets or clears each staged bit over the freshly read live rights (`or mask[k]` /
-    // `and ~mask[k]`), so a right can be turned off and bits outside the thirteen, such as `0x40`,
-    // which the reference never tests, ride through as the server sent them.
+    // GuildControlSaveRank(name) (`0x5cb170`): an empty name is a silent no-op; otherwise the
+    // scrubbed name, the staged flags folded over the live rights (`or mask` / `and ~mask`), the
+    // withdraw limit times 10000 and the six bank tabs, as one `CMSG_GUILD_RANK` for the loaded
+    // rank, if it is one of the guild's.
     g.set(
         "GuildControlSaveRank",
-        lua.create_function(|lua, name: String| {
-            let Some(name) = gated_rank_name(&name).map(str::to_string) else {
+        lua.create_function(|lua, name: Value| {
+            let name = binding_abi::string_arg(lua, name, "Usage: GuildControlSaveRank(name)")?;
+            if name.is_empty() {
                 return Ok(());
-            };
+            }
             let mut model = crate::script::model_mut_of(lua);
             let edit = model.guild_control.clone();
-            // The reference's `[0x84966c] >= [0xb73120]`: no rank loaded (its -1, our 0) or one
-            // past the rank count.
-            if edit.rank >= 1 && (edit.rank as usize) <= model.guild.ranks.len() {
-                let mut rights = live_rights(&model, edit.rank);
-                for (i, bit) in RANK_RIGHT_BITS.iter().enumerate() {
-                    if edit.staged[i] {
-                        rights |= bit;
-                    } else {
-                        rights &= !bit;
-                    }
-                }
-                model.guild_requests.push(GuildRequest::SaveRank {
-                    rank_index: edit.rank - 1,
-                    rights,
-                    name,
-                });
-            }
-            Ok(())
-        })?,
-    )?;
-
-    // GuildControlAddRank(name) (`0x4d2210`): the same name gate, and a silent refusal at
-    // `MAX_RANKS`, both before any packet.
-    g.set(
-        "GuildControlAddRank",
-        lua.create_function(|lua, name: String| {
-            let Some(name) = gated_rank_name(&name).map(str::to_string) else {
+            let Some(rank) = control_rank(&model) else {
                 return Ok(());
             };
+            let mut rights = rank.rights;
+            for (staged, bit) in edit.staged.iter().zip(RANK_RIGHT_BITS) {
+                if *staged {
+                    rights |= bit;
+                } else {
+                    rights &= !bit;
+                }
+            }
+            let money_per_day = rank.bank_money_per_day.wrapping_mul(10_000);
+            let tabs = std::array::from_fn(|i| rank.tab(i));
+            model.guild_requests.push(GuildRequest::SaveRank {
+                rank_index: edit.rank - 1,
+                rights,
+                name: scrubbed_rank_name(&name),
+                money_per_day,
+                tabs,
+            });
+            Ok(())
+        })?,
+    )?;
+
+    // GuildControlAddRank(name) (`0x5cb330`): an empty name is a silent no-op, and so is a guild
+    // already at `MAX_RANKS`; the name is scrubbed as the save's is.
+    g.set(
+        "GuildControlAddRank",
+        lua.create_function(|lua, name: Value| {
+            let name = binding_abi::string_arg(lua, name, "Usage: GuildControlAddRank(name)")?;
+            if name.is_empty() {
+                return Ok(());
+            }
             let mut model = crate::script::model_mut_of(lua);
             if model.guild.ranks.len() < MAX_RANKS {
-                model.guild_requests.push(GuildRequest::AddRank(name));
+                model
+                    .guild_requests
+                    .push(GuildRequest::AddRank(scrubbed_rank_name(&name)));
             }
             Ok(())
         })?,
     )?;
 
-    // GuildControlDelRank() (`0x4d22e0`) reads no argument and sends an empty `0x233`: the server
-    // deletes the last rank. The FrameXML passes a name (`FriendsFrame.lua:895`), which is ignored.
-    // It refuses silently at `MIN_RANKS`, before any packet.
+    // GuildControlDelRank() (`0x5cb3f0`) reads no argument and sends an empty `0x233`: the server
+    // deletes the last rank. It refuses silently at `MIN_RANKS`, before any packet.
     g.set(
         "GuildControlDelRank",
         lua.create_function(|lua, _ignored: MultiValue| {
             let mut model = crate::script::model_mut_of(lua);
             if model.guild.ranks.len() > MIN_RANKS {
                 model.guild_requests.push(GuildRequest::DelRank);
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // ── The loaded rank's bank half ──────────────────────────────────────────────────────────
+    // Five verbs read and write the control rank's record in place, which the next roster
+    // overwrites; the save sends what they left there.
+
+    // GetGuildBankTabPermissions(tab) → view, deposit, updateText, withdrawals (`0x5cb560`):
+    // three flags and a number, zeros past the six tabs.
+    g.set(
+        "GetGuildBankTabPermissions",
+        lua.create_function(|lua, tab: Value| {
+            let tab = binding_abi::number_arg(lua, tab, "Usage: GetGuildBankTabPermissions(tab)")?;
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let (rights, stacks) = usize::try_from(tab - 1)
+                .ok()
+                .filter(|t| *t < BANK_TABS)
+                .and_then(|t| control_rank(&model).map(|r| r.tab(t)))
+                .unwrap_or_default();
+            Ok((
+                binding_abi::flag(rights & BANK_TAB_RIGHT_BITS[0] != 0),
+                binding_abi::flag(rights & BANK_TAB_RIGHT_BITS[1] != 0),
+                binding_abi::flag(rights & BANK_TAB_RIGHT_BITS[2] != 0),
+                i64::from(stacks),
+            ))
+        })?,
+    )?;
+
+    // SetGuildBankTabPermissions(tab, index, enabled) (`0x5cb470`): one of the tab's three rights
+    // by `GetBoolOrDefault(3, 0)`.
+    g.set(
+        "SetGuildBankTabPermissions",
+        lua.create_function(|lua, args: MultiValue| {
+            const USAGE: &str = "Usage: SetGuildTabPermissions(tab, index, enabled)";
+            let mut args = args.into_iter();
+            let tab = binding_abi::number_arg(lua, args.next().unwrap_or(Value::Nil), USAGE)?;
+            let index = binding_abi::number_arg(lua, args.next().unwrap_or(Value::Nil), USAGE)?;
+            let enabled = binding_abi::bool_or_default(args.next().as_ref(), false);
+            let (Some(tab), Some(&bit)) = (
+                usize::try_from(tab - 1).ok().filter(|t| *t < BANK_TABS),
+                usize::try_from(index - 1)
+                    .ok()
+                    .and_then(|i| BANK_TAB_RIGHT_BITS.get(i)),
+            ) else {
+                return Ok(());
+            };
+            let mut model = crate::script::model_mut_of(lua);
+            if let Some(rank) = control_rank_mut(&mut model) {
+                let (rights, _) = rank.tab_mut(tab);
+                if enabled {
+                    *rights |= bit;
+                } else {
+                    *rights &= !bit;
+                }
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // SetGuildBankWithdrawLimit(amount) (`0x5cb6a0`): stores the gold amount, capped at 10^9, in
+    // the copper slot the save multiplies by 10000.
+    g.set(
+        "SetGuildBankWithdrawLimit",
+        lua.create_function(|lua, amount: Value| {
+            let amount = binding_abi::number_arg(
+                lua,
+                amount,
+                "Usage: Script_SetGuildBankWithdrawLimit(amount)",
+            )?;
+            let mut model = crate::script::model_mut_of(lua);
+            if let Some(rank) = control_rank_mut(&mut model) {
+                rank.bank_money_per_day = (amount as u32).min(1_000_000_000);
+            }
+            Ok(())
+        })?,
+    )?;
+
+    // GetGuildBankWithdrawLimit() (`0x5cb700`): the slot over 10000 when it is not negative, so
+    // the guild master's -1 stays -1.
+    g.set(
+        "GetGuildBankWithdrawLimit",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let limit = control_rank(&model)
+                .map(|r| r.bank_money_per_day as i32)
+                .unwrap_or(0);
+            Ok(i64::from(if limit >= 0 { limit / 10_000 } else { limit }))
+        })?,
+    )?;
+
+    // SetGuildBankTabWithdraw(tab, amount) (`0x5cb760`): a tab's daily withdrawals, capped at
+    // 100000.
+    g.set(
+        "SetGuildBankTabWithdraw",
+        lua.create_function(|lua, (tab, amount): (Value, Value)| {
+            const USAGE: &str = "Usage: SetGuildBankTabWithdraw(tab, amount)";
+            let tab = binding_abi::number_arg(lua, tab, USAGE)?;
+            let amount = binding_abi::number_arg(lua, amount, USAGE)?;
+            let Some(tab) = usize::try_from(tab - 1).ok().filter(|t| *t < BANK_TABS) else {
+                return Ok(());
+            };
+            let mut model = crate::script::model_mut_of(lua);
+            if let Some(rank) = control_rank_mut(&mut model) {
+                rank.tab_mut(tab).1 = (amount as u32).min(100_000);
             }
             Ok(())
         })?,
@@ -828,8 +997,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::*;
 
-    /// `0x4c9330`: only an unrecognised token raises; `"player"` with no unit behind it, the paper
-    /// doll's case at world entry, answers `nil, nil, 0`.
+    /// Only an unrecognised token raises; `"player"` with no unit behind it, the paper doll's case
+    /// at world entry, answers `nil, nil, 0`.
     #[test]
     fn a_recognised_but_unresolved_unit_answers_nils_and_only_an_unknown_token_raises() {
         let s = crate::script::UiScript::new().unwrap();
@@ -837,7 +1006,6 @@ mod tests {
             .eval(r#"return GetGuildInfo("player")"#)
             .expect("a recognised token must not raise");
         assert_eq!((name, rank, idx), (None, None, 0));
-        // The third value is the number 0, not nil (`mov eax,3` on both legs).
         assert!(s
             .eval::<bool>(r#"local a,b,c = GetGuildInfo("party3") return c == 0"#)
             .unwrap());
@@ -846,8 +1014,8 @@ mod tests {
             .is_err());
     }
 
-    /// `CanGuildBankRepair` (`0x5cc200`) is our rank's `GR_RIGHT_WITHDRAW_REPAIR` while in a
-    /// guild; the two money getters (`0x5a4440`, `0x5a44a0`) answer the stored values.
+    /// `CanGuildBankRepair` (`0x5cc200`) is our rank's Withdraw Repair while in a guild; the two
+    /// money getters (`0x5a4440`, `0x5a44a0`) answer the stored values.
     #[test]
     fn the_guild_bank_repair_verbs_read_the_rank_and_the_stored_money() {
         let mut s = crate::script::UiScript::new().unwrap();
@@ -898,58 +1066,23 @@ mod tests {
     }
 
     #[test]
-    fn the_rank_right_table_is_not_a_shift() {
-        assert_eq!(RANK_RIGHT_BITS.len(), 13, "one bit per GUILDCONTROL_OPTION");
+    fn the_rank_right_table_is_twelve_thousand_three_hundred_forty_s_seventeen_slots() {
         assert_eq!(RANK_RIGHT_BITS[right::PROMOTE - 1], 0x80);
         assert_eq!(RANK_RIGHT_BITS[right::DEMOTE - 1], 0x100);
         assert_eq!(RANK_RIGHT_BITS[right::INVITE - 1], 0x10);
         assert_eq!(RANK_RIGHT_BITS[right::REMOVE - 1], 0x20);
-        assert!(
-            RANK_RIGHT_BITS[right::PROMOTE - 1] > RANK_RIGHT_BITS[right::INVITE - 1],
-            "promote's bit is above invite's while its index is below — the whole reason this is \
-             a table and not a shift"
+        assert_eq!(RANK_RIGHT_BITS[right::WITHDRAW_REPAIR - 1], 0x4_0000);
+        assert_eq!(
+            RANK_RIGHT_BITS[16],
+            super::super::calendar::RIGHT_EDIT_GUILD_EVENT,
+            "the last slot is the calendar's right"
         );
-        for (i, bit) in RANK_RIGHT_BITS.iter().enumerate() {
-            assert_eq!(bit.count_ones(), 1, "flag {} is not a single bit", i + 1);
-        }
         let mut seen = 0u32;
         for bit in RANK_RIGHT_BITS {
+            assert_eq!(bit.count_ones(), 1, "{bit:#x} is not a single bit");
             assert_eq!(seen & bit, 0, "duplicate bit {bit:#x}");
             seen |= bit;
         }
-    }
-
-    /// `0x40`, vmangos's `GR_RIGHT_EMPTY`, is none of the thirteen and never tested by the
-    /// reference.
-    #[test]
-    fn saving_a_rank_preserves_bits_outside_the_thirteen_and_can_clear() {
-        // Live: Invite (0x10) + Set MOTD (0x1000), plus the untouchable 0x40.
-        let live = 0x0000_0040 | RANK_RIGHT_BITS[right::INVITE - 1] | RANK_RIGHT_BITS[8];
-        // Staged: the user unticked Set MOTD and ticked Promote.
-        let mut staged = [false; 13];
-        staged[right::INVITE - 1] = true;
-        staged[right::PROMOTE - 1] = true;
-
-        let mut folded = live;
-        for (i, bit) in RANK_RIGHT_BITS.iter().enumerate() {
-            if staged[i] {
-                folded |= bit;
-            } else {
-                folded &= !bit;
-            }
-        }
-
-        assert_eq!(
-            folded & 0x0000_0040,
-            0x0000_0040,
-            "0x40 is outside the thirteen and must ride through untouched"
-        );
-        assert_ne!(folded & RANK_RIGHT_BITS[right::PROMOTE - 1], 0, "ticked");
-        assert_eq!(
-            folded & RANK_RIGHT_BITS[8],
-            0,
-            "unticked Set MOTD must actually clear — a plain OR could never do this"
-        );
     }
 
     fn guild_with_ranks(n: usize) -> crate::script::UiScript {
@@ -967,57 +1100,287 @@ mod tests {
         s
     }
 
-    /// `0x4d20d0` refuses silently: a name outside 1 to 16 UTF-16 units (`0x65b250` counts them
-    /// plus the NUL), no rank loaded, or a rank past the count.
+    fn saves(s: &mut crate::script::UiScript) -> Vec<GuildRequest> {
+        s.take_guild_requests()
+            .into_iter()
+            .filter(|r| matches!(r, GuildRequest::SaveRank { .. }))
+            .collect()
+    }
+
+    /// `0x5cb170` sends any non-empty name, scrubbed to fifteen characters with its pipes gone
+    /// (`ScrubString`, `0x7e1830`), and refuses no rank loaded or one past the count.
     #[test]
-    fn saving_a_rank_refuses_what_the_reference_refuses() {
+    fn saving_a_rank_scrubs_the_name_and_refuses_what_the_reference_refuses() {
         let mut s = guild_with_ranks(5);
-        let saves = |s: &mut crate::script::UiScript| {
-            s.take_guild_requests()
-                .into_iter()
-                .filter(|r| matches!(r, GuildRequest::SaveRank { .. }))
-                .count()
+        let name = |r: &GuildRequest| match r {
+            GuildRequest::SaveRank { name, .. } => name.clone(),
+            _ => unreachable!(),
         };
 
         s.run(r#"GuildControlSetRank(2); GuildControlSaveRank("")"#)
             .unwrap();
-        assert_eq!(saves(&mut s), 0, "an empty name is a silent no-op");
+        assert!(saves(&mut s).is_empty(), "an empty name is a silent no-op");
 
-        // Sixteen UTF-16 units is the ceiling; seventeen is refused.
-        s.run(r#"GuildControlSetRank(2); GuildControlSaveRank(string.rep("a", 16))"#)
+        s.run(r#"GuildControlSetRank(2); GuildControlSaveRank(string.rep("a", 20))"#)
             .unwrap();
-        assert_eq!(saves(&mut s), 1);
-        s.run(r#"GuildControlSetRank(2); GuildControlSaveRank(string.rep("a", 17))"#)
+        assert_eq!(
+            saves(&mut s).iter().map(name).collect::<Vec<_>>(),
+            vec!["a".repeat(15)],
+            "the sixteenth character is where the scrub cuts"
+        );
+        s.run(r#"GuildControlSetRank(2); GuildControlSaveRank("Of|ficer\nnext")"#)
             .unwrap();
-        assert_eq!(saves(&mut s), 0, "seventeen units");
-        // Units, not bytes: sixteen two-byte letters are sixteen units.
-        s.run(r#"GuildControlSetRank(2); GuildControlSaveRank(string.rep("é", 16))"#)
-            .unwrap();
-        assert_eq!(saves(&mut s), 1, "32 bytes, 16 units");
-        // Whitespace is not empty to the reference.
-        s.run(r#"GuildControlSetRank(2); GuildControlSaveRank(" ")"#)
-            .unwrap();
-        assert_eq!(saves(&mut s), 1);
+        assert_eq!(
+            saves(&mut s).iter().map(name).collect::<Vec<_>>(),
+            vec!["Officer".to_string()]
+        );
 
-        // No rank loaded in a fresh popup (the selection persists across saves, as `[0x84966c]`
-        // does), or one past the count.
         let mut fresh = guild_with_ranks(5);
         fresh.run(r#"GuildControlSaveRank("Officer")"#).unwrap();
-        assert_eq!(saves(&mut fresh), 0, "nothing selected");
+        assert!(saves(&mut fresh).is_empty(), "nothing selected");
         s.run(r#"GuildControlSetRank(6); GuildControlSaveRank("Officer")"#)
             .unwrap();
-        assert_eq!(saves(&mut s), 0, "rank index 5 >= 5 ranks");
+        assert!(saves(&mut s).is_empty(), "rank index 5 >= 5 ranks");
     }
 
-    /// `0x4d2210` runs the same name gate; a whitespace name passes it.
+    /// The save folds the seventeen staged flags over the live rights and carries the rank's bank
+    /// half as the popup's verbs left it: the gold limit times 10000 and six tab pairs.
     #[test]
-    fn adding_a_rank_runs_the_same_name_gate() {
+    fn saving_a_rank_carries_the_staged_flags_and_the_bank_half() {
+        let mut s = crate::script::UiScript::new().unwrap();
+        s.set_guild(GuildState {
+            in_guild: true,
+            ranks: vec![
+                GuildRankInfo {
+                    name: "Master".into(),
+                    rights: 0x001F_F1FF,
+                    ..Default::default()
+                },
+                GuildRankInfo {
+                    name: "Officer".into(),
+                    // Listen, Speak, Set MOTD, and a bit outside the seventeen.
+                    rights: 0x0000_1003 | 0x0000_0040,
+                    bank_money_per_day: 50_000,
+                    bank_tabs: vec![(0x1, 5); BANK_TABS],
+                },
+            ],
+            ..Default::default()
+        });
+        s.run(
+            r#"
+            GuildControlSetRank(2)
+            GuildControlSetRankFlag(9, nil)    -- Set MOTD off
+            GuildControlSetRankFlag(16, 1)     -- Withdraw Gold on
+            SetGuildBankWithdrawLimit(25)
+            SetGuildBankTabPermissions(2, 2, 1)
+            SetGuildBankTabWithdraw(3, 250000)
+            GuildControlSaveRank("Officer")
+        "#,
+        )
+        .unwrap();
+        let mut tabs = [(0x1, 5); BANK_TABS];
+        tabs[1].0 = 0x1 | 0x2;
+        tabs[2].1 = 100_000;
+        assert_eq!(
+            saves(&mut s),
+            vec![GuildRequest::SaveRank {
+                rank_index: 1,
+                rights: 0x0000_0003 | 0x0000_0040 | 0x0008_0000,
+                name: "Officer".into(),
+                money_per_day: 250_000,
+                tabs,
+            }]
+        );
+    }
+
+    /// `0x5cb700` divides the stored slot by 10000 unless it is negative; `0x5cb560` answers three
+    /// flags and the withdrawals, zeros past the tabs.
+    #[test]
+    fn the_bank_limit_getters_read_the_loaded_rank() {
+        let mut s = crate::script::UiScript::new().unwrap();
+        s.set_guild(GuildState {
+            in_guild: true,
+            ranks: vec![
+                GuildRankInfo {
+                    bank_money_per_day: u32::MAX,
+                    ..Default::default()
+                },
+                GuildRankInfo {
+                    bank_money_per_day: 1_234_567,
+                    bank_tabs: vec![(0x5, 7)],
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+        s.run("GuildControlSetRank(1)").unwrap();
+        assert_eq!(
+            s.eval::<i64>("return GetGuildBankWithdrawLimit()").unwrap(),
+            -1
+        );
+        s.run("GuildControlSetRank(2)").unwrap();
+        assert_eq!(
+            s.eval::<i64>("return GetGuildBankWithdrawLimit()").unwrap(),
+            123
+        );
+        assert!(s
+            .eval::<bool>(
+                "local v, d, u, n = GetGuildBankTabPermissions(1) \
+                 return v == 1 and d == nil and u == 1 and n == 7"
+            )
+            .unwrap());
+        assert!(s
+            .eval::<bool>(
+                "local v, d, u, n = GetGuildBankTabPermissions(7) \
+                 return v == nil and d == nil and u == nil and n == 0"
+            )
+            .unwrap());
+    }
+
+    /// `0x5cc3e0` answers seventeen values, all nil before any rank is loaded.
+    #[test]
+    fn the_rank_flags_are_seventeen_values() {
+        let s = guild_with_ranks(5);
+        assert_eq!(
+            s.eval::<i64>("return select('#', GuildControlGetRankFlags())")
+                .unwrap(),
+            17
+        );
+        assert!(s
+            .eval::<bool>("return GuildControlGetRankFlags() == nil")
+            .unwrap());
+    }
+
+    /// `0x5ccc90` answers `""` past the ranks and cuts a name at its line break.
+    #[test]
+    fn a_rank_name_past_the_count_is_empty() {
+        let mut s = guild_with_ranks(5);
+        s.set_guild(GuildState {
+            in_guild: true,
+            ranks: vec![GuildRankInfo {
+                name: "Master\nof all".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        assert_eq!(
+            s.eval::<String>("return GuildControlGetRankName(1)")
+                .unwrap(),
+            "Master"
+        );
+        assert_eq!(
+            s.eval::<String>("return GuildControlGetRankName(2)")
+                .unwrap(),
+            ""
+        );
+    }
+
+    /// `0x5cc9c0`: eleven returns, the eleventh the class file; out of range the fixed shape;
+    /// `0x5cabb0`: nothing for an online member.
+    #[test]
+    fn the_roster_row_is_eleven_values_and_an_online_member_has_no_last_online() {
+        let mut s = crate::script::UiScript::new().unwrap();
+        s.set_guild(GuildState {
+            in_guild: true,
+            roster: vec![
+                GuildMemberInfo {
+                    name: "Tigole".into(),
+                    rank: "Guild Master".into(),
+                    level: 80,
+                    class: "Warrior".into(),
+                    class_file: "WARRIOR".into(),
+                    online: true,
+                    ..Default::default()
+                },
+                GuildMemberInfo {
+                    name: "Kaplan".into(),
+                    last_online: LastOnline {
+                        days: 3,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ],
+            num_members: 1,
+            ..Default::default()
+        });
+        assert_eq!(
+            s.eval::<i64>("return select('#', GetGuildRosterInfo(1))")
+                .unwrap(),
+            11
+        );
+        assert_eq!(
+            s.eval::<String>("return select(11, GetGuildRosterInfo(1))")
+                .unwrap(),
+            "WARRIOR"
+        );
+        assert!(s
+            .eval::<bool>(
+                "local n, r, ri, l, c, z, no, o, on, st, cf = GetGuildRosterInfo(9) \
+                 return n == nil and r == nil and ri == 0 and l == 0 and c == nil and z == nil \
+                 and no == nil and o == nil and on == nil and st == '' and cf == nil"
+            )
+            .unwrap());
+        assert!(s
+            .eval::<bool>(
+                "local n, r, ri, l, c, z = GetGuildRosterInfo(2) return c == nil and z == nil"
+            )
+            .unwrap());
+        assert!(s
+            .eval::<bool>("return GetGuildRosterLastOnline(1) == nil")
+            .unwrap());
+        assert_eq!(
+            s.eval::<i64>("return select(3, GetGuildRosterLastOnline(2))")
+                .unwrap(),
+            3
+        );
+        assert_eq!(s.eval::<i64>("return GetNumGuildMembers()").unwrap(), 1);
+        assert_eq!(s.eval::<i64>("return GetNumGuildMembers(1)").unwrap(), 2);
+        s.run("SetGuildRosterSelection(3)").unwrap();
+        assert_eq!(
+            s.eval::<i64>("return GetGuildRosterSelection()").unwrap(),
+            0,
+            "an index past the roster clears the selection"
+        );
+    }
+
+    /// `0x5cb330` scrubs the name as the save does and sends only below ten ranks.
+    #[test]
+    fn adding_a_rank_scrubs_the_name() {
         let mut s = guild_with_ranks(5);
         s.run(r#"GuildControlAddRank(""); GuildControlAddRank(string.rep("a", 17))"#)
             .unwrap();
-        assert!(s.take_guild_requests().is_empty());
-        s.run(r#"GuildControlAddRank(" ")"#).unwrap();
+        assert_eq!(
+            s.take_guild_requests(),
+            vec![GuildRequest::AddRank("a".repeat(15))]
+        );
+        let mut full = guild_with_ranks(MAX_RANKS);
+        full.run(r#"GuildControlAddRank("Peon")"#).unwrap();
+        assert!(full.take_guild_requests().is_empty());
+    }
+
+    /// `GuildInvite` and its four siblings (`0x522a20`-`0x522d60`): no name posts the needs-target
+    /// error, a name over 48 bytes raises, and an empty one is sent.
+    #[test]
+    fn the_by_name_verbs_send_any_name_up_to_48_bytes() {
+        let mut s = crate::script::UiScript::new().unwrap();
+        s.run(r#"GuildInvite("Thrall"); GuildSetLeader(""); GuildUninvite()"#)
+            .unwrap();
+        assert_eq!(
+            s.take_guild_requests(),
+            vec![
+                GuildRequest::Invite("Thrall".into()),
+                GuildRequest::SetLeader(String::new()),
+            ]
+        );
+        assert_eq!(s.take_ui_errors(), vec!["ERR_COMMAND_NEEDS_TARGET"]);
+        assert!(s.run(r#"GuildPromote(string.rep("a", 49))"#).is_err());
+        s.run(r#"GuildDemote(string.rep("a", 48))"#).unwrap();
         assert_eq!(s.take_guild_requests().len(), 1);
+        assert!(
+            s.eval::<bool>("return GuildInviteByName == nil").unwrap(),
+            "the 1.12 names are gone"
+        );
     }
 
     /// `GuildStatus_Update` passes 0 before it tests the selection.

@@ -25,8 +25,8 @@ const CLASS_HUNTER: u8 = 3;
 const POWER_HAPPINESS: u8 = 4;
 
 /// `PetPersonality.dbc`, loaded once; without it happiness answers the binding's failure form.
-/// 12340 has no pet loyalty (no `PetLoyalty.dbc`, no loyalty-rate column), so the 1.12 loyalty
-/// readouts, until #52 removes them, answer their no-data forms: a nil name and a 0 rate.
+/// 12340 has no pet loyalty (no `PetLoyalty.dbc`), so the 1.12 `GetPetLoyalty`, until #52 removes
+/// it, answers its no-data form: nil.
 #[derive(Resource)]
 pub(crate) struct PetStatTables {
     pub(crate) personalities: benilla_formats::PetPersonalities,
@@ -153,7 +153,6 @@ fn stats_for(
             hunter_pet: true,
             happiness,
             damage_percentage,
-            loyalty_rate: 0.0,
             loyalty: None,
             training_points: fields.unit_training_points(),
             experience: fields.unit_pet_experience(),
@@ -195,17 +194,10 @@ fn feed_pet_stats(
     // `UNIT_HAPPINESS`, the pet frame's icon repaint (`PetFrame.lua:63`). Deviation: fired when
     // the bucket or its two tooltip figures change, not on every change of the happiness field as
     // in the reference, because no stock consumer reads the raw value.
-    let happiness_moved = last.as_ref().map(|(_, s)| {
-        (
-            s.happiness,
-            s.damage_percentage.to_bits(),
-            s.loyalty_rate.to_bits(),
-        )
-    }) != Some((
-        fresh.1.happiness,
-        fresh.1.damage_percentage.to_bits(),
-        fresh.1.loyalty_rate.to_bits(),
-    ));
+    let happiness_moved = last
+        .as_ref()
+        .map(|(_, s)| (s.happiness, s.damage_percentage.to_bits()))
+        != Some((fresh.1.happiness, fresh.1.damage_percentage.to_bits()));
     // The pet page's other repaint events (`PetPaperDollFrame.lua:9,21`), each fired off its own
     // values so happiness drift leaves them alone; `UNIT_PET_EXPERIENCE` repaints only the XP bar.
     let xp_moved = last.as_ref().map(|(_, s)| s.experience) != Some(fresh.1.experience);
@@ -354,7 +346,6 @@ mod tests {
         assert!(has_ui && s.hunter_pet);
         assert_eq!(s.happiness, Some(3));
         assert_eq!(s.damage_percentage, 125.0);
-        assert_eq!(s.loyalty_rate, 0.0, "12340 has no loyalty");
         assert_eq!(s.loyalty, None);
         assert_eq!(
             s.training_points,
@@ -430,7 +421,7 @@ mod tests {
         let (has_ui, s) = stats_for(Some(&boar()), Some(&hunter()), None, no_family());
         assert!(has_ui && s.hunter_pet);
         assert_eq!(s.happiness, None);
-        assert_eq!((s.damage_percentage, s.loyalty_rate), (100.0, 0.0));
+        assert_eq!(s.damage_percentage, 100.0);
         // The descriptor values need no table.
         assert_eq!(s.training_points, (170, 130));
     }

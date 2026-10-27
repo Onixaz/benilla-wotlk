@@ -2,15 +2,11 @@
 //! and colouring, the drag, the row menu, the ready check and the saved-instance panel.
 
 use benilla_ui::script::{
-    PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo, SelectionRequest,
-    UiScript,
+    PartyMemberInfo, PartyRequest, PartyState, RaidMemberInfo, SavedInstanceInfo, UiScript,
 };
 
 fn setup() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    super::test_ui::load_social_ui(&mut s);
-    s
+    super::test_ui::social_ui(|_| {})
 }
 
 fn visible(s: &UiScript, frame: &str) -> bool {
@@ -48,8 +44,23 @@ fn row(
     }
 }
 
-/// Pushes a roster and fires its event, as `ui_party`'s `feed_party` does.
+/// Pushes a roster, its `raidN` snapshots and its event, as `ui_party`'s `feed_party` does.
 fn push_raid(s: &mut UiScript, raid: Vec<RaidMemberInfo>) {
+    for i in 1..=40usize {
+        let snap = raid.get(i - 1).map(|r| benilla_ui::script::UnitState {
+            exists: true,
+            name: Some(r.name.clone()),
+            guid: r.guid,
+            level: r.level,
+            is_player: true,
+            player_controlled: true,
+            is_connected: r.online,
+            dead: r.ninth,
+            reaction: 5,
+            ..Default::default()
+        });
+        s.set_unit(&format!("raid{i}"), snap);
+    }
     // `members` is our own subgroup's slice; non-empty, it makes `IsPartyLeader()` and
     // `IsRaidLeader()` answer 1 for `leader_index` 0.
     let members = raid
@@ -95,7 +106,7 @@ fn twelve() -> Vec<RaidMemberInfo> {
 
 /// Opens the tab and drains the `RequestRaidInfo()` its OnShow sends (`RaidFrame.xml:350`).
 fn open_raid_tab(s: &mut UiScript) {
-    s.run("ToggleFriendsFrame(4)").unwrap();
+    s.run("ToggleFriendsFrame(5)").unwrap();
     assert_eq!(
         s.take_party_requests(),
         vec![PartyRequest::RequestRaidInfo],
@@ -106,14 +117,13 @@ fn open_raid_tab(s: &mut UiScript) {
 // ── The tab ──────────────────────────────────────────────────────────────────────────────────────
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_fourth_tab_opens_the_raid_pane() {
+fn the_fifth_tab_opens_the_raid_pane() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     assert_eq!(
         s.eval::<i64>("return FriendsFrame.numTabs").unwrap(),
-        4,
-        "PanelTemplates_SetNumTabs says four now — it said three while the pane did not exist"
+        5,
+        "friends, who, guild, channels and raid (`FriendsFrame.lua:322-328`)"
     );
     open_raid_tab(&mut s);
     assert!(visible(&s, "RaidFrame"), "the pane opens");
@@ -128,13 +138,12 @@ fn the_fourth_tab_opens_the_raid_pane() {
     }
     s.run("FriendsFrameTab1:Click()").unwrap();
     assert!(!visible(&s, "RaidFrame"));
-    s.run("FriendsFrameTab4:Click()").unwrap();
+    s.run("FriendsFrameTab5:Click()").unwrap();
     assert!(visible(&s, "RaidFrame"), "the tab button opens it too");
 }
 
-/// `FriendsFrame_OnHide` hides `RaidInfoFrame` too (`FriendsFrame.lua:136`).
+/// `FriendsFrame_OnHide` hides `RaidInfoFrame` too.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn hiding_the_window_closes_the_raid_info_panel() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -225,17 +234,20 @@ fn the_grid_seats_each_row_in_its_own_subgroups_next_free_slot() {
 
     // Groups 1-3 hold 4/4/4; the roster is 12 with us at row 1 in group 1.
     assert_eq!(
-        s.eval::<String>("return RaidGroupButton1.slot").unwrap(),
+        s.eval::<String>("return RaidGroupButton1.slot:GetName()")
+            .unwrap(),
         "RaidGroup1Slot1",
         "row 1 (us) takes group 1's first seat"
     );
     assert_eq!(
-        s.eval::<String>("return RaidGroupButton5.slot").unwrap(),
+        s.eval::<String>("return RaidGroupButton5.slot:GetName()")
+            .unwrap(),
         "RaidGroup2Slot1",
         "row 5 is the first of group 2 — NOT group 1's fifth seat"
     );
     assert_eq!(
-        s.eval::<String>("return RaidGroupButton12.slot").unwrap(),
+        s.eval::<String>("return RaidGroupButton12.slot:GetName()")
+            .unwrap(),
         "RaidGroup3Slot4"
     );
     // The slot knows its occupant, which the drop reads to choose move or swap.
@@ -281,7 +293,6 @@ fn the_grid_seats_each_row_in_its_own_subgroups_next_free_slot() {
 /// Offline grey is tested first, then dead red, then the class colour, on all three columns
 /// (`Blizzard_RaidUI.lua:135-152`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_rows_colour_is_offline_then_dead_then_class() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -346,19 +357,24 @@ fn a_rows_colour_is_offline_then_dead_then_class() {
     );
 }
 
-/// `UNIT_HEALTH` and `UNIT_LEVEL` repaint one `raidN` row without the roster event
-/// (`Blizzard_RaidUI.lua:27-38`).
+/// `UNIT_LEVEL` repaints one `raidN` row's level without the roster event; `UNIT_HEALTH` repaints
+/// nothing, as the stock arm matches its pattern against the literal `"..."`
+/// (`Blizzard_RaidUI.lua:174-179`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn a_units_health_and_level_repaint_only_that_row() {
+fn a_units_level_repaints_its_row_and_its_health_repaints_nothing() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     open_raid_tab(&mut s);
     let mut raid = twelve();
     push_raid(&mut s, raid.clone());
     assert_eq!(text_of(&s, "RaidGroupButton3Level"), "60");
+    let green = |s: &UiScript| {
+        s.eval::<f32>("local r, g = RaidGroupButton3Name:GetTextColor() return g")
+            .unwrap()
+    };
+    let alive = green(&s);
 
-    // The row dies; only the per-unit event fires.
+    // The row dies; only the per-unit event fires, and the row keeps its colour.
     raid[2].ninth = true;
     s.set_party(PartyState {
         members: vec![PartyMemberInfo {
@@ -373,25 +389,27 @@ fn a_units_health_and_level_repaint_only_that_row() {
         "UNIT_HEALTH",
         vec![benilla_ui::script::ScriptValue::Str("raid3".into())],
     );
-    let red = s
-        .eval::<f32>("local r, g = RaidGroupButton3Name:GetTextColor() return g")
-        .unwrap();
-    assert!(red < 0.2, "row 3 went red without a roster rebuild ({red})");
+    assert_eq!(green(&s), alive, "the health arm never matches a token");
 
-    // A unit event for a token that is not `raidN` is ignored.
-    s.fire_event(
-        "UNIT_HEALTH",
-        vec![benilla_ui::script::ScriptValue::Str("target".into())],
+    s.set_unit(
+        "raid3",
+        Some(benilla_ui::script::UnitState {
+            exists: true,
+            level: 61,
+            ..Default::default()
+        }),
     );
+    s.fire_event(
+        "UNIT_LEVEL",
+        vec![benilla_ui::script::ScriptValue::Str("raid3".into())],
+    );
+    assert_eq!(text_of(&s, "RaidGroupButton3Level"), "61");
+    // A token that is not `raidN` is ignored.
     s.fire_event(
         "UNIT_LEVEL",
         vec![benilla_ui::script::ScriptValue::Str("player".into())],
     );
-    assert_eq!(
-        text_of(&s, "RaidGroupButton3Level"),
-        "60",
-        "and nothing else moved"
-    );
+    assert_eq!(text_of(&s, "RaidGroupButton3Level"), "61");
 }
 
 // ── The management buttons ───────────────────────────────────────────────────────────────────────
@@ -443,7 +461,6 @@ fn ready_check_is_the_leaders_and_add_member_is_everyones() {
 /// An empty slot in another group moves, an occupied one swaps, anything else springs the row home
 /// (`Blizzard_RaidUI.lua:257-273`); `TARGET_RAID_SLOT` stands in for the hover sweep.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dragging_a_row_moves_swaps_or_springs_back() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -488,7 +505,6 @@ fn dragging_a_row_moves_swaps_or_springs_back() {
 
 /// `OnDragStart` and `OnDragStop` both return for a non-leader (`Blizzard_RaidUI.lua:236`, `:248`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn only_the_leader_may_drag() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -517,18 +533,17 @@ fn only_the_leader_may_drag() {
 
 // ── The row's click and menu ─────────────────────────────────────────────────────────────────────
 
+/// A row is a `SecureUnitButtonTemplate` whose OnLoad seats no `type` attribute
+/// (`RaidGroupButton_OnLoad`, `Blizzard_RaidUI.lua:604-612`), so a left click acts on nothing.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn left_clicking_a_row_targets_its_raid_token() {
+fn left_clicking_a_row_does_nothing() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     open_raid_tab(&mut s);
     push_raid(&mut s, twelve());
     s.run("RaidGroupButton7:Click(\"LeftButton\")").unwrap();
-    assert_eq!(
-        s.take_selection_requests(),
-        vec![SelectionRequest::Unit("raid7".into())]
-    );
+    assert_eq!(s.take_selection_requests(), vec![]);
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 /// The RAID menu's rank rules re-read the row's rank by row index (`UnitPopup.lua:382-401`).
@@ -835,7 +850,6 @@ fn the_ready_check_popup_opens_and_answers() {
 /// `UiScript::pointer_left_window` ends the drag: `OnDragStop` runs, the row goes home, and the
 /// next row still drags.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_drag_carried_off_the_window_edge_ends_instead_of_gluing_the_row_to_the_cursor() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -909,7 +923,6 @@ fn a_drag_carried_off_the_window_edge_ends_instead_of_gluing_the_row_to_the_curs
 /// Three whole gestures through the real pointer path, with the roster echo `/partytest raid`
 /// supplies in between.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn one_drag_does_not_cost_the_next_one() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();

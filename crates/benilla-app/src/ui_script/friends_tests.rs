@@ -3,12 +3,9 @@
 
 use benilla_ui::script::{FriendInfo, SocialRequest, SocialState, UiScript, WhoInfo};
 
-/// The window's own manifest slice, in `load_default_ui` order.
+/// The stock interface with the raid tab's addon loaded.
 fn setup() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    super::test_ui::load_social_ui(&mut s);
-    s
+    super::test_ui::social_ui(|_| {})
 }
 
 /// The production 3.3.5a interface load, with the environment lock the load needs held for the
@@ -118,16 +115,13 @@ fn the_window_opens_on_friends_with_the_guild_tab_disabled() {
 /// The tabs inherit through `FriendsFrameTabTemplate`, which adds only `<OnClick>`; handlers
 /// replace per name (`0x76a0d0`), so the base template's `<OnShow>` fit still runs two hops down.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_social_tabs_fit_their_labels_on_the_first_show() {
     let _data = benilla_formats::wow_data_or_skip!();
     /// The big tab's two 20-unit end slices.
     const SIDES: f64 = 40.0;
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
     // Synchronous, like the app's `AtlasMeasurer`: the reference fits the tab inline.
-    s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    super::test_ui::load_social_ui(&mut s);
+    let mut s =
+        super::test_ui::social_ui(|s| s.set_text_measurer(Box::new(super::FixedWidthFont(6.0))));
     s.run("ToggleFriendsFrame(1)").unwrap();
     s.resolve();
 
@@ -587,7 +581,6 @@ fn the_who_edit_box_sends_its_filter() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn add_friend_without_a_target_opens_the_name_dialog() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -625,7 +618,6 @@ fn add_friend_without_a_target_opens_the_name_dialog() {
 
 /// The stock `ADD_FRIEND`'s `OnHide` empties the box (`StaticPopup.lua:788-793`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_name_dialog_reopens_empty() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = setup();

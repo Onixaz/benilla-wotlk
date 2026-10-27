@@ -81,25 +81,6 @@ pub mod guild_rank_right {
     pub const ALL: u32 = 0x000F_F1FF;
 }
 
-/// The thirteen rank-right checkboxes in the order `GuildControlGetRankFlags()` and
-/// `GuildControlSetRankFlag(i, on)` index them, which is not bit order: Promote/Demote (5/6) come
-/// before Invite/Remove (7/8), whose bits are lower.
-pub const GUILD_RANK_RIGHT_ORDER: [u32; 13] = [
-    guild_rank_right::GCHAT_LISTEN,
-    guild_rank_right::GCHAT_SPEAK,
-    guild_rank_right::OFFCHAT_LISTEN,
-    guild_rank_right::OFFCHAT_SPEAK,
-    guild_rank_right::PROMOTE,
-    guild_rank_right::DEMOTE,
-    guild_rank_right::INVITE,
-    guild_rank_right::REMOVE,
-    guild_rank_right::SET_MOTD,
-    guild_rank_right::EDIT_PUBLIC_NOTE,
-    guild_rank_right::VIEW_OFFICER_NOTE,
-    guild_rank_right::EDIT_OFFICER_NOTE,
-    guild_rank_right::MODIFY_GUILD_INFO,
-];
-
 /// A roster member's presence byte (`Guild/Guild.h:139-144`); only `0` changes the wire, adding
 /// the `f32 lastOnlineTime`. The reference tests DND before AFK (`0x4d13e4`, `0x4d13fb`), so a
 /// member flagged both shows as DND.
@@ -621,14 +602,24 @@ pub fn guild_motd(motd: &str) -> Vec<u8> {
     cstring_body(motd)
 }
 
-/// Body of `CMSG_GUILD_RANK` (`Server/Packets/Guild.cpp:78-83`): rank id, rights, name. Both are
-/// set, so changing one resends the other; rank 0's rights become [`guild_rank_right::ALL`], and
-/// a name over [`GUILD_RANK_MAX_LENGTH`] gets the session kicked.
-pub fn guild_rank(rank_id: u32, rights: u32, name: &str) -> Vec<u8> {
-    let mut body = Vec::with_capacity(9 + name.len());
+/// Body of `CMSG_GUILD_RANK` as `GuildControlSaveRank` builds it (`0x5cb21a`): rank id, rights,
+/// name, the daily gold limit in copper, then per bank tab its rights and daily withdrawals.
+pub fn guild_rank(
+    rank_id: u32,
+    rights: u32,
+    name: &str,
+    gold_per_day: u32,
+    tabs: &[(u32, u32); GUILD_BANK_TABS],
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(13 + name.len() + 8 * GUILD_BANK_TABS);
     body.extend_from_slice(&rank_id.to_le_bytes());
     body.extend_from_slice(&rights.to_le_bytes());
     push_cstring(&mut body, name);
+    body.extend_from_slice(&gold_per_day.to_le_bytes());
+    for (tab_rights, withdrawals) in tabs {
+        body.extend_from_slice(&tab_rights.to_le_bytes());
+        body.extend_from_slice(&withdrawals.to_le_bytes());
+    }
     body
 }
 
@@ -683,22 +674,6 @@ fn push_cstring(body: &mut Vec<u8>, s: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn rank_right_checkbox_order_is_not_bit_order() {
-        assert_eq!(GUILD_RANK_RIGHT_ORDER[4], 0x0000_0080, "idx 5 = Promote");
-        assert_eq!(GUILD_RANK_RIGHT_ORDER[5], 0x0000_0100, "idx 6 = Demote");
-        assert_eq!(GUILD_RANK_RIGHT_ORDER[6], 0x0000_0010, "idx 7 = Invite");
-        assert_eq!(GUILD_RANK_RIGHT_ORDER[7], 0x0000_0020, "idx 8 = Remove");
-        assert!(
-            GUILD_RANK_RIGHT_ORDER[4] > GUILD_RANK_RIGHT_ORDER[6],
-            "the order is deliberately non-monotonic in bit value"
-        );
-        for right in GUILD_RANK_RIGHT_ORDER {
-            assert_eq!(right.count_ones(), 1, "{right:#x} is one bit");
-            assert_ne!(right, guild_rank_right::EMPTY);
-        }
-    }
 
     /// The expected values are vmangos's `GuildRankRights` (`Guild/Guild.h:56-74`).
     #[test]

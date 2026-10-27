@@ -1,15 +1,13 @@
-//! The stock target-of-target frame (`TargetFrame.xml:515-680`) over synthetic `"targettarget"`
-//! snapshots. Nothing on it answers a unit event: its bars' `UNIT_HEALTH`/`UNIT_MANA`
-//! registrations reach no handler that uses them (`TargetFrame.xml:593-625`) and
-//! `UnitFrame_OnEvent` ignores `UNIT_AURA` (`UnitFrame.lua:31-45`). `TargetofTarget_OnUpdate` is
+//! The stock target-of-target frame, `TargetFrameToT` (`TargetofTargetFrameTemplate`,
+//! `TargetFrame.xml:467-621`, made by `TargetFrame_CreateTargetofTarget`), over synthetic
+//! `"targettarget"` snapshots. Nothing on it answers a unit event (`UnitFrame_OnEvent`,
+//! `UnitFrame.lua:101-117`): its `OnUpdate`, `TargetofTarget_Update` (`TargetFrame.xml:619`), is
 //! the only driver, so most steps here are a `tick`.
 
 use benilla_ui::script::{
     AuraState, PartyMemberInfo, PartyState, QuadContent, RaidMemberInfo, ScriptValue,
     SelectionRequest, UiScript, UnitState,
 };
-
-use super::test_ui::load_ui as load_xml;
 
 /// A unit snapshot; the guid is what `UnitIsUnit` compares for the "target is you" gate.
 fn unit(name: &str, guid: u64, health: u32) -> UnitState {
@@ -33,31 +31,9 @@ fn unit(name: &str, guid: u64, health: u32) -> UnitState {
 fn load_tot() -> UiScript {
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_xml(&s, "Interface\\FrameXML\\GlobalStrings.lua");
-    load_xml(&s, "Interface\\FrameXML\\Fonts.xml");
-    load_xml(&s, "Interface\\FrameXML\\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\GameTooltip.xml");
-    load_xml(&s, "Interface\\FrameXML\\UIDropDownMenu.xml");
-    load_xml(&s, "Interface\\FrameXML\\TextStatusBar.lua");
-    load_xml(&s, "Interface\\FrameXML\\TextStatusBar.xml");
-    load_xml(&s, "Interface\\FrameXML\\MainMenuBar.xml");
-    load_xml(&s, "Interface\\FrameXML\\Cooldown.xml");
-    load_xml(&s, "Interface\\FrameXML\\ActionButtonTemplate.xml");
-    load_xml(&s, "Interface\\FrameXML\\ActionBarFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\BuffFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\CombatFeedback.xml");
-    load_xml(&s, "Interface\\FrameXML\\UnitPopup.xml");
-    load_xml(&s, "Interface\\FrameXML\\UnitFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\PlayerFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\PartyFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\TargetFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\PetFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\BonusActionBarFrame.xml");
-    // The pair's defaults from stock `UIOptionsFrame_Init` (`UIOptionsFrame.lua:116-119`), which
-    // this kit does not load.
+    super::test_ui::load_stock_ui(&mut s);
+    // The pair's defaults, the `showTargetOfTarget` and `targetOfTargetMode` rows
+    // (`InterfaceOptionsFrame.lua:318-319`).
     s.run(r#"SHOW_TARGET_OF_TARGET = "0" SHOW_TARGET_OF_TARGET_STATE = "5""#)
         .unwrap();
     s.set_unit("player", Some(unit("Tri", 0x100, 100)));
@@ -69,12 +45,12 @@ fn load_tot() -> UiScript {
 
 /// Turn the frame on as the option row does: the write, then its `applyFunc`.
 fn switch_on(s: &mut UiScript) {
-    s.run(r#"SHOW_TARGET_OF_TARGET = "1" this = TargetofTargetFrame TargetofTarget_Update() this = nil"#)
+    s.run(r#"SHOW_TARGET_OF_TARGET = "1" TargetofTarget_Update(TargetFrameToT)"#)
         .unwrap();
 }
 
 fn shown(s: &mut UiScript) -> bool {
-    s.eval::<bool>("return TargetofTargetFrame:IsShown() and true or false")
+    s.eval::<bool>("return TargetFrameToT:IsShown() and true or false")
         .unwrap()
 }
 
@@ -135,9 +111,8 @@ fn raid(n: usize) -> PartyState {
     }
 }
 
-/// `SHOW_TARGET_OF_TARGET` defaults to `"0"` in 1.12 (`UIOptionsFrame.lua:116`).
+/// `SHOW_TARGET_OF_TARGET` defaults to `"0"` (`InterfaceOptionsFrame.lua:318`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_frame_ships_off_and_the_switch_is_what_shows_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -157,9 +132,8 @@ fn the_frame_ships_off_and_the_switch_is_what_shows_it() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The four unit gates around the switch (`TargetFrame.lua:504`).
+/// The four unit gates around the switch (`TargetFrame.lua:730`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_four_unit_gates_each_take_the_frame_down() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -167,40 +141,33 @@ fn the_four_unit_gates_each_take_the_frame_down() {
     assert!(shown(&mut s));
 
     s.set_unit("targettarget", None);
-    s.run("this = TargetofTargetFrame TargetofTarget_Update() this = nil")
-        .unwrap();
+    s.run("TargetofTarget_Update(TargetFrameToT)").unwrap();
     assert!(!shown(&mut s), "nothing to show");
     s.set_unit("targettarget", Some(unit("Tri", 0x100, 100)));
 
     s.set_unit("target", None);
-    s.run("this = TargetofTargetFrame TargetofTarget_Update() this = nil")
-        .unwrap();
+    s.run("TargetofTarget_Update(TargetFrameToT)").unwrap();
     assert!(!shown(&mut s), "no target, no target's target");
     s.set_unit("target", Some(unit("Kobold Miner", 0x200, 80)));
 
     // The target is the player (same guid).
     s.set_unit("target", Some(unit("Tri", 0x100, 100)));
-    s.run("this = TargetofTargetFrame TargetofTarget_Update() this = nil")
-        .unwrap();
+    s.run("TargetofTarget_Update(TargetFrameToT)").unwrap();
     assert!(!shown(&mut s), "self-target: nothing to add");
     s.set_unit("target", Some(unit("Kobold Miner", 0x200, 80)));
 
     s.set_unit("target", Some(unit("Kobold Miner", 0x200, 0)));
-    s.run("this = TargetofTargetFrame TargetofTarget_Update() this = nil")
-        .unwrap();
+    s.run("TargetofTarget_Update(TargetFrameToT)").unwrap();
     assert!(!shown(&mut s), "a corpse is fighting nobody");
 
     s.set_unit("target", Some(unit("Kobold Miner", 0x200, 80)));
-    s.run("this = TargetofTargetFrame TargetofTarget_Update() this = nil")
-        .unwrap();
+    s.run("TargetofTarget_Update(TargetFrameToT)").unwrap();
     assert!(shown(&mut s), "and back");
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Mode 3 in a raid reads hidden only because the party step before it hid the frame: that arm
-/// calls neither `Show` nor `Hide` in a raid (`TargetFrame.lua:513-520`).
+/// Each mode against solo, party and raid (`TargetFrame.lua:731-735`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_five_modes_answer_solo_party_and_raid() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -223,7 +190,7 @@ fn the_five_modes_answer_solo_party_and_raid() {
         for (i, (label, state)) in states.iter().enumerate() {
             s.set_party(state.clone());
             s.run(&format!(
-                r#"SHOW_TARGET_OF_TARGET_STATE = "{mode}" this = TargetofTargetFrame TargetofTarget_Update() this = nil"#
+                r#"SHOW_TARGET_OF_TARGET_STATE = "{mode}" TargetofTarget_Update(TargetFrameToT)"#
             ))
             .unwrap();
             assert_eq!(
@@ -237,32 +204,30 @@ fn the_five_modes_answer_solo_party_and_raid() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// In a raid the mode-3 arm reaches neither `Show` nor `Hide` (`TargetFrame.lua:513-520`), though
-/// `TargetofTarget_OnUpdate` re-asks every frame (`TargetFrame.lua:494-501`), so the frame stays.
+/// Mode 3 is solo only: the frame's `OnUpdate`, `TargetofTarget_Update`, hides it once a
+/// raid forms (`TargetFrame.lua:727-760`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_solo_mode_keeps_the_frame_when_a_raid_forms() {
+fn the_solo_mode_hides_the_frame_when_a_raid_forms() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
     switch_on(&mut s);
-    s.run(r#"SHOW_TARGET_OF_TARGET_STATE = "3" this = TargetofTargetFrame TargetofTarget_Update() this = nil"#)
+    s.run(r#"SHOW_TARGET_OF_TARGET_STATE = "3" TargetofTarget_Update(TargetFrameToT)"#)
         .unwrap();
     assert!(shown(&mut s), "solo, in solo mode");
 
     s.set_party(raid(10));
     s.tick(0.016);
     assert!(
-        shown(&mut s),
-        "the raid forms and the reference's solo arm never fires — the frame stays"
+        !shown(&mut s),
+        "the raid forms and the solo mode lets the frame go"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The name is set only by `TargetofTarget_OnUpdate`'s `CURRENT_TARGETTARGET` compare
-/// (`TargetFrame.lua:494-501`), so it waits for a tick. A powerless unit keeps a 0/0 rail:
-/// `UnitFrameManaBar_Update` never hides the bar (`UnitFrame.lua:203-224`).
+/// The frame repaints in its `OnUpdate`'s `UnitFrame_Update` (`TargetFrame.lua:748`), so it waits
+/// for a tick. A powerless unit keeps a 0/0 rail: the template declares no numerals, and a bar
+/// without a `TextString` never hides (`TextStatusBar.lua:31-33`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_frame_paints_its_unit() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -270,19 +235,19 @@ fn the_frame_paints_its_unit() {
     s.tick(0.016);
 
     assert_eq!(
-        s.eval::<String>("return TargetofTargetName:GetText()")
+        s.eval::<String>("return TargetFrameToTTextureFrameName:GetText()")
             .unwrap(),
         "Tri"
     );
     let (value, max) = s
         .eval::<(f64, f64)>(
-            "local _, m = TargetofTargetHealthBar:GetMinMaxValues() \
-             return TargetofTargetHealthBar:GetValue(), m",
+            "local _, m = TargetFrameToTHealthBar:GetMinMaxValues() \
+             return TargetFrameToTHealthBar:GetValue(), m",
         )
         .unwrap();
     assert_eq!((value, max), (100.0, 100.0));
     assert!(
-        s.eval::<bool>("return TargetofTargetManaBar:IsShown() and true or false")
+        s.eval::<bool>("return TargetFrameToTManaBar:IsShown() and true or false")
             .unwrap(),
         "a unit with mana shows its rail"
     );
@@ -292,14 +257,14 @@ fn the_frame_paints_its_unit() {
     s.set_unit("targettarget", Some(powerless));
     s.tick(0.016);
     assert!(
-        s.eval::<bool>("return TargetofTargetManaBar:IsShown() and true or false")
+        s.eval::<bool>("return TargetFrameToTManaBar:IsShown() and true or false")
             .unwrap(),
         "no power, and the rail is STILL drawn — the reference has no hide leg"
     );
     assert_eq!(
         s.eval::<(f64, f64)>(
-            "local _, m = TargetofTargetManaBar:GetMinMaxValues() \
-             return TargetofTargetManaBar:GetValue(), m",
+            "local _, m = TargetFrameToTManaBar:GetMinMaxValues() \
+             return TargetFrameToTManaBar:GetValue(), m",
         )
         .unwrap(),
         (0.0, 0.0),
@@ -309,16 +274,15 @@ fn the_frame_paints_its_unit() {
 }
 
 /// Zero health shows the dead text only while connected, which tells a corpse from a linkdead
-/// player (`TargetofTarget_CheckDead`, `TargetFrame.lua:559-567`).
+/// player (`TargetofTarget_CheckDead`, `TargetFrame.lua:763-771`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_dead_word_needs_a_connected_corpse() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
     switch_on(&mut s);
     s.tick(0.016);
     assert!(
-        !s.eval::<bool>("return TargetofTargetDeadText:IsShown() and true or false")
+        !s.eval::<bool>("return TargetFrameToTTextureFrameDeadText:IsShown() and true or false")
             .unwrap(),
         "alive: no word"
     );
@@ -328,7 +292,7 @@ fn the_dead_word_needs_a_connected_corpse() {
     s.set_unit("targettarget", Some(corpse.clone()));
     s.tick(0.016);
     assert!(
-        s.eval::<bool>("return TargetofTargetDeadText:IsShown() and true or false")
+        s.eval::<bool>("return TargetFrameToTTextureFrameDeadText:IsShown() and true or false")
             .unwrap(),
         "dead: the word"
     );
@@ -338,17 +302,16 @@ fn the_dead_word_needs_a_connected_corpse() {
     s.set_unit("targettarget", Some(linkdead));
     s.tick(0.016);
     assert!(
-        !s.eval::<bool>("return TargetofTargetDeadText:IsShown() and true or false")
+        !s.eval::<bool>("return TargetFrameToTTextureFrameDeadText:IsShown() and true or false")
             .unwrap(),
         "disconnected, not dead"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The tint (`TargetofTargetHealthCheck`, `TargetFrame.lua:569-585`) runs off the health bar's
-/// `OnValueChanged` (`TargetFrame.xml:604-608`) and only for players.
+/// The tint (`TargetofTargetHealthCheck`, `TargetFrame.lua:773-789`) runs off the health bar's
+/// `OnValueChanged` (`TargetFrame.xml:556`) and only for players.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_portrait_tints_with_a_players_state_and_never_a_creatures() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -360,7 +323,7 @@ fn the_portrait_tints_with_a_players_state_and_never_a_creatures() {
     s.set_unit("targettarget", Some(hurt));
     s.tick(0.016);
     let (r, g, b) = s
-        .eval::<(f64, f64, f64)>("return TargetofTargetPortrait:GetVertexColor()")
+        .eval::<(f64, f64, f64)>("return TargetFrameToTPortrait:GetVertexColor()")
         .unwrap();
     assert_eq!((r, g, b), (1.0, 0.0, 0.0), "a player under a fifth: red");
 
@@ -369,7 +332,7 @@ fn the_portrait_tints_with_a_players_state_and_never_a_creatures() {
     s.set_unit("targettarget", Some(healthy));
     s.tick(0.016);
     let (r, g, b) = s
-        .eval::<(f64, f64, f64)>("return TargetofTargetPortrait:GetVertexColor()")
+        .eval::<(f64, f64, f64)>("return TargetFrameToTPortrait:GetVertexColor()")
         .unwrap();
     assert_eq!((r, g, b), (1.0, 1.0, 1.0), "and white again");
 
@@ -377,35 +340,34 @@ fn the_portrait_tints_with_a_players_state_and_never_a_creatures() {
     s.set_unit("targettarget", Some(unit("Kobold", 0x500, 15)));
     s.tick(0.016);
     let (r, g, b) = s
-        .eval::<(f64, f64, f64)>("return TargetofTargetPortrait:GetVertexColor()")
+        .eval::<(f64, f64, f64)>("return TargetFrameToTPortrait:GetVertexColor()")
         .unwrap();
     assert_eq!((r, g, b), (1.0, 1.0, 1.0), "creatures carry no reading");
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_left_click_targets_the_unit() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
     switch_on(&mut s);
-    s.run(r#"TargetofTarget_OnClick("LeftButton")"#).unwrap();
+    s.run(r#"TargetFrameToT:Click("LeftButton")"#).unwrap();
     assert_eq!(
         s.take_selection_requests(),
         vec![SelectionRequest::Unit("targettarget".into())]
     );
 
-    // A right click opens no menu here (`TargetFrame.lua:543-557`).
-    s.run(r#"TargetofTarget_OnClick("RightButton")"#).unwrap();
+    // A right click opens no menu: `SecureUnitButton_OnLoad` gets no menu function here
+    // (`TargetFrame.lua:720`).
+    s.run(r#"TargetFrameToT:Click("RightButton")"#).unwrap();
     assert!(s.take_selection_requests().is_empty());
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The row is `RefreshBuffs` over `MAX_PARTY_DEBUFFS` (`BuffFrame.lua:262-313`), called from
-/// `TargetofTarget_Update` (`TargetFrame.lua:538`). The `UNIT_AURA` fire is what the feed does,
+/// The row is `RefreshDebuffs` over `MAX_PARTY_DEBUFFS` (`UIParent.lua:3293-3346`), called from
+/// `TargetofTarget_Update` (`TargetFrame.lua:751`). The `UNIT_AURA` fire is what the feed does,
 /// but it is inert: `UnitFrame_OnEvent` ignores it, so the `tick` draws the row.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_debuff_row_draws_what_the_unit_carries() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
@@ -431,24 +393,26 @@ fn the_debuff_row_draws_what_the_unit_carries() {
         "and the second"
     );
     assert!(
-        !s.eval::<bool>("return TargetofTargetFrameDebuff3:IsShown() and true or false")
+        !s.eval::<bool>("return TargetFrameToTDebuff3:IsShown() and true or false")
             .unwrap(),
         "the empty slots stay down"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// While this frame shows, the target's own aura rows wrap at 5 instead of 6
-/// (`TargetDebuffButton_Update`, `TargetFrame.lua:312-338`, `:370-385`). They re-lay only on the
-/// way in: the call sits inside `if ( TargetofTargetFrame:IsShown() )` (`TargetFrame.lua:532-539`).
+/// While this frame shows, the target's first two aura rows hold 101 px instead of 122
+/// (`TargetFrame_UpdateAuras`, `TOT_AURA_ROW_WIDTH`), so five small debuffs fill a row and the
+/// sixth wraps. The rows re-lay on the target's next aura update, and on this frame's `OnHide`
+/// (`TargetofTarget_OnHide`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_target_rows_wrap_short_while_the_frame_stands_beside_them() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();
-    // A hostile target, so the debuffs lead and the buffs hang off them.
     s.set_unit_guids(&unit_guids());
-    s.set_unit_auras(TARGET, Some(vec![debuff(2000, "Sunder", None)]));
+    let seven: Vec<AuraState> = (0..7)
+        .map(|i| debuff(2000 + i, &format!("D{i}"), None))
+        .collect();
+    s.set_unit_auras(TARGET, Some(seven));
     s.fire_event("UNIT_AURA", vec![ScriptValue::Str("target".into())]);
 
     let anchor = |s: &mut UiScript, frame: &str| -> String {
@@ -458,39 +422,32 @@ fn the_target_rows_wrap_short_while_the_frame_stands_beside_them() {
         .unwrap()
     };
     assert_eq!(
-        anchor(&mut s, "TargetFrameBuff1"),
-        "TargetFrameDebuff7",
-        "hidden: the sixth icon closes the first row"
+        anchor(&mut s, "TargetFrameDebuff6"),
+        "TargetFrameDebuff5",
+        "hidden: six fit in 122 px"
     );
+    assert_eq!(anchor(&mut s, "TargetFrameDebuff7"), "TargetFrameDebuff1");
 
     switch_on(&mut s);
     assert!(shown(&mut s));
-    assert_eq!(
-        anchor(&mut s, "TargetFrameBuff1"),
-        "TargetFrameDebuff6",
-        "shown: the row wraps a slot early"
-    );
+    s.fire_event("UNIT_AURA", vec![ScriptValue::Str("target".into())]);
     assert_eq!(
         anchor(&mut s, "TargetFrameDebuff6"),
         "TargetFrameDebuff1",
-        "and the sixth icon starts the second row"
+        "shown: the sixth starts the second row"
     );
 
-    // Back off: the rows stay wrapped short until the next target change or `UNIT_AURA`.
-    s.run(r#"SHOW_TARGET_OF_TARGET = "0" this = TargetofTargetFrame TargetofTarget_Update() this = nil"#)
+    // Back off: the frame's `OnHide` re-lays the rows full width.
+    s.run(r#"SHOW_TARGET_OF_TARGET = "0" TargetofTarget_Update(TargetFrameToT)"#)
         .unwrap();
-    assert_eq!(
-        anchor(&mut s, "TargetFrameBuff1"),
-        "TargetFrameDebuff6",
-        "the frame goes and the rows are left wrapped short behind it"
-    );
+    assert!(!shown(&mut s));
+    assert_eq!(anchor(&mut s, "TargetFrameDebuff6"), "TargetFrameDebuff5");
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// A token going away fires no event, so `TargetFrame_OnUpdate` reconciles it
-/// (`TargetFrame.lua:257-261`); it runs only while you have a target.
+/// A token going away fires no event, so the frame's `OnUpdate`, `TargetofTarget_Update`,
+/// reconciles it (`TargetFrame.lua:727-760`); it runs only while the target frame shows.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_reconcile_takes_the_frame_down_when_the_token_goes_silent() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_tot();

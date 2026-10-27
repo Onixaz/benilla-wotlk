@@ -585,55 +585,18 @@ pub(super) const CHARACTER_UI: &[&str] = &[
     "ScrollTemplates.xml", // our scroll kit
 ];
 
-/// The manifest slice stock `FriendsFrame.xml` and `RaidFrame.xml` reach at load or on show, in its
-/// order; [`load_social_ui`] adds the raid tab's LoadOnDemand addon.
-pub(super) const SOCIAL_UI: &[&str] = &[
-    "Interface\\FrameXML\\GlobalStrings.lua",
-    "Interface\\FrameXML\\Fonts.xml",
-    "Interface\\FrameXML\\BasicControls.xml",
-    "Interface\\FrameXML\\LocaleProperties.lua",
-    r"Interface\FrameXML\UIParent.xml",
-    r"Interface\FrameXML\MoneyFrame.lua",
-    r"Interface\FrameXML\MoneyFrame.xml",
-    "Interface\\FrameXML\\GameTooltip.xml",
-    "Interface\\FrameXML\\UIMenu.xml",
-    "Interface\\FrameXML\\UIDropDownMenu.xml",
-    "Interface\\FrameXML\\UIPanelTemplates.lua",
-    "Interface\\FrameXML\\UIPanelTemplates.xml",
-    "Interface\\FrameXML\\OptionsFrameTemplates.xml",
-    // The stock window tab, whose `<OnShow>` needs the `UIPanelTemplates` pair above it.
-    r"Interface\FrameXML\CharacterFrameTemplates.xml",
-    "Interface\\FrameXML\\StaticPopup.xml",
-    "Interface\\FrameXML\\TextStatusBar.lua",
-    "Interface\\FrameXML\\TextStatusBar.xml",
-    "Interface\\FrameXML\\MainMenuBar.xml",
-    r"Interface\FrameXML\MainMenuBarMicroButtons.xml",
-    "Interface\\FrameXML\\Cooldown.xml",
-    "Interface\\FrameXML\\ActionButtonTemplate.xml",
-    "Interface\\FrameXML\\ActionBarFrame.xml",
-    "Interface\\FrameXML\\MultiActionBars.xml",
-    "Interface\\FrameXML\\BuffFrame.xml",
-    "Interface\\FrameXML\\CombatFeedback.xml",
-    "Interface\\FrameXML\\UnitPopup.xml",
-    "Interface\\FrameXML\\UnitFrame.xml",
-    "Interface\\FrameXML\\PartyFrame.xml",
-    "Interface\\FrameXML\\ChatFrame.xml",
-    "Interface\\FrameXML\\FloatingChatFrame.xml",
-    "Interface\\FrameXML\\ReputationFrame.xml",
-    "Interface\\FrameXML\\FriendsFrame.xml",
-    "Interface\\FrameXML\\RaidFrame.xml",
-    "Interface\\FrameXML\\BonusActionBarFrame.xml",
-    "ScrollTemplates.xml",
-];
-
-/// Load [`SOCIAL_UI`], then the raid tab's LoadOnDemand addon as the app reaches it: seated off the
-/// chain and loaded by stock `RaidFrame_LoadUI`. Needs client data.
-pub(super) fn load_social_ui(s: &mut UiScript) {
-    for f in SOCIAL_UI {
-        load_ui_strict(s, f);
-    }
-    seat_chain_addon(s, "Blizzard_RaidUI");
+/// The whole stock interface ([`load_stock_ui`]) on a 1024×768 screen with `seed` run on the VM
+/// first, for state the stock files read at load, then the raid tab's LoadOnDemand addon as the
+/// app reaches it: seated off the chain and loaded by stock `RaidFrame_LoadUI`. Needs client data.
+pub(super) fn social_ui(seed: impl FnOnce(&mut UiScript)) -> UiScript {
+    let mut s = UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    seed(&mut s);
+    load_stock_ui(&mut s);
+    seat_chain_addon(&mut s, "Blizzard_RaidUI");
     s.run("RaidFrame_LoadUI()").unwrap();
+    s.resolve();
+    s
 }
 
 /// The files a test needs before it can open a bag window, in the production order, trimmed to what
@@ -696,12 +659,19 @@ pub(super) const BAG_UI: &[&str] = &[
 /// seated player, its character record and the display's mode list; fails on any load raise but
 /// the frames still waiting on a port of their own.
 pub(super) fn load_stock_ui(s: &mut UiScript) {
-    s.set_player_record(benilla_ui::script::PlayerRecord {
-        name: "Probesix".into(),
-        race: Some(("Human".into(), "Human".into())),
-        class: Some(("Warrior".into(), "WARRIOR".into())),
-        sex: 2,
-    });
+    // A default player unless the caller seated one.
+    if s.eval::<Option<String>>("return UnitName('player')")
+        .ok()
+        .flatten()
+        .is_none_or(|n| n.is_empty())
+    {
+        s.set_player_record(benilla_ui::script::PlayerRecord {
+            name: "Probesix".into(),
+            race: Some(("Human".into(), "Human".into())),
+            class: Some(("Warrior".into(), "WARRIOR".into())),
+            sex: 2,
+        });
+    }
     if !s
         .eval::<bool>("return UnitExists('player') == 1")
         .unwrap_or(false)

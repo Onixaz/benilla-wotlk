@@ -7,30 +7,12 @@ use benilla_ui::script::{
     AuraState, QuadContent, ScriptValue, SelectionRequest, UiScript, UnitState,
 };
 
-use super::test_ui::load_ui as load_xml;
-
 /// The pet frame's load chain, with a player seated: `PetFrame` is a child of `PlayerFrame`
-/// (PetFrame.xml:4), and `UnitFrame_Update` hides a frame whose unit does not exist.
+/// (`PetFrame.xml:4`), and `UnitFrame_Update` hides a frame whose unit does not exist.
 fn load_pet_frame() -> UiScript {
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    load_xml(&s, "Interface\\FrameXML\\Fonts.xml");
-    load_xml(&s, "Interface\\FrameXML\\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\GameTooltip.xml");
-    load_xml(&s, "Interface\\FrameXML\\UIDropDownMenu.xml");
-    load_xml(&s, "Interface\\FrameXML\\TextStatusBar.lua");
-    load_xml(&s, "Interface\\FrameXML\\TextStatusBar.xml");
-    load_xml(&s, "Interface\\FrameXML\\BuffFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\CombatFeedback.xml");
-    load_xml(&s, "Interface\\FrameXML\\UnitPopup.xml");
-    load_xml(&s, "Interface\\FrameXML\\UnitFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\PlayerFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\PartyFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\TargetFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\PetFrame.xml");
+    super::test_ui::load_stock_ui(&mut s);
     s.set_unit(
         "player",
         Some(UnitState {
@@ -42,6 +24,7 @@ fn load_pet_frame() -> UiScript {
             power_type: 0,
             power: 100,
             max_power: 100,
+            faction_group: Some("Alliance".into()),
             ..UnitState::default()
         }),
     );
@@ -69,6 +52,7 @@ fn load_stock_pet_frame() -> (std::sync::MutexGuard<'static, ()>, UiScript) {
             power_type: 0,
             power: 100,
             max_power: 100,
+            faction_group: Some("Alliance".into()),
             ..UnitState::default()
         }),
     );
@@ -131,7 +115,7 @@ fn draws(s: &mut UiScript, path: &str) -> bool {
     drawn(s).iter().any(|(p, _)| p == path)
 }
 
-/// One helpful aura: the pet frame's row shows buffs (PetFrame.lua:37,56).
+/// One helpful aura, which the pet frame's debuff row never shows.
 fn pet_buff(spell_id: u32, name: &str, count: u8) -> AuraState {
     AuraState {
         spell_id,
@@ -139,7 +123,7 @@ fn pet_buff(spell_id: u32, name: &str, count: u8) -> AuraState {
         icon: Some(format!("Interface\\Icons\\Spell_{spell_id}")),
         count,
         debuff_type: None,
-        // Only your own auras carry a duration on the 1.12 wire.
+        // No duration, so no cooldown sweep.
         duration: 0.0,
         expiration_time: 0.0,
         helpful: true,
@@ -241,12 +225,11 @@ fn the_frame_answers_only_the_events_that_name_its_own_unit() {
     assert!(!s.eval::<bool>("return PetFrame:IsVisible()").unwrap());
 }
 
-/// A powerless pet wears the `-NoMana` plate (PetFrame.lua:29-33), recut only on `UNIT_PET` or
-/// OnShow (PetFrame.lua:46-49, PetFrame.xml:284-287). Its bar hides through `TextStatusBar`:
-/// `SetMinMaxValues(0, 0)` (UnitFrame.lua:211-212) reaches the inherited OnValueChanged, which
-/// hides a bar whose max is 0 (TextStatusBar.lua:34,55-57), so only a value change brings it back.
+/// A powerless pet wears the `-NoMana` plate (`PetFrame.lua:49-54`), recut only on `UNIT_PET` or
+/// OnShow (`PetFrame.lua:67-78`, `PetFrame.xml:279-283`). Its bar hides through
+/// `TextStatusBar_UpdateTextString`, which hides a bar whose max is 0 (`TextStatusBar.lua:76-82`),
+/// so only a value change brings it back.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_powerless_pet_wears_the_no_mana_plate() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_frame();
@@ -281,9 +264,8 @@ fn a_powerless_pet_wears_the_no_mana_plate() {
 }
 
 /// `PET_ATTACK_START`/`PET_ATTACK_STOP` show and hide the attack overlay and repaint nothing else
-/// (PetFrame.lua:58-62).
+/// (`PetFrame.lua:86-90`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_attack_overlay_follows_its_own_two_events() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_frame();
@@ -299,7 +281,7 @@ fn the_attack_overlay_follows_its_own_two_events() {
         .unwrap());
 
     // `PetFrame_OnUpdate` ramps the alpha down from 1 on the opening leg; its constants are 0-255,
-    // divided into the API's 0-1 (PetFrame.lua:68-87).
+    // divided into the API's 0-1 (`PetFrame.lua:98-119`).
     s.tick(0.1);
     s.tick(0.1);
     let tint = drawn(&mut s)
@@ -320,11 +302,10 @@ fn the_attack_overlay_follows_its_own_two_events() {
         .unwrap());
 }
 
-/// The row shows buffs despite its `PetFrameDebuffN` names: `RefreshBuffs(this, 1, "pet")` selects
-/// `UnitBuff` (PetFrame.lua:54-57, BuffFrame.lua:277). Its `PartyBuffButtonTemplate` has an icon
-/// and a border and no count (PartyFrameTemplates.xml:3-36).
+/// The row shows the pet's debuffs: `RefreshDebuffs(self, self.unit)` reads `UnitDebuff`
+/// (`PetFrame.lua:58`, `UIParent.lua:3293-3346`). Its `PartyDebuffFrameTemplate` has an icon and a
+/// border and no count.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_debuff_row_fills_from_the_pets_own_auras() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_frame();
@@ -340,7 +321,18 @@ fn the_debuff_row_fills_from_the_pets_own_auras() {
     });
     s.set_unit_auras(
         PET,
-        Some(vec![pet_buff(1000, "Rend", 1), pet_buff(1001, "Sunder", 3)]),
+        Some(vec![
+            AuraState {
+                helpful: false,
+                ..pet_buff(1000, "Rend", 1)
+            },
+            AuraState {
+                helpful: false,
+                ..pet_buff(1001, "Sunder", 3)
+            },
+            // A buff never reaches the row.
+            pet_buff(1002, "Blessing", 1),
+        ]),
     );
     s.fire_event("UNIT_AURA", vec![ScriptValue::Str("pet".into())]);
 
@@ -358,14 +350,10 @@ fn the_debuff_row_fills_from_the_pets_own_auras() {
         )
         .unwrap();
     assert!(ok, "two auras draw, the other two rows stay down");
-    // The icons, in order: `RefreshBuffs` sets `UnitBuff`'s first return, in 1.12 the texture
-    // path (BuffFrame.lua:277,288).
-    assert!(
-        draws(&mut s, "Interface\\Icons\\Spell_1000"),
-        "the first buff's ICON draws — if this fails with the aura's NAME on the row instead, \
-         `UnitBuff`'s first return is the Era signature's `name`, not 1.12's texture"
-    );
+    // The icons: `UnitDebuff`'s third return.
+    assert!(draws(&mut s, "Interface\\Icons\\Spell_1000"));
     assert!(draws(&mut s, "Interface\\Icons\\Spell_1001"));
+    assert!(!draws(&mut s, "Interface\\Icons\\Spell_1002"));
 
     s.set_unit_auras(PET, Some(vec![]));
     s.fire_event("UNIT_AURA", vec![ScriptValue::Str("pet".into())]);
@@ -374,31 +362,30 @@ fn the_debuff_row_fills_from_the_pets_own_auras() {
         .unwrap());
 }
 
-/// A plain left-click targets the pet (PetFrame.lua:119-126).
+/// A plain left-click targets the pet: `PetFrame` is a secure unit button, `*type1` target
+/// (`PetFrame.lua:29`, `SecureTemplates.lua:555-560`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn left_clicking_the_pet_frame_targets_it() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_frame();
     s.set_unit("pet", Some(pet("Grimjaw", 72, 45, 80, 0)));
     s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
 
-    s.run("PetFrame_OnClick(\"LeftButton\")").unwrap();
+    s.run("PetFrame:Click(\"LeftButton\")").unwrap();
     assert_eq!(
         s.take_selection_requests(),
         vec![SelectionRequest::Unit("pet".into())]
     );
 
-    // The right button toggles `PetFrameDropDown` (PetFrame.lua:127-128), never a target.
-    s.run("PetFrame_OnClick(\"RightButton\")").unwrap();
+    // The right button opens `PetFrameDropDown` (`PetFrame.lua:26-29`), never a target.
+    s.run("PetFrame:Click(\"RightButton\")").unwrap();
     assert!(s.take_selection_requests().is_empty());
 }
 
-/// `PetFrame_OnClick` tries a spell target, then an item drop, then a target
-/// (PetFrame.lua:114-129). Every global it calls must exist, so food dropped on the pet queues a
-/// drop instead of raising.
+/// The secure `target` action tries a spell target, then an item drop, then a target
+/// (`SecureTemplates.lua:402-415`). Every global it calls must exist, so food dropped on the pet
+/// queues a drop instead of raising.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_leg_of_the_pet_frame_click_reaches_a_live_binding() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_frame();
@@ -442,7 +429,7 @@ fn every_leg_of_the_pet_frame_click_reaches_a_live_binding() {
         "the food is on the cursor"
     );
 
-    s.run("PetFrame_OnClick(\"LeftButton\")")
+    s.run("PetFrame:Click(\"LeftButton\")")
         .expect("the cursor-holds-an-item leg must not error");
     assert_eq!(
         s.take_drop_item_on_unit(),
@@ -453,28 +440,11 @@ fn every_leg_of_the_pet_frame_click_reaches_a_live_binding() {
     assert!(s.take_selection_requests().is_empty());
 }
 
-/// Declares the `GlobalStrings` keys the happiness tooltip reads.
-fn declare_happiness_strings(s: &UiScript) {
-    s.run(
-        "PET_HAPPINESS1 = 'Unhappy' PET_HAPPINESS2 = 'Content' PET_HAPPINESS3 = 'Happy' \
-         PET_DAMAGE_PERCENTAGE = 'Damage: %d%%' \
-         LOSING_LOYALTY = 'Losing Loyalty' GAINING_LOYALTY = 'Gaining Loyalty'",
-    )
-    .unwrap();
-}
-
-fn stats(
-    hunter: bool,
-    happiness: Option<u32>,
-    damage: f32,
-    rate: f32,
-) -> benilla_ui::script::PetStats {
+fn stats(hunter: bool, happiness: Option<u32>, damage: f32) -> benilla_ui::script::PetStats {
     benilla_ui::script::PetStats {
         hunter_pet: hunter,
         happiness,
         damage_percentage: damage,
-        loyalty_rate: rate,
-        loyalty: Some("(Loyalty Level 6) Best Friend".into()),
         training_points: (170, 130),
         experience: (4200, 8000),
         // Family and diet stay default: the unit frame draws neither.
@@ -482,21 +452,20 @@ fn stats(
     }
 }
 
-/// The tooltip is `PET_HAPPINESS<n>` (PetFrame.lua:147), so it names the bucket that painted.
+/// The tooltip is `PET_HAPPINESS<n>` and `PET_DAMAGE_PERCENTAGE` over `GetPetHappiness`' second
+/// return (`PetFrame_SetHappiness`, `PetFrame.lua:144-161`), so it names the bucket that painted.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_happiness_icon_shows_per_bucket_and_hides_for_a_non_hunter_pet() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_frame();
-    declare_happiness_strings(&s);
     s.set_unit("pet", Some(pet("Grimjaw", 72, 45, 80, 2)));
 
-    for (bucket, tip, rate, loyalty_line) in [
-        (3u32, "Happy", 20.0f32, Some("Gaining Loyalty")),
-        (2, "Content", 0.0, None),
-        (1, "Unhappy", -10.0, Some("Losing Loyalty")),
+    for (bucket, tip, damage) in [
+        (3u32, "Happy", 125.0f32),
+        (2, "Content", 100.0),
+        (1, "Unhappy", 75.0),
     ] {
-        s.set_pet_stats(true, stats(true, Some(bucket), 125.0, rate));
+        s.set_pet_stats(true, stats(true, Some(bucket), damage));
         s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
         assert!(
             s.eval::<bool>("return PetFrameHappiness:IsVisible()")
@@ -509,36 +478,31 @@ fn the_happiness_icon_shows_per_bucket_and_hides_for_a_non_hunter_pet() {
             tip,
             "bucket {bucket} took the wrong texcoord branch"
         );
-        // The loyalty line follows the rate's sign and is nil at zero (PetFrame.lua:149-155).
-        let line = s
-            .eval::<Option<String>>("return PetFrameHappiness.tooltipLoyalty")
-            .unwrap();
         assert_eq!(
-            line.as_deref(),
-            loyalty_line,
-            "bucket {bucket} loyalty line"
+            s.eval::<String>("return PetFrameHappiness.tooltipDamage")
+                .unwrap(),
+            format!("Causes {}% of normal damage", damage as i32),
+            "bucket {bucket} damage line"
         );
     }
 
-    // A warlock's imp: `HasPetUI`'s second return is nil, so the icon hides (PetFrame.lua:134-137).
-    s.set_pet_stats(true, stats(false, Some(3), 125.0, 20.0));
+    // A warlock's imp: `HasPetUI`'s second return is nil, so the icon hides (`PetFrame.lua:147`).
+    s.set_pet_stats(true, stats(false, Some(3), 125.0));
     s.fire_event("UNIT_HAPPINESS", vec![]);
     assert!(!s
         .eval::<bool>("return PetFrameHappiness:IsVisible()")
         .unwrap());
 }
 
-/// The frame hides on `not happiness`, and 0 is truthy in Lua: `GetPetHappiness` (`0x4be900`)
-/// answers bucket 0 as a number, not a nil.
+/// The frame hides on `not happiness`, and 0 is truthy in Lua: `GetPetHappiness` (`0x5d3b00`)
+/// answers a bucket as a number, never a nil.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn happiness_bucket_zero_keeps_the_icon_showing() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_frame();
-    declare_happiness_strings(&s);
     s.set_unit("pet", Some(pet("Grimjaw", 72, 45, 80, 2)));
 
-    s.set_pet_stats(true, stats(true, Some(0), 100.0, 0.0));
+    s.set_pet_stats(true, stats(true, Some(0), 100.0));
     s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
     assert!(
         s.eval::<bool>("return PetFrameHappiness:IsVisible()")
@@ -547,22 +511,20 @@ fn happiness_bucket_zero_keeps_the_icon_showing() {
     );
 
     // A nil does hide it.
-    s.set_pet_stats(true, stats(true, None, 100.0, 0.0));
+    s.set_pet_stats(true, stats(true, None, 100.0));
     s.fire_event("UNIT_HAPPINESS", vec![]);
     assert!(!s
         .eval::<bool>("return PetFrameHappiness:IsVisible()")
         .unwrap());
 }
 
-/// `UNIT_HAPPINESS` repaints the icon alone (PetFrame.lua:63-64).
+/// `UNIT_HAPPINESS` repaints the icon alone (`PetFrame.lua:91-92`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn unit_happiness_repaints_only_the_icon() {
     benilla_formats::wow_data_or_skip!();
     let mut s = load_pet_frame();
-    declare_happiness_strings(&s);
     s.set_unit("pet", Some(pet("Grimjaw", 72, 45, 80, 2)));
-    s.set_pet_stats(true, stats(true, Some(1), 75.0, -10.0));
+    s.set_pet_stats(true, stats(true, Some(1), 75.0));
     s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
     assert_eq!(
         s.eval::<String>("return PetFrameHappiness.tooltip")
@@ -570,7 +532,7 @@ fn unit_happiness_repaints_only_the_icon() {
         "Unhappy"
     );
 
-    s.set_pet_stats(true, stats(true, Some(3), 125.0, 20.0));
+    s.set_pet_stats(true, stats(true, Some(3), 125.0));
     s.fire_event("UNIT_HAPPINESS", vec![]);
     assert_eq!(
         s.eval::<String>("return PetFrameHappiness.tooltip")
@@ -582,10 +544,9 @@ fn unit_happiness_repaints_only_the_icon() {
 }
 
 /// The art draws over the bar fills, which only frame level can hold. The art frame is anonymous,
-/// nested two deep (PetFrame.xml:52-124) where the bars are direct children (PetFrame.xml:125,150),
-/// so it is reached as `PetFrameTexture:GetParent()`.
+/// nested two deep (`PetFrame.xml:63-65`) where the bars are direct children (`PetFrame.xml:136`,
+/// `:158`), so it is reached as `PetFrameTexture:GetParent()`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_pet_art_paints_over_the_bars() {
     benilla_formats::wow_data_or_skip!();
     let s = load_pet_frame();

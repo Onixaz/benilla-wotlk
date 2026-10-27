@@ -186,7 +186,6 @@ pub use guild::{
     GuildPermissions, GuildQueryResponse, GuildRankBank, GuildRoster, GuildRosterMember,
     GUILD_BANK_TABS, GUILD_INFO_MAX_LENGTH, GUILD_MOTD_MAX_LENGTH, GUILD_NAME_MAX_LENGTH,
     GUILD_NOTE_MAX_LENGTH, GUILD_RANKS_MAX_COUNT, GUILD_RANKS_MIN_COUNT, GUILD_RANK_MAX_LENGTH,
-    GUILD_RANK_RIGHT_ORDER,
 };
 pub use guild_bank::{
     guild_bank_activate, guild_bank_buy_tab, guild_bank_log, guild_bank_money,

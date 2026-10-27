@@ -70,7 +70,7 @@ pub(crate) struct StoredPetAction {
 /// The pet stat block: the four hunter stat bindings and `HasPetUI`'s second return
 /// (`0x4be670`), plus the family word, icon and diet. The stats share one hunter-pet gate
 /// (`0x6116e0`) and fail their own ways: loyalty to nil, the pairs to `(0, 0)`, happiness to
-/// `(nil, 100.0, 0.0)`. The family word has no gate (`0x51a310`); the diet shares the stats'.
+/// `(nil, 100.0)`. The family word has no gate (`0x51a310`); the diet shares the stats'.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PetStats {
     /// `HasPetUI`'s second return; false makes every gated binding answer its failure form.
@@ -79,8 +79,6 @@ pub struct PetStats {
     pub happiness: Option<u32>,
     /// Return 2: the damage percentage, already scaled by 100.
     pub damage_percentage: f32,
-    /// Return 3: the loyalty rate, unscaled and possibly negative.
-    pub loyalty_rate: f32,
     /// `GetPetLoyalty`: the `PetLoyalty.dbc` name verbatim, `"(Loyalty Level N) "` prefix included.
     pub loyalty: Option<String>,
     /// `GetPetTrainingPoints`: `(totalPoints, spent)`, high word first.
@@ -525,8 +523,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The client buckets return 1 off `PetPersonality.dbc` (`0x4be900`), and bucket 0 is the
-    // number 0; only the gate failure is nil, and even then returns 2 and 3 are `(100.0, 0.0)`.
+    // GetPetHappiness() (`0x5d3b00`): two returns, the bucket off `PetPersonality.dbc` plus one
+    // and its damage percentage; `nil, 100` without a hunter's pet.
     g.set(
         "GetPetHappiness",
         lua.create_function(move |lua, ()| {
@@ -534,20 +532,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             let s = &model.pet_bar.stats;
-            let happiness = match s.happiness.filter(|_| s.hunter_pet) {
-                Some(b) => Value::Integer(i64::from(b)),
-                None => Value::Nil,
-            };
-            let (dmg, rate) = if happiness == Value::Nil {
-                (100.0, 0.0)
-            } else {
-                (s.damage_percentage, s.loyalty_rate)
-            };
-            Ok(MultiValue::from_vec(vec![
-                happiness,
-                Value::Number(f64::from(dmg)),
-                Value::Number(f64::from(rate)),
-            ]))
+            Ok(match s.happiness.filter(|_| s.hunter_pet) {
+                Some(b) => (Value::Integer(i64::from(b)), f64::from(s.damage_percentage)),
+                None => (Value::Nil, 100.0),
+            })
         })?,
     )?;
 
@@ -1235,7 +1223,6 @@ mod tests {
             icon: Some("Interface\\Icons\\Ability_Hunter_Pet_Boar".into()),
             happiness: Some(3),
             damage_percentage: 125.0,
-            loyalty_rate: 20.0,
             loyalty: Some("(Loyalty Level 6) Best Friend".into()),
             training_points: (170, 130),
             experience: (4200, 8000),
@@ -1259,8 +1246,8 @@ mod tests {
 
         assert!(s
             .eval::<bool>(
-                "local h, dmg, rate = GetPetHappiness() \
-                 return h == 3 and dmg == 125 and rate == 20"
+                "local h, dmg = GetPetHappiness() \
+                 return h == 3 and dmg == 125 and select('#', GetPetHappiness()) == 2"
             )
             .unwrap());
         assert_eq!(
@@ -1292,8 +1279,8 @@ mod tests {
 
         assert!(
             s.eval::<bool>(
-                "local h, dmg, rate = GetPetHappiness() \
-                 return h == nil and dmg == 100 and rate == 0"
+                "local h, dmg = GetPetHappiness() \
+                 return h == nil and dmg == 100 and select('#', GetPetHappiness()) == 2"
             )
             .unwrap(),
             "happiness is nil but its two numbers are still numbers"
@@ -1318,7 +1305,6 @@ mod tests {
             PetStats {
                 happiness: Some(0),
                 damage_percentage: 100.0,
-                loyalty_rate: 0.0,
                 ..hunter_stats()
             },
         );

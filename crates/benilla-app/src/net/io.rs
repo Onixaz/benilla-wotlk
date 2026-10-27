@@ -1992,7 +1992,9 @@ pub(super) fn writer_loop(
                         rank_id,
                         rights,
                         name,
-                    } => w.guild_rank(rank_id, rights, &name),
+                        gold_per_day,
+                        tabs,
+                    } => w.guild_rank(rank_id, rights, &name, gold_per_day, &tabs),
                     ClientCommand::GuildAddRank { name } => w.guild_add_rank(&name),
                     ClientCommand::GuildDelRank => w.guild_del_rank(),
                     ClientCommand::GuildSetPublicNote { name, note } => {

@@ -16,6 +16,7 @@ mod tests;
 
 pub(super) use api::install;
 pub use engine::CalendarModel;
+pub(super) use event::scrub;
 pub use time::WowTime;
 
 use std::collections::{HashMap, HashSet};

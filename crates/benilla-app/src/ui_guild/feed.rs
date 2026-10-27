@@ -1,12 +1,11 @@
 //! The guild VM feed and drain: resolve the roster into the snapshot the guild windows read, fire
 //! the guild events on their edges, and send the Lua [`GuildRequest`] intents. Names resolve
-//! engine-side as in the reference: `GetGuildRosterInfo 0x4d1200` returns the localized class and
-//! zone names, not ids (`0x4d1355`, `0x4d1391`), and the rank name from the cached guild record.
+//! engine-side as in the reference: `GetGuildRosterInfo` (`0x5cc9c0`) returns the localized class
+//! and zone names, not ids, and the rank name from the cached guild record.
 
 use benilla_formats::AreaTableCatalog;
 use benilla_protocol::messages::{
     guild_presence, GuildInfo, GuildRosterMember, GUILD_RANKS_MAX_COUNT, GUILD_RANKS_MIN_COUNT,
-    GUILD_RANK_MAX_LENGTH,
 };
 use benilla_ui::script::{
     GuildMemberInfo, GuildRankInfo, GuildRequest, GuildState as VmGuild, ScriptValue, UiScript,
@@ -19,8 +18,8 @@ use crate::ui_unit::class_names;
 
 use super::{last_online, GuildState, Identity, RosterRow, ROSTER_REQUEST_THROTTLE_SECS};
 
-/// `CHAT_FLAG_AFK` and `CHAT_FLAG_DND` (`GlobalStrings.lua:534-535`), which the reference loads at
-/// `0x4d1404` and `0x4d13ed`.
+/// `CHAT_FLAG_AFK` and `CHAT_FLAG_DND`, which `GetGuildRosterInfo` reads through `GetText`
+/// (`0x5ccbc7`, `0x5ccba9`).
 const CHAT_FLAG_AFK: &str = "<AFK>";
 const CHAT_FLAG_DND: &str = "<DND>";
 
@@ -259,6 +258,9 @@ fn row(
             class: class_names(m.class)
                 .map(|(display, _)| display.to_string())
                 .unwrap_or_default(),
+            class_file: class_names(m.class)
+                .map(|(_, file)| file.to_string())
+                .unwrap_or_default(),
             zone: areas
                 .and_then(|a| a.name(m.zone))
                 .unwrap_or_default()
@@ -267,7 +269,7 @@ fn row(
             officer_note: m.officer_note.clone(),
             online,
             status: status_tag(m.presence).to_string(),
-            // No float on the wire for an online member; the formatter reads all zeroes as nil.
+            // No float on the wire for an online member, whose binding answers nils.
             last_online: if online {
                 Default::default()
             } else {
@@ -278,7 +280,7 @@ fn row(
 }
 
 /// The away tag, `GetGuildRosterInfo`'s tenth return: always a string, `""` rather than nil. DND
-/// is tested before AFK (`0x4d13e4`, `0x4d13fb`), so a member flagged both shows as DND.
+/// is tested before AFK (`0x5ccba9`, `0x5ccbc7`), so a member flagged both shows as DND.
 pub(super) fn status_tag(presence: u8) -> &'static str {
     if presence & guild_presence::DND != 0 {
         CHAT_FLAG_DND
@@ -377,23 +379,22 @@ pub(super) fn drain_guild(
                 rank_index,
                 rights,
                 name,
+                money_per_day,
+                tabs,
             } => {
-                if let Some(name) = capped_rank_name(name) {
-                    let _ = commands.0.send(ClientCommand::GuildRank {
-                        rank_id: rank_index,
-                        rights,
-                        name,
-                    });
-                }
+                let _ = commands.0.send(ClientCommand::GuildRank {
+                    rank_id: rank_index,
+                    rights,
+                    name,
+                    gold_per_day: money_per_day,
+                    tabs,
+                });
             }
             GuildRequest::AddRank(name) => {
-                // Ten ranks at most, and more than five to remove one, as the reference's
-                // `GuildControlAddRank` (`0x4d2271`) and `GuildControlDelRank` (`0x4d22e6`) check
-                // silently; the stock buttons follow them (`FriendsFrame.lua:887`, `:908`).
+                // Ten ranks at most, and more than five to remove one, as `GuildControlAddRank`
+                // (`0x5cb330`) and `GuildControlDelRank` (`0x5cb3f0`) check silently.
                 if guild.rank_rights.len() < GUILD_RANKS_MAX_COUNT {
-                    if let Some(name) = capped_rank_name(name) {
-                        let _ = commands.0.send(ClientCommand::GuildAddRank { name });
-                    }
+                    let _ = commands.0.send(ClientCommand::GuildAddRank { name });
                 }
             }
             GuildRequest::DelRank => {
@@ -437,21 +438,6 @@ fn set_note(
         ClientCommand::GuildSetPublicNote { name, note }
     };
     let _ = commands.0.send(command);
-}
-
-/// The rank name, or `None` past vmangos's cap of 15, where it kicks the session
-/// (`Handlers/GuildHandler.cpp:580-584`, `:600-604`); the stock edit box stops at 15. Deviation: a
-/// script's 16-letter name, which the reference's bindings pass (1 to 16 units, `0x4d20d0`,
-/// `0x4d2210`), is dropped rather than sent or truncated, because vmangos would kick the session.
-fn capped_rank_name(name: String) -> Option<String> {
-    if name.chars().count() > GUILD_RANK_MAX_LENGTH {
-        warn!(
-            "guild: refusing a {}-character rank name (the server kicks over {GUILD_RANK_MAX_LENGTH})",
-            name.chars().count()
-        );
-        return None;
-    }
-    Some(name)
 }
 
 #[cfg(test)]
@@ -524,18 +510,5 @@ mod tests {
         assert_eq!(index_of(&[22, 11, 33], 22), 1, "same player, new row");
         assert_eq!(index_of(&[11, 33], 22), 0, "no longer listed");
         assert_eq!(index_of(&[11, 22], 0), 0, "nothing selected");
-    }
-
-    #[test]
-    fn an_over_long_rank_name_is_refused() {
-        assert_eq!(
-            capped_rank_name("Officer".into()).as_deref(),
-            Some("Officer")
-        );
-        assert!(capped_rank_name("A".repeat(GUILD_RANK_MAX_LENGTH)).is_some());
-        assert_eq!(
-            capped_rank_name("A".repeat(GUILD_RANK_MAX_LENGTH + 1)),
-            None
-        );
     }
 }

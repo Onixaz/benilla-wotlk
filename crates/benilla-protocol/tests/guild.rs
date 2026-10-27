@@ -106,7 +106,8 @@ fn cmsg_bodies_golden() {
         "CMSG_GUILD_DEL_RANK body"
     );
 
-    // CMSG_GUILD_RANK (Guild.cpp:78-83): u32 rankId, u32 rights, cstring rankName.
+    // CMSG_GUILD_RANK (`0x5cb21a`): u32 rankId, u32 rights, cstring rankName, u32 gold per day,
+    // then six (u32 tab rights, u32 tab withdrawals).
     let rights = guild_rank_right::GCHAT_LISTEN
         | guild_rank_right::GCHAT_SPEAK
         | guild_rank_right::OFFCHAT_LISTEN
@@ -116,8 +117,27 @@ fn cmsg_bodies_golden() {
         | guild_rank_right::DEMOTE;
     assert_eq!(rights, 0x0000_019F, "the officer rights mask");
     assert_eq!(
-        messages::guild_rank(2, rights, "Veteran"),
-        hx(concat!("02000000", "9f010000", "5665746572616e00")),
+        messages::guild_rank(
+            2,
+            rights,
+            "Veteran",
+            250_000,
+            &[(0x3, 10), (0, 0), (0, 0), (0, 0), (0, 0), (0x7, 100_000)]
+        ),
+        hx(concat!(
+            "02000000",
+            "9f010000",
+            "5665746572616e00",
+            "90d00300",
+            "03000000",
+            "0a000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "0000000000000000",
+            "07000000",
+            "a0860100"
+        )),
         "CMSG_GUILD_RANK body"
     );
 
