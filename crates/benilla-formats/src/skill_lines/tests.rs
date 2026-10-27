@@ -15,7 +15,9 @@ fn real_skill_line_catalog_resolves_known_spells() {
     );
 
     // Fireball (133) -> the Fire line (SKILL_FIRE = 8).
-    let fire_line = cat.spell_to_line(133).expect("Fireball has a skill line");
+    let fire_line = cat
+        .spell_to_line(133, 0, 0)
+        .expect("Fireball has a skill line");
     assert_eq!(fire_line, 8);
     let fire = cat.line(fire_line).expect("the Fire line resolves");
     assert_eq!(fire.name, "Fire");
@@ -23,14 +25,14 @@ fn real_skill_line_catalog_resolves_known_spells() {
 
     // Frost Armor (168) -> the Frost line (SKILL_FROST = 6).
     let frost_line = cat
-        .spell_to_line(168)
+        .spell_to_line(168, 0, 0)
         .expect("Frost Armor has a skill line");
     assert_eq!(frost_line, 6);
     let frost = cat.line(frost_line).expect("the Frost line resolves");
     assert_eq!(frost.name, "Frost");
     assert!(frost.icon.is_some(), "the Frost tab has an icon");
 
-    assert_eq!(cat.spell_to_line(0), None);
+    assert_eq!(cat.spell_to_line(0, 0, 0), None);
 
     // Column 12: a profession's own flavour sentence, the weapon lines' shared one.
     let smithing = cat.line(164).expect("Blacksmithing resolves");
@@ -59,7 +61,7 @@ fn real_spell_tab_collapses_general_by_race_and_class() {
 
     // Charge, Heroic Strike and Rend on Arms (26), Battle Shout on Fury (256).
     for (id, line) in [(100u32, 26u32), (78, 26), (772, 26), (6673, 256)] {
-        assert_eq!(cat.spell_to_line(id), Some(line));
+        assert_eq!(cat.spell_to_line(id, 0, 0), Some(line));
         assert_eq!(
             cat.spell_tab(id, HUMAN, WARRIOR),
             line,
@@ -68,7 +70,7 @@ fn real_spell_tab_collapses_general_by_race_and_class() {
     }
 
     // Perception, on line 754 `Racial - Human`.
-    assert_eq!(cat.spell_to_line(20600), Some(754));
+    assert_eq!(cat.spell_to_line(20600, 0, 0), Some(754));
     assert_eq!(
         cat.spell_tab(20600, HUMAN, WARRIOR),
         0,
@@ -76,7 +78,7 @@ fn real_spell_tab_collapses_general_by_race_and_class() {
     );
 
     // A warrior has no Fire row; a mage's has no sort flag.
-    assert_eq!(cat.spell_to_line(133), Some(8));
+    assert_eq!(cat.spell_to_line(133, 0, 0), Some(8));
     assert_eq!(
         cat.spell_tab(133, HUMAN, WARRIOR),
         0,
@@ -162,7 +164,7 @@ fn real_skill_line_ability_reads_requirement_and_trivial_ranks() {
         (2538, 185, 1, 45, 85),
         (3920, 202, 1, 30, 60),
     ] {
-        let sla = cat.ability(spell).expect("recipe has an SLA row");
+        let sla = cat.ability(spell, 0, 0).expect("recipe has an SLA row");
         assert_eq!(
             (
                 sla.skill_id,
@@ -177,7 +179,7 @@ fn real_skill_line_ability_reads_requirement_and_trivial_ranks() {
 
     // The Tailoring and Enchanting openers carry zero trivial ranks.
     for (spell, line) in [(3908u32, 197u32), (7411, 333)] {
-        let sla = cat.ability(spell).expect("opener has an SLA row");
+        let sla = cat.ability(spell, 0, 0).expect("opener has an SLA row");
         assert_eq!(
             (sla.skill_id, sla.trivial_low, sla.trivial_high),
             (line, 0, 0)
@@ -335,6 +337,68 @@ fn real_rank_chains_resolve_the_highest_known_rank() {
     let attack: std::collections::BTreeSet<u32> = [6603].into_iter().collect();
     assert_eq!(cat.rank_successor(6603), None);
     assert_eq!(cat.highest_known_rank(6603, &attack), Some(6603));
+}
+
+/// `SpellTableLookupAbility` (`0x812410`): the last admitted row per race and class. The four
+/// runes with an earlier Blood or Frost row resolve to Runeforging (776) for a Death Knight, and
+/// Summon Warhorse to the mount line (777) over Holy (594) for a Human Paladin.
+#[test]
+fn real_multi_row_spells_resolve_their_last_admitted_row() {
+    let data = crate::wow_data_or_skip!();
+    let mut chain = crate::open_chain(&data).expect("open chain");
+    let cat = load_skill_line_catalog(&mut chain).expect("load SkillLine/SkillLineAbility");
+    const ORC: u8 = 2;
+    const DEATH_KNIGHT: u8 = 6;
+    for rune in [53323, 53331, 53341, 53343, 53344] {
+        assert_eq!(
+            cat.spell_to_line(rune, ORC, DEATH_KNIGHT),
+            Some(776),
+            "rune {rune} files under Runeforging"
+        );
+    }
+    // Before the descriptor, the first row.
+    assert_eq!(cat.spell_to_line(53341, 0, 0), Some(771));
+    const HUMAN: u8 = 1;
+    const PALADIN: u8 = 2;
+    assert_eq!(cat.spell_to_line(13819, HUMAN, PALADIN), Some(777));
+}
+
+/// The masks and exclude flags of `SpellTableMatchRaceClass` (`0x810320`), last row first.
+#[test]
+fn the_lookup_takes_the_last_row_its_masks_admit() {
+    let info = |skill_id| SlaInfo {
+        skill_id,
+        req_skill_value: 0,
+        forward_spell_id: 0,
+        trivial_low: 0,
+        trivial_high: 0,
+    };
+    let row = |line, race_mask, class_mask, exclude_race| SlaRow {
+        info: info(line),
+        race_mask,
+        class_mask,
+        exclude_race,
+        exclude_class: false,
+    };
+    let mut cat = SkillLineCatalog::from_abilities([]);
+    // Line 1 for all, line 2 for class 2 only, line 3 for every race but race 1.
+    cat.abilities.insert(
+        7,
+        vec![
+            row(1, 0, 0, false),
+            row(2, 0, 0b10, false),
+            row(3, 0b1, 0, true),
+        ],
+    );
+    assert_eq!(cat.spell_to_line(7, 1, 1), Some(1));
+    assert_eq!(cat.spell_to_line(7, 1, 2), Some(2));
+    assert_eq!(cat.spell_to_line(7, 2, 2), Some(3));
+    assert_eq!(
+        cat.spell_to_line(7, 0, 0),
+        Some(1),
+        "no descriptor: first row"
+    );
+    assert_eq!(cat.spell_to_line(8, 1, 1), None);
 }
 
 /// `KnownHigherRank` (`0x60c8d0`) walks forward only; the spell itself does not count.

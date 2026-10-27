@@ -17,24 +17,52 @@ use crate::widget::FrameHandle;
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const RED: [f32; 4] = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
-/// `0xc0d420` = `0xff40c040`, the satisfiable-lock green.
-const LOCK_OPEN: [f32; 4] = [64.0 / 255.0, 192.0 / 255.0, 64.0 / 255.0, 1.0];
+/// `(1, 0, 0)`, the unknown opener's line (`0x6269a6`).
+const PURE_RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
+/// `GetSkillColor`'s table (`0xad2d54`): grey, green, yellow, orange, red.
+const SKILL_RAMP: [[f32; 4]; 5] = [
+    [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0],
+    [64.0 / 255.0, 192.0 / 255.0, 64.0 / 255.0, 1.0],
+    [1.0, 1.0, 0.0, 1.0],
+    [1.0, 128.0 / 255.0, 64.0 / 255.0, 1.0],
+    RED,
+];
 /// `0xffffd200`, the unit name's colour until FrameXML recolours it by reaction.
 const GOLD: [f32; 4] = [1.0, 210.0 / 255.0, 0.0, 1.0];
 
-/// A GameObject tooltip line's colour, as the builder `0x52aa20` picks it; the app picks the tint
-/// for each line.
+/// A GameObject tooltip line's colour, as `CGTooltip::SetObject` (`0x626720`) picks it; the app
+/// picks the tint for each line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TooltipTint {
-    /// `0xc0cf60`: a requirement line's normal colour (the key item's "Requires %s").
+    /// A requirement line's normal colour (the key item's "Requires %s").
     White,
-    /// `0xc0d3a8` = `0xffff2020`, the unmet "Locked" line. Deviation: the unknown-skill
-    /// "Requires %s" shares it, though its reference red is `0xffff0000`, because a 32/255
-    /// difference in G and B does not show.
+    /// `0xffff2020`, the unmet "Locked" line, the ramp's red rung.
     Red,
-    /// The satisfiable "Locked" line: `0xc0d420` = `0xff40c040`, the green rung of the
-    /// skill-difficulty ramp `0x529fa0`, not the ordinary green `0xc0d3ac` = `0xff00ff00`.
-    LockOpen,
+    /// `(1, 0, 0)`: the unknown opener's "Requires %s".
+    PureRed,
+    /// A rung of `GetSkillColor`'s ramp (`0x61a1f0`), 0 grey to 4 red; see [`skill_rung`].
+    Skill(u8),
+}
+
+/// `GetSkillColor`'s rung (`0x61a1f0`) for a `current` value against `required`: grey at +100,
+/// green at +50, yellow at +25, orange at +0, else red.
+pub fn skill_rung(required: i32, current: i32) -> u8 {
+    let margin = i64::from(current) - i64::from(required);
+    match margin {
+        100.. => 0,
+        50.. => 1,
+        25.. => 2,
+        0.. => 3,
+        _ => 4,
+    }
+}
+
+/// The colourblind prefix `GetSkillColor` returns beside a rung's colour (`0xad2ac8`).
+pub fn skill_rung_suffix(rung: u8) -> &'static str {
+    ["", "[+] ", "[++] ", "[+++] ", "[-] "]
+        .get(usize::from(rung))
+        .copied()
+        .unwrap_or("")
 }
 
 /// The rank word's GlobalString key, from the builder's table `0x854158` (indexed at `0x52a5bd`
@@ -392,7 +420,8 @@ impl super::UiScript {
                 let colour = match tint {
                     TooltipTint::White => WHITE,
                     TooltipTint::Red => RED,
-                    TooltipTint::LockOpen => LOCK_OPEN,
+                    TooltipTint::PureRed => PURE_RED,
+                    TooltipTint::Skill(rung) => SKILL_RAMP[usize::from((*rung).min(4))],
                 };
                 append_line(&self.lua, &wrapper, (text.clone(), colour), None, false)?;
             }

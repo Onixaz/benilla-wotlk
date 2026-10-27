@@ -117,11 +117,11 @@ pub(super) fn arm_ground_effects(
         let Some(spell_id) = store.0.dynamicobject_spell_id() else {
             continue;
         };
-        let Some(stages) = spells
-            .catalog
-            .get(spell_id)
-            .and_then(|d| visuals.0.stages(d.visual))
-        else {
+        let Some(stages) = spells.catalog.get(spell_id).and_then(|d| {
+            visuals
+                .0
+                .stages(crate::creature_anim::spell_visual::spell_visual_id(d))
+        }) else {
             debug!("dest_fx: dynobj spell {spell_id} has no visual row — invisible area");
             continue;
         };

@@ -54,13 +54,18 @@ fn on_action_feedback(In(ev): In<SessionEvent>, mut errors: ResMut<UiErrorKeys>)
     }
 }
 
-fn on_cast_failed(In(ev): In<SessionEvent>, mut errors: ResMut<CastErrors>) {
+fn on_cast_failed(
+    In(ev): In<SessionEvent>,
+    mut errors: ResMut<CastErrors>,
+    mut bar: ResMut<super::PetBar>,
+) {
     if let SessionEvent::PetCastFailed {
         spell_id,
         reason,
         arg,
     } = ev
     {
+        bar.pending_cast = None;
         pet_cast_failed(spell_id, reason, arg, &mut errors);
     }
 }

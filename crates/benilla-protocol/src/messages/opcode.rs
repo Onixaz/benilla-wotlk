@@ -303,6 +303,9 @@ pub const CMSG_PET_NAME_QUERY: u16 = 0x0052; // 82
 
 /// A pet bar press: the slot's packed word and a target guid, dispatched on its type byte.
 pub const CMSG_PET_ACTION: u16 = 0x0175; // 373
+/// A cast whose caster is not the active player, the pet's client-targeted or possessed casts
+/// (`Spell_C::SendPendingCast`, `0x80b315`).
+pub const CMSG_PET_CAST_SPELL: u16 = 0x01F0; // 496
 /// A pet bar drag: one or two `(position, packed)` pairs, told apart by body size alone.
 pub const CMSG_PET_SET_ACTION: u16 = 0x0174; // 372
 /// Set a pet spell's autocast bit to a given value (the right-click).

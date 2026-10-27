@@ -515,11 +515,6 @@ pub fn use_item(
     item_guid: u64,
     target: UseItemTarget,
 ) -> Vec<u8> {
-    use super::spells::{
-        put_cast_tail, put_target_guid, put_target_point, TARGET_FLAG_DEST_LOCATION,
-        TARGET_FLAG_GAMEOBJECT, TARGET_FLAG_GLYPH_SLOT, TARGET_FLAG_ITEM,
-        TARGET_FLAG_SOURCE_LOCATION, TARGET_FLAG_UNIT,
-    };
     let mut body = Vec::with_capacity(32);
     body.push(bag_index);
     body.push(slot);
@@ -531,33 +526,44 @@ pub fn use_item(
         _ => 0,
     };
     body.extend_from_slice(&glyph_index.to_le_bytes());
+    put_cast_targets(&mut body, target);
+    body
+}
+
+/// The tail every cast opcode shares from `0x80b351`: `u8 castFlags`, the mask, and the target's
+/// payload.
+pub(super) fn put_cast_targets(body: &mut Vec<u8>, target: UseItemTarget) {
+    use super::spells::{
+        put_cast_tail, put_target_guid, put_target_point, TARGET_FLAG_DEST_LOCATION,
+        TARGET_FLAG_GAMEOBJECT, TARGET_FLAG_GLYPH_SLOT, TARGET_FLAG_ITEM,
+        TARGET_FLAG_SOURCE_LOCATION, TARGET_FLAG_UNIT,
+    };
     let (mask, guid) = match target {
         UseItemTarget::SelfImplicit => {
-            put_cast_tail(&mut body, 0);
-            return body;
+            put_cast_tail(body, 0);
+            return;
         }
         UseItemTarget::Glyph(_) => {
-            put_cast_tail(&mut body, TARGET_FLAG_GLYPH_SLOT);
-            return body;
+            put_cast_tail(body, TARGET_FLAG_GLYPH_SLOT);
+            return;
         }
         UseItemTarget::Unit(guid) => (TARGET_FLAG_UNIT, guid),
         UseItemTarget::Object(guid) => (TARGET_FLAG_GAMEOBJECT, guid),
         UseItemTarget::Item(guid) => (TARGET_FLAG_ITEM, guid),
         UseItemTarget::Corpse(corpse, guid) => (corpse.target_flag(), guid),
         UseItemTarget::Dest(dest) => {
-            put_cast_tail(&mut body, TARGET_FLAG_DEST_LOCATION);
-            put_target_point(&mut body, dest);
-            return body;
+            put_cast_tail(body, TARGET_FLAG_DEST_LOCATION);
+            put_target_point(body, dest);
+            return;
         }
         UseItemTarget::Source(src) => {
-            put_cast_tail(&mut body, TARGET_FLAG_SOURCE_LOCATION);
-            put_target_point(&mut body, src);
-            return body;
+            put_cast_tail(body, TARGET_FLAG_SOURCE_LOCATION);
+            put_target_point(body, src);
+            return;
         }
     };
-    put_cast_tail(&mut body, mask);
-    put_target_guid(&mut body, guid);
-    body
+    put_cast_tail(body, mask);
+    put_target_guid(body, guid);
 }
 
 /// Body of `CMSG_OPEN_ITEM` (opcode 172, `Server/Packets/Spell.h:36-45`): bag index and slot, as

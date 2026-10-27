@@ -287,7 +287,7 @@ fn battle_shout_description_scales_by_the_skill_level() {
     };
     let skill_lines = benilla_formats::load_skill_line_catalog(&mut chain).expect("skill lines");
     let line = skill_lines
-        .spell_to_line(6673)
+        .spell_to_line(6673, 0, 0)
         .expect("Battle Shout's line");
     let mut t = TestCtx::new();
     t.skill_lines = Some(skill_lines);
@@ -836,35 +836,69 @@ fn the_required_item_chance_and_reagent_lines_on_real_data() {
     );
 }
 
-/// Red only when the resolver finds no opener; a key, a known skill, no requirement and no
-/// `Lock.dbc` row all read green.
+/// Red only when the resolver finds no opener; a key, no requirement and no `Lock.dbc` row read
+/// the ramp's green, and a known skill opener its margin's rung.
 #[test]
 fn the_locked_line_greens_when_the_lock_can_be_opened() {
-    use crate::target::lock::LockOutcome;
+    use crate::target::lock::{LockMatch, LockOutcome};
+    let green = TooltipTint::Skill(1);
+    let mining = |value| LockMatch {
+        spell: 2575,
+        value,
+        required: 50,
+    };
 
     // The Scarlet Key in hand at the Armory Door.
     assert_eq!(
-        locked_line_tint(Some(LockOutcome::OpenByKey(7146))),
-        TooltipTint::LockOpen,
+        locked_line_tint(Some(LockOutcome::OpenByKey(7146)), None),
+        green,
         "holding the key must read green"
     );
     // The same door without the key.
     assert_eq!(
-        locked_line_tint(Some(LockOutcome::Unmet)),
+        locked_line_tint(Some(LockOutcome::Unmet), None),
         TooltipTint::Red,
         "no key still reads red"
     );
-    // A known skill opener: green, where the reference ramps by margin (`locked_line_tint`).
+    // A known skill opener ramps by its margin.
     assert_eq!(
-        locked_line_tint(Some(LockOutcome::OpenBySpell(2575))),
-        TooltipTint::LockOpen
+        locked_line_tint(Some(LockOutcome::OpenBySpell(2575)), Some(mining(75))),
+        TooltipTint::Skill(2)
     );
     // A lock row that imposes nothing, and a flag-locked object with no row at all.
+    assert_eq!(locked_line_tint(Some(LockOutcome::Unlocked), None), green);
+    assert_eq!(locked_line_tint(None, None), green);
+}
+
+/// The SKILL line (`0x626910`): no opener is pure red `LOCKED_WITH_SPELL`, silent when flag-locked;
+/// a known opener is `LOCKED_WITH_SPELL_KNOWN` in its rung, red below the requirement, with the
+/// colourblind prefix when the CVar is on.
+#[test]
+fn the_skill_lock_line_ramps_a_known_opener_by_its_margin() {
+    use crate::target::lock::LockMatch;
+    let at = |value| {
+        Some(LockMatch {
+            spell: 2575,
+            value,
+            required: 100,
+        })
+    };
     assert_eq!(
-        locked_line_tint(Some(LockOutcome::Unlocked)),
-        TooltipTint::LockOpen
+        skill_lock_line(None, false, false),
+        Some(("LOCKED_WITH_SPELL", TooltipTint::PureRed, ""))
     );
-    assert_eq!(locked_line_tint(None), TooltipTint::LockOpen);
+    assert_eq!(skill_lock_line(None, true, false), None);
+    let rung = |value| skill_lock_line(at(value), false, false).map(|(_, t, _)| t);
+    assert_eq!(rung(99), Some(TooltipTint::Skill(4)), "short of it: red");
+    assert_eq!(rung(100), Some(TooltipTint::Skill(3)), "+0: orange");
+    assert_eq!(rung(125), Some(TooltipTint::Skill(2)), "+25: yellow");
+    assert_eq!(rung(150), Some(TooltipTint::Skill(1)), "+50: green");
+    assert_eq!(rung(200), Some(TooltipTint::Skill(0)), "+100: grey");
+    assert_eq!(
+        skill_lock_line(at(99), true, true),
+        Some(("LOCKED_WITH_SPELL_KNOWN", TooltipTint::Skill(4), "[-] ")),
+        "a flag-locked object still names a known opener"
+    );
 }
 
 /// A trainer list that lands this frame is hoverable in this frame's tick: the trainer feed derives

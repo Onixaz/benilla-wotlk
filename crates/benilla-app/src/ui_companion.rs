@@ -229,6 +229,7 @@ fn feed_companions(
         &cooldown_of,
     );
     // `SummonRandomCritter`'s pool: the known spells of skill line 778, whatever their effect.
+    let (race, class) = crate::spell::race_class(me.map(|(s, _)| s));
     fresh.random_pool = actions
         .spells
         .iter()
@@ -236,7 +237,7 @@ fn feed_companions(
         .filter(|&id| {
             skill_lines
                 .as_deref()
-                .and_then(|s| s.catalog.spell_to_line(id))
+                .and_then(|s| s.catalog.spell_to_line(id, race, class))
                 == Some(SKILL_LINE_COMPANIONS)
         })
         .collect();

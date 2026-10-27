@@ -136,7 +136,9 @@ impl Plugin for UiTradeSkillPlugin {
                 (
                     // Opens before the feed, so an opener shows the window this frame; the
                     // drain after the input pass, so a Create click casts this frame.
-                    open_trade_skill.before(feed_trade_skill),
+                    open_trade_skill
+                        .before(feed_trade_skill)
+                        .after(benilla_world::schedule::WorldStage::Net),
                     feed_trade_skill.in_set(UnitFeed),
                     drain_trade_skill.after(UiInput),
                 ),
@@ -178,13 +180,15 @@ fn open_trade_skill(
     mut opens: ResMut<TradeSkillOpens>,
     mut open: ResMut<TradeSkillOpen>,
     skill_lines: Option<Res<SkillLines>>,
+    self_q: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
 ) {
+    let (race, class) = crate::spell::race_class(self_q.iter().next());
     for spell_id in opens.0.drain(..) {
         let Some(skill_lines) = skill_lines.as_deref() else {
             warn!("ui_tradeskill: opener {spell_id} before SkillLineAbility loaded — dropped");
             continue;
         };
-        let Some(line) = skill_lines.catalog.spell_to_line(spell_id) else {
+        let Some(line) = skill_lines.catalog.spell_to_line(spell_id, race, class) else {
             warn!("ui_tradeskill: opener {spell_id} has no SkillLineAbility row — dropped");
             continue;
         };
@@ -536,16 +540,20 @@ fn feed_trade_skill(
         let texts = texts.get(&script);
 
         let mut recipes = Vec::new();
+        // A recipe files under its line for our race and class (`AddKnownSpell` `0x6e7b00`).
+        let (race, class) = crate::spell::race_class(Some(store));
         for &spell_id in &actions.spells {
             let Some(d) = spells.catalog.get(spell_id) else {
                 continue;
             };
-            if d.attributes & SPELL_ATTR_IS_TRADESKILL == 0
-                || skill_lines.catalog.spell_to_line(spell_id) != Some(line)
-            {
+            if d.attributes & SPELL_ATTR_IS_TRADESKILL == 0 {
                 continue;
             }
-            let Some(sla) = skill_lines.catalog.ability(spell_id) else {
+            let Some(sla) = skill_lines
+                .catalog
+                .ability(spell_id, race, class)
+                .filter(|sla| sla.skill_id == line)
+            else {
                 continue;
             };
             let mut templates = 0;

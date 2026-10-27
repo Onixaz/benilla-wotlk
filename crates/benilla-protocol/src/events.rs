@@ -717,6 +717,8 @@ pub enum SessionEvent {
         target: Option<u64>,
         /// The `CAST_FLAG_AMMO` tail: nocked ammo for any caster (`0x60ba30` from `0x6e78b6`).
         ammo_display_id: Option<u32>,
+        /// The `CAST_FLAG_IMMUNITY` tail, `(school, mechanic)`.
+        immunities: Option<(u32, u32)>,
     },
     /// The cast launched (`SMSG_SPELL_GO`); the server times impact off `Spell.dbc` Speed itself.
     SpellGo {

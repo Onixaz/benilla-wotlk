@@ -184,9 +184,9 @@ pub mod char_proc_type {
 }
 
 /// One `SpellVisual.dbc` row: the kit ids for the stages (0 for none), then the missile and
-/// dest-anchored columns. Column 5 (state done), 14-15 (caster and target impact kits), 16-22 (the
-/// missile's source attachment, ground following, motion and targeting kit) and 26-31 (the
-/// missile's cast and impact offsets) are not read.
+/// dest-anchored columns. Columns 14-15 (caster and target impact kits), 16-22 (the missile's
+/// source attachment, ground following, motion and targeting kit) and 26-31 (the missile's cast
+/// and impact offsets) are not read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VisualStages {
     /// Column 1.
@@ -197,6 +197,8 @@ pub struct VisualStages {
     pub impact: u32,
     /// Column 4.
     pub state: u32,
+    /// Column 5, the kit an ending aura plays at stage 8 (`0x71ebef`).
+    pub state_done: u32,
     /// Column 6, the kit `0x7224d0` takes a channel's animation from.
     pub channel: u32,
     /// Column 8: the missile's `SpellVisualEffectName` id; 0 flies the ammo or weapon model, and an
@@ -539,6 +541,7 @@ fn parse_visuals(bytes: &[u8]) -> Result<HashMap<u32, VisualStages>> {
                 cast: g(2),
                 impact: g(3),
                 state: g(4),
+                state_done: g(5),
                 channel: g(6),
                 missile_model: g(8),
                 missile_attach: g(10),

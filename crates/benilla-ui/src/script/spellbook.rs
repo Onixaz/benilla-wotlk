@@ -544,39 +544,37 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // IsCurrentSpell(spellId | name) (`0x541500`): 1 while that spell is the current cast, else
-    // nil. Deviation: 12340 asks the cast state by spell id (`0x806030`); here it is the book
-    // slot's `current` verdict, so a spell the book does not list answers nil.
+    // IsCurrentSpell(id | slot, bookType | name) (`0x541500`): 1 or nil by `0x806030`, by id.
     g.set(
         "IsCurrentSpell",
-        lua.create_function(|lua, spell: Value| {
-            let model = lua
-                .app_data_ref::<crate::script::ModelCell>()
-                .expect("model app_data");
-            let current = match &spell {
-                Value::Integer(_) | Value::Number(_) => {
-                    let id = super::binding_abi::number_arg(lua, spell.clone(), "")?;
-                    model
-                        .spellbook
-                        .slots
-                        .iter()
-                        .any(|s| s.current && f64::from(s.spell_id) == id as f64)
+        lua.create_function(|lua, args: MultiValue| {
+            let lone_number = args.len() == 1
+                && matches!(
+                    args.front(),
+                    Some(Value::Integer(_) | Value::Number(_) | Value::String(_))
+                )
+                && lua.coerce_number(args[0].clone())?.is_some();
+            let spell_id = if lone_number {
+                let n = lua.coerce_number(args[0].clone())?.unwrap_or(0.0);
+                super::binding_abi::ftol(n) as u32
+            } else {
+                match super::spell_info::spell_of(lua, &args, "IsCurrentSpell")? {
+                    Some((id, _)) => id,
+                    None => return Ok(MultiValue::new()),
                 }
-                Value::String(name) => {
-                    let name = name.to_string_lossy();
-                    model
-                        .spellbook
-                        .slots
-                        .iter()
-                        .any(|s| s.current && s.name == name)
-                }
-                _ => false,
             };
-            Ok(if current {
+            let source = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                model.spell_info.clone()
+            };
+            let current = source.is_some_and(|s| s.is_current_spell(spell_id));
+            Ok(MultiValue::from_vec(vec![if current {
                 Value::Integer(1)
             } else {
                 Value::Nil
-            })
+            }]))
         })?,
     )?;
 

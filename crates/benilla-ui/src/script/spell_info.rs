@@ -33,6 +33,12 @@ pub struct SpellInfo {
 /// The app's answer for one spell id, against the player, or with `pet` against its pet.
 pub trait SpellInfoSource {
     fn spell_info(&self, spell_id: u32, pet: bool) -> Option<SpellInfo>;
+
+    /// `Spell_C_IsCurrentSpell` (`0x806030`) for `spell_id`, the player's cast state as the call
+    /// is made.
+    fn is_current_spell(&self, _spell_id: u32) -> bool {
+        false
+    }
 }
 
 impl super::UiScript {
@@ -44,9 +50,13 @@ impl super::UiScript {
 
 /// `GetSlotFromLua`'s spell (`0x540670`), `Ok(None)` for a name the book lacks: a number and a
 /// string are a book slot below 1024, else the binding raises; a string is a book name, with the
-/// second argument its subtext unless it names a unit.
-fn spell_of(lua: &Lua, args: &MultiValue) -> mlua::Result<Option<(u32, bool)>> {
-    let invalid = || mlua::Error::runtime("GetSpellInfo(): Invalid spell slot");
+/// second argument its subtext unless it names a unit. The error names the binding, `verb`.
+pub(super) fn spell_of(
+    lua: &Lua,
+    args: &MultiValue,
+    verb: &str,
+) -> mlua::Result<Option<(u32, bool)>> {
+    let invalid = || mlua::Error::runtime(format!("{verb}(): Invalid spell slot"));
     let first = args.front().cloned().unwrap_or(Value::Nil);
     let second = args.get(1).cloned().unwrap_or(Value::Nil);
     let is_string =
@@ -106,7 +116,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let n = lua.coerce_number(args[0].clone())?.unwrap_or(0.0);
                 Some((super::binding_abi::ftol(n) as u32, false))
             } else {
-                spell_of(lua, &args)?
+                spell_of(lua, &args, "GetSpellInfo")?
             };
             let Some((spell_id, pet)) = spell else {
                 return Ok(MultiValue::new());
@@ -163,6 +173,33 @@ mod tests {
                 ..Default::default()
             })
         }
+
+        fn is_current_spell(&self, spell_id: u32) -> bool {
+            spell_id == 63645 || spell_id == 133
+        }
+    }
+
+    /// `IsCurrentSpell` asks the cast state by id, so a spell the book lacks answers too; a book
+    /// slot or name resolves first, and a name the book lacks answers nothing.
+    #[test]
+    fn is_current_spell_asks_the_cast_state_by_id() {
+        let s = script();
+        let n = |call: &str| {
+            s.eval::<i64>(&format!("return select('#', {call})"))
+                .unwrap()
+        };
+        assert_eq!(s.eval::<i64>("return IsCurrentSpell(63645)").unwrap(), 1);
+        assert_eq!(n("IsCurrentSpell(2)"), 1);
+        assert!(s.eval::<bool>("return IsCurrentSpell(2) == nil").unwrap());
+        assert_eq!(
+            s.eval::<i64>("return IsCurrentSpell('Fireball')").unwrap(),
+            1
+        );
+        assert_eq!(
+            s.eval::<i64>("return IsCurrentSpell(1, 'spell')").unwrap(),
+            1
+        );
+        assert_eq!(n("IsCurrentSpell('Nope')"), 0);
     }
 
     fn script() -> UiScript {

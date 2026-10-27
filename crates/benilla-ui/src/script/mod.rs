@@ -249,7 +249,7 @@ mod totem;
 mod tracking;
 mod ui_errors;
 mod update_walk;
-pub use tooltip_unit::TooltipTint;
+pub use tooltip_unit::{skill_rung, skill_rung_suffix, TooltipTint};
 pub use tracking::{TownKind, TownType, TrackingSpell, TOWN_TYPES};
 mod trade;
 mod tradeskill;

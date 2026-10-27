@@ -211,6 +211,7 @@ fn app_with_chains() -> App {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     app.add_message::<crate::creature_anim::SpellKitFx>();
+    app.add_message::<crate::creature_anim::spell_visual::StateDoneKit>();
     app.add_message::<crate::net::FieldChanged>();
     app.add_message::<crate::creature_anim::SpellKitSound>();
     app.add_message::<AuraProc>();

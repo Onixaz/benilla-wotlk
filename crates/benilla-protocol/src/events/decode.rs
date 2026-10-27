@@ -236,6 +236,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 cast_time_ms: s.cast_time_ms,
                 target: s.targets.unit_target,
                 ammo_display_id: s.ammo_display_id,
+                immunities: s.immunities,
             }];
             events.extend(s.runes.map(|runes| SessionEvent::CastRunes {
                 caster,

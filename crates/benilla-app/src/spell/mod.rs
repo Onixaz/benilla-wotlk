@@ -168,10 +168,19 @@ pub(crate) fn spell_skill_value(
     skill_lines: Option<&benilla_formats::SkillLineCatalog>,
     spell_id: u32,
 ) -> u32 {
-    let Some(line) = skill_lines.and_then(|c| c.spell_to_line(spell_id)) else {
+    let (race, class) = race_class(me);
+    let Some(line) = skill_lines.and_then(|c| c.spell_to_line(spell_id, race, class)) else {
         return 0;
     };
     skill_line_value(me, line)
+}
+
+/// The player's race and class bytes, which `SpellTableLookupAbility` (`0x812410`) keys on; 0/0
+/// before the descriptor.
+pub(crate) fn race_class(me: Option<&crate::net::ObjectStore>) -> (u8, u8) {
+    me.map_or((0, 0), |s| {
+        (s.0.unit_race().unwrap_or(0), s.0.unit_class().unwrap_or(0))
+    })
 }
 
 /// The player's skill in `line`, [`spell_skill_value`]'s second half: 0 without a player or a

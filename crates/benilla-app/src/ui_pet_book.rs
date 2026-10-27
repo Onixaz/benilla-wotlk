@@ -169,38 +169,20 @@ fn slot_view(
     }
 }
 
-/// `CastSpell(id, "pet", onSelf)`: cancel first, as on the bar (`0x4b33af`-`0x4b3461`), a spell
-/// whose aura is on the pet sending `CMSG_PET_CANCEL_AURA` (0x26B) instead of the order; else
-/// `CMSG_PET_ACTION` at the selection as the calls before it left it, or with `onSelf` at the
-/// player. Unlike the bar's press it asks no usability predicate: no call site of `0x4bcf70` is
-/// in this path.
-pub(crate) fn cast_pet_spell(p: &mut crate::ui_pet::PetPress, spell_id: u32, on_self: bool) {
-    let pet_guid = p.bar.spells.pet_guid;
-    if pet_guid == 0 {
+/// `CastSpell(id, "pet", onSelf)` (`CGSpellBook::CastSpell` `0x53bc40`): the spell word through
+/// the bar's dispatcher `SendPetAction`, at the player with `onSelf`, else at the selection.
+pub(crate) fn cast_pet_spell(
+    p: &mut crate::ui_pet::PetPress,
+    spell_id: u32,
+    on_self: bool,
+) -> crate::ui_pet::PetCast {
+    if p.bar.spells.pet_guid == 0 {
         debug!("ui_pet_book: dropping a queued pet book cast — the bar is gone");
-        return;
+        return crate::ui_pet::PetCast::Done;
     }
-    let target_guid = p.spell_target(on_self);
-    let display = p.spells.as_ref().and_then(|s| s.catalog.get(spell_id));
-    if let Some(d) = display {
-        if crate::ui_action::toggle::active_action_toggle(spell_id, d, p.pet.auras(pet_guid)) {
-            debug!("ui_pet_book: cast {spell_id} cancels the pet's own aura");
-            let _ = p
-                .commands
-                .0
-                .send(ClientCommand::PetCancelAura { pet_guid, spell_id });
-            return;
-        }
-    }
-    // The word built for the send (`0x4b350a`-`0x4b3516`): type 1, the spell branch, autocast
-    // bits clear; with no target passed it aims at the selection (`0x4b34af`).
-    let packed = 0x0100_0000 | (spell_id & 0xFFFF);
-    debug!("ui_pet_book: cast {spell_id} (target {target_guid:#x})");
-    let _ = p.commands.0.send(ClientCommand::PetAction {
-        pet_guid,
-        packed,
-        target_guid,
-    });
+    let target = p.spell_target(on_self);
+    debug!("ui_pet_book: cast {spell_id} (target {target:?})");
+    p.cast_book_spell(spell_id, target)
 }
 
 /// Drains the pet book's `ToggleSpellAutocast` intents. Each asks the usability predicate before

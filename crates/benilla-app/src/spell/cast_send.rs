@@ -46,6 +46,8 @@ pub(crate) enum CastCommit {
         /// binder, as TryCast's target resolve (`6e4ef4`) takes the pair it was passed.
         on_object: Option<u64>,
     },
+    /// `CMSG_PET_CAST_SPELL` (0x1f0): a caster that is not the active player (`0x80b315`).
+    Pet { caster: u64 },
 }
 
 impl CastCommit {
@@ -61,6 +63,22 @@ impl CastCommit {
         } else {
             0x3c
         }
+    }
+}
+
+/// How long a cast as the pet stays pending when neither its go nor its failure arrives.
+const PET_PENDING_LIFE: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// A targeting click's bind as a cast's targets block, the same under every opcode.
+fn bound_target(bound: TargetedBind) -> UseItemTarget {
+    match bound {
+        TargetedBind::Dest(dest) => UseItemTarget::Dest(dest),
+        TargetedBind::Source(src) => UseItemTarget::Source(src),
+        TargetedBind::Item(guid) => UseItemTarget::Item(guid),
+        TargetedBind::Object(guid) => UseItemTarget::Object(guid),
+        TargetedBind::Unit(guid) => UseItemTarget::Unit(guid),
+        TargetedBind::Corpse(guid, target) => UseItemTarget::Corpse(target, guid),
+        TargetedBind::Glyph(socket) => UseItemTarget::Glyph(socket),
     }
 }
 
@@ -103,6 +121,9 @@ pub(crate) struct CastLadder<'w, 's> {
     pub(crate) trade_skill_opens: ResMut<'w, crate::ui_tradeskill::TradeSkillOpens>,
     pub(crate) ground: ResMut<'w, super::targeting::SpellTargeting>,
     pub(crate) held_for_pick: ResMut<'w, HeldForPick>,
+    /// The pet's cooldown list and pending cast, which a cast as the pet reads; its writes are
+    /// queued, as the script appliers share the bar.
+    pub(crate) pet_bar: Option<Res<'w, crate::ui_pet::PetBar>>,
 }
 
 /// What a targeting-cursor click bound: what `BindLocation 0x6e60f0` or `BindTarget 0x6e5b40`
@@ -136,7 +157,13 @@ impl CastLadder<'_, '_> {
         commit: CastCommit,
         bound: TargetedBind,
     ) {
+        if let CastCommit::Pet { caster } = commit {
+            self.commit_pet(spell_id, caster, bound_target(bound));
+            self.ground.clear();
+            return;
+        }
         let cmd = match commit {
+            CastCommit::Pet { .. } => unreachable!("committed above"),
             // The same targets block under either opcode; the spell side has one builder per bind.
             CastCommit::Spell => match bound {
                 TargetedBind::Dest(dest) => ClientCommand::CastSpellAtDest { spell_id, dest },
@@ -170,15 +197,7 @@ impl CastLadder<'_, '_> {
                 slot,
                 spell_id,
                 item_guid,
-                target: match bound {
-                    TargetedBind::Dest(dest) => UseItemTarget::Dest(dest),
-                    TargetedBind::Source(src) => UseItemTarget::Source(src),
-                    TargetedBind::Item(guid) => UseItemTarget::Item(guid),
-                    TargetedBind::Object(guid) => UseItemTarget::Object(guid),
-                    TargetedBind::Unit(guid) => UseItemTarget::Unit(guid),
-                    TargetedBind::Corpse(guid, target) => UseItemTarget::Corpse(target, guid),
-                    TargetedBind::Glyph(socket) => UseItemTarget::Glyph(socket),
-                },
+                target: bound_target(bound),
             },
         };
         if !commit.is_item() {
@@ -205,6 +224,158 @@ impl CastLadder<'_, '_> {
             self.cooldowns.start_gcd(spell_id, d, now, &self.spell_mods);
         }
         self.ground.clear();
+    }
+
+    /// `Spell_C_CastSpell` (`0x80cce0`) with the pet as caster, for the pet's client-targeted and
+    /// possessed presses (`0x5d445a`). The rungs that read the casting unit run on the pet's
+    /// [`cast_target::CastContext`]: a passive never casts, the dead rung, the per-caster pending
+    /// bail (`0x80d34b`), the targeting abort, the target bind and its range, power, crowd
+    /// control, then the targeting cursor or the send. The player's own state (bags, combo points,
+    /// auto-repeat, the swing) is not the pet's and is not asked.
+    pub(crate) fn send_pet(&mut self, spell_id: u32, ctx: &cast_target::CastContext, pet: u64) {
+        let now = Instant::now();
+        let Some(d) = self.spells.as_ref().and_then(|s| s.catalog.get(spell_id)) else {
+            return;
+        };
+        if d.attributes & 0x40 != 0 {
+            return;
+        }
+        if caster_dead_refusal(spell_id, Some(d), ctx.rel.self_store, &mut self.cast_errors) {
+            return;
+        }
+        // The same spell pending for this caster bails on cooldown or `0x404` (`0x80d36d`).
+        if let Some(bar) = self.pet_bar.as_deref() {
+            let pending = bar
+                .pending_cast
+                .is_some_and(|(id, until)| id == spell_id && now < until);
+            if pending
+                && (bar.cooldowns.not_ready(spell_id, 0, Some(d), now) || d.attributes & 0x404 != 0)
+            {
+                debug!("ui_pet: pet cast {spell_id} already pending — no packet");
+                return;
+            }
+        }
+        if self.ground.active() {
+            self.ground.clear();
+        }
+        let candidates = cast_target::CastCandidates {
+            selection: ctx.selection_guid,
+            caster: ctx.self_guid,
+            main_hand_item: None,
+        };
+        let mut pending_word = None;
+        let mut deferred_refusal = None;
+        let target = match cast_target::resolve_cast_target(
+            Some(d),
+            &candidates,
+            ctx.auto_self_cast,
+            &ctx.rel,
+        ) {
+            cast_target::CastWireTarget::SelfImplicit | cast_target::CastWireTarget::Item(_) => {
+                None
+            }
+            cast_target::CastWireTarget::Unit(guid) => Some(guid),
+            cast_target::CastWireTarget::Targeting(word) => {
+                pending_word = Some(word);
+                None
+            }
+            cast_target::CastWireTarget::Refused(reason) => {
+                self.cast_errors.push_local(spell_id, reason);
+                return;
+            }
+            cast_target::CastWireTarget::RefusedAtArm(reason) => {
+                deferred_refusal = Some(reason);
+                None
+            }
+        };
+        if target.is_some() && target == ctx.selection_guid && target != ctx.self_guid {
+            let row = self
+                .spells
+                .as_ref()
+                .and_then(|s| s.ranges.get(d.range_index));
+            if let Some(reason) = ctx.range.refusal(d, row, &self.spell_mods) {
+                debug!("ui_pet: pet cast {spell_id} refused locally — range ({reason:#x})");
+                self.cast_errors.push_local(spell_id, reason);
+                return;
+            }
+        }
+        if let Some(store) = ctx.rel.self_store {
+            if !super::usable::can_afford(d, store, &self.spell_mods) {
+                self.cast_errors.push_local(spell_id, 0x4d);
+                return;
+            }
+        }
+        let fields = ctx.rel.self_store.map(|s| &s.0);
+        let catalog = self.spells.as_ref().map(|s| &s.catalog);
+        if let Some((reason, mechanic)) = validator::cast_cc_refusal(
+            fields.map_or(0, |f| f.unit_flags()),
+            fields.and_then(|f| f.unit_health()),
+            // The pet is charmed or summoned by us; the charm arm refuses only another's.
+            false,
+            Some(d),
+            &mut |aura_types: &[u32]| {
+                let ids = || {
+                    ctx.self_auras
+                        .into_iter()
+                        .flat_map(|t| t.iter().map(|a| a.spell_id))
+                };
+                aura_types
+                    .iter()
+                    .map(|&ty| {
+                        benilla_formats::cc_exemption(d, ids(), ty, |id| {
+                            catalog.and_then(|c| c.get(id))
+                        })
+                    })
+                    .reduce(|a, b| if a.mechanic != 0 || a.exempt { a } else { b })
+                    .unwrap_or_default()
+            },
+        ) {
+            match mechanic {
+                Some(m) => self.cast_errors.push_local_arg(spell_id, reason, m),
+                None => self.cast_errors.push_local(spell_id, reason),
+            }
+            return;
+        }
+        if let Some(reason) = deferred_refusal {
+            self.cast_errors.push_local(spell_id, reason);
+            return;
+        }
+        if let Some(word) = pending_word {
+            debug!("ui_pet: pet cast {spell_id} awaits its click ({word:#06x})");
+            self.ground
+                .enter(spell_id, CastCommit::Pet { caster: pet }, word);
+            return;
+        }
+        let target = target.map_or(UseItemTarget::SelfImplicit, UseItemTarget::Unit);
+        self.commit_pet(spell_id, pet, target);
+    }
+
+    /// `Spell_C::SendPendingCast`'s pet arm (`0x80b315`): `CMSG_PET_CAST_SPELL`, no
+    /// `UNIT_SPELLCAST_SENT` (the player's only), the pet's pending cast and its cooldown start
+    /// (`Spell_C_StartSpellCooldown` with the pet as caster).
+    fn commit_pet(&mut self, spell_id: u32, pet: u64, target: UseItemTarget) {
+        debug!("ui_pet: pet cast {spell_id} sent as {pet:#x} at {target:?}");
+        let _ = self.commands.0.send(ClientCommand::PetCastSpell {
+            pet_guid: pet,
+            spell_id,
+            target,
+        });
+        let now = Instant::now();
+        let mods = self.spell_mods.clone();
+        self.ecs.queue(move |world: &mut World| {
+            if !world.contains_resource::<crate::ui_pet::PetBar>() {
+                return;
+            }
+            world.resource_scope(|world, mut bar: Mut<crate::ui_pet::PetBar>| {
+                bar.pending_cast = Some((spell_id, now + PET_PENDING_LIFE));
+                let d = world
+                    .get_resource::<crate::ui_action::Spells>()
+                    .and_then(|s| s.catalog.get(spell_id));
+                if let Some(d) = d {
+                    bar.cooldowns.start_gcd(spell_id, d, now, &mods);
+                }
+            });
+        });
     }
 
     /// TryCast's dead rung alone, for the Attack button, whose short-circuit (`0x6e4c7a`) leaves
@@ -453,7 +624,7 @@ fn send_spell_cast(
     let mut deferred_refusal = None;
     let explicit_object = match commit {
         CastCommit::Item { on_object, .. } => on_object,
-        CastCommit::Spell => bound_object,
+        CastCommit::Spell | CastCommit::Pet { .. } => bound_object,
     };
     let candidates = cast_target::CastCandidates {
         selection: ctx.selection_guid,
@@ -520,7 +691,7 @@ fn send_spell_cast(
     // `StartRecoveryCategory`. Local, because the server's NOT_READY fail clears the running GCD.
     let queried_item = match commit {
         CastCommit::Item { entry, .. } => entry,
-        CastCommit::Spell => 0,
+        CastCommit::Spell | CastCommit::Pet { .. } => 0,
     };
     if cooldowns.not_ready(spell_id, queried_item, def, now) {
         debug!("ui_action: cast {spell_id} refused locally — not ready (the validator's rung 1)");
@@ -745,6 +916,12 @@ fn send_spell_cast(
                 (None, None, Some(unit)) => UseItemTarget::Unit(unit),
                 (None, None, None) => UseItemTarget::SelfImplicit,
             },
+        },
+        // The pet's casts take `CastLadder::send_pet`, never this ladder.
+        CastCommit::Pet { caster } => ClientCommand::PetCastSpell {
+            pet_guid: caster,
+            spell_id,
+            target: target.map_or(UseItemTarget::SelfImplicit, UseItemTarget::Unit),
         },
     });
     // One in-flight id for every commit (`0xceca88`, written at `0x6e5026`): every class is

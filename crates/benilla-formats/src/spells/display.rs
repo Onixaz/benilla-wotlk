@@ -38,6 +38,9 @@ pub struct SpellDisplay {
     pub icon: Option<String>,
     /// `SpellVisual.dbc` id (column 131, the first of two); 0 is a silent cast.
     pub visual: u32,
+    /// The second `SpellVisual.dbc` id (column 132), taken below violence level 2 when nonzero
+    /// (`GetSpellVisual` `0x7fa290`).
+    pub visual_low_violence: u32,
     /// Projectile speed (column 47) in world units per second; 0 is an instant impact.
     pub speed: f32,
     /// `Attributes` (column 4).
@@ -259,6 +262,7 @@ impl Default for SpellDisplay {
             rank: None,
             icon: None,
             visual: 0,
+            visual_low_violence: 0,
             speed: 0.0,
             attributes: 0,
             school_mask: 0,

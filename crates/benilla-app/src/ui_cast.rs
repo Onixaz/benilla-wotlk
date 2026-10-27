@@ -34,6 +34,8 @@ pub(crate) enum CastBarEdge {
         spell_id: u32,
         cast_count: u8,
         cast_time_ms: u32,
+        /// The `CAST_FLAG_IMMUNITY` pair, `(school, mechanic)`, kept on the caster until the next.
+        immunities: Option<(u32, u32)>,
     },
     /// `SMSG_SPELL_GO`: the cast launched; `cast_flags & 1` fires nothing (`0x80e747`).
     Go {
@@ -84,6 +86,148 @@ pub(crate) fn queue_sent(ecs: &mut Commands, spell_id: u32, target: Option<u64>)
 pub(crate) struct UnitCasts {
     casts: HashMap<u64, Running>,
     channels: HashMap<u64, Running>,
+    /// Each unit's state bit `+0xa34 & 8`, set by `ProcessCastNotInterruptible` (`0x7262e0`) and
+    /// kept until its next evaluation.
+    not_interruptible: HashMap<u64, bool>,
+    /// Each caster's last cast immunities, `(school, mechanic)` (`+0xa64`, `+0xa68`).
+    immunities: HashMap<u64, (u32, u32)>,
+    /// The player's four school masks over its known spells.
+    schools: InterruptSchools,
+    /// The target and focus the bit was last evaluated for.
+    watched: [Option<u64>; 2],
+}
+
+impl UnitCasts {
+    /// `IsCastNotInterruptible` (`0x71ab20`): the unit's bit, and any of the player's masks, the
+    /// two specials only against a non-player.
+    fn reads_not_interruptible(&self, caster: u64) -> bool {
+        self.not_interruptible
+            .get(&caster)
+            .copied()
+            .unwrap_or(false)
+            && self.schools.against(is_player(caster)).any()
+    }
+}
+
+/// A unit guid of the player kind.
+fn is_player(guid: u64) -> bool {
+    benilla_protocol::guid::is_player(guid)
+}
+
+/// `CGSpellBook::UpdateSpells`' four school masks (`0x53cd48`-`0x53ce75`) over the known spells:
+/// an interrupt (effect 68), a silence (an aura 27), and the `AttributesEx7` specials `0x800` and
+/// `0x1000`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct InterruptSchools {
+    interrupt: u32,
+    silence: u32,
+    interrupt_special: u32,
+    silence_special: u32,
+}
+
+impl InterruptSchools {
+    pub(crate) fn of<'a>(known: impl IntoIterator<Item = &'a SpellDisplay>) -> Self {
+        let mut m = Self::default();
+        for d in known {
+            for j in 0..3 {
+                match d.effects[j] {
+                    6 if d.effect_apply_aura[j] == 27 => m.silence |= d.school_mask,
+                    68 => m.interrupt |= d.school_mask,
+                    _ => {}
+                }
+            }
+            if d.attributes_ex7 & 0x800 != 0 {
+                m.interrupt_special |= d.school_mask;
+            }
+            if d.attributes_ex7 & 0x1000 != 0 {
+                m.silence_special |= d.school_mask;
+            }
+        }
+        m
+    }
+
+    /// The masks against a caster: the specials count only against a non-player (`0x71ab30`).
+    fn against(mut self, caster_is_player: bool) -> Self {
+        if caster_is_player {
+            self.interrupt_special = 0;
+            self.silence_special = 0;
+        }
+        self
+    }
+
+    fn any(self) -> bool {
+        self.interrupt | self.silence | self.interrupt_special | self.silence_special != 0
+    }
+
+    fn clear_interrupt(&mut self) {
+        self.interrupt = 0;
+        self.interrupt_special = 0;
+    }
+
+    fn clear_silence(&mut self) {
+        self.silence = 0;
+        self.silence_special = 0;
+    }
+
+    fn clear_schools(&mut self, schools: u32) {
+        self.interrupt &= !schools;
+        self.interrupt_special &= !schools;
+        self.silence &= !schools;
+        self.silence_special &= !schools;
+    }
+}
+
+/// `ProcessCastNotInterruptible` (`0x7262e0`): the bit for a cast of `d`. Never under
+/// `AttributesEx7 & 0x2000`; always for a spell no silence prevents (`PreventionType != 1`);
+/// otherwise when the player's masks against the caster are left empty by its cast immunities
+/// (mechanic 26 interrupt, 9 silence, else the school mask) and its aura immunities (37 to 68, 38
+/// to 27, 39 by school, 77 to 9 or 26). Masks empty from the start leave the bit clear.
+fn not_interruptible_bit<'a>(
+    d: &SpellDisplay,
+    schools: InterruptSchools,
+    have_player: bool,
+    (school_imm, mechanic_imm): (u32, u32),
+    aura_spells: impl IntoIterator<Item = &'a SpellDisplay>,
+) -> bool {
+    if d.attributes_ex7 & 0x2000 != 0 {
+        return false;
+    }
+    if !have_player || d.prevention_type != 1 {
+        return true;
+    }
+    let mut m = schools;
+    if !m.any() {
+        return false;
+    }
+    if mechanic_imm & 0x0400_0000 != 0 {
+        m.clear_interrupt();
+    } else if school_imm != 0 {
+        m.interrupt &= !school_imm;
+        m.interrupt_special &= !school_imm;
+    }
+    if mechanic_imm & 0x200 != 0 {
+        m.clear_silence();
+    } else if school_imm != 0 {
+        m.silence &= !school_imm;
+        m.silence_special &= !school_imm;
+    }
+    for aura in aura_spells {
+        if !m.any() {
+            break;
+        }
+        for j in 0..3 {
+            let misc = aura.effect_misc_value[j];
+            match aura.effect_apply_aura[j] {
+                37 if misc == 68 => m.clear_interrupt(),
+                38 if misc == 27 => m.clear_silence(),
+                39 => m.clear_schools(misc as u32),
+                77 if misc == 9 => m.clear_silence(),
+                77 if misc == 26 => m.clear_interrupt(),
+                _ => {}
+            }
+        }
+    }
+    !m.any()
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -154,7 +298,13 @@ fn spell_args(spells: Option<&Spells>, id: u32, cast_count: u8) -> Vec<ScriptVal
 /// The cast as `UnitCastingInfo`/`UnitChannelInfo` read it. A cast's text is its name, empty under
 /// `AttributesEx3 & 4` (`0x611e81`); a channel's is its name only with `AttributesEx` bit 29
 /// (`0x612151`), else the Lua global `CHANNELING`.
-fn unit_cast(script: &UiScript, spells: Option<&Spells>, run: Running, channel: bool) -> UnitCast {
+fn unit_cast(
+    script: &UiScript,
+    spells: Option<&Spells>,
+    run: Running,
+    channel: bool,
+    not_interruptible: bool,
+) -> UnitCast {
     let display = spells.and_then(|s| s.catalog.get(run.spell_id));
     let (name, rank) = name_rank(spells, run.spell_id);
     let text = match display {
@@ -176,6 +326,7 @@ fn unit_cast(script: &UiScript, spells: Option<&Spells>, run: Running, channel: 
         // `Attributes & 0x20` (`0x611fa8`).
         trade_skill: display.is_some_and(|d| d.attributes & 0x20 != 0),
         cast_count: run.cast_count,
+        not_interruptible,
     }
 }
 
@@ -204,11 +355,21 @@ pub(crate) fn feed_cast_bar(
     index: Res<GuidIndex>,
     casting: Query<&Casting>,
     sent: SentTarget,
+    shield: ShieldInputs,
 ) {
     let Some(mut script) = script else {
         return;
     };
     let now = Instant::now();
+    if let (Some(actions), Some(s)) = (shield.actions.as_ref(), spells.as_ref()) {
+        if actions.is_changed() || s.is_changed() {
+            units.schools =
+                InterruptSchools::of(actions.spells.iter().filter_map(|&id| s.catalog.get(id)));
+        }
+    }
+    let target = shield.selection.as_ref().and_then(|s| s.guid);
+    let focus = Some(script.focus_guid()).filter(|&g| g != 0);
+    let watched = [target, focus];
     // The auto-repeat key (`0xceac30`), which the reference reads first, then the in-flight slot
     // the cancel resolves, so the flag and the cancel agree.
     let started = self_guid
@@ -253,7 +414,12 @@ pub(crate) fn feed_cast_bar(
                 spell_id,
                 cast_count,
                 cast_time_ms,
+                immunities,
             } => {
+                // Stored before any gate, and kept until the next start that carries a pair.
+                if let Some(pair) = immunities {
+                    units.immunities.insert(caster, pair);
+                }
                 let raises = spells
                     .and_then(|s| s.catalog.get(spell_id))
                     .is_none_or(|d| raises_events(d, is_self(caster), false));
@@ -267,7 +433,19 @@ pub(crate) fn feed_cast_bar(
                     end_ms: now_ms + f64::from(cast_time_ms),
                 };
                 units.casts.insert(caster, run);
-                let cast = unit_cast(&script, spells, run, false);
+                // `SetUICasting` evaluates the bit for the target and focus only (`0x72ac50`).
+                if watched.contains(&Some(caster)) {
+                    shield.evaluate(
+                        &mut units,
+                        spells,
+                        &index,
+                        self_guid.0.is_some(),
+                        caster,
+                        spell_id,
+                    );
+                }
+                let not = units.reads_not_interruptible(caster);
+                let cast = unit_cast(&script, spells, run, false, not);
                 script.set_unit_cast(caster, false, Some(cast));
                 script.fire_unit_event(
                     caster,
@@ -328,7 +506,8 @@ pub(crate) fn feed_cast_bar(
                 };
                 run.end_ms += f64::from(delay_ms);
                 let run = *run;
-                let cast = unit_cast(&script, spells, run, false);
+                let not = units.reads_not_interruptible(caster);
+                let cast = unit_cast(&script, spells, run, false, not);
                 script.set_unit_cast(caster, false, Some(cast));
                 script.fire_unit_event(
                     caster,
@@ -355,7 +534,19 @@ pub(crate) fn feed_cast_bar(
                     end_ms: now_ms + f64::from(duration_ms),
                 };
                 units.channels.insert(caster, run);
-                let cast = unit_cast(&script, spells, run, true);
+                // `SetUIChannel` evaluates the bit for the target and focus only (`0x72ad20`).
+                if watched.contains(&Some(caster)) {
+                    shield.evaluate(
+                        &mut units,
+                        spells,
+                        &index,
+                        self_guid.0.is_some(),
+                        caster,
+                        spell_id,
+                    );
+                }
+                let not = units.reads_not_interruptible(caster);
+                let cast = unit_cast(&script, spells, run, true, not);
                 script.set_unit_cast(caster, true, Some(cast));
                 script.fire_unit_event(
                     caster,
@@ -385,7 +576,8 @@ pub(crate) fn feed_cast_bar(
                         ..run
                     };
                     units.channels.insert(caster, run);
-                    let cast = unit_cast(&script, spells, run, true);
+                    let not = units.reads_not_interruptible(caster);
+                    let cast = unit_cast(&script, spells, run, true, not);
                     script.set_unit_cast(caster, true, Some(cast));
                     script.fire_unit_event(
                         caster,
@@ -395,6 +587,121 @@ pub(crate) fn feed_cast_bar(
                 }
             }
         }
+    }
+    reevaluate_watched(
+        &mut script,
+        &mut units,
+        spells,
+        &index,
+        self_guid.0.is_some(),
+        &shield,
+        watched,
+    );
+}
+
+/// The bit's other two evaluations: a new target re-reads it with no event (`0x524dbc`), and an
+/// aura change on the target or focus with a silenceable cast running (`PreventionType` 1)
+/// re-reads it and fires `UNIT_SPELLCAST_(NOT_)INTERRUPTIBLE` on a change (`0x72fd30`).
+fn reevaluate_watched(
+    script: &mut UiScript,
+    units: &mut UnitCasts,
+    spells: Option<&Spells>,
+    index: &GuidIndex,
+    have_player: bool,
+    shield: &ShieldInputs,
+    watched: [Option<u64>; 2],
+) {
+    for (slot, guid) in watched.into_iter().enumerate() {
+        let Some(guid) = guid else { continue };
+        let newly = slot == 0 && units.watched[0] != Some(guid);
+        let auras_moved = index
+            .0
+            .get(&guid)
+            .and_then(|&e| shield.auras.get(e).ok())
+            .is_some_and(|a| a.is_changed());
+        if !newly && !auras_moved {
+            continue;
+        }
+        // The casting spell first, else the channel.
+        let (run, channel) = match (units.casts.get(&guid), units.channels.get(&guid)) {
+            (Some(&r), _) => (r, false),
+            (None, Some(&r)) => (r, true),
+            (None, None) => continue,
+        };
+        let silenceable = spells
+            .and_then(|s| s.catalog.get(run.spell_id))
+            .is_some_and(|d| d.prevention_type == 1);
+        if !newly && !silenceable {
+            continue;
+        }
+        let before = units.reads_not_interruptible(guid);
+        shield.evaluate(units, spells, index, have_player, guid, run.spell_id);
+        let after = units.reads_not_interruptible(guid);
+        let cast = unit_cast(script, spells, run, channel, after);
+        script.set_unit_cast(guid, channel, Some(cast));
+        if !newly && before != after {
+            let event = if after {
+                "UNIT_SPELLCAST_NOT_INTERRUPTIBLE"
+            } else {
+                "UNIT_SPELLCAST_INTERRUPTIBLE"
+            };
+            script.fire_unit_event(guid, event, vec![]);
+        }
+    }
+    units.watched = watched;
+    // The bits outlive their casts, as on the unit; bound them by the units still in play.
+    if units.not_interruptible.len() > 256 {
+        let UnitCasts {
+            casts,
+            channels,
+            not_interruptible,
+            immunities,
+            ..
+        } = units;
+        let keep = |g: &u64| {
+            casts.contains_key(g) || channels.contains_key(g) || watched.contains(&Some(*g))
+        };
+        not_interruptible.retain(|g, _| keep(g));
+        immunities.retain(|g, _| keep(g));
+    }
+}
+
+/// What the not-interruptible bit reads beyond the feed: the known spells the school masks come
+/// from, the target, and the casters' auras.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct ShieldInputs<'w, 's> {
+    actions: Option<Res<'w, crate::ui_action::PlayerActions>>,
+    selection: Option<Res<'w, crate::target::Selection>>,
+    auras: Query<'w, 's, Ref<'static, crate::unit_auras::UnitAuras>>,
+}
+
+impl ShieldInputs<'_, '_> {
+    /// Run `ProcessCastNotInterruptible` for `caster`'s cast of `spell_id` into its bit.
+    fn evaluate(
+        &self,
+        units: &mut UnitCasts,
+        spells: Option<&Spells>,
+        index: &GuidIndex,
+        have_player: bool,
+        caster: u64,
+        spell_id: u32,
+    ) {
+        let Some((spells, d)) = spells.and_then(|s| Some((s, s.catalog.get(spell_id)?))) else {
+            return;
+        };
+        let auras = index.0.get(&caster).and_then(|&e| self.auras.get(e).ok());
+        let aura_spells = auras
+            .iter()
+            .flat_map(|a| a.iter())
+            .filter_map(|a| spells.catalog.get(a.spell_id));
+        let bit = not_interruptible_bit(
+            d,
+            units.schools.against(is_player(caster)),
+            have_player,
+            units.immunities.get(&caster).copied().unwrap_or((0, 0)),
+            aura_spells,
+        );
+        units.not_interruptible.insert(caster, bit);
     }
 }
 
@@ -546,6 +853,7 @@ mod tests {
             spell_id: HEAL,
             cast_count,
             cast_time_ms: 1500,
+            immunities: None,
         };
         assert_eq!(run(&mut app, vec![start(7)]), "START:player:Lesser Heal:7");
         assert_eq!(
@@ -605,6 +913,7 @@ mod tests {
             spell_id: HEAL,
             cast_count: 11,
             cast_time_ms: 0,
+            immunities: None,
         };
         let go11 = CastBarEdge::Go {
             caster: ME,
@@ -638,5 +947,159 @@ mod tests {
             end_event(shared("SPELL_FAILED_BAD_TARGETS")),
             "UNIT_SPELLCAST_FAILED"
         );
+    }
+
+    /// Kick: an interrupt (effect 68) of the physical school.
+    fn kick() -> SpellDisplay {
+        SpellDisplay {
+            effects: [68, 0, 0],
+            school_mask: 1,
+            ..Default::default()
+        }
+    }
+
+    /// A silenceable mob cast (`PreventionType` 1).
+    fn bolt() -> SpellDisplay {
+        SpellDisplay {
+            prevention_type: 1,
+            ..Default::default()
+        }
+    }
+
+    /// `ProcessCastNotInterruptible` (`0x7262e0`) over its arms.
+    #[test]
+    fn the_bit_sets_when_the_players_interrupts_cannot_land() {
+        let schools = InterruptSchools::of([&kick()]);
+        let none: [&SpellDisplay; 0] = [];
+        // Interruptible: the player's Kick lands.
+        assert!(!not_interruptible_bit(&bolt(), schools, true, (0, 0), none));
+        // A mechanic-26 immunity from the cast, or the caster's school immunity, clears Kick.
+        assert!(not_interruptible_bit(
+            &bolt(),
+            schools,
+            true,
+            (0, 0x0400_0000),
+            none
+        ));
+        assert!(not_interruptible_bit(&bolt(), schools, true, (1, 0), none));
+        // An aura immunity to the interrupt effect does the same.
+        let immune = SpellDisplay {
+            effect_apply_aura: [37, 0, 0],
+            effect_misc_value: [68, 0, 0],
+            ..Default::default()
+        };
+        assert!(not_interruptible_bit(
+            &bolt(),
+            schools,
+            true,
+            (0, 0),
+            [&immune]
+        ));
+        // A spell nothing silences always sets it; `AttributesEx7 & 0x2000` never does.
+        assert!(not_interruptible_bit(
+            &SpellDisplay::default(),
+            schools,
+            true,
+            (0, 0),
+            none
+        ));
+        let exempt = SpellDisplay {
+            attributes_ex7: 0x2000,
+            ..bolt()
+        };
+        assert!(!not_interruptible_bit(
+            &exempt,
+            schools,
+            true,
+            (0, 0x0400_0000),
+            none
+        ));
+        // No interrupt known: the bit stays clear.
+        let empty = InterruptSchools::default();
+        assert!(!not_interruptible_bit(
+            &bolt(),
+            empty,
+            true,
+            (0, 0x0400_0000),
+            none
+        ));
+    }
+
+    /// The target's immune cast reads `notInterruptible`, and a dispelled immunity aura fires
+    /// `UNIT_SPELLCAST_INTERRUPTIBLE` and clears it.
+    #[test]
+    fn the_targets_cast_carries_the_shield_and_its_edges() {
+        const MOB: u64 = 0xF130_0000_0000_0042;
+        const BOLT: u32 = 9001;
+        const IMMUNE: u32 = 9002;
+        const KICK: u32 = 1766;
+        let mut app = feed_app();
+        {
+            let mut spells = app.world_mut().resource_mut::<Spells>();
+            let immune = SpellDisplay {
+                effect_apply_aura: [77, 0, 0],
+                effect_misc_value: [26, 0, 0],
+                ..Default::default()
+            };
+            spells.catalog = benilla_formats::SpellCatalog::from_displays(
+                [(KICK, kick()), (BOLT, bolt()), (IMMUNE, immune)]
+                    .into_iter()
+                    .collect(),
+            );
+        }
+        let mut actions = crate::ui_action::PlayerActions::default();
+        actions.spells.insert(KICK);
+        app.insert_resource(actions);
+        app.insert_resource(crate::target::Selection {
+            guid: Some(MOB),
+            ..Default::default()
+        });
+        let mob = app
+            .world_mut()
+            .spawn(crate::unit_auras::UnitAuras::of(MOB, &[(0, IMMUNE, 1)]))
+            .id();
+        app.world_mut()
+            .resource_mut::<GuidIndex>()
+            .0
+            .insert(MOB, mob);
+        {
+            let mut script = app.world_mut().non_send_resource_mut::<UiScript>();
+            script.set_unit_guids(&benilla_ui::script::UnitGuids {
+                player: ME,
+                target: MOB,
+                ..Default::default()
+            });
+            script
+                .run(
+                    "local g = CreateFrame('Frame')
+                     g:RegisterEvent('UNIT_SPELLCAST_INTERRUPTIBLE')
+                     g:RegisterEvent('UNIT_SPELLCAST_NOT_INTERRUPTIBLE')
+                     g:SetScript('OnEvent', function(self, e, u, n, r, c)
+                         table.insert(SEEN, e:sub(16) .. ':' .. u .. ':' .. tostring(n) .. ':'
+                             .. tostring(c)) end)",
+                )
+                .unwrap();
+        }
+        let start = CastBarEdge::Start {
+            caster: MOB,
+            spell_id: BOLT,
+            cast_count: 0,
+            cast_time_ms: 2000,
+            immunities: None,
+        };
+        run(&mut app, vec![start]);
+        let shield = |app: &mut App| {
+            app.world_mut()
+                .non_send_resource::<UiScript>()
+                .eval::<bool>(r#"return select(9, UnitCastingInfo("target"))"#)
+                .unwrap()
+        };
+        assert!(shield(&mut app), "the immunity aura shields the cast");
+        // The aura goes; the re-read clears the shield and says so.
+        app.world_mut()
+            .entity_mut(mob)
+            .insert(crate::unit_auras::UnitAuras::default());
+        assert_eq!(run(&mut app, vec![]), "INTERRUPTIBLE:target:nil:nil");
+        assert!(!shield(&mut app));
     }
 }

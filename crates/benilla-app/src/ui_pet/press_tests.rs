@@ -223,11 +223,11 @@ impl Rig {
     }
 
     /// `CastPetAction(slot)`, applied.
-    pub(super) fn press(&mut self, slot: u32) {
+    pub(super) fn press(&mut self, slot: u32) -> super::PetCast {
         self.app
             .world_mut()
             .run_system_once(move |mut press: PetPress| press.press_slot(slot))
-            .expect("the press applies as a one-shot system");
+            .expect("the press applies as a one-shot system")
     }
 
     /// `PetAttack` and the other one-shot orders, as their slot's packed word, applied.

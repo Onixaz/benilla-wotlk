@@ -65,6 +65,8 @@ struct Record {
     gcd: Timer,
     /// Every timer has run out: the record reads cold and stays until [`Cooldowns::collect`].
     spent: bool,
+    /// When the record was inserted, the stamp `RecentlyCast` reads.
+    time: Instant,
 }
 
 /// One action's cooldown read (`GetActionCooldown`): the winning timer's start, duration and
@@ -200,9 +202,20 @@ impl Cooldowns {
             gcd_category,
             gcd,
             spent: false,
+            time: now,
         });
         self.bump();
         true
+    }
+
+    /// `SpellHistory::RecentlyCast` (`0x807d40`): a record of the spell and item inserted under
+    /// 1500 ms ago.
+    pub(crate) fn recently_cast(&self, spell_id: u32, item_id: u32, now: Instant) -> bool {
+        self.records.iter().any(|r| {
+            r.spell_id == spell_id
+                && r.item_id == item_id
+                && now.saturating_duration_since(r.time) < Duration::from_millis(1500)
+        })
     }
 
     /// Mark the fully elapsed records that are not on hold spent; invisible to reads, it is the

@@ -3,9 +3,9 @@
 //!
 //! - `SkillLine.dbc`, 56 fields: `ID`, `categoryId`, `skillCostID`, the name (3-19), the
 //!   description (20-36), `spellIcon` (37), the alternate verb (38-54) and `canLink`.
-//! - `SkillLineAbility.dbc`, 14 fields: one row per spell, the first in file order, except
-//!   `forward_spellid`, the first non-zero across the spell's rows as in vmangos's
-//!   `SpellMgr::GetSpellBookSuccessorSpellId`.
+//! - `SkillLineAbility.dbc`, 14 fields: every row of a spell, resolved per race and class as
+//!   `SpellTableLookupAbility` (`0x812410`) does; `forward_spellid` is the first non-zero across
+//!   the spell's rows, as in vmangos's `SpellMgr::GetSpellBookSuccessorSpellId`.
 //! - `SkillRaceClassInfo.dbc`, `SkillRaceClassInfofmt = "diiiiiix"`: the row admitting the
 //!   player's race and class, which the reference resolves at `0x6ddf90`; here the first such row.
 //!   With flag `0x80`, or with no such row, a spell's tab is General.
@@ -37,6 +37,8 @@ const COL_SLA_SKILL_ID: usize = 1;
 const COL_SLA_SPELL_ID: usize = 2;
 const COL_SLA_RACE_MASK: usize = 3;
 const COL_SLA_CLASS_MASK: usize = 4;
+const COL_SLA_EXCLUDE_RACE: usize = 5;
+const COL_SLA_EXCLUDE_CLASS: usize = 6;
 const COL_SLA_REQ_SKILL_VALUE: usize = 7;
 const COL_SLA_FORWARD_SPELL: usize = 8;
 const COL_SLA_TRIVIAL_HIGH: usize = 10;
@@ -186,10 +188,52 @@ pub struct SlaInfo {
     pub trivial_high: u32,
 }
 
+/// One `SkillLineAbility.dbc` row of a spell, with the masks its lookup admits it by.
+#[derive(Clone, Copy, Debug)]
+struct SlaRow {
+    info: SlaInfo,
+    race_mask: u32,
+    class_mask: u32,
+    /// `ExcludeRace`/`ExcludeClass`, columns 5-6: the mask names who is refused.
+    exclude_race: bool,
+    exclude_class: bool,
+}
+
+impl SlaRow {
+    fn any(info: SlaInfo) -> Self {
+        Self {
+            info,
+            race_mask: 0,
+            class_mask: 0,
+            exclude_race: false,
+            exclude_class: false,
+        }
+    }
+
+    /// `SpellTableMatchRaceClass` (`0x810320`): an exclude flag inverts its mask, a zero mask
+    /// admits all.
+    fn admits(&self, race: u8, class: u8) -> bool {
+        let bit = |n: u8| 1u32.wrapping_shl(u32::from(n).wrapping_sub(1));
+        let race_mask = if self.exclude_race {
+            !self.race_mask
+        } else {
+            self.race_mask
+        };
+        let class_mask = if self.exclude_class {
+            !self.class_mask
+        } else {
+            self.class_mask
+        };
+        (race_mask == 0 || race_mask & bit(race) != 0)
+            && (class_mask == 0 || class_mask & bit(class) != 0)
+    }
+}
+
 /// The skill tables joined: a spell's line, a line's display, and the per-race/class routing.
 pub struct SkillLineCatalog {
     lines: HashMap<u32, SkillLineInfo>,
-    abilities: HashMap<u32, SlaInfo>,
+    /// Every row of a spell, in file order.
+    abilities: HashMap<u32, Vec<SlaRow>>,
     /// `SkillLineCategory.dbc`: id to (enUS name, displayOrder).
     categories: HashMap<u32, (String, u32)>,
     /// Skill line id to its `SkillRaceClassInfo` rows; empty if the DBC failed to load.
@@ -209,13 +253,13 @@ impl SkillLineCatalog {
                 .map(|(spell, line)| {
                     (
                         spell,
-                        SlaInfo {
+                        vec![SlaRow::any(SlaInfo {
                             skill_id: line,
                             req_skill_value: 0,
                             forward_spell_id: 0,
                             trivial_low: 0,
                             trivial_high: 0,
-                        },
+                        })],
                     )
                 })
                 .collect(),
@@ -227,22 +271,35 @@ impl SkillLineCatalog {
         }
     }
 
-    /// The skill line a spell belongs to, if `SkillLineAbility.dbc` names one.
-    pub fn spell_to_line(&self, spell_id: u32) -> Option<u32> {
-        self.abilities.get(&spell_id).map(|a| a.skill_id)
+    /// The skill line of a spell for a 1-based `race` and `class`, through [`Self::ability`].
+    pub fn spell_to_line(&self, spell_id: u32, race: u8, class: u8) -> Option<u32> {
+        self.ability(spell_id, race, class).map(|a| a.skill_id)
     }
 
-    /// A spell's `SkillLineAbility` row.
-    pub fn ability(&self, spell_id: u32) -> Option<&SlaInfo> {
-        self.abilities.get(&spell_id)
+    /// A spell's `SkillLineAbility` row for a 1-based `race` and `class`: the last row in file
+    /// order whose line has a `SkillRaceClassInfo` row admitting the pair and whose own masks admit
+    /// it, the bucket head `SpellTableLookupAbility` (`0x812410`) returns, since each admitted row
+    /// links at the head (`0x811cc0`). Before the descriptor (race or class 0), the first row.
+    pub fn ability(&self, spell_id: u32, race: u8, class: u8) -> Option<&SlaInfo> {
+        let rows = self.abilities.get(&spell_id)?;
+        if !(1..=32).contains(&race) || !(1..=32).contains(&class) {
+            return rows.first().map(|r| &r.info);
+        }
+        rows.iter()
+            .rev()
+            .find(|r| {
+                r.admits(race, class)
+                    && (self.race_class.is_empty()
+                        || self.srci_row(r.info.skill_id, race, class).is_some())
+            })
+            .map(|r| &r.info)
     }
 
     /// The next rank of `spell_id`, as vmangos's `SpellMgr::GetSpellBookSuccessorSpellId`.
     pub fn rank_successor(&self, spell_id: u32) -> Option<u32> {
         self.abilities
             .get(&spell_id)
-            .map(|a| a.forward_spell_id)
-            .filter(|&id| id != 0)
+            .and_then(|rows| forward_of(rows))
     }
 
     /// The first rank of `spell_id`'s chain, `spell_id` itself when it has none.
@@ -279,12 +336,11 @@ impl SkillLineCatalog {
 
     /// A catalog of ability rows only, for tests.
     pub fn from_abilities(abilities: impl IntoIterator<Item = (u32, SlaInfo)>) -> Self {
-        let abilities: HashMap<u32, SlaInfo> = abilities.into_iter().collect();
-        let rank_prev = abilities
-            .iter()
-            .filter(|(_, a)| a.forward_spell_id != 0)
-            .map(|(id, a)| (a.forward_spell_id, *id))
+        let abilities: HashMap<u32, Vec<SlaRow>> = abilities
+            .into_iter()
+            .map(|(id, a)| (id, vec![SlaRow::any(a)]))
             .collect();
+        let rank_prev = rank_links(&abilities);
         Self {
             abilities,
             lines: HashMap::new(),
@@ -343,7 +399,7 @@ impl SkillLineCatalog {
     /// The spellbook tab for a spell and a 1-based `race`/`class`: its skill line, or 0 for
     /// General. An unknown race or class, or no routing data, keeps the raw line.
     pub fn spell_tab(&self, spell_id: u32, race: u8, class: u8) -> u32 {
-        let Some(line) = self.spell_to_line(spell_id) else {
+        let Some(line) = self.spell_to_line(spell_id, race, class) else {
             return 0; // no skill line → General
         };
         if self.race_class.is_empty() || !(1..=32).contains(&race) || !(1..=32).contains(&class) {
@@ -415,6 +471,21 @@ impl SkillLineCatalog {
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
     }
+}
+
+/// A spell's next rank: the first non-zero `forward_spellid` across its rows.
+fn forward_of(rows: &[SlaRow]) -> Option<u32> {
+    rows.iter()
+        .map(|r| r.info.forward_spell_id)
+        .find(|&id| id != 0)
+}
+
+/// `forward_spellid` inverted, next rank to previous.
+fn rank_links(abilities: &HashMap<u32, Vec<SlaRow>>) -> HashMap<u32, u32> {
+    abilities
+        .iter()
+        .filter_map(|(&spell, rows)| Some((forward_of(rows)?, spell)))
+        .collect()
 }
 
 pub(crate) fn skill_line_schema() -> Schema {
@@ -556,7 +627,7 @@ pub fn load_skill_line_catalog(chain: &mut Chain) -> Result<SkillLineCatalog> {
         skill_line_ability_schema(),
         "SkillLineAbility.dbc",
     )?;
-    let mut abilities: HashMap<u32, SlaInfo> = HashMap::new();
+    let mut abilities: HashMap<u32, Vec<SlaRow>> = HashMap::new();
     let mut link_runs: HashMap<u32, Vec<LinkAbility>> = HashMap::new();
     // The open run's line; a non-linkable row ends it without starting one (`0x812030`).
     let mut run: Option<u32> = None;
@@ -584,26 +655,23 @@ pub fn load_skill_line_catalog(chain: &mut Chain) -> Result<SkillLineCatalog> {
             } else {
                 run = None;
             }
-            let forward_spell_id = u32_at(r, COL_SLA_FORWARD_SPELL).unwrap_or(0);
-            // The first row in file order wins.
-            let slot = abilities.entry(spell_id).or_insert(SlaInfo {
-                skill_id,
-                req_skill_value: u32_at(r, COL_SLA_REQ_SKILL_VALUE).unwrap_or(0),
-                forward_spell_id,
-                trivial_low: u32_at(r, COL_SLA_TRIVIAL_LOW).unwrap_or(0),
-                trivial_high: u32_at(r, COL_SLA_TRIVIAL_HIGH).unwrap_or(0),
+            let rows = abilities.entry(spell_id).or_default();
+            rows.push(SlaRow {
+                info: SlaInfo {
+                    skill_id,
+                    req_skill_value: u32_at(r, COL_SLA_REQ_SKILL_VALUE).unwrap_or(0),
+                    forward_spell_id: u32_at(r, COL_SLA_FORWARD_SPELL).unwrap_or(0),
+                    trivial_low: u32_at(r, COL_SLA_TRIVIAL_LOW).unwrap_or(0),
+                    trivial_high: u32_at(r, COL_SLA_TRIVIAL_HIGH).unwrap_or(0),
+                },
+                race_mask: row.race_mask,
+                class_mask: row.class_mask,
+                exclude_race: u32_at(r, COL_SLA_EXCLUDE_RACE).unwrap_or(0) != 0,
+                exclude_class: u32_at(r, COL_SLA_EXCLUDE_CLASS).unwrap_or(0) != 0,
             });
-            // Except the rank link: the first non-zero across the rows, as vmangos scans them all.
-            if slot.forward_spell_id == 0 {
-                slot.forward_spell_id = forward_spell_id;
-            }
         }
     }
-    let rank_prev = abilities
-        .iter()
-        .filter(|(_, a)| a.forward_spell_id != 0)
-        .map(|(&spell, a)| (a.forward_spell_id, spell))
-        .collect();
+    let rank_prev = rank_links(&abilities);
 
     let race_class = load_race_class_info(chain);
     let categories = load_categories(chain);

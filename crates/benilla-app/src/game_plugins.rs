@@ -830,7 +830,7 @@ pub(crate) mod schedule_tests {
     /// - `vplates::read_plate_cvars` against the `Cvars` writers `persist_last_character`,
     ///   `drive_game_tip` and `drain_view_requests`: it reads only the two plate rows, which none of
     ///   them writes, and only when the registry moved.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_920;
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_862;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

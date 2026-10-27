@@ -253,6 +253,43 @@ mod tests {
         ));
     }
 
+    /// A cast as the pet (Freeze, `0x5d445a`) binds the same terrain click and leaves as
+    /// `CMSG_PET_CAST_SPELL` with the pet's guid and the dest block (`0x80b315`).
+    #[test]
+    fn the_pets_ground_cast_commits_as_the_pet() {
+        const FREEZE: u32 = 33395;
+        const PET: u64 = 0xF130_0001_FE16_EC4F;
+        let (mut world, rx, _) = fixture();
+        let id = world.register_system(commit_ground_cast_on_click);
+        world.resource_mut::<super::super::SpellTargeting>().enter(
+            FREEZE,
+            crate::spell::cast_send::CastCommit::Pet { caster: PET },
+            0x0040,
+        );
+        world.resource_mut::<crate::target::PressPick>().occlusion = crate::target::PickOcclusion {
+            distance: 5.0,
+            point: Some(Vec3::new(1.0, 2.0, 3.0)),
+            ray: None,
+        };
+        world
+            .resource_mut::<Messages<WorldClick>>()
+            .write(WorldClick);
+        world.run_system(id).expect("the ground commit runs");
+        let sent = rx.try_recv().expect("the pet's cast is sent");
+        let ClientCommand::PetCastSpell {
+            pet_guid,
+            spell_id,
+            target: benilla_protocol::messages::UseItemTarget::Dest(at),
+        } = sent
+        else {
+            panic!("a pet cast at the click: {sent:?}");
+        };
+        assert_eq!((pet_guid, spell_id), (PET, FREEZE));
+        assert_eq!(at, bevy_to_wow(Vec3::new(1.0, 2.0, 3.0)));
+        assert!(rx.try_recv().is_err(), "nothing else: no CMSG_CAST_SPELL");
+        assert!(!world.resource::<super::super::SpellTargeting>().active());
+    }
+
     /// A lock word, a chest under the cursor, one click: the cast at the chest, the mode ended.
     #[test]
     fn a_click_on_a_hovered_gameobject_commits_the_lock_cast() {

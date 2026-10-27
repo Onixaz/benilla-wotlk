@@ -1216,6 +1216,13 @@ pub(crate) enum ClientCommand {
         packed: u32,
         target_guid: u64,
     },
+    /// `CMSG_PET_CAST_SPELL`: a cast with the pet as caster, through the cast ladder; the targets
+    /// block is a cast's.
+    PetCastSpell {
+        pet_guid: u64,
+        spell_id: u32,
+        target: benilla_protocol::messages::UseItemTarget,
+    },
     /// `CMSG_PET_SET_ACTION`: one or two `(position, word)` pairs. The bar's autocast toggle is
     /// one entry with bit 30 flipped.
     PetSetAction {

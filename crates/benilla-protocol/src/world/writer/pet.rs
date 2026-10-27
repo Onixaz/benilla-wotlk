@@ -18,6 +18,21 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_PET_CAST_SPELL`: a cast as the pet, its targets block a cast's; the server answers a
+    /// refusal with `SMSG_PET_CAST_FAILED`.
+    pub fn pet_cast_spell(
+        &mut self,
+        pet_guid: u64,
+        spell_id: u32,
+        target: messages::UseItemTarget,
+    ) -> Result<()> {
+        let count = self.cast_counter.take();
+        self.send(
+            opcode::CMSG_PET_CAST_SPELL,
+            &messages::pet_cast_spell(pet_guid, count, spell_id, target),
+        )
+    }
+
     /// `CMSG_PET_STOP_ATTACK`: the Attack button's second press.
     pub fn pet_stop_attack(&mut self, pet_guid: u64) -> Result<()> {
         self.send(

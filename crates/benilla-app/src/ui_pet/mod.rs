@@ -27,7 +27,7 @@ use bar::{feed_pet_bar, fire_pet_cooldown_events};
 use drain::drain_pet_actions;
 // A pet bar press, applied in call order by `crate::script_calls`.
 pub(crate) use drain::pet_stop_on_old_target_clear;
-pub(crate) use drain::PetPress;
+pub(crate) use drain::{PetCast, PetPress};
 use menu::{drain_pet_menu, feed_pet_menu};
 use unit::feed_pet_unit;
 
@@ -65,6 +65,9 @@ pub(crate) struct PetBar {
     /// `[0xb714a8]`: the charm or possess expiry, the packet's duration past its arrival; `None`
     /// when the duration is 0, as for a hunter's or warlock's own pet.
     pub(crate) expires: Option<Instant>,
+    /// The pet's pending cast, the spell a cast as the pet sent and its expiry: the per-caster
+    /// pending list `Spell_C_CastSpell` asks (`0x80d34b`), released by the pet's go or failure.
+    pub(crate) pending_cast: Option<(u32, Instant)>,
 }
 
 impl PetBar {

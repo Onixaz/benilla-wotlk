@@ -258,7 +258,31 @@ impl WeaponVisualSrc<'_, '_> {
     }
 }
 
-/// A spell's effective `SpellVisual` row (`Spell.dbc` column 115). A ranged spell
+/// `ViolenceGetLevel() < 2`, as [`track_violence_level`] keeps it from `violenceLevel`.
+static LOW_VIOLENCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `GetSpellVisual` (`0x7fa290`): below violence level 2 a spell's second visual, when it has one.
+pub(crate) fn spell_visual_id(d: &benilla_formats::SpellDisplay) -> u32 {
+    pick_visual(d, LOW_VIOLENCE.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+fn pick_visual(d: &benilla_formats::SpellDisplay, low_violence: bool) -> u32 {
+    if low_violence && d.visual_low_violence != 0 {
+        d.visual_low_violence
+    } else {
+        d.visual
+    }
+}
+
+/// Follow `violenceLevel` into [`LOW_VIOLENCE`] when the CVars change.
+pub(super) fn track_violence_level(cvars: Option<Res<crate::cvars::Cvars>>) {
+    if let Some(c) = cvars.filter(|c| c.is_changed()) {
+        let low = super::blood::violence_level(Some(&c)) < 2;
+        LOW_VIOLENCE.store(low, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// A spell's effective `SpellVisual` row ([`spell_visual_id`]). A ranged spell
 /// (`Attributes & 0x2`) fills its row's zero slots, never state or channel, from the caster's
 /// ranged weapon visual (`0x60d450`); a basic shot has no row and takes it whole.
 fn resolve_stages(
@@ -268,7 +292,7 @@ fn resolve_stages(
     weapon_visual: impl FnOnce() -> Option<u32>,
 ) -> Option<VisualStages> {
     let def = spells.catalog.get(spell_id)?;
-    let own = visuals.stages(def.visual).copied();
+    let own = visuals.stages(spell_visual_id(def)).copied();
     if !def.ranged_slot() {
         return own; // no fill (`0x60d468`)
     }
@@ -326,7 +350,7 @@ fn resolve_kit_traced(
             &format!(
                 "kit {stage_name} unit={entity} spell={spell_id} own_visual={} ranged_slot={} \
                  weapon={weapon} kit={kit_id} anim={:?}",
-                def.map_or(0, |d| d.visual),
+                def.map_or(0, spell_visual_id),
                 def.is_some_and(|d| d.ranged_slot()),
                 kit.and_then(|k| k.anim_id),
             ),
@@ -986,10 +1010,12 @@ pub(super) fn route_cast_visuals(
 /// `SMSG_AURA_UPDATE_ALL`), and leaving reaps them. 12340's applied core (`0x724820`) plays the
 /// spell's `SpellVisual` state kit (column 4, `+0x10`) at stage 2 through the unit's kit player
 /// (`0x745230`, `0x724c86`), and its removal core (`0x71e930`) stops the spell's kits with
-/// `0x743b40(spellId, force=1)` (`0x71ebda`). The add edge rings the kit sound and never plays the
-/// kit's anim: stage 2 compares it with what the unit plays, a mismatch spent on a
-/// [`BaseAnimRecompute`]. `CharProc` columns go out as [`AuraProc`] edges, and a kit arms for any
-/// leg (Stealth's kit 312 is one `CharProc`). `armed` holds only the pairs this watcher began.
+/// `0x743b40(spellId, force=1)` (`0x71ebda`), then plays the state-done kit ([`StateDoneKit`]).
+/// The add edge rings the kit sound and never plays the kit's anim: stage 2 compares it with what
+/// the unit plays, a mismatch spent on a [`BaseAnimRecompute`]. `CharProc` columns go out as
+/// [`AuraProc`] edges, and a kit arms for any leg (Stealth's kit 312 is one `CharProc`). `armed`
+/// holds every visible aura's spell, kit or none, as the applied core stores the slot's spell
+/// (`0x724820`) whatever its visual.
 ///
 /// A detection aura's kit shows only to a viewer who shares its vision: the applied core skips the
 /// kit when the spell's [`aura_vision_mask`](benilla_formats::SpellDisplay::aura_vision_mask) has
@@ -1012,6 +1038,7 @@ pub(crate) fn arm_aura_state_fx(
     mut procs: MessageWriter<AuraProc>,
     mut sounds: MessageWriter<SpellKitSound>,
     mut recomputes: MessageWriter<BaseAnimRecompute>,
+    mut done: MessageWriter<StateDoneKit>,
     mut armed: Local<EntityHashMap<Vec<u32>>>,
     mut seen_vision: Local<u8>,
 ) {
@@ -1063,13 +1090,16 @@ pub(crate) fn arm_aura_state_fx(
                 {
                     sounds.write(SpellKitSound::StopKit { entity, kit_sound });
                 }
+                // Then the state-done kit, for any slot the applied core armed (`0x71eb11`).
+                done.write(StateDoneKit { entity, spell_id });
             }
         }
         let mut next = Vec::with_capacity(prev.len());
         for &spell_id in &cur {
+            // Armed whatever its visual, so its end plays the state-done kit.
+            next.push(spell_id);
             if prev.contains(&spell_id) {
-                next.push(spell_id); // still armed
-                continue;
+                continue; // still armed
             }
             let Some(kit) = resolve_kit(spells, &visuals.0, spell_id, |s| s.state, || None) else {
                 continue; // no state kit
@@ -1117,7 +1147,6 @@ pub(crate) fn arm_aura_state_fx(
             if let Some(anim_id) = kit.anim_id {
                 recomputes.write(BaseAnimRecompute { entity, anim_id });
             }
-            next.push(spell_id);
         }
         *prev = next;
     }
@@ -1381,6 +1410,65 @@ pub(super) fn arm_morph_latch(
     seen.retain(|e, _| units.contains(*e));
     // The latch dies with a despawned unit.
     latch.0.retain(|e, _| units.contains(*e));
+}
+
+/// An aura's end on a unit whose slot the applied core armed: its spell's state-done kit plays.
+#[derive(Message, Clone, Copy, Debug)]
+pub(crate) struct StateDoneKit {
+    pub(crate) entity: Entity,
+    pub(crate) spell_id: u32,
+}
+
+/// The removal core's tail (`0x71ebef`-`0x71ec4c`): the `SpellVisual` row's state-done kit
+/// (column 5, `+0x14`) through the kit player at stage 8, which takes the one-shot handler with
+/// stages 1, 5 and 6 (`0x745230`), so every leg plays and the models end after one pass.
+pub(super) fn play_state_done_kits(
+    mut ends: MessageReader<StateDoneKit>,
+    visuals: Option<Res<SpellVisuals>>,
+    spells: Option<Res<crate::ui_action::Spells>>,
+    mut play_seq: ResMut<super::PlaySeq>,
+    mut oneshots: MessageWriter<EmoteAnim>,
+    mut wounds: MessageWriter<WoundAnim>,
+    mut sounds: MessageWriter<SpellKitSound>,
+    mut fx: MessageWriter<SpellKitFx>,
+    mut chain: MessageWriter<ChainProcPlay>,
+    mut shakes: MessageWriter<SpellKitShake>,
+    mut trails: MessageWriter<crate::weapon_trail::TrailArm>,
+    mut recomputes: MessageWriter<BaseAnimRecompute>,
+) {
+    let (Some(visuals), Some(spells)) = (visuals.as_deref(), spells.as_deref()) else {
+        ends.clear();
+        return; // no client data
+    };
+    for end in ends.read() {
+        let Some(kit) = resolve_kit(spells, &visuals.0, end.spell_id, |s| s.state_done, || None)
+        else {
+            continue; // no state-done kit
+        };
+        debug!(
+            "anim: aura state-done kit plays ({}, spell {})",
+            end.entity, end.spell_id
+        );
+        let mut out = KitOut {
+            oneshots: &mut oneshots,
+            wounds: &mut wounds,
+            sounds: &mut sounds,
+            fx: &mut fx,
+            chain: &mut chain,
+            shakes: &mut shakes,
+            trails: &mut trails,
+            recomputes: &mut recomputes,
+        };
+        play_kit(
+            end.entity,
+            end.spell_id,
+            &kit,
+            KitPlay::DISCRETE,
+            play_seq.next(),
+            &visuals.0,
+            &mut out,
+        );
+    }
 }
 
 /// The rebuild's impact-kit replay (the tail of `0x60abe0`): a display swap with the latch armed

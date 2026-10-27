@@ -345,6 +345,7 @@ fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
         cast_time_ms,
         target,
         ammo_display_id,
+        immunities,
     } = ev
     {
         spell_start(
@@ -355,6 +356,7 @@ fn on_spell_start(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Scene) {
             cast_time_ms,
             target,
             ammo_display_id,
+            immunities,
             &mut sc.commands,
             &l.index,
             &mut sc.cast_events,
@@ -924,6 +926,7 @@ fn spell_start(
     cast_time_ms: u32,
     target: Option<u64>,
     ammo_display_id: Option<u32>,
+    immunities: Option<(u32, u32)>,
     commands: &mut Commands,
     index: &GuidIndex,
     cast_events: &mut MessageWriter<CastEvent>,
@@ -983,6 +986,7 @@ fn spell_start(
         spell_id,
         cast_count,
         cast_time_ms,
+        immunities,
     });
     if self_guid.0 == Some(caster) && cast_time_ms > 0 {
         // The real cast time replaces the guard's send-time deadline, ranged casts included.
@@ -1200,6 +1204,9 @@ fn spell_go(
         }
     }
     // The pet leg of the same insert: an independent `if`, not an else.
+    if pet_bar.has_bar() && pet_bar.spells.pet_guid == caster {
+        pet_bar.pending_cast = None;
+    }
     if let Some(d) = display.filter(|_| pet_go_cooldown(caster, self_guid, index, stores)) {
         // No ranged pad: `0x6e2b60` is called on the self leg only (`0x6e845d`). Op 11 still
         // applies to both columns (`0x6e85c5`, `0x6e85d1`) off the player's tables, which gate

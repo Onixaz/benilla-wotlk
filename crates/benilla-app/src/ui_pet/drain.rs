@@ -34,37 +34,72 @@ pub(crate) struct PetPress<'w, 's> {
     ui_errors: ResMut<'w, crate::ui_action::UiErrorKeys>,
     pick: crate::target::AttackPick<'w, 's>,
     seam: crate::creature_anim::AttackSeam<'w, 's>,
+    /// `secureAbilityToggle`, the recently-used guard on an aura cancel.
+    cvars: Option<Res<'w, crate::cvars::Cvars>>,
+}
+
+/// The pet's control state against a spell (`0x5d437f`-`0x5d43dc`): stunned unless
+/// `AttributesEx5 & 0x8`, else fleeing unless `& 0x20000`, else confused unless `& 0x40000`.
+fn pet_cannot_cast(unit_flags: u32, spell: &benilla_formats::SpellDisplay) -> bool {
+    const STUNNED: u32 = 0x0004_0000;
+    const FLEEING: u32 = 0x0080_0000;
+    const CONFUSED: u32 = 0x0040_0000;
+    let ex5 = spell.attributes_ex5;
+    (ex5 & 0x8 == 0 && unit_flags & STUNNED != 0)
+        || (ex5 & 0x2_0000 == 0 && unit_flags & FLEEING != 0)
+        || (ex5 & 0x4_0000 == 0 && unit_flags & CONFUSED != 0)
+}
+
+/// Where a press went: [`PetCast::CastAsPet`] leaves the spell to the cast ladder with the pet as
+/// caster (`Spell_C_CastSpell` `0x80cce0`), which [`crate::script_calls`] runs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PetCast {
+    Done,
+    CastAsPet {
+        pet_guid: u64,
+        spell_id: u32,
+        target_guid: u64,
+    },
 }
 
 impl PetPress<'_, '_> {
     /// `CastPetAction(slot)`, a 1-based bar slot.
-    pub(crate) fn press_slot(&mut self, slot: u32) {
-        if let Some(entry) = slot_entry(&self.bar, slot) {
-            self.press(slot, entry);
+    pub(crate) fn press_slot(&mut self, slot: u32) -> PetCast {
+        match slot_entry(&self.bar, slot) {
+            Some(entry) => self.press(slot, entry, None),
+            None => PetCast::Done,
         }
     }
 
-    /// The guid the pet book's `CastSpell(id, "pet", onSelf)` aims at: the selection, or with
-    /// `onSelf` the active player (`0x4b4345`). A zero guid falls back to the selection
-    /// (`0x4b34af`), so a missing player leaves it.
-    pub(crate) fn spell_target(&self, on_self: bool) -> u64 {
-        let caster = if on_self { self.pet.self_guid.0 } else { None };
-        caster.or(self.selection.guid).unwrap_or(0)
+    /// The guid the pet book's `CastSpell(id, "pet", onSelf)` passes: the active player with
+    /// `onSelf`, else none, which `SendPetAction` reads as the selection.
+    pub(crate) fn spell_target(&self, on_self: bool) -> Option<u64> {
+        if on_self {
+            self.pet.self_guid.0
+        } else {
+            None
+        }
     }
 
-    /// `PetAttack` and the other one-shot orders, as their slot's packed word. A slot press and
-    /// an order are one press: both reach the reference's one dispatcher (`0x4bd1d0`). The slot
-    /// number only labels logs.
-    pub(crate) fn order(&mut self, packed: u32) {
-        self.press(0, PetActionEntry::from(packed));
+    /// `PetAttack` and the other one-shot orders, as their slot's packed word. A slot press, an
+    /// order and a pet book cast are one press: each reaches `CGPetInfo::SendPetAction`
+    /// (`0x5d4210`). The slot number only labels logs.
+    pub(crate) fn order(&mut self, packed: u32) -> PetCast {
+        self.press(0, PetActionEntry::from(packed), None)
     }
 
-    /// Send under [`PetBar`]'s pet guid, never one from the VM, so a press queued as the pet
-    /// leaves dies here. `CMSG_PET_ACTION` echoes the slot's word, which the server dispatches on
-    /// its type, with our selection as the target; `HandlePetAction` drops a target the spell
-    /// does not want. The dispatcher's first act is the usability predicate (`0x4bd1f2`), and a
-    /// zero answer leaves for the epilogue (`0x4bd1f9`) ahead of everything below it.
-    fn press(&mut self, slot: u32, entry: PetActionEntry) {
+    /// The pet book's `CastSpell(id, "pet")` (`CGSpellBook::CastSpell` `0x53bc40`): the spell
+    /// word `id | 0x1000000` through the bar's dispatcher, at `target` if one is passed.
+    pub(crate) fn cast_book_spell(&mut self, spell_id: u32, target: Option<u64>) -> PetCast {
+        let entry = PetActionEntry::from(0x0100_0000 | (spell_id & 0x00FF_FFFF));
+        self.press(0, entry, target)
+    }
+
+    /// `CGPetInfo::SendPetAction` (`0x5d4210`), under [`PetBar`]'s pet guid, never one from the VM,
+    /// so a press queued as the pet leaves dies here. `CMSG_PET_ACTION` echoes the slot's word,
+    /// which the server dispatches on its type, with `passed` or else the selection as the target.
+    /// The usability predicate comes first (`0x5d4285`), and a refusal sends nothing.
+    fn press(&mut self, slot: u32, entry: PetActionEntry, passed: Option<u64>) -> PetCast {
         let Self {
             bar,
             selection,
@@ -75,47 +110,73 @@ impl PetPress<'_, '_> {
             ui_errors,
             pick,
             seam,
+            cvars,
         } = self;
-        let Some(pet_store) = pet.usable_pet(bar) else {
+        // The spell arm asks with `ignoreControl` set (`0x5d4283 push 1`), the others without.
+        let Some(pet_store) = pet.usable_pet_with(bar, entry.is_spell()) else {
             debug!("ui_pet: slot {slot} refused, the pet's actions are not usable — no packet");
-            return;
+            return PetCast::Done;
         };
         let pet_guid = bar.spells.pet_guid;
         let possessing = possessing(Some(pet_store), pet.self_guid.0);
-        // A press on a spell the pet is running cancels its aura and sends no `CMSG_PET_ACTION`
-        // (`0x4bd240`-`0x4bd2ad`); nothing latches, the icon follows the pet's aura field.
+        // A press on a running spell cancels its aura (`0x5d4325`), kept if cast under 1.5 s ago.
         let display = entry
             .is_spell()
             .then(|| spells.as_ref().and_then(|s| s.catalog.get(entry.action())))
             .flatten();
         if let Some(spell_id) = active_aura_press(entry, pet.auras(pet_guid), display) {
+            let secure = cvars
+                .as_ref()
+                .and_then(|c| c.num("secureAbilityToggle"))
+                .is_some_and(|v| v != 0.0);
+            if secure && bar.cooldowns.recently_cast(spell_id, 0, Instant::now()) {
+                debug!("ui_pet: slot {slot} (spell {spell_id}) was just cast — the aura stays");
+                return PetCast::Done;
+            }
             debug!("ui_pet: slot {slot} cancels its own aura (spell {spell_id}) — no PetAction");
             let _ = commands
                 .0
                 .send(ClientCommand::PetCancelAura { pet_guid, spell_id });
-            return;
+            return PetCast::Done;
         }
-        // The spell arm leaves for the epilogue, before its GCD and its send, unless the slot's
-        // `Spell.dbc` record resolves (`0x4bd2e7`-`0x4bd2fe`); an id past the table's maximum has
-        // none. Its lookups of the active player and the pet (`0x4bd31a`-`0x4bd324`,
-        // `0x4bd346`-`0x4bd34f`) repeat the predicate's, on the same guids and typemasks, and
-        // cannot fail past it. Commands and reactions have no exit of their own (`0x4bd391`,
-        // `0x4bd3a3`).
+        // The spell arm leaves without a `Spell.dbc` record (`0x5d42b4`).
         let spell = if entry.is_spell() {
             let Some(spell) = display else {
                 debug!(
                     "ui_pet: slot {slot} (spell {}) has no record — no packet",
                     entry.action()
                 );
-                return;
+                return PetCast::Done;
             };
             Some(spell)
         } else {
             None
         };
-        // Only Attack runs `0x612df0`, the attack validator with the pet as actor, whose target
-        // pick can move the selection; every other press sends the selection as is (`0x4bd212`).
-        let mut target_guid = selection.guid.unwrap_or(0);
+        // The passed target, else the selection (`0x5d4240`).
+        let mut target_guid = passed.filter(|&g| g != 0).or(selection.guid).unwrap_or(0);
+        // `AttributesEx4 & 0x20` (`0x5d4407`) or a possessed pet casts as the pet (`0x5d445a`).
+        if let Some(spell) = spell {
+            if pet_cannot_cast(pet_store.0.unit_flags(), spell) {
+                debug!(
+                    "ui_pet: slot {slot} (spell {}) refused, the pet is stunned, fleeing or \
+                     confused — no packet",
+                    entry.action()
+                );
+                return PetCast::Done;
+            }
+            if spell.allows_client_targeting() || possessing {
+                debug!(
+                    "ui_pet: slot {slot} (spell {}) casts as the pet at {target_guid:#x}",
+                    entry.action()
+                );
+                return PetCast::CastAsPet {
+                    pet_guid,
+                    spell_id: entry.action(),
+                    target_guid,
+                };
+            }
+        }
+        // Only Attack runs the attack validator, whose pick can move the selection (`0x5d4500`).
         let refused = if is_attack_order(entry) {
             crate::ui_action::attack_actor_refusal(Some(pet_store), pet.self_guid.0, ui_errors)
                 || match pick.target(None, selection, seam, ui_errors) {
@@ -130,7 +191,7 @@ impl PetPress<'_, '_> {
         };
         if !commit_press(bar, entry, refused, possessing) {
             debug!("ui_pet: slot {slot} refused by the attack validator — no packet");
-            return;
+            return PetCast::Done;
         }
         if let Some(spell) = spell {
             arm_pet_gcd(
@@ -152,23 +213,15 @@ impl PetPress<'_, '_> {
             packed: entry.packed,
             target_guid,
         });
+        PetCast::Done
     }
 }
 
-/// The spell arm's tail (`0x4bd355`-`0x4bd36e`) for a press past the usability gate whose
-/// `Spell.dbc` record resolved: one that neither cancels an aura nor takes the generic cast entry
-/// `0x6e4b60` (`AttributesEx4 & 0x20`, or the bar's unit possessed) calls `StartGlobalCooldown
-/// 0x6e2de0(spellId, 1)` before the send (`0x4bd444`): the spell's own `StartRecovery*` pair,
-/// under op 21, into the pet's list (`0xcecaec + 0x18`). The insert moves the list's generation,
-/// which carries the flush that follows it (`0x6e2e77`, `0x6e2e8e`) to
-/// `bar::fire_pet_cooldown_events`.
-///
-/// The pet's GCD starts in three places, and this arm is one. A `SMSG_SPELL_COOLDOWN` addressed
-/// to the pet's guid under flag `0x1` inserts the op-21 pair for every entry not parked on its
-/// event (`0x806f8c`-`0x806fdb`, `Cooldowns::apply_wire_cooldown`). The generic cast send starts
-/// it too (`0x6e58fb`), with the list picked by the caster's charmed-by, else summoned-by, guid
-/// (`0x6e58c2`-`0x6e58f3`); the possessed and client-targeted presses above reach it through
-/// `0x6e4b60`. The `SMSG_SPELL_GO` pet leg inserts the spell's own timers and no GCD (`0x6e85f7`).
+/// The spell arm's tail for a press that sends `CMSG_PET_ACTION`: `Spell_C_StartSpellCooldown`
+/// (`0x5d4427`) before the send, the spell's own `StartRecovery*` pair into the pet's list. The
+/// insert moves the list's generation, which carries its flush to
+/// `bar::fire_pet_cooldown_events`. The client-targeted and possessed presses start it at their
+/// cast's send instead (`Spell_C::SendPendingCast`, `0x80ac90`).
 pub(super) fn arm_pet_gcd(
     bar: &mut PetBar,
     spell_id: u32,

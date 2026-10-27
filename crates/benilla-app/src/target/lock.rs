@@ -123,6 +123,41 @@ pub(crate) fn resolve_lock(
     go: GoFacts,
     matched_spell: &mut Option<u32>,
 ) -> LockOutcome {
+    let mut matched = None;
+    let outcome = resolve_lock_detail(
+        slots,
+        known,
+        spells,
+        skill_lines,
+        me,
+        objects,
+        go,
+        &mut matched,
+    );
+    *matched_spell = matched.map(|m: LockMatch| m.spell);
+    outcome
+}
+
+/// The out-params `CGGameObject_C::IsLocked` (`0x70f160`) writes on each `OPEN_LOCK` match, before
+/// its sufficiency test: the spell, its value (`Spell_C_GetMinMaxPoints`) and the requirement.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LockMatch {
+    pub(crate) spell: u32,
+    pub(crate) value: i32,
+    pub(crate) required: i32,
+}
+
+/// [`resolve_lock`] with the full out-params: the last match examined, as each overwrites them.
+pub(crate) fn resolve_lock_detail(
+    slots: &[LockSlot],
+    known: &BTreeSet<u32>,
+    spells: Option<&crate::ui_action::Spells>,
+    skill_lines: Option<&benilla_formats::SkillLineCatalog>,
+    me: Option<&ObjectStore>,
+    objects: &crate::net::Objects,
+    go: GoFacts,
+    matched: &mut Option<LockMatch>,
+) -> LockOutcome {
     let mut real = false;
     for slot in slots {
         match slot.key_type {
@@ -139,11 +174,16 @@ pub(crate) fn resolve_lock(
                     if spell.open_lock_type() != Some(slot.index) {
                         continue;
                     }
-                    // `0x5f84f8`: set on the LockType match, before the value test.
-                    matched_spell.get_or_insert(id);
+                    // Set on the LockType match, before the value test (`0x70f160`).
                     let skill = crate::spell::spell_skill_value(me, skill_lines, id);
                     let provides = spell.open_lock_skill(skill).unwrap_or(0);
-                    if provides >= required_skill(slot, go.level) {
+                    let required = required_skill(slot, go.level);
+                    *matched = Some(LockMatch {
+                        spell: id,
+                        value: provides,
+                        required,
+                    });
+                    if provides >= required {
                         return LockOutcome::OpenBySpell(id);
                     }
                 }

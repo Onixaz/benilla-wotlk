@@ -322,6 +322,22 @@ pub fn pet_action(pet_guid: u64, packed: u32, target_guid: u64) -> Vec<u8> {
     body
 }
 
+/// Body of `CMSG_PET_CAST_SPELL` (opcode 496, `0x80b315`): the caster's `u64` guid, `castCount`,
+/// `u32` spell, then the targets tail `CMSG_CAST_SPELL` shares (`0x80b351`).
+pub fn pet_cast_spell(
+    pet_guid: u64,
+    cast_count: u8,
+    spell_id: u32,
+    target: super::UseItemTarget,
+) -> Vec<u8> {
+    let mut body = Vec::with_capacity(36);
+    body.extend_from_slice(&pet_guid.to_le_bytes());
+    body.push(cast_count);
+    body.extend_from_slice(&spell_id.to_le_bytes());
+    super::items::put_cast_targets(&mut body, target);
+    body
+}
+
 /// Body of `CMSG_PET_STOP_ATTACK` (opcode 746, `0x5d4665`): the pet guid, sent by the Attack
 /// button's second press.
 pub fn pet_stop_attack(pet_guid: u64) -> Vec<u8> {
@@ -496,6 +512,25 @@ mod tests {
     }
 
     /// No cooldowns: one count byte, fully consumed.
+    /// Freeze at a ground point: the pet's full guid, count, spell, flags 0, mask `0x40`, the
+    /// transport's empty packed guid and three floats.
+    #[test]
+    fn pet_cast_spell_dest_body_golden() {
+        let body = pet_cast_spell(
+            0xF140_0000_0000_0007,
+            3,
+            33395,
+            super::super::UseItemTarget::Dest([1.0, 2.0, 3.0]),
+        );
+        let mut want = vec![0x07, 0, 0, 0, 0, 0, 0x40, 0xF1, 3, 0x73, 0x82, 0, 0, 0];
+        want.extend_from_slice(&0x40u32.to_le_bytes());
+        want.push(0);
+        for c in [1.0f32, 2.0, 3.0] {
+            want.extend_from_slice(&c.to_le_bytes());
+        }
+        assert_eq!(body, want);
+    }
+
     #[test]
     fn an_empty_cooldown_block_is_one_byte() {
         let mut r = &[0u8][..];

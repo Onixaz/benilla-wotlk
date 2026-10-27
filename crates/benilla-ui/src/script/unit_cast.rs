@@ -3,9 +3,6 @@
 //! it (the reference keeps them on the unit: the cast at `+0xa6c`/`+0xa78`/`+0xa7c`, its
 //! `castCount` at `+0xa5c`, the channel at `+0xa80`..`+0xa88`), and fires each event through
 //! [`super::UiScript::fire_unit_event`], once per token naming the caster (`0x60bb70`).
-//!
-//! Deviation: `notInterruptible` is always false and `UNIT_SPELLCAST_INTERRUPTIBLE` never fires:
-//! the reference reads a unit state bit (`+0xa34 & 8`, `0x71ab20`) benilla does not track.
 
 use std::collections::HashMap;
 
@@ -30,6 +27,8 @@ pub struct UnitCast {
     pub trade_skill: bool,
     /// The cast's `castCount` (`+0xa5c`); a channel has none.
     pub cast_count: u8,
+    /// `CGUnit_C::IsCastNotInterruptible` (`0x71ab20`), as the app last evaluated it.
+    pub not_interruptible: bool,
 }
 
 /// The pushed casts, by caster guid.
@@ -105,7 +104,7 @@ fn info(lua: &Lua, cast: &UnitCast, with_count: bool) -> mlua::Result<MultiValue
     if with_count {
         v.push(Value::Integer(i64::from(cast.cast_count)));
     }
-    v.push(Value::Boolean(false));
+    v.push(Value::Boolean(cast.not_interruptible));
     Ok(MultiValue::from_vec(v))
 }
 
@@ -189,6 +188,7 @@ mod tests {
             end_ms: 11_500.0,
             trade_skill: false,
             cast_count: 7,
+            not_interruptible: false,
         }
     }
 

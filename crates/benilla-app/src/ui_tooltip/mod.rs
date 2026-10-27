@@ -84,15 +84,41 @@ fn lines_view(s: &UnitState) -> UnitState {
     }
 }
 
-/// The "Locked" line's colour (`0x52ab03`-`0x52ab43`): red `0xc0d3a8` unless the resolver finds an
-/// opener, then green `0xc0d420`, for a key (`0x52ab29`) or no requirement (`0x52ab22`); `None`, a
-/// flag-locked object with no `Lock.dbc` row, is no requirement. A skill opener takes the
-/// reference's difficulty ramp `0x529fa0` (grey, green, yellow, orange, red at +0/25/50/100);
-/// benilla shows its green, since the resolver discards the margin.
-fn locked_line_tint(outcome: Option<crate::target::lock::LockOutcome>) -> TooltipTint {
-    match outcome {
-        Some(crate::target::lock::LockOutcome::Unmet) => TooltipTint::Red,
-        _ => TooltipTint::LockOpen,
+/// The "Locked" line's colour (`0x6267fa`-`0x626840`): red while locked; opened by a known spell
+/// and no key, `GetSkillColor`'s rung for the match; else (a key, no requirement, no `Lock.dbc`
+/// row) the ramp's green. The line never takes the colourblind prefix.
+fn locked_line_tint(
+    outcome: Option<crate::target::lock::LockOutcome>,
+    matched: Option<crate::target::lock::LockMatch>,
+) -> TooltipTint {
+    use crate::target::lock::LockOutcome;
+    match (outcome, matched) {
+        (Some(LockOutcome::Unmet), _) => TooltipTint::Red,
+        (Some(LockOutcome::OpenByKey(_)), _) | (_, None) => TooltipTint::Skill(1),
+        (_, Some(m)) => TooltipTint::Skill(benilla_ui::script::skill_rung(m.required, m.value)),
+    }
+}
+
+/// The slot-0 SKILL line (`0x626910`): with a known opener, `LOCKED_WITH_SPELL_KNOWN` in its rung's
+/// colour behind the colourblind prefix; with none, `LOCKED_WITH_SPELL` in pure red, but not on a
+/// flag-locked object (`0x626979`).
+fn skill_lock_line(
+    matched: Option<crate::target::lock::LockMatch>,
+    flag_locked: bool,
+    colorblind: bool,
+) -> Option<(&'static str, TooltipTint, &'static str)> {
+    match matched {
+        Some(m) => {
+            let rung = benilla_ui::script::skill_rung(m.required, m.value);
+            let suffix = if colorblind {
+                benilla_ui::script::skill_rung_suffix(rung)
+            } else {
+                ""
+            };
+            Some(("LOCKED_WITH_SPELL_KNOWN", TooltipTint::Skill(rung), suffix))
+        }
+        None if !flag_locked => Some(("LOCKED_WITH_SPELL", TooltipTint::PureRed, "")),
+        None => None,
     }
 }
 
@@ -270,10 +296,7 @@ fn drive_mouseover_tooltip(
             go_inputs.templates.request(guid, &commands);
             return;
         };
-        // The builder's lock lines (`0x52aa20`): "Locked" iff `GO_FLAG_LOCKED` (`0x52aae5`), then
-        // one line from `Lock.dbc` slot 0 only, if it passes the Action gate (`0x52ab7e`): a key in
-        // white (`0x52acd9`), an unknown skill in red but only on an unflagged object (`0x52abf7`),
-        // so a locked door names its key, never its lockpicking.
+        // "Locked" iff `GO_FLAG_LOCKED`, then `Lock.dbc` slot 0's line past its gate (`0x62689d`).
         let go_store = stores.get(entity).ok();
         let flags = go_store.map_or(0, |s| s.0.gameobject_flags());
         let flag_locked = flags & GO_FLAG_LOCKED != 0;
@@ -288,25 +311,24 @@ fn drive_mouseover_tooltip(
         let mut lines: Vec<(String, TooltipTint)> = Vec::new();
         // The lock lines' keys all read "Requires %s" in enUS; only the binary tells them apart.
         let go_get = |key: &str| benilla_ui::strings::global(script.lua(), key);
+        // Both lock lines ask `IsLocked` (`0x70f160`), the resolver the click uses.
+        let facts = crate::target::lock::go_facts(go_store.map(|s| (s, state)));
+        let mut matched = None;
+        let outcome = slots.map(|slots| {
+            crate::target::lock::resolve_lock_detail(
+                slots,
+                &player_actions.spells,
+                go_inputs.spells.as_deref(),
+                go_inputs.skill_lines.as_ref().map(|s| &*s.catalog),
+                self_store,
+                &go_inputs.objects,
+                facts,
+                &mut matched,
+            )
+        });
         if flag_locked {
-            // Coloured by whether the player can open it: the builder asks the resolver the click
-            // uses (`0x52ab14` → `0x5f83d0`), and `locked_line_tint` maps the answer.
-            let facts = crate::target::lock::go_facts(go_store.map(|s| (s, state)));
-            let mut matched = None;
-            let outcome = slots.map(|slots| {
-                crate::target::lock::resolve_lock(
-                    slots,
-                    &player_actions.spells,
-                    go_inputs.spells.as_deref(),
-                    go_inputs.skill_lines.as_ref().map(|s| &*s.catalog),
-                    self_store,
-                    &go_inputs.objects,
-                    facts,
-                    &mut matched,
-                )
-            });
             if let Some(text) = keyed(&go_get, "LOCKED", &[]) {
-                lines.push((text, locked_line_tint(outcome)));
+                lines.push((text, locked_line_tint(outcome, matched)));
             }
         }
         if let Some(slot0) = slots
@@ -322,20 +344,26 @@ fn drive_mouseover_tooltip(
                         }
                     }
                 }
-                // Every skill lock takes the opener-unknown arm, silent on a flag-locked object;
-                // the known arm, `LOCKED_WITH_SPELL_KNOWN` in the margin ramp's colour
-                // (`0x529fa0`), is not built.
-                benilla_formats::LOCK_KEY_SKILL if !flag_locked => {
-                    // `LOCKED_WITH_SPELL` (`0x52ac04`), named by `LockType.dbc` ("Pick Lock"); the
-                    // reference takes the known arm iff any known spell opens it (`0x52abcb`).
-                    let word = go_inputs
-                        .lock_types
-                        .as_deref()
-                        .and_then(|c| c.0.name(slot0.index));
-                    if let Some(text) =
-                        word.and_then(|w| keyed(&go_get, "LOCKED_WITH_SPELL", &[Arg::S(w)]))
+                benilla_formats::LOCK_KEY_SKILL => {
+                    let colorblind = script
+                        .cvar("colorblindMode")
+                        .is_some_and(|v| v.trim().parse::<i64>().unwrap_or(0) != 0);
+                    if let Some((key, tint, suffix)) =
+                        skill_lock_line(matched, flag_locked, colorblind)
                     {
-                        lines.push((text, TooltipTint::Red));
+                        // Named by `LockType.dbc` ("Mining"), `UNKNOWN` without a row (`0x6269c6`).
+                        let word = go_inputs
+                            .lock_types
+                            .as_deref()
+                            .and_then(|c| c.0.name(slot0.index))
+                            .unwrap_or("UNKNOWN");
+                        debug!(
+                            "ui_tooltip: lock skill line {key} {tint:?} for {word} — match {:?}",
+                            matched
+                        );
+                        if let Some(text) = keyed(&go_get, key, &[Arg::S(word)]) {
+                            lines.push((format!("{suffix}{text}"), tint));
+                        }
                     }
                 }
                 _ => {}

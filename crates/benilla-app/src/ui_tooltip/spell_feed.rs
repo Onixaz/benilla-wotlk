@@ -98,7 +98,10 @@ pub(super) fn build_view(
     // The `$`-tokens' level (`0x5075f0` hands the selector to `0x6e3130`, `507645`-`50764a`).
     let skill = |id| match caster {
         ViewCaster::Player => {
-            let line = vctx.skill_lines.and_then(|c| c.spell_to_line(id));
+            let (race, class) = crate::spell::race_class(vctx.store);
+            let line = vctx
+                .skill_lines
+                .and_then(|c| c.spell_to_line(id, race, class));
             if let Some(line) = line {
                 deps.borrow_mut().skill_line(line);
             }

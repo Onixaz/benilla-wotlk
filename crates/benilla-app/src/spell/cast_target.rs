@@ -238,6 +238,8 @@ pub(crate) struct CastTargeting<'w, 's> {
     pub(crate) selection: Res<'w, Selection>,
     pub(crate) self_store: Query<'w, 's, &'static ObjectStore, With<SelfPlayer>>,
     pub(crate) self_auras: Query<'w, 's, &'static UnitAuras, With<SelfPlayer>>,
+    /// Any caster's auras, for a cast as the pet.
+    unit_auras: Query<'w, 's, &'static UnitAuras>,
     stores: Query<'w, 's, &'static ObjectStore>,
     index: Option<Res<'w, GuidIndex>>,
     self_guid: Res<'w, SelfGuid>,
@@ -327,6 +329,45 @@ impl CastTargeting<'_, '_> {
             .and_then(|e| self.transforms.get(e).ok())
             .map(|t| t.translation);
         ctx.range.target = entity.and_then(|e| self.range_units.unit(e));
+        ctx
+    }
+
+    /// The [`CastContext`] of a cast with the pet as caster (`Spell_C_CastSpell` `0x80cce0` called
+    /// with the pet), aimed at `target` or else the selection: the caster's store, position, reach
+    /// and auras are the pet's, and it has no main hand and no own movement flags. With
+    /// `owner_casts` (`AttributesEx6 & 0x40000`, `0x80cd3e`) the owner, the player, is the unit
+    /// the ladder reads.
+    pub(crate) fn pet_context(
+        &self,
+        pet_guid: u64,
+        target: Option<u64>,
+        owner_casts: bool,
+    ) -> CastContext<'_> {
+        let mut ctx = match target {
+            Some(guid) => self.context_at(Aim::Unit(Some(guid))),
+            None => self.context(),
+        };
+        if owner_casts {
+            return ctx;
+        }
+        let entity = self
+            .index
+            .as_deref()
+            .and_then(|i| i.0.get(&pet_guid).copied());
+        let store = entity.and_then(|e| self.stores.get(e).ok());
+        ctx.self_guid = Some(pet_guid);
+        ctx.rel.self_store = store;
+        ctx.rel.group.self_guid = Some(pet_guid);
+        ctx.rel.group.self_owner_store = owner_store(store, self.index.as_deref(), &self.stores);
+        ctx.range.self_pos = entity
+            .and_then(|e| self.transforms.get(e).ok())
+            .map(|t| t.translation);
+        if let Some(unit) = entity.and_then(|e| self.range_units.unit(e)) {
+            ctx.range.caster = unit;
+        }
+        ctx.main_hand_item = None;
+        ctx.self_move_flags = 0;
+        ctx.self_auras = entity.and_then(|e| self.unit_auras.get(e).ok());
         ctx
     }
 

@@ -41,6 +41,23 @@ struct Snapshot {
     pet: Option<Caster>,
     mods: Option<crate::spell::SpellModifiers>,
     icons: WeaponActionIcons,
+    cast: CastNow,
+}
+
+/// The player's cast state `Spell_C_IsCurrentSpell` (`0x806030`) reads.
+#[derive(Default)]
+struct CastNow {
+    /// The pending or running cast, or the queued strike (`0x805f30`).
+    pending: Option<u32>,
+    /// Auto-attacking (`[player+0xa20]`).
+    attacking: bool,
+    /// The open trade-skill line (`[0xc235a4]`); a linked book is never open here.
+    trade_line: Option<u32>,
+    race_class: (u8, u8),
+    critter: Option<u64>,
+    /// The player's auras, `(spell, wire flags)`.
+    auras: Vec<(u32, u8)>,
+    summons: benilla_formats::SummonPropertiesCatalog,
 }
 
 struct Source {
@@ -49,7 +66,84 @@ struct Source {
     snapshot: Arc<Mutex<Snapshot>>,
 }
 
+/// `SPELL_EFFECT_ATTACK`, the melee auto-attack's first effect.
+const EFFECT_ATTACK: u32 = 78;
+/// `SPELL_AURA_MOD_SHAPESHIFT`.
+const AURA_SHAPESHIFT: u32 = 36;
+
+impl Source {
+    /// `Spell_C_IsActiveSpell` (`0x802cb0`) for the player: a critter summon while its creature is
+    /// out, a spell whose own cancelable aura (flag `0x10`) is up, or a mount while any `MOUNTED`
+    /// aura rides its creature.
+    fn is_active_spell(
+        &self,
+        spell_id: u32,
+        d: &benilla_formats::SpellDisplay,
+        now: &CastNow,
+    ) -> bool {
+        let critter =
+            d.companion_kind(&now.summons) == Some(benilla_formats::CompanionKind::Critter);
+        if d.active_icon.is_none() && d.companion_kind(&now.summons).is_none() {
+            return false;
+        }
+        if critter {
+            let entry = now.critter.map(|g| ((g >> 24) & 0x0fff_ffff) as i32);
+            return entry == Some(d.effect_misc_value[0]);
+        }
+        if now.auras.iter().any(|&(id, flags)| {
+            id == spell_id && flags & benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE != 0
+        }) {
+            return true;
+        }
+        d.effect_apply_aura[0] == benilla_formats::SPELL_AURA_MOUNTED
+            && now.auras.iter().any(|&(id, _)| {
+                self.spells.catalog.get(id).is_some_and(|a| {
+                    a.effect_apply_aura[0] == benilla_formats::SPELL_AURA_MOUNTED
+                        && a.effect_misc_value[0] == d.effect_misc_value[0]
+                })
+            })
+    }
+}
+
 impl SpellInfoSource for Source {
+    /// `Spell_C_IsCurrentSpell` (`0x806030`): no row is nil; the pending cast; the auto-attack
+    /// while attacking; a trade-skill opener while its line's book is open; a critter, mount or
+    /// shapeshift by [`Source::is_active_spell`].
+    fn is_current_spell(&self, spell_id: u32) -> bool {
+        let Some(d) = self.spells.catalog.get(spell_id) else {
+            return false;
+        };
+        let snap = self
+            .snapshot
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let now = &snap.cast;
+        if now.pending == Some(spell_id) {
+            return true;
+        }
+        if snap.player.is_none() {
+            return false;
+        }
+        match d.effects[0] {
+            EFFECT_ATTACK => return now.attacking,
+            benilla_formats::SPELL_EFFECT_TRADE_SKILL => {
+                let (race, class) = now.race_class;
+                let line = self
+                    .skill_lines
+                    .as_deref()
+                    .and_then(|c| c.spell_to_line(spell_id, race, class));
+                return line.is_some() && line == now.trade_line;
+            }
+            _ => {}
+        }
+        if d.companion_kind(&now.summons).is_none()
+            && !d.effect_apply_aura.contains(&AURA_SHAPESHIFT)
+        {
+            return false;
+        }
+        self.is_active_spell(spell_id, d, now)
+    }
+
     fn spell_info(&self, spell_id: u32, pet: bool) -> Option<SpellInfo> {
         let d = self.spells.catalog.get(spell_id)?;
         let snap = self
@@ -169,6 +263,7 @@ fn feed_spell_info(
     index: Res<crate::net::GuidIndex>,
     stores: Query<Ref<ObjectStore>>,
     range_units: crate::spell::RangeUnits,
+    cast_now: CastNowInputs,
     mut memory: Local<VmMemo<Installed>>,
 ) {
     let (Some(mut script), Some(spells)) = (script, spells) else {
@@ -223,4 +318,53 @@ fn feed_spell_info(
         let level = store.0.unit_level().unwrap_or(0);
         caster(entity, &store, snap.pet.take(), level)
     });
+    cast_now.refresh(&mut snap.cast, reinstall);
+}
+
+/// The self player's store, running cast, attack lock and auras.
+type SelfCastState = (
+    &'static ObjectStore,
+    Option<&'static crate::creature_anim::Casting>,
+    Has<crate::creature_anim::Engaged>,
+    Option<Ref<'static, crate::unit_auras::UnitAuras>>,
+);
+
+/// What [`CastNow`] reads off the world.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(crate) struct CastNowInputs<'w, 's> {
+    pending: Res<'w, crate::spell::PendingCast>,
+    queued_melee: Res<'w, crate::spell::QueuedMeleeSpell>,
+    trade_skill: Option<Res<'w, crate::ui_tradeskill::TradeSkillOpen>>,
+    summons: Res<'w, crate::spell::SummonSlots>,
+    me: Query<'w, 's, SelfCastState, With<SelfPlayer>>,
+}
+
+impl CastNowInputs<'_, '_> {
+    fn refresh(&self, cast: &mut CastNow, reinstall: bool) {
+        let (store, casting, engaged, auras) = match self.me.iter().next() {
+            Some((s, c, e, a)) => (Some(s), c, e, a),
+            None => (None, None, false, None),
+        };
+        cast.pending = crate::spell::inflight(
+            &self.pending,
+            &self.queued_melee,
+            casting.map(|c| c.spell_id),
+            std::time::Instant::now(),
+        )
+        .map(|i| i.spell_id());
+        cast.attacking = engaged;
+        cast.trade_line = self.trade_skill.as_ref().and_then(|t| t.line);
+        cast.race_class = crate::spell::race_class(store);
+        cast.critter = store.and_then(|s| s.0.unit_critter());
+        if reinstall || self.summons.is_changed() {
+            cast.summons = self.summons.0.clone();
+        }
+        match auras {
+            Some(auras) if reinstall || auras.is_changed() => {
+                cast.auras = auras.iter().map(|a| (a.spell_id, a.flags)).collect();
+            }
+            Some(_) => {}
+            None => cast.auras.clear(),
+        }
+    }
 }

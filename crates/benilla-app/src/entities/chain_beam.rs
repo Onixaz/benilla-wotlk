@@ -227,7 +227,11 @@ pub(super) fn spawn_chain_beams(
         let dest_tag = spells
             .catalog
             .get(play.spell_id)
-            .and_then(|d| visuals.0.stages(d.visual))
+            .and_then(|d| {
+                visuals
+                    .0
+                    .stages(crate::creature_anim::spell_visual::spell_visual_id(d))
+            })
             .and_then(|s| s.missile_dest_attachment())
             .unwrap_or(CHAIN_ATTACH_FALLBACK);
         // A persistent beam replaces the one before it on the same caster and spell.

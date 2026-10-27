@@ -74,10 +74,17 @@ pub(crate) fn apply_script_calls(
             }
             ScriptCall::UseInventoryItem(id) => appliers.p5().use_inventory_item(script, id),
             ScriptCall::CastPetSpell { spell_id, on_self } => {
-                crate::ui_pet_book::cast_pet_spell(&mut appliers.p6(), spell_id, on_self);
+                let out = crate::ui_pet_book::cast_pet_spell(&mut appliers.p6(), spell_id, on_self);
+                cast_as_pet(&mut appliers.p3(), out);
             }
-            ScriptCall::PetAction(slot) => appliers.p6().press_slot(slot),
-            ScriptCall::PetOrder(packed) => appliers.p6().order(packed),
+            ScriptCall::PetAction(slot) => {
+                let out = appliers.p6().press_slot(slot);
+                cast_as_pet(&mut appliers.p3(), out);
+            }
+            ScriptCall::PetOrder(packed) => {
+                let out = appliers.p6().order(packed);
+                cast_as_pet(&mut appliers.p3(), out);
+            }
         }
         // TryCast's attack pick can move the selection mid-cast (`0x6e4efb`), so a press held
         // there is picked and resumed before the next call reads the selection.
@@ -90,6 +97,26 @@ pub(crate) fn apply_script_calls(
             cast.ladder.resume_after_pick(held, &ctx);
         }
     });
+}
+
+/// A pet press that forked to the cast ladder (`0x5d445a`): run it with the pet as caster.
+fn cast_as_pet(cast: &mut crate::spell::ScriptCast, out: crate::ui_pet::PetCast) {
+    if let crate::ui_pet::PetCast::CastAsPet {
+        pet_guid,
+        spell_id,
+        target_guid,
+    } = out
+    {
+        let target = (target_guid != 0).then_some(target_guid);
+        let owner_casts = cast
+            .ladder
+            .spells
+            .as_ref()
+            .and_then(|s| s.catalog.get(spell_id))
+            .is_some_and(|d| d.attributes_ex6 & 0x4_0000 != 0);
+        let ctx = cast.targeting.pet_context(pet_guid, target, owner_casts);
+        cast.ladder.send_pet(spell_id, &ctx, pet_guid);
+    }
 }
 
 /// Apply every queued call front to back. Applying one may queue more: a macro's lines run
@@ -483,8 +510,9 @@ mod tests {
             .collect()
     }
 
-    /// `0x4b3300`'s pet fork sends the guid it was handed as the order's target (`0x4b34ce`), so
-    /// `CastSpell(slot, "pet", 1)` aims the pet's spell at the player, not the selection.
+    /// The book's pet cast (`CGSpellBook::CastSpell` `0x53bc40`) hands `SendPetAction` the guid it
+    /// was given, so `CastSpell(slot, "pet", 1)` aims the pet's spell at the player, not the
+    /// selection.
     #[test]
     fn a_pet_book_cast_on_self_aims_at_the_player() {
         for (lua, target) in [
@@ -499,6 +527,30 @@ mod tests {
                 .resource_mut::<crate::ui_pet::PetBar>()
                 .spells
                 .pet_guid = PET;
+            // Our own pet, `SUMMONEDBY` us, so the usability gate passes (`0x5d4285`).
+            let pet = f
+                .app
+                .world_mut()
+                .spawn((
+                    Guid(PET),
+                    ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                        (12, ME as u32),
+                        (13, 0),
+                    ])),
+                ))
+                .id();
+            f.app
+                .world_mut()
+                .resource_mut::<GuidIndex>()
+                .0
+                .insert(PET, pet);
+            // The spell arm leaves without a `Spell.dbc` record (`0x5d42b4`).
+            f.app.world_mut().insert_resource(crate::ui_action::Spells {
+                catalog: benilla_formats::SpellCatalog::from_displays(
+                    [(GROWL, benilla_formats::SpellDisplay::default())].into(),
+                ),
+                ..crate::ui_action::Spells::empty_for_tests()
+            });
             f.app
                 .world_mut()
                 .non_send_resource_mut::<UiScript>()

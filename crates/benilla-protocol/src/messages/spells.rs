@@ -391,6 +391,9 @@ pub struct SpellStart {
     pub ammo_display_id: Option<u32>,
     /// The `CAST_FLAG_RUNE_LIST` block.
     pub runes: Option<CastRunes>,
+    /// The `CAST_FLAG_IMMUNITY` pair, `(school, mechanic)`: the caster's cast immunities, which the
+    /// client keeps on the unit (`0x715aa0`, `0x715ab0`).
+    pub immunities: Option<(u32, u32)>,
 }
 
 /// Read `SMSG_SPELL_START`: the shared head (`0x80fef4`-`0x80ff22`), `u32 castTime`, the targets,
@@ -416,10 +419,11 @@ pub(super) fn read_spell_start(r: &mut impl Read) -> io::Result<SpellStart> {
     } else {
         None
     };
-    if cast_flags & CAST_FLAG_IMMUNITY != 0 {
-        let _school_immunities = read_u32_le(r)?;
-        let _mechanic_immunities = read_u32_le(r)?;
-    }
+    let immunities = if cast_flags & CAST_FLAG_IMMUNITY != 0 {
+        Some((read_u32_le(r)?, read_u32_le(r)?))
+    } else {
+        None
+    };
     Ok(SpellStart {
         item_or_caster,
         caster,
@@ -430,6 +434,7 @@ pub(super) fn read_spell_start(r: &mut impl Read) -> io::Result<SpellStart> {
         targets,
         ammo_display_id,
         runes,
+        immunities,
     })
 }
 

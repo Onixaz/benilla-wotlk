@@ -251,12 +251,16 @@ fn each_exit_alone_stops_a_press_and_every_order() {
         rig.frame();
         let before = latched(&rig);
 
-        rig.press(1);
+        let cast = rig.press(1);
         let sent = rig.sent();
         let got = effects(&rig, sent);
         if usable {
-            // A possessed unit's press takes the generic cast entry, which arms its own GCD.
-            assert!(got.contains(&"PetAction"), "{name}: a spell press: {got:?}");
+            // A possessed unit's press forks to the cast ladder (`0x5d4413`), sending nothing here.
+            let forked = matches!(cast, super::PetCast::CastAsPet { .. });
+            assert!(
+                got.contains(&"PetAction") || forked,
+                "{name}: a spell press: {got:?}"
+            );
         } else {
             assert_eq!(got, Vec::<&str>::new(), "{name}: a spell press");
             assert_eq!(latched(&rig), before, "{name}: nothing latched");

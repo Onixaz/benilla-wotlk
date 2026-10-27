@@ -549,7 +549,8 @@ use env_damage::{hard_landing_dust, load_env_damage_table};
 pub(crate) use env_damage::{EnvDamageTable, HardLanding, HARD_LANDING_DESCENT};
 use spell_visual::{
     arm_aura_state_fx, arm_level_up_fx, arm_loot_fx, arm_morph_latch, arm_mount_poof_fx,
-    load_spell_visuals, replay_morph_kit, route_cast_visuals, MorphLatch,
+    load_spell_visuals, play_state_done_kits, replay_morph_kit, route_cast_visuals,
+    track_violence_level, MorphLatch, StateDoneKit,
 };
 // `crate::aura_visual`'s tests drive the aura-slot watcher directly.
 #[cfg(test)]
@@ -812,6 +813,7 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<SpellKitSound>()
             .add_message::<SpellKitShake>()
             .add_message::<SpellKitFx>()
+            .add_message::<StateDoneKit>()
             .add_message::<MissileSpawn>()
             .add_message::<ChainProcPlay>()
             .add_message::<KitPush>()
@@ -830,6 +832,8 @@ impl Plugin for CreatureAnimPlugin {
                 )
                     .after(AssetSet::Open),
             )
+            // Ahead of the frame's kit resolves; a `violenceLevel` change applies next frame.
+            .add_systems(First, track_violence_level)
             .add_systems(
                 Update,
                 (
@@ -837,7 +841,10 @@ impl Plugin for CreatureAnimPlugin {
                     arm_loot_fx,
                     arm_level_up_fx,
                     arm_mount_poof_fx,
-                    arm_aura_state_fx,
+                    // The removal core reaps the state kit, then plays the state-done kit.
+                    (arm_aura_state_fx, play_state_done_kits)
+                        .chain()
+                        .before(WorldStage::Present),
                     // `0x5ff0c0` arms, `0x60abe0` replays on a display swap; arm first, since the
                     // swap crosses from last frame's teardown, armed by the same wire burst.
                     (arm_morph_latch, replay_morph_kit).chain(),

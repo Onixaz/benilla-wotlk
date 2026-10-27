@@ -608,6 +608,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
             .filter(|&i| i != 0)
             .and_then(|i| icons.get(&i).cloned());
         let visual = u32_at(r, COL_VISUAL_ID).unwrap_or(0);
+        let visual_low_violence = u32_at(r, COL_VISUAL_ID + 1).unwrap_or(0);
         let speed = f32_at(r, COL_SPEED).unwrap_or(0.0);
         let attributes = u32_at(r, COL_ATTRIBUTES).unwrap_or(0);
         // Read once; the shapeshift-form derivation below reuses `effect_apply_aura`.
@@ -623,6 +624,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 rank,
                 icon,
                 visual,
+                visual_low_violence,
                 speed,
                 attributes,
                 attributes_ex: u32_at(r, COL_ATTRIBUTES_EX).unwrap_or(0),

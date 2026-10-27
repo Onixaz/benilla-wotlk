@@ -363,6 +363,7 @@ fn start_heal(s: &mut UiScript, cast_count: u8) {
             end_ms: now_ms + 1500.0,
             trade_skill: false,
             cast_count,
+            not_interruptible: false,
         }),
     );
     s.fire_event("UNIT_SPELLCAST_START", heal_args(cast_count));

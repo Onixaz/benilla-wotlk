@@ -121,11 +121,12 @@ pub(super) fn feed_language_skills(
 
     let mut skill = HashMap::new();
     if let (Some(actions), Some(spells), Some(lines)) = (actions, spells, skill_lines) {
+        let (race, class) = crate::spell::race_class(Some(&*store));
         for &known in &actions.spells {
             let Some(language) = spells.catalog.declared_language(known) else {
                 continue;
             };
-            let Some(line) = lines.catalog.spell_to_line(known) else {
+            let Some(line) = lines.catalog.spell_to_line(known, race, class) else {
                 // Spell 25674 declares Draconic but has no `SkillLineAbility` row (`0x6de040`),
                 // so Draconic is never understood.
                 continue;

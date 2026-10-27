@@ -12,7 +12,7 @@ use super::super::{
 };
 use super::{
     route_cast_visuals, KitPush, MissileSpawn, SpellKitFx, SpellKitShake, SpellKitSound,
-    SpellVisuals,
+    SpellVisuals, StateDoneKit,
 };
 use crate::creature_anim::SpellGoTargets;
 
@@ -41,6 +41,7 @@ fn app() -> App {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::BaseAnimRecompute>()
         .add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
@@ -199,6 +200,7 @@ fn precast_kit_sound_rings_once_at_start() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::BaseAnimRecompute>()
         .add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
@@ -468,7 +470,8 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
 
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
-    app.add_message::<SpellKitFx>();
+    app.add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>();
     app.add_message::<crate::net::FieldChanged>();
     // The watcher's CharProc and sound writers need their messages; kit 409 carries neither.
     app.add_message::<crate::aura_visual::AuraProc>();
@@ -581,6 +584,133 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
     }
 }
 
+/// `GetSpellVisual` (`0x7fa290`): below violence 2 the second visual, when the spell has one.
+#[test]
+fn low_violence_takes_the_second_visual_when_there_is_one() {
+    let both = SpellDisplay {
+        visual: 10,
+        visual_low_violence: 11,
+        ..Default::default()
+    };
+    let one = SpellDisplay {
+        visual: 10,
+        ..Default::default()
+    };
+    assert_eq!(super::pick_visual(&both, false), 10);
+    assert_eq!(super::pick_visual(&both, true), 11);
+    assert_eq!(super::pick_visual(&one, true), 10);
+}
+
+/// The removal core's tail (`0x71ebef`): an armed aura's end plays its state-done kit (column 5)
+/// once, one-shot, even with no state kit; the add edge plays nothing of it.
+#[test]
+fn an_ending_aura_plays_its_state_done_kit_once() {
+    const AURA: u32 = 43039;
+    const VISUAL: u32 = 7001;
+    const DONE_KIT: u32 = 7002;
+    const DONE_FX: u32 = 7003;
+
+    #[derive(Resource, Default)]
+    struct FxLog(Vec<SpellKitFx>);
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>();
+    app.add_message::<crate::net::FieldChanged>();
+    app.add_message::<crate::aura_visual::AuraProc>();
+    app.add_message::<SpellKitSound>()
+        .add_message::<SpellKitShake>()
+        .add_message::<EmoteAnim>()
+        .add_message::<WoundAnim>()
+        .add_message::<super::ChainProcPlay>()
+        .add_message::<crate::weapon_trail::TrailArm>()
+        .add_message::<super::BaseAnimRecompute>();
+    app.init_resource::<FxLog>();
+    app.init_resource::<super::super::PlaySeq>();
+    let mut slots = [None; 9];
+    slots[4] = Some(DONE_FX);
+    app.insert_resource(SpellVisuals(SpellVisualCatalog::from_tables_with_paths(
+        HashMap::from([(
+            VISUAL,
+            VisualStages {
+                state_done: DONE_KIT,
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([(
+            DONE_KIT,
+            VisualKit {
+                effect_slots: slots,
+                ..Default::default()
+            },
+        )]),
+        HashMap::from([(DONE_FX, "Spells\\Done.mdx".to_string())]),
+    )));
+    app.insert_resource(crate::ui_action::Spells {
+        catalog: SpellCatalog::from_displays(HashMap::from([(
+            AURA,
+            SpellDisplay {
+                visual: VISUAL,
+                ..Default::default()
+            },
+        )])),
+        ..crate::ui_action::Spells::empty_for_tests()
+    });
+    app.add_systems(
+        Update,
+        (
+            super::arm_aura_state_fx,
+            super::play_state_done_kits,
+            |mut r: MessageReader<SpellKitFx>, mut log: ResMut<FxLog>| {
+                log.0.extend(r.read().cloned());
+            },
+        )
+            .chain(),
+    );
+
+    let unit = app
+        .world_mut()
+        .spawn(crate::unit_auras::aura_unit_for_test(&[AURA]))
+        .id();
+    app.update();
+    assert!(
+        app.world().resource::<FxLog>().0.is_empty(),
+        "no state kit: the add edge spawns nothing"
+    );
+
+    crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
+    app.update();
+    let begins: Vec<_> = app
+        .world()
+        .resource::<FxLog>()
+        .0
+        .iter()
+        .filter_map(|f| match f {
+            SpellKitFx::Begin {
+                spell_id,
+                persistent,
+                stage,
+                effects,
+                ..
+            } => Some((*spell_id, *persistent, *stage, effects.len())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        begins,
+        [(AURA, false, super::FxStage::OneShot, 1)],
+        "the state-done kit plays once, one-shot"
+    );
+    let count = app.world().resource::<FxLog>().0.len();
+    app.update();
+    assert_eq!(
+        app.world().resource::<FxLog>().0.len(),
+        count,
+        "and only once"
+    );
+}
+
 /// An instant harmful GO lays one severity-0 wound on each hit (`0x6e8bf0` at `0x6e8c89`), a
 /// helpful one none; a state kit's wound anim adds nothing (stage 2 never reaches the `[8,10]`
 /// test, `0x60f383`); a missile arrival always wounds (`0x61dc50` at `0x61dc74`).
@@ -605,6 +735,7 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::BaseAnimRecompute>()
         .add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
@@ -715,6 +846,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::BaseAnimRecompute>()
         .add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
@@ -825,6 +957,7 @@ fn ground_app(
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::BaseAnimRecompute>()
         .add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
@@ -1082,7 +1215,8 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
 
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
-    app.add_message::<SpellKitFx>();
+    app.add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>();
     app.add_message::<crate::net::FieldChanged>();
     app.insert_resource(SpellVisuals(
         SpellVisualCatalog::from_tables(HashMap::new(), HashMap::new()).with_hardcoded(
@@ -1364,6 +1498,7 @@ fn real_shooter(weapon: &RealRanged) -> Option<(App, Entity)> {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::BaseAnimRecompute>()
         .add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
@@ -1570,6 +1705,7 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         .add_message::<crate::weapon_trail::TrailArm>()
         .add_message::<super::BaseAnimRecompute>()
         .add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
@@ -1664,6 +1800,7 @@ fn an_anim_only_state_kit_still_arms_on_the_aura_add_edge() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     app.add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<crate::aura_visual::AuraProc>()
         .add_message::<SpellKitSound>()
@@ -1729,6 +1866,7 @@ fn a_detection_aura_s_state_kit_follows_our_own_aura_vision() {
     let mut app = App::new();
     app.add_plugins(MinimalPlugins);
     app.add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<crate::aura_visual::AuraProc>()
         .add_message::<SpellKitSound>()
@@ -1844,7 +1982,8 @@ fn an_earn_arms_the_achievement_base_on_the_earning_player() {
     const FX: u32 = 4000;
     const PATH: &str = "Spells/AchievementBase.mdx";
     let mut app = App::new();
-    app.add_message::<SpellKitFx>();
+    app.add_message::<SpellKitFx>()
+        .add_message::<StateDoneKit>();
     app.insert_resource(SpellVisuals(
         SpellVisualCatalog::from_tables(HashMap::new(), HashMap::new()).with_hardcoded(
             "HARDCODED Achievement Base",

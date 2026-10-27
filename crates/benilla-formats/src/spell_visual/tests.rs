@@ -213,6 +213,7 @@ fn real_spell_visual_chain_resolves_fireball() {
             cast: 38,
             impact: 286,
             state: 0,
+            state_done: 0,
             channel: 0,
             missile_model: 365,
             missile_attach: 1,
@@ -610,7 +611,8 @@ fn the_weapon_merge_fills_only_the_empty_slots() {
         precast: 7,
         cast: 164,
         impact: 1947,
-        state: 999,   // never merged
+        state: 999, // never merged
+        state_done: 997,
         channel: 998, // never merged
         missile_gate: 1,
         missile_model: 42,

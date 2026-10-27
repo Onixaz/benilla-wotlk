@@ -21,7 +21,7 @@ const MAX_VIOLENCE_LEVEL: usize = 2;
 
 /// `violenceLevel` as `ViolenceLevelChanged` (`0x7f39b0`) holds it: a value outside `[0, max]`
 /// reads as the ceiling.
-fn violence_level(cvars: Option<&crate::cvars::Cvars>) -> usize {
+pub(super) fn violence_level(cvars: Option<&crate::cvars::Cvars>) -> usize {
     match cvars.and_then(|c| c.num("violenceLevel")).map(|v| v as i64) {
         Some(level) if (0..=MAX_VIOLENCE_LEVEL as i64).contains(&level) => level as usize,
         _ => MAX_VIOLENCE_LEVEL,

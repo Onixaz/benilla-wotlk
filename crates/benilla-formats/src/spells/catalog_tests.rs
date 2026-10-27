@@ -19,12 +19,12 @@ fn real_learn_spell_hop_resolves_the_taught_ability() {
             "learn wrapper {wrapper} teaches ability {ability}"
         );
         assert_eq!(
-            skills.spell_to_line(wrapper),
+            skills.spell_to_line(wrapper, 0, 0),
             None,
             "the wrapper {wrapper} is not itself in SkillLineAbility (the bug's root)"
         );
         assert_eq!(
-            skills.spell_to_line(ability),
+            skills.spell_to_line(ability, 0, 0),
             Some(line),
             "the taught ability {ability} groups under skill line {line}"
         );
@@ -1298,7 +1298,7 @@ fn the_language_declaring_spells_cover_twelve_of_seventeen_languages() {
         );
         // The second hop the garble gate walks: spell -> SkillLineAbility -> SkillLine.dbc id.
         assert_eq!(
-            skills.spell_to_line(spell),
+            skills.spell_to_line(spell, 0, 0),
             Some(line),
             "spell {spell} -> skill line"
         );
@@ -1307,7 +1307,7 @@ fn the_language_declaring_spells_cover_twelve_of_seventeen_languages() {
     // Both hops walked, these are the languages a character can ever understand.
     let understandable: std::collections::BTreeSet<u32> = spells
         .declared_languages()
-        .filter(|(spell, _)| skills.spell_to_line(*spell).is_some())
+        .filter(|(spell, _)| skills.spell_to_line(*spell, 0, 0).is_some())
         .map(|(_, l)| l)
         .collect();
     assert_eq!(
