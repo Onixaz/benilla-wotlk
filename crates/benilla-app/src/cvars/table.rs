@@ -1013,6 +1013,10 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // texture over each presented frame (`CGxDevice::ICursorDraw 0x687a90`). The knob is
     // [`crate::video::VideoConfig::hw_cursor`], which `crate::cursor` follows.
     same("gxCursor", "1").latched(),
+    // `gxAspect` ("1", callback `0x769580`): a windowed window wider or taller than the screen
+    // shrinks keeping its aspect (`AdjustWindowRectToWorkArea 0x684d70`). The knob is
+    // [`crate::video::VideoConfig::aspect`].
+    same("gxAspect", "1").latched(),
     // `gxFixLag` (callback `0x7696a0`), Reduce Input Lag: after each present the device waits for
     // the GPU to drain (`CGxDeviceD3d::ScenePresent 0x6a3450`). The knob is
     // [`crate::video::VideoConfig::fix_lag`], a swapchain of one frame in flight.

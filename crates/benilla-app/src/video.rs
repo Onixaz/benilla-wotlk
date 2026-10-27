@@ -160,6 +160,62 @@ pub(crate) fn boot_windowed_size() -> UVec2 {
         .unwrap_or(DEFAULT_WINDOWED)
 }
 
+/// A windowed window's client size and outer top-left, fitted to `work` (physical px) as
+/// `CGxDevice::AdjustWindowRectToWorkArea 0x684d70` fits the outer rect, `frame` being the outer
+/// rect's excess over the client: an overflowing axis clamps, the other following the aspect with
+/// `aspect` (`gxAspect`) by stepping down to a near-whole length, then the rect is centred.
+pub(crate) fn fit_to_work_area(
+    size: UVec2,
+    frame: UVec2,
+    work: IRect,
+    aspect: bool,
+) -> (IVec2, UVec2) {
+    let (width, height) = (size.x as i32, size.y as i32);
+    let (fx, fy) = (frame.x as i32, frame.y as i32);
+    let ratio = if aspect && width > 0 && height > 0 {
+        width as f32 / height as f32
+    } else {
+        0.0
+    };
+    let mut right = work.min.x + width + fx;
+    let mut bottom = work.min.y + height + fy;
+    if right > work.max.x {
+        right = work.max.x;
+        if ratio != 0.0 {
+            let max_width = work.width() - fx;
+            let inv = 1.0 / ratio;
+            let fitted = (width / 2..=max_width)
+                .rev()
+                .find(|&w| (w as f32 * inv).fract() < 0.01);
+            let (outer, h) = match fitted {
+                Some(w) => (w + fx, (w as f32 * inv).floor()),
+                None => (work.width(), (max_width as f32 / ratio + 0.5).floor()),
+            };
+            right = work.min.x + outer;
+            bottom = work.min.y + fy + h as i32;
+        }
+    }
+    if bottom > work.max.y {
+        bottom = work.max.y;
+        if ratio != 0.0 {
+            let max_height = work.height() - fy;
+            let fitted = (height / 2..=max_height)
+                .rev()
+                .find(|&h| (h as f32 * ratio).fract() < 0.01);
+            let (outer, w) = match fitted {
+                Some(h) => (h + fy, (h as f32 * ratio).floor()),
+                None => (work.height(), (max_height as f32 * ratio + 0.5).floor()),
+            };
+            right = work.min.x + fx + w as i32;
+            bottom = work.min.y + outer;
+        }
+    }
+    let (space_x, space_y) = ((work.max.x - right) / 2, (work.max.y - bottom) / 2);
+    let at = IVec2::new(work.min.x + space_x, work.min.y + space_y);
+    let client = IVec2::new(right + space_x - fx, bottom + space_y - fy) - at;
+    (at, client.max(IVec2::ONE).as_uvec2())
+}
+
 /// The swapchain's frames in flight: one more with `gxTripleBuffer` under vsync, the reference's
 /// second back buffer (`ISetPresentParms 0x68e250` counts it only with vsync); `None` is wgpu's 2.
 /// The patched `bevy_render` (`third_party/bevy_render`) reconfigures the surface when it moves.
@@ -195,6 +251,9 @@ pub(crate) struct VideoConfig {
     pub(crate) hw_cursor: bool,
     /// `windowResizeLock`: the window's border drag is refused (`ResizeDragWindow 0x869970`).
     pub(crate) resize_lock: bool,
+    /// `gxAspect`: a window too big for the screen keeps its aspect as it shrinks
+    /// ([`fit_to_work_area`]).
+    pub(crate) aspect: bool,
 }
 
 impl Default for VideoConfig {
@@ -213,6 +272,7 @@ impl Default for VideoConfig {
             fix_lag: false,
             hw_cursor: true,
             resize_lock: false,
+            aspect: true,
         }
     }
 }
@@ -313,6 +373,7 @@ pub(crate) fn on_cvar(
         "gxfixlag" => cfg.fix_lag = int != 0,
         "gxcursor" => cfg.hw_cursor = int != 0,
         "windowresizelock" => cfg.resize_lock = int != 0,
+        "gxaspect" => cfg.aspect = int != 0,
         // The FFX pass's switches, read every frame, so a write shows on the next frame.
         "ffx" | "ffxglow" | "ffxdeath" => {
             match ev.key().as_str() {
@@ -483,6 +544,7 @@ impl Plugin for VideoPlugin {
                 Last,
                 (
                     drain_restart_gx,
+                    validate_refresh,
                     apply_present_mode,
                     apply_window_mode,
                     apply_resize_lock,
@@ -655,12 +717,30 @@ fn publish_display_modes(
     script.set_screen_modes(offered, current);
 }
 
-/// [`publish_display_modes`]' push for a VM about to load, which the reference has before
-/// `UI_Init`: `UpdateMenuBarTop` divides the current entry's sides at load (`UIParent.lua:1171`).
+/// What `GetVideoCaps` (`0x54ee60`) answers. Shaders, trilinear, anisotropy and the hardware
+/// cursor are always there (`crate::cursor` composites the reference's cursors into an OS cursor,
+/// or draws them itself with `gxCursor` off); slot 5 is the backend constant, 0 as under OpenGL.
+pub(crate) fn video_caps() -> benilla_ui::script::VideoCaps {
+    benilla_ui::script::VideoCaps {
+        anisotropic: true,
+        pixel_shaders: true,
+        vertex_shaders: true,
+        trilinear: true,
+        triple_buffering: false,
+        max_anisotropy: benilla_assets::MAX_ANISOTROPY_CAP,
+        hardware_cursor: true,
+    }
+}
+
+/// [`publish_display_modes`]' push and the device caps for a VM about to load, which the
+/// reference has before `UI_Init`: `UpdateMenuBarTop` divides the current entry's sides at load
+/// (`UIParent.lua:1171`), and the Resolution panel's `PLAYER_ENTERING_WORLD` arm disables
+/// Hardware Cursor for good on a nil cursor cap (`VideoOptionsPanels.lua:119`).
 pub(crate) fn seed_display_modes_for_vm(
     world: &mut World,
     script: &mut benilla_ui::script::UiScript,
 ) {
+    script.set_video_caps(video_caps());
     let cfg = world
         .get_resource::<VideoConfig>()
         .copied()
@@ -769,6 +849,47 @@ fn display_session() -> String {
     String::new()
 }
 
+/// `gxRefresh` against the primary monitor once its modes are known, as `ValidateFormatMonitor
+/// 0x769e10` checks the boot format and `SetGxCVars 0x769950` writes it back: a rate no mode offers
+/// (the refresh callback's `0x76a580` test) becomes the monitor's current one. Deviation: the
+/// reference takes the size's lowest rate over the 60 its first-run hwDetect writes; benilla runs no
+/// hwDetect, and the lowest (50 Hz on a common 144 Hz panel) is not among the first size's rates
+/// the stock dropdown lists, so it would read blank.
+fn validate_refresh(
+    mut cfg: ResMut<VideoConfig>,
+    cvars: Option<ResMut<crate::cvars::Cvars>>,
+    monitors: Query<&bevy::window::Monitor, With<PrimaryMonitor>>,
+    mut done: Local<bool>,
+) {
+    if *done {
+        return;
+    }
+    let Some(monitor) = monitors.iter().next() else {
+        return;
+    };
+    *done = true;
+    let offers = |hz: u32| monitor.video_modes.iter().any(|m| mode_hz(m) == hz);
+    // Where the platform cannot mode-set, the dropdown is the disabled sentinel and the row unread.
+    if !exclusive_supported() || offers(cfg.refresh) {
+        return;
+    }
+    let Some(desktop) = monitor
+        .refresh_rate_millihertz
+        .map(|mhz| (mhz + 500) / 1000)
+        .filter(|&hz| offers(hz))
+    else {
+        return;
+    };
+    info!(
+        "video: gxRefresh {} is not offered — using the desktop's {desktop}",
+        cfg.refresh
+    );
+    cfg.refresh = desktop;
+    if let Some(mut cvars) = cvars {
+        cvars.mirror("gxRefresh", &desktop.to_string());
+    }
+}
+
 /// Push vsync and the frames in flight to the window only when the setting moves or a
 /// `RestartGx()` asks: the capture probes write `present_mode` directly, and their override must
 /// stick.
@@ -816,16 +937,47 @@ fn wanted_mode(cfg: &VideoConfig, monitor: Option<(Entity, &bevy::window::Monito
     window_mode(cfg.display, cfg.maximize, exclusive, selection)
 }
 
+/// The outer rect's excess over the client area, winit's `outer_size` less `inner_size`, which
+/// `ICreateWindow 0x68ebb0` takes from `AdjustWindowRectEx`; zero before the OS window exists.
+fn outer_frame(window: Entity) -> UVec2 {
+    bevy::winit::WINIT_WINDOWS.with_borrow(|windows| {
+        windows.get_window(window).map_or(UVec2::ZERO, |w| {
+            let (outer, inner) = (w.outer_size(), w.inner_size());
+            UVec2::new(
+                outer.width.saturating_sub(inner.width),
+                outer.height.saturating_sub(inner.height),
+            )
+        })
+    })
+}
+
+/// The windowed client size and outer top-left on `monitor`, [`fit_to_work_area`] over its
+/// whole rect. Deviation: the reference fits the work area (`rcWork`, the taskbar excluded), which
+/// only native calls report; winit gives the monitor's rect alone.
+fn fitted_window(
+    cfg: &VideoConfig,
+    monitor: &bevy::window::Monitor,
+    frame: UVec2,
+) -> (IVec2, UVec2) {
+    let at = monitor.physical_position;
+    let work = IRect::from_corners(at, at + monitor.physical_size().as_ivec2());
+    fit_to_work_area(cfg.windowed(), frame, work, cfg.aspect)
+}
+
 /// Push the display mode to the window, gated as [`apply_present_mode`] is, and again the first
 /// frame the primary monitor's modes are known (the boot window cannot name a mode). An unchanged
-/// mode is not re-asserted, so a restart that moved nothing leaves the display alone.
+/// mode is not re-asserted, so a restart that moved nothing leaves the display alone. A windowed
+/// window is fitted to the monitor ([`fitted_window`]) while `gxResolution` keeps the size asked
+/// for, as `SetGxCVars 0x769950` writes the requested format.
 fn apply_window_mode(
     cfg: Res<VideoConfig>,
     restarts: Res<GxRestarts>,
-    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    mut windows: Query<(Entity, &mut Window), With<PrimaryWindow>>,
     monitors: Query<(Entity, &bevy::window::Monitor), With<PrimaryMonitor>>,
     mut last_restart: Local<u32>,
     mut saw_monitor: Local<bool>,
+    // `WINIT_WINDOWS` is the main thread's.
+    _main: bevy::ecs::system::NonSendMarker,
 ) {
     let forced = std::mem::replace(&mut *last_restart, restarts.0) != restarts.0;
     let monitor = monitors.iter().next();
@@ -833,7 +985,7 @@ fn apply_window_mode(
     if !cfg.is_changed() && !forced && !first_monitor {
         return;
     }
-    let Ok(mut window) = windows.single_mut() else {
+    let Ok((entity, mut window)) = windows.single_mut() else {
         return;
     };
     let want = wanted_mode(&cfg, monitor);
@@ -844,13 +996,18 @@ fn apply_window_mode(
         (WindowMode::Fullscreen(_, a), WindowMode::Fullscreen(_, b)) => a == b,
         _ => false,
     };
-    let windowed_size = cfg.windowed();
+    // A run that sizes its own window keeps it where its instrument put it.
+    let fitted = monitor
+        .filter(|_| !windowed_env())
+        .map(|(_, m)| fitted_window(&cfg, m, outer_frame(entity)));
+    let windowed_size = fitted.map_or(cfg.windowed(), |(_, size)| size);
     let size_moved = want == WindowMode::Windowed
         && (
             window.resolution.physical_width(),
             window.resolution.physical_height(),
         ) != (windowed_size.x, windowed_size.y);
-    if same && !size_moved {
+    // The boot window is centred once the monitor is known, as the device's first window is.
+    if same && !size_moved && !(first_monitor && want == WindowMode::Windowed) {
         return;
     }
     // Leaving fullscreen hands the size back: entering it overwrote `window.resolution` with the
@@ -860,6 +1017,14 @@ fn apply_window_mode(
         window
             .resolution
             .set_physical_resolution(windowed_size.x, windowed_size.y);
+        if let Some((at, size)) = fitted {
+            window.position = bevy::window::WindowPosition::At(at);
+            let asked = cfg.windowed();
+            info!(
+                "video: window {}x{} at {},{}, fitted for {}x{}",
+                size.x, size.y, at.x, at.y, asked.x, asked.y
+            );
+        }
     }
     window.mode = want;
     info!(
@@ -1082,6 +1247,94 @@ mod tests {
         assert_eq!(frame_latency(true, true).map(|n| n.get()), Some(3));
         assert_eq!(frame_latency(false, true), None);
         assert_eq!(frame_latency(true, false), None);
+    }
+
+    /// `0x684d70` on a 2560x1440 screen with a 16x39 frame: a size that fits is centred, an
+    /// oversized one shrinks keeping its aspect (both passes here), and without `gxAspect` each
+    /// axis clamps alone.
+    #[test]
+    fn an_oversized_window_fits_the_screen_as_the_reference_fits_it() {
+        let work = IRect::new(0, 0, 2560, 1440);
+        let frame = UVec2::new(16, 39);
+        let fit = |w, h, aspect| fit_to_work_area(UVec2::new(w, h), frame, work, aspect);
+        assert_eq!(
+            fit(1600, 900, true),
+            (IVec2::new(472, 250), UVec2::new(1600, 900))
+        );
+        assert_eq!(
+            fit(3620, 2036, true),
+            (IVec2::new(327, 169), UVec2::new(1890, 1063))
+        );
+        assert_eq!(
+            fit(3620, 2036, false),
+            (IVec2::ZERO, UVec2::new(2544, 1401))
+        );
+        // A monitor off the origin: the fit is in its own rect.
+        let right = IRect::new(2560, 0, 4480, 1080);
+        assert_eq!(
+            fit_to_work_area(UVec2::new(1920, 1080), frame, right, true),
+            (IVec2::new(2592, 3), UVec2::new(1840, 1035))
+        );
+    }
+
+    /// The window opens fitted and centred on the primary monitor, while `gxResolution` keeps the
+    /// requested size for the dropdown.
+    #[test]
+    fn the_windowed_window_is_fitted_to_the_primary_monitor() {
+        let want = UVec2::new(3620, 2036);
+        let (mut app, win) = window_app(VideoConfig {
+            display: DisplayMode::Windowed,
+            resolution: Some(want),
+            ..VideoConfig::default()
+        });
+        app.world_mut().spawn((monitor(&[]), PrimaryMonitor));
+        app.update();
+        let w = app.world().entity(win).get::<Window>().unwrap();
+        // No OS window in the test, so no frame: the client takes the whole monitor height.
+        let (at, size) = fit_to_work_area(want, UVec2::ZERO, IRect::new(0, 0, 2560, 1440), true);
+        assert!(size.x <= 2560 && size.y <= 1440, "{size}");
+        assert_eq!(
+            (
+                w.resolution.physical_width(),
+                w.resolution.physical_height()
+            ),
+            (size.x, size.y)
+        );
+        assert_eq!(w.position, bevy::window::WindowPosition::At(at));
+        assert_eq!(app.world().resource::<VideoConfig>().resolution, Some(want));
+    }
+
+    /// A VM is handed the device caps at its load, before `PLAYER_ENTERING_WORLD` can read them,
+    /// even with no window to size it.
+    #[test]
+    fn a_loading_vm_has_the_hardware_cursor_cap() {
+        let mut world = World::new();
+        let mut script = benilla_ui::script::UiScript::new().unwrap();
+        seed_display_modes_for_vm(&mut world, &mut script);
+        let cursor: Option<f64> = script.eval("return select(7, GetVideoCaps())").unwrap();
+        assert_eq!(cursor, Some(1.0));
+    }
+
+    /// A saved rate the monitor does not offer becomes the desktop's at boot; an offered one stays.
+    #[test]
+    fn an_unoffered_refresh_rate_becomes_the_desktops() {
+        if !exclusive_supported() {
+            return;
+        }
+        let modes = [(2560, 1440, 59_951, 32), (2560, 1440, 144_000, 32)];
+        for (saved, want) in [(75, 144), (60, 60)] {
+            let mut app = App::new();
+            app.insert_resource(VideoConfig {
+                refresh: saved,
+                ..VideoConfig::default()
+            })
+            .add_systems(Update, validate_refresh);
+            let mut modes = modes.to_vec();
+            modes.push((1920, 1080, 60_000, 32));
+            app.world_mut().spawn((monitor(&modes), PrimaryMonitor));
+            app.update();
+            assert_eq!(app.world().resource::<VideoConfig>().refresh, want);
+        }
     }
 
     fn window_app(cfg: VideoConfig) -> (App, Entity) {

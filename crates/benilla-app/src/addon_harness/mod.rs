@@ -1050,16 +1050,8 @@ fn seat_a_session(script: &mut UiScript) {
             height: 768,
         }),
     );
-    // What this run's device offers, as `crate::cvars` pushes it in the app.
-    script.set_video_caps(benilla_ui::script::VideoCaps {
-        anisotropic: true,
-        pixel_shaders: true,
-        vertex_shaders: true,
-        trilinear: true,
-        triple_buffering: false,
-        max_anisotropy: benilla_assets::MAX_ANISOTROPY_CAP,
-        hardware_cursor: true,
-    });
+    // What this run's device offers, as the app seeds it at each VM's load.
+    script.set_video_caps(crate::video::video_caps());
     script.set_realm_name("Harness");
     // The bind point: the server sends `SMSG_BINDPOINTUPDATE` at login, before any addon runs.
     script.set_bind_location("Stormwind City");

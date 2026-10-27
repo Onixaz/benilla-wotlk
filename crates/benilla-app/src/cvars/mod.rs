@@ -909,20 +909,6 @@ pub(crate) fn sync_cvars(
                 })
                 .unwrap_or_default(),
         );
-        // `GetVideoCaps` (`0x54ee60`), which the Resolution panel's `PLAYER_ENTERING_WORLD` arm
-        // reads for the hardware cursor (`VideoOptionsPanels.lua:119`). Shaders, trilinear,
-        // anisotropy and the hardware cursor are always there (`crate::cursor` composites the
-        // reference's cursors into an OS cursor, or draws them itself with `gxCursor` off); slot 5
-        // is the device's backend constant, 0 here as under OpenGL.
-        script.set_video_caps(benilla_ui::script::VideoCaps {
-            anisotropic: true,
-            pixel_shaders: true,
-            vertex_shaders: true,
-            trilinear: true,
-            triple_buffering: false,
-            max_anisotropy: benilla_assets::MAX_ANISOTROPY_CAP,
-            hardware_cursor: true,
-        });
     }
     if cvars.has_outbox() {
         for (name, value) in cvars.take_outbox() {
@@ -2591,6 +2577,7 @@ mod tests {
             vec![
                 "SoundBufferSize",
                 "gxApi",
+                "gxAspect",
                 "gxColorBits",
                 "gxCursor",
                 "gxDepthBits",

@@ -243,3 +243,29 @@ fn the_defaults_verbs_restore_their_own_page() {
     assert_eq!(s.cvar("gxResolution").as_deref(), Some(""));
     assert_eq!(s.take_restart_gx_asks(), 1);
 }
+
+/// Hardware Cursor is live after world entry on a device that offers one, its text is not greyed,
+/// and Okay writes the box to `gxCursor`.
+#[test]
+fn the_hardware_cursor_box_writes_gx_cursor() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let mut s = opened("vid-cursor", "VideoOptionsResolutionPanel");
+    let state: String = s
+        .eval(
+            "local b = VideoOptionsResolutionPanelHardwareCursor \
+             return tostring(b:IsEnabled()) .. ',' .. tostring(b:GetChecked()) .. ',' \
+               .. tostring(b:IsVisible())",
+        )
+        .unwrap();
+    assert_eq!(state, "1,1,1", "enabled, checked, shown");
+    s.run("VideoOptionsResolutionPanelHardwareCursor:Click() VideoOptionsFrameOkay:Click()")
+        .unwrap();
+    let changes = changed(&mut s);
+    assert!(
+        changes.iter().any(|(n, v)| n == "gxCursor" && v == "0"),
+        "gxCursor = 0 not written: {changes:?}"
+    );
+}

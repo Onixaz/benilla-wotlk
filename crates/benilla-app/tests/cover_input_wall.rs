@@ -96,6 +96,8 @@ const VERDICTS: &[(&str, Verdict)] = &[
     ("NativeKey", Plumbing),
     ("ExitCondition", Plumbing),
     ("Monitor", Plumbing),
+    // The OS window's frame size, read to fit the window to the screen (`video.rs`).
+    ("WINIT_WINDOWS", Plumbing),
     ("MonitorSelection", Plumbing),
     ("PrimaryMonitor", Plumbing),
     ("VideoMode", Plumbing),
