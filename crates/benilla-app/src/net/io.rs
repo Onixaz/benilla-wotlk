@@ -1528,6 +1528,7 @@ pub(super) fn writer_loop(
                         w.cast_spell_at_source(spell_id, src)
                     }
                     ClientCommand::CancelAura { spell_id } => w.cancel_aura(spell_id),
+                    ClientCommand::CancelMountAura => w.cancel_mount_aura(),
                     ClientCommand::DismissCritter { guid } => w.dismiss_critter(guid),
                     ClientCommand::SetActionButton { button, packed } => {
                         w.set_action_button(button, packed)

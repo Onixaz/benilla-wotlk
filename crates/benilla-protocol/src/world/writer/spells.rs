@@ -24,6 +24,11 @@ impl WorldWriter {
         self.send(opcode::CMSG_CANCEL_AURA, &messages::cancel_aura(spell_id))
     }
 
+    /// `CMSG_CANCEL_MOUNT_AURA`: get off the mount. No reply: `UNIT_FIELD_MOUNTDISPLAYID` clears.
+    pub fn cancel_mount_aura(&mut self) -> Result<()> {
+        self.send(opcode::CMSG_CANCEL_MOUNT_AURA, &[])
+    }
+
     /// `CMSG_DISMISS_CRITTER`: send the companion out home. No reply: `UNIT_FIELD_CRITTER` clears.
     pub fn dismiss_critter(&mut self, critter_guid: u64) -> Result<()> {
         self.send(

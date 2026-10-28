@@ -346,9 +346,9 @@ impl NpcSession for TradeSession {
 
 pub(crate) struct UiTradePlugin;
 
-/// Mirrors the `BlockTrades` CVar into [`BlockTrades`].
+/// Mirrors the `blockTrades` CVar into [`BlockTrades`].
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut block: ResMut<BlockTrades>) {
-    if ev.is("BlockTrades") {
+    if ev.is("blockTrades") {
         block.0 = ev.flag();
     }
 }
@@ -378,7 +378,7 @@ impl Plugin for UiTradePlugin {
     }
 }
 
-/// 1.12's `BlockTrades` CVar (`0x842fbc`), the Block Trades checkbox (`UIOptionsFrame.lua:11`).
+/// The `blockTrades` CVar (`0x51daec`), the Controls panel's Block Trades checkbox.
 /// A resource, not a [`TradeSession`] field, because a disconnect clears the session; read only
 /// by [`answer_trade_request`]'s leg 8.
 #[derive(Resource, Default)]
