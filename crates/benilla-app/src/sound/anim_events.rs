@@ -135,8 +135,9 @@ pub(super) fn route_anim_events(
                     .get(ev.entity)
                     .map_or(Vec3::ZERO, |t| t.translation());
                 let at = attach.point(ev.entity, VOICE_ATTACH, root);
+                let store = units.get(ev.entity).ok().and_then(|(store, _)| store);
                 if let Err(e) = play_emote_voice(
-                    &mut kits, &assets, &mut out, &config, listener, ev.data, ev.entity, at,
+                    &mut kits, &assets, &mut out, &config, listener, ev.data, ev.entity, store, at,
                 ) {
                     if complained.insert(ev.data) {
                         warn!(

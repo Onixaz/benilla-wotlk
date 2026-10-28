@@ -37,6 +37,9 @@ pub(crate) struct EngineSettings {
     pub(crate) voices: usize,
     /// `Sound_EnableSoftwareHRTF` ([`super::hrtf`]).
     pub(crate) hrtf: bool,
+    /// `Sound_EnableDSPEffects`: `DSP_Init` builds the chains only when it is on
+    /// ([`super::dsp`]).
+    pub(crate) dsp: bool,
 }
 
 impl Default for EngineSettings {
@@ -45,6 +48,7 @@ impl Default for EngineSettings {
             driver: 0,
             voices: 32,
             hrtf: false,
+            dsp: true,
         }
     }
 }
@@ -99,6 +103,7 @@ fn settings_from(drivers: &OutputDrivers, get: impl Fn(&str) -> Option<String>) 
         driver: find_driver(drivers, &name, index),
         voices: voice_ceiling(int(get("Sound_NumChannels").as_deref(), 32)),
         hrtf: int(get("Sound_EnableSoftwareHRTF").as_deref(), 0) != 0,
+        dsp: int(get("Sound_EnableDSPEffects").as_deref(), 1) != 0,
     }
 }
 
@@ -189,10 +194,11 @@ pub(super) fn restart_sound_system(
     super::kit::stop_all(&mut out);
     let device = drivers.device(settings.driver);
     info!(
-        "sound: restart — output {}, {} voices, software HRTF {}",
+        "sound: restart — output {}, {} voices, software HRTF {}, DSP effects {}",
         device.as_deref().unwrap_or(SYSTEM_DEFAULT),
         settings.voices,
         if settings.hrtf { "on" } else { "off" },
+        if settings.dsp { "on" } else { "off" },
     );
     if let Some(mixer) = out.mixer.as_mut() {
         mixer.select_output(device);
@@ -252,6 +258,7 @@ mod tests {
                 "Sound_OutputDriverIndex" => Some("0"),
                 "Sound_NumChannels" => Some("64"),
                 "Sound_EnableSoftwareHRTF" => Some("1"),
+                "Sound_EnableDSPEffects" => Some("0"),
                 _ => None,
             }
             .map(str::to_string)
@@ -261,7 +268,8 @@ mod tests {
             EngineSettings {
                 driver: 2,
                 voices: 64,
-                hrtf: true
+                hrtf: true,
+                dsp: false,
             }
         );
         assert_eq!(settings_from(&d, |_| None), EngineSettings::default());

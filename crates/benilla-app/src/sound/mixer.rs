@@ -16,7 +16,9 @@ use kira::effect::volume_control::{VolumeControlBuilder, VolumeControlHandle};
 use kira::listener::ListenerHandle;
 use kira::sound::streaming::StreamingSoundData;
 use kira::sound::FromFileError;
-use kira::track::{SendTrackBuilder, SendTrackHandle, SpatialTrackBuilder};
+use kira::track::{
+    SendTrackBuilder, SendTrackHandle, SpatialTrackBuilder, TrackBuilder, TrackHandle,
+};
 use kira::{AudioManager, AudioManagerSettings, Decibels, Mix, Tween};
 
 use super::limiter;
@@ -283,18 +285,40 @@ impl Mixer {
             .map_err(|e| anyhow::anyhow!("play 2d: {e}"))
     }
 
+    /// [`Self::play_2d`] through a DSP chain ([`super::dsp`]): a sub track of its own, as the
+    /// reference moves the channel into the chain's channel group (`0x4ce250`).
+    pub(crate) fn play_2d_chain(
+        &mut self,
+        data: StaticSoundData,
+        chain: Vec<benilla_formats::SoundFilterElem>,
+    ) -> Result<(TrackHandle, StaticSoundHandle)> {
+        let builder = TrackBuilder::new()
+            .sound_capacity(1)
+            .with_effect(super::dsp::ChainBuilder(chain))
+            .persist_until_sounds_finish(true);
+        let mut track = self.manager.add_sub_track(builder).map_err(|e| {
+            self.health.voices_refused += 1;
+            anyhow::anyhow!("filtered track alloc ({SPATIAL_VOICE_CAPACITY}-voice ceiling): {e}")
+        })?;
+        let handle = track
+            .play(data)
+            .map_err(|e| anyhow::anyhow!("play 2d: {e}"))?;
+        Ok((track, handle))
+    }
+
     /// Play a decoded sound on a fresh spatial track; the backend only pans, gain over distance
     /// is the kit pump's. `reverb_send` is whether `SoundEntries.EAXDef` resolves a slot
     /// (`0x458f1c` via `0x45cdc0`): `SoundSamplePreferences.dbc` has only ids 1 and 2, so
     /// `EAXDef 0` stays dry (`0x7a5bf0`). A slot sends at unity; its per-channel EAX properties
     /// are not applied. `hrtf` puts the software-HRTF lowpass on the voice ([`super::hrtf`]) and
-    /// returns its cutoff cell.
+    /// returns its cutoff cell; `chain` runs a DSP chain after it ([`super::dsp`]).
     pub(crate) fn play_3d(
         &mut self,
         data: StaticSoundData,
         pos: Vec3,
         reverb_send: bool,
         hrtf: bool,
+        chain: Option<Vec<benilla_formats::SoundFilterElem>>,
     ) -> Result<(
         SpatialTrackHandle,
         StaticSoundHandle,
@@ -305,6 +329,9 @@ impl Mixer {
             .attenuation_function(None)
             .sound_capacity(1);
         let cutoff = hrtf.then(|| builder.add_effect(super::hrtf::HrtfBuilder));
+        if let Some(chain) = chain {
+            builder.add_effect(super::dsp::ChainBuilder(chain));
+        }
         if reverb_send {
             builder = builder.with_send(&self.reverb_send, Decibels(0.0));
         }

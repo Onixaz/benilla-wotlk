@@ -349,7 +349,7 @@ fn combat_sounds(
     // `force = 0` (`0x62477e`), so the class roll applies: class 0 is 70 for a creature and 35
     // for a player, class 1 (a crit) 100.
     for (attacker, crit) in exertions {
-        let Ok((tr, _, net, _, _)) = units.get(attacker) else {
+        let Ok((tr, _, net, _, store)) = units.get(attacker) else {
             continue;
         };
         // The `AISOUNDDESC` gate on the attacker: exertion is classes 0/1.
@@ -371,6 +371,7 @@ fn combat_sounds(
             .and_then(|d| voices.0.for_display(d))
             .map(|v| v.exertion[usize::from(crit)])
             .unwrap_or(0);
+        let voice_filter = player_voice_filter(&out, net, store);
         play(
             &mut kits,
             &mut out,
@@ -378,6 +379,7 @@ fn combat_sounds(
             tr.translation,
             PlayExtras {
                 bus: Bus::EXERTION,
+                voice_filter,
                 ..default()
             },
             "exertion",
@@ -604,7 +606,7 @@ fn combat_sounds(
                     || net.kind == EntityKind::Player
                     || !swing.victim.is_some_and(|v| object_sound_playing(&out, v))
             });
-            if let Some((victim_tr, _, net, victim_is_you, _)) = vocal_victim {
+            if let Some((victim_tr, _, net, victim_is_you, store)) = vocal_victim {
                 // The class roll, keyed on the victim's type (`[vt+0x88]`): class 2 is 60 for a
                 // creature and 30 for a player; classes 3 and 9 are 100.
                 if !crushing && !crit {
@@ -630,17 +632,35 @@ fn combat_sounds(
                 } else {
                     Bus::INJURY
                 };
+                let voice_filter = player_voice_filter(&out, net, store);
                 play(
                     &mut kits,
                     &mut out,
                     vocal,
                     victim_tr.translation,
-                    PlayExtras { bus, ..default() },
+                    PlayExtras {
+                        bus,
+                        voice_filter,
+                        ..default()
+                    },
                     "injury",
                 );
             }
         }
     }
+}
+
+/// A player's exertion (classes 0/1) and wound (2/3/9) vocals take a Death Knight's voice chain:
+/// `CGPlayer_C::PlayUnitSound` (`0x7631a0`) filters every class but 5-7 and 10-13. The creature
+/// route `0x623490` never does.
+fn player_voice_filter(
+    out: &SoundOutput,
+    net: &NetEntity,
+    store: Option<&crate::net::ObjectStore>,
+) -> Option<super::dsp::VoiceFilter> {
+    (net.kind == EntityKind::Player)
+        .then(|| super::kit::voice_filter(out, store))
+        .flatten()
 }
 
 /// Registration hook for [`super::SoundPlugin`].
