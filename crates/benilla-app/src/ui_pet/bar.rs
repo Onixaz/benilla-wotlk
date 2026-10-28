@@ -26,6 +26,7 @@ pub(super) struct PetSlotWalk<'w, 's> {
     reputations: Option<Res<'w, crate::net::Reputations>>,
     items: Option<Res<'w, crate::items::Items>>,
     commands: Option<Res<'w, crate::net::NetCommands>>,
+    combo: Option<Res<'w, crate::spell::ComboPoints>>,
 }
 
 impl PetSlotWalk<'_, '_> {
@@ -63,6 +64,10 @@ impl PetSlotWalk<'_, '_> {
             carried: &std::collections::HashMap::new(),
             // The pet is not the active player: no rune spell is usable on it (`0x80182d`).
             runes: None,
+            combo_points: self.combo.as_ref().map_or(0, |c| {
+                c.pet
+                    .on(0, self.selection.as_ref().and_then(|s| s.guid).unwrap_or(0))
+            }),
         };
         crate::spell::usable::spell_usable(
             spell_id,

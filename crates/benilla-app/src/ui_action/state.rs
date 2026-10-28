@@ -93,6 +93,7 @@ pub(super) fn feed_action_state(
             Option<Res<crate::ui_rune::Runes>>,
             Option<Res<crate::ui_rune::RuneCosts>>,
         ),
+        Option<Res<crate::spell::ComboPoints>>,
     ),
     self_q: Query<(&ObjectStore, &Transform, Has<Engaged>, Option<&Casting>), With<SelfPlayer>>,
     selection: Res<Selection>,
@@ -125,8 +126,20 @@ pub(super) fn feed_action_state(
         memory.last_cd_trace = Some(now);
     }
 
-    let (pending, queued_melee, channel, targeting, bound, spell_mods, range_units, rune_inputs) =
-        &cast_state;
+    let (
+        pending,
+        queued_melee,
+        channel,
+        targeting,
+        bound,
+        spell_mods,
+        range_units,
+        rune_inputs,
+        combo,
+    ) = &cast_state;
+    let combo_points = combo
+        .as_deref()
+        .map_or(0, |c| c.player.on(0, selection.guid.unwrap_or(0)));
     let rune_leg = |check| crate::spell::cooldowns::RuneLeg {
         runes: check,
         catalog: &spells
@@ -229,6 +242,7 @@ pub(super) fn feed_action_state(
                         carried: &carried,
                         spell_mods,
                         runes: rune_check,
+                        combo_points,
                     };
                     let (u, oom) = usable::spell_usable(
                         button.action,
@@ -319,6 +333,7 @@ pub(super) fn feed_action_state(
                         carried: &carried,
                         spell_mods,
                         runes: rune_check,
+                        combo_points,
                     };
                     let (u, oom) = usable::item_usable(
                         button.action,

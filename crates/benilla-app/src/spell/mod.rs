@@ -15,6 +15,7 @@ use benilla_world::schedule::WorldStage;
 mod bind_gates;
 mod cast_send;
 pub(crate) mod cast_target;
+pub(crate) mod combo;
 pub(crate) mod cooldowns;
 pub(crate) mod group_relation;
 mod inflight;
@@ -32,6 +33,7 @@ pub(crate) mod validator;
 // `send_spell_cast` is private to `cast_send`, so no second send path can exist.
 pub(crate) use cast_send::{CastCommit, CastLadder, HeldCast, HeldForPick, TargetedBind};
 pub(crate) use cast_target::{AutoDismount, AutoSelfCast};
+pub(crate) use combo::ComboPoints;
 pub(crate) use cooldowns::Cooldowns;
 pub(crate) use inflight::{
     inflight, ActiveChannel, AutoRepeatActive, LocalMoveStart, PendingCast, QueuedMeleeSpell,
@@ -100,6 +102,7 @@ impl Plugin for SpellPlugin {
             .init_resource::<LocalMoveStart>()
             .init_resource::<AutoRepeatActive>()
             .init_resource::<Cooldowns>()
+            .init_resource::<ComboPoints>()
             .init_resource::<SpellModifiers>()
             .init_resource::<AutoSelfCast>()
             .init_resource::<AutoDismount>()
@@ -147,6 +150,7 @@ impl Plugin for SpellPlugin {
                 ),
             )
             .add_systems(OnEnter(ClientState::InWorld), mods::clear_on_world_enter)
+            .add_systems(OnEnter(ClientState::InWorld), combo::clear_combo_points)
             .init_resource::<SummonSlots>()
             .init_resource::<multicast::MultiCastLists>()
             .add_systems(
@@ -158,6 +162,7 @@ impl Plugin for SpellPlugin {
                 load_summon_slots.after(benilla_assets::AssetSet::Open),
             );
         net::register(app);
+        combo::register(app);
     }
 }
 

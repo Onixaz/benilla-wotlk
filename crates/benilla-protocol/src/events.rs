@@ -798,6 +798,33 @@ pub enum SessionEvent {
     ClearCooldown { spell_id: u32, caster: u64 },
     /// Wipe every cooldown for `caster` (`SMSG_COOLDOWN_CHEAT`, the GM reset).
     CooldownCheat { caster: u64 },
+    /// Shift one spell's cooldown by a signed delay (`SMSG_MODIFY_COOLDOWN`).
+    ModifyCooldown {
+        spell_id: u32,
+        caster: u64,
+        delay_ms: i32,
+    },
+    /// A unit's power of one type, set outright (`SMSG_POWER_UPDATE`).
+    PowerUpdate {
+        guid: u64,
+        power_type: u8,
+        value: u32,
+    },
+    /// Our combo points and the unit they sit on (`SMSG_UPDATE_COMBO_POINTS`).
+    ComboPoints { target: u64, points: u8 },
+    /// A pet's combo points and the unit they sit on (`SMSG_PET_UPDATE_COMBO_POINTS`).
+    PetComboPoints { pet: u64, target: u64, points: u8 },
+    /// Drop the target when it is `guid` (`SMSG_CLEAR_TARGET`).
+    ClearTarget { guid: u64 },
+    /// The unit dismounts now, ahead of its descriptor (`SMSG_DISMOUNT`).
+    Dismount { guid: u64 },
+    /// A clone's caster look (`SMSG_MIRRORIMAGE_DATA`).
+    MirrorImageData {
+        guid: u64,
+        image: crate::messages::MirrorImage,
+    },
+    /// The whole forced `(faction, reaction)` list (`SMSG_SET_FORCED_REACTIONS`).
+    ForcedReactions { reactions: Vec<(u32, u32)> },
     /// A unit's channel opened (`MSG_CHANNEL_START`).
     ChannelStart {
         caster: u64,

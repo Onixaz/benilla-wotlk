@@ -44,11 +44,26 @@ pub(super) fn resolve_char_look(
     dm: Option<&DisplayModel>,
     entity: Entity,
     stores: &Query<&ObjectStore>,
+    mirror: Option<&super::super::mirror_image::MirrorLookOf>,
 ) -> Option<CharLook> {
     // The look follows the display, not the entity kind: the display's own appearance row first,
     // the wire's only for a character body without one, as the reference's race and sex getters
     // answer (`0x60c690`). A druid form is a plain creature model and has no look.
     let d = dm?;
+    // A clone's caster look comes first, ahead of the display's own row (`0x73014a`).
+    if let Some(m) = mirror.and_then(|m| m.for_display(net.display_id)) {
+        return Some(CharLook {
+            race: m.race,
+            sex: m.sex,
+            class: m.class,
+            skin: m.skin,
+            face: m.face,
+            hair_style: m.hair_style,
+            hair_color: m.hair_color,
+            facial_hair: m.facial_hair,
+            body: BodySkin::Composite,
+        });
+    }
     if let Some(npc) = d.npc_appearance.as_ref() {
         // The unit's `UNIT_FIELD_BYTES_0` class (`0x71d06c`); a baked atlas gets none (`0x730363`).
         let class = match npc.bake_name {
@@ -161,6 +176,16 @@ pub(super) fn resolve_worn_equip(
                 helm: e.helm,
                 emblem: e.emblem,
                 tabard_preview: e.tabard_preview,
+            })
+            .unwrap_or_default(),
+        // A clone wears its caster's displays, the only unit given an `Equipment`.
+        EntityKind::Unit if equipment.is_some() => equipment
+            .map(|e| WornEquip {
+                bodyslots: e.bodyslots,
+                cloak: e.cloak,
+                helm: e.helm,
+                emblem: e.emblem,
+                tabard_preview: false,
             })
             .unwrap_or_default(),
         // An NPC wears its CreatureDisplayInfoExtra columns, ItemDisplayInfo ids by bodyslot: 2 to

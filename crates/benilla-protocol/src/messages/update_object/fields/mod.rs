@@ -85,6 +85,8 @@ const FIELD_UNIT_NATIVEDISPLAYID: u16 = 132;
 /// The ridden mount's `CreatureDisplayInfo` id, 0 when unmounted; this field, not the aura, is the
 /// mounted state (`Unit::IsMounted`; client `[unit+0x110]+0x1fc`).
 pub const FIELD_UNIT_MOUNTDISPLAYID: u16 = 133;
+/// `UNIT_FIELD_FLAGS_2`, 3.3.5a's second flags word.
+const FIELD_UNIT_FLAGS_2: u16 = 44;
 /// Nonzero on a pet or charm; the rank getter `0x605620` then forces rank 0, so an enslaved mob
 /// shows no elite dragon, tooltip rank word or boss skull.
 const FIELD_UNIT_PETNUMBER: u16 = 139;
@@ -342,9 +344,10 @@ const FIELD_PLAYER_DUEL_TEAM: u16 = 196;
 // visible player; a guild id of 0 is guildless.
 const FIELD_PLAYER_GUILDID: u16 = 191;
 const FIELD_PLAYER_GUILDRANK: u16 = 192;
-// `GetComboPoints` (`0x51a190`) reads the target at block +0x838 and the count byte at +0x1029.
+// A slot of the shared index space only: 3.3.5a sends combo points in `SMSG_UPDATE_COMBO_POINTS`.
+#[cfg(test)]
 const FIELD_PLAYER_FIELD_COMBO_TARGET: u16 = 714;
-const FIELD_PLAYER_FIELD_BYTES: u16 = 1222; // UNIT_END+0x40A: flags, combo points, action bars,
+const FIELD_PLAYER_FIELD_BYTES: u16 = 1222; // UNIT_END+0x40A: flags, RAF levels, action bars,
                                             // highest honor rank; not the appearance PLAYER_BYTES
 
 // The honor block (`UpdateFields_1_12_1.h:288-298`) is private: another player's honor needs
@@ -407,6 +410,20 @@ pub struct ObjectFields {
     values: Vec<u32>,
     /// The created type's [`descriptor_len`], below which absent reads 0; 0 for a delta or fixture.
     descriptor_end: u16,
+    /// The client's own copies read in place of a field, `None` while none stands.
+    shadow: Option<Box<Shadow>>,
+}
+
+/// What the client keeps beside a unit's descriptor and reads in its place: the power
+/// `SMSG_POWER_UPDATE` sets (`CGUnit_C::SetPredictedPower` `0x722c50`, `[unit+0xfb4]`) and the
+/// mount `SMSG_DISMOUNT` drops ahead of the field (`0x741a40`). A move of the shadowed field drops
+/// the copy, as its field handler re-seeds it (`0x7234d0`, `0x7235c0`, `0x723620`). benilla
+/// predicts no spend, so the handler's keep-a-lower-prediction leg for our own unit never differs.
+#[derive(Debug, Clone, Default)]
+struct Shadow {
+    /// By power type, 0..7.
+    power: [Option<u32>; 7],
+    dismounted: bool,
 }
 
 /// An object's descriptor length in dwords: the `*_END` of its innermost block, so a Player spans
@@ -447,6 +464,7 @@ impl ObjectFields {
             present,
             values,
             descriptor_end: 0,
+            shadow: None,
         })
     }
 
@@ -666,21 +684,87 @@ impl ObjectFields {
                     );
                     if old != new {
                         changed(index, old, new);
+                        follow_shadow(&mut self.shadow, index, new);
                     }
                 }
             }
+            let shadow = self.shadow.take();
             *self = delta;
+            self.shadow = shadow;
         } else {
             for (index, value) in delta.raw_fields() {
                 let old = self.get_raw(index).unwrap_or(0);
                 if old != value {
                     changed(index, old, value);
+                    follow_shadow(&mut self.shadow, index, value);
                 }
                 self.insert(index, value);
             }
         }
     }
 
+    /// `SMSG_POWER_UPDATE` (`CGUnit_C::SetPredictedPower` `0x722c50`): power type `ty` reads
+    /// `value`, capped at its maximum, until its field next moves. Whether the read moved; a type
+    /// past the seven has no slot.
+    pub fn set_predicted_power(&mut self, ty: u8, value: u32) -> bool {
+        if usize::from(ty) >= 7 {
+            return false;
+        }
+        let value = value.min(self.unit_max_power(ty).unwrap_or(0));
+        if self.unit_power(ty) == Some(value) {
+            return false;
+        }
+        self.shadow.get_or_insert_default().power[usize::from(ty)] = Some(value);
+        true
+    }
+
+    /// `SMSG_DISMOUNT` (`0x741a40`): the mount reads 0 until its field next moves. Whether it
+    /// dropped one; an unmounted unit is left alone.
+    pub fn drop_mount(&mut self) -> bool {
+        if self.unit_mount_display_id() == 0 {
+            return false;
+        }
+        self.shadow.get_or_insert_default().dismounted = true;
+        true
+    }
+
+    /// The predicted power of type `ty` while one stands.
+    fn predicted_power(&self, ty: u8) -> Option<u32> {
+        self.shadow
+            .as_deref()?
+            .power
+            .get(usize::from(ty))
+            .copied()?
+    }
+
+    /// Whether `SMSG_DISMOUNT` dropped the mount the field still names.
+    fn mount_dropped(&self) -> bool {
+        self.shadow.as_deref().is_some_and(|s| s.dismounted)
+    }
+}
+
+/// Drop the copy a moved field re-seeds: its power type's for a power or maximum, the new display
+/// type's for `UNIT_FIELD_BYTES_0` (`0x723620`), the dropped mount for the mount field.
+fn follow_shadow(shadow: &mut Option<Box<Shadow>>, index: u16, new: u32) {
+    let Some(s) = shadow.as_deref_mut() else {
+        return;
+    };
+    // Types 0-4 and 5-6 sit in two runs each, power and maximum alike.
+    let run = |base: u16, len: u16| (base..base + len).contains(&index).then(|| index - base);
+    let slot = run(FIELD_UNIT_POWER1, 5)
+        .or_else(|| run(FIELD_UNIT_MAXPOWER1, 5))
+        .or_else(|| run(FIELD_UNIT_POWER6, 2).map(|t| t + 5))
+        .or_else(|| run(FIELD_UNIT_MAXPOWER6, 2).map(|t| t + 5))
+        .or_else(|| (index == FIELD_UNIT_BYTES_0).then_some((new >> 24) as u16));
+    if let Some(slot) = slot.filter(|&t| t < 7) {
+        s.power[usize::from(slot)] = None;
+    }
+    if index == FIELD_UNIT_MOUNTDISPLAYID {
+        s.dismounted = false;
+    }
+}
+
+impl ObjectFields {
     /// The type this was created as, from its descriptor length (the eight lengths are distinct).
     /// Unlike [`Self::object_type`] it tells a corpse from an item, as index 36 needs.
     pub fn created_as(&self) -> Option<ObjectType> {
