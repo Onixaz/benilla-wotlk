@@ -19,11 +19,12 @@ use objc2_core_audio::{
     kAudioDevicePropertyBufferFrameSizeRange, kAudioDevicePropertyDeviceIsAlive,
     kAudioDevicePropertyIOThreadOSWorkgroup, kAudioDevicePropertyLatency,
     kAudioDevicePropertyNominalSampleRate, kAudioDevicePropertySafetyOffset,
-    kAudioDevicePropertyScopeOutput, kAudioHardwarePropertyDefaultOutputDevice,
+    kAudioDevicePropertyScopeOutput, kAudioDevicePropertyStreams,
+    kAudioHardwarePropertyDefaultOutputDevice, kAudioHardwarePropertyDevices,
     kAudioObjectPropertyElementMain, kAudioObjectPropertyScopeGlobal, kAudioObjectSystemObject,
-    AudioObjectAddPropertyListener, AudioObjectGetPropertyData, AudioObjectID,
-    AudioObjectPropertyAddress, AudioObjectPropertySelector, AudioObjectRemovePropertyListener,
-    AudioObjectSetPropertyData,
+    AudioObjectAddPropertyListener, AudioObjectGetPropertyData, AudioObjectGetPropertyDataSize,
+    AudioObjectID, AudioObjectPropertyAddress, AudioObjectPropertySelector,
+    AudioObjectRemovePropertyListener, AudioObjectSetPropertyData,
 };
 use objc2_core_audio_types::AudioValueRange;
 
@@ -192,9 +193,92 @@ pub(super) fn default_output() -> Result<Device> {
     describe(id)
 }
 
+/// Every device with an output stream, by name, in the HAL's order.
+pub(super) fn output_names() -> Vec<String> {
+    output_ids().into_iter().map(device_name).collect()
+}
+
+/// The first output device carrying `name`.
+pub(super) fn output_named(name: &str) -> Result<Device> {
+    let id = output_ids()
+        .into_iter()
+        .find(|&id| device_name(id) == name)
+        .with_context(|| format!("no output device named {name}"))?;
+    describe(id)
+}
+
+fn device_name(id: AudioObjectID) -> String {
+    coreaudio::audio_unit::macos_helpers::get_device_name(id)
+        .unwrap_or_else(|_| format!("device {id}"))
+}
+
+/// The size in bytes of a variable-length property; `None` when the HAL refuses.
+fn size_of_property(
+    object: AudioObjectID,
+    selector: AudioObjectPropertySelector,
+    scope: u32,
+) -> Option<u32> {
+    let address = addr(selector, scope);
+    let mut size = 0u32;
+    // SAFETY: `size` is a valid out-pointer; no qualifier.
+    let status = unsafe {
+        AudioObjectGetPropertyDataSize(
+            object,
+            NonNull::from(&address),
+            0,
+            std::ptr::null(),
+            NonNull::from(&mut size),
+        )
+    };
+    (status == 0).then_some(size)
+}
+
+/// The HAL's devices that carry at least one output stream.
+fn output_ids() -> Vec<AudioObjectID> {
+    let system = kAudioObjectSystemObject as AudioObjectID;
+    let Some(mut size) = size_of_property(
+        system,
+        kAudioHardwarePropertyDevices,
+        kAudioObjectPropertyScopeGlobal,
+    ) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<AudioObjectID> = vec![0; size as usize / std::mem::size_of::<AudioObjectID>()];
+    if ids.is_empty() {
+        return ids;
+    }
+    let address = addr(
+        kAudioHardwarePropertyDevices,
+        kAudioObjectPropertyScopeGlobal,
+    );
+    // SAFETY: `size` bounds the write into `ids`, which holds that many bytes.
+    let status = unsafe {
+        AudioObjectGetPropertyData(
+            system,
+            NonNull::from(&address),
+            0,
+            std::ptr::null(),
+            NonNull::from(&mut size),
+            NonNull::new_unchecked(ids.as_mut_ptr().cast::<c_void>()),
+        )
+    };
+    if status != 0 {
+        return Vec::new();
+    }
+    ids.truncate(size as usize / std::mem::size_of::<AudioObjectID>());
+    ids.retain(|&id| {
+        size_of_property(
+            id,
+            kAudioDevicePropertyStreams,
+            kAudioDevicePropertyScopeOutput,
+        )
+        .is_some_and(|s| s > 0)
+    });
+    ids
+}
+
 fn describe(id: AudioObjectID) -> Result<Device> {
-    let name = coreaudio::audio_unit::macos_helpers::get_device_name(id)
-        .unwrap_or_else(|_| format!("device {id}"));
+    let name = device_name(id);
     let rate: f64 = get(
         id,
         kAudioDevicePropertyNominalSampleRate,
@@ -411,17 +495,20 @@ pub(super) struct Listeners {
 }
 
 impl Listeners {
-    pub(super) fn arm(device: &Device, notices: Arc<Notices>) -> Self {
+    /// `follow_default` also listens for the system default moving; a chosen device ignores it.
+    pub(super) fn arm(device: &Device, notices: Arc<Notices>, follow_default: bool) -> Self {
         let device = device.id;
         let client = Arc::as_ptr(&notices) as *mut c_void;
-        let wanted = [
+        let default_watch = follow_default.then(|| {
             (
                 kAudioObjectSystemObject as AudioObjectID,
                 addr(
                     kAudioHardwarePropertyDefaultOutputDevice,
                     kAudioObjectPropertyScopeGlobal,
                 ),
-            ),
+            )
+        });
+        let device_watch = [
             (
                 device,
                 addr(
@@ -444,8 +531,8 @@ impl Listeners {
                 ),
             ),
         ];
-        let mut armed = Vec::with_capacity(wanted.len());
-        for (object, address) in wanted {
+        let mut armed = Vec::with_capacity(device_watch.len() + 1);
+        for (object, address) in default_watch.into_iter().chain(device_watch) {
             // SAFETY: `client` stays valid while `self` holds the Arc; removed in Drop.
             let status = unsafe {
                 AudioObjectAddPropertyListener(

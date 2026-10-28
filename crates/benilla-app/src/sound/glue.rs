@@ -356,6 +356,19 @@ fn watch_glue_music(
     music.watch.feed(h, f64::from(time.delta_secs()));
 }
 
+/// A sound-system restart stops the theme and the ambience (`SE2::StopAllSounds 0x87ded0`); on the
+/// glue screens [`watch_glue_music`] starts the remembered theme again.
+fn stop_on_restart(
+    mut restarts: MessageReader<super::engine::SoundRestart>,
+    mut music: NonSendMut<GlueMusic>,
+) {
+    if restarts.read().count() == 0 {
+        return;
+    }
+    fade_glue_music(&mut music, glue_cut());
+    fade_glue_ambience(&mut music, glue_cut());
+}
+
 /// Report the glue theme's voice into the global budget; it plays into `InWorld` too.
 fn report_stream_voices(music: NonSend<GlueMusic>, mut out: NonSendMut<super::SoundOutput>) {
     let live = |h: &Option<mixer::StreamingSoundHandle<kira::sound::FromFileError>>| {
@@ -380,6 +393,9 @@ pub(super) fn plugin(app: &mut App) {
                 // No run condition: the theme plays into `InWorld`, and the entry load burst is
                 // the window the watch exists for.
                 hand_off_glue_music,
+                stop_on_restart
+                    .after(super::engine::RestartSet)
+                    .before(watch_glue_music),
                 watch_glue_music.after(hand_off_glue_music),
                 report_stream_voices,
             ),

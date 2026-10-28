@@ -83,6 +83,9 @@ pub(crate) fn amp_to_db(amp: f32) -> Decibels {
 pub(crate) struct Mixer {
     manager: AudioManager<OutputBackend>,
     listener: ListenerHandle,
+    /// The chosen output device was lost and the output went to the system default, not yet
+    /// taken by [`Mixer::take_fell_back`].
+    fell_back: bool,
     /// Rolling mix-health counters ([`Mixer::poll_health`]).
     health: MixHealth,
     /// The output meters accumulated since the last [`Mixer::take_output_window`].
@@ -106,13 +109,14 @@ pub(crate) struct Mixer {
 }
 
 impl Mixer {
-    /// Open the default audio device; without one the caller runs silent.
-    pub(crate) fn new(probe_dir: Option<&Path>) -> Result<Self> {
+    /// Open `device` (`None` is the system default); without one the caller runs silent.
+    pub(crate) fn new(probe_dir: Option<&Path>, device: Option<String>) -> Result<Self> {
         // The tap's WAV header and the limiter's delay line are sized at build time.
         let sample_rate = output::probe_sample_rate();
         let backend_settings = OutputSettings {
             mix_ahead_ms: mix_ahead_ms(),
             device_buffer_frames: io_buffer_frames(),
+            device,
         };
         let level = Arc::new(MixLevel::default());
         let limiter_on = Arc::new(AtomicBool::new(true));
@@ -165,6 +169,7 @@ impl Mixer {
         Ok(Self {
             manager,
             listener,
+            fell_back: false,
             health: MixHealth::default(),
             window: Window::default(),
             reverb_send,
@@ -225,6 +230,18 @@ impl Mixer {
         );
     }
 
+    /// Reopen the output on `device` (`None` is the system default).
+    pub(crate) fn select_output(&mut self, device: Option<String>) {
+        for event in self.manager.backend_mut().select(device) {
+            self.report(event);
+        }
+    }
+
+    /// Whether the chosen device was lost for the system default since the last call.
+    pub(crate) fn take_fell_back(&mut self) -> bool {
+        std::mem::take(&mut self.fell_back)
+    }
+
     /// Master volume as linear amplitude: the first effect in the main chain.
     pub(crate) fn set_master(&mut self, amp: f32) {
         self.master.set_volume(amp_to_db(amp), glide());
@@ -270,17 +287,24 @@ impl Mixer {
     /// is the kit pump's. `reverb_send` is whether `SoundEntries.EAXDef` resolves a slot
     /// (`0x458f1c` via `0x45cdc0`): `SoundSamplePreferences.dbc` has only ids 1 and 2, so
     /// `EAXDef 0` stays dry (`0x7a5bf0`). A slot sends at unity; its per-channel EAX properties
-    /// are not applied.
+    /// are not applied. `hrtf` puts the software-HRTF lowpass on the voice ([`super::hrtf`]) and
+    /// returns its cutoff cell.
     pub(crate) fn play_3d(
         &mut self,
         data: StaticSoundData,
         pos: Vec3,
         reverb_send: bool,
-    ) -> Result<(SpatialTrackHandle, StaticSoundHandle)> {
+        hrtf: bool,
+    ) -> Result<(
+        SpatialTrackHandle,
+        StaticSoundHandle,
+        Option<Arc<super::hrtf::HrtfCutoff>>,
+    )> {
         // One sound per track: kira's default capacity allocates for 128 on every play.
         let mut builder = SpatialTrackBuilder::new()
             .attenuation_function(None)
             .sound_capacity(1);
+        let cutoff = hrtf.then(|| builder.add_effect(super::hrtf::HrtfBuilder));
         if reverb_send {
             builder = builder.with_send(&self.reverb_send, Decibels(0.0));
         }
@@ -307,7 +331,7 @@ impl Mixer {
         let handle = track
             .play(data)
             .map_err(|e| anyhow::anyhow!("play 3d: {e}"))?;
-        Ok((track, handle))
+        Ok((track, handle, cutoff))
     }
 
     /// Decode-stream a long sound (music, an ambience bed) on the main track.
@@ -410,23 +434,7 @@ impl Mixer {
         self.sample_rate = Some(backend.sample_rate());
         self.health.stream_errors = backend.stream_errors();
         for event in events {
-            match event {
-                Event::Opened {
-                    device,
-                    sample_rate,
-                    buffer_frames,
-                    mix_ahead_ms,
-                    realtime_latency_frames,
-                } => info!(
-                    "audio: {device} — {sample_rate} Hz, IO buffer {buffer_frames} frames \
-                     (~{:.1} ms), mix-ahead {mix_ahead_ms} ms, device latency ~{:.1} ms",
-                    f64::from(buffer_frames) / f64::from(sample_rate) * 1000.0,
-                    f64::from(realtime_latency_frames) / f64::from(sample_rate) * 1000.0,
-                ),
-                Event::Lost(why) => warn!("audio: output stream dropped — {why}; reopening"),
-                Event::OpenFailed(what) => warn!("audio: output device refused — {what}; retrying"),
-                Event::Dead(what) => error!("audio: output is gone for good — {what}"),
-            }
+            self.report(event);
         }
         if window.render_chunks > 0 && window.chunk_ms > 0.0 {
             self.health.load = (window.render_wall_max_ms / window.chunk_ms) as f32;
@@ -435,6 +443,31 @@ impl Mixer {
         self.health.overruns += window.underruns;
         self.window.merge(window);
         self.health
+    }
+
+    /// Log one backend event; a fallback is also kept for [`Mixer::take_fell_back`].
+    fn report(&mut self, event: Event) {
+        match event {
+            Event::Opened {
+                device,
+                sample_rate,
+                buffer_frames,
+                mix_ahead_ms,
+                realtime_latency_frames,
+            } => info!(
+                "audio: {device} — {sample_rate} Hz, IO buffer {buffer_frames} frames \
+                 (~{:.1} ms), mix-ahead {mix_ahead_ms} ms, device latency ~{:.1} ms",
+                f64::from(buffer_frames) / f64::from(sample_rate) * 1000.0,
+                f64::from(realtime_latency_frames) / f64::from(sample_rate) * 1000.0,
+            ),
+            Event::Lost(why) => warn!("audio: output stream dropped — {why}; reopening"),
+            Event::OpenFailed(what) => warn!("audio: output device refused — {what}; retrying"),
+            Event::FellBack(name) => {
+                warn!("audio: output device {name} is gone — using the system default");
+                self.fell_back = true;
+            }
+            Event::Dead(what) => error!("audio: output is gone for good — {what}"),
+        }
     }
 
     /// Read and reset the peak load, so a report covers only its own window.

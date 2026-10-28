@@ -120,26 +120,83 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )
 }
 
-/// The sound table's driver and voice verbs (table `0xb2d928`). benilla plays through the system's
-/// default output and lists no drivers of its own, and it has no voice chat: every driver count is
-/// 0, every name the empty string, and the voice loopback never runs.
+impl super::UiScript {
+    /// The engine's cached output devices after its last init, `None` with no engine; the verbs
+    /// put "System Default" ahead of them.
+    pub fn set_sound_output_drivers(&mut self, drivers: Option<Vec<String>>) {
+        set_field!(self, sound_output_drivers, drivers);
+    }
+
+    /// Whether `Sound_GameSystem_RestartSoundSystem` was called since the last drain.
+    pub fn take_sound_restart(&mut self) -> bool {
+        drain_field!(self, sound_restart)
+    }
+}
+
+/// The sound table's driver and voice verbs (table `0xb2d928`). The game system's output devices
+/// are the engine's cache ([`super::UiScript::set_sound_output_drivers`]).
+///
+/// Deviation: benilla has no voice chat, a maintainer's call, since no 3.3.5a server runs the
+/// voice service. The input and chat systems list no device and the voice loopback never runs;
+/// the server's voice flag reads off ([`install_voice`]), so the stock UI never shows them.
 fn install_drivers(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
-    // `Sound_GameSystem_GetNumOutputDrivers` (`0x985c70`) and its siblings: the counts.
-    for name in [
+    // `Sound_GameSystem_GetNumOutputDrivers` (`0x985c70`): the cached count, the host's devices
+    // plus "System Default" (`SE2::GetNumOutputDrivers 0x878450`); 0 with no engine.
+    g.set(
         "Sound_GameSystem_GetNumOutputDrivers",
+        lua.create_function(|lua, _: mlua::MultiValue| {
+            let model = lua
+                .app_data_ref::<super::ModelCell>()
+                .expect("model app_data");
+            Ok(model
+                .sound_output_drivers
+                .as_ref()
+                .map_or(0.0, |d| (d.len() + 1) as f64))
+        })?,
+    )?;
+    // `Sound_GameSystem_GetOutputDriverNameByIndex` (`0x985ca0`): a number or the usage error, then
+    // `SI2::GetOutputDriverName_Cached` (`0x8792b0`): 0 is `SYSTEM_DEFAULT`'s text, `i` the
+    // host's device `i - 1`. Deviation: an index past the cache reads "" where the reference
+    // reads past its array.
+    g.set(
+        "Sound_GameSystem_GetOutputDriverNameByIndex",
+        lua.create_function(|lua, index: Value| {
+            let index = super::binding_abi::number_arg(
+                lua,
+                index,
+                "Usage: Sound_GetOutputDriverNameByIndex(OutputDriverIndex)",
+            )?;
+            let name = {
+                let model = lua
+                    .app_data_ref::<super::ModelCell>()
+                    .expect("model app_data");
+                match (&model.sound_output_drivers, index) {
+                    (None, _) => Some(String::new()),
+                    (Some(_), 0) => None,
+                    (Some(d), i) => Some(
+                        usize::try_from(i - 1)
+                            .ok()
+                            .and_then(|i| d.get(i))
+                            .cloned()
+                            .unwrap_or_default(),
+                    ),
+                }
+            };
+            let name = name.unwrap_or_else(|| super::get_text::global_text(lua, "SYSTEM_DEFAULT"));
+            lua.create_string(name)
+        })?,
+    )?;
+    // The voice systems' counts: no device.
+    for name in [
         "Sound_GameSystem_GetNumInputDrivers",
         "Sound_ChatSystem_GetNumOutputDrivers",
         "Sound_ChatSystem_GetNumInputDrivers",
     ] {
         g.set(name, lua.create_function(|_, _: mlua::MultiValue| Ok(0.0))?)?;
     }
-    // The names by index (`0x985ca0` and siblings): a number or the usage error, then the name.
+    // Their names by index: a number or the usage error, then "".
     for (name, usage) in [
-        (
-            "Sound_GameSystem_GetOutputDriverNameByIndex",
-            "Usage: Sound_GetOutputDriverNameByIndex(OutputDriverIndex)",
-        ),
         (
             "Sound_GameSystem_GetInputDriverNameByIndex",
             "Usage: Sound_GameSystem_GetInputDriverNameByIndex(InputDriverIndex)",
@@ -163,11 +220,14 @@ fn install_drivers(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
-    // `Sound_GameSystem_RestartSoundSystem` (`0x985d30`): the sound system is the host's and
-    // follows its CVars as they change, so there is nothing to restart.
+    // `Sound_GameSystem_RestartSoundSystem` (`0x985d30`): `SI2::ShutDown(1)` then `Init(1)`, which
+    // the host runs after the frame ([`crate::script::UiScript::take_sound_restart`]).
     g.set(
         "Sound_GameSystem_RestartSoundSystem",
-        lua.create_function(|_, _: mlua::MultiValue| Ok(()))?,
+        lua.create_function(|lua, _: mlua::MultiValue| {
+            crate::script::model_mut_of(lua).sound_restart = true;
+            Ok(())
+        })?,
     )?;
     // The voice loopback (`0x985d50`-`0x985ef0`): with no voice chat nothing records or plays.
     for name in [
@@ -202,11 +262,15 @@ fn install_drivers(lua: &Lua) -> mlua::Result<()> {
 }
 
 /// The in-game voice verbs (`ChatFrame` and `ComSatClient` tables), which the glue does not have.
+///
+/// Deviation: benilla has no voice chat (see [`install_drivers`]), so these answer as the reference
+/// does on a server that offers none, whatever `SMSG_FEATURE_SYSTEM_STATUS` says: the Voice page
+/// is never added (`AudioOptionsVoicePanel_OnEvent`) and the voice CVars save without effect.
 pub(super) fn install_voice(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
     // `IsVoiceChatAllowedByServer` (`0x4fccb0`, the server's flag `[0xbcf004]`),
     // `IsVoiceChatEnabled` (`0x4fcbf0`, that flag and a voice session) and
-    // `VoiceIsDisabledByClient` (`0x7dc910`): nil, voice off, as on a server that offers none.
+    // `VoiceIsDisabledByClient` (`0x7dc910`): nil, voice off.
     for name in [
         "IsVoiceChatAllowedByServer",
         "IsVoiceChatEnabled",
@@ -355,6 +419,63 @@ mod tests {
             s.take_music(),
             vec![MusicRequest::Play("42".into()), MusicRequest::Stop]
         );
+    }
+
+    /// The stock device dropdown's reads: "System Default" at 0, then the engine's cache; nothing
+    /// with no engine.
+    #[test]
+    fn the_output_drivers_are_system_default_then_the_engines_devices() {
+        let mut s = UiScript::new().unwrap();
+        s.run("SYSTEM_DEFAULT = 'System Default'").unwrap();
+        assert_eq!(
+            s.eval::<f64>("return Sound_GameSystem_GetNumOutputDrivers()")
+                .unwrap(),
+            0.0
+        );
+        assert_eq!(
+            s.eval::<String>("return Sound_GameSystem_GetOutputDriverNameByIndex(0)")
+                .unwrap(),
+            ""
+        );
+        s.set_sound_output_drivers(Some(vec!["Speakers".into(), "Headphones".into()]));
+        assert_eq!(
+            s.eval::<f64>("return Sound_GameSystem_GetNumOutputDrivers()")
+                .unwrap(),
+            3.0
+        );
+        for (index, name) in [
+            ("0", "System Default"),
+            ("1", "Speakers"),
+            ("'2'", "Headphones"),
+            ("2.9", "Headphones"),
+            ("3", ""),
+            ("-1", ""),
+        ] {
+            assert_eq!(
+                s.eval::<String>(&format!(
+                    "return Sound_GameSystem_GetOutputDriverNameByIndex({index})"
+                ))
+                .unwrap(),
+                name,
+                "{index}"
+            );
+        }
+        let e = s
+            .run("Sound_GameSystem_GetOutputDriverNameByIndex()")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("Usage: Sound_GetOutputDriverNameByIndex(OutputDriverIndex)"));
+    }
+
+    /// The restart answers nothing and leaves one request for the host.
+    #[test]
+    fn the_restart_is_a_request_for_the_host() {
+        let mut s = UiScript::new().unwrap();
+        assert!(!s.take_sound_restart());
+        assert_eq!(s.arity("Sound_GameSystem_RestartSoundSystem()").unwrap(), 0);
+        s.run("Sound_GameSystem_RestartSoundSystem()").unwrap();
+        assert!(s.take_sound_restart());
+        assert!(!s.take_sound_restart());
     }
 
     /// With no voice session the stock voice menu lists no rows and no channel carries voice.

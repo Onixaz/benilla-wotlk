@@ -9,6 +9,8 @@
 //!   payloads play the generic grab/drop pair; never both. A bag swap plays one sound, the held
 //!   item's put-down: the place branch never calls `SetCursorItem` (`0x5e0c40`).
 //! - Taking a loot row plays that item's pickup kit at the click, before the send (`0x4c2790`).
+//! - The Sound panel's side of the engine ([`super::engine`]): the cached device list into the VM,
+//!   and its restart out.
 
 use bevy::prelude::*;
 
@@ -20,6 +22,7 @@ use crate::items::Items;
 use crate::net::NetCommands;
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 
+use super::engine::{DeviceChanged, OutputDrivers, SoundRestart};
 use super::kit::{self, KitRef, SoundKits};
 use super::{SoundConfig, SoundOutput};
 
@@ -361,4 +364,36 @@ pub(super) fn plugin(app: &mut App) {
             )
                 .after(crate::ui_script::UiInput),
         );
+}
+
+/// Hand each new VM the cached device list, and every VM a list that moved.
+pub(super) fn feed_drivers(
+    script: Option<NonSendMut<UiScript>>,
+    drivers: Res<OutputDrivers>,
+    out: NonSend<SoundOutput>,
+    mut device_changed: ResMut<DeviceChanged>,
+    mut seeded: Local<crate::ui_script::VmMemo<bool>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let fresh = seeded.claim(&script);
+    if fresh || drivers.is_changed() {
+        // No engine at all (no device, `$WOW_NOSOUND`): the reference's count with no driver, 0.
+        script.set_sound_output_drivers(out.mixer.as_ref().map(|_| drivers.0.clone()));
+    }
+    // `SOUND_DEVICE_UPDATE` (`0x4c66e3`) follows a device change, not a panel restart.
+    if std::mem::take(&mut device_changed.0) {
+        script.queue_event("SOUND_DEVICE_UPDATE", Vec::new());
+    }
+}
+
+/// Drain the panel's `Sound_GameSystem_RestartSoundSystem` into a [`SoundRestart`].
+pub(super) fn drain_restart_request(
+    script: Option<NonSendMut<UiScript>>,
+    mut restarts: MessageWriter<SoundRestart>,
+) {
+    if script.is_some_and(|mut s| s.take_sound_restart()) {
+        restarts.write(SoundRestart);
+    }
 }

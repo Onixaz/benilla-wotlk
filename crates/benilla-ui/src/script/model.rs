@@ -428,6 +428,13 @@ pub(crate) struct Model {
     /// `PlaySoundFile` and music play normally.
     pub(crate) sound_suppression: u32,
 
+    /// The output devices the engine cached at its last init, after the "System Default" entry
+    /// the verbs add; `None` with no engine.
+    pub(crate) sound_output_drivers: Option<Vec<String>>,
+
+    /// `Sound_GameSystem_RestartSoundSystem` was called since the host's last drain.
+    pub(crate) sound_restart: bool,
+
     /// The CVar table, by lowercased name.
     pub(crate) cvars: HashMap<String, super::cvars::CvarSlot>,
     /// The current map's `MapName_lang` and dynamic-difficulty bit, `GetInstanceInfo`'s.
@@ -1334,6 +1341,8 @@ impl Model {
             sound_queue: Vec::new(),
             music_queue: Vec::new(),
             sound_suppression: 0,
+            sound_output_drivers: None,
+            sound_restart: false,
             cvars: HashMap::new(),
             map_info: None,
             cvars_saved_base: HashMap::new(),

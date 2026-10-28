@@ -109,6 +109,8 @@ pub(crate) struct ActiveChannel {
     amp: f32,
     /// Which per-unit latch this channel's liveness represents ([`Latch`]).
     latch: Latch,
+    /// The software-HRTF lowpass's cutoff, on a 3D voice opened with it ([`super::hrtf`]).
+    hrtf: Option<std::sync::Arc<super::hrtf::HrtfCutoff>>,
 }
 
 /// Which per-unit latch a channel holds. The reference keeps separate handles on a unit,
@@ -246,22 +248,16 @@ fn same_kit_cap_blocks(dedupe_exempt: bool, live_same_kit: usize) -> bool {
     !dedupe_exempt && live_same_kit >= SAME_KIT_MAX
 }
 
-/// The reference's global voice ceiling: `FSOUND_Init(44100, 12, 0x82)` (`0x7a492b`, the
-/// `SoundSoftwareChannels` default). The hardware bank is forced to 0 without hardware mixing, so
-/// it is 12 on any host. It counts every channel, music and ambience included
-/// ([`SoundOutput::live_voices`]).
-pub(crate) const SOFTWARE_CHANNELS: usize = 12;
-
 /// Make room for one more voice or refuse; `true` if the caller may start a sound. At the ceiling
 /// the quietest live one-shot loses its slot to a louder newcomer, and a newcomer quieter than
 /// everything is dropped.
 ///
-/// Deviation: the reference never steals. Every WoW voice is an `FSOUND_Stream` at priority 256
-/// (`fmod.dll 0x1002be47`) and FMOD's steal scan skips `>= 256` (`0x100268e9`), so its 13th sound
-/// is dropped. FMOD's own allocator rule (`0x100268e6`) runs here instead, because dropping the
-/// newest sound silences a near one in favour of distant ones.
+/// Deviation: the reference opens 512 virtual channels over its software voices (`SE2::Init`,
+/// `System::init(512, …)` at `0x87d9cb`), so a voice that loses its slot goes virtual and returns
+/// when it is audible again; here it stops.
 fn claim_voice(out: &mut SoundOutput, candidate_amp: f32) -> bool {
-    if out.live_voices() >= SOFTWARE_CHANNELS {
+    let ceiling = out.engine.voices;
+    if out.live_voices() >= ceiling {
         // Reap first: a channel that ended earlier this frame would still count against the
         // ceiling until the pump runs.
         out.channels
@@ -273,7 +269,7 @@ fn claim_voice(out: &mut SoundOutput, candidate_amp: f32) -> bool {
         .enumerate()
         .filter(|(_, c)| stealable(c.looping, c.latch))
         .map(|(i, c)| (i, c.amp));
-    match pick_voice_slot(stealable, out.live_voices(), candidate_amp) {
+    match pick_voice_slot(stealable, out.live_voices(), ceiling, candidate_amp) {
         VoiceSlot::Free => true,
         VoiceSlot::Steal(i) => {
             // Stopping a waveform mid-sample clicks; fade it.
@@ -307,14 +303,18 @@ enum VoiceSlot {
     Denied,
 }
 
-/// The voice-cap decision over the stealable channels' `(index, amplitude)`. Strict: a newcomer
-/// must be louder than the quietest, so identical copies of a mass buff do not evict each other.
+/// The voice-cap decision over the stealable channels' `(index, amplitude)` against `ceiling`, the
+/// software voices the engine runs (`Sound_NumChannels`, [`super::engine::voice_ceiling`]); it
+/// counts every channel, music and ambience included ([`SoundOutput::live_voices`]). Strict: a
+/// newcomer must be louder than the quietest, so identical copies of a mass buff do not evict each
+/// other.
 fn pick_voice_slot(
     stealable: impl Iterator<Item = (usize, f32)>,
     live_voices: usize,
+    ceiling: usize,
     candidate_amp: f32,
 ) -> VoiceSlot {
-    if live_voices < SOFTWARE_CHANNELS {
+    if live_voices < ceiling {
         return VoiceSlot::Free;
     }
     match stealable.min_by(|a, b| a.1.total_cmp(&b.1)) {
@@ -517,17 +517,18 @@ pub(super) fn play_kit_ext(
 
     // No audio device (`WOW_NOSOUND=1`, CI, a lost device) is a no-op: `sound::plugin` warns once
     // at startup, and `false` already means dropped.
+    let hrtf_on = out.engine.hrtf;
     let Some(mixer) = out.mixer.as_mut() else {
         return Ok(false);
     };
-    let (track, handle) = match pos {
+    let (track, handle, hrtf) = match pos {
         Some(p) => {
             // `EAXDef 0` has no `SoundSamplePreferences` row and the reference gives it no reverb
             // (`0x45cdc0`/`0x7a5bf0`), so NPC voice lines (every `SoundType 17` row) stay dry.
-            let (t, h) = mixer.play_3d(data, p, eax_def != 0)?;
-            (Some(t), h)
+            let (t, h, cutoff) = mixer.play_3d(data, p, eax_def != 0, hrtf_on)?;
+            (Some(t), h, cutoff)
         }
-        None => (None, mixer.play_2d(data)?),
+        None => (None, mixer.play_2d(data)?, None),
     };
     // Every play, named with its wet or dry class, at `RUST_LOG=benilla_app::sound=debug`.
     let name = kits.catalog.get(id).map_or("?", |k| k.name.as_str());
@@ -562,6 +563,7 @@ pub(super) fn play_kit_ext(
         amp,
         bus,
         latch,
+        hrtf,
     });
     Ok(true)
 }
@@ -688,6 +690,13 @@ pub(super) fn stop_source_kit(out: &mut SoundOutput, source: Entity, kit_id: u32
     });
 }
 
+/// Stop every kit channel, the sound-system restart's `SE2::StopAllSounds` (`0x87ded0`).
+pub(super) fn stop_all(out: &mut SoundOutput) {
+    for mut c in out.channels.drain(..) {
+        c.handle.stop(mixer::declick());
+    }
+}
+
 /// Force-stop every channel tagged with `source` on despawn, the unit teardown stop (`0x5fbb6c`).
 /// Returns how many it stopped, so the doodad reaper in [`super::anim_events`] can tell a reaped
 /// loop from a silent source.
@@ -748,6 +757,7 @@ pub(crate) fn play_file(
         amp,
         bus: Bus::DEFAULT,
         latch: Latch::None,
+        hrtf: None,
     });
     Ok(())
 }
@@ -877,7 +887,7 @@ pub(super) fn pump_channels(
     listener: Res<AudioListener>,
     transforms: Query<&Transform, Without<Camera3d>>,
 ) {
-    let listener = listener.pos;
+    let (listener, facing) = (listener.pos, listener.rot);
     out.channels.retain_mut(|ch| {
         if ch.handle.state() == PlaybackState::Stopped {
             return false;
@@ -910,6 +920,9 @@ pub(super) fn pump_channels(
             }
             return true;
         };
+        if let Some(cutoff) = ch.hrtf.as_ref() {
+            cutoff.set(super::hrtf::cutoff_for(listener, facing, p));
+        }
         let d_sq = math::dist_sq(listener, p);
         if ch.cutoff > 0.0 && !math::audible(d_sq, ch.cutoff) {
             // Beyond cutoff the reference mutes the channel (`0x7a5095`); here it stops.
@@ -1197,18 +1210,20 @@ mod tests {
         assert!(!occupies_greeting_latch(None, Latch::None, bear));
     }
 
-    /// `FSOUND_Init(44100, 12, 0x82)` at `0x7a492b`.
-    #[test]
-    fn the_ceiling_is_the_references_twelve() {
-        assert_eq!(SOFTWARE_CHANNELS, 12);
-    }
+    /// `Sound_NumChannels`' default.
+    const SOFTWARE_CHANNELS: usize = 32;
 
     /// Under the ceiling everything plays, whatever the amplitudes.
     #[test]
     fn under_the_ceiling_everything_plays() {
         let live = [(0, 0.9f32), (1, 0.8)];
         assert_eq!(
-            pick_voice_slot(live.into_iter(), SOFTWARE_CHANNELS - 1, 0.001),
+            pick_voice_slot(
+                live.into_iter(),
+                SOFTWARE_CHANNELS - 1,
+                SOFTWARE_CHANNELS,
+                0.001
+            ),
             VoiceSlot::Free,
             "a near-silent sound still plays while there is room"
         );
@@ -1220,7 +1235,7 @@ mod tests {
         // Index 2 is the quietest; index 0 is the oldest and must survive.
         let live = [(0, 0.50f32), (1, 0.30), (2, 0.05), (3, 0.40)];
         assert_eq!(
-            pick_voice_slot(live.into_iter(), SOFTWARE_CHANNELS, 0.9),
+            pick_voice_slot(live.into_iter(), SOFTWARE_CHANNELS, SOFTWARE_CHANNELS, 0.9),
             VoiceSlot::Steal(2)
         );
     }
@@ -1230,7 +1245,7 @@ mod tests {
     fn at_the_ceiling_a_quieter_newcomer_is_dropped() {
         let live = [(0, 0.50f32), (1, 0.30), (2, 0.20)];
         assert_eq!(
-            pick_voice_slot(live.into_iter(), SOFTWARE_CHANNELS, 0.10),
+            pick_voice_slot(live.into_iter(), SOFTWARE_CHANNELS, SOFTWARE_CHANNELS, 0.10),
             VoiceSlot::Denied
         );
     }
@@ -1240,7 +1255,12 @@ mod tests {
     fn identical_copies_do_not_churn_the_budget() {
         let live: Vec<(usize, f32)> = (0..12).map(|i| (i, 0.7)).collect();
         assert_eq!(
-            pick_voice_slot(live.iter().copied(), SOFTWARE_CHANNELS, 0.7),
+            pick_voice_slot(
+                live.iter().copied(),
+                SOFTWARE_CHANNELS,
+                SOFTWARE_CHANNELS,
+                0.7
+            ),
             VoiceSlot::Denied,
             "an equally-loud copy must not evict its own twin"
         );
@@ -1251,7 +1271,12 @@ mod tests {
     fn beds_are_never_stolen() {
         // `claim_voice` filters loops out, so only loops live is an empty stealable set.
         assert_eq!(
-            pick_voice_slot(std::iter::empty(), SOFTWARE_CHANNELS, 1.0),
+            pick_voice_slot(
+                std::iter::empty(),
+                SOFTWARE_CHANNELS,
+                SOFTWARE_CHANNELS,
+                1.0
+            ),
             VoiceSlot::Denied
         );
     }

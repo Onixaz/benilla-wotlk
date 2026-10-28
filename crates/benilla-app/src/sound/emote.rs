@@ -182,6 +182,11 @@ fn emote_sounds(
         else {
             continue;
         };
+        // `Sound_EnablePetSounds` off silences a pet's emote voice too (`CGUnit_C::PlayEmoteSound
+        // 0x746d60`, behind the emote check).
+        if !config.pet_sounds && store.0.unit_pet_number() != 0 {
+            continue;
+        }
         let is_player = store.0.object_type() == Some(ObjectType::Player);
         if !voice_audible(
             m.guid,

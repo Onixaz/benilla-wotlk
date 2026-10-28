@@ -1081,6 +1081,19 @@ fn stop_world_soundscape(zone: &mut ZoneAudio, reason: &str) {
     }
 }
 
+/// A sound-system restart stops the music, the Lua track and the bed (`SE2::StopAllSounds
+/// 0x87ded0`); the scheduler starts cold and picks the zone's music and bed again.
+fn stop_on_restart(
+    mut restarts: MessageReader<super::engine::SoundRestart>,
+    mut zone: NonSendMut<ZoneAudio>,
+) {
+    if restarts.read().count() == 0 {
+        return;
+    }
+    stop_world_soundscape(&mut zone, "sound restart");
+    drop_lua_music(&mut zone);
+}
+
 /// Report this module's live stream voices into the global budget, recounted from the held
 /// handles every frame; a released outgoing ambience bed is not counted.
 fn report_stream_voices(zone: NonSend<ZoneAudio>, mut out: NonSendMut<super::SoundOutput>) {
@@ -1110,6 +1123,12 @@ pub(super) fn plugin(app: &mut App) {
                 // After the dev mute chord, so the gain feed hears it the same frame.
                 .after(super::toggle_mute)
                 .in_set(WorldStage::Present),
+        )
+        .add_systems(
+            Update,
+            stop_on_restart
+                .after(super::engine::RestartSet)
+                .before(lua_music),
         )
         // Unconditional, so the count falls to zero when the soundscape stops.
         .add_systems(Update, report_stream_voices)
