@@ -759,16 +759,11 @@ fn the_two_region_leaves_answer_their_own_maps() {
         "SetTexCoordModifiesRect",
         "GetTexCoordModifiesRect",
         "GetVertexColor",
+        // 3.3.5a's Texture `SetRotation` (`0x48c860`); a FontString has none.
+        "SetRotation",
     ] {
         assert!(has(&s, "Tex", m), "a Texture answers {m}");
         assert!(!has(&s, "Str", m), "a FontString must NOT answer {m}");
-    }
-    // `SetRotation` is 1.12's PlayerModel verb (`0x84f1fc`/`0x505f00`), in neither leaf map.
-    for leaf in ["Tex", "Str"] {
-        assert!(
-            !has(&s, leaf, "SetRotation"),
-            "SetRotation is not a region method"
-        );
     }
     // FontString-only.
     for m in [

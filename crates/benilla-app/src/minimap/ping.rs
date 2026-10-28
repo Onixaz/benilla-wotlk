@@ -67,8 +67,10 @@ fn click_to_world(ctx: &BlipCtx, ui: (f32, f32), seam: f32) -> Option<(f32, f32)
     if ctx.px_per_yd <= 0.0 || seam <= 0.0 {
         return None;
     }
-    let right_yd = ui.0 * seam / ctx.px_per_yd;
-    let up_yd = ui.1 * seam / ctx.px_per_yd;
+    // Turned back to north up, as `PingLocation` rotates by the facing (`0x57ee76`).
+    let back = super::turn_offset(Vec2::new(ui.0, -ui.1), -ctx.turn);
+    let right_yd = back.x * seam / ctx.px_per_yd;
+    let up_yd = -back.y * seam / ctx.px_per_yd;
     if right_yd.hypot(up_yd) >= ctx.radius_yd {
         return None;
     }
@@ -91,6 +93,7 @@ pub(super) fn drive_minimap_ping(
     player: Res<Player>,
     widget: Res<super::MinimapWidget>,
     inside: Res<super::MinimapInside>,
+    rotate: Res<super::MinimapRotate>,
     group: Res<crate::ui_party::GroupState>,
     self_q: Query<&Guid, With<SelfPlayer>>,
     commands: Res<NetCommands>,
@@ -115,7 +118,12 @@ pub(super) fn drive_minimap_ping(
         inside.0,
     );
     let k = 1.0 / (2.0 * radius);
-    let norm = ((wow[1] - live.world.1) * k, (live.world.0 - wow[0]) * k);
+    // Turned with the map (`GetPingPosition`, `0x57f072`): the offset is y-up here.
+    let turned = super::turn_offset(
+        Vec2::new(wow[1] - live.world.1, wow[0] - live.world.0),
+        rotate.turn(player.facing()),
+    );
+    let norm = (turned.x * k, -turned.y * k);
     script.set_minimap_ping(norm);
 
     if !std::mem::take(&mut ping.fresh) {
@@ -189,6 +197,7 @@ mod tests {
             cursor: None,
             cursor_ui: None,
             seam: 1.0,
+            turn: 0.0,
         }
     }
 
@@ -224,6 +233,28 @@ mod tests {
         let world = click_to_world(&c, ui, 1.0).expect("inside the disc");
         let back = c.offset([world.0, world.1, 0.0]);
         // `offset` is y-DOWN screen space; the click was y-up.
+        assert!((back.x - ui.0).abs() < 1e-3, "{back:?} vs {ui:?}");
+        assert!((back.y + ui.1).abs() < 1e-3, "{back:?} vs {ui:?}");
+    }
+
+    /// `rotateMinimap` turns the map clockwise by the facing: facing west (π/2), a point due west
+    /// draws straight up, and a click still round-trips to the world point under it.
+    #[test]
+    fn a_turned_map_puts_the_facing_up_and_round_trips_clicks() {
+        let c = BlipCtx {
+            turn: std::f32::consts::FRAC_PI_2,
+            ..ctx()
+        };
+        let west = c.offset([0.0, 30.0, 0.0]);
+        assert!(west.x.abs() < 1e-3 && west.y < 0.0, "west is up: {west:?}");
+        let north = c.offset([30.0, 0.0, 0.0]);
+        assert!(
+            north.y.abs() < 1e-3 && north.x > 0.0,
+            "north is right: {north:?}"
+        );
+        let ui = (18.0, -25.0);
+        let world = click_to_world(&c, ui, 1.0).expect("inside the disc");
+        let back = c.offset([world.0, world.1, 0.0]);
         assert!((back.x - ui.0).abs() < 1e-3, "{back:?} vs {ui:?}");
         assert!((back.y + ui.1).abs() < 1e-3, "{back:?} vs {ui:?}");
     }

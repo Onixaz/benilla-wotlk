@@ -91,6 +91,7 @@ fn seed_item_strings(s: &mut UiScript) {
         ITEM_CLASSES_ALLOWED = "[CLASSES %s]"
         ITEM_RACES_ALLOWED   = "[RACES %s]"
         ITEM_MIN_LEVEL       = "[MIN_LEVEL %d]"
+        ITEM_LEVEL           = "[ITEM_LEVEL %d]"
         ITEM_MIN_SKILL       = "[MIN_SKILL %s %d]"
         ITEM_REQ_SKILL       = "[REQ_SKILL %s]"
         ITEM_SPELL_KNOWN     = "[ITEM_SPELL_KNOWN]"
