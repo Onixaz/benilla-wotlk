@@ -190,26 +190,38 @@ pub(crate) enum BarberView {
     Leave,
 }
 
-/// Seat or leave the barber view, before [`super::control`] seats this frame's camera.
-fn drain_barber_view(
-    mut requests: MessageReader<BarberView>,
+/// Everything one drained request may write.
+#[derive(bevy::ecs::system::SystemParam)]
+struct ViewTargets<'w, 's> {
+    views: ResMut<'w, CameraViews>,
+    rig: ResMut<'w, CameraControl>,
+    cam: Query<'w, 's, &'static mut FlyCam, With<WorldCamera>>,
+    player: Res<'w, Player>,
+}
+
+/// Drain the Lua queue and the barber chair's view into the rig, before [`super::control`] seats
+/// this frame's camera.
+fn drain_view_requests(
+    script: Option<NonSendMut<UiScript>>,
+    mut cvars: ResMut<crate::cvars::Cvars>,
     mut targets: ViewTargets,
-    mut left: Local<Option<usize>>,
+    mut barber: MessageReader<BarberView>,
+    mut barber_left: Local<Option<usize>>,
 ) {
-    for request in requests.read() {
+    for request in barber.read() {
         let Ok(mut cam) = targets.cam.single_mut() else {
             continue;
         };
         let face_yaw = targets.player.facing();
         match *request {
             BarberView::Enter { distance } => {
-                left.get_or_insert(targets.views.current);
+                barber_left.get_or_insert(targets.views.current);
                 targets.rig.target_distance = distance.clamp(CAM_DIST_MIN, CAM_DIST_MAX);
                 cam.pitch = 0.0;
                 cam.yaw = wrap_pi(face_yaw + std::f32::consts::PI);
             }
             BarberView::Leave => {
-                if let Some(view) = left.take() {
+                if let Some(view) = barber_left.take() {
                     apply(
                         &mut targets.views,
                         &mut targets.rig,
@@ -221,23 +233,6 @@ fn drain_barber_view(
             }
         }
     }
-}
-
-/// Everything one drained request may write.
-#[derive(bevy::ecs::system::SystemParam)]
-struct ViewTargets<'w, 's> {
-    views: ResMut<'w, CameraViews>,
-    rig: ResMut<'w, CameraControl>,
-    cam: Query<'w, 's, &'static mut FlyCam, With<WorldCamera>>,
-    player: Res<'w, Player>,
-}
-
-/// Drain the Lua queue into the rig, before [`super::control`] seats this frame's camera.
-fn drain_view_requests(
-    script: Option<NonSendMut<UiScript>>,
-    mut cvars: ResMut<crate::cvars::Cvars>,
-    mut targets: ViewTargets,
-) {
     let Some(mut script) = script else {
         return;
     };
@@ -353,10 +348,10 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(Startup, load_saved_views.after(crate::cvars::CvarLoad))
         .add_systems(
             Update,
-            (drain_view_requests, drain_barber_view)
-                .chain()
+            drain_view_requests
                 // After the Lua tick that queues them, before the control pass seats the pose.
                 .after(crate::ui_script::UiInput)
+                .after(crate::ui_barber::BarberDrain)
                 .before(super::control)
                 // Capture parks the camera itself; a queued view must not move it.
                 .run_if(not(resource_exists::<crate::run_mode::CaptureMode>)),

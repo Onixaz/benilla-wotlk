@@ -302,6 +302,10 @@ fn watch_close(
     }
 }
 
+/// The drain of the verbs' intents, which queues the close's view before the camera seats it.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct BarberDrain;
+
 /// The barber shop's packet handlers.
 mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
@@ -321,7 +325,7 @@ mod net {
     /// floors the zoom while the shop is open.
     #[allow(clippy::type_complexity)]
     fn on_enable(
-        In(_): In<SessionEvent>,
+        In(ev): In<SessionEvent>,
         mut shop: ResMut<BarberShop>,
         self_q: Query<
             (&ObjectStore, Option<&ModelAnimations>, Option<&AnimDriver>),
@@ -330,6 +334,9 @@ mod net {
         mut view: MessageWriter<BarberView>,
         mut zoom: ResMut<ZoomLimit>,
     ) {
+        if !matches!(ev, SessionEvent::EnableBarberShop) {
+            return;
+        }
         let Some((store, anims, driver)) = self_q.iter().next() else {
             return;
         };
@@ -384,9 +391,13 @@ impl Plugin for BarberUiPlugin {
             .add_systems(
                 Update,
                 (
-                    watch_close.before(feed_barber),
-                    feed_barber.in_set(UiFeed),
-                    drain_barber.after(UiInput),
+                    watch_close
+                        .after(crate::net::apply_net_updates)
+                        .before(feed_barber),
+                    feed_barber
+                        .in_set(UiFeed)
+                        .run_if(crate::ui_script::ingame_ui_up),
+                    drain_barber.after(UiInput).in_set(BarberDrain),
                 ),
             );
     }
