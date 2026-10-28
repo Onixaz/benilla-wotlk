@@ -312,6 +312,7 @@ pub use container::{
     BagAutoStore, ContainerMove, ContainerSlot, ContainerState, EnchantView, PendingWrap,
     PetitionSlotView, RandomPropertyView, UiCursorMode,
 };
+pub use cursor::item_lock_args;
 pub use cursor::money::coin_icon;
 pub use cursor::{
     CursorAction, CursorEquipmentSet, CursorGuildBankItem, CursorItem, CursorMacro,

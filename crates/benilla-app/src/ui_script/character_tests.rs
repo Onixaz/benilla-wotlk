@@ -1,14 +1,29 @@
-//! The character window, engine-only: the reference's own `CharacterFrame.xml`,
-//! `PaperDollFrame.xml` and `PetPaperDollFrame.xml` off the player's patch chain, loaded through
-//! [`super::test_ui::CHARACTER_UI`]. Slot handlers are driven through the mouse: they read the
-//! frame from `this` (`PaperDollFrame.lua:647`), and only the engine sets `this`.
+//! The character window, engine-only, on the full stock load off the player's patch chain. Slot
+//! handlers are driven through the mouse: they read the frame from `self`, which only the engine
+//! passes.
 
 use benilla_ui::script::{
     ExtractedQuad, InvSlotView, InventorySlots, QuadContent, ScriptValue, SoundRequest, UiScript,
     UnitCombatStats, UnitState,
 };
 
-use super::test_ui::load_ui as load_xml;
+use super::test_ui::stock_ui;
+
+/// The stock load plus `Blizzard_TokenUI`, which has no `## LoadOnDemand`, so the startup walk
+/// loads it (`0x5f7ff0`) and `TokenFrame`, the window's fifth page, always exists; then the
+/// login's `VARIABLES_LOADED`, where the paper doll picks its stat columns for the class.
+fn character_ui() -> UiScript {
+    let mut s = stock_ui(1024.0, 768.0);
+    super::test_ui::seat_chain_addon(&mut s, "Blizzard_TokenUI");
+    s.run("LoadAddOn('Blizzard_TokenUI')").unwrap();
+    s.fire_event("VARIABLES_LOADED", vec![]);
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "{:?}",
+        s.errors()
+    );
+    s
+}
 
 fn player_unit() -> UnitState {
     UnitState {
@@ -33,7 +48,7 @@ fn player_unit() -> UnitState {
     }
 }
 
-/// Strength 15 with a +2 buff (a green line), 120 armor, 3 arcane (school 6), no ranged weapon.
+/// Strength 15 with a +2 buff (a green line), 120 armor, 3 arcane (school 6).
 fn combat_stats() -> UnitCombatStats {
     UnitCombatStats {
         stats: [15, 12, 20, 8, 9],
@@ -111,42 +126,37 @@ fn backpack_with_fitting_helm() -> benilla_ui::script::ContainerState {
     }
 }
 
-/// A frame count fingerprints the player's own file, not a target: it moves only when that does.
+/// The stock load builds the character window and its paper doll without an error.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_character_frame_loads_clean() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let s = UiScript::new().unwrap();
-    let mut counts = std::collections::HashMap::new();
-    for f in super::test_ui::CHARACTER_UI {
-        counts.insert(*f, super::test_ui::load_ui_strict(&s, f));
-    }
+    let s = character_ui();
     assert!(s.errors().is_empty(), "load errors: {:?}", s.errors());
-    assert_eq!(
-        counts.get("Interface\\FrameXML\\CharacterFrame.xml"),
-        Some(&8),
-        "the reference's own CharacterFrame.xml"
-    );
-    assert_eq!(
-        counts.get("Interface\\FrameXML\\PaperDollFrame.xml"),
-        Some(&75),
-        "the reference's own PaperDollFrame.xml"
-    );
+    for frame in [
+        "CharacterFrame",
+        "PaperDollFrame",
+        "CharacterHeadSlot",
+        "CharacterMainHandSlot",
+        "CharacterModelFrame",
+        "PetPaperDollFrame",
+        "SkillFrame",
+        "ReputationFrame",
+        "TokenFrame",
+    ] {
+        assert!(
+            s.eval::<bool>(&format!("return {frame} ~= nil")).unwrap(),
+            "{frame} is built"
+        );
+    }
 }
 
 /// Opens with `ToggleCharacter`, the `C` binding's entry point, reads the snapshot lines, hovers,
 /// rotates the model and closes again.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_character_frame_drives_end_to_end() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    // The stock tooltip sizes from its measured lines; a fixed-width font stands in for the atlas.
+    let mut s = character_ui();
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
 
     s.set_unit("player", Some(player_unit()));
     s.set_player_combat_stats(Some(combat_stats()));
@@ -177,32 +187,34 @@ fn shipped_character_frame_drives_end_to_end() {
             .unwrap(),
         "Level 12 Night Elf Warrior"
     );
-    // `PaperDollFrame_SetStats` colours a buffed stat green.
+    // The left column is `PLAYERSTAT_BASE_STATS`; `PaperDollFrame_SetStat` colours a buffed
+    // stat green.
     assert_eq!(
-        s.eval::<String>("return CharacterStatFrame1StatText:GetText()")
+        s.eval::<String>("return PlayerStatFrameLeft1StatText:GetText()")
             .unwrap(),
         "|cff20ff2015|r"
     );
-    // Labels are the template's `$parentLabel`, set in Lua (`PaperDollFrame.lua:7-13`, `:140`).
+    // Labels are the template's `$parentLabel`, set in Lua (`PaperDollFrame.lua`).
     assert_eq!(
-        s.eval::<String>("return CharacterStatFrame1Label:GetText()")
+        s.eval::<String>("return PlayerStatFrameLeft1Label:GetText()")
             .unwrap(),
         "Strength:"
     );
+    // A warrior's right column is `PLAYERSTAT_MELEE_COMBAT`, damage first.
     assert_eq!(
-        s.eval::<String>("return CharacterAttackFrameLabel:GetText()")
+        s.eval::<String>("return PlayerStatFrameRight1Label:GetText()")
             .unwrap(),
-        "Melee Attack"
+        "Damage:"
     );
     // GetLeft is nil until the first resolve.
     s.resolve();
     assert_eq!(
-        s.eval::<f32>("return CharacterStatFrame1Label:GetLeft()")
+        s.eval::<f32>("return PlayerStatFrameLeft1Label:GetLeft()")
             .unwrap(),
-        s.eval::<f32>("return CharacterStatFrame1:GetLeft()")
+        s.eval::<f32>("return PlayerStatFrameLeft1:GetLeft()")
             .unwrap(),
     );
-    // One region, in GameFontNormalSmall: 10 px, 1.0/0.82/0 (`Fonts.xml:97-102`).
+    // One region, in GameFontNormalSmall: 10 px, 1.0/0.82/0 (`Fonts.xml`).
     let quads = s.extract();
     let strength_labels: Vec<_> = quads
         .iter()
@@ -230,20 +242,14 @@ fn shipped_character_frame_drives_end_to_end() {
         "gold NORMAL_FONT_COLOR, got {c:?}"
     );
     assert_eq!(
-        s.eval::<String>("return CharacterArmorFrameStatText:GetText()")
+        s.eval::<String>("return PlayerStatFrameLeft6StatText:GetText()")
             .unwrap(),
         "120"
     );
-    // MagicResFrame1 is id 6, arcane (`PaperDollFrame.xml:654`).
+    // MagicResFrame1 is id 6, arcane (`PaperDollFrame.xml`).
     assert_eq!(
         s.eval::<String>("return MagicResText1:GetText()").unwrap(),
         "3"
-    );
-    // No ranged weapon: `PaperDollFrame_SetRangedAttack` shows N/A.
-    assert_eq!(
-        s.eval::<String>("return CharacterRangedAttackFrameStatText:GetText()")
-            .unwrap(),
-        "N/A"
     );
 
     // The app follows a snapshot push with this event; the slots repaint on the event.
@@ -277,7 +283,7 @@ fn shipped_character_frame_drives_end_to_end() {
         "the empty Neck slot shows a tooltip"
     );
 
-    // The resistance subtext wraps: its `AddLine` passes wrap = 1 (`PaperDollFrame.xml:115`).
+    // The resistance subtext wraps: its `AddLine` passes wrap = 1 (`PaperDollFrame.xml`).
     let res_center = {
         let l: f32 = s.eval("return MagicResFrame1:GetLeft()").unwrap();
         let r: f32 = s.eval("return MagicResFrame1:GetRight()").unwrap();
@@ -311,7 +317,7 @@ fn shipped_character_frame_drives_end_to_end() {
     );
 
     // `Model_RotateRight` adds 0.03 to `Model_OnLoad`'s 0.61 and plays the rotate kit
-    // (`UIParent.lua:1421-1442`); the pane's button calls it (`PaperDollFrame.xml:265`).
+    // (`UIParent.lua`); the pane's button calls it (`PaperDollFrame.xml`).
     s.run("Model_RotateRight(CharacterModelFrame)").unwrap();
     assert!(
         (s.model_pane_facing("CharacterModelFrame") - 0.64).abs() < 0.001,
@@ -334,16 +340,11 @@ fn shipped_character_frame_drives_end_to_end() {
 }
 
 /// The window's art is `PaperDollFrame`'s BACKGROUND layer, created after the close button; the
-/// button's `OnLoad` raises its level by 4 (`CharacterFrame.xml:75`), so its red X paints above.
+/// button's `OnLoad` raises its level by 4 (`CharacterFrame.xml`), so its red X paints above.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn close_button_draws_above_the_paper_doll_page() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    let mut s = character_ui();
     s.set_unit("player", Some(player_unit()));
     // extract() emits only shown frames, and the window is authored hidden.
     s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
@@ -374,18 +375,13 @@ fn close_button_draws_above_the_paper_doll_page() {
 }
 
 /// `PaperDollFrame_SetLevel` writes `PLAYER_LEVEL` to `CharacterLevelText` and `HonorLevelText`
-/// (`PaperDollFrame.lua:100-103`); `UNIT_LEVEL` repaints it while the page shows (`:42-49`). A nil
+/// (`PaperDollFrame.lua`); `UNIT_LEVEL` repaints it while the page shows (`:42-49`). A nil
 /// race raises in its `format`, and `ui_unit::feed_units` always pushes the player snapshot before
 /// `PLAYER_ENTERING_WORLD`, so the test seats one first.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn level_line_reads_the_snapshot_and_repaints_on_unit_level() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    let mut s = character_ui();
     s.set_unit("player", Some(player_unit()));
     s.set_player_combat_stats(Some(combat_stats()));
 
@@ -412,7 +408,7 @@ fn level_line_reads_the_snapshot_and_repaints_on_unit_level() {
         s.eval::<String>("return CharacterLevelText:GetText()")
             .unwrap(),
         "Level 13 Night Elf Warrior",
-        "UNIT_LEVEL repaints the line (PaperDollFrame.lua:48-49)"
+        "UNIT_LEVEL repaints the line"
     );
 
     s.resolve();
@@ -425,17 +421,12 @@ fn level_line_reads_the_snapshot_and_repaints_on_unit_level() {
 }
 
 /// A click picks the item up and locks the slot, and a second click on it cancels. A locked slot's
-/// icon is desaturated and tinted 0.5 (`PaperDollFrame.lua:729-737`,
-/// `ItemButtonTemplate.lua:61-82`).
+/// icon is desaturated and tinted 0.5 (`PaperDollFrame.lua`,
+/// `ItemButtonTemplate.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn clicking_an_occupied_doll_slot_picks_it_up_and_locks_it() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    let mut s = character_ui();
     s.set_unit("player", Some(player_unit()));
     s.set_player_combat_stats(Some(combat_stats()));
     s.set_inventory_slots(inventory_with_head_item());
@@ -449,7 +440,7 @@ fn clicking_an_occupied_doll_slot_picks_it_up_and_locks_it() {
 
     super::test_ui::click(&mut s, "CharacterHeadSlot", "LeftButton");
     // `PickupInventoryItem` queues `ITEM_LOCK_CHANGED`, whose arm repaints the lock
-    // (`PaperDollFrame.lua:601-604`); the tick delivers it.
+    // (`PaperDollFrame.lua`); the tick delivers it.
     s.tick(0.0);
     assert!(s.errors().is_empty(), "click errors: {:?}", s.errors());
 
@@ -483,17 +474,12 @@ fn clicking_an_occupied_doll_slot_picks_it_up_and_locks_it() {
 }
 
 /// `CURSOR_UPDATE` locks the highlight on each slot `CursorCanGoInSlot` accepts
-/// (`PaperDollFrame.lua:609-616`); the lit ring is the template's `HighlightTexture`
-/// (`ItemButtonTemplate.xml:44`). The mouse is parked off the doll, so only a lock lights a ring.
+/// (`PaperDollFrame.lua`); the lit ring is the template's `HighlightTexture`
+/// (`ItemButtonTemplate.xml`). The mouse is parked off the doll, so only a lock lights a ring.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn cursor_update_highlights_fitting_doll_slots_while_holding_a_bag_item() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    let mut s = character_ui();
     s.set_unit("player", Some(player_unit()));
     s.set_player_combat_stats(Some(combat_stats()));
     s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
@@ -535,16 +521,11 @@ fn cursor_update_highlights_fitting_doll_slots_while_holding_a_bag_item() {
     );
 }
 
-/// A left-button release on the model pane auto-equips the held item (`PaperDollFrame.lua:31-35`).
+/// A left-button release on the model pane auto-equips the held item (`PaperDollFrame.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn model_pane_click_auto_equips_a_held_bag_item() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    let mut s = character_ui();
     s.set_unit("player", Some(player_unit()));
     s.set_player_combat_stats(Some(combat_stats()));
     s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
@@ -570,18 +551,13 @@ fn model_pane_click_auto_equips_a_held_bag_item() {
     assert_eq!(s.take_container_autoequips(), vec![(0, 1)]);
 }
 
-/// A broken item tints its slot's ring (`UI-Quickslot2`) 0.9,0,0 (`PaperDollFrame.lua:670-672`).
+/// A broken item tints its slot's ring (`UI-Quickslot2`) 0.9,0,0 (`PaperDollFrame.lua`).
 /// The icon is tinted too, but the same update ends in `UpdateLock` (`:714`), whose unlocked
-/// `SetItemButtonDesaturated(this, nil)` resets it to white (`ItemButtonTemplate.lua:71-81`).
+/// `SetItemButtonDesaturated(this, nil)` resets it to white (`ItemButtonTemplate.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn broken_equipped_item_tints_its_doll_slot_red() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    let mut s = character_ui();
     s.set_unit("player", Some(player_unit()));
     s.set_player_combat_stats(Some(combat_stats()));
 
@@ -647,16 +623,11 @@ fn broken_equipped_item_tints_its_doll_slot_red() {
 /// Skills and back to Character twice, every click by screen point through the pointer path, with
 /// a skill row selected on the way: the Character tab must switch back while Skills is up.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn tab_round_trip_with_a_selected_skill_by_point() {
     let _data = benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::{SkillEntry, SkillsState};
 
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    let mut s = character_ui();
     s.set_unit("player", Some(player_unit()));
     s.set_skills(SkillsState {
         entries: vec![
@@ -747,7 +718,7 @@ fn tab_round_trip_with_a_selected_skill_by_point() {
         "the row click selects"
     );
     assert!(shown(&mut s, "SkillDetailStatusBar"), "detail bar arms");
-    // SKILL_DESCRIPTION, with a skillType that is always "" (`SkillFrame.lua:245`).
+    // SKILL_DESCRIPTION, with a skillType that is always "" (`SkillFrame.lua`).
     assert_eq!(
         s.eval::<String>("return SkillDetailDescriptionText:GetText()")
             .unwrap(),
@@ -819,18 +790,13 @@ fn tab_round_trip_with_a_selected_skill_by_point() {
     );
 }
 
-/// A tap clicks on both edges (`PaperDollFrame.xml:243`), 0.03 each; holding spins half a turn a
-/// second (`Model_OnUpdate`, `UIParent.lua:1444-1462`). The held branches turn opposite to the
+/// A tap clicks on both edges (`PaperDollFrame.xml`), 0.03 each; holding spins half a turn a
+/// second (`Model_OnUpdate`, `UIParent.lua`). The held branches turn opposite to the
 /// click helpers, as in the reference.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn rotate_arrows_tap_twice_and_spin_while_held() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    let mut s = character_ui();
     s.set_unit("player", Some(player_unit()));
     s.set_player_combat_stats(Some(combat_stats()));
     s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
@@ -898,28 +864,23 @@ fn rotate_arrows_tap_twice_and_spin_while_held() {
     assert!(s.errors().is_empty(), "no handler errors: {:?}", s.errors());
 }
 
-/// `ToggleCharacter` selects the tab itself (`CharacterFrame.lua:10`), so a keybind's page switch
+/// `ToggleCharacter` selects the tab itself (`CharacterFrame.lua`), so a keybind's page switch
 /// moves the tab row; driven by a bare `ToggleCharacter(page)`, as the `C` binding calls it.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_keybind_page_switch_moves_the_tab_row_with_it() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
+    let mut s = character_ui();
     s.set_unit("player", Some(player_unit()));
 
     // `ToggleCharacter` selects the tab by the page's id, so each page's id is the tab that shows
-    // it (`CharacterFrame.lua:35-48`). `CHARACTERFRAME_SUBFRAMES` is a set, not the tab order:
-    // Skills is its third entry and tab 4 (`CharacterFrame.lua:1`, `CharacterFrame.xml:79-168`).
+    // it (`CharacterFrame.lua`). `CHARACTERFRAME_SUBFRAMES` is a set, not the tab order:
+    // Skills is its third entry and tab 4 (`CharacterFrame.lua`, `CharacterFrame.xml`).
     let row: [(i64, &str); 5] = [
         (1, "PaperDollFrame"),
         (2, "PetPaperDollFrame"),
         (3, "ReputationFrame"),
         (4, "SkillFrame"),
-        (5, "HonorFrame"),
+        (5, "TokenFrame"),
     ];
     for (id, page) in row {
         assert_eq!(
@@ -932,7 +893,7 @@ fn a_keybind_page_switch_moves_the_tab_row_with_it() {
                 .unwrap(),
             id,
         );
-        // In the list `CharacterFrame_ShowSubFrame` sweeps (`CharacterFrame.lua:25-33`).
+        // In the list `CharacterFrame_ShowSubFrame` sweeps (`CharacterFrame.lua`).
         assert!(
             s.eval::<bool>(&format!(
                 "for _, v in ipairs(CHARACTERFRAME_SUBFRAMES) do if v == \"{page}\" then return true end \
@@ -943,8 +904,7 @@ fn a_keybind_page_switch_moves_the_tab_row_with_it() {
         );
     }
     assert_eq!(
-        s.eval::<i64>("return getn(CHARACTERFRAME_SUBFRAMES)")
-            .unwrap(),
+        s.eval::<i64>("return #CHARACTERFRAME_SUBFRAMES").unwrap(),
         5,
         "…and there is nothing past the end for a sixth page to arrive into unnoticed"
     );
@@ -953,7 +913,7 @@ fn a_keybind_page_switch_moves_the_tab_row_with_it() {
         s.eval::<i64>("return PanelTemplates_GetSelectedTab(CharacterFrame)")
             .unwrap()
     };
-    // A selected tab shows its Disabled art, the active look (`UIPanelTemplates.lua:119-128`).
+    // A selected tab shows its Disabled art, the active look (`UIPanelTemplates.lua`).
     let wearing_active_art = |s: &mut UiScript, tab: u32| {
         s.eval::<bool>(&format!(
             "return CharacterFrameTab{tab}MiddleDisabled:IsVisible()"
@@ -985,7 +945,7 @@ fn a_keybind_page_switch_moves_the_tab_row_with_it() {
     assert!(wearing_active_art(&mut s, 1));
     assert!(!wearing_active_art(&mut s, 4));
 
-    // `PanelTemplates_SelectTab` disables the selected tab (`UIPanelTemplates.lua:125`), so a click
+    // `PanelTemplates_SelectTab` disables the selected tab (`UIPanelTemplates.lua`), so a click
     // on the showing page's tab cannot close the window. The disable is asserted before the click:
     // a click whose OnClick never ran would pass the checks after it.
     assert_eq!(
@@ -1010,23 +970,20 @@ fn a_keybind_page_switch_moves_the_tab_row_with_it() {
 }
 
 /// The template's `<OnShow>` fits a tab once with `PanelTemplates_TabResize(0)`: its text width
-/// plus the two end slices (`CharacterFrameTemplates.xml:78`, `UIPanelTemplates.lua:31-88`), from
+/// plus the two end slices (`CharacterFrameTemplates.xml`, `UIPanelTemplates.lua`), from
 /// an authored 115.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_five_tabs_fit_their_labels_on_the_first_show() {
     let _data = benilla_formats::wow_data_or_skip!();
     /// `2 * CharacterFrameTab1Left:GetWidth()`: the two 20-unit end slices.
     const SIDES: f64 = 40.0;
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    // The app always installs a measurer (`AtlasMeasurer`); a bare VM has none.
+    let mut s = character_ui();
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    for f in super::test_ui::CHARACTER_UI {
-        super::test_ui::load_ui_strict(&s, f);
-    }
     s.set_unit("player", Some(player_unit()));
 
+    // A pet event runs `PetPaperDollFrame_UpdateIsAvailable`, which hides the pet tab with no
+    // pet, critter or mount.
+    s.fire_event("UNIT_PET", vec![ScriptValue::Str("player".into())]);
     s.run(r#"ToggleCharacter("PaperDollFrame")"#).unwrap();
     s.resolve();
 
@@ -1040,18 +997,18 @@ fn the_five_tabs_fit_their_labels_on_the_first_show() {
             })
             .collect()
     };
-    // `PetTab_Update` hides the pet tab without a pet (`PetPaperDollFrame.lua:189-197`), and a
-    // hidden tab gets no OnShow, so it keeps its authored width.
+    // A hidden tab gets no OnShow, so it keeps its authored width.
     assert!(
         !s.eval::<bool>("return CharacterFrameTab2:IsVisible()")
             .unwrap(),
-        "the pet tab is off with no pet — the rest of this test rests on it"
+        "the pet tab is off with no pet, critter or mount"
     );
 
     let first = widths(&mut s);
     let fitted = |label: f64| label + SIDES;
-    for i in [0, 2, 3, 4] {
-        let (label, width) = first[i];
+    // Every tab starts shown, the pet tab included, so each fits on its load-time OnShow and keeps
+    // that width once hidden.
+    for (i, &(label, width)) in first.iter().enumerate() {
         assert!(label > 0.0, "tab {} measured its label", i + 1);
         assert_eq!(
             width,
@@ -1066,20 +1023,6 @@ fn the_five_tabs_fit_their_labels_on_the_first_show() {
             i + 1
         );
     }
-    assert_eq!(
-        first[1].1, 115.0,
-        "…and the hidden pet tab is not yet fitted"
-    );
-
-    // Shown as a pet shows it, it fits on its own first show.
-    s.run("CharacterFrameTab2:Show()").unwrap();
-    s.resolve();
-    let (pet_label, pet_width) = widths(&mut s)[1];
-    assert_eq!(
-        pet_width,
-        fitted(pet_label),
-        "the pet tab fits when it is first shown"
-    );
 
     for _ in 0..3 {
         s.tick(0.016);
@@ -1087,36 +1030,18 @@ fn the_five_tabs_fit_their_labels_on_the_first_show() {
     s.resolve();
     let settled = widths(&mut s);
     assert_eq!(
-        settled[0], first[0],
+        settled, first,
         "the fit is once, in OnShow — nothing re-fits per frame"
     );
-    assert_eq!(&settled[2..], &first[2..], "…for the whole row");
     assert!(s.errors().is_empty(), "no handler errors: {:?}", s.errors());
 }
 
-/// `PanelTemplates_Tab_OnClick(frame)` selects `this:GetID()` on `frame`
-/// (`UIPanelTemplates.lua:2-4`): `this` is the clicked tab and the owner an argument, as an addon
-/// calls it from a tab's `<OnClick>` on a row of its own.
+/// `PanelTemplates_Tab_OnClick(self, frame)` selects the clicked tab's own id on `frame`
+/// (`UIPanelTemplates.lua`), as an addon calls it from a tab's `<OnClick>` on a row of its own.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addons_tab_click_selects_through_the_generic_entry_point() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, "Interface\\FrameXML\\Fonts.xml");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    // `PanelTemplates_SelectTab` asks `GameTooltip:IsOwned(tab)` (`UIPanelTemplates.lua:130`).
-    load_xml(&s, "Interface\\FrameXML\\GameTooltip.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, r"Interface\FrameXML\CharacterFrameTemplates.xml"); // the window tab
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-    load_xml(&s, "ScrollTemplates.xml"); // our scroll kits
+    let mut s = character_ui();
 
     // Tabs named `<frame>Tab1..N`, as `PanelTemplates_UpdateTabs` looks them up, each with its id.
     s.run(
@@ -1138,12 +1063,12 @@ fn an_addons_tab_click_selects_through_the_generic_entry_point() {
     };
     assert_eq!(selected(&mut s), 1);
 
-    s.run("this = TabKitFrameTab2; PanelTemplates_Tab_OnClick(TabKitFrame); this = nil")
+    s.run("PanelTemplates_Tab_OnClick(TabKitFrameTab2, TabKitFrame)")
         .unwrap();
     assert_eq!(
         selected(&mut s),
         2,
-        "the kit takes the tab's OWN id from `this`, not from the frame it was handed"
+        "the kit takes the tab's OWN id, not the frame's"
     );
     // The row repaints, not just the number.
     assert!(

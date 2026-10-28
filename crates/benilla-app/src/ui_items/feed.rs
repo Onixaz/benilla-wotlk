@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 use benilla_protocol::ItemInfo;
-use benilla_ui::script::{ContainerSlot, ContainerState, ScriptValue, UiScript};
+use benilla_ui::script::{item_lock_args, ContainerSlot, ContainerState, ScriptValue, UiScript};
 
 use crate::entities::ItemDisplays;
 use crate::items::Items;
@@ -1350,12 +1350,10 @@ pub(crate) fn apply_container_source(
     }
     // After the push, so a repaint reads the corrected `locked`.
     pushed |= !transitioned.is_empty();
-    // No arguments: the reference's five fire sites (`0x495415`, `0x495455`, `0x49557d`,
-    // `0x5d859a`, `0x5d94b9`) call `FrameScript_SignalEvent` (`0x703e50`), which pushes none, and
-    // stock consumers repaint from `this` (`ContainerFrame.lua:39`, `PaperDollFrame.lua:601`,
-    // `BankFrame.lua:209`).
-    for _ in transitioned {
-        script.fire_event("ITEM_LOCK_CHANGED", Vec::new());
+    // Located as `CGItem_C::SignalEvent` (`0x60bfe0`) does: stock slot buttons repaint only on
+    // their own `(bag, slot)` or inventory slot.
+    for (bag, slot) in transitioned {
+        script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
     }
     // The reference fires `BAG_OPEN(id)` from the handler (`0x5e3b35`); here it follows this
     // frame's `BAG_UPDATE`s, so the frame shown paints the bag as it is.
@@ -1446,34 +1444,8 @@ fn diff_and_push(
         .filter(|b| fresh.get(b) != memory.pushed.get(b))
         .collect();
     if !changed.is_empty() {
-        // A stack-count write on an item we own fires `ITEM_LOCK_CHANGED` ahead of `BAG_UPDATE`
-        // (the reference's mirror handler `0x5d9400`, registered at `0x5d9360` via `0x468070`):
-        // an auto-shot timer's only per-shot signal. Computed before `memory.pushed` is replaced.
-        let restacked = {
-            let empty = HashMap::new();
-            let mut v: Vec<(i64, u32)> = Vec::new();
-            for &bag in &changed {
-                let now = fresh.get(&bag).map_or(&empty, |c| &c.slots);
-                let was = memory.pushed.get(&bag).map_or(&empty, |c| &c.slots);
-                for (&slot, n) in now {
-                    // The same item restacked; a changed entry is a create or a swap.
-                    if was.get(&slot).is_some_and(|w| {
-                        w.item_id != 0 && w.item_id == n.item_id && w.count != n.count
-                    }) {
-                        v.push((bag, slot));
-                    }
-                }
-            }
-            // Sorted: an event stream has to be reproducible.
-            v.sort_unstable();
-            v
-        };
         for &bag in &changed {
             script.set_container(bag, fresh.get(&bag).cloned());
-        }
-        // Ahead of `BAG_UPDATE`, one argless event per restacked slot.
-        for _ in &restacked {
-            script.fire_event("ITEM_LOCK_CHANGED", Vec::new());
         }
         debug!(
             "ui_items: fed {} changed bag(s) — {}",
@@ -1885,11 +1857,10 @@ mod tests {
         assert_eq!(s.eval::<i64>("return BAG_EVENTS").unwrap(), 2);
     }
 
-    /// A stack ticking down fires an argless `ITEM_LOCK_CHANGED` before its bag's `BAG_UPDATE`
-    /// (`0x5d94b9`): an auto-shot timer such as Quiver's learns of a shot from it alone. A changed
-    /// entry is a swap and must not fire it, or the timer counts shots never fired.
+    /// A stack ticking down is a `BAG_UPDATE` alone: 12340 fires `ITEM_LOCK_CHANGED` only from
+    /// `CGItem_C::Lock`/`Unlock` (`0x706fe0`, `0x707020`), located as `0x60bfe0` locates the item.
     #[test]
-    fn a_stack_ticking_down_fires_item_lock_changed_before_bag_update() {
+    fn a_stack_ticking_down_is_a_bag_update_and_a_lock_names_its_slot() {
         use benilla_ui::script::ContainerSlot;
 
         let mut s = UiScript::new().unwrap();
@@ -1949,11 +1920,16 @@ mod tests {
         );
         assert_eq!(
             s.eval::<String>("return table.concat(ORDER, ' ')").unwrap(),
-            "ITEM_LOCK_CHANGED:nil,nil BAG_UPDATE:0,nil",
-            "the shot signal fires — with NO arguments, as all five of the reference's fire sites \
-             do — and precedes BAG_UPDATE. The slot it names travels in the fact \
-             that it fired at all, which is enough: every consumer repaints from its own `this`, \
-             and Quiver's shot timer only needs to know that A shot happened"
+            "BAG_UPDATE:0,nil",
+            "a stack-count write locks nothing"
+        );
+
+        // The slot locks: one event naming the backpack slot.
+        s.run("ORDER = {}").unwrap();
+        apply_container_source(&mut s, &mut memory, None, NO_BAGS, vec![(0, 1)], Vec::new());
+        assert_eq!(
+            s.eval::<String>("return table.concat(ORDER, ' ')").unwrap(),
+            "ITEM_LOCK_CHANGED:0,1"
         );
 
         // A different item in the slot, with a different count: a swap, no lock event.
