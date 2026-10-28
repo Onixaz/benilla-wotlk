@@ -68,8 +68,8 @@ pub(super) struct Parsed {
     /// The header's `ZONECHANNELS` word, the reference's `[0xb6e5e0]`, overwritten from the file
     /// (`0x498d83`); `None` without the line, so the loader seeds from the DBC rather than 0.
     pub(super) zone_mask: Option<u32>,
-    /// `OPTION_GUILD_RECRUITMENT_CHANNEL`, the latch `GetGuildRecruitmentMode` returns: `STANDARD`
-    /// is 0 and any other word, or none, is 1 (`0x49ea70`, `ecx=0` only for `STANDARD`).
+    /// `OPTION_GUILD_RECRUITMENT_CHANNEL`, the latch the `guildRecruitmentChannel` CVar moves:
+    /// `STANDARD` is 0 and any other word, or none, is 1 (`LoadChatSettingsCallback 0x508320`).
     pub(super) guild_recruitment_auto: bool,
 }
 
@@ -98,7 +98,7 @@ fn render(
     guild_recruitment_auto: bool,
 ) -> String {
     let mut out = String::new();
-    // The latch `SetGuildRecruitmentMode` writes; this is the one place it persists.
+    // The latch `SetGuildRecruitmentMode` (`0x508260`) moves; this is where it persists.
     let recruitment = if guild_recruitment_auto {
         "AUTO"
     } else {
