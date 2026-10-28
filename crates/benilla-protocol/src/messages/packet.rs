@@ -1390,6 +1390,18 @@ pub enum ServerPacket {
         /// One status per record, in arrival order.
         statuses: Vec<u8>,
     },
+    /// `SMSG_THREAT_UPDATE` or `SMSG_HIGHEST_THREAT_UPDATE`: a unit's threat rows, and on the
+    /// highest variant its highest-threat guid.
+    ThreatUpdate(super::ThreatUpdate),
+    /// `SMSG_THREAT_REMOVE`: `target` leaves `unit`'s threat list.
+    ThreatRemove {
+        unit: u64,
+        target: u64,
+    },
+    /// `SMSG_THREAT_CLEAR`: `unit`'s whole threat list goes.
+    ThreatClear {
+        unit: u64,
+    },
     /// `SMSG_POWER_UPDATE`: a unit's power of one type, set outright.
     PowerUpdate {
         guid: u64,
@@ -1621,6 +1633,12 @@ impl ServerPacket {
             ServerPacket::ClearCooldown { .. } => "SMSG_CLEAR_COOLDOWN".into(),
             ServerPacket::CooldownCheat { .. } => "SMSG_COOLDOWN_CHEAT".into(),
             ServerPacket::PowerUpdate { .. } => "SMSG_POWER_UPDATE".into(),
+            ServerPacket::ThreatUpdate(u) if u.highest.is_some() => {
+                "SMSG_HIGHEST_THREAT_UPDATE".into()
+            }
+            ServerPacket::ThreatUpdate(_) => "SMSG_THREAT_UPDATE".into(),
+            ServerPacket::ThreatRemove { .. } => "SMSG_THREAT_REMOVE".into(),
+            ServerPacket::ThreatClear { .. } => "SMSG_THREAT_CLEAR".into(),
             ServerPacket::ComboPoints { .. } => "SMSG_UPDATE_COMBO_POINTS".into(),
             ServerPacket::PetComboPoints { .. } => "SMSG_PET_UPDATE_COMBO_POINTS".into(),
             ServerPacket::ModifyCooldown { .. } => "SMSG_MODIFY_COOLDOWN".into(),

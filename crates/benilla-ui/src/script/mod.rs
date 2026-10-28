@@ -193,6 +193,7 @@ mod messageframe;
 mod minimap;
 pub mod nameplate;
 mod quest_poi_frame;
+mod threat;
 pub use nameplate::{PlateGeometry, PlateState};
 mod macro_options;
 
@@ -434,6 +435,7 @@ pub use talent::{
     TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState, TalentView,
 };
 pub use taxi::{TaxiNodeType, TaxiUiNode, TaxiUiState};
+pub use threat::{MobThreat, ThreatRow};
 pub use title::{chosen_title_name, title_row, PlayerTitles, TitleRow};
 pub use tooltip_spell::SpellTooltipView;
 pub use totem::{TotemSlots, TotemView, MAX_TOTEM_SLOTS};

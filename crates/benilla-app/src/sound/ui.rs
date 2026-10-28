@@ -26,6 +26,39 @@ use super::engine::{DeviceChanged, OutputDrivers, SoundRestart};
 use super::kit::{self, KitRef, SoundKits};
 use super::{SoundConfig, SoundOutput};
 
+/// A `SoundEntries` kit the engine plays itself in 2D on the SFX slider, as the client's
+/// `PlayUISound` (`0x457fb0`): the threat cues are its callers.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct UiKitSound(pub(crate) u32);
+
+/// Play the frame's [`UiKitSound`]s; read even with no catalog, so none waits a frame.
+fn play_ui_kits(
+    mut requests: MessageReader<UiKitSound>,
+    kits: Option<ResMut<SoundKits>>,
+    assets: Option<Res<WorldAssets>>,
+    mut out: NonSendMut<SoundOutput>,
+    config: Res<SoundConfig>,
+) {
+    let (Some(mut kits), Some(assets)) = (kits, assets) else {
+        requests.clear();
+        return;
+    };
+    for &UiKitSound(kit) in requests.read() {
+        if let Err(e) = kit::play_kit(
+            &mut kits,
+            &assets,
+            &mut out,
+            &config,
+            Vec3::ZERO,
+            KitRef::Id(kit),
+            None,
+            kit::SoundCategory::Sfx,
+        ) {
+            debug!("sound(ui): kit {kit} — {e:#}");
+        }
+    }
+}
+
 /// Drain the VM's queued `PlaySound` intents into the kit player; drained even with no catalog,
 /// so the queue cannot grow unbounded.
 fn drain_ui_sounds(
@@ -353,11 +386,13 @@ fn play_auto_equip_sounds(
 pub(super) fn plugin(app: &mut App) {
     app.add_message::<LootPickupSound>()
         .add_message::<AutoEquipSound>()
+        .add_message::<UiKitSound>()
         .add_systems(Startup, load_item_sounds.after(AssetSet::Open))
         .add_systems(
             Update,
             (
                 drain_ui_sounds,
+                play_ui_kits,
                 play_item_gesture_sounds,
                 play_loot_pickup_sounds,
                 play_auto_equip_sounds,

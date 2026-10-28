@@ -1002,6 +1002,8 @@ pub(crate) struct Model {
     pub(crate) world_frame_made: bool,
     /// Per live-unit guid, reach for `CanInspect`/`CheckInteractDistance`; absent: nil.
     pub(crate) unit_reach: HashMap<u64, super::UnitReach>,
+    /// Per held unit with a threat list, that list ([`super::UiScript::set_threat`]).
+    pub(crate) threat: HashMap<u64, super::MobThreat>,
 
     /// The skills pane's snapshot and the display tree built from it.
     pub(crate) skills: skills::SkillsState,
@@ -1660,6 +1662,7 @@ impl Model {
             tabard_intents: Vec::new(),
             world_frame_made: false,
             unit_reach: HashMap::new(),
+            threat: HashMap::new(),
             chat_input: Vec::new(),
             skills: skills::SkillsState::default(),
             skills_groups: Vec::new(),

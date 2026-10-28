@@ -12,8 +12,8 @@ use super::{
     binder, broadcast, calendar, channel, chat, combat_log, death, duel, equipment_set, gameobject,
     gm_ticket, gossip, group, guild, guild_bank, instance, items, lfg, loot, mail, meeting_stone,
     mirror_timer, monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp,
-    quest, rune, social, spellbook, spells, stable, summon, tabard, talents, taxi, totem, trade,
-    trainer, tutorial, unit_state, update_object, vendor, world_state, AttackSwingError,
+    quest, rune, social, spellbook, spells, stable, summon, tabard, talents, taxi, threat, totem,
+    trade, trainer, tutorial, unit_state, update_object, vendor, world_state, AttackSwingError,
     CalendarPacket, Character, CreatureQueryInfo, DifficultySet, JumpInfo, LfgPacket, MoveMode,
     ServerPacket, SpeedKind, SplineMode,
 };
@@ -1074,6 +1074,19 @@ fn parse_server_body(
             let (spell_id, caster) = spellbook::read_cooldown_event(&mut r)?;
             ServerPacket::ClearCooldown { spell_id, caster }
         }
+        opcode::SMSG_THREAT_UPDATE | opcode::SMSG_HIGHEST_THREAT_UPDATE => {
+            ServerPacket::ThreatUpdate(threat::read_threat_update(
+                &mut r,
+                opcode == opcode::SMSG_HIGHEST_THREAT_UPDATE,
+            )?)
+        }
+        opcode::SMSG_THREAT_REMOVE => {
+            let (unit, target) = threat::read_threat_remove(&mut r)?;
+            ServerPacket::ThreatRemove { unit, target }
+        }
+        opcode::SMSG_THREAT_CLEAR => ServerPacket::ThreatClear {
+            unit: threat::read_threat_clear(&mut r)?,
+        },
         opcode::SMSG_POWER_UPDATE => {
             let (guid, power_type, value) = unit_state::read_power_update(&mut r)?;
             ServerPacket::PowerUpdate {

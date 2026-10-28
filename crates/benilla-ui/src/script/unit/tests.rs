@@ -2343,6 +2343,79 @@ fn unit_detailed_threat_situation_needs_both_tokens() {
     }
 }
 
+/// A mob targeted by us, with us tanking and party1 above us: `0x613a60` and `0x613b40` answer
+/// from the list the app pushed.
+#[test]
+fn the_threat_verbs_read_the_pushed_lists() {
+    use crate::script::{MobThreat, ThreatRow};
+    use std::collections::HashMap;
+    const ME: u64 = 0x10;
+    const P1: u64 = 0x20;
+    const MOB: u64 = 0xF130_0000_0000_00AB;
+    let mut s = UiScript::new().unwrap();
+    s.set_unit_guids(&UnitGuids {
+        player: ME,
+        target: MOB,
+        party: [P1, 0, 0, 0],
+        held: HashMap::from([(ME, 0), (P1, 0), (MOB, ME)]),
+        ..Default::default()
+    });
+    let row = |status, percent, threat, in_melee| ThreatRow {
+        status,
+        percent,
+        threat,
+        in_melee,
+    };
+    s.set_threat(HashMap::from([(
+        MOB,
+        MobThreat {
+            highest: ME,
+            rows: vec![
+                (ME, row(3, 255, 1000, true)),
+                (P1, row(2, 105, 1050, false)),
+            ],
+        },
+    )]));
+    let one =
+        |s: &mut UiScript, call: &str| s.eval::<Option<f64>>(&format!("return {call}")).unwrap();
+    assert_eq!(one(&mut s, r#"UnitThreatSituation("player")"#), Some(2.0));
+    assert_eq!(
+        one(&mut s, r#"UnitThreatSituation("player", "target")"#),
+        Some(2.0)
+    );
+    assert_eq!(one(&mut s, r#"UnitThreatSituation("party1")"#), Some(1.0));
+    assert_eq!(
+        one(&mut s, r#"UnitThreatSituation("party2")"#),
+        None,
+        "nobody named"
+    );
+
+    let detailed = |s: &mut UiScript, unit: &str| {
+        s.eval::<(Option<f64>, f64, f64, f64, f64)>(&format!(
+            r#"return UnitDetailedThreatSituation("{unit}", "target")"#
+        ))
+        .unwrap()
+    };
+    assert_eq!(
+        detailed(&mut s, "player"),
+        (Some(1.0), 2.0, 100.0, 255.0, 1000.0)
+    );
+    let (tanking, status, percent, raw, threat) = detailed(&mut s, "party1");
+    assert_eq!((tanking, status, raw, threat), (None, 1.0, 105.0, 1050.0));
+    assert!(
+        (percent - 105.0 * 0.769_230_78).abs() < 1e-3,
+        "beyond melee: / 1.3"
+    );
+
+    // A mob with no list, and a pair with no row, answer nothing.
+    s.set_threat(HashMap::new());
+    assert_eq!(
+        s.eval::<i64>(r#"return select('#', UnitDetailedThreatSituation("player", "target"))"#)
+            .unwrap(),
+        0
+    );
+}
+
 /// `0x511fe0`: `status + 1` indexes the five colours, entry 1 outside them.
 #[test]
 fn threat_status_colors_index_the_table() {

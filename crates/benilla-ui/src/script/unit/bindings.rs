@@ -1070,45 +1070,98 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     }
 
     // UnitThreatSituation(unit [, mob]) (`0x613a60`): each token through the resolver, an unknown
-    // one raising the usage line; then the status byte, `status - 1` when nonzero and nothing
-    // otherwise. benilla keeps no threat table, so every status reads 0, as a unit with no
-    // threat entry does in the reference (`0x52a1d7`).
+    // one raising the usage line. With a mob, that mob's status for the unit; without, the unit's
+    // worst status over every list naming it (`0x52a1a0`). Then `status - 1` when nonzero and
+    // nothing otherwise; nobody named answers nothing.
     g.set(
         "UnitThreatSituation",
         lua.create_function(|lua, (unit, mob): (Value, Value)| {
             const USAGE: &str = r#"Usage: UnitThreatSituation("unit" [, "mob"])"#;
-            let known = |v: &Value| -> bool {
-                crate::script::binding_abi::optional_string(lua, v)
-                    .is_some_and(|t| parse_unit_token(&t) != UnitTokenParse::Unknown)
+            let resolve = |v: &Value| -> Option<Option<u64>> {
+                let token = crate::script::binding_abi::optional_string(lua, v)?;
+                if parse_unit_token(&token) == UnitTokenParse::Unknown {
+                    return None;
+                }
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                Some(model.unit_guids.resolve(&token).ok().flatten())
             };
-            if !known(&unit) {
+            let Some(unit) = resolve(&unit) else {
                 return Err(mlua::Error::runtime(USAGE));
-            }
+            };
             // The mob goes through the resolver only when `lua_isstring` passes (`0x613aae`).
-            if matches!(mob, Value::String(_) | Value::Number(_) | Value::Integer(_))
-                && !known(&mob)
-            {
-                return Err(mlua::Error::runtime(USAGE));
-            }
-            Ok(mlua::MultiValue::new())
+            let mob = if matches!(mob, Value::String(_) | Value::Number(_) | Value::Integer(_)) {
+                match resolve(&mob) {
+                    Some(m) => Some(m),
+                    None => return Err(mlua::Error::runtime(USAGE)),
+                }
+            } else {
+                None
+            };
+            let Some(unit) = unit.filter(|&g| g != 0) else {
+                return Ok(mlua::MultiValue::new());
+            };
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let status = match mob {
+                Some(mob) => mob.map_or(0, |m| {
+                    crate::script::threat::calculate(&model, m, unit).status
+                }),
+                None => crate::script::threat::situation(&model, unit),
+            };
+            Ok(if status == 0 {
+                mlua::MultiValue::new()
+            } else {
+                mlua::MultiValue::from_vec(vec![Value::Number(f64::from(status - 1))])
+            })
         })?,
     )?;
 
     // UnitDetailedThreatSituation(unit, mob) (`0x613b40`): both tokens through the resolver, the
     // mob too, so a missing or unknown one raises the usage line; then nothing for a mob not held
-    // or a status of 0, which every status is without a threat table.
+    // or a status of 0. Else `isTanking` (1 or nil), `status - 1`, the scaled percent, the raw
+    // percent and the raw threat.
     g.set(
         "UnitDetailedThreatSituation",
         lua.create_function(|lua, (unit, mob): (Value, Value)| {
             const USAGE: &str = r#"Usage: UnitDetailedThreatSituation("unit" [, "mob"])"#;
-            for v in [&unit, &mob] {
-                let known = crate::script::binding_abi::optional_string(lua, v)
-                    .is_some_and(|t| parse_unit_token(&t) != UnitTokenParse::Unknown);
-                if !known {
+            let mut guids = [None, None];
+            for (slot, v) in guids.iter_mut().zip([&unit, &mob]) {
+                let token = crate::script::binding_abi::optional_string(lua, v)
+                    .filter(|t| parse_unit_token(t) != UnitTokenParse::Unknown);
+                let Some(token) = token else {
                     return Err(mlua::Error::runtime(USAGE));
-                }
+                };
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                *slot = model.unit_guids.resolve(&token).ok().flatten();
             }
-            Ok(mlua::MultiValue::new())
+            let [unit, mob] = guids;
+            let (Some(unit), Some(mob)) = (unit, mob.filter(|&g| g != 0)) else {
+                return Ok(mlua::MultiValue::new());
+            };
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            let c = crate::script::threat::calculate(&model, mob, unit);
+            if c.status == 0 {
+                return Ok(mlua::MultiValue::new());
+            }
+            let tanking = if crate::script::threat::highest(&model, mob) == unit {
+                Value::Number(1.0)
+            } else {
+                Value::Nil
+            };
+            Ok(mlua::MultiValue::from_vec(vec![
+                tanking,
+                Value::Number(f64::from(c.status - 1)),
+                Value::Number(f64::from(c.percent)),
+                Value::Number(f64::from(c.raw_percent)),
+                Value::Number(f64::from(c.threat)),
+            ]))
         })?,
     )?;
 

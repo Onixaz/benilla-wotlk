@@ -60,6 +60,7 @@ mod summon;
 mod tabard;
 mod talents;
 mod taxi;
+mod threat;
 mod totem;
 mod trade;
 mod trainer;
@@ -313,6 +314,7 @@ pub use taxi::{
     activate_taxi, activate_taxi_express, taxi_node_status_query, taxi_query_available_nodes,
     taxi_reply, TaxiMask,
 };
+pub use threat::{ThreatEntry, ThreatUpdate};
 pub use totem::{totem_destroyed, TotemCreated};
 pub use trade::{
     accept_trade, clear_trade_item, initiate_trade, set_trade_gold, set_trade_item, TradeItem,

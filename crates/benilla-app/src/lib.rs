@@ -118,6 +118,7 @@ pub(crate) mod test_support;
 mod text_filter;
 mod text_reshape;
 mod textinput;
+mod threat;
 mod transport;
 mod tutorial;
 mod ui_achievement;

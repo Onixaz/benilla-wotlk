@@ -269,6 +269,7 @@ impl PluginGroup for GamePlugins {
             .add(UiTaxiPlugin)
             .add(UiTradeSkillPlugin)
             .add(UiLootPlugin)
+            .add(crate::threat::ThreatPlugin)
             .add(UiLootRollPlugin)
             .add(UiQuestPlugin)
             .add(UiQuestLogPlugin)

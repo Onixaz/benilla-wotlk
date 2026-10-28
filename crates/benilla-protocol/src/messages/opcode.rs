@@ -1287,6 +1287,14 @@ pub const SMSG_REAL_GROUP_UPDATE: u16 = 0x0397; // 919
 
 /// A unit's power, set outright (`Packet_SMSG_POWER_UPDATE` `0x7236c0`).
 pub const SMSG_POWER_UPDATE: u16 = 0x0480; // 1152
+/// A unit's threat list with its highest-threat guid (`0x741c90`, shared with the plain update).
+pub const SMSG_HIGHEST_THREAT_UPDATE: u16 = 0x0482; // 1154
+/// A unit's threat list, rows only (`0x741c90`).
+pub const SMSG_THREAT_UPDATE: u16 = 0x0483; // 1155
+/// One guid leaves a unit's threat list (`0x737b20`).
+pub const SMSG_THREAT_REMOVE: u16 = 0x0484; // 1156
+/// A unit's whole threat list goes (`0x734b00`).
+pub const SMSG_THREAT_CLEAR: u16 = 0x0485; // 1157
 /// Our combo points and the unit they sit on (`CGGameUI::MessageHandler` `0x526530`).
 pub const SMSG_UPDATE_COMBO_POINTS: u16 = 0x039D; // 925
 /// The pet's combo points (`Packet_SMSG_PET_UPDATE_COMBO_POINTS` `0x5d36a0`).

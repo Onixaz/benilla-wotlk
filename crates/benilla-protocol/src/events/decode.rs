@@ -353,6 +353,11 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             caster,
             delay_ms,
         }],
+        ServerPacket::ThreatUpdate(u) => vec![SessionEvent::ThreatUpdate(u)],
+        ServerPacket::ThreatRemove { unit, target } => {
+            vec![SessionEvent::ThreatRemove { unit, target }]
+        }
+        ServerPacket::ThreatClear { unit } => vec![SessionEvent::ThreatClear { unit }],
         ServerPacket::PowerUpdate {
             guid,
             power_type,

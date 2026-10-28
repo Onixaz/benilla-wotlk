@@ -804,6 +804,13 @@ pub enum SessionEvent {
         caster: u64,
         delay_ms: i32,
     },
+    /// A unit's threat rows, and on the highest variant its highest-threat guid
+    /// (`SMSG_THREAT_UPDATE`, `SMSG_HIGHEST_THREAT_UPDATE`).
+    ThreatUpdate(crate::messages::ThreatUpdate),
+    /// `target` leaves `unit`'s threat list (`SMSG_THREAT_REMOVE`).
+    ThreatRemove { unit: u64, target: u64 },
+    /// `unit`'s whole threat list goes (`SMSG_THREAT_CLEAR`).
+    ThreatClear { unit: u64 },
     /// A unit's power of one type, set outright (`SMSG_POWER_UPDATE`).
     PowerUpdate {
         guid: u64,
