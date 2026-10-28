@@ -279,6 +279,7 @@ pub use auction::{
 pub use aura::AuraState;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
 pub use bank::BankState;
+pub use barber::{BarberHost, BarberIntent, BarberStyle};
 pub use battlefield_positions::{BattlefieldFlagView, BattlefieldPositionView};
 pub use battlefield_queue::{
     BattlefieldFrame, BattlefieldJoin, BattlefieldListPush, BattlefieldMgrRequest,
@@ -347,7 +348,6 @@ pub use petition::{
     petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionRecordView,
     PetitionRequest, PetitionState, PetitionVendorItem, PetitionVendorState,
 };
-pub use barber::{BarberHost, BarberIntent, BarberStyle};
 pub use tabard::{
     emblem_mask_path, TabardHost, TabardIntent, EMBLEM_MASK_TOKEN, TABARD_COUNTS,
     TABARD_CREATION_COST,

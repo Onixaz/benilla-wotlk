@@ -8,14 +8,14 @@ use crate::wire::{
 };
 
 use super::{
-    achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, barber, battlefield,
-    binder, broadcast, calendar, channel, chat, combat_log, death, duel, equipment_set, gameobject,
-    gm_ticket, gossip, group, guild, guild_bank, instance, items, lfg, loot, mail, meeting_stone,
-    mirror_timer, monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp,
-    quest, rune, social, spellbook, spells, stable, summon, tabard, talents, taxi, totem, trade,
-    trainer, tutorial, unit_state, update_object, vendor, world_state, AttackSwingError,
-    CalendarPacket, Character, CreatureQueryInfo, DifficultySet, JumpInfo, LfgPacket, MoveMode,
-    ServerPacket, SpeedKind, SplineMode,
+    achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, barber,
+    battlefield, binder, broadcast, calendar, channel, chat, combat_log, death, duel,
+    equipment_set, gameobject, gm_ticket, gossip, group, guild, guild_bank, instance, items, lfg,
+    loot, mail, meeting_stone, mirror_timer, monster_move, movement, opcode, page_text, pet,
+    petition, pose, progression, pvp, quest, rune, social, spellbook, spells, stable, summon,
+    tabard, talents, taxi, totem, trade, trainer, tutorial, unit_state, update_object, vendor,
+    world_state, AttackSwingError, CalendarPacket, Character, CreatureQueryInfo, DifficultySet,
+    JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
 };
 
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`

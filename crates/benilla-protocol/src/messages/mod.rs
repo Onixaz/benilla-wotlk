@@ -11,6 +11,7 @@ mod attack;
 mod auction;
 mod aura;
 mod bank;
+mod barber;
 mod battlefield;
 mod binder;
 mod broadcast;
@@ -57,7 +58,6 @@ mod spellbook;
 mod spells;
 mod stable;
 mod summon;
-mod barber;
 mod tabard;
 mod talents;
 mod taxi;
@@ -106,6 +106,7 @@ pub use aura::{
 pub use bank::{
     autobank_item, autostore_bank_item, bank_slot_result, banker_activate, buy_bank_slot,
 };
+pub use barber::alter_appearance;
 pub use battlefield::{
     battlefield_list, battlefield_port, battlemaster_join, battlemaster_join_arena,
     bf_mgr_response, leave_battlefield, queue_bg_type, queue_team_size, BattlefieldActive,
@@ -303,7 +304,6 @@ pub use stable::{
     StabledPet,
 };
 pub use summon::{summon_response, SummonRequest};
-pub use barber::alter_appearance;
 pub use tabard::{
     battlemaster_hello, save_guild_emblem, tabard_vendor_activate, GUILD_EMBLEM_RESULT_MESSAGES,
 };

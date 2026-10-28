@@ -203,7 +203,10 @@ mod tests {
             ..default()
         };
         apply_zoom_scroll(1.0, 0.1, &mut rig, 15.0, Some(1.5));
-        assert!((rig.target_distance - 1.8).abs() < 1e-6, "a fifth of a notch");
+        assert!(
+            (rig.target_distance - 1.8).abs() < 1e-6,
+            "a fifth of a notch"
+        );
         apply_zoom_scroll(10.0, 0.1, &mut rig, 15.0, Some(1.5));
         assert_eq!(rig.target_distance, 1.5, "held at the body's radius");
         // A target under the floor when the chair opens is pushed out to it.

@@ -176,8 +176,7 @@ fn feed_barber(
                 open: key.open,
                 class: key.class,
                 base_cost: sheet.as_deref().map_or(0.0, |t| {
-                    t.gt
-                        .lookup(GameTableId::BarberShopCostBase, key.level as i32 - 1, 0)
+                    t.gt.lookup(GameTableId::BarberShopCostBase, key.level as i32 - 1, 0)
                 }),
                 look: key.look,
                 styles: styles
@@ -206,9 +205,7 @@ fn feed_barber(
         // no such handler.
         let look = self_look(s);
         let seen = last_look.get(&script);
-        let applied = seen.is_some_and(|old| {
-            [0, 2, 3, 4].iter().any(|&i| old[i] != look[i])
-        });
+        let applied = seen.is_some_and(|old| [0, 2, 3, 4].iter().any(|&i| old[i] != look[i]));
         *seen = Some(look);
         if applied {
             script.fire_event("BARBER_SHOP_APPEARANCE_APPLIED", vec![]);
@@ -258,9 +255,15 @@ fn drain_barber(
                     .unwrap_or(0);
                 // The client's own check, with no packet (`0x52ee6e`).
                 if cost > purse {
-                    if let Some(line) = crate::ui_action::keyed_line(&script, "ERR_NOT_ENOUGH_MONEY")
+                    if let Some(line) =
+                        crate::ui_action::keyed_line(&script, "ERR_NOT_ENOUGH_MONEY")
                     {
-                        crate::ui_action::show_messages(&mut script, &mut sink, "ui_barber", [line]);
+                        crate::ui_action::show_messages(
+                            &mut script,
+                            &mut sink,
+                            "ui_barber",
+                            [line],
+                        );
                     }
                     continue;
                 }
@@ -302,7 +305,6 @@ fn watch_close(
 /// The barber shop's packet handlers.
 mod net {
     use benilla_protocol::{SessionEvent, SessionEventKind};
-    use bevy::prelude::*;
 
     use super::*;
     use crate::net::NetHandlerApp;
@@ -320,7 +322,10 @@ mod net {
     fn on_enable(
         In(_): In<SessionEvent>,
         mut shop: ResMut<BarberShop>,
-        self_q: Query<(&ObjectStore, Option<&ModelAnimations>, Option<&AnimDriver>), With<SelfPlayer>>,
+        self_q: Query<
+            (&ObjectStore, Option<&ModelAnimations>, Option<&AnimDriver>),
+            With<SelfPlayer>,
+        >,
         mut view: MessageWriter<BarberView>,
         mut zoom: ResMut<ZoomLimit>,
     ) {
@@ -335,7 +340,11 @@ mod net {
                 .map_or(1.0, |c| c.bounds_radius),
             _ => 1.0,
         };
-        let scale = if store.0.unit_race() == Some(7) { 3.0 } else { 2.0 };
+        let scale = if store.0.unit_race() == Some(7) {
+            3.0
+        } else {
+            2.0
+        };
         zoom.barber_floor = Some(radius);
         view.write(BarberView::Enter {
             distance: radius * scale,
@@ -435,6 +444,9 @@ mod tests {
         assert!(!s.watch(5, 49));
         assert!(s.watch(5, 50), "a new display");
         let mut s = BarberShop::default();
-        assert!(!s.watch(5, 49) && !s.watch(0, 50), "a closed shop watches nothing");
+        assert!(
+            !s.watch(5, 49) && !s.watch(0, 50),
+            "a closed shop watches nothing"
+        );
     }
 }

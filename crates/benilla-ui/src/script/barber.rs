@@ -155,12 +155,7 @@ impl BarberState {
         let hair = self.current(HAIR_STYLE)?.id;
         let facial = self.current(FACIAL_HAIR)?.id;
         let skin = self.current(SKIN).map_or(0, |s| s.id);
-        Some([
-            hair,
-            u32::from(self.dials[DIAL_HAIR_COLOR]),
-            facial,
-            skin,
-        ])
+        Some([hair, u32::from(self.dials[DIAL_HAIR_COLOR]), facial, skin])
     }
 }
 
@@ -488,7 +483,10 @@ mod tests {
         s.run("SetNextBarberShopStyle(1)").unwrap();
         assert_eq!(s.barber_preview(), Some([0, 0, 2, 0, 0]));
         // Style 2 costs 2.0 × the truncated base.
-        assert_eq!(s.eval::<i64>("return GetBarberShopTotalCost()").unwrap(), 2002);
+        assert_eq!(
+            s.eval::<i64>("return GetBarberShopTotalCost()").unwrap(),
+            2002
+        );
         s.run("SetNextBarberShopStyle(1, 1)").unwrap();
         assert_eq!(s.barber_preview(), Some([0, 0, 1, 0, 0]), "backward");
         assert_eq!(s.eval::<i64>("return GetBarberShopTotalCost()").unwrap(), 0);
@@ -509,7 +507,10 @@ mod tests {
     fn apply_queues_the_four_ids_only_for_a_changed_look() {
         let mut s = vm();
         s.run("ApplyBarberShopStyle()").unwrap();
-        assert!(s.take_barber_intents().is_empty(), "the real look sends nothing");
+        assert!(
+            s.take_barber_intents().is_empty(),
+            "the real look sends nothing"
+        );
         s.run("SetNextBarberShopStyle(1) SetNextBarberShopStyle(2) ApplyBarberShopStyle()")
             .unwrap();
         assert_eq!(
@@ -538,7 +539,10 @@ mod tests {
             ..host()
         });
         assert_eq!(s.barber_preview(), Some([0, 0, 2, 1, 0]));
-        assert_eq!(s.eval::<i64>("return GetBarberShopTotalCost()").unwrap(), 500);
+        assert_eq!(
+            s.eval::<i64>("return GetBarberShopTotalCost()").unwrap(),
+            500
+        );
     }
 
     #[test]
@@ -549,7 +553,8 @@ mod tests {
             "HORNS"
         );
         assert_eq!(
-            s.eval::<String>("return GetFacialHairCustomization()").unwrap(),
+            s.eval::<String>("return GetFacialHairCustomization()")
+                .unwrap(),
             "NORMAL"
         );
     }
