@@ -229,6 +229,8 @@ pub(crate) struct Dispatch<'w, 's> {
     feedback: Feedback<'w>,
     auto: crate::player::AutoMove<'w, 's>,
     player: Res<'w, crate::player::Player>,
+    // `SpellShapeshiftForm.dbc`'s flags, the barber chair's shapeshift test.
+    sheet: Option<Res<'w, crate::ui_char::SheetTables>>,
 }
 
 /// What the skin legs read: `GetSkinningSpell 0x53bce0`'s learned slots, and `CanAssist`'s
@@ -475,11 +477,10 @@ impl Dispatch<'_, '_> {
                 let f = &s.0;
                 let form = f.unit_shapeshift_form();
                 let flags = self
-                    .player_actions
-                    .spells
-                    .forms
-                    .get(&u32::from(form))
-                    .map_or(0, |f| f.flags);
+                    .sheet
+                    .as_deref()
+                    .and_then(|t| t.form_flags.get(&u32::from(form)).copied())
+                    .unwrap_or(0);
                 f.unit_displayid() != f.unit_native_displayid() || (form != 0 && flags & 0x1 == 0)
             });
             if refused {

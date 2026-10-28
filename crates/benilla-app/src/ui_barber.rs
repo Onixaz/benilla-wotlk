@@ -319,6 +319,7 @@ mod net {
     /// The open needs our own body (`0x52f9c4`). The view's distance is the body's playing
     /// sequence's bounds radius, twice over, three times for a Gnome (`0x52fbf1`); the radius
     /// floors the zoom while the shop is open.
+    #[allow(clippy::type_complexity)]
     fn on_enable(
         In(_): In<SessionEvent>,
         mut shop: ResMut<BarberShop>,
