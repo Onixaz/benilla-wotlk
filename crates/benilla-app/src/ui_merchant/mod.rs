@@ -516,6 +516,7 @@ impl RepairPurse<'_, '_> {
             crate::target::vendor_price_discount(
                 self.reactions.factions.as_deref(),
                 &self.reactions.reputations,
+                self.reactions.party(),
                 vendor,
                 player,
             )
@@ -573,6 +574,7 @@ fn feed_repair_costs(
         crate::target::vendor_price_discount(
             reactions.factions.as_deref(),
             &reactions.reputations,
+            reactions.party(),
             vendor,
             player,
         )

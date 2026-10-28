@@ -113,6 +113,8 @@ pub(super) struct InspectStores<'w, 's> {
     self_store: Query<'w, 's, &'static ObjectStore, With<crate::net::SelfPlayer>>,
     /// The live standings: `ring_reaction` takes the reputation branch before the template one.
     reputations: Res<'w, crate::net::Reputations>,
+    /// The group roster, the reaction's party rung.
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
     /// This frame's rendered plate verdict, not a re-derivation, so the card matches the screen.
     plates: Res<'w, crate::vplates::VPlates>,
     /// The two plate CVars, so a `plate ✗` can say whether the category gate refused it.
@@ -435,7 +437,13 @@ pub(super) fn inspect_ui(
     // Why this unit does or does not carry a plate: every input of `vplates::drive_vplates`'s
     // gate and the verdict read from [`crate::vplates::VPlates`].
     let plate_line = store.filter(|_| is_unit).map(|s| {
-        let rank = crate::target::ring::ring_reaction(factions, reputations, Some(s), self_store);
+        let rank = crate::target::ring::ring_reaction(
+            factions,
+            reputations,
+            crate::target::party_of(stores.group.as_deref()),
+            Some(s),
+            self_store,
+        );
         let word = match rank {
             0 => "hated",
             1 => "hostile",

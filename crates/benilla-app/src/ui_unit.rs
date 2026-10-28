@@ -780,6 +780,7 @@ fn feed_unit_reach(
     transforms: Query<&Transform>,
     factions: Option<Res<Factions>>,
     reputations: Res<Reputations>,
+    group: Option<Res<crate::ui_party::GroupState>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -799,6 +800,7 @@ fn feed_unit_reach(
                     store,
                     factions.as_deref(),
                     &reputations,
+                    crate::target::party_of(group.as_deref()),
                     Some(self_store),
                 );
             reach.insert(
@@ -852,10 +854,11 @@ impl SnapshotTables<'_> {
 pub(crate) fn unit_reaction(
     factions: Option<&Factions>,
     reputations: &Reputations,
+    party: &dyn crate::target::GroupMembers,
     store: &ObjectStore,
     self_store: Option<&ObjectStore>,
 ) -> u8 {
-    ring_reaction(factions, reputations, Some(store), self_store) + 1
+    ring_reaction(factions, reputations, party, Some(store), self_store) + 1
 }
 
 /// Build a unit snapshot from a streamed descriptor, its guid, its cached name and its
@@ -1339,8 +1342,13 @@ fn feed_units(
         s.is_player = true;
         // `CanAssist` answers the player for himself.
         s.can_assist = true;
-        s.selection_color =
-            crate::target::selection_color(store, factions.as_deref(), &reputations, Some(store));
+        s.selection_color = crate::target::selection_color(
+            store,
+            factions.as_deref(),
+            &reputations,
+            &*group,
+            Some(store),
+        );
         s.raid_target = group.raid_target_index(guid.0);
         s.group_roles = group.own_roles;
         // `UnitFactionGroup("player")` (`0x60d0f4`) reads the character's race, not the live

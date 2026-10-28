@@ -153,6 +153,7 @@ impl TargetRelations<'_> {
                 self.target_store,
                 self.factions,
                 self.reputations,
+                &self.group,
                 self.self_store,
                 self.types.names,
             )
@@ -166,6 +167,7 @@ impl TargetRelations<'_> {
                 self.target_store,
                 self.factions,
                 self.reputations,
+                &self.group,
                 self.self_store,
             )
     }

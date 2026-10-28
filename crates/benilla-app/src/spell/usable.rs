@@ -41,6 +41,8 @@ pub(crate) struct UsableCtx<'a> {
     pub(crate) target_store: Option<&'a ObjectStore>,
     pub(crate) factions: Option<&'a Factions>,
     pub(crate) reputations: &'a Reputations,
+    /// The group, for the reaction's party rung.
+    pub(crate) party: &'a dyn crate::target::GroupMembers,
     pub(crate) cooldowns: &'a Cooldowns,
     /// The talent spell-modifier tables leg 12's cost goes through.
     pub(crate) spell_mods: &'a SpellModifiers,
@@ -545,14 +547,25 @@ pub(crate) fn spell_usable(
         match d.implicit_target_a1 {
             // `CanAttack 0x606980`.
             IMPLICIT_TARGET_ENEMY
-                if !can_attack(Some(target), ctx.factions, ctx.reputations, Some(ctx.store)) =>
+                if !can_attack(
+                    Some(target),
+                    ctx.factions,
+                    ctx.reputations,
+                    ctx.party,
+                    Some(ctx.store),
+                ) =>
             {
                 return (false, false);
             }
             // Reaction friendly or better, standing in for `CanAssist 0x6066f0`.
             IMPLICIT_TARGET_FRIEND
-                if ring_reaction(ctx.factions, ctx.reputations, Some(target), Some(ctx.store))
-                    < 4 =>
+                if ring_reaction(
+                    ctx.factions,
+                    ctx.reputations,
+                    ctx.party,
+                    Some(target),
+                    Some(ctx.store),
+                ) < 4 =>
             {
                 return (false, false);
             }
@@ -869,6 +882,7 @@ mod tests {
             target_store: None,
             factions: None,
             reputations,
+            party: &crate::target::NoGroup,
             cooldowns,
             carried,
             spell_mods,
@@ -1197,6 +1211,7 @@ mod tests {
                 target_store: Some(target),
                 factions: None,
                 reputations: &reputations,
+                party: &crate::target::NoGroup,
                 cooldowns: &cooldowns,
                 carried: &carried,
                 spell_mods: &SpellModifiers::default(),

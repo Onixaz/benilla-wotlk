@@ -74,6 +74,8 @@ pub(crate) struct RangeUnits<'w, 's> {
     /// `CanAssist`'s reaction inputs; a harness without them assists only the caster.
     factions: Option<Res<'w, Factions>>,
     reputations: Option<Res<'w, Reputations>>,
+    /// The group, for the reaction's party rung; a harness without it has no group.
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
     /// The creature templates `CanAssist`'s last leg reads.
     names: Option<Res<'w, crate::names::NameCache>>,
 }
@@ -109,10 +111,13 @@ impl RangeUnits<'_, '_> {
             return false;
         };
         let self_store = caster.and_then(|e| self.units.get(e).ok()).map(|p| p.0);
+        let party: &dyn crate::target::GroupMembers =
+            crate::target::party_of(self.group.as_deref());
         can_assist(
             Some(store),
             self.factions.as_deref(),
             reputations,
+            party,
             self_store,
             self.names.as_deref(),
         )

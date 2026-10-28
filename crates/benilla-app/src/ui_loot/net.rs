@@ -1108,6 +1108,7 @@ mod tests {
                     Some(&creature(t, 100)),
                     Some(&factions),
                     &reps,
+                    &crate::target::NoGroup,
                     Some(&me_store),
                 )
             })

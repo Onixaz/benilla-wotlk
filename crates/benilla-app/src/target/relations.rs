@@ -14,8 +14,9 @@
 use benilla_protocol::messages::{ObjectType, OwnerFallback};
 
 use crate::net::{ObjectStore, Reputations};
+use crate::ui_party::GroupState;
 
-use super::{ring_reaction, Factions};
+use super::{ring_reaction, Factions, GroupMembers};
 
 /// `OBJECT_FIELD_TYPE` bit 4, the reference's own player test (`0x606984` in `CanAttack`,
 /// `0x6067fc` in `CanInteract`), read off the store the rest of the predicate walks.
@@ -36,11 +37,13 @@ pub(crate) fn can_attack(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
     reputations: &Reputations,
+    party: &dyn GroupMembers,
     self_store: Option<&ObjectStore>,
 ) -> bool {
     super::ring::can_attack_from_player(
         factions,
         reputations,
+        party,
         store,
         self_store,
         is_player_object(store),
@@ -54,9 +57,10 @@ pub(crate) fn can_interact(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
     reputations: &Reputations,
+    party: &dyn GroupMembers,
     self_store: Option<&ObjectStore>,
 ) -> bool {
-    super::ring::can_interact_from_player(factions, reputations, store, self_store)
+    super::ring::can_interact_from_player(factions, reputations, party, store, self_store)
 }
 
 /// `UNIT_FLAG_NOT_SELECTABLE`, bit 25 (vmangos `UnitDefines.h:570`): `CanAssist`'s first refusal
@@ -150,6 +154,7 @@ pub(crate) fn can_assist(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
     reputations: &Reputations,
+    party: &dyn GroupMembers,
     self_store: Option<&ObjectStore>,
     names: Option<&crate::names::NameCache>,
 ) -> bool {
@@ -158,6 +163,7 @@ pub(crate) fn can_assist(
         store,
         factions,
         reputations,
+        party,
         self_store,
         names,
     )
@@ -178,6 +184,7 @@ pub(crate) fn can_assist_dir(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
     reputations: &Reputations,
+    party: &dyn GroupMembers,
     self_store: Option<&ObjectStore>,
     names: Option<&crate::names::NameCache>,
 ) -> bool {
@@ -196,14 +203,14 @@ pub(crate) fn can_assist_dir(
             unit,
             0,
             unit_type_flags,
-            super::ring::reaction_from_player(factions, reputations, Some(unit), Some(me)),
+            super::ring::reaction_from_player(factions, reputations, party, Some(unit), Some(me)),
         ),
         Assist::UnitToPlayer => (
             unit,
             me,
             unit_type_flags,
             0,
-            ring_reaction(factions, reputations, Some(unit), Some(me)),
+            ring_reaction(factions, reputations, party, Some(unit), Some(me)),
         ),
     };
     let (aflags, tflags) = (actor.0.unit_flags(), target.0.unit_flags());
@@ -259,6 +266,55 @@ const SELECTION_BLUE: u32 = 0xFF00_00FF;
 /// `UNIT_BYTE2_FLAG_PVP` and `_SANCTUARY`, `UNIT_FIELD_BYTES_2` byte 1 (`0x521ea5`).
 const BYTE2_PVP: u8 = 0x1;
 const BYTE2_SANCTUARY: u8 = 0x8;
+/// `UNIT_DYNFLAG_DEAD`, the second half of the resolver's dead test (`0x521f6b`).
+const DYNFLAG_DEAD: u32 = 0x20;
+
+/// The resolver's player-controlled verdict, from `CanAttack 0x729740` asked both ways.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Matrix {
+    /// The unit can attack us and we it (`0x521e60`).
+    Mutual,
+    /// It can attack us; we cannot attack it.
+    TheyOnly,
+    /// We can attack it; it cannot attack us (`0x521e9e`).
+    WeOnly,
+    /// Neither can; `pvp` is its PvP bit with neither side in a sanctuary (`0x521ea5`).
+    Neither { pvp: bool },
+}
+
+/// `0x521bf0`'s question for a player-controlled unit, as both of its modes ask it.
+fn attack_matrix(
+    store: &ObjectStore,
+    own: &ObjectStore,
+    factions: Option<&Factions>,
+    reputations: &Reputations,
+    party: &dyn GroupMembers,
+) -> Matrix {
+    // `CanAttack(unit, player)`: the arm both bit-3 flags select is the same either way round,
+    // so the player-side predicate with the two swapped asks it.
+    let attacks_us = super::ring::can_attack_from_player(
+        factions,
+        reputations,
+        party,
+        Some(own),
+        Some(store),
+        is_player_object(Some(own)),
+    );
+    let we_attack = can_attack(Some(store), factions, reputations, party, Some(own));
+    match (attacks_us, we_attack) {
+        (true, true) => Matrix::Mutual,
+        (true, false) => Matrix::TheyOnly,
+        (false, true) => Matrix::WeOnly,
+        (false, false) => {
+            let (theirs, ours) = (store.0.unit_byte2_flags(), own.0.unit_byte2_flags());
+            Matrix::Neither {
+                pvp: theirs & BYTE2_PVP != 0
+                    && theirs & BYTE2_SANCTUARY == 0
+                    && ours & BYTE2_SANCTUARY == 0,
+            }
+        }
+    }
+}
 
 /// `UnitSelectionColor`'s ARGB dword, 12340's resolver `0x521bf0` with its third argument 0, as
 /// `0x60da6f` calls it: a unit that is not player-controlled takes the palette entry of its
@@ -267,53 +323,95 @@ const BYTE2_SANCTUARY: u8 = 0x8;
 /// only, yellow (`0x521e45`-`0x521e9e`). Else a PvP-flagged unit, neither side in a sanctuary,
 /// takes its reaction's entry, and any other blue. `self_store` is the player's own descriptor;
 /// passing it as `store` reads the player's own colour, whose reaction toward itself is 4
-/// (`0x7251d5`). Not applied: the active mover's vehicle or charm (`0x6dd060`, `0x5140a0`) and
+/// (`0x7251c0`). Not applied: the active mover's vehicle or charm (`0x6dd060`, `0x5140a0`) and
 /// the zone's sanctuary test (`[0xbea570] == 4`).
 pub(crate) fn selection_color(
     store: &ObjectStore,
     factions: Option<&Factions>,
     reputations: &Reputations,
+    party: &dyn GroupMembers,
     self_store: Option<&ObjectStore>,
 ) -> u32 {
     let Some(own) = self_store else {
         return SELECTION_BLUE;
     };
     let reaction_color = || {
-        let r = if std::ptr::eq(store, own) {
-            4
-        } else {
-            ring_reaction(factions, reputations, Some(store), Some(own))
-        };
+        let r = ring_reaction(factions, reputations, party, Some(store), Some(own));
         SELECTION_REACTION[usize::from(r.min(7))]
     };
     if store.0.unit_flags() & UNIT_FLAG_PLAYER_CONTROLLED == 0 {
         return reaction_color();
     }
-    // `CanAttack(unit, player)`: the arm both bit-3 flags select is the same either way round,
-    // so the player-side predicate with the two swapped asks it.
-    let attacks_us = super::ring::can_attack_from_player(
-        factions,
-        reputations,
-        Some(own),
-        Some(store),
-        is_player_object(Some(own)),
-    );
-    let we_attack = can_attack(Some(store), factions, reputations, Some(own));
-    match (attacks_us, we_attack) {
-        (true, true) => SELECTION_REACTION[1],
-        (true, false) => SELECTION_BLUE,
-        (false, true) => SELECTION_REACTION[3],
-        (false, false) => {
-            let (theirs, ours) = (store.0.unit_byte2_flags(), own.0.unit_byte2_flags());
-            if theirs & BYTE2_PVP != 0
-                && theirs & BYTE2_SANCTUARY == 0
-                && ours & BYTE2_SANCTUARY == 0
-            {
-                reaction_color()
-            } else {
-                SELECTION_BLUE
-            }
+    match attack_matrix(store, own, factions, reputations, party) {
+        Matrix::Mutual => SELECTION_REACTION[1],
+        Matrix::TheyOnly => SELECTION_BLUE,
+        Matrix::WeOnly => SELECTION_REACTION[3],
+        Matrix::Neither { pvp: true } => reaction_color(),
+        Matrix::Neither { pvp: false } => SELECTION_BLUE,
+    }
+}
+
+/// The colour class of the ground ring and the overhead name: `0x521bf0` with its third argument
+/// 1, as the unit's highlight colour `0x718ac0` asks it for the ring draw and the name string
+/// (`0x725980`). It runs the same matrix as [`selection_color`], and differs in four places:
+/// - a dead unit that is not player-controlled is grey (`0x521f6b`);
+/// - an unattackable player-controlled unit in our party (our subgroup, in a raid), or its pet,
+///   takes the party colour, pale green when PvP-flagged (`0xbd0c84`) and pale blue when not (`0xbd0c88`);
+/// - else one on our friend list takes the friend colour (`0xbd0c80`);
+/// - the blue entry is the second of `0xbd0c8c`, a soft blue.
+///
+/// The combat flash, which `0x718ac0` checks before the resolver, is the callers'. Not applied, as
+/// in [`selection_color`]: the active mover's vehicle or charm, and the zone sanctuary test.
+pub(crate) fn highlight_variant(
+    store: &ObjectStore,
+    factions: Option<&Factions>,
+    reputations: &Reputations,
+    party: &GroupState,
+    self_store: Option<&ObjectStore>,
+    is_friend: impl Fn(u64) -> bool,
+) -> super::RingVariant {
+    use super::RingVariant as V;
+    let Some(own) = self_store else {
+        return V::Player;
+    };
+    let reaction_variant =
+        || match ring_reaction(factions, reputations, party, Some(store), Some(own)) {
+            0..=1 => V::Hostile,
+            2 => V::Unfriendly,
+            3 => V::Neutral,
+            _ => V::Friendly,
+        };
+    if store.0.unit_flags() & UNIT_FLAG_PLAYER_CONTROLLED == 0 {
+        if store.0.unit_is_dead() || store.0.unit_dynamic_flags() & DYNFLAG_DEAD != 0 {
+            return V::Dead;
         }
+        return reaction_variant();
+    }
+    let pvp = match attack_matrix(store, own, factions, reputations, party) {
+        Matrix::Mutual => return V::Hostile,
+        Matrix::TheyOnly => return V::Player,
+        Matrix::WeOnly => return V::Neutral,
+        Matrix::Neither { pvp } => pvp,
+    };
+    // The party test: the unit, or the owner of a pet, in the party slots, which in a raid hold
+    // our own subgroup; none once a leave or a kick emptied them.
+    let guid = store.0.object_guid();
+    let owner = store.0.unit_owner(OwnerFallback::CreatedBy);
+    let grouped = !party.slots_emptied
+        && [guid, owner]
+            .into_iter()
+            .flatten()
+            .any(|g| party.party_slots().any(|m| m.guid == g));
+    if grouped {
+        return if pvp { V::PartyPvp } else { V::Party };
+    }
+    if guid.is_some_and(is_friend) {
+        return V::Friend;
+    }
+    if pvp {
+        reaction_variant()
+    } else {
+        V::Player
     }
 }
 
@@ -321,6 +419,265 @@ pub(crate) fn selection_color(
 mod tests {
     use super::*;
     use crate::spell::targeting::corpse_fixture as fx;
+    use crate::target::NoGroup;
+
+    /// Free-for-all, every unit and our player carrying `UNIT_BYTE2_FLAG_FFA_PVP`: the rungs ahead
+    /// of the FFA rung (`0x7251c0`) decide self, our pet, the group and a duel, and the ring and
+    /// name colour (`0x521bf0` mode 1) follows the `CanAttack` matrix they produce.
+    mod ffa {
+        use super::*;
+        use crate::target::{reaction_from_player, ring_reaction, RingVariant};
+        use benilla_formats::{FactionCatalog, FactionTemplate};
+        use benilla_protocol::messages::GroupMemberEntry;
+        use std::collections::HashMap;
+
+        const ME: u64 = 0x10;
+        const MEMBER: u64 = 0x20;
+        const RAIDER: u64 = 0x30;
+        const STRANGER: u64 = 0x40;
+        const FRIEND: u64 = 0x50;
+        const OUR_PET: u64 = 0xF140_0000_0000_0001;
+        const MEMBER_PET: u64 = 0xF140_0000_0000_0002;
+
+        fn factions() -> Factions {
+            let human = FactionTemplate {
+                faction: 1,
+                group_mask: 3,
+                friend_group_mask: 2,
+                enemy_group_mask: 12,
+                enemies: [0; 4],
+                friends: [0; 4],
+            };
+            Factions::from_catalog(FactionCatalog::from_rows(
+                HashMap::from([(1, human)]),
+                HashMap::new(),
+            ))
+        }
+
+        /// A Human player-controlled unit with the FFA bit, plus `byte2` and any `extra` fields:
+        /// `OBJECT_FIELD_GUID` 0-1, type 2, template 35, flags 46, `UNIT_FIELD_BYTES_2` 164.
+        fn unit(guid: u64, player: bool, byte2: u8, extra: &[(u16, u32)]) -> ObjectStore {
+            let mut pairs = vec![
+                (0, guid as u32),
+                (1, (guid >> 32) as u32),
+                (2, if player { 0x19 } else { 0x9 }),
+                (35, 1),
+                (46, UNIT_FLAG_PLAYER_CONTROLLED),
+                (164, u32::from(byte2 | BYTE2_FFA_PVP) << 8),
+            ];
+            pairs.extend_from_slice(extra);
+            ObjectStore(benilla_protocol::ObjectFields::from_pairs(&pairs))
+        }
+
+        /// `UNIT_FIELD_CREATEDBY` (14-15) naming `owner`.
+        fn pet(guid: u64, owner: u64) -> ObjectStore {
+            unit(
+                guid,
+                false,
+                0,
+                &[(14, owner as u32), (15, (owner >> 32) as u32)],
+            )
+        }
+
+        /// A raid: [`MEMBER`] in our subgroup 0, [`RAIDER`] in subgroup 1.
+        fn group() -> GroupState {
+            let member = |guid, flags| GroupMemberEntry {
+                name: String::new(),
+                guid,
+                status: 1,
+                flags,
+                roles: 0,
+            };
+            GroupState {
+                in_group: true,
+                group_type: 1,
+                members: vec![member(MEMBER, 0), member(RAIDER, 1)],
+                ..GroupState::default()
+            }
+        }
+
+        /// Both reactions, both `CanAttack` directions and the ring and name colour of `them`.
+        struct Seen {
+            toward_us: u8,
+            from_us: u8,
+            we_attack: bool,
+            attacks_us: bool,
+            ring: RingVariant,
+        }
+
+        fn seen(them: &ObjectStore, me: &ObjectStore, party: &GroupState) -> Seen {
+            let f = factions();
+            let reps = Reputations::default();
+            Seen {
+                toward_us: ring_reaction(Some(&f), &reps, party, Some(them), Some(me)),
+                from_us: reaction_from_player(Some(&f), &reps, party, Some(them), Some(me)),
+                we_attack: can_attack(Some(them), Some(&f), &reps, party, Some(me)),
+                attacks_us: crate::target::ring::can_attack_from_player(
+                    Some(&f),
+                    &reps,
+                    party,
+                    Some(me),
+                    Some(them),
+                    true,
+                ),
+                ring: highlight_variant(them, Some(&f), &reps, party, Some(me), |g| g == FRIEND),
+            }
+        }
+
+        const FRIENDLY: u8 = 4;
+        const HOSTILE: u8 = 1;
+
+        #[test]
+        fn our_player_is_friendly_to_itself_and_never_red() {
+            let me = unit(ME, true, 0, &[]);
+            // The same store, and a second store carrying our guid: both are the same unit.
+            for them in [&me, &unit(ME, true, 0, &[])] {
+                let s = seen(them, &me, &group());
+                assert_eq!((s.toward_us, s.from_us), (FRIENDLY, FRIENDLY));
+                assert!(!s.we_attack && !s.attacks_us, "nobody attacks himself");
+                assert_eq!(s.ring, RingVariant::Player, "the soft blue, not red");
+                assert_eq!(
+                    selection_color(
+                        them,
+                        Some(&factions()),
+                        &Reputations::default(),
+                        &group(),
+                        Some(&me)
+                    ),
+                    SELECTION_BLUE,
+                    "UnitSelectionColor(\"player\") agrees"
+                );
+            }
+        }
+
+        #[test]
+        fn our_own_pet_shares_our_controller() {
+            let me = unit(ME, true, 0, &[]);
+            let s = seen(&pet(OUR_PET, ME), &me, &GroupState::default());
+            assert_eq!((s.toward_us, s.from_us), (FRIENDLY, FRIENDLY));
+            assert!(!s.we_attack && !s.attacks_us);
+            assert_ne!(s.ring, RingVariant::Hostile);
+        }
+
+        #[test]
+        fn a_party_member_and_their_pet_stay_friendly() {
+            let me = unit(ME, true, 0, &[]);
+            let s = seen(&unit(MEMBER, true, 0, &[]), &me, &group());
+            assert_eq!((s.toward_us, s.from_us), (FRIENDLY, FRIENDLY));
+            assert!(
+                !s.we_attack && !s.attacks_us,
+                "the party rung skips the FFA rung"
+            );
+            assert_eq!(s.ring, RingVariant::Party, "pale blue");
+
+            let flagged = seen(&unit(MEMBER, true, BYTE2_PVP, &[]), &me, &group());
+            assert_eq!(
+                flagged.ring,
+                RingVariant::PartyPvp,
+                "pale green when PvP-flagged"
+            );
+
+            let s = seen(&pet(MEMBER_PET, MEMBER), &me, &group());
+            assert_eq!((s.toward_us, s.from_us), (FRIENDLY, FRIENDLY));
+            assert_eq!(
+                s.ring,
+                RingVariant::Party,
+                "a member's pet takes the party colour"
+            );
+        }
+
+        #[test]
+        fn a_raid_member_outside_our_subgroup_is_friendly_but_not_party_coloured() {
+            let me = unit(ME, true, 0, &[]);
+            let s = seen(&unit(RAIDER, true, 0, &[]), &me, &group());
+            assert_eq!(
+                (s.toward_us, s.from_us),
+                (FRIENDLY, FRIENDLY),
+                "the raid roster counts"
+            );
+            assert!(!s.we_attack && !s.attacks_us);
+            assert_eq!(
+                s.ring,
+                RingVariant::Player,
+                "the party colour reads the party slots"
+            );
+        }
+
+        #[test]
+        fn a_stranger_is_hostile_and_red() {
+            let me = unit(ME, true, 0, &[]);
+            let s = seen(&unit(STRANGER, true, 0, &[]), &me, &group());
+            assert_eq!((s.toward_us, s.from_us), (HOSTILE, HOSTILE));
+            assert!(s.we_attack && s.attacks_us);
+            assert_eq!(s.ring, RingVariant::Hostile);
+            // The same stranger out of the FFA area is a friendly Human again.
+            let calm = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (0, STRANGER as u32),
+                (2, 0x19),
+                (35, 1),
+                (46, UNIT_FLAG_PLAYER_CONTROLLED),
+            ]));
+            assert_eq!(seen(&calm, &me, &group()).toward_us, FRIENDLY);
+        }
+
+        #[test]
+        fn a_duel_outranks_the_party() {
+            // `PLAYER_DUEL_ARBITER` 188-189 shared, `PLAYER_DUEL_TEAM` 196 opposed.
+            let duel = |team: u32| [(188, 0xD0), (196, team)];
+            let me = unit(ME, true, 0, &duel(1));
+            let s = seen(&unit(MEMBER, true, 0, &duel(2)), &me, &group());
+            assert_eq!((s.toward_us, s.from_us), (HOSTILE, HOSTILE));
+            assert!(s.we_attack && s.attacks_us);
+            assert_eq!(s.ring, RingVariant::Hostile);
+        }
+
+        #[test]
+        fn a_friend_takes_the_friend_colour_only_when_unattackable() {
+            let me = unit(ME, true, 0, &[]);
+            assert_eq!(
+                seen(&unit(FRIEND, true, 0, &[]), &me, &group()).ring,
+                RingVariant::Hostile,
+                "in FFA the friend is attackable both ways: red first"
+            );
+            let calm = |guid: u64| {
+                ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                    (0, guid as u32),
+                    (2, 0x19),
+                    (35, 1),
+                    (46, UNIT_FLAG_PLAYER_CONTROLLED),
+                ]))
+            };
+            let calm_me = calm(ME);
+            assert_eq!(
+                seen(&calm(FRIEND), &calm_me, &group()).ring,
+                RingVariant::Friend
+            );
+            assert_eq!(
+                seen(&calm(STRANGER), &calm_me, &group()).ring,
+                RingVariant::Player
+            );
+        }
+
+        #[test]
+        fn a_dead_npc_is_grey_and_a_dead_player_is_not() {
+            let me = unit(ME, true, 0, &[]);
+            let f = factions();
+            let reps = Reputations::default();
+            // Health 22 zero against max health 28.
+            let dead_npc = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
+                (2, 0x9),
+                (22, 0),
+                (28, 100),
+                (35, 1),
+            ]));
+            assert_eq!(
+                highlight_variant(&dead_npc, Some(&f), &reps, &group(), Some(&me), |_| false),
+                RingVariant::Dead
+            );
+            let dead_member = unit(MEMBER, true, 0, &[(22, 0), (28, 100)]);
+            assert_eq!(seen(&dead_member, &me, &group()).ring, RingVariant::Party);
+        }
+    }
 
     /// `0x521bf0` with its third argument 0, over templates 1 (Human) and 2 (Orc) and three NPC
     /// rows: a beast no mask names (neutral), a monster enemy-masked against players (hostile)
@@ -359,7 +716,9 @@ mod tests {
             ]))
         };
         let me = unit(1, UNIT_FLAG_PLAYER_CONTROLLED, 0, true);
-        let color = |store: &ObjectStore| selection_color(store, Some(&factions), &reps, Some(&me));
+        let color = |store: &ObjectStore| {
+            selection_color(store, Some(&factions), &reps, &NoGroup, Some(&me))
+        };
 
         // NPCs: the reaction palette.
         assert_eq!(
@@ -408,7 +767,7 @@ mod tests {
         let flagged_me = unit(1, pc, BYTE2_PVP, true);
         let enemy = unit(2, pc, BYTE2_PVP, true);
         assert_eq!(
-            selection_color(&enemy, Some(&factions), &reps, Some(&flagged_me)),
+            selection_color(&enemy, Some(&factions), &reps, &NoGroup, Some(&flagged_me)),
             0xFFFF_0000,
             "both flagged: red"
         );
@@ -417,6 +776,7 @@ mod tests {
                 &unit(2, pc, 0, true),
                 Some(&factions),
                 &reps,
+                &NoGroup,
                 Some(&flagged_me)
             ),
             0xFF00_00FF,
@@ -427,12 +787,18 @@ mod tests {
         assert_eq!(color(&me), 0xFF00_00FF);
         let flagged = unit(1, pc, BYTE2_PVP, true);
         assert_eq!(
-            selection_color(&flagged, Some(&factions), &reps, Some(&flagged)),
+            selection_color(&flagged, Some(&factions), &reps, &NoGroup, Some(&flagged)),
             0xFF00_FF00
         );
         // No player: the resolver's blue.
         assert_eq!(
-            selection_color(&unit(7, 0, 0, false), Some(&factions), &reps, None),
+            selection_color(
+                &unit(7, 0, 0, false),
+                Some(&factions),
+                &reps,
+                &NoGroup,
+                None
+            ),
             0xFF00_00FF
         );
     }
@@ -469,7 +835,7 @@ mod tests {
             ]))
         };
         let attack = |target: &ObjectStore, me: &ObjectStore| {
-            can_attack(Some(target), Some(&factions), &reps, Some(me))
+            can_attack(Some(target), Some(&factions), &reps, &NoGroup, Some(me))
         };
         let me = unit(1, BYTE2_PVP, 0);
 
@@ -567,6 +933,7 @@ mod tests {
                 Some(unit),
                 Some(&factions),
                 &reps,
+                &NoGroup,
                 Some(me),
                 Some(&names),
             )
