@@ -961,3 +961,42 @@ fn container_slots_line_names_its_subclass() {
     let lines = show(&mut s, 914, bag(0, None, 16));
     assert_eq!(lines.len(), 1, "name line only: {lines:?}");
 }
+
+/// `showItemLevel` (`0x62b1ad`): with the CVar set, ItemClass 2, 4, 5 and 6 print `ITEM_LEVEL`
+/// under the level line, whether or not that printed; another class and an unset CVar print none.
+#[test]
+fn show_item_level_adds_the_line_for_its_four_classes() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.register_cvars([("showItemLevel", "0")]);
+    for (id, class, req) in [(21, 2u32, 10u32), (22, 4, 0), (23, 0, 0)] {
+        s.set_item_template(
+            id,
+            ItemTemplateView {
+                name: format!("Ilvl{id}"),
+                class,
+                required_level: req,
+                item_level: 200,
+                ..Default::default()
+            },
+        );
+    }
+    s.run(
+        r#"
+        local a = CreateFrame("Button", "SlotI"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        local tt = CreateFrame("GameTooltip", "TT")
+        tt:SetOwner(a, "ANCHOR_RIGHT"); SetItemByIdForTest(tt, 21)
+        assert(tt:NumLines() == 2, "off: name and level only, got " .. tt:NumLines())
+        SetCVar("showItemLevel", "1")
+        tt:SetOwner(a, "ANCHOR_RIGHT"); SetItemByIdForTest(tt, 21)
+        assert(TTTextLeft2:GetText() == "[MIN_LEVEL 10]")
+        assert(TTTextLeft3:GetText() == "[ITEM_LEVEL 200]", tostring(TTTextLeft3:GetText()))
+        tt:SetOwner(a, "ANCHOR_RIGHT"); SetItemByIdForTest(tt, 22)
+        assert(TTTextLeft2:GetText() == "[ITEM_LEVEL 200]", "armor with no level line")
+        tt:SetOwner(a, "ANCHOR_RIGHT"); SetItemByIdForTest(tt, 23)
+        assert(tt:NumLines() == 1, "a consumable prints none, got " .. tt:NumLines())
+    "#,
+    )
+    .unwrap();
+    assert!(s.take_errors().is_empty());
+}

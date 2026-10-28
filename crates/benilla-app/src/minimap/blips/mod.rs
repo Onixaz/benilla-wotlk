@@ -215,14 +215,20 @@ pub(super) struct BlipCtx {
     /// Window px per UI unit: everything else here is window px, while Lua
     /// ([`Minimap:PingLocation`](super::ping)) speaks UI units.
     pub(super) seam: f32,
+    /// The map's clockwise turn, the facing under `rotateMinimap` and 0 north up.
+    pub(super) turn: f32,
 }
 
 impl BlipCtx {
-    /// A WoW world point's screen offset from the widget centre, north up (+X up, +Y left).
+    /// A WoW world point's screen offset from the widget centre: north up (+X up, +Y left), then
+    /// turned with the map (`point *= rotation`, `RenderObjectBlips` `0x5803de`).
     pub(super) fn offset(&self, w: [f32; 3]) -> Vec2 {
-        Vec2::new(
-            (self.wy - w[1]) * self.px_per_yd,
-            -(w[0] - self.wx) * self.px_per_yd,
+        super::turn_offset(
+            Vec2::new(
+                (self.wy - w[1]) * self.px_per_yd,
+                -(w[0] - self.wx) * self.px_per_yd,
+            ),
+            self.turn,
         )
     }
 }

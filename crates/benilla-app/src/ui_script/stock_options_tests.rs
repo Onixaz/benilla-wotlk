@@ -714,3 +714,86 @@ fn the_combat_panel_reaches_the_target_frame() {
     let errors = options_errors(s.take_errors());
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
+
+/// The Display panel's CVar checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+const DISPLAY_CHECKBOXES: [(&str, &str, &str); 10] = [
+    ("RotateMinimap", "rotateMinimap", "0"),
+    ("ScreenEdgeFlash", "screenEdgeFlash", "1"),
+    ("DetailedLootInfo", "showLootSpam", "1"),
+    ("ShowFreeBagSpace", "displayFreeBagSlots", "0"),
+    ("ShowClock", "showClock", "1"),
+    ("ShowAggroPercentage", "threatShowNumeric", "0"),
+    ("PlayAggroSounds", "threatPlaySounds", "1"),
+    ("ColorblindMode", "colorblindMode", "0"),
+    ("ShowItemLevel", "showItemLevel", "0"),
+    ("CinematicSubtitles", "movieSubtitle", "0"),
+];
+
+/// Each Display checkbox boots at its CVar's 12340 default, a click and Okay writes the flip, a
+/// click and Cancel writes nothing, and Defaults puts the registered value back; Rotate Minimap's
+/// `setFunc` swaps the compass for the north tag (`Minimap_UpdateRotationSetting`).
+#[test]
+fn every_display_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-display");
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsDisplayPanel)";
+    for (suffix, cvar, default) in DISPLAY_CHECKBOXES {
+        let button = format!("InterfaceOptionsDisplayPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        if cvar == "rotateMinimap" {
+            let shown: (bool, bool) = s
+                .eval(
+                    "return MinimapCompassTexture:IsShown() == 1, \
+                     MinimapNorthTag:IsShown() == 1",
+                )
+                .unwrap();
+            assert_eq!(shown, (true, false), "rotating: the compass, no north tag");
+        }
+        if cvar == "displayFreeBagSlots" {
+            // `CVAR_UPDATE("DISPLAY_FREE_BAG_SLOTS")` shows the count (`MainMenuBarBackpackButton_OnEvent`).
+            assert!(s
+                .eval::<bool>("return MainMenuBarBackpackButtonCount:IsShown() == 1")
+                .unwrap());
+        }
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}

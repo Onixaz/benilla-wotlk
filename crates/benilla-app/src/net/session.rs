@@ -51,6 +51,11 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Reputations, on_reputations)
         .net_handler(K::ReputationDelta, on_reputation_delta)
         .net_handler(K::ReputationVisible, on_reputations)
+        .net_handler(K::ForcedReactions, on_reputations)
+        .add_systems(
+            OnExit(crate::char_select::ClientState::InWorld),
+            clear_forced_reactions,
+        )
         .net_handler(K::BindPoint, on_player_store)
         .net_handler(K::Proficiency, on_player_store)
         .net_handler(K::PacketDropped, on_packet_dropped)
@@ -329,8 +334,19 @@ fn on_reputations(In(ev): In<SessionEvent>, mut b: Bridge) {
         SessionEvent::ReputationVisible { list_id } => {
             reputation_visible(list_id, &mut b.reputations)
         }
+        // `0x5d15d0` replaces the list, then re-reads every reaction (`UpdateReaction`
+        // `0x71f8f0`), which the reaction readers do off this resource's change.
+        SessionEvent::ForcedReactions { reactions } => {
+            info!("net: {} forced reactions", reactions.len());
+            b.reputations.1 = reactions;
+        }
         _ => {}
     }
+}
+
+/// `CGReputationInfo::LeaveWorld` (`0x5d24c0`) empties the forced reactions.
+fn clear_forced_reactions(mut reputations: ResMut<Reputations>) {
+    reputations.1.clear();
 }
 
 /// The chat line reads the deltas against the store, so it must run before the overwrite.

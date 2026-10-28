@@ -1381,6 +1381,7 @@ pub(super) fn writer_loop(
                     ClientCommand::TeleportAck { guid, counter } => w.teleport_ack(guid, counter),
                     ClientCommand::WorldportAck => w.worldport_ack(),
                     ClientCommand::SetSelection { guid } => w.set_selection(guid),
+                    ClientCommand::GetMirrorImageData { guid } => w.get_mirror_image_data(guid),
                     ClientCommand::CancelAutoRepeat => w.cancel_auto_repeat(),
                     ClientCommand::CancelCast { spell_id } => w.cancel_cast(spell_id),
                     ClientCommand::CancelChannelling { spell_id } => w.cancel_channelling(spell_id),

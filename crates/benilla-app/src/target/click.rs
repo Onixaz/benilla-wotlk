@@ -1570,15 +1570,39 @@ pub(crate) fn clear_target_requests(
     engaged: Query<(), (With<Engaged>, With<SelfPlayer>)>,
     mut guid_asks: MessageReader<DeselectGuid>,
 ) {
-    if guid_asks.read().any(|ask| selection.guid == Some(ask.0)) {
+    if guid_asks
+        .read()
+        .any(|ask| ask.0 == 0 || selection.guid == Some(ask.0))
+    {
         clear(&mut selection, &mut seam, !engaged.is_empty());
     }
 }
 
-/// A deselect that applies only if the selection is this guid (`0x493910(guid, 1)`), raised by
-/// every loot close for a dead unit (`0x48f369`) and drained by [`clear_target_requests`].
+/// A deselect that applies only if the selection is this guid, or whatever it is for 0
+/// (`CGGameUI::ClearTarget(guid, 1)` `0x5241b0`), raised by every loot close for a dead unit
+/// (`0x48f369`) and by `SMSG_CLEAR_TARGET`, and drained by [`clear_target_requests`].
 #[derive(bevy::ecs::message::Message, Clone, Copy, Debug)]
 pub(crate) struct DeselectGuid(pub(crate) u64);
+
+/// Registers the `SMSG_CLEAR_TARGET` handler.
+pub(super) fn register_clear_target(app: &mut App) {
+    use crate::net::NetHandlerApp;
+    app.net_handler(
+        benilla_protocol::SessionEventKind::ClearTarget,
+        on_clear_target,
+    );
+}
+
+/// `SMSG_CLEAR_TARGET` (`0x756800`'s `0x3bf` arm): `ClearTarget(guid, 1)`.
+fn on_clear_target(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    mut asks: MessageWriter<DeselectGuid>,
+) {
+    if let benilla_protocol::SessionEvent::ClearTarget { guid } = ev {
+        debug!("net: clear target {guid:#x}");
+        asks.write(DeselectGuid(guid));
+    }
+}
 
 /// `SetSelection(0,0)` (`0x493540` → `0x4938f3`): the deselect of Esc, a click off and a target's
 /// death, which stamps the outgoing target into the last-target pair before [`clear`]. A no-op

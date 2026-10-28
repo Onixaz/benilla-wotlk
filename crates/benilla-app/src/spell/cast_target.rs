@@ -189,6 +189,9 @@ pub(crate) struct CastContext<'a> {
     pub(crate) auto_dismount: bool,
     /// The caster's aura table: the toggle-cancel scans and the crowd-control exemption read it.
     pub(crate) self_auras: Option<&'a UnitAuras>,
+    /// The caster's combo points on the cast's target, the finisher gate's read
+    /// (`GetComboPoints(target)`, the player's at `0x80d518`, the pet's at `0x80d54e`).
+    pub(crate) combo_points: u8,
 }
 
 /// Positions and the two units for the pre-send range refusal: the client's cast runs
@@ -263,6 +266,8 @@ pub(crate) struct CastTargeting<'w, 's> {
     auto_dismount: Option<Res<'w, AutoDismount>>,
     /// The caster's and the selection's reach and motion, for the range gate.
     range_units: super::RangeUnits<'w, 's>,
+    /// The player's and the pet's combo banks; a harness without them holds none.
+    combo: Option<Res<'w, super::ComboPoints>>,
 }
 
 impl CastTargeting<'_, '_> {
@@ -319,7 +324,17 @@ impl CastTargeting<'_, '_> {
                 )
             },
             self_auras: self.self_auras.iter().next(),
+            combo_points: self.combo_on(false, 0),
         }
+    }
+
+    /// `GetComboPoints(target)` on the player's bank or the pet's (`0x513920`, `0x5d3520`), a 0
+    /// target reading the selection.
+    fn combo_on(&self, pet: bool, target: u64) -> u8 {
+        self.combo.as_deref().map_or(0, |c| {
+            let bank = if pet { c.pet } else { c.player };
+            bank.on(target, self.selection.guid.unwrap_or(0))
+        })
     }
 
     /// This frame's [`CastContext`] aimed where a cast verb's target argument points: the guid
@@ -338,6 +353,8 @@ impl CastTargeting<'_, '_> {
         ctx.rel.target_store = store;
         ctx.rel.target_owner_store = owner_store(store, self.index.as_deref(), &self.stores);
         ctx.rel.group.target_guid = guid;
+        // A token naming nobody hands the cast a guid no unit banks points on.
+        ctx.combo_points = guid.map_or(0, |g| self.combo_on(false, g));
         ctx.range.target_pos = entity
             .and_then(|e| self.transforms.get(e).ok())
             .map(|t| t.translation);
@@ -381,6 +398,7 @@ impl CastTargeting<'_, '_> {
         ctx.main_hand_item = None;
         ctx.self_move_flags = 0;
         ctx.self_auras = entity.and_then(|e| self.unit_auras.get(e).ok());
+        ctx.combo_points = self.combo_on(true, target.unwrap_or(0));
         ctx
     }
 
@@ -702,7 +720,7 @@ mod tests {
             target_owner_store: None,
             self_store: Some(&me),
             factions: None,
-            reputations: &Reputations(Vec::new()),
+            reputations: &Reputations(Vec::new(), Vec::new()),
             types: Default::default(),
             group: Default::default(),
         };
@@ -769,7 +787,7 @@ mod tests {
         let me = ObjectStore(ObjectFields::from_pairs(&[(35, 1), (46, 0x8)]));
         let quiet = ObjectStore(ObjectFields::from_pairs(&[(35, 35), (46, 0)]));
         let pvp = ObjectStore(ObjectFields::from_pairs(&[(35, 35), (46, 0x1000)]));
-        let reputations = Reputations(Vec::new());
+        let reputations = Reputations(Vec::new(), Vec::new());
         let rel = |target| TargetRelations {
             target_store: Some(target),
             target_owner_store: None,
@@ -981,7 +999,7 @@ mod tests {
     }
 
     fn rel_none() -> TargetRelations<'static> {
-        static EMPTY: Reputations = Reputations(Vec::new());
+        static EMPTY: Reputations = Reputations(Vec::new(), Vec::new());
         TargetRelations {
             target_store: None,
             target_owner_store: None,

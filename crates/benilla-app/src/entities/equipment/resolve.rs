@@ -138,6 +138,7 @@ pub(in crate::entities) fn resolve_equipment(
         Option<&DressKey>,
         Option<&DisarmFreeze>,
         Has<crate::net::SelfPlayer>,
+        Option<&super::super::mirror_image::MirrorLookOf>,
     )>,
     held: Option<ResMut<ItemDisplays>>,
     templates: Res<Items>,
@@ -188,6 +189,7 @@ pub(in crate::entities) fn resolve_equipment(
         current_dress,
         freeze,
         is_self,
+        mirror,
     ) in &units
     {
         if !matches!(net_entity.kind, EntityKind::Unit | EntityKind::Player) {
@@ -259,6 +261,14 @@ pub(in crate::entities) fn resolve_equipment(
                     eq.tabard_preview = true;
                 }
             }
+            if current_equipment != Some(&eq) {
+                commands.entity(entity).insert(eq);
+            }
+        }
+        // A clone dresses in its caster's displays (`0x730564`-`0x7306bc`).
+        let mirror = mirror.and_then(|m| m.for_display(net_entity.display_id));
+        if let Some(look) = mirror.filter(|_| net_entity.kind == EntityKind::Unit) {
+            let eq = super::super::mirror_image::mirror_equipment(look);
             if current_equipment != Some(&eq) {
                 commands.entity(entity).insert(eq);
             }
@@ -495,11 +505,14 @@ pub(in crate::entities) fn resolve_equipment(
                 let shoulder = resolve(2);
                 Some((helm, shoulder, race, sex))
             }
-            EntityKind::Unit => net_entity
-                .display_id
-                .and_then(|disp| creatures.as_deref()?.models.get(&disp))
-                .and_then(|dm| dm.npc_appearance.as_ref())
-                .map(|npc| (npc.equipment[0], npc.equipment[1], npc.race, npc.sex.min(1))),
+            EntityKind::Unit => match mirror {
+                Some(m) => Some((m.items[0], m.items[1], m.race, m.sex.min(1))),
+                None => net_entity
+                    .display_id
+                    .and_then(|disp| creatures.as_deref()?.models.get(&disp))
+                    .and_then(|dm| dm.npc_appearance.as_ref())
+                    .map(|npc| (npc.equipment[0], npc.equipment[1], npc.race, npc.sex.min(1))),
+            },
             _ => None,
         };
         if let Some((helm, shoulder, race, sex)) = head_shoulder {

@@ -8,6 +8,17 @@ use crate::script::{BlendMode, TexCoords};
 
 use super::region_handle_of;
 
+/// `CSimpleTexture::SetRotation` (`0x483120`): the corners on a unit radius
+/// about `(cx, cy)` from `angle - π/4`, UL, LL, UR then LR, stored in screen order.
+pub(crate) fn rotation_corners(angle: f32, cx: f32, cy: f32) -> TexCoords {
+    let (s, c) = (angle - std::f32::consts::FRAC_PI_4).sin_cos();
+    let ul = [s + cx, cy - c];
+    let ll = [cx - c, cy - s];
+    let ur = [c + cx, s + cy];
+    let lr = [cx - s, cy + c];
+    TexCoords::Corners([ul, ur, lr, ll])
+}
+
 /// Install the paint methods into `m`.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // SetAlpha/GetAlpha: the region's own alpha, not the owner frame's; stock
@@ -428,8 +439,41 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // No Texture `SetRotation`: 1.12 registers it only on PlayerModel (`0x505f00`, table
-    // `0x84f1fc`), in neither region map (`0x87c128`, `0xcf5400`).
+    // SetRotation(angle[, cx, cy]) (`0x48c860`): the corners turned about the centre, 0.5 each
+    // unless both are numbers; a non-number angle raises.
+    m.set(
+        "SetRotation",
+        lua.create_function(|lua, (this, args): (Table, mlua::Variadic<Value>)| {
+            let num = |i: usize| match args.get(i) {
+                Some(Value::Number(n)) => Some(*n as f32),
+                Some(Value::Integer(n)) => Some(*n as f32),
+                Some(Value::String(s)) => s.to_str().ok().and_then(|s| s.trim().parse().ok()),
+                _ => None,
+            };
+            let rh = region_handle_of(lua, &this)?;
+            let Some(angle) = num(0) else {
+                let name = {
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model");
+                    crate::script::object::decode_id(&this)
+                        .ok()
+                        .and_then(|id| super::region_name_of(&model, id))
+                };
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {}:SetRotation(angle, [cx, cy])",
+                    name.as_deref().unwrap_or("<unnamed>")
+                )));
+            };
+            let (cx, cy) = num(1).zip(num(2)).unwrap_or((0.5, 0.5));
+            crate::script::model_mut_of(lua)
+                .region_data
+                .entry(rh)
+                .or_default()
+                .tex_coords = Some(rotation_corners(angle, cx, cy));
+            Ok(())
+        })?,
+    )?;
 
     // SetTexCoord(left, right, top, bottom), XML `<TexCoords>`: a UV sub-rect in 0..1, origin top
     // left. SetTexCoord(ULx, ULy, LLx, LLy, URx, URy, LRx, LRy): any UV quad, as stock

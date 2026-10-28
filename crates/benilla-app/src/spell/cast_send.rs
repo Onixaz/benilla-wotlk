@@ -82,8 +82,8 @@ fn bound_target(bound: TargetedBind) -> UseItemTarget {
     }
 }
 
-/// The class byte TryCast's finisher rung tests (`6e4e98`).
-const CLASS_ROGUE: u8 = 4;
+/// The class byte the finisher rung tests (`0x80d57d`).
+const CLASS_WARRIOR: u8 = 1;
 
 /// A player's spell press held at TryCast's attack pick (`6e4edf` → `0x612df0`), which can move
 /// the selection the ladder only reads. [`crate::script_calls`] runs the pick and resumes it.
@@ -606,16 +606,17 @@ fn send_spell_cast(
             }
         }
     }
-    // The finisher rung (`6e4e50`–`6e4ecd`), above the attack pick: a finishing move
-    // (`AttributesEx & 0x500000`) with the combo-point byte at 0 refuses 0x46 "That ability
-    // requires combo points" for a rogue (class byte 4, `6e4e98`), else 0x12. Like the button
-    // greying, it reads no target.
+    // The finisher rung (`0x80d4e7`-`0x80d5fd`), above the attack pick: a finishing move
+    // (`AttributesEx & 0x500000`) with no combo points on the cast's target refuses
+    // `CASTER_AURASTATE` for a warrior (class byte 1, `0x80d57d`), else `NO_COMBO_POINTS`
+    // (12340's 0x16 and 0x4e, the shared table's 0x12 and 0x46). The player's aura-262
+    // exemption (`0x80d56a`) is not built.
     if let (Some(d), Some(store)) = (def, ctx.rel.self_store) {
-        if d.needs_combo_points() && store.0.player_combo_points().unwrap_or(0) == 0 {
-            let reason = if store.0.unit_class() == Some(CLASS_ROGUE) {
-                0x46
-            } else {
+        if d.needs_combo_points() && ctx.combo_points == 0 {
+            let reason = if store.0.unit_class() == Some(CLASS_WARRIOR) {
                 0x12
+            } else {
+                0x46
             };
             debug!("ui_action: cast {spell_id} refused locally — no combo points ({reason:#x})");
             cast_errors.push_local(spell_id, reason);
@@ -1016,7 +1017,7 @@ mod tests {
     };
     const HEARTH_GUID: u64 = 0x4000_0000_0000_0042;
 
-    static EMPTY_REPUTATIONS: Reputations = Reputations(Vec::new());
+    static EMPTY_REPUTATIONS: Reputations = Reputations(Vec::new(), Vec::new());
 
     /// A context with nothing selected: every rung that needs world state is inert.
     fn ctx() -> cast_target::CastContext<'static> {
@@ -1038,6 +1039,7 @@ mod tests {
             self_auras: None,
             self_move_flags: 0,
             auto_dismount: true,
+            combo_points: 0,
         }
     }
 
@@ -1517,8 +1519,8 @@ mod tests {
     }
 
     /// The rungs above the pick refuse before it: a press mid-cast (`6e4d97`) and a finisher with no
-    /// combo points (`6e4e50`) hold nothing, so they never select a unit. A rogue reads 0x46, any
-    /// other class 0x12 (`6e4e98`).
+    /// combo points (`0x80d4e7`) hold nothing, so they never select a unit. A warrior reads
+    /// `CASTER_AURASTATE` (0x12), any other class `NO_COMBO_POINTS` (0x46, `0x80d57d`).
     #[test]
     fn the_rungs_above_the_attack_pick_refuse_before_it() {
         use benilla_protocol::ObjectFields;
@@ -1539,9 +1541,8 @@ mod tests {
         );
         assert!(rx.try_recv().is_err());
 
-        // `UNIT_FIELD_BYTES_0` (field 36) byte 1 is the class; `PLAYER_FIELD_BYTES` holds no
-        // combo points.
-        for (class, reason) in [(4u32, 0x46), (11, 0x12)] {
+        // `UNIT_FIELD_BYTES_0` (field 36) byte 1 is the class; the context banks no points.
+        for (class, reason) in [(4u32, 0x46), (11, 0x46), (1, 0x12)] {
             let (mut world, rx) = combat_world(false);
             let held = world
                 .run_system_once(move |mut ladder: CastLadder| {

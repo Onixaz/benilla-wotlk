@@ -54,6 +54,8 @@ pub struct ItemTemplateView {
     pub max_durability: u32,
     /// "Requires Level N", printed only for N > 1 (`0x52d2cf`).
     pub required_level: u32,
+    /// The template's item level, the `ITEM_LEVEL` line `showItemLevel` adds (`0x62b1e3`).
+    pub item_level: u32,
     /// Class and race masks: `<= 0` prints no line, and a line missing the player's bit is red.
     pub allowable_class: i32,
     pub allowable_race: i32,

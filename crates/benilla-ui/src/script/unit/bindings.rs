@@ -92,8 +92,8 @@ fn player_record_arm<T>(
     Some(f(&model.player_record))
 }
 
-/// The class ids `GetComboPoints` (`0x51a190`) accepts: it compares the class, `UNIT_FIELD_BYTES_0`
-/// byte 1, with 4 and 0xb.
+/// The class ids `GetComboPoints` (`0x611670`) accepts: it compares the class, `UNIT_FIELD_BYTES_0`
+/// byte 1, with 4 and 0xb (`0x611712`).
 const CLASS_ROGUE: u32 = 4;
 const CLASS_DRUID: u32 = 11;
 
@@ -1201,25 +1201,43 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetComboPoints() (`0x51a190`): `PLAYER_FIELD_BYTES` byte 1, behind two gates stock
-    // `ComboFrame.lua` does not repeat: the class is rogue or druid (`0x51a1cc`), so a warrior's
-    // dodge point never shows, and `PLAYER_FIELD_COMBO_TARGET` equals the current target
-    // (`0x51a205`), so the points read per target. Both are plain equality, GUID 0 included.
+    // GetComboPoints("unit"[, "target"]) (`0x611670`): the unit names whose bank to read, the
+    // player's or the pet's; any other answers 0. The bank counts only while its unit is the
+    // target argument, the current target when that names nobody (`0x513920`, `0x5d3520`). The
+    // player's also needs a rogue or druid (`0x611712`), so a warrior's dodge point never shows.
     g.set(
         "GetComboPoints",
-        lua.create_function(|lua, ()| {
+        lua.create_function(|lua, (unit, target): (Value, Value)| {
+            let unit = crate::script::binding_abi::string_arg(
+                lua,
+                unit,
+                r#"Usage: GetComboPoints("unit"[, "target"]"#,
+            )?;
+            let target = crate::script::binding_abi::optional_string(lua, &target);
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let class = model.player_req.class_id;
-            if class != CLASS_ROGUE && class != CLASS_DRUID {
-                return Ok(0_i64);
-            }
-            let target = model.unit("target").map_or(0, |u| u.guid);
-            if model.combo_target != target {
-                return Ok(0_i64);
-            }
-            Ok(i64::from(model.combo_points))
+            let guid_of = |token: &str| model.unit_guids.guid_of(token).unwrap_or(0);
+            let unit = guid_of(&unit);
+            let target = match target.as_deref().map(guid_of).unwrap_or(0) {
+                0 => model.unit("target").map_or(0, |u| u.guid),
+                g => g,
+            };
+            let bank = |points: u8, on: u64| if on == target { points } else { 0 };
+            let player = guid_of("player");
+            let points = if unit != 0 && unit == player {
+                let class = model.player_req.class_id;
+                if class == CLASS_ROGUE || class == CLASS_DRUID {
+                    bank(model.combo_points, model.combo_target)
+                } else {
+                    0
+                }
+            } else if unit != 0 && unit == guid_of("pet") {
+                bank(model.pet_combo_points, model.pet_combo_target)
+            } else {
+                0
+            };
+            Ok(i64::from(points))
         })?,
     )?;
 

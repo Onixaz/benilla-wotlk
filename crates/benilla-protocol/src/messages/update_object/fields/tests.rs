@@ -276,16 +276,12 @@ fn player_self_res_spell_collapses_absent_and_zero() {
 }
 
 #[test]
-fn player_field_bytes_splits_into_combo_points_toggles_and_honor_rank() {
-    // Bytes 0-3: flags 0x01, combo 2, action bars 3, highest rank 5; the client reads bytes 1-3
-    // of field 1222 at `[[player+0xe68]+0x1029..0x102b]`.
+fn player_field_bytes_splits_into_toggles_and_honor_rank() {
+    // Bytes 2-3 of field 1222: action bars 3, highest rank 5 (`[[player+0xe68]+0x102a..0x102b]`).
     let f = ObjectFields::from_pairs(&[(1222, 0x05_03_02_01)]);
     assert_eq!(f.player_honor_rank(), Some(5));
     assert_eq!(f.player_action_bar_toggles(), Some(3));
-    assert_eq!(f.player_combo_points(), Some(2));
-    // A full five points with everything else clear.
     let capped = ObjectFields::from_pairs(&[(1222, 0x00_00_05_00)]);
-    assert_eq!(capped.player_combo_points(), Some(5));
     assert_eq!(capped.player_action_bar_toggles(), Some(0));
     assert_eq!(capped.player_honor_rank(), Some(0));
     // The accessor returns the raw byte, high nibble included; only the binding masks to 4 bits.
@@ -293,7 +289,6 @@ fn player_field_bytes_splits_into_combo_points_toggles_and_honor_rank() {
     assert_eq!(high.player_action_bar_toggles(), Some(0xf5));
     assert_eq!(ObjectFields::default().player_honor_rank(), None);
     assert_eq!(ObjectFields::default().player_action_bar_toggles(), None);
-    assert_eq!(ObjectFields::default().player_combo_points(), None);
 }
 
 /// The nonzero drunk byte catches a wrong shift; the current rank (field 195) and the highest
@@ -377,14 +372,6 @@ fn player_honor_rank_bar_is_byte_zero_of_player_field_bytes2() {
         Some(0x9C)
     );
     assert_eq!(ObjectFields::default().player_honor_rank_bar(), None);
-}
-
-#[test]
-fn player_combo_target_reads_the_guid_pair() {
-    let f = ObjectFields::from_pairs(&[(714, 0x1234_5678), (715, 0xF000_0001)]);
-    assert_eq!(f.player_combo_target(), 0xF000_0001_1234_5678);
-    // Nothing banked reads 0, as the current-target global does with no target.
-    assert_eq!(ObjectFields::default().player_combo_target(), 0);
 }
 
 /// 48 spell-id dwords, 48 nibbles (6 dwords), 48 bytes (12 dwords) twice, `AURASTATE` (+0x77),
@@ -898,4 +885,65 @@ fn base_mana_and_base_health_read_fields_162_and_163() {
     let unit = ObjectFields::from_pairs(&[(162, 1500), (163, 1689)]);
     assert_eq!(unit.unit_base_mana(), Some(1500));
     assert_eq!(unit.unit_base_health(), Some(1689));
+}
+
+/// A predicted power reads until its field moves, capped at the maximum (`0x722c50`); a resend of
+/// the field's old value moves nothing, and a maximum health change is not a power slot.
+#[test]
+fn a_predicted_power_reads_until_its_field_moves() {
+    const ENERGY: u8 = 3;
+    let power = FIELD_UNIT_POWER1 + u16::from(ENERGY);
+    let max = FIELD_UNIT_MAXPOWER1 + u16::from(ENERGY);
+    let mut f = ObjectFields::from_pairs(&[(power, 40), (max, 100)]).into_created(ObjectType::Unit);
+    assert!(f.set_predicted_power(ENERGY, 55));
+    assert_eq!(f.unit_power(ENERGY), Some(55));
+    assert!(
+        !f.set_predicted_power(ENERGY, 55),
+        "the same value moves nothing"
+    );
+    assert!(f.set_predicted_power(ENERGY, 500));
+    assert_eq!(f.unit_power(ENERGY), Some(100), "capped at the maximum");
+
+    f.merge(ObjectFields::from_pairs(&[(power, 40)]));
+    assert_eq!(
+        f.unit_power(ENERGY),
+        Some(100),
+        "an unchanged field keeps it"
+    );
+    f.merge(ObjectFields::from_pairs(&[(FIELD_UNIT_MAXHEALTH, 900)]));
+    assert_eq!(f.unit_power(ENERGY), Some(100));
+    f.merge(ObjectFields::from_pairs(&[(power, 90)]));
+    assert_eq!(
+        f.unit_power(ENERGY),
+        Some(90),
+        "the field moved: it reads again"
+    );
+
+    f.set_predicted_power(ENERGY, 95);
+    f.merge(ObjectFields::from_pairs(&[(max, 120)]));
+    assert_eq!(
+        f.unit_power(ENERGY),
+        Some(90),
+        "a maximum change re-seeds too"
+    );
+    assert!(!f.set_predicted_power(7, 1), "seven slots");
+}
+
+/// A dropped mount reads 0 until the mount field moves, a re-create included (`0x741a40`).
+#[test]
+fn a_dropped_mount_reads_zero_until_its_field_moves() {
+    let mount = |id: u32| ObjectFields::from_pairs(&[(FIELD_UNIT_MOUNTDISPLAYID, id)]);
+    let mut f = mount(14_376).into_created(ObjectType::Unit);
+    assert!(f.drop_mount());
+    assert_eq!(f.unit_mount_display_id(), 0);
+    f.merge(mount(14_376).into_created(ObjectType::Unit));
+    assert_eq!(
+        f.unit_mount_display_id(),
+        0,
+        "a re-create of the same mount stays dropped"
+    );
+    f.merge(mount(0));
+    assert!(!f.drop_mount(), "nothing left to drop");
+    f.merge(mount(2_410));
+    assert_eq!(f.unit_mount_display_id(), 2_410, "a new mount reads");
 }

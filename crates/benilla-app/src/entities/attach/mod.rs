@@ -237,6 +237,7 @@ pub(super) fn attach_entity_visuals(
             Has<crate::transport::TransportAnchor>,
             Option<&super::Arrival>,
             Has<super::live_display::ShownRebuild>,
+            Option<&super::mirror_image::MirrorLookOf>,
         ),
         // A torn-down unit gets no model: the reference frees it at once (`0x464920`).
         (
@@ -300,6 +301,7 @@ pub(super) fn attach_entity_visuals(
         anchored,
         arrival,
         shown_rebuild,
+        mirror,
     ) in &pending
     {
         // The appear ramp's origin: the unit's arrival, however long its visual waited to build.
@@ -350,7 +352,7 @@ pub(super) fn attach_entity_visuals(
 
         // A character model carries every hair, facial and body geoset, and is shared by its
         // display, so the entity's own look picks which show.
-        let look = model.and_then(|_| resolve_char_look(net, dm, entity, &stores));
+        let look = model.and_then(|_| resolve_char_look(net, dm, entity, &stores, mirror));
         // A body whose composite is still running is not built: nothing of it draws, its mount
         // included, until it can draw dressed, as the reference's ShouldRender answers the
         // composite driver's 0 (`0x607e7c` → `0x481749`). Retried each frame, with the look of

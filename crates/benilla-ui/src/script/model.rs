@@ -936,10 +936,13 @@ pub(crate) struct Model {
     pub(crate) player_xp: u32,
     pub(crate) player_next_level_xp: u32,
 
-    /// Raw combo points (`PLAYER_FIELD_BYTES` byte 1) and target, ungated: a warrior banks them too
-    /// (Overpower); `GetComboPoints` (`0x51a190`) applies the class and current-target gates.
+    /// Our combo points and the unit they sit on (`SMSG_UPDATE_COMBO_POINTS`), ungated: a warrior
+    /// banks them too (Overpower); `GetComboPoints` (`0x611670`) applies the class gate.
     pub(crate) combo_points: u8,
     pub(crate) combo_target: u64,
+    /// The pet's, from `SMSG_PET_UPDATE_COMBO_POINTS`.
+    pub(crate) pet_combo_points: u8,
+    pub(crate) pet_combo_target: u64,
 
     /// `PLAYER_BYTES_2` byte 3 (1 rested, 2 normal), defaulting to 2 as every 1.12 character has
     /// it: a 0 has no Exhaustion row, and `GetRestState()`'s nil would raise at the unguarded
@@ -1620,6 +1623,8 @@ impl Model {
             player_next_level_xp: 0,
             combo_points: 0,
             combo_target: 0,
+            pet_combo_points: 0,
+            pet_combo_target: 0,
             rest_state: 2,
             rest_pool: 0,
             resting: false,

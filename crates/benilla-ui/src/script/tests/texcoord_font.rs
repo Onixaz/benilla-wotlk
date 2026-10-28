@@ -226,3 +226,54 @@ fn justify_v_defaults_middle_and_overrides() {
         .expect("a text quad");
     assert_eq!(fresh, JustifyV::Top);
 }
+
+/// `Texture:SetRotation(angle[, cx, cy])` (`0x48c860` → `CSimpleTexture::SetRotation 0x483120`):
+/// the corners on a unit radius about the centre from `angle - π/4`, read back by `GetTexCoord` in
+/// UL, LL, UR, LR order; the host's compass setter writes the same corners.
+#[test]
+fn set_rotation_turns_the_corners_on_a_unit_radius() {
+    let mut s = script();
+    s.run(
+        r#"
+        f = CreateFrame("Frame", "RotF")
+        t = f:CreateTexture("MinimapCompassTexture")
+        t:SetRotation(0)
+    "#,
+    )
+    .unwrap();
+    let r = std::f32::consts::FRAC_1_SQRT_2;
+    let got: (f32, f32, f32, f32, f32, f32, f32, f32) = s.eval("return t:GetTexCoord()").unwrap();
+    let want = (
+        0.5 - r,
+        0.5 - r,
+        0.5 - r,
+        0.5 + r,
+        0.5 + r,
+        0.5 - r,
+        0.5 + r,
+        0.5 + r,
+    );
+    for (g, w) in [
+        (got.0, want.0),
+        (got.1, want.1),
+        (got.2, want.2),
+        (got.3, want.3),
+        (got.4, want.4),
+        (got.5, want.5),
+        (got.6, want.6),
+        (got.7, want.7),
+    ] {
+        assert!((g - w).abs() < 1e-5, "{got:?} vs {want:?}");
+    }
+    // A quarter turn about (0,0) moves UL to (s, -c) of 45°: (r, -r).
+    s.run("t:SetRotation(math.pi / 2, 0, 0)").unwrap();
+    let ul: (f32, f32) = s.eval("return t:GetTexCoord()").unwrap();
+    assert!((ul.0 - r).abs() < 1e-5 && (ul.1 + r).abs() < 1e-5, "{ul:?}");
+    assert!(
+        s.run("t:SetRotation('x')").is_err(),
+        "a non-number angle raises"
+    );
+    s.set_minimap_compass_rotation(0.0);
+    let again: (f32, f32) = s.eval("return t:GetTexCoord()").unwrap();
+    assert!((again.0 - (0.5 - r)).abs() < 1e-5, "{again:?}");
+}

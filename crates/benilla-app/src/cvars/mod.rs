@@ -1951,6 +1951,7 @@ mod tests {
             .init_resource::<NameConfig>()
             .init_resource::<ClutterConfig>()
             .init_resource::<MinimapZoom>()
+            .init_resource::<crate::minimap::MinimapRotate>()
             .init_resource::<BubbleConfig>()
             .init_resource::<ZoomLimit>()
             .init_resource::<FollowConfig>()

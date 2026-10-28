@@ -162,11 +162,12 @@ fn feed_shapeshift_bar(
     clock: Res<crate::ui_script::UiClock>,
     // One tuple for Bevy's 16-param ceiling: the spell mods, the rune table and costs, and the
     // form byte the auto-tracking edge reads.
-    (spell_mods, runes, rune_costs, mut seen_form): (
+    (spell_mods, runes, rune_costs, mut seen_form, combo): (
         Res<crate::spell::SpellModifiers>,
         Option<Res<crate::ui_rune::Runes>>,
         Option<Res<crate::ui_rune::RuneCosts>>,
         ResMut<SeenForm>,
+        Option<Res<crate::spell::ComboPoints>>,
     ),
     mut memory: Local<crate::ui_script::VmMemo<StanceMemory>>,
 ) {
@@ -257,6 +258,9 @@ fn feed_shapeshift_bar(
                         carried: &carried,
                         spell_mods: &spell_mods,
                         runes: rune_check,
+                        combo_points: combo
+                            .as_deref()
+                            .map_or(0, |c| c.player.on(0, selection.guid.unwrap_or(0))),
                     };
                     usable::spell_usable(id, d, &spells, &ctx, &objects, &items, &commands).0
                 });

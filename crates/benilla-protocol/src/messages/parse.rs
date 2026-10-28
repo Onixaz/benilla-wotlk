@@ -13,9 +13,9 @@ use super::{
     gm_ticket, gossip, group, guild, guild_bank, instance, items, lfg, loot, mail, meeting_stone,
     mirror_timer, monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp,
     quest, rune, social, spellbook, spells, stable, summon, tabard, talents, taxi, totem, trade,
-    trainer, tutorial, update_object, vendor, world_state, AttackSwingError, CalendarPacket,
-    Character, CreatureQueryInfo, DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket,
-    SpeedKind, SplineMode,
+    trainer, tutorial, unit_state, update_object, vendor, world_state, AttackSwingError,
+    CalendarPacket, Character, CreatureQueryInfo, DifficultySet, JumpInfo, LfgPacket, MoveMode,
+    ServerPacket, SpeedKind, SplineMode,
 };
 
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`
@@ -1074,6 +1074,47 @@ fn parse_server_body(
             let (spell_id, caster) = spellbook::read_cooldown_event(&mut r)?;
             ServerPacket::ClearCooldown { spell_id, caster }
         }
+        opcode::SMSG_POWER_UPDATE => {
+            let (guid, power_type, value) = unit_state::read_power_update(&mut r)?;
+            ServerPacket::PowerUpdate {
+                guid,
+                power_type,
+                value,
+            }
+        }
+        opcode::SMSG_UPDATE_COMBO_POINTS => {
+            let (target, points) = unit_state::read_combo_points(&mut r)?;
+            ServerPacket::ComboPoints { target, points }
+        }
+        opcode::SMSG_PET_UPDATE_COMBO_POINTS => {
+            let (pet, target, points) = unit_state::read_pet_combo_points(&mut r)?;
+            ServerPacket::PetComboPoints {
+                pet,
+                target,
+                points,
+            }
+        }
+        opcode::SMSG_MODIFY_COOLDOWN => {
+            let (spell_id, caster, delay_ms) = unit_state::read_modify_cooldown(&mut r)?;
+            ServerPacket::ModifyCooldown {
+                spell_id,
+                caster,
+                delay_ms,
+            }
+        }
+        opcode::SMSG_CLEAR_TARGET => ServerPacket::ClearTarget {
+            guid: read_u64_le(&mut r)?,
+        },
+        opcode::SMSG_DISMOUNT => ServerPacket::Dismount {
+            guid: read_packed_guid(&mut r)?,
+        },
+        opcode::SMSG_MIRRORIMAGE_DATA => {
+            let (guid, image) = unit_state::read_mirror_image(&mut r)?;
+            ServerPacket::MirrorImageData { guid, image }
+        }
+        opcode::SMSG_SET_FORCED_REACTIONS => ServerPacket::ForcedReactions {
+            reactions: unit_state::read_forced_reactions(&mut r)?,
+        },
         opcode::SMSG_COOLDOWN_CHEAT => ServerPacket::CooldownCheat {
             caster: spellbook::read_cooldown_cheat(&mut r)?,
         },

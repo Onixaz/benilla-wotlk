@@ -46,6 +46,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::CooldownEvent, on_cooldown_packet)
         .net_handler(K::ClearCooldown, on_cooldown_packet)
         .net_handler(K::CooldownCheat, on_cooldown_packet)
+        .net_handler(K::ModifyCooldown, on_cooldown_packet)
         .net_handler(K::ItemCooldown, on_item_cooldown)
         .net_handler(K::ChannelStart, on_channel)
         .net_handler(K::ChannelUpdate, on_channel)
@@ -513,7 +514,7 @@ fn on_cancel_auto_repeat(In(ev): In<SessionEvent>, mut l: Lifecycle, mut sc: Sce
     }
 }
 
-/// The four cooldown packets, each routed through [`addressed_store`] by the caster guid.
+/// The five cooldown packets, each routed through [`addressed_store`] by the caster guid.
 fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
     let Lifecycle {
         self_guid,
@@ -546,6 +547,26 @@ fn on_cooldown_packet(In(ev): In<SessionEvent>, mut l: Lifecycle) {
         SessionEvent::CooldownCheat { caster } => {
             if let Some(store) = addressed_store(caster, self_guid, cooldowns, pet_bar) {
                 cooldown_cheat(caster, store);
+            }
+        }
+        // `0x804010`'s `0x491` arm skips spell 0 (`0x8040e4`).
+        SessionEvent::ModifyCooldown {
+            spell_id,
+            caster,
+            delay_ms,
+        } if spell_id != 0 => {
+            if let Some(store) = addressed_store(caster, self_guid, cooldowns, pet_bar) {
+                let now = Instant::now();
+                // The row, so a category-held cooldown (Elemental Mastery) reads too.
+                let row = spells.as_deref().and_then(|s| s.catalog.get(spell_id));
+                let left = |store: &Cooldowns| store.info(spell_id, 0, row, now).remaining_ms;
+                let before = left(store);
+                store.delay(spell_id, delay_ms, now);
+                let after = left(store);
+                debug!(
+                    "net: modify cooldown — spell {spell_id} by {delay_ms} ms on {caster:#x}: \
+                     {before} → {after} ms left"
+                );
             }
         }
         _ => {}

@@ -452,6 +452,32 @@ impl Cooldowns {
         }
     }
 
+    /// `SMSG_MODIFY_COOLDOWN` (`SpellHistory::DelayCooldown` `0x802a10`): every record of the
+    /// spell has its recovery and category starts moved by `delay_ms`, negative sooner; the GCD
+    /// stays. `Spell_C_DelayCooldown` (`0x802bf0`) flushes whether or not a record matched.
+    pub(crate) fn delay(&mut self, spell_id: u32, delay_ms: i32, now: Instant) {
+        let by = Duration::from_millis(u64::from(delay_ms.unsigned_abs()));
+        let shift = |t: &mut Timer| {
+            if delay_ms >= 0 {
+                t.start += by;
+            } else if let Some(start) = t.start.checked_sub(by) {
+                t.start = start;
+            } else {
+                // A start before the process clock: the same remainder, from a shorter duration.
+                t.duration = t.duration.saturating_sub(by);
+            }
+        };
+        for r in self.records.iter_mut().filter(|r| r.spell_id == spell_id) {
+            shift(&mut r.recovery);
+            shift(&mut r.category_recovery);
+            // A later start can bring a spent record back.
+            r.spent &= r.recovery.remaining(now).is_zero()
+                && r.category_recovery.remaining(now).is_zero()
+                && r.gcd.remaining(now).is_zero();
+        }
+        self.bump();
+    }
+
     /// `SMSG_COOLDOWN_CHEAT` (`0x6e9700`).
     pub(crate) fn wipe(&mut self) {
         if !self.records.is_empty() {
@@ -1252,6 +1278,34 @@ mod tests {
                 53_000
             ),
             long
+        );
+    }
+
+    /// `SMSG_MODIFY_COOLDOWN` moves the recovery's start both ways, leaves the duration, and
+    /// flushes even when no record matches (`0x802a10`, `0x802bf0`).
+    #[test]
+    fn a_delay_moves_the_recovery_start_and_flushes() {
+        let t0 = Instant::now();
+        let mut cds = Cooldowns::default();
+        cds.start_spell(100, &charge(), 0, t0, None);
+        let at = |cds: &Cooldowns| cds.info(100, 0, Some(&charge()), t0);
+        let before = at(&cds);
+        let generation = cds.generation;
+
+        cds.delay(100, -5_000, t0);
+        let sooner = at(&cds);
+        assert_eq!(sooner.duration_ms, before.duration_ms);
+        assert_eq!(sooner.remaining_ms, before.remaining_ms - 5_000);
+        assert!(cds.generation > generation);
+
+        cds.delay(100, 5_000, t0);
+        assert_eq!(at(&cds).remaining_ms, before.remaining_ms);
+
+        let generation = cds.generation;
+        cds.delay(999, 1_000, t0);
+        assert!(
+            cds.generation > generation,
+            "an unmatched spell still flushes"
         );
     }
 
