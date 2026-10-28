@@ -109,7 +109,8 @@ fn voice_audible(
 
 /// `0x623c10`: play `kit` at the unit's attachment `0x11`, then stop the unit's previous emote
 /// voice (`[unit+0xb28]`, `0x623c63`-`0x623c70`); a play that opens no channel stops nothing
-/// (`0x623c55`). Shared by the text-emote voice and the `$CSD` anim event.
+/// (`0x623c55`). Shared by the text-emote voice and the `$CSD` anim event. A Death Knight's takes
+/// its voice chain, except kit 6576 (`CGUnit_C::PlayEmoteSound 0x746d60`).
 pub(super) fn play_emote_voice(
     kits: &mut SoundKits,
     assets: &WorldAssets,
@@ -118,11 +119,17 @@ pub(super) fn play_emote_voice(
     listener: Vec3,
     kit: u32,
     unit: Entity,
+    store: Option<&ObjectStore>,
     at: Vec3,
 ) -> anyhow::Result<bool> {
+    /// The one emote kit `0x746d60` leaves unfiltered.
+    const UNFILTERED_EMOTE_KIT: u32 = 6576;
     let extras = PlayExtras {
         source: Some(unit),
         latch: Latch::EmoteVoice,
+        voice_filter: (kit != UNFILTERED_EMOTE_KIT)
+            .then(|| super::kit::voice_filter(out, store))
+            .flatten(),
         ..PlayExtras::default()
     };
     let opened = play_kit_ext(
@@ -221,7 +228,15 @@ fn emote_sounds(
         };
         let at = attach.point(unit, VOICE_ATTACH, transform.translation);
         if let Err(e) = play_emote_voice(
-            &mut kits, &assets, &mut out, &config, listener, kit, unit, at,
+            &mut kits,
+            &assets,
+            &mut out,
+            &config,
+            listener,
+            kit,
+            unit,
+            Some(store),
+            at,
         ) {
             warn!("emote sound (kit {kit}): {e:#}");
         }

@@ -101,6 +101,7 @@ fn play_bark(
     voice: &benilla_formats::CreatureVoice,
     state: u8,
     pet: bool,
+    voice_filter: Option<super::dsp::VoiceFilter>,
 ) {
     if object_sound_playing(out, unit) {
         return;
@@ -128,6 +129,7 @@ fn play_bark(
         PlayExtras {
             source: Some(unit),
             latch: Latch::Voice(state),
+            voice_filter,
             ..default()
         },
     ) {
@@ -178,9 +180,19 @@ fn death_vocals(
             voice,
             BARK_DEATH,
             false,
+            None,
         );
     }
 }
+
+/// What [`ai_reaction_vocals`] reads of the reacting unit.
+type ReactionUnit = (
+    &'static NetEntity,
+    &'static Transform,
+    Option<&'static MountChild>,
+    Option<&'static ObjectStore>,
+    Has<SelfPlayer>,
+);
 
 /// `SMSG_AI_REACTION` vocals, audio only (`0x6056e0` plays no animation). HOSTILE is the aggro
 /// bark (column 10) through [`play_bark`], whose slot drops a repeat while one sounds: vmangos
@@ -193,12 +205,7 @@ fn death_vocals(
 /// a non-player unit. It stores no latch.
 fn ai_reaction_vocals(
     mut reactions: MessageReader<crate::net::AiReactionMessage>,
-    units: Query<(
-        &NetEntity,
-        &Transform,
-        Option<&MountChild>,
-        Option<&ObjectStore>,
-    )>,
+    units: Query<ReactionUnit>,
     mounts: Query<&NetEntity, With<MountBody>>,
     voices: Option<Res<CreatureVoices>>,
     kits: Option<ResMut<SoundKits>>,
@@ -215,7 +222,7 @@ fn ai_reaction_vocals(
     };
     let listener = listener.pos;
     for r in reactions.read() {
-        let Ok((net, transform, mount_child, store)) = units.get(r.unit) else {
+        let Ok((net, transform, mount_child, store, is_you)) = units.get(r.unit) else {
             continue;
         };
         // ALERT reads the mount-preferred row (`0x60c480`: `+0xb44 ?: +0xb40`), so a mounted unit
@@ -233,6 +240,10 @@ fn ai_reaction_vocals(
         };
         // HOSTILE is the bark route `0x623a40(0)`.
         if r.hostile {
+            // Your own bark takes your Death Knight voice (`0x7474b0`, the active mover).
+            let voice_filter = is_you
+                .then(|| super::kit::voice_filter(&out, store))
+                .flatten();
             play_bark(
                 &mut kits,
                 &assets,
@@ -244,6 +255,7 @@ fn ai_reaction_vocals(
                 voice,
                 BARK_AGGRO,
                 store.is_some_and(|s| s.0.unit_pet_number() != 0),
+                voice_filter,
             );
             continue;
         }
@@ -255,7 +267,12 @@ fn ai_reaction_vocals(
         if net.kind != EntityKind::Player && object_sound_playing(&out, r.unit) {
             continue;
         }
-        if let Err(e) = play_kit(
+        // A player alerts through `CGPlayer_C::PlayUnitSound(8)` (`0x7631a0`), which filters a
+        // Death Knight's voice.
+        let voice_filter = (net.kind == EntityKind::Player)
+            .then(|| super::kit::voice_filter(&out, store))
+            .flatten();
+        if let Err(e) = play_kit_ext(
             &mut kits,
             &assets,
             &mut out,
@@ -264,6 +281,10 @@ fn ai_reaction_vocals(
             KitRef::Id(voice.alert),
             Some(transform.translation),
             SoundCategory::Sfx,
+            PlayExtras {
+                voice_filter,
+                ..default()
+            },
         ) {
             warn!("alert vocal (kit {}): {e:#}", voice.alert);
         }
@@ -320,6 +341,7 @@ fn pet_talk_vocals(
             voice,
             state,
             store.is_some_and(|s| s.0.unit_pet_number() != 0),
+            None,
         );
     }
 }

@@ -111,6 +111,8 @@ pub(crate) struct ActiveChannel {
     latch: Latch,
     /// The software-HRTF lowpass's cutoff, on a 3D voice opened with it ([`super::hrtf`]).
     hrtf: Option<std::sync::Arc<super::hrtf::HrtfCutoff>>,
+    /// The sub track a 2D voice runs its DSP chain on ([`super::dsp`]).
+    _chain_track: Option<kira::track::TrackHandle>,
 }
 
 /// Which per-unit latch a channel holds. The reference keeps separate handles on a unit,
@@ -354,6 +356,21 @@ pub(super) struct PlayExtras {
     /// `0x458890`'s per-shot multiplier (1.0 at every site but one), applied inside
     /// [`math::variation_volume`] before the 0..1 clamp and distance attenuation.
     pub(super) volume_mult: Volume,
+    /// The DSP chain the sound plays through (`SE2SoundKitProperties::m_useDspChain`), from
+    /// [`voice_filter`]; ignored when the engine built none.
+    pub(super) voice_filter: Option<super::dsp::VoiceFilter>,
+}
+
+/// A unit's voice chain for its vocals: a Death Knight's (`SI2::DK_GetPlayerFilterName`), when
+/// the engine built the chains (`Sound_EnableDSPEffects` at init, `SI2::Init` → `DSP_Init`).
+pub(super) fn voice_filter(
+    out: &SoundOutput,
+    store: Option<&crate::net::ObjectStore>,
+) -> Option<super::dsp::VoiceFilter> {
+    if !out.engine.dsp {
+        return None;
+    }
+    out.voice_filters.for_unit(&store?.0)
 }
 
 /// A per-shot volume multiplier defaulting to 1.0, so `PlayExtras` can derive `Default`.
@@ -419,6 +436,7 @@ pub(super) fn play_kit_ext(
         latch,
         bus,
         volume_mult: Volume(mult),
+        voice_filter,
     } = extras;
     // No sound starts under the loading screen ([`SoundConfig::world_hold`]): the reference's
     // world load blocks, so the events these would voice pass unheard.
@@ -518,17 +536,25 @@ pub(super) fn play_kit_ext(
     // No audio device (`WOW_NOSOUND=1`, CI, a lost device) is a no-op: `sound::plugin` warns once
     // at startup, and `false` already means dropped.
     let hrtf_on = out.engine.hrtf;
+    let chain = voice_filter
+        .filter(|_| out.engine.dsp)
+        .and_then(|f| out.voice_filters.chain(f))
+        .map(<[_]>::to_vec);
     let Some(mixer) = out.mixer.as_mut() else {
         return Ok(false);
     };
-    let (track, handle, hrtf) = match pos {
-        Some(p) => {
+    let (track, handle, hrtf, chain_track) = match (pos, chain) {
+        (Some(p), chain) => {
             // `EAXDef 0` has no `SoundSamplePreferences` row and the reference gives it no reverb
             // (`0x45cdc0`/`0x7a5bf0`), so NPC voice lines (every `SoundType 17` row) stay dry.
-            let (t, h, cutoff) = mixer.play_3d(data, p, eax_def != 0, hrtf_on)?;
-            (Some(t), h, cutoff)
+            let (t, h, cutoff) = mixer.play_3d(data, p, eax_def != 0, hrtf_on, chain)?;
+            (Some(t), h, cutoff, None)
         }
-        None => (None, mixer.play_2d(data)?, None),
+        (None, Some(chain)) => {
+            let (t, h) = mixer.play_2d_chain(data, chain)?;
+            (None, h, None, Some(t))
+        }
+        (None, None) => (None, mixer.play_2d(data)?, None, None),
     };
     // Every play, named with its wet or dry class, at `RUST_LOG=benilla_app::sound=debug`.
     let name = kits.catalog.get(id).map_or("?", |k| k.name.as_str());
@@ -564,6 +590,7 @@ pub(super) fn play_kit_ext(
         bus,
         latch,
         hrtf,
+        _chain_track: chain_track,
     });
     Ok(true)
 }
@@ -758,6 +785,7 @@ pub(crate) fn play_file(
         bus: Bus::DEFAULT,
         latch: Latch::None,
         hrtf: None,
+        _chain_track: None,
     });
     Ok(())
 }

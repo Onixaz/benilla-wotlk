@@ -158,6 +158,8 @@ tables! {
         "SkillRaceClassInfo" => skill_lines::skill_race_class_info_schema(),
         "SoundAmbience" => area_sound::ambience_schema(),
         "SoundEntries" => sound_entries::sound_entries_schema(),
+        "SoundFilter" => sound_filter::filter_schema(),
+        "SoundFilterElem" => sound_filter::elem_schema(),
         "SoundProviderPreferences" => sound_provider::schema(),
         "SpamMessages" => text_filter_lists::spam_messages_schema(),
         "Spell" => spells::spell_schema(),

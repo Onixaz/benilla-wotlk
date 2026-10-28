@@ -223,6 +223,7 @@ pub(super) fn speak_line(
     out: &mut SoundOutput,
     config: &SoundConfig,
     listener: Vec3,
+    voice_filter: Option<super::dsp::VoiceFilter>,
 ) {
     // `0x458264`/`0x45827f`: both CVars, ahead of every state write, so the counter stays put.
     if !config.enabled || !config.error_speech {
@@ -242,6 +243,7 @@ pub(super) fn speak_line(
             PlayExtras {
                 variant,
                 bus: Bus::ERROR_SPEECH,
+                voice_filter,
                 ..default()
             },
         ) {

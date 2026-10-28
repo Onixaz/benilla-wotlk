@@ -13,6 +13,7 @@ mod cinematic;
 mod combat;
 mod creature;
 mod death_thud;
+mod dsp;
 mod emitter_pool;
 mod emote;
 pub(crate) mod engine;
@@ -250,12 +251,40 @@ pub(crate) struct SoundOutput {
     /// What the engine was initialised with ([`engine`]): the voice ceiling and the software
     /// HRTF apply from here.
     pub(crate) engine: engine::EngineSettings,
+    /// The `SoundFilter.dbc` voice chains ([`dsp`]), used while [`engine::EngineSettings::dsp`].
+    pub(crate) voice_filters: dsp::VoiceFilters,
 }
 
 impl SoundOutput {
     /// Everything the device is mixing, the number [`engine::EngineSettings::voices`] bounds.
     pub(crate) fn live_voices(&self) -> usize {
         self.channels.len() + self.zone_streams + self.glue_streams + self.cinematic_streams
+    }
+}
+
+/// Build the Death Knight voice chains from `SoundFilter.dbc` and `ChrRaces`; a missing table
+/// leaves them empty and every voice dry.
+fn load_voice_filters(
+    mut out: NonSendMut<SoundOutput>,
+    assets: Option<Res<benilla_assets::WorldAssets>>,
+    races: Option<Res<crate::entities::CharCreate>>,
+) {
+    use benilla_assets::LockRecover;
+    let (Some(assets), Some(races)) = (assets, races) else {
+        return;
+    };
+    let loaded = {
+        let mut chain = assets.chain.lock_recover();
+        benilla_formats::load_sound_filter_catalog(&mut chain)
+    };
+    match loaded {
+        Ok(catalog) => {
+            out.voice_filters = dsp::VoiceFilters::build(&catalog, |race| {
+                races.0.race_file(race).map(str::to_string)
+            });
+            info!("sound: {} voice filter chains", catalog.len());
+        }
+        Err(e) => warn!("sound: voice filters failed to load: {e:#}"),
     }
 }
 
@@ -395,6 +424,7 @@ impl Plugin for SoundPlugin {
             voices_denied: 0,
             copies_dropped: 0,
             engine: settings,
+            voice_filters: dsp::VoiceFilters::default(),
         })
         .insert_resource(drivers)
         .init_resource::<engine::DeviceChanged>()
@@ -407,6 +437,8 @@ impl Plugin for SoundPlugin {
             (
                 load_materials.after(benilla_assets::AssetSet::Open),
                 engine::write_back_driver.after(crate::cvars::CvarLoad),
+                // `ChrRaces` arrives with the entity tables.
+                load_voice_filters.after(crate::entities::setup_entities),
             ),
         )
         .add_systems(
