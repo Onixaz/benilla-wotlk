@@ -1219,10 +1219,10 @@ mod tests {
         );
         assert_eq!(d["guildMemberNotify"], 0.0, "the binary registers \"0\"");
         assert_eq!(
-            d["BlockTrades"] != 0.0,
+            d["blockTrades"] != 0.0,
             crate::ui_trade::BlockTrades::default().0
         );
-        assert_eq!(d["BlockTrades"], 0.0, "an unset BlockTrades allows trades");
+        assert_eq!(d["blockTrades"], 0.0, "an unset blockTrades allows trades");
         let names = NameConfig::default();
         assert_eq!(d["UnitNamePlayer"] != 0.0, names.player);
         assert_eq!(d["UnitNameNPC"] != 0.0, names.npc);
@@ -1527,7 +1527,7 @@ mod tests {
         assert!(!res::<LootConfig>(&app).show_loot_spam);
         apply(&mut app, "guildMemberNotify", "1");
         assert!(res::<crate::ui_guild::GuildMemberNotify>(&app).0);
-        apply(&mut app, "BlockTrades", "1");
+        apply(&mut app, "blockTrades", "1");
         assert!(res::<crate::ui_trade::BlockTrades>(&app).0);
         apply(&mut app, "UnitNameNPC", "0");
         assert!(!res::<NameConfig>(&app).npc);
@@ -1965,6 +1965,7 @@ mod tests {
             .init_resource::<crate::ui_guild::GuildMemberNotify>()
             .init_resource::<crate::ui_trade::BlockTrades>()
             .init_resource::<crate::spell::AutoSelfCast>()
+            .init_resource::<crate::spell::AutoDismount>()
             .init_resource::<crate::perf::FpsJournalSetting>()
             .init_resource::<crate::text_filter::TextFilterSwitches>()
             .init_resource::<crate::game_tip::GameTipSetting>()

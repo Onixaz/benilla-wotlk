@@ -194,6 +194,166 @@ fn an_interface_panel_okay_writes_its_cvar() {
         .unwrap());
 }
 
+/// The Controls panel's checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+const CONTROLS_CHECKBOXES: [(&str, &str, &str); 6] = [
+    ("StickyTargeting", "deselectOnClick", "1"),
+    ("AutoDismount", "autoDismountFlying", "0"),
+    ("AutoClearAFK", "autoClearAFK", "1"),
+    ("BlockTrades", "blockTrades", "0"),
+    ("LootAtMouse", "lootUnderMouse", "1"),
+    ("AutoLootCorpse", "autoLootDefault", "0"),
+];
+
+/// Each Controls checkbox boots at its CVar's 12340 default (Sticky Targeting shown inverted), a
+/// click and Okay writes the flip, a click and Cancel writes nothing, and Defaults puts the
+/// registered value back.
+#[test]
+fn every_controls_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-controls");
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    for (suffix, cvar, default) in CONTROLS_CHECKBOXES {
+        let button = format!("InterfaceOptionsControlsPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run("InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsControlsPanel)")
+            .unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        let shown = if suffix == "StickyTargeting" {
+            default == "0"
+        } else {
+            default == "1"
+        };
+        assert_eq!(checked, shown, "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        s.run(&format!(
+            "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsControlsPanel) \
+             {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(
+            "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsControlsPanel) \
+             InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()",
+        )
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
+/// The Auto Loot Key dropdown reads and writes the `AUTOLOOTTOGGLE` modified click
+/// (`InterfaceOptionsControlsPanelAutoLootKeyDropDown_OnEvent`), which the loot interact inverts
+/// `autoLootDefault` by (`IsAutoLooting 0x513700`); its label follows the Auto Loot checkbox.
+#[test]
+fn the_auto_loot_key_dropdown_rebinds_the_modified_click() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-lootkey");
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let initial: String = s
+        .eval("return InterfaceOptionsControlsPanelAutoLootKeyDropDown.value")
+        .unwrap();
+    assert_eq!(
+        initial,
+        s.eval::<String>("return GetModifiedClick('AUTOLOOTTOGGLE')")
+            .unwrap(),
+        "the dropdown shows the live binding"
+    );
+    for key in ["CTRL", "ALT", "NONE", "SHIFT"] {
+        s.run(&format!(
+            "InterfaceOptionsControlsPanelAutoLootKeyDropDown:SetValue('{key}')"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.eval::<String>("return GetModifiedClick('AUTOLOOTTOGGLE')")
+                .unwrap(),
+            key
+        );
+    }
+    let label = |s: &mut UiScript| {
+        s.eval::<String>("return InterfaceOptionsControlsPanelAutoLootKeyDropDownLabel:GetText()")
+            .unwrap()
+    };
+    let auto_loot_key = s.eval::<String>("return AUTO_LOOT_KEY_TEXT").unwrap();
+    let loot_key = s.eval::<String>("return LOOT_KEY_TEXT").unwrap();
+    assert_eq!(label(&mut s), auto_loot_key, "auto loot off");
+    s.run(
+        "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsControlsPanel) \
+         InterfaceOptionsControlsPanelAutoLootCorpse:Click()",
+    )
+    .unwrap();
+    assert_eq!(label(&mut s), loot_key, "auto loot on");
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
+/// `lootUnderMouse` 1 opens the loot window at the cursor (`LootFrame_Show`: 175 left, 25 up for
+/// an empty loot, the top clamped to 350); 0 leaves it at its UI panel spot.
+#[test]
+fn loot_under_mouse_opens_the_loot_window_at_the_cursor() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-lootmouse");
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let panel_spot = |s: &mut UiScript| {
+        s.run("HideUIPanel(LootFrame) LootFrame.page = 1 LootFrame_Show(LootFrame)")
+            .unwrap();
+        s.eval::<(f64, f64)>("return LootFrame:GetLeft(), LootFrame:GetTop()")
+            .unwrap()
+    };
+    s.run("SetCVar('lootUnderMouse', '0')").unwrap();
+    let docked = panel_spot(&mut s);
+    s.mouse_move(600.0, 500.0);
+    s.run("SetCVar('lootUnderMouse', '1')").unwrap();
+    let scale: f64 = s.eval("return LootFrame:GetEffectiveScale()").unwrap();
+    let at = panel_spot(&mut s);
+    assert!((at.0 - (600.0 / scale - 175.0)).abs() < 0.5, "left {at:?}");
+    assert!((at.1 - (500.0 / scale + 25.0)).abs() < 0.5, "top {at:?}");
+    s.mouse_move(600.0, 100.0);
+    let low = panel_spot(&mut s);
+    assert!(
+        (low.1 - 350.0).abs() < 0.5,
+        "the top clamps at 350: {low:?}"
+    );
+    s.run("SetCVar('lootUnderMouse', '0')").unwrap();
+    let back = panel_spot(&mut s);
+    assert_eq!(back, docked, "off, the window keeps its panel spot");
+    let errors: Vec<String> = s
+        .take_errors()
+        .into_iter()
+        .filter(|e| e.contains("Loot"))
+        .collect();
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Sound panel's device dropdown lists "System Default" and the engine's devices; a pick writes
 /// `Sound_OutputDriverIndex` and restarts the sound system at once, and Cancel puts the old index
 /// back with another restart (`AudioOptionsPanels.lua`, `AudioOptionsFrame_AudioRestart`).

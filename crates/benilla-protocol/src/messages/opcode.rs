@@ -426,6 +426,8 @@ pub const CMSG_CAST_SPELL: u16 = 0x012E; // 302
 /// before the local cancel (`0x6095b8`).
 pub const CMSG_CANCEL_CAST: u16 = 0x012F; // 303
 pub const CMSG_CANCEL_AURA: u16 = 0x0136; // 310
+/// Get off the mount (`CGUnit_C::Dismount 0x7412e0`, `0x741325`): no body.
+pub const CMSG_CANCEL_MOUNT_AURA: u16 = 0x0375; // 885
 /// Send the summoned companion home (`Spell_C_CancelAura` `0x80303d`): the critter's guid.
 pub const CMSG_DISMISS_CRITTER: u16 = 0x048D; // 1165
 /// Empty a glyph socket (`RemoveGlyphFromSocket` `0x5b76ea`): the 0-based socket as a `u32`.

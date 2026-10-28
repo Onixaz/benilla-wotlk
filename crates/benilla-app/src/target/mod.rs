@@ -238,9 +238,9 @@ pub(crate) struct SelectionRadius(pub(crate) f32);
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct TargetUpdate;
 
-/// `deselectOnClick`, 1.12's CVar behind the "Sticky Targeting" checkbox, which shows it inverted
-/// (`UIOptionsFrame.lua:250`). On by default, as in the reference: an empty-world click clears the
-/// target.
+/// `deselectOnClick`, behind the Controls panel's Sticky Targeting checkbox, which shows it
+/// inverted (`self.invert`). On by default, as in the reference: an empty-world click clears the
+/// target (`HandleWorldClick 0x5278c0`, `OnTerrainClick 0x527360`).
 #[derive(Resource)]
 pub(crate) struct ClickConfig {
     pub(crate) deselect_on_click: bool,

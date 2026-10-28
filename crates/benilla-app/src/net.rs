@@ -1195,6 +1195,8 @@ pub(crate) enum ClientCommand {
     CancelAura {
         spell_id: u32,
     },
+    /// `CMSG_CANCEL_MOUNT_AURA`, the auto-dismount ahead of a mounted cast.
+    CancelMountAura,
     /// `CMSG_DISMISS_CRITTER`, the companion out by guid; it leaves as a `UNIT_FIELD_CRITTER` delta.
     DismissCritter {
         guid: u64,

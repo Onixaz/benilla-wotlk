@@ -209,6 +209,9 @@ impl CastLadder<'_, '_> {
             };
             crate::ui_cast::queue_sent(&mut self.ecs, spell_id, target);
         }
+        if self.ground.dismounts() {
+            let _ = self.commands.0.send(ClientCommand::CancelMountAura);
+        }
         let _ = self.commands.0.send(cmd);
         let now = Instant::now();
         if commit.is_item() {
@@ -795,15 +798,16 @@ fn send_spell_cast(
         }
         return;
     }
-    // The mounted block (`0x609c6c`): a live `UNIT_FIELD_MOUNTDISPLAYID` refuses 0x39 "You are
-    // mounted" unless `Attributes & 0x01000000`. Local, because vmangos silently dismounts
-    // instead. The range gate runs first, so mounted and out of range reads "Out of range.".
-    if validator::cast_mounted_refusal(
+    // The mounted block (`0x739e8f`): unless `Attributes & 0x01000000`, a mounted caster
+    // `CanAutoDismount` refuses reads 0x39 "You are mounted"; any other dismounts at the send.
+    // The range gate runs first, so mounted and out of range reads "Out of range.".
+    let dismount = validator::cast_mounted_refusal(
         ctx.rel
             .self_store
             .is_some_and(|s| s.0.unit_mount_display_id() > 0),
         def,
-    ) {
+    );
+    if dismount && !ctx.auto_dismount {
         debug!("ui_action: cast {spell_id} refused locally — mounted (0x39)");
         cast_errors.push_local(spell_id, 0x39);
         return;
@@ -859,6 +863,7 @@ fn send_spell_cast(
     if let Some(word) = pending_word {
         debug!("ui_action: cast {spell_id} awaits its click — targeting cursor up ({word:#06x})");
         ground.enter(spell_id, commit, word);
+        ground.dismount_at_commit(dismount);
         return;
     }
     // The wand handoff (`0x60959e`): a new cast cancels the running repeat only when it carries
@@ -901,6 +906,11 @@ fn send_spell_cast(
     }
     if matches!(commit, CastCommit::Spell) {
         crate::ui_cast::queue_sent(ecs, spell_id, target);
+    }
+    // `SendPendingCast`'s dismount (`0x80af40`) goes out ahead of the cast.
+    if dismount {
+        debug!("ui_action: cast {spell_id} dismounts first (CMSG_CANCEL_MOUNT_AURA)");
+        let _ = commands.0.send(ClientCommand::CancelMountAura);
     }
     // `SendCast 0x6e54f0`: one targets block, two opcodes.
     let _ = commands.0.send(match commit {
@@ -1027,6 +1037,7 @@ mod tests {
             main_hand_item: None,
             self_auras: None,
             self_move_flags: 0,
+            auto_dismount: true,
         }
     }
 
@@ -1173,6 +1184,101 @@ mod tests {
             "the castable-while-dead attribute waives the rung"
         );
         assert!(world.resource::<CastErrors>().0.is_empty());
+    }
+
+    /// The mounted block (`0x739e8f`): a mounted press `CanAutoDismount` allows sends
+    /// `CMSG_CANCEL_MOUNT_AURA` ahead of the cast (`SendPendingCast 0x80af40`); one it refuses
+    /// reads 0x39 with no packet; the `Attributes & 0x01000000` spell casts in the saddle.
+    #[test]
+    fn a_mounted_cast_dismounts_first_unless_auto_dismount_refuses() {
+        use crate::net::ObjectStore;
+        use benilla_formats::SpellDisplay;
+        use benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID;
+        use benilla_protocol::ObjectFields;
+        const PLAIN: u32 = 100;
+        const SADDLE: u32 = 200;
+
+        let (mut world, rx) = world();
+        let mut spells = crate::ui_action::Spells::empty_for_tests();
+        spells.catalog = benilla_formats::SpellCatalog::from_displays(
+            [
+                (PLAIN, SpellDisplay::default()),
+                (
+                    SADDLE,
+                    SpellDisplay {
+                        attributes: 0x0100_0000,
+                        ..Default::default()
+                    },
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        world.insert_resource(spells);
+        let mounted: &'static ObjectStore =
+            Box::leak(Box::new(ObjectStore(ObjectFields::from_pairs(&[
+                (22, 100),
+                (28, 100),
+                (FIELD_UNIT_MOUNTDISPLAYID, 2410),
+            ]))));
+        let press = |world: &mut World, spell_id: u32, auto_dismount: bool| {
+            world
+                .run_system_once(move |mut ladder: CastLadder| {
+                    let base = ctx();
+                    let mounted_ctx = cast_target::CastContext {
+                        rel: cast_target::TargetRelations {
+                            self_store: Some(mounted),
+                            ..base.rel
+                        },
+                        auto_dismount,
+                        ..base
+                    };
+                    ladder.send(spell_id, &mounted_ctx, CastCommit::Spell);
+                })
+                .expect("one-shot");
+            world
+                .resource_mut::<crate::spell::PendingCast>()
+                .clear_if(spell_id);
+            rx.try_iter().collect::<Vec<ClientCommand>>()
+        };
+
+        let sent = press(&mut world, PLAIN, true);
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [
+                    ClientCommand::CancelMountAura,
+                    ClientCommand::CastSpell {
+                        spell_id: PLAIN,
+                        ..
+                    }
+                ]
+            ),
+            "the dismount goes first: {sent:?}"
+        );
+        assert!(world.resource::<CastErrors>().0.is_empty());
+
+        assert!(
+            press(&mut world, PLAIN, false).is_empty(),
+            "refused, no packet"
+        );
+        assert_eq!(
+            std::mem::take(&mut world.resource_mut::<CastErrors>().0),
+            vec![CastFail::local(PLAIN, 0x39)],
+            "\"You are mounted\""
+        );
+
+        let sent = press(&mut world, SADDLE, false);
+        assert!(
+            matches!(
+                sent.as_slice(),
+                [ClientCommand::CastSpell {
+                    spell_id: SADDLE,
+                    ..
+                }]
+            ),
+            "an allowed-while-mounted spell keeps the mount: {sent:?}"
+        );
     }
 
     /// A mashed chest opener goes out once as the GameObject block; the re-click is `6e4d43`'s

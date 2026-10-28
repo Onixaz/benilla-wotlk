@@ -185,6 +185,8 @@ pub(crate) struct CastContext<'a> {
     /// The caster's movement flags (the client's `[unit+0x9e8]`), read by the requirement
     /// validator's moving gate.
     pub(crate) self_move_flags: u32,
+    /// `CanAutoDismount 0x71b0c0`'s verdict: a mounted cast dismounts instead of refusing.
+    pub(crate) auto_dismount: bool,
     /// The caster's aura table: the toggle-cancel scans and the crowd-control exemption read it.
     pub(crate) self_auras: Option<&'a UnitAuras>,
 }
@@ -257,6 +259,8 @@ pub(crate) struct CastTargeting<'w, 's> {
     /// `Option`: the body exists only in world, and the cast-result handler must fetch this param
     /// anywhere. With no body the moving gate passes and the server decides.
     player: Option<Res<'w, crate::player::Player>>,
+    /// `autoDismount` and `autoDismountFlying`; a harness without them reads the defaults.
+    auto_dismount: Option<Res<'w, AutoDismount>>,
     /// The caster's and the selection's reach and motion, for the range gate.
     range_units: super::RangeUnits<'w, 's>,
 }
@@ -305,6 +309,15 @@ impl CastTargeting<'_, '_> {
                 .and_then(|s| s.0.player_inv_slot(EQUIPMENT_SLOT_MAINHAND))
                 .filter(|&g| g != 0),
             self_move_flags: self.player.as_deref().map_or(0, |p| p.move_flags()),
+            auto_dismount: {
+                let cvars = self.auto_dismount.as_deref().copied().unwrap_or_default();
+                super::validator::can_auto_dismount(
+                    self_store.map_or(0, |s| s.0.unit_flags()),
+                    self.player.as_deref().map_or(0, |p| p.move_flags()),
+                    cvars.ground,
+                    cvars.flying,
+                )
+            },
             self_auras: self.self_auras.iter().next(),
         }
     }
@@ -414,10 +427,35 @@ impl Default for AutoSelfCast {
     }
 }
 
-/// `autoSelfCast`'s change callback: a flag.
-pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut auto: ResMut<AutoSelfCast>) {
+/// `autoDismount` and `autoDismountFlying` (`0x51da52`, "1"; `0x51da77`, "0"), the two CVars
+/// `CanAutoDismount 0x71b0c0` reads.
+#[derive(bevy::prelude::Resource, Clone, Copy)]
+pub(crate) struct AutoDismount {
+    pub(crate) ground: bool,
+    pub(crate) flying: bool,
+}
+
+impl Default for AutoDismount {
+    fn default() -> Self {
+        Self {
+            ground: true,
+            flying: false,
+        }
+    }
+}
+
+/// `autoSelfCast`'s, `autoDismount`'s and `autoDismountFlying`'s change callbacks: flags.
+pub(crate) fn on_cvar(
+    ev: On<crate::cvars::CvarChanged>,
+    mut auto: ResMut<AutoSelfCast>,
+    mut dismount: ResMut<AutoDismount>,
+) {
     if ev.is("autoSelfCast") {
         auto.0 = ev.flag();
+    } else if ev.is("autoDismount") {
+        dismount.ground = ev.flag();
+    } else if ev.is("autoDismountFlying") {
+        dismount.flying = ev.flag();
     }
 }
 

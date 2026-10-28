@@ -229,6 +229,8 @@ struct Targeting {
     commit: super::cast_send::CastCommit,
     /// The standing flag_word `0xcecac0`; more than one seam can answer yes to it.
     word: u32,
+    /// The ladder passed a mounted caster on `CanAutoDismount`: the commit dismounts first.
+    dismount: bool,
 }
 
 impl SpellTargeting {
@@ -291,7 +293,20 @@ impl SpellTargeting {
             spell_id,
             commit,
             word,
+            dismount: false,
         });
+    }
+
+    /// Mark the standing cast to dismount at its commit, as `SendPendingCast` does (`0x80af40`).
+    pub(crate) fn dismount_at_commit(&mut self, dismount: bool) {
+        if let Some(t) = &mut self.0 {
+            t.dismount = dismount;
+        }
+    }
+
+    /// Whether the standing cast's commit dismounts first.
+    pub(crate) fn dismounts(&self) -> bool {
+        self.0.as_ref().is_some_and(|t| t.dismount)
     }
 
     /// The pending cast when the standing word answers `wants`, so no commit fires on a word its

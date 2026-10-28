@@ -2095,7 +2095,8 @@ mod tests {
     }
 
     /// A corpse and a refused `NOT_SELECTABLE` unit reach `select_on_click`'s `_` arm with no
-    /// `target`, but are object hits, and only the terrain and nothing legs deselect.
+    /// `target`, but are object hits, and only the terrain and nothing legs deselect, and those
+    /// only with `deselectOnClick` on (`HandleWorldClick 0x5278c0`).
     #[test]
     fn an_object_hit_never_deselects_but_empty_world_does() {
         use crate::net::NetCommands;
@@ -2104,7 +2105,7 @@ mod tests {
         const HELD: u64 = 0xF00D;
 
         // One click of the left button over `pick`, returning the selection it left behind.
-        let click = |pick: Hovered| {
+        let click_with = |pick: Hovered, deselect_on_click: bool| {
             let (tx, _rx) = crossbeam_channel::unbounded();
             let mut world = World::new();
             world.insert_resource(NetCommands(tx));
@@ -2115,7 +2116,7 @@ mod tests {
             world.init_resource::<crate::ui_loot::LootLatch>();
             world.init_resource::<crate::ui_script::CursorPayloadHeld>();
             world.init_resource::<crate::spell::SpellTargeting>();
-            world.init_resource::<ClickConfig>();
+            world.insert_resource(ClickConfig { deselect_on_click });
             world.init_resource::<Messages<crate::creature_anim::SheathRequest>>();
             world.init_resource::<Messages<crate::player::StandStateRequest>>();
             world.init_resource::<Messages<crate::sound::NpcGreetingRequest>>();
@@ -2138,11 +2139,17 @@ mod tests {
                 .expect("select_on_click runs as a one-shot system");
             world.resource::<Selection>().guid
         };
+        let click = |pick: Hovered| click_with(pick, true);
 
         assert_eq!(
             click(Hovered::default()),
             None,
             "clicking the sky deselects"
+        );
+        assert_eq!(
+            click_with(Hovered::default(), false),
+            Some(HELD),
+            "Sticky Targeting keeps the target"
         );
         assert_eq!(
             click(Hovered {

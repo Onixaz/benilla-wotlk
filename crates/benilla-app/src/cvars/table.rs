@@ -634,15 +634,15 @@ pub(crate) const REGISTERED: &[Registered] = &[
     // The callback's derived global `[0xc7b480]` has no reader. pfUI's `hdgraphic` writes
     // 0.06..0.30, inside `[0.01, 0.33]`.
     same("nearclip", "0.1"),
-    // `deselectOnClick` and `mouseInvertPitch` are 1.12's own (`UIOptionsFrame.lua:8,4`);
-    // `autoLootDefault` is the later-era name, 1.12 having only the shift gesture.
+    // `deselectOnClick` (`0x51d9cf`, "1"), the Controls panel's Sticky Targeting shown inverted:
+    // a bare world or terrain left-click clears the target (`0x5278c0`, `0x527360`).
     same("deselectOnClick", "1").per_account(),
     // `AutoInteract` (`0x603390`, record `[0xc4d9a4]`), Click-to-Move (`UIOptionsFrame.lua:7`):
     // "1" on koKR alone (`0x603368`). The knob is [`crate::player::Approach`].
     same("AutoInteract", "0").per_account(),
-    // `BlockTrades` (`0x842fbc`), `UIOptionsFrame.lua:11`: the refusal leg `0x4bf7bc` fires only
-    // when it is set. The knob is [`crate::ui_trade::BlockTrades`].
-    same("BlockTrades", "0").per_character(),
+    // `blockTrades` (`0x51daec`, "0", flags 0x20): `HandleTradeMessage`'s refusal leg (`0x587478`)
+    // fires only when it is set. The knob is [`crate::ui_trade::BlockTrades`].
+    same("blockTrades", "0").per_character(),
     // `autoSelfCast` (register site `0x51dbee`, name `0xa025e4`, default `0x9e1464` "1"): a
     // friendly cast that binds nothing falls back to the caster. `TOGGLEAUTOSELFCAST` toggles it.
     same("autoSelfCast", "1").per_character(),

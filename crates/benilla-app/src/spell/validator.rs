@@ -137,14 +137,27 @@ pub(crate) fn cast_cc_refusal(
 /// `SpellMechanic.dbc` name.
 const REASON_PREVENTED_BY_MECHANIC: u8 = 0x8d;
 
-/// The mounted refusal, `0x6094f0`'s mounted block (`0x609c6c`): a live
-/// `UNIT_FIELD_MOUNTDISPLAYID` refuses with `0x39` "You are mounted" unless Attributes bit 24
-/// (`0x01000000`, vmangos `SPELL_ATTR_ALLOW_WHILE_MOUNTED`, tested at `0x609c6f`) is set. A spell
-/// with no record has no exemption. The mount-required gate (`0x53`, `0x609c05`) is not built, as
-/// no 1.12 player spell needs it; it reads `0x40` in `AuraInterruptFlags` and, at `0x609c3a`, in
-/// `ChannelInterruptFlags`.
+/// The mounted block of `CheckAndReportSpellInhibitFlags` (`0x739e8f`): a live
+/// `UNIT_FIELD_MOUNTDISPLAYID` meets it unless Attributes bit 24 (`0x01000000`,
+/// `SPELL_ATTR_ALLOW_WHILE_MOUNTED`) is set; a spell with no record has no exemption. A caster
+/// [`can_auto_dismount`] refuses is told `0x39` "You are mounted", any other dismounts at the send
+/// (`SendPendingCast 0x80af40`). The mount-required gate (`0x53`) is not built.
 pub(crate) fn cast_mounted_refusal(mounted: bool, spell: Option<&SpellDisplay>) -> bool {
     mounted && spell.is_none_or(|d| d.attributes & 0x0100_0000 == 0)
+}
+
+/// `CGUnit_C::CanAutoDismount` (`0x71b0c0`) for the active player: never on a taxi
+/// (`UNIT_FLAG_TAXI_FLIGHT`), only with `autoDismount` on, and in flight only with
+/// `autoDismountFlying` on too.
+pub(crate) fn can_auto_dismount(
+    unit_flags: u32,
+    move_flags: u32,
+    auto_dismount: bool,
+    auto_dismount_flying: bool,
+) -> bool {
+    unit_flags & crate::player::UNIT_FLAG_TAXI_FLIGHT == 0
+        && auto_dismount
+        && (move_flags & crate::creature_anim::move_flags::FLYING == 0 || auto_dismount_flying)
 }
 
 /// The interrupt-flag water pair: `0x80` cancels an aura on entering water, `0x100` on leaving it
@@ -359,7 +372,24 @@ mod tests {
         assert_eq!(press(standing, standing, 5.0), None);
     }
 
-    /// The mounted refusal (`0x609c6c`) and its bit-24 exemption (`0x609c6f`).
+    /// `CanAutoDismount` (`0x71b0c0`): the taxi bit, `autoDismount`, then `autoDismountFlying`
+    /// only while flying.
+    #[test]
+    fn auto_dismount_needs_the_flying_cvar_only_in_flight() {
+        use crate::creature_anim::move_flags::FLYING;
+        use crate::player::UNIT_FLAG_TAXI_FLIGHT;
+        assert!(can_auto_dismount(0, 0, true, false), "the ground default");
+        assert!(
+            !can_auto_dismount(0, FLYING, true, false),
+            "the flying default"
+        );
+        assert!(can_auto_dismount(0, FLYING, true, true));
+        assert!(!can_auto_dismount(0, 0, false, true));
+        assert!(!can_auto_dismount(0, FLYING, false, true));
+        assert!(!can_auto_dismount(UNIT_FLAG_TAXI_FLIGHT, 0, true, true));
+    }
+
+    /// The mounted block and its bit-24 exemption.
     #[test]
     fn cast_mounted_refusal_honors_the_bit24_exemption() {
         let plain = SpellDisplay::default();
