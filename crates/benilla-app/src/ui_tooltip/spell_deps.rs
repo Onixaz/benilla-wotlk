@@ -130,7 +130,7 @@ pub(super) struct Deps {
     pub(super) unit: u16,
     /// The modifier cells read: the `SpellFamilyFlags` bits of the view's spell and of each spell
     /// its text cross-references, for the ones the caster's class family owns.
-    pub(super) mod_bits: u64,
+    pub(super) mod_bits: u128,
     /// The skill lines read, through the view's own spell and each one its text cross-references.
     pub(super) skill_lines: Vec<u32>,
     /// The reagent entries the reagents line lists.
@@ -237,7 +237,7 @@ pub(super) struct Changes {
     /// A [`UnitField`] bit each.
     pub(super) unit: u16,
     /// The `SpellFamilyFlags` bits with a changed modifier cell.
-    pub(super) mod_bits: u64,
+    pub(super) mod_bits: u128,
     pub(super) skill_lines: Vec<u32>,
     pub(super) reagents: Vec<u32>,
     /// The spells learned or unlearned.

@@ -111,13 +111,12 @@ mod tests {
     use super::*;
 
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_spell_durations_read_the_probed_rows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
         let durations = load_spell_durations(&mut chain).expect("load SpellDuration");
 
-        // Row 30: Frost Armor, spell 168 (vmangos `spell_template.durationIndex`).
+        // Row 30: Frost Armor, spell 168's `DurationIndex`.
         let frost_armor = durations.get(30).expect("row 30");
         assert_eq!(
             (
@@ -138,7 +137,7 @@ mod tests {
         let short = durations.get(1).expect("row 1");
         assert_eq!((short.base_ms, short.per_level_ms), (10_000, 0));
 
-        assert_eq!(durations.len(), 82, "5875 ships 82 SpellDuration rows");
+        assert_eq!(durations.len(), 130, "12340 ships 130 SpellDuration rows");
 
         // Row 427: a negative base with a positive per-level term, permanent under neither test.
         let scaling = durations.get(427).expect("row 427");

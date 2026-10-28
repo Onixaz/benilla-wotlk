@@ -106,6 +106,10 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
                 CastOutcome::Ok => None,
                 CastOutcome::Failed { arg, .. } => arg,
             },
+            arg2: match outcome {
+                CastOutcome::Ok => None,
+                CastOutcome::Failed { arg2, .. } => arg2,
+            },
         }],
         ServerPacket::PetSpells(spells) => vec![SessionEvent::PetSpells(Box::new(spells))],
         ServerPacket::PetMode(mode) => vec![SessionEvent::PetMode(mode)],
@@ -114,7 +118,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         }
         ServerPacket::PetCastFailed { spell_id, outcome } => match outcome {
             CastOutcome::Ok => Vec::new(),
-            CastOutcome::Failed { reason, arg } => vec![SessionEvent::PetCastFailed {
+            CastOutcome::Failed { reason, arg, .. } => vec![SessionEvent::PetCastFailed {
                 spell_id,
                 reason,
                 arg,

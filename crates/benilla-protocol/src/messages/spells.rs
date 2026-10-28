@@ -19,8 +19,12 @@ pub enum CastOutcome {
         reason: u8,
         /// The `%s` of the client's message (`0x6e1d8e`): a `SpellFocusObject.dbc` id for
         /// `REQUIRES_SPELL_FOCUS` (0x5e), an `AreaTable.dbc` id for `REQUIRES_AREA` (0x5d), an
-        /// `EquippedItemClass` for 0x19-0x1b, a permanent-cooldown flag for `NOT_READY` (0x3c).
+        /// `EquippedItemClass` for 0x19-0x1b, a permanent-cooldown flag for `NOT_READY` (0x3c);
+        /// the item for `NEED_MORE_ITEMS` (0x97), the `SkillLine` for `MIN_SKILL` (0x90).
         arg: Option<u32>,
+        /// The second word (`0x808200`): the count `NEED_MORE_ITEMS` asks for, the skill value
+        /// `MIN_SKILL` needs.
+        arg2: Option<u32>,
     },
 }
 
@@ -248,15 +252,18 @@ const SHARED_CAST_FAIL_UNKNOWN: u8 = 0x91;
 /// Read `SMSG_CAST_FAILED` as the 12340 handler does (`0x809af0`): `u8 castCount`, `u32 spellId`,
 /// `u8 reason`, then up to two argument words, each read only while bytes remain (`0x809b35`,
 /// `0x809b48`). There is no status byte. The reason comes back in the shared numbering
-/// ([`wotlk_cast_fail_shared`]). `None` stands for an absent argument. The second word is
-/// dropped: the client fills that message from the spell's own `EquippedItem*` columns.
+/// ([`wotlk_cast_fail_shared`]). `None` stands for an absent argument.
 pub(super) fn read_cast_result(r: &mut &[u8]) -> io::Result<(u8, u32, CastOutcome)> {
     let cast_count = read_u8(r)?;
     let spell_id = read_u32_le(r)?;
     let reason = wotlk_cast_fail_shared(read_u8(r)?);
     let arg = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
-    let _arg2 = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
-    Ok((cast_count, spell_id, CastOutcome::Failed { reason, arg }))
+    let arg2 = (r.len() >= 4).then(|| read_u32_le(r)).transpose()?;
+    Ok((
+        cast_count,
+        spell_id,
+        CastOutcome::Failed { reason, arg, arg2 },
+    ))
 }
 
 // --- Start and go --------------------------------------------------------------------------------
@@ -572,9 +579,9 @@ pub(super) fn read_channel_update(r: &mut impl Read) -> io::Result<(u64, u32)> {
 }
 
 /// Read `SMSG_SET_FLAT_SPELL_MODIFIER` / `SMSG_SET_PCT_SPELL_MODIFIER`: a `u8` `SpellFamilyFlags`
-/// bit index (0..63), a `u8` SpellModOp (0..28), then the `i32` sum of every matching modifier.
-/// The bit comes first: the client (`0x6e9950`) stores at `bit * 29 + op`, and vmangos
-/// (`Player.cpp:17815`) sends one packet per set bit. The client range-checks neither byte.
+/// bit index (0..95), a `u8` SpellModOp (0..30), then the `i32` sum of every matching modifier.
+/// The bit comes first: the client (`0x7fdc60`) stores at `[bit][op]`. It range-checks neither
+/// byte.
 pub(super) fn read_set_spell_modifier(r: &mut impl Read) -> io::Result<(u8, u8, i32)> {
     let mask_bit = read_u8(r)?;
     let op = read_u8(r)?;
@@ -939,17 +946,23 @@ mod tests {
         // count 9, Raptor Strike, wire 0x0c BAD_TARGETS (AzerothCore, no target): shared 0x0a.
         let body = [9, 0x9d, 0x0b, 0, 0, 0x0c];
         let mut r = &body[..];
-        let failed = |reason, arg| CastOutcome::Failed { reason, arg };
+        let failed = |reason, arg, arg2| CastOutcome::Failed { reason, arg, arg2 };
         assert_eq!(
             read_cast_result(&mut r).unwrap(),
-            (9, 2973, failed(0x0a, None))
+            (9, 2973, failed(0x0a, None, None))
         );
         assert!(r.is_empty());
         // Wire 0x66 REQUIRES_SPELL_FOCUS with its focus id: shared 0x5e.
         let body = [9, 133, 0, 0, 0, 0x66, 3, 0, 0, 0];
         assert_eq!(
             read_cast_result(&mut &body[..]).unwrap(),
-            (9, 133, failed(0x5e, Some(3)))
+            (9, 133, failed(0x5e, Some(3), None))
+        );
+        // Wire 55 NEED_MORE_ITEMS for Prospecting 31252: five Copper Ore (2770), shared 0x97.
+        let body = [9, 0x14, 0x7a, 0, 0, 55, 0xd2, 0x0a, 0, 0, 5, 0, 0, 0];
+        assert_eq!(
+            read_cast_result(&mut &body[..]).unwrap(),
+            (9, 31252, failed(0x97, Some(2770), Some(5)))
         );
     }
 
@@ -970,13 +983,13 @@ mod tests {
             "the body is exactly 6 bytes — two bytes and a dword, never three dwords"
         );
 
-        // 35 is a legal mask bit (0..=63) but not a legal op (0..=28), so a swap would show.
+        // 35 is a legal mask bit (0..=95) but not a legal op (0..=30), so a swap would show.
         let (mask_bit, op, _) = read_set_spell_modifier(&mut &body[..]).unwrap();
         assert!(
-            mask_bit >= 29,
+            mask_bit >= 31,
             "field 1 would be an out-of-range op if swapped"
         );
-        assert!(op < 29, "field 2 is a legal op as read");
+        assert!(op < 31, "field 2 is a legal op as read");
 
         // Both bytes are unsigned, the value signed; the consumer must refuse bit 255.
         assert_eq!(

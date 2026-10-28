@@ -233,9 +233,7 @@ const ATTR_EX3_NORMAL_RANGED_ATTACK: u32 = 0x8000;
 const ATTR_EX4_ALLOW_CLIENT_TARGETING: u32 = 0x20;
 /// `SPELL_ATTR_EX3_NO_CASTING_BAR_TEXT` (vmangos `SpellDefines.h:907`).
 const ATTR_EX3_NO_CASTING_BAR_TEXT: u32 = 0x4;
-/// `AttributesEx3` bit 13: `0x6e7595` tests it as `0x20` in the word's second byte.
-const ATTR_EX3_NO_CHANNEL_BAR: u32 = 0x2000;
-/// `AttributesEx` bit 29: the channel bar names the spell, not "Channeling" (`0x6e759a`).
+/// `AttributesEx` bit 29: the channel bar names the spell, not "Channeling" (`0x612090`).
 const ATTR_EX_CHANNEL_BAR_OWN_NAME: u32 = 0x2000_0000;
 /// `SPELL_ATTR_RANGED`: the spell uses the ranged slot.
 const ATTR_RANGED: u32 = 0x2;
@@ -644,9 +642,11 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 }),
                 prevention_type: u32_at(r, COL_PREVENTION_TYPE).unwrap_or(0),
                 spell_family: u32_at(r, COL_SPELL_FAMILY_NAME).unwrap_or(0),
-                // Low dword first: the reference reads bit i at `[rec + 4 * (i >> 5) + 0x284]`.
-                spell_family_flags: u64::from(u32_at(r, COL_SPELL_FAMILY_FLAGS_LOW).unwrap_or(0))
-                    | u64::from(u32_at(r, COL_SPELL_FAMILY_FLAGS_LOW + 1).unwrap_or(0)) << 32,
+                // Low dword first: the reference reads bit i in dword `i >> 5` (`0x7fd970`).
+                spell_family_flags: (0..3).fold(0u128, |mask, i| {
+                    mask | u128::from(u32_at(r, COL_SPELL_FAMILY_FLAGS_LOW + i).unwrap_or(0))
+                        << (32 * i)
+                }),
                 passive: attributes & ATTR_PASSIVE != 0,
                 // 12340 has no `castUI` column.
                 cast_ui: 0,

@@ -259,7 +259,6 @@ impl UnitAuras {
         buffs_visible: &impl Fn(u64, &ObjectStore) -> bool,
         ctx: ListCtx,
     ) {
-        let catalog = ctx.catalog;
         if self
             .by_guid
             .get(&guid)
@@ -272,13 +271,13 @@ impl UnitAuras {
             Some((store, table)) => {
                 if let Some(table) = table {
                     let visible = buffs_visible(guid, store);
-                    self.scratch.extend(table_inputs(table, catalog, visible));
+                    self.scratch.extend(table_inputs(table, ctx, visible));
                 }
             }
             None if record_ok => {
                 if let Some(group) = group {
                     self.scratch
-                        .extend(record_inputs(group.roster_auras(guid), catalog));
+                        .extend(record_inputs(group.roster_auras(guid), ctx));
                 }
             }
             None => return,

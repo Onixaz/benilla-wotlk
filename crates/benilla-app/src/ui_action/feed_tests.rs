@@ -451,6 +451,7 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
         spell_id: GROWL,
         reason: 0x5F,
         arg: None,
+        arg2: None,
         caster: Caster::Player,
         redisplay: false,
     });
@@ -495,6 +496,88 @@ fn a_pets_refused_cast_writes_no_combat_log_line() {
         logged,
         [(GROWL, "A reason".to_string())],
         "the player's failure logs, with the shown text, and the pet's does not"
+    );
+}
+
+/// `0x808200`'s two-word arms: `NEED_MORE_ITEMS` (wire 55) names the item and the count, and
+/// `MIN_SKILL` (wire 150) the skill line and the value; the pet's table fills neither.
+#[test]
+fn need_more_items_and_min_skill_fill_both_argument_words() {
+    use crate::ui_action::{CastFail, Caster, Spells};
+    use benilla_formats::{SkillLineCatalog, SkillLineInfo};
+
+    const PROSPECTING: u32 = 31252;
+    const COPPER_ORE: u32 = 2770;
+    const JEWELCRAFTING: u32 = 755;
+
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let mut app = App::new();
+    let mut errors = CastErrors::default();
+    let fail = |reason, arg, arg2, caster| CastFail {
+        spell_id: PROSPECTING,
+        reason,
+        arg: Some(arg),
+        arg2: Some(arg2),
+        caster,
+        redisplay: false,
+    };
+    errors.0.push(fail(0x97, COPPER_ORE, 5, Caster::Player));
+    errors.0.push(fail(0x90, JEWELCRAFTING, 50, Caster::Player));
+    errors.0.push(fail(0x90, JEWELCRAFTING, 50, Caster::Pet));
+    let mut items = Items::default();
+    items.insert_template(COPPER_ORE, Some(test_template("Copper Ore")));
+    let lines = SkillLineCatalog::from_lines([(
+        JEWELCRAFTING,
+        SkillLineInfo {
+            name: "Jewelcrafting".into(),
+            category_id: 11,
+            icon: None,
+            description: String::new(),
+            alternate_verb: String::new(),
+            can_link: false,
+        },
+    )]);
+
+    app.insert_resource(PlayerActions::default())
+        .insert_resource(errors)
+        .insert_resource(Spells::empty_for_tests())
+        .insert_resource(items)
+        .insert_resource(crate::ui_spellbook::SkillLines {
+            catalog: std::sync::Arc::new(lines),
+        })
+        .init_resource::<crate::net::GuidIndex>()
+        .init_resource::<MountErrors>()
+        .init_resource::<PetTameFailures>()
+        .init_resource::<UiErrorKeys>()
+        .init_resource::<UiErrorTexts>()
+        .init_resource::<crate::ui_chat::ChatLog>()
+        .init_resource::<crate::sound::MessageSounds>()
+        .add_message::<crate::combat_log::SpellCastFailedLog>()
+        .insert_resource(NetCommands(tx));
+    let script = UiScript::new().unwrap();
+    script
+        .run(
+            r#"SPELL_FAILED_NEED_MORE_ITEMS = "Requires %d %s."
+               SPELL_FAILED_MIN_SKILL = "Your skill is not high enough.  Requires %s (%d).""#,
+        )
+        .unwrap();
+    app.insert_non_send_resource(script);
+    app.add_systems(Update, feed_actions);
+    app.update();
+
+    let logged: Vec<String> = app
+        .world_mut()
+        .resource_mut::<Messages<crate::combat_log::SpellCastFailedLog>>()
+        .drain()
+        .map(|f| f.reason)
+        .collect();
+    assert_eq!(
+        logged,
+        [
+            "Requires 5 Copper Ore.",
+            "Your skill is not high enough.  Requires Jewelcrafting (50).",
+        ],
+        "the player's two lines; the pet's is never logged"
     );
 }
 

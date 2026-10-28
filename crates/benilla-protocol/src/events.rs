@@ -595,6 +595,7 @@ pub enum SessionEvent {
         success: bool,
         reason: Option<u8>,
         arg: Option<u32>,
+        arg2: Option<u32>,
     },
     /// The whole pet bar (`SMSG_PET_SPELLS`), never a delta; a zero `pet_guid` tears it down.
     PetSpells(Box<PetSpells>),

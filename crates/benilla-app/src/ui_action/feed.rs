@@ -53,9 +53,19 @@ pub(super) struct FailNameTables<'w> {
     areas: Option<Res<'w, crate::area::AreaTableRes>>,
     /// `SpellMechanic.dbc`, for `0x8d`.
     mechanics: Option<Res<'w, super::SpellMechanics>>,
+    /// `SkillLine.dbc`, for `0x90`.
+    skill_lines: Option<Res<'w, crate::ui_spellbook::SkillLines>>,
+    /// `TotemCategory.dbc`, for `0x9c`.
+    totems: Option<Res<'w, crate::ui_totem::TotemCategories>>,
 }
 
 impl FailNameTables<'_> {
+    /// A `SkillLine.dbc` row's display name.
+    fn skill_name(&self, line_id: u32) -> Option<&str> {
+        let lines = self.skill_lines.as_deref()?;
+        lines.catalog.line(line_id).map(|l| l.name.as_str())
+    }
+
     fn args<'a>(&'a self, spells: Option<&'a Spells>) -> cast_fail::FailArgs<'a> {
         cast_fail::FailArgs {
             arg: None,
@@ -63,6 +73,7 @@ impl FailNameTables<'_> {
             areas: self.areas.as_deref().map(|a| &a.0),
             mechanics: self.mechanics.as_deref().map(|m| &m.catalog),
             forms: spells.map(|s| &s.forms),
+            totems: self.totems.as_deref().map(|t| &t.0),
         }
     }
 }
@@ -196,6 +207,37 @@ pub(super) fn feed_actions(
                     return get(key)
                         .filter(|s| !s.is_empty())
                         .map(|t| cast_fail::CastFailLine::passthrough(t.replace("%s", &name)));
+                }
+                // `0x97` NEED_MORE_ITEMS and `0x90` MIN_SKILL (12340's 55 and 150, `0x808200`),
+                // the player's arms only: the first word names the item or skill line, the second
+                // the count or the value, "Requires %d %s." and "Requires %s (%d).". A pending
+                // item waits as `0x5c` does; an unknown one prints 0 "UNKNOWN" (`0x7feb50`).
+                if !pet && (reason == 0x97 || reason == 0x90) {
+                    let key = cast_fail::CAST_FAIL_KEYS[reason as usize];
+                    let second = fail.arg2.map_or(-1, |n| n as i32);
+                    let (count, name) = if reason == 0x90 {
+                        let name = fail.arg.and_then(|id| name_tables.skill_name(id));
+                        (second, name.unwrap_or("UNKNOWN").to_string())
+                    } else {
+                        let cached = fail.arg.and_then(|id| {
+                            items.template(id, 0, &commands).map(|i| i.name.clone())
+                        });
+                        match (cached, fail.arg) {
+                            (Some(name), _) => (second, name),
+                            (None, Some(id)) if !items.template_answered_unknown(id) => {
+                                await_template.push(fail.requeued());
+                                return None;
+                            }
+                            (None, _) => (0, "UNKNOWN".to_string()),
+                        }
+                    };
+                    return get(key).filter(|s| !s.is_empty()).map(|t| {
+                        cast_fail::CastFailLine::passthrough(t.replacen("%s", &name, 1).replacen(
+                            "%d",
+                            &count.to_string(),
+                            1,
+                        ))
+                    });
                 }
                 cast_fail::cast_fail_text(
                     caster,

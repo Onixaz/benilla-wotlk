@@ -245,6 +245,14 @@ pub struct SkillLineCatalog {
 }
 
 impl SkillLineCatalog {
+    /// A catalog of line displays only, for tests and fixtures.
+    pub fn from_lines(lines: impl IntoIterator<Item = (u32, SkillLineInfo)>) -> Self {
+        Self {
+            lines: lines.into_iter().collect(),
+            ..Self::from_spell_lines([])
+        }
+    }
+
     /// A catalog of spell-to-line pairs only, for tests and fixtures.
     pub fn from_spell_lines(pairs: impl IntoIterator<Item = (u32, u32)>) -> Self {
         Self {

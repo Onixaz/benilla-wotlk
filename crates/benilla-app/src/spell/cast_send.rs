@@ -107,6 +107,8 @@ pub(crate) struct CastLadder<'w, 's> {
         Query<'w, 's, (Entity, Has<crate::creature_anim::Engaged>), With<SelfPlayer>>,
     pub(crate) spells: Option<Res<'w, Spells>>,
     pub(crate) items: Res<'w, Items>,
+    /// `TotemCategory.dbc`, the pre-send check's tool leg; absent without client data.
+    pub(crate) totem_categories: Option<Res<'w, crate::ui_totem::TotemCategories>>,
     /// The reagent check walks the bags through it; the item arms resolve an instance guid here.
     pub(crate) objects: Objects<'w, 's>,
     pub(crate) sheath: MessageWriter<'w, crate::creature_anim::SheathRequest>,
@@ -454,6 +456,7 @@ impl CastLadder<'_, '_> {
             self.spells.as_deref(),
             &self.objects,
             &self.items,
+            self.totem_categories.as_deref().map(|t| &t.0),
             &mut self.sheath,
             &mut self.ecs,
             &mut self.pending,
@@ -509,6 +512,7 @@ fn send_spell_cast(
     spells: Option<&Spells>,
     objects: &Objects,
     items: &Items,
+    totem_categories: Option<&benilla_formats::TotemCategoryCatalog>,
     sheath: &mut MessageWriter<crate::creature_anim::SheathRequest>,
     ecs: &mut Commands,
     pending: &mut crate::spell::PendingCast,
@@ -569,10 +573,21 @@ fn send_spell_cast(
         debug!("ui_action: cast {spell_id} suppressed — a cast is already in flight");
         return;
     }
-    // `CheckReagentsAndTotems 0x6e4000` (TryCast's `0x6e4ded`, before the validator call at
-    // `0x6e4f3b`): a missing tool or reagent refuses with 0x78/0x5c. Local because vmangos answers
-    // a pickless cast with `ITEM_GONE`.
-    if reagent_totem_refusal(spell_id, def, ctx.rel.self_store, objects, cast_errors) {
+    // `HaveSpellTokens 0x8091d0`, before the validator: a missing totem, tool category or reagent
+    // refuses with 0x78, 0x9c or 0x5c.
+    let tools = totem_categories.map(|categories| crate::ui_action::ToolCheck {
+        categories,
+        items,
+        commands,
+    });
+    if reagent_totem_refusal(
+        spell_id,
+        def,
+        ctx.rel.self_store,
+        objects,
+        tools,
+        cast_errors,
+    ) {
         return;
     }
     // The equipped-item requirement (`0x6e4e03`), the same search the button greying and tooltip
@@ -816,18 +831,18 @@ fn send_spell_cast(
             return;
         }
     }
-    // The form leg (`0x609e49` → `0x612480`; `0x609ca2` is the posture gate): 0x3d "Can't do that
-    // while shapeshifted" or 0x56 needs-a-form (vmangos `GetErrorAtShapeshiftedCast`).
+    // The form leg (`CheckShapeshiftRules 0x72bac0`): "Can't do that while shapeshifted" or
+    // needs-a-form.
     if let Some(d) = def {
         let form = ctx
             .rel
             .self_store
             .map(|s| s.0.unit_shapeshift_form())
             .unwrap_or(0);
-        let form_is_stance = spells
+        let form_flags = spells
             .and_then(|s| s.forms.get(&u32::from(form)))
-            .is_some_and(|f| f.is_stance());
-        if let Some(refusal) = d.form_refusal(form, form_is_stance) {
+            .map_or(0, |f| f.flags);
+        if let Some(refusal) = d.form_refusal(form, form_flags) {
             let reason = refusal.reason();
             debug!("ui_action: cast {spell_id} refused locally — the form gate ({reason:#x})");
             cast_errors.push_local(spell_id, reason);

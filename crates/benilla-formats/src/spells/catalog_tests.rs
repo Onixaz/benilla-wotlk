@@ -1,18 +1,22 @@
-//! The spell catalog's column pins, checked end to end against the real 5875 `Spell.dbc`.
+//! The spell catalog's column pins, checked end to end against the real 12340 `Spell.dbc`.
 
 use super::*;
 
-/// A trainer's learn wrapper is never in `SkillLineAbility`, so the tree groups it by the spell
-/// it teaches: Heroic Strike 78 via 1605, Charge 100 via 1738, Battle Shout 6673 via 6674.
+/// A learn wrapper is never in `SkillLineAbility`, so the tree groups it by the spell it teaches:
+/// Apprentice Blacksmith 2020 teaches Blacksmithing 2018, Lockpicking 1809 Pick Lock 1804, and
+/// the Ice Armor wrapper 1214 Ice Armor 7302.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_learn_spell_hop_resolves_the_taught_ability() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let spells = load_spell_catalog(&mut chain).expect("load Spell/SpellIcon");
     let skills = crate::skill_lines::load_skill_line_catalog(&mut chain).expect("load skill lines");
 
-    for (wrapper, ability, line) in [(1605u32, 78u32, 26u32), (1738, 100, 26), (6674, 6673, 256)] {
+    for (wrapper, ability, line) in [
+        (2020u32, 2018u32, 164u32),
+        (1809, 1804, 633),
+        (1214, 7302, 6),
+    ] {
         assert_eq!(
             spells.learned_spell(wrapper),
             Some(ability),
@@ -21,7 +25,7 @@ fn real_learn_spell_hop_resolves_the_taught_ability() {
         assert_eq!(
             skills.spell_to_line(wrapper, 0, 0),
             None,
-            "the wrapper {wrapper} is not itself in SkillLineAbility (the bug's root)"
+            "the wrapper {wrapper} is not itself in SkillLineAbility"
         );
         assert_eq!(
             skills.spell_to_line(ability, 0, 0),
@@ -35,9 +39,7 @@ fn real_learn_spell_hop_resolves_the_taught_ability() {
     }
 }
 
-/// Values from the vmangos `spell_template` rows.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_ranged_attributes() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -57,11 +59,11 @@ fn real_spell_catalog_reads_ranged_attributes() {
     assert_eq!(shoot.attributes_ex2, 0x20);
     assert!(shoot.ranged_attack());
 
-    // Throw: ranged but not auto-repeat, and still arms the ranged stance.
+    // Throw: ranged but not auto-repeat; its `AttributesEx2` is the post-cast attack bit alone.
     let throw = cat.get(2764).expect("Throw");
     assert_eq!(throw.attributes, 0x410012);
-    assert_eq!(throw.attributes_ex2, 0);
-    assert!(throw.ranged_attack());
+    assert_eq!(throw.attributes_ex2, 0x10_0000);
+    assert!(throw.ranged_attack() && !throw.auto_repeat());
 
     // Fireball: neither bit.
     let fireball = cat.get(133).expect("Fireball");
@@ -69,8 +71,8 @@ fn real_spell_catalog_reads_ranged_attributes() {
     assert_eq!(fireball.attributes_ex2, 0);
     assert!(!fireball.ranged_attack());
 
-    // Effect[0] (column 61): 6603 "Attack" carries SPELL_EFFECT_ATTACK (78).
-    let attack = cat.get(6603).expect("Attack");
+    // Effect[0] (column 71): 6603 "Auto Attack" carries SPELL_EFFECT_ATTACK (78).
+    let attack = cat.get(6603).expect("Auto Attack");
     assert_eq!(
         attack.effects[0], 78,
         "6603 Effect[0] == SPELL_EFFECT_ATTACK"
@@ -83,43 +85,61 @@ fn real_spell_catalog_reads_ranged_attributes() {
     );
 }
 
-/// The buff bar's cache builder (`PlayerAuras_Update` `0x4e4170`) refuses `NO_AURA_ICON` and
-/// `DO_NOT_DISPLAY` (0x80), reading `Attributes` as a byte (columns 6 and 7).
+/// `CanShowAura` (`0x53d580`), the spell's own legs: `Attributes & 0x80` and `AttributesEx &
+/// 0x10000000` hide an aura whoever cast it; a passive shows only with an area-aura effect; the
+/// `AttributesEx5` pair hides a self-cast or another's aura.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_hides_stances_from_the_aura_bar() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = load_spell_catalog(&mut chain).expect("load Spell/SpellIcon");
+    let shows = |id: u32, self_cast: bool| {
+        cat.get(id)
+            .unwrap_or_else(|| panic!("spell {id}"))
+            .shows_aura(self_cast)
+    };
 
-    // Battle Stance carries NO_AURA_ICON | CAST_WHEN_LEARNED, the other two NO_AURA_ICON alone.
-    let battle = cat.get(2457).expect("Battle Stance");
-    assert_eq!(battle.attributes_ex, 0x9000_0000);
-    assert!(battle.hidden_from_aura_bar());
-    let defensive = cat.get(71).expect("Defensive Stance");
-    assert_eq!(defensive.attributes_ex, 0x1000_0000);
-    assert!(defensive.hidden_from_aura_bar());
-    let berserker = cat.get(2458).expect("Berserker Stance");
-    assert_eq!(berserker.attributes_ex, 0x1000_0000);
-    assert!(berserker.hidden_from_aura_bar());
+    // The warrior stances carry NO_AURA_ICON, Battle Stance with CAST_WHEN_LEARNED.
+    for (id, ex) in [
+        (2457u32, 0x9000_0400u32),
+        (71, 0x1000_0400),
+        (2458, 0x1000_0400),
+    ] {
+        assert_eq!(cat.get(id).unwrap().attributes_ex, ex, "stance {id}");
+        assert!(!shows(id, true), "stance {id}");
+    }
+    // Defensive State (DND) 5301: DO_NOT_DISPLAY. Its 1.12 sibling 5302 has no 12340 row.
+    assert_eq!(cat.get(5301).unwrap().attributes, 0x1d0);
+    assert!(!shows(5301, true));
+    assert!(cat.get(5302).is_none());
 
-    // Defensive State 5302 rides a visible wire slot, but DO_NOT_DISPLAY keeps it off the bar.
-    let def_state = cat.get(5302).expect("Defensive State");
-    assert_eq!(def_state.attributes, 0x2000_0190);
-    assert!(def_state.hidden_from_aura_bar());
-    let def_state_dnd = cat.get(5301).expect("Defensive State (DND)");
-    assert_eq!(def_state_dnd.attributes, 0x1d0);
-    assert!(def_state_dnd.hidden_from_aura_bar());
+    assert!(shows(6673, true), "Battle Shout");
+    assert!(shows(1243, false), "Power Word: Fortitude");
+    // The dword sign bit (`CANT_CANCEL`) filters nothing: Echoes of Lordaeron still shows.
+    assert_eq!(cat.get(1386).unwrap().attributes, 0x8800_0100);
+    assert!(shows(1386, false));
 
-    let shout = cat.get(6673).expect("Battle Shout");
-    assert!(!shout.hidden_from_aura_bar());
-    let fortitude = cat.get(1243).expect("Power Word: Fortitude");
-    assert!(!fortitude.hidden_from_aura_bar());
+    // A passive without an area aura is hidden (Diplomacy 20599), one with it listed (Heroic
+    // Presence 6562, effect 65).
+    assert!(cat.get(20599).unwrap().passive && !shows(20599, true));
+    assert!(cat.get(6562).unwrap().passive && shows(6562, true));
 
-    // The dword sign bit (`NO_AURA_CANCEL`) filters nothing: Echoes of Lordaeron still shows.
-    let echoes = cat.get(1386).expect("Echoes of Lordaeron");
-    assert_eq!(echoes.attributes, 0x8800_0100);
-    assert!(!echoes.hidden_from_aura_bar());
+    // `AttributesEx5` bit 27 hides Mind Flay's slow only when self-cast; bit 28 hides Fixate's
+    // only when another cast it, and Mirror Image carries both.
+    assert!(!shows(15407, true) && shows(15407, false));
+    assert!(shows(12021, true) && !shows(12021, false));
+    assert!(!shows(55342, true) && !shows(55342, false));
+    // `AttributesEx6 & 0x100000`, the caster-only leg, ships on two rows.
+    let caster_only: Vec<u32> = {
+        let mut v: Vec<u32> = cat
+            .iter()
+            .filter(|(_, d)| d.only_visible_to_caster())
+            .map(|(id, _)| id)
+            .collect();
+        v.sort_unstable();
+        v
+    };
+    assert_eq!(caster_only, [58371, 62218], "Recently Slain, Frenzy");
 }
 
 #[test]
@@ -182,10 +202,9 @@ fn real_spell_catalog_gates_the_spellbook() {
     }
 }
 
-/// The OPEN_LOCK effect (column 61 == 0x21) and its `LockType` (`EffectMiscValue`, column 106): a
+/// The OPEN_LOCK effect (column 71 == 0x21) and its `LockType` (`EffectMiscValue`, column 110): a
 /// Copper Vein's `Lock.dbc` skill slot names LockType 3, which Mining (2575) opens.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_open_lock_types() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -212,8 +231,8 @@ fn real_spell_catalog_reads_open_lock_types() {
         "Fireball opens no lock"
     );
 
-    // LockType 13 (lock 43, the ground containers) has two openers every character knows; the
-    // resolver takes the first sufficient one in known-spell order, and the cast bar prints it.
+    // LockType 13 has two openers every character knows; the resolver takes the first sufficient
+    // one in known-spell order, and the cast bar prints it.
     assert_eq!(cat.get(6478).unwrap().open_lock_type(), Some(13));
     assert_eq!(cat.get(6478).unwrap().name, "Opening");
     assert_eq!(cat.get(22810).unwrap().open_lock_type(), Some(13));
@@ -223,8 +242,8 @@ fn real_spell_catalog_reads_open_lock_types() {
         "the placeholder is Blizzard's own Spell.dbc string, not a formatting bug of ours"
     );
 
-    // The cast bar shows no name for `AttributesEx3 & 0x4` (`SPELL_ATTR_EX3_NO_CASTING_BAR_TEXT`),
-    // the one column separating 22810 from 6478; three shipped rows carry it.
+    // The cast bar shows no name for `AttributesEx3 & 0x4` (`UnitCastingInfo` `0x611df0`), the
+    // one column separating 22810 from 6478; 28 shipped rows carry it.
     assert!(cat.get(22810).unwrap().no_casting_bar_text());
     assert!(!cat.get(6478).unwrap().no_casting_bar_text());
     let silent: Vec<u32> = {
@@ -236,23 +255,17 @@ fn real_spell_catalog_reads_open_lock_types() {
         v.sort_unstable();
         v
     };
-    assert_eq!(
-        silent,
-        vec![6477, 22810, 26380],
-        "6477 Opening / 22810 Opening - No Text / 26380 zzOLDSummon Mouth Tentacle Visual"
-    );
+    assert_eq!(silent.len(), 28);
+    assert_eq!(silent[..3], [6477, 21651, 22810]);
 
-    // The tool and reagent columns the pre-send possession check reads (`0x6e4000`): totems at
-    // columns 40-41, reagents at 42-49 with their counts at 50-57.
+    // The tools: 12340 gathering names a `TotemCategory` (columns 222-223), not an item, so the
+    // Mining Pick and Skinning Knife columns are empty; reagents are columns 52-59, counts 60-67.
+    let mining = cat.get(2575).unwrap();
+    assert_eq!((mining.totems, mining.totem_categories), ([0, 0], [165, 0]));
+    let skinning = cat.get(8613).unwrap();
     assert_eq!(
-        cat.get(2575).unwrap().totems,
-        [2901, 0],
-        "Mining requires the Mining Pick (2901)"
-    );
-    assert_eq!(
-        cat.get(8613).unwrap().totems,
-        [7005, 0],
-        "Skinning requires the Skinning Knife (7005)"
+        (skinning.totems, skinning.totem_categories),
+        ([0, 0], [166, 0])
     );
     let slow_fall = cat.get(130).unwrap();
     assert_eq!(
@@ -329,15 +342,14 @@ fn real_spell_catalog_computes_the_lock_skill_an_opener_provides() {
     assert_eq!(cat.get(133).unwrap().open_lock_skill(300), None);
 }
 
-/// Values from vmangos `spell_template`, each entry at its highest build up to 5875.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_cooldown_cost_and_range_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = load_spell_catalog(&mut chain).expect("load Spell/SpellIcon");
 
-    // Fireball r1: no cooldown, the ordinary GCD (category 133, 1500 ms), 30 mana, range row 35.
+    // Fireball r1: no cooldown, the ordinary GCD (category 133, 1500 ms), 8% of base mana,
+    // range row 35.
     let fireball = cat.get(133).unwrap();
     assert_eq!(
         (
@@ -351,11 +363,19 @@ fn real_spell_catalog_reads_cooldown_cost_and_range_columns() {
         (fireball.start_recovery_category, fireball.start_recovery_ms),
         (133, 1500)
     );
-    assert_eq!((fireball.power_type, fireball.mana_cost), (0, 30));
+    assert_eq!(
+        (
+            fireball.power_type,
+            fireball.mana_cost,
+            fireball.mana_cost_pct
+        ),
+        (0, 0, 8)
+    );
     assert_eq!(fireball.range_index, 35);
     assert!(!fireball.cooldown_on_event());
 
-    // Charge: category 44 with a 15 s category cooldown, rage (1), no GCD pair, range row 95.
+    // Charge: category 1219 with a 15 s category cooldown, rage (1), its own GCD category 1178
+    // with no time, range row 95.
     let charge = cat.get(100).unwrap();
     assert_eq!(
         (
@@ -363,16 +383,16 @@ fn real_spell_catalog_reads_cooldown_cost_and_range_columns() {
             charge.recovery_ms,
             charge.category_recovery_ms
         ),
-        (44, 0, 15000)
+        (1219, 0, 15000)
     );
     assert_eq!(
         (charge.start_recovery_category, charge.start_recovery_ms),
-        (0, 0)
+        (1178, 0)
     );
     assert_eq!(charge.power_type, 1, "Charge costs rage");
     assert_eq!(charge.range_index, 95);
 
-    // Feign Death: a 30 s RecoveryTime and SPELL_ATTR_COOLDOWN_ON_EVENT (bit 25 of 0x2151400).
+    // Feign Death: a 30 s RecoveryTime and the cooldown-on-event bit of `0x2150100`.
     let feign = cat.get(5384).unwrap();
     assert_eq!(feign.recovery_ms, 30_000);
     assert!(
@@ -380,25 +400,24 @@ fn real_spell_catalog_reads_cooldown_cost_and_range_columns() {
         "Feign Death is cooldown-on-event"
     );
 
-    // Lay on Hands: the hour-long category cooldown (56 / 3_600_000).
+    // Lay on Hands: the 20-minute category cooldown (56 / 1_200_000).
     let loh = cat.get(633).unwrap();
-    assert_eq!((loh.category, loh.category_recovery_ms), (56, 3_600_000));
+    assert_eq!((loh.category, loh.category_recovery_ms), (56, 1_200_000));
 
-    // ManaCostPercentage: Purge r1 (370) is 10, Dispel Magic r1 (527) 18.
-    assert_eq!(cat.get(370).unwrap().mana_cost_pct, 10);
-    assert_eq!(cat.get(527).unwrap().mana_cost_pct, 18);
+    // ManaCostPercentage: Purge r1 (370) is 8, Dispel Magic r1 (527) 14.
+    assert_eq!(cat.get(370).unwrap().mana_cost_pct, 8);
+    assert_eq!(cat.get(527).unwrap().mana_cost_pct, 14);
 }
 
-/// [`COL_TARGETS`] (13) and [`COL_IMPLICIT_TARGET_A1`] (82): one row per `0x6e5250` arm or bit.
+/// [`COL_TARGETS`] (16) and [`COL_IMPLICIT_TARGET_A1`] (86).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_cast_targeting_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = load_spell_catalog(&mut chain).expect("load Spell/SpellIcon");
 
-    // Implicit targets: 6 single enemy (hostile bit), 1 self, 21 single friend (assist bit), 20
-    // party around the caster (a no-op arm, so the mask stays 0).
+    // Implicit targets: 6 single enemy (hostile bit), 1 self, 21 single friend (assist bit), 56
+    // the caster's raid around it (no arm, so the mask stays 0).
     assert_eq!(cat.get(133).unwrap().implicit_target_a1, 6, "Fireball");
     assert_eq!(cat.get(7302).unwrap().implicit_target_a1, 1, "Ice Armor");
     assert_eq!(cat.get(5384).unwrap().implicit_target_a1, 1, "Feign Death");
@@ -409,7 +428,7 @@ fn real_spell_catalog_reads_cast_targeting_columns() {
     );
     assert_eq!(
         cat.get(6673).unwrap().implicit_target_a1,
-        20,
+        56,
         "Battle Shout"
     );
 
@@ -421,14 +440,14 @@ fn real_spell_catalog_reads_cast_targeting_columns() {
     assert_eq!(cat.get(8613).unwrap().targets, 0x402, "Skinning");
 }
 
-/// The usable walk's columns (`0x6e3d60`), one row per gate family, and the real form flags.
+/// The usable walk's columns (`0x80b5d0`), one row per gate family, and the real form flags.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_usable_walk_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = load_spell_catalog(&mut chain).expect("load Spell/SpellIcon");
     let forms = load_shapeshift_forms(&mut chain).expect("load SpellShapeshiftForm");
+    let flags = |form: u8| forms.get(&u32::from(form)).map_or(0, |f| f.flags);
 
     // Claw: cat form (1). Ambush: stealth (form 30), a dagger and the only-stealthed attribute.
     // Execute: battle or berserker stance and the target's below-20% aura state. Revenge: the
@@ -449,8 +468,8 @@ fn real_spell_catalog_reads_usable_walk_columns() {
     assert_eq!((execute.stances, execute.target_aura_state), (0x50000, 2));
     assert_eq!(cat.get(6572).unwrap().caster_aura_state, 1, "Revenge");
 
-    // The combo-point gate (`0x6e3e7a`): Overpower has no aura state; its window rides
-    // `AttributesEx` bit 20 (`FINISHING_MOVE_DAMAGE`) like the finishers.
+    // The combo-point gate: Overpower has no aura state; its window rides `AttributesEx` bit 20
+    // like the finishers.
     for rank in [7384, 7887, 11584, 11585] {
         let op = cat.get(rank).unwrap();
         assert!(op.needs_combo_points(), "Overpower {rank}");
@@ -489,25 +508,26 @@ fn real_spell_catalog_reads_usable_walk_columns() {
     );
     assert_eq!(cat.get(130).unwrap().reagents[0], (17056, 1), "Slow Fall");
 
-    // Battle Stance (17) is a stance (flags1 bit 0), Cat Form (1) a true shapeshift.
+    // Battle Stance (17) is a stance (flag 0x1), Cat Form (1) a true shapeshift.
     assert!(forms.get(&17).unwrap().is_stance());
     assert!(!forms.get(&1).unwrap().is_stance());
     assert_eq!(forms.get(&1).unwrap().bonus_bar, 1);
 
     // Claw in cat only; Fireball unshifted and in a stance, not in Cat Form; Execute in Battle
     // (17), not in Defensive (18).
-    assert!(claw.usable_in_form(1, false));
-    assert!(!claw.usable_in_form(0, false));
+    assert!(claw.usable_in_form(1, flags(1)));
+    assert!(!claw.usable_in_form(0, 0));
     let fireball = cat.get(133).unwrap();
-    assert!(fireball.usable_in_form(0, false));
-    assert!(fireball.usable_in_form(17, true));
-    assert!(!fireball.usable_in_form(1, false));
-    assert!(execute.usable_in_form(17, true));
-    assert!(!execute.usable_in_form(18, true));
+    assert!(fireball.usable_in_form(0, 0));
+    assert!(fireball.usable_in_form(17, flags(17)));
+    assert!(!fireball.usable_in_form(1, flags(1)));
+    assert!(execute.usable_in_form(17, flags(17)));
+    assert!(!execute.usable_in_form(18, flags(18)));
 
     // Ghost Wolf: form 16 is a cancelable true shapeshift; the spell carries NOT_SHAPESHIFT (bit
     // 16) and the stance-bar exclusion (`AttributesEx2 & 0x2`: a shaman gets no stance bar). In
-    // the form an ordinary spell refuses 0x3d; a form spell out of its form refuses 0x56.
+    // the form an ordinary spell refuses NOT_SHAPESHIFT; a form spell out of its form refuses
+    // ONLY_SHAPESHIFT.
     let ghost_wolf = cat.get(2645).unwrap();
     assert_eq!(ghost_wolf.shapeshift_form, Some(16));
     assert_ne!(ghost_wolf.attributes & 0x1_0000, 0);
@@ -518,28 +538,31 @@ fn real_spell_catalog_reads_usable_walk_columns() {
     use crate::FormRefusal;
     let bolt = cat.get(403).unwrap();
     assert_eq!(
-        bolt.form_refusal(16, false),
+        bolt.form_refusal(16, flags(16)),
         Some(FormRefusal::NotShapeshift)
     );
-    assert_eq!(bolt.form_refusal(0, false), None);
+    assert_eq!(bolt.form_refusal(0, 0), None);
+    assert_eq!(claw.form_refusal(0, 0), Some(FormRefusal::OnlyShapeshift));
     assert_eq!(
-        claw.form_refusal(0, false),
-        Some(FormRefusal::OnlyShapeshift)
-    );
-    assert_eq!(
-        ghost_wolf.form_refusal(16, false),
+        ghost_wolf.form_refusal(16, flags(16)),
         Some(FormRefusal::NotShapeshift),
         "re-pressing Ghost Wolf in the form draws the gate too (the cancel is a separate branch)"
     );
-    assert_eq!(FormRefusal::NotShapeshift.reason(), 0x3d);
-    assert_eq!(FormRefusal::OnlyShapeshift.reason(), 0x56);
+    // Moonkin (31) carries the stance flag, so an ordinary spell casts in it; the Zombie form
+    // (21) carries `0x400`, which refuses every spell its mask does not name.
+    assert!(forms.get(&31).unwrap().is_stance());
+    assert_eq!(bolt.form_refusal(31, flags(31)), None);
+    assert_ne!(flags(21) & 0x400, 0);
+    assert_eq!(
+        claw.form_refusal(21, flags(21)),
+        Some(FormRefusal::NotShapeshift)
+    );
 
-    // The active-action toggle (`0x4e563c`): Ghost Wolf's nonzero ActiveIconID lets a second
-    // press cancel it; Battle Stance's 0 keeps a stance up on the plain paths.
+    // The icons: Ghost Wolf and Battle Stance both carry an `ActiveIconID`.
     assert_ne!(ghost_wolf.active_icon_id, 0);
-    assert_eq!(cat.get(2457).unwrap().active_icon_id, 0, "Battle Stance");
+    assert_eq!(cat.get(2457).unwrap().active_icon_id, 279, "Battle Stance");
 
-    // AttackIconID (column 13, `0x4e6870`): Cat Form has its own, Ghost Wolf's 0 means the weapon.
+    // AttackIconID (column 21): Cat Form has its own, Ghost Wolf's 0 means the weapon.
     assert_eq!(
         forms.get(&1).unwrap().attack_icon.as_deref(),
         Some("Interface\\Icons\\Ability_Druid_CatFormAttack")
@@ -657,12 +680,11 @@ fn spell_schema_decodes_token_float_columns() {
     );
 }
 
-/// The attack-start masks, rows from vmangos: [`SpellDisplay::on_next_swing`] (`0x404`),
+/// The attack-start masks: [`SpellDisplay::on_next_swing`] (`0x404`),
 /// [`SpellDisplay::initiates_auto_attack`] (adding `AttributesEx & 0x200`) and
 /// [`SpellDisplay::initiates_auto_attack_at_go`] (`AttributesEx2 & 0x100000`), whose union is
-/// [`SpellDisplay::initiates_combat`] (`0x6e5200`).
+/// [`SpellDisplay::initiates_combat`] (`0x7fcc70`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_classifies_combat_initiation() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -670,36 +692,38 @@ fn real_spell_catalog_classifies_combat_initiation() {
 
     // (spell, on_next_swing, initiates_auto_attack, initiates_auto_attack_at_go)
     for (id, name, next_swing, initiates, at_go) in [
-        (78u32, "Heroic Strike", true, true, false), // Attributes 0x50014
-        (845, "Cleave", true, true, false),          // Attributes 0x50014, Ex 0x200
-        (2973, "Raptor Strike", true, true, false),  // Attributes 0x50404
-        (772, "Rend", false, true, false),           // Ex 0x8000200
-        (7386, "Sunder Armor", false, true, false),  // Ex 0x8000200
-        (1464, "Slam", false, true, false),          // Ex 0x8000200
-        (1752, "Sinister Strike", false, true, false), // Ex 0x8000200
-        (100, "Charge", false, false, false),        // Ex 0x400: neither bit, bit 20 clear
-        (6673, "Battle Shout", false, false, false), // Ex 0x0
-        (6603, "Attack", false, false, false),       // the auto-attack pseudo-spell itself
-        (133, "Fireball", false, false, false),      // an ordinary cast
-        // The GO-deferred class: bit 20 set, so the attack starts at `SMSG_SPELL_GO` (`0x6e83c0`).
-        (53, "Backstab", false, false, true), // Attributes 0x50010, Ex 0x8000200, Ex2 0x100000
+        (78u32, "Heroic Strike", true, true, false),
+        (845, "Cleave", true, true, false),
+        (2973, "Raptor Strike", true, true, false),
+        (772, "Rend", false, true, false),
+        (7386, "Sunder Armor", false, true, false),
+        (1464, "Slam", false, true, false),
+        (1752, "Sinister Strike", false, true, false),
+        (100, "Charge", false, false, false),
+        (6673, "Battle Shout", false, false, false),
+        (6603, "Auto Attack", false, false, false),
+        (133, "Fireball", false, false, false),
+        // The GO-deferred class: bit 20 set, so the attack starts at `SMSG_SPELL_GO` (`0x80e1b0`).
+        (53, "Backstab", false, false, true),
         (703, "Garrote", false, false, true),
         (8676, "Ambush", false, false, true),
         (1833, "Cheap Shot", false, false, true),
         (5221, "Shred", false, false, true),
         (6785, "Ravage", false, false, true),
         (9005, "Pounce", false, false, true),
-        (20271, "Judgement", false, false, true), // Ex 0x0: bit 20 is its only initiation bit
-        // The hunter's instant shots carry `AttributesEx2` bit 17 (`DO_NOT_RESET_COMBAT_TIMERS`),
-        // not bit 20, and no other initiation bit, so neither attack start fires for them.
+        (20271, "Judgement of Light", false, false, true),
+        (49576, "Death Grip", false, false, true),
+        (2764, "Throw", false, false, true),
+        // The hunter's instant shots start no attack of either kind.
         (1978, "Serpent Sting", false, false, false),
         (3044, "Arcane Shot", false, false, false),
         (2643, "Multi-Shot", false, false, false),
-        (75, "Auto Shot", false, false, false), // the auto-repeat itself: Ex2 0x20, not 0x100000
+        (75, "Auto Shot", false, false, false),
     ] {
         let d = cat
             .get(id)
             .unwrap_or_else(|| panic!("{name} ({id}) in the catalog"));
+        assert_eq!(d.name, name, "{id}");
         assert_eq!(
             d.on_next_swing(),
             next_swing,
@@ -723,10 +747,7 @@ fn real_spell_catalog_classifies_combat_initiation() {
         assert_eq!(
             d.initiates_combat(),
             next_swing || initiates || at_go,
-            "{name} ({id}) initiates_combat (Attributes {:#x}, Ex {:#x}, Ex2 {:#x})",
-            d.attributes,
-            d.attributes_ex,
-            d.attributes_ex2
+            "{name} ({id}) initiates_combat"
         );
         // Bit 20 suppresses the send-time start, so no spell starts the attack twice.
         assert!(
@@ -735,20 +756,15 @@ fn real_spell_catalog_classifies_combat_initiation() {
         );
     }
 
-    // 36 shipped rows carry bit 20, every one an opener, a positional strike or Judgement.
-    let deferred: Vec<(u32, &str)> = cat
+    // 77 shipped rows carry bit 20: the openers, the positional strikes, the Judgements, Death
+    // Grip, Throw and a few creature and test rows.
+    let deferred: Vec<&str> = cat
         .iter()
         .filter(|(_, d)| d.initiates_auto_attack_at_go())
-        .map(|(id, d)| (id, d.name.as_str()))
+        .map(|(_, d)| d.name.as_str())
         .collect();
-    assert_eq!(
-        deferred.len(),
-        36,
-        "5875 ships 36 INITIATE_COMBAT_POST_CAST rows, got {}: {:?}",
-        deferred.len(),
-        deferred
-    );
-    let mut names: Vec<&str> = deferred.iter().map(|&(_, n)| n).collect();
+    assert_eq!(deferred.len(), 77);
+    let mut names = deferred;
     names.sort_unstable();
     names.dedup();
     assert_eq!(
@@ -756,15 +772,24 @@ fn real_spell_catalog_classifies_combat_initiation() {
         [
             "Ambush",
             "Backstab",
+            "Caught!",
             "Cheap Shot",
+            "Death Grip",
             "Garrote",
+            "Gnaw",
             "Judgement",
+            "Judgement of Justice",
+            "Judgement of Light",
+            "Judgement of Wisdom",
+            "Mutilate",
             "Pounce",
             "Ravage",
+            "Shiv",
             "Shred",
+            "Test Backstab",
             "Test Stab R50",
-        ],
-        "the deferred-start class is the openers, the positional strikes and Judgement"
+            "Throw",
+        ]
     );
 }
 
@@ -804,10 +829,9 @@ fn real_spell_catalog_keeps_the_attack_pick_to_spell_presses() {
     );
 }
 
-/// `modalNextSpell`, column 38, which `0x6e7447` reads to start Auto Shot after a hunter shot:
-/// nonzero on 57 of 22357 rows, 52 of them naming spell 75.
+/// `modalNextSpell`, column 48, which the cast's finish (`0x8054f0`) reads to start Auto Shot
+/// after a hunter shot: nonzero on 111 rows, 106 of them naming spell 75.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_modal_next_spell() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -823,8 +847,10 @@ fn real_spell_catalog_reads_modal_next_spell() {
         (3034, "Viper Sting", 75),
         (3043, "Scorpid Sting", 75),
         (3674, "Black Arrow", 75),
-        (14274, "Distracting Shot", 75),
-        // Auto Shot's own column 38 is 0: the chain is one hop and cannot loop.
+        (20736, "Distracting Shot", 75),
+        (53351, "Kill Shot", 75),
+        (56641, "Steady Shot", 75),
+        // Auto Shot's own column is 0: the chain is one hop.
         (75, "Auto Shot", 0),
         // A melee strike and an ordinary cast carry nothing here.
         (78, "Heroic Strike", 0),
@@ -833,10 +859,8 @@ fn real_spell_catalog_reads_modal_next_spell() {
         let d = cat
             .get(id)
             .unwrap_or_else(|| panic!("{name} ({id}) in the catalog"));
-        assert_eq!(
-            d.modal_next_spell, next,
-            "{name} ({id}) modalNextSpell (column 38)"
-        );
+        assert_eq!(d.name, name, "{id}");
+        assert_eq!(d.modal_next_spell, next, "{name} ({id}) modalNextSpell");
     }
 
     let chained: Vec<(u32, u32)> = cat
@@ -844,18 +868,13 @@ fn real_spell_catalog_reads_modal_next_spell() {
         .filter(|(_, d)| d.modal_next_spell != 0)
         .map(|(id, d)| (id, d.modal_next_spell))
         .collect();
+    assert_eq!(chained.len(), 111);
     assert_eq!(
-        chained.len(),
-        57,
-        "5875 ships 57 rows with a non-zero column 38, got {}",
-        chained.len()
+        chained.iter().filter(|&&(_, next)| next == 75).count(),
+        106,
+        "the rest: three (TEST) bow shot rows → 59, two Minigun → 23675"
     );
-    let to_auto_shot = chained.iter().filter(|&&(_, next)| next == 75).count();
-    assert_eq!(
-        to_auto_shot, 52,
-        "52 of the 57 name Auto Shot (the rest: three (TEST) bow shot rows → 59, two Minigun → 23675)"
-    );
-    // Nothing points at a spell that chains onward: one hop, in data.
+    // Nothing points at a spell that chains onward, but for the two that name themselves.
     for &(id, next) in &chained {
         let onward = cat.get(next).map(|d| d.modal_next_spell).unwrap_or(0);
         assert!(
@@ -931,11 +950,12 @@ fn the_tooltip_gates_read_effect_and_mask() {
     assert!(trade_skill.tooltip_omits_cast_line());
 }
 
-/// The main-hand auto-pick family (`Attributes & 0x200`): `ArmCast` (`0x6e5250`) binds the
-/// equipped main hand instead of arming the item cursor. vmangos keeps a row per build, so a
-/// `GROUP BY entry` also returns pre-5302 Feedback and Omen of Clarity rows and counts 28.
+/// The weapon auto-pick family (`Attributes & 0x200`): for a player caster the cast binds an
+/// equipped weapon instead of arming the item cursor (`BeginCast 0x80c790`). On 12340 it is the
+/// weapon imbues and the fishing lures, each with `Targets == 0x10` and a temporary enchant (54),
+/// most gated on a weapon or a fishing pole, but for Windfury Weapon 32911, a 54-less creature
+/// row. Rockbiter's four ranks carry their enchant in effect slot 1.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_main_hand_autopick_family() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -946,39 +966,56 @@ fn real_main_hand_autopick_family() {
     for (id, d) in cat.iter().filter(|(_, d)| d.targets_main_hand_item()) {
         rows += 1;
         names.insert(d.name.clone());
-        assert_eq!(
-            d.targets, 0x10,
-            "spell {id} ({}) carries the main-hand attribute with word {:#x} — the resolver's \
-             item arm cannot discharge it",
-            d.name, d.targets
-        );
-        assert_eq!(
-            d.effects[0],
-            crate::SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY,
-            "spell {id} ({}) is not a temporary weapon enchant",
-            d.name
-        );
-        // The auto-pick bypasses `0x495d60`, so an equipped-item gate here would never run.
-        assert_eq!(
-            (
-                d.equipped_item_subclass_mask,
-                d.equipped_item_inventory_type_mask
-            ),
-            (0, 0),
-            "spell {id} ({}) carries an equipped-item gate the auto-pick path never runs",
-            d.name
-        );
+        if id == 32911 {
+            assert_eq!((d.targets, d.effects), (0, [6, 0, 0]));
+            continue;
+        }
+        assert_eq!(d.targets, 0x10, "spell {id} ({})", d.name);
+        let slot = d
+            .effects
+            .iter()
+            .position(|&e| e == crate::SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY);
+        let expected = if [8017, 8018, 8019, 10399].contains(&id) {
+            1
+        } else {
+            0
+        };
+        assert_eq!(slot, Some(expected), "spell {id} ({})", d.name);
     }
-    assert_eq!(rows, 22, "the whole main-hand auto-pick family");
+    assert_eq!(rows, 70, "the whole auto-pick family");
     assert_eq!(
         names.iter().map(String::as_str).collect::<Vec<_>>(),
         [
+            "Aquadynamic Fish Attractor",
+            "Aquadynamic Fish Lens",
+            "Bright Baubles",
+            "Consecrated Weapon",
+            "Earthliving Weapon",
+            "Fishing Hat Lure",
             "Flametongue Weapon",
+            "Flesh Eating Worm",
             "Frostbrand Weapon",
+            "Frozen Rune Weapon",
+            "Glow Worm",
+            "Nightcrawlers",
             "Rockbiter Weapon",
+            "Sharpened Fish Hook",
+            "Shiny Bauble",
             "Windfury Weapon",
-        ],
-        "in 5875 the family is the four shaman weapon imbues and nothing else"
+        ]
+    );
+    // A lure gates on the fishing pole (weapon subclass 20).
+    let bauble = cat
+        .iter()
+        .find(|(_, d)| d.name == "Shiny Bauble")
+        .map(|(_, d)| d)
+        .expect("Shiny Bauble");
+    assert_eq!(
+        (
+            bauble.equipped_item_class,
+            bauble.equipped_item_subclass_mask
+        ),
+        (2, 1 << 20)
     );
     // Windfury Totem is not in it: a totem summon with no target word at all.
     let wf_totem = cat.get(8512).expect("Windfury Totem");
@@ -986,46 +1023,49 @@ fn real_main_hand_autopick_family() {
     assert_eq!(wf_totem.targets, 0, "a totem summon binds nothing");
 }
 
-/// `0x495d60`'s third effect leg (`0x495df1 jne 0x495f36` into `0x495f39`, effect `0x7f`) holds
-/// the only raises of `SPELL_FAILED_PROSPECT_NEED_MORE` (`0x49614e`) and `SPELL_FAILED_MIN_SKILL`
-/// (`0x496128`); vmangos sends neither, so with no shipped [`SPELL_EFFECT_PROSPECTING`] spell
-/// neither message can appear.
+/// 12340 ships the prospecting (127) and milling (158) effects, whose casts the server refuses
+/// with `NEED_MORE_ITEMS` and `MIN_SKILL`, both carrying two argument words.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn real_prospecting_effect_is_absent_from_5875() {
+fn real_prospecting_and_milling_effects_ship_in_12340() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let raw = chain.read_file(SPELL).expect("Spell.dbc");
     let set = parse(&raw, spell_schema(), "Spell.dbc").expect("parse Spell.dbc");
 
     let mut slots = 0usize;
+    let mut found = Vec::new();
     for r in set.records() {
         for i in 0..3 {
             slots += 1;
-            assert_ne!(
-                u32_at(r, COL_EFFECT_1 + i).unwrap_or(0),
-                crate::SPELL_EFFECT_PROSPECTING,
-                "spell {} carries SPELL_EFFECT_PROSPECTING in effect slot {i} — `0x495d60`'s \
-                 third leg is reachable now, so cast-fail reasons 0x84 PROSPECT_NEED_MORE and \
-                 0x90 MIN_SKILL can raise and `ui_action::cast_fail` owes them \
-                 argument arms",
-                u32_at(r, 0).unwrap_or(0)
-            );
+            let effect = u32_at(r, COL_EFFECT_1 + i).unwrap_or(0);
+            if effect == crate::SPELL_EFFECT_PROSPECTING || effect == 158 {
+                found.push((u32_at(r, 0).unwrap_or(0), effect, i));
+            }
         }
     }
+    found.sort_unstable();
+    assert_eq!(
+        found,
+        [
+            (31032, 127, 0),
+            (31252, 127, 0),
+            (51005, 158, 0),
+            (58510, 158, 1)
+        ],
+        "TestProspect, Prospecting, Milling, Magic Impedence"
+    );
     // A scan that read nothing would pass too, so pin the row count.
     assert_eq!(
         slots,
-        22357 * 3,
-        "every effect slot of every 5875 row was read"
+        49839 * 3,
+        "every effect slot of every 12340 row was read"
     );
 }
 
-/// `TargetingWantsItem` (`0x6e6330`) is `flag_word & 0x4010`, bits that never mix with a unit
-/// bit on shipped data: `Targets` is exactly `0x10` (enchants, poisons, stones, scopes) or
-/// `0x4000` (OPEN_LOCK), so the resolver forks on the bare word. `0x495d60` reads the gate columns.
+/// `Targets & 0x4010` (the item and lock bits) never mixes with a unit bit on shipped data:
+/// `Targets` is exactly `0x10` (enchants, poisons, stones, scopes) or `0x4000` (OPEN_LOCK), so the
+/// resolver forks on the bare word.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_item_target_family_and_its_gate_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1051,40 +1091,32 @@ fn real_item_target_family_and_its_gate_columns() {
         }
     }
     assert_eq!(
-        item_only, 363,
+        item_only, 768,
         "Targets == 0x10 — the enchant/poison family"
     );
-    assert_eq!(locked_only, 103, "Targets == 0x4000 — the OPEN_LOCK family");
+    assert_eq!(locked_only, 203, "Targets == 0x4000 — the OPEN_LOCK family");
 
     // The OPEN_LOCK implicit arm: `cast_target_mask` ORs `0x800` for arm 23 and `TF_UNIT` for arm
-    // 25, so a lock word is `0x4000` or `0x4800`, nonzero under both `& 0x4010` and `& 0x4800`,
-    // and one armed cursor answers both the bag click and the world click.
+    // 25, so one armed cursor answers both the bag click and the world click.
     let mut arms = std::collections::BTreeMap::<u32, usize>::new();
     for (_, d) in cat.iter().filter(|(_, d)| d.targets == 0x4000) {
         *arms.entry(d.implicit_target_a1).or_default() += 1;
     }
     assert_eq!(
-        arms.values().sum::<usize>(),
-        103,
-        "every OPEN_LOCK row is counted"
+        arms,
+        [(0, 2), (23, 200), (25, 1)].into_iter().collect(),
+        "the family is overwhelmingly arm 23, whose overlay is TARGET_FLAG_GAMEOBJECT"
     );
-    assert_eq!(
-        arms.get(&25),
-        Some(&1),
-        "one row arms 25 (its overlay is TF_UNIT, not the GameObject bit)"
-    );
-    assert!(
-        arms.get(&23).copied().unwrap_or(0) >= 100,
-        "the family is overwhelmingly arm 23, whose overlay is TARGET_FLAG_GAMEOBJECT: {arms:?}"
-    );
-    // Bit 11 comes only from the implicit arm, never from the `Targets` column.
-    assert_eq!(
-        cat.iter().filter(|(_, d)| d.targets & 0x800 != 0).count(),
-        0,
-        "TARGET_FLAG_GAMEOBJECT never appears in the Targets column"
-    );
+    // Bit 11 in the `Targets` column itself: two creature rows, no player spell.
+    let mut go_word: Vec<u32> = cat
+        .iter()
+        .filter(|(_, d)| d.targets & 0x800 != 0)
+        .map(|(id, _)| id)
+        .collect();
+    go_word.sort_unstable();
+    assert_eq!(go_word, [44678, 55088], "TrajTemp Damage, Barrel o' Fun");
 
-    // Bracer enchant: armor (4), any subclass, InventoryType WRIST(9) only.
+    // Bracer enchant: armor (4), InventoryType WRIST(9) only.
     let bracer = cat.get(7418).unwrap();
     assert_eq!(bracer.targets, 0x10);
     assert_eq!(bracer.equipped_item_class, 4);
@@ -1106,57 +1138,45 @@ fn real_item_target_family_and_its_gate_columns() {
         (2, 0x2a5f3, 0)
     );
 
-    // The reference walks all three effect slots for an enchant (`0x495de4`-`0x496050`), while
-    // `SpellDisplay` keeps slot 0: no item-target row has its enchant elsewhere. Read raw.
+    // `SpellDisplay` keeps an enchant effect in slot 0 for the item cursor's verdict: the only
+    // item-target rows with it elsewhere are Rockbiter's four ranks, which the weapon auto-pick
+    // binds instead (`0x80c790` walks all three slots). Read raw.
     let raw = chain.read_file(SPELL).expect("Spell.dbc");
     let set = parse(&raw, spell_schema(), "Spell.dbc").expect("parse Spell.dbc");
     let is_enchant = |e: u32| {
         e == crate::SPELL_EFFECT_ENCHANT_ITEM || e == crate::SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY
     };
-    for r in set.records() {
-        if u32_at(r, COL_TARGETS).unwrap_or(0) != 0x10 {
-            continue;
-        }
-        let effects: Vec<u32> = (0..3)
-            .map(|i| u32_at(r, COL_EFFECT_1 + i).unwrap_or(0))
-            .collect();
-        assert!(
-            is_enchant(effects[0]) || !(is_enchant(effects[1]) || is_enchant(effects[2])),
-            "spell {} hides its enchant effect outside slot 0 ({effects:?}) — the one-slot read \
-             in `spell::targeting::item_bind_verdict` would miss it",
-            u32_at(r, 0).unwrap_or(0)
-        );
-    }
+    let mut elsewhere: Vec<u32> = set
+        .records()
+        .iter()
+        .filter(|r| u32_at(r, COL_TARGETS).unwrap_or(0) == 0x10)
+        .filter(|r| {
+            let e = |i| u32_at(r, COL_EFFECT_1 + i).unwrap_or(0);
+            !is_enchant(e(0)) && (is_enchant(e(1)) || is_enchant(e(2)))
+        })
+        .map(|r| u32_at(r, 0).unwrap_or(0))
+        .collect();
+    elsewhere.sort_unstable();
+    assert_eq!(elsewhere, [8017, 8018, 8019, 10399]);
+    assert!(elsewhere.iter().all(|&id| cat
+        .get(id)
+        .is_some_and(SpellDisplay::targets_main_hand_item)));
 }
 
-/// `GetCooldownInfo` (`0x6e13e0`): the `SpellCategory` flags `0x2` wildcard is wand Shoot's
-/// category 351, the whole-bar swing sweep the cooldown store's wildcard leg implements.
+/// The cooldown history's wildcard (`GetSpellCooldown 0x807980`, `SpellCategory` flags `0x2`): on
+/// 12340 only category 351 carries it, and no shipped spell names that category, so no row reads
+/// wildcard.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn gcd_wildcard_and_shape_corners_hold_on_the_real_data() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = load_spell_catalog(&mut chain).expect("catalog");
 
-    let shoot = cat.get(5019).expect("wand Shoot");
-    assert_eq!(shoot.category, 351);
-    assert!(
-        shoot.category_wildcard,
-        "Shoot's category row carries flags&2"
-    );
-    for &(id, name) in &[
-        (133u32, "Fireball"),
-        (100, "Charge"),
-        (6673, "Battle Shout"),
-    ] {
-        let d = cat.get(id).expect(name);
-        assert!(
-            !d.category_wildcard,
-            "{name}'s category must not read wildcard"
-        );
-    }
+    assert_eq!(cat.get(5019).expect("wand Shoot").category, 0);
+    assert_eq!(cat.iter().filter(|(_, d)| d.category == 351).count(), 0);
+    assert_eq!(cat.iter().filter(|(_, d)| d.category_wildcard).count(), 0);
 
-    // Scroll of Armor's spell: the {cat≠0, time=0} shape, which a GCD locks, since the pressed
+    // Armor's scroll spell: the {cat≠0, time=0} shape, which a GCD locks, since the pressed
     // spell's own time is never consulted.
     let scroll = cat.get(8091).expect("Scroll of Armor's spell");
     assert_eq!(
@@ -1167,15 +1187,13 @@ fn gcd_wildcard_and_shape_corners_hold_on_the_real_data() {
 
 /// The health power type is -2, read as `0xFFFFFFFE`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_cost_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = crate::load_spell_catalog(&mut chain).expect("Spell.dbc");
 
-    // Life Tap, every rank: health type and no cost at all, so the cost cell stays empty; 1.12
-    // states the trade in the description.
-    for id in [1454u32, 1455, 1456, 11687, 11688, 11689] {
+    // Life Tap, every rank: health type and no cost at all, so the cost cell stays empty.
+    for id in [1454u32, 1455, 1456, 11687, 11688, 11689, 27222, 57946] {
         let d = cat.get(id).unwrap();
         assert_eq!(
             (
@@ -1196,7 +1214,7 @@ fn real_spell_catalog_cost_columns() {
             bloodrage.mana_cost,
             bloodrage.mana_cost_pct
         ),
-        (0xFFFF_FFFE, 0, 20)
+        (0xFFFF_FFFE, 0, 16)
     );
     // Health Funnel: flat health plus per second (the `_PER_TIME` line), and channeled.
     let funnel = cat.get(755).unwrap();
@@ -1207,7 +1225,7 @@ fn real_spell_catalog_cost_columns() {
     assert!(funnel.tooltip_channeled());
     // The cast cell's attribute arms: Heroic Strike (next melee; 150 on the wire is "15 Rage"),
     // Auto Shot and Throw (the ranged bit alone, so Throw reads "Attack speed"), Mind Flay
-    // (channeled), Judgement (percentage-only mana, shown as the resolved number).
+    // (channeled), Judgement of Light (percentage-only mana).
     let hs = cat.get(78).unwrap();
     assert_eq!((hs.power_type, hs.mana_cost), (1, 150));
     assert!(hs.on_next_swing());
@@ -1215,7 +1233,7 @@ fn real_spell_catalog_cost_columns() {
     assert!(cat.get(2764).unwrap().tooltip_on_next_ranged(), "Throw");
     let mf = cat.get(15407).unwrap();
     assert!(mf.tooltip_channeled());
-    assert_eq!((mf.power_type, mf.mana_cost), (0, 45));
+    assert_eq!((mf.power_type, mf.mana_cost, mf.mana_cost_pct), (0, 0, 9));
     let judgement = cat.get(20271).unwrap();
     assert_eq!(
         (
@@ -1223,27 +1241,27 @@ fn real_spell_catalog_cost_columns() {
             judgement.mana_cost,
             judgement.mana_cost_pct
         ),
-        (0, 0, 6)
+        (0, 0, 5)
     );
 
-    // `manaPerSecondPerLevel` (column 35) is zero on every row, so it stays unparsed;
-    // `manaCostPerlevel` (33) is nonzero on 72 creature spells, so `power_cost` applies it though
+    // `manaPerSecondPerLevel` (column 45) is zero on every row, so it stays unparsed;
+    // `manaCostPerlevel` (43) is nonzero on 138 creature spells, so `power_cost` applies it though
     // no player tooltip shows it.
     let bytes = chain.read_file(super::SPELL).expect("reading Spell.dbc");
     let rs = super::parse(&bytes, super::spell_schema(), "Spell.dbc").expect("Spell.dbc");
     let mut per_level_rows = 0u32;
     for r in rs.records() {
         let id = super::u32_at(r, 0).unwrap_or(0);
-        if super::u32_at(r, 33).unwrap_or(0) > 0 {
+        if super::u32_at(r, COL_MANA_COST_PER_LEVEL).unwrap_or(0) > 0 {
             per_level_rows += 1;
         }
         assert_eq!(
-            super::u32_at(r, 35).unwrap_or(0),
+            super::u32_at(r, COL_MANA_PER_SECOND_PER_LEVEL).unwrap_or(0),
             0,
             "manaPerSecondPerLevel on {id}"
         );
     }
-    assert_eq!(per_level_rows, 72, "the manaCostPerlevel population");
+    assert_eq!(per_level_rows, 138, "the manaCostPerlevel population");
     let dark_offering = cat.get(7154).unwrap();
     assert_eq!(
         (
@@ -1363,10 +1381,10 @@ fn real_is_harmful_pins() {
     }
 }
 
-/// `SpellChannelStart` (`0x6e7550`): unlike the cast bar, the channel bar says "Channeling" unless
-/// a bit lets it name the spell, as 9 of the 323 channeled rows do; 2 suppress the bar.
+/// `UnitChannelInfo` (`0x612090`): unlike the cast bar, the `"player"` token's channel text says
+/// "Channeling" unless `AttributesEx` bit 29 lets it name the spell, as 74 of the 1961 channeled
+/// rows do.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_channel_bar_name_law() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1374,23 +1392,23 @@ fn real_channel_bar_name_law() {
 
     // The generic leg: every rank of Blizzard and other everyday channels.
     for id in [
-        10u32, 6141, 8427, 10185, 10186, 10187, // Blizzard, all six ranks
+        10u32, 6141, 8427, 10185, 10186, 10187, // Blizzard, ranks 1-6
         5143,  // Arcane Missiles
         15407, // Mind Flay
         689,   // Drain Life
         5740,  // Rain of Fire
     ] {
         let d = cat.get(id).unwrap_or_else(|| panic!("spell {id}"));
+        assert!(d.tooltip_channeled(), "{id} {:?} channels", d.name);
         assert!(
             !d.channel_bar_own_name(),
             "{id} {:?} reads \"Channeling\", not its own name (AttributesEx {:#010x})",
             d.name,
             d.attributes_ex
         );
-        assert!(!d.no_channel_bar(), "{id} {:?} still shows a bar", d.name);
     }
 
-    // The named leg: Fishing and Mind Flay take opposite legs of the same `0x6e75a1`.
+    // The named leg.
     for (id, name) in [
         (7620u32, "Fishing"),
         (18248, "Fishing"),
@@ -1401,89 +1419,74 @@ fn real_channel_bar_name_law() {
         assert_eq!(d.name, name);
     }
 
-    // The suppressor, on these two rows only.
-    for id in [24322u32, 24323] {
-        assert!(
-            cat.get(id).expect("Blood Siphon").no_channel_bar(),
-            "{id} Blood Siphon shows no channel bar at all"
-        );
-    }
-
     let channeled: Vec<_> = cat.iter().filter(|(_, d)| d.tooltip_channeled()).collect();
-    assert_eq!(channeled.len(), 323, "channeled rows in the shipped file");
+    assert_eq!(channeled.len(), 1961, "channeled rows in the shipped file");
     assert_eq!(
         channeled
             .iter()
             .filter(|(_, d)| d.channel_bar_own_name())
             .count(),
-        9,
-        "only nine channeled rows print their own name"
-    );
-    assert_eq!(
-        channeled.iter().filter(|(_, d)| d.no_channel_bar()).count(),
-        2,
-        "only the two Blood Siphons suppress the bar"
+        74,
+        "the channeled rows that print their own name"
     );
 }
 
-/// `SpellFamilyName` (160) and the `SpellFamilyFlags` pair (161-162): the eleven nonzero families
-/// are vmangos's `SpellFamilyNames`, 322 rows set several bits and the top bit is 35, so the high
-/// dword is live, and Cleanse (4987, bits 12 and 33) pins the pair's order.
+/// `SpellFamilyName` (208) and the three `SpellFamilyFlags` dwords (209-211): 827 rows set several
+/// bits and the top bit is 95, so the third dword is live; Fireball (bits 0 and 67) pins the
+/// order of the low and the third.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_family_columns_carry_the_modifier_gate() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = load_spell_catalog(&mut chain).expect("load Spell/SpellIcon");
 
     let mut families: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
-    let mut popcounts: std::collections::BTreeMap<u32, usize> = std::collections::BTreeMap::new();
+    let mut multi = 0usize;
     let mut max_bit = 0u32;
     for (_, d) in cat.iter() {
         *families.entry(d.spell_family).or_default() += 1;
-        *popcounts
-            .entry(d.spell_family_flags.count_ones())
-            .or_default() += 1;
+        if d.spell_family_flags.count_ones() > 1 {
+            multi += 1;
+        }
         if d.spell_family_flags != 0 {
-            max_bit = max_bit.max(63 - d.spell_family_flags.leading_zeros());
+            max_bit = max_bit.max(127 - d.spell_family_flags.leading_zeros());
         }
     }
     assert_eq!(
         families,
         [
-            (0, 18243),
-            (1, 47),
-            (3, 563),
-            (4, 350),
-            (5, 466),
-            (6, 493),
-            (7, 450),
-            (8, 316),
-            (9, 393),
-            (10, 362),
-            (11, 500),
-            (13, 174),
+            (0, 40256),
+            (1, 137),
+            (3, 1200),
+            (4, 736),
+            (5, 1004),
+            (6, 978),
+            (7, 979),
+            (8, 628),
+            (9, 1151),
+            (10, 740),
+            (11, 1049),
+            (12, 2),
+            (13, 375),
+            (15, 576),
+            (17, 28),
         ]
         .into_iter()
         .collect::<std::collections::BTreeMap<u32, usize>>(),
-        "SpellFamilyName histogram — the vmangos SpellFamilyNames set, and only it"
+        "SpellFamilyName histogram"
     );
-    assert_eq!(
-        popcounts.values().skip(1).sum::<usize>() - popcounts[&1],
-        322,
-        "rows setting MORE than one family bit — the reader's sum is live"
-    );
-    assert_eq!(max_bit, 35, "the highest family bit index in the file");
+    assert_eq!(multi, 827, "rows setting more than one family bit");
+    assert_eq!(max_bit, 95, "the highest family bit index in the file");
 
-    // Frostbolt spans one dword, Cleanse both, Cure Poison only the high one.
     for (id, family, bits) in [
-        (116u32, 3u32, &[5u32, 19, 20, 30][..]),
-        (4987, 10, &[12, 33]),
+        (116u32, 3u32, &[5u32][..]),
+        (4987, 10, &[12]),
         (526, 11, &[35]),
+        (133, 3, &[0, 67]),
     ] {
         let d = cat.get(id).unwrap_or_else(|| panic!("spell {id}"));
         assert_eq!(d.spell_family, family, "{id} {:?} family", d.name);
-        let set: Vec<u32> = (0..64)
+        let set: Vec<u32> = (0..128)
             .filter(|b| d.spell_family_flags >> b & 1 == 1)
             .collect();
         assert_eq!(set, bits, "{id} {:?} family bits", d.name);
@@ -1491,17 +1494,16 @@ fn real_spell_family_columns_carry_the_modifier_gate() {
 }
 
 /// The pet bar's GCD starts from the pressed spell's `StartRecoveryCategory`/`StartRecoveryTime`
-/// pair (`0x6e2de0`), which every learnable pet ability carries as category 133, and its press
-/// route branches on `AttributesEx4 & 0x20` (`0x4bd355`), the dword at `+0x28`, column 10.
+/// pair, which every learnable pet ability carries as category 133, and its press route branches
+/// on `AttributesEx4 & 0x20` (`SendPetAction 0x5d4210`), column 8.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn real_pet_spells_carry_the_gcd_pair_and_ex4_reads_column_10() {
+fn real_pet_spells_carry_the_gcd_pair_and_the_client_targeting_bit() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = load_spell_catalog(&mut chain).expect("load Spell/SpellIcon");
 
-    // (id, name, startRecoveryCategory, startRecoveryTime): the ranks a pet learns, one per
-    // ability, with Claw's first rank and every Firebolt rank on 1 s and the rest on 1.5 s.
+    // (id, name, startRecoveryCategory, startRecoveryTime): Claw's first rank and every Firebolt
+    // rank on 1 s, the rest on 1.5 s.
     for (id, name, gcd_category, gcd_ms) in [
         (1082u32, "Claw", 133u32, 1000u32),
         (3010, "Claw", 133, 1500),
@@ -1524,11 +1526,11 @@ fn real_pet_spells_carry_the_gcd_pair_and_ex4_reads_column_10() {
             "{name} {id} is an ordinary press"
         );
     }
-    // Bite's own timer is its category's, beside the GCD.
-    let bite = cat.get(17258).expect("Bite");
-    assert_eq!((bite.category, bite.category_recovery_ms), (19, 10_000));
+    // Lash of Pain's own timer is its category's, beside the GCD.
+    let lash = cat.get(7814).expect("Lash of Pain");
+    assert_eq!((lash.category, lash.category_recovery_ms), (73, 12_000));
 
-    // The rows with the bit are Flamestrike and Rain of Fire, the ground-targeted casts.
+    // The rows with the bit include Flamestrike and Rain of Fire, the ground-targeted casts.
     for id in [11829u32, 19474] {
         let d = cat.get(id).expect("a ground-targeted row");
         assert_eq!(d.attributes_ex4, 0x20, "{} {id}", d.name);
@@ -1536,10 +1538,9 @@ fn real_pet_spells_carry_the_gcd_pair_and_ex4_reads_column_10() {
     }
 }
 
-/// `TargetCreatureType` (column 14), read as the bind gate does: bit `type - 1` of the mask.
+/// `TargetCreatureType` (column 17), read as the bind gate does: bit `type - 1` of the mask.
 /// Beast is type 1, Dragonkin 2, Demon 3, Elemental 4, Undead 6, Humanoid 7.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn real_spell_catalog_reads_the_bind_gate_columns() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
@@ -1550,8 +1551,8 @@ fn real_spell_catalog_reads_the_bind_gate_columns() {
         (2637u32, 0x3u32, [1u32, 2], [7u32, 6]),
         // Banish: Demon and Elemental.
         (710, 0xc, [3, 4], [1, 7]),
-        // Turn Undead: Undead alone.
-        (2878, 0x20, [6, 6], [7, 1]),
+        // Shackle Undead: Undead alone.
+        (9484, 0x20, [6, 6], [7, 1]),
         // Mind Control: Humanoid alone, so a player (Humanoid) is a candidate.
         (605, 0x40, [7, 7], [1, 6]),
     ] {

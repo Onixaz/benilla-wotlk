@@ -22,6 +22,8 @@ pub(crate) struct CastFail {
     pub spell_id: u32,
     pub reason: u8,
     pub arg: Option<u32>,
+    /// The second argument word, which only the player's `0x97` and `0x90` arms read.
+    pub arg2: Option<u32>,
     /// Whose refusal this is, which picks the reference's message table ([`Caster`]).
     pub caster: Caster,
     /// A retry after the item template landed (the `0x78`/`0x5c` cache miss). The reference's
@@ -51,6 +53,7 @@ impl CastFail {
             spell_id,
             reason,
             arg: None,
+            arg2: None,
             caster: Caster::Player,
             redisplay: false,
         }
@@ -71,12 +74,14 @@ impl CastErrors {
         self.0.push(CastFail::local(spell_id, reason));
     }
 
-    /// Queue a client-local refusal with an argument word, the crowd-control `0x8d`.
+    /// Queue a client-local refusal with an argument word: the crowd-control `0x8d`, the missing
+    /// tool category `0x9c`.
     pub(crate) fn push_local_arg(&mut self, spell_id: u32, reason: u8, arg: u32) {
         self.0.push(CastFail {
             spell_id,
             reason,
             arg: Some(arg),
+            arg2: None,
             caster: Caster::Player,
             redisplay: false,
         });
@@ -89,6 +94,7 @@ impl CastErrors {
             spell_id,
             reason,
             arg,
+            arg2: None,
             caster: Caster::Pet,
             redisplay: false,
         });
@@ -390,32 +396,72 @@ pub(crate) fn attack_actor_blocked(
     Some(key)
 }
 
-/// The reference's pre-send check `0x6e4000`, run on every cast path before any packet: the first
-/// missing totem (a presence test), then the first short reagent (a count), refuses locally as
-/// `0x78` or `0x5c` and returns `true`. It is the only source of "Requires Mining Pick": vmangos
-/// answers a pickless cast with `ITEM_GONE` (`Spell.cpp:7301`). A missing self store skips the
-/// check, as the reference's active-player gate does.
+/// What the pre-send check's tool leg reads: `TotemCategory.dbc` and the carried items' templates.
+#[derive(Clone, Copy)]
+pub(crate) struct ToolCheck<'a> {
+    pub(crate) categories: &'a benilla_formats::TotemCategoryCatalog,
+    pub(crate) items: &'a crate::items::Items,
+    pub(crate) commands: &'a crate::net::NetCommands,
+}
+
+/// The reference's pre-send check `HaveSpellTokens 0x8091d0`, run on every cast path before any
+/// packet: the first missing totem item (a presence test), then the first `TotemCategory` no
+/// carried tool covers, then the first short reagent (a count), refuses locally as `0x78`,
+/// `0x9c` (naming the category) or `0x5c` and returns `true`. On 12340 the gathering tools are
+/// categories, so the tool leg is the source of "Requires Mining Pick". Without `tools` the
+/// category leg is skipped; a missing self store skips the check, as the reference's
+/// active-player gate does.
 pub(crate) fn reagent_totem_refusal(
     spell_id: u32,
     def: Option<&benilla_formats::SpellDisplay>,
     self_store: Option<&ObjectStore>,
     objects: &crate::net::Objects,
+    tools: Option<ToolCheck>,
     errors: &mut CastErrors,
 ) -> bool {
     let (Some(d), Some(store)) = (def, self_store) else {
         return false;
     };
-    // Totems before reagents, the reference's order.
-    let reason = if first_missing_totem(d, store, objects).is_some() {
-        0x78
-    } else if first_short_reagent(d, store, objects).is_some() {
-        0x5c
-    } else {
-        return false;
-    };
-    debug!("cast {spell_id} refused locally — missing totem/reagent ({reason:#04x})");
-    errors.push_local(spell_id, reason);
-    true
+    if first_missing_totem(d, store, objects).is_some() {
+        debug!("cast {spell_id} refused locally — missing totem (0x78)");
+        errors.push_local(spell_id, 0x78);
+        return true;
+    }
+    if let Some(category) = tools.and_then(|t| first_missing_tool(d, store, objects, t)) {
+        debug!("cast {spell_id} refused locally — missing tool category {category} (0x9c)");
+        errors.push_local_arg(spell_id, 0x9c, category);
+        return true;
+    }
+    if first_short_reagent(d, store, objects).is_some() {
+        debug!("cast {spell_id} refused locally — short reagent (0x5c)");
+        errors.push_local(spell_id, 0x5c);
+        return true;
+    }
+    false
+}
+
+/// The first `TotemCategory` the carried tools do not cover: `0x8091d0`'s failing category.
+fn first_missing_tool(
+    d: &benilla_formats::SpellDisplay,
+    store: &ObjectStore,
+    objects: &crate::net::Objects,
+    tools: ToolCheck,
+) -> Option<u32> {
+    let mut required = d
+        .totem_categories
+        .iter()
+        .copied()
+        .filter(|&c| c != 0)
+        .peekable();
+    required.peek()?;
+    let carried = crate::ui_items::tool_categories(
+        &store.0,
+        objects,
+        tools.items,
+        tools.commands,
+        InventoryScope::CARRIED,
+    );
+    required.find(|&c| !tools.categories.covered_by(c, carried.iter().copied()))
 }
 
 /// The first totem item absent from our bags: `0x6e4000`'s failing slot.
@@ -810,6 +856,61 @@ mod totem_reagent_tests {
         }
     }
 
+    /// `0x8091d0`'s tool leg: against empty bags Mining's category 165 refuses `0x9c` naming it,
+    /// after the totem leg and before the reagents; without the category table the leg is
+    /// skipped.
+    #[test]
+    fn a_missing_tool_category_refuses_with_the_category() {
+        let mut objs = objects();
+        let st = store();
+        let categories =
+            benilla_formats::TotemCategoryCatalog::from_rows([benilla_formats::TotemCategory {
+                id: 165,
+                name: "Mining Pick".into(),
+                category_type: 0x18,
+                mask: 0x8,
+            }]);
+        let items = crate::items::Items::default();
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let commands = crate::net::NetCommands(tx);
+        let tools = ToolCheck {
+            categories: &categories,
+            items: &items,
+            commands: &commands,
+        };
+        let mut reagents = [(0, 0); 8];
+        reagents[0] = (2770, 5);
+        let mining = SpellDisplay {
+            totem_categories: [165, 0],
+            reagents,
+            ..Default::default()
+        };
+        let mut errors = CastErrors::default();
+        assert!(reagent_totem_refusal(
+            2575,
+            Some(&mining),
+            Some(&st),
+            &objs.get(),
+            Some(tools),
+            &mut errors
+        ));
+        assert_eq!(
+            (errors.0[0].reason, errors.0[0].arg),
+            (0x9c, Some(165)),
+            "the tool leg runs before the reagents"
+        );
+        let mut errors = CastErrors::default();
+        assert!(reagent_totem_refusal(
+            2575,
+            Some(&mining),
+            Some(&st),
+            &objs.get(),
+            None,
+            &mut errors
+        ));
+        assert_eq!(errors.0.as_slice(), &[CastFail::local(2575, 0x5c)]);
+    }
+
     /// Against empty bags: a totem spell refuses `0x78`, a reagent spell `0x5c`, totems first; a
     /// spell with neither passes, and no spell or no store skips the check.
     #[test]
@@ -823,6 +924,7 @@ mod totem_reagent_tests {
             Some(&mining),
             Some(&st),
             &objs.get(),
+            None,
             &mut errors
         ));
         assert_eq!(errors.0.as_slice(), &[CastFail::local(2575, 0x78)]);
@@ -836,6 +938,7 @@ mod totem_reagent_tests {
             Some(&slow_fall),
             Some(&st),
             &objs.get(),
+            None,
             &mut errors
         ));
         assert_eq!(errors.0.as_slice(), &[CastFail::local(130, 0x5c)]);
@@ -847,6 +950,7 @@ mod totem_reagent_tests {
             Some(&both),
             Some(&st),
             &objs.get(),
+            None,
             &mut errors
         ));
         assert_eq!(errors.0.as_slice(), &[CastFail::local(1, 0x78)]);
@@ -858,6 +962,7 @@ mod totem_reagent_tests {
             Some(&plain),
             Some(&st),
             &objs.get(),
+            None,
             &mut errors
         ));
         assert!(!reagent_totem_refusal(
@@ -865,6 +970,7 @@ mod totem_reagent_tests {
             None,
             Some(&st),
             &objs.get(),
+            None,
             &mut errors
         ));
         assert!(!reagent_totem_refusal(
@@ -872,6 +978,7 @@ mod totem_reagent_tests {
             Some(&mining),
             None,
             &objs.get(),
+            None,
             &mut errors
         ));
         assert!(errors.0.is_empty());

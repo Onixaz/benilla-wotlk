@@ -16,8 +16,9 @@ pub struct UnitCast {
     pub name: String,
     /// `NameSubtext`, `""` when the spell has none.
     pub rank: String,
-    /// The bar's text: the name, `""` under `AttributesEx3 & 4` (`0x611e81`); a channel's is the
-    /// name only with `AttributesEx` bit 29 (`0x612151`), else `CHANNELING`.
+    /// The bar's text: the name, `""` under `AttributesEx3 & 4` (`0x611e81`); a channel's, as the
+    /// `"player"` token reads it, is the name only with `AttributesEx` bit 29 (`0x612151`), else
+    /// `CHANNELING`; every other token reads the name.
     pub text: String,
     pub texture: Option<String>,
     /// On the `GetTime` clock, in milliseconds (`+0xa78`/`+0xa7c`, `+0xa84`/`+0xa88`).
@@ -77,13 +78,14 @@ impl super::UiScript {
     }
 }
 
-/// The unit a token names, through the shared resolver; `None` for nobody or an unknown token.
-fn unit_of(lua: &Lua, unit: Value, usage: &'static str) -> mlua::Result<Option<u64>> {
+/// The unit a token names, through the shared resolver, and the token; `None` for nobody or an
+/// unknown token.
+fn unit_of(lua: &Lua, unit: Value, usage: &'static str) -> mlua::Result<(Option<u64>, String)> {
     let token = super::binding_abi::string_arg(lua, unit, usage)?;
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data");
-    Ok(model.unit_guids.resolve(&token).ok().flatten())
+    Ok((model.unit_guids.resolve(&token).ok().flatten(), token))
 }
 
 /// The cast's values while it runs: `now` before its end (`0x611e75`), else none.
@@ -117,7 +119,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "UnitCastingInfo",
         lua.create_function(|lua, unit: Value| {
-            let Some(guid) = unit_of(lua, unit, r#"Usage: UnitCastingInfo("unit")"#)? else {
+            let (Some(guid), _) = unit_of(lua, unit, r#"Usage: UnitCastingInfo("unit")"#)? else {
                 return Ok(MultiValue::new());
             };
             let now_ms = super::clock::now(lua) * 1000.0;
@@ -135,11 +137,13 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // UnitChannelInfo("unit") (`0x612090`): name, nameSubtext, text, texture, startTime, endTime,
-    // isTradeSkill, notInterruptible while the unit channels, else nothing.
+    // isTradeSkill, notInterruptible while the unit channels, else nothing. The pushed text is
+    // the `"player"` token's; any other token reads the name.
     g.set(
         "UnitChannelInfo",
         lua.create_function(|lua, unit: Value| {
-            let Some(guid) = unit_of(lua, unit, r#"Usage: UnitChannelInfo("unit")"#)? else {
+            let (Some(guid), token) = unit_of(lua, unit, r#"Usage: UnitChannelInfo("unit")"#)?
+            else {
                 return Ok(MultiValue::new());
             };
             let now_ms = super::clock::now(lua) * 1000.0;
@@ -150,6 +154,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 model.unit_casts.channels.get(&guid).cloned()
             };
             match cast.filter(|c| now_ms < c.end_ms) {
+                Some(c) if !token.eq_ignore_ascii_case("player") => info(
+                    lua,
+                    &UnitCast {
+                        text: c.name.clone(),
+                        ..c
+                    },
+                    false,
+                ),
                 Some(c) => info(lua, &c, false),
                 None => Ok(MultiValue::new()),
             }
@@ -223,6 +235,33 @@ mod tests {
         let mut s = script();
         s.set_unit_cast(MOB, true, Some(heal()));
         assert_eq!(s.arity(r#"UnitChannelInfo("target")"#).unwrap(), 8);
+    }
+
+    /// `0x612090` says `CHANNELING` only to the literal `"player"` token, in any case: the same
+    /// channel read through `"target"` names the spell.
+    #[test]
+    fn only_the_player_token_reads_the_channeling_text() {
+        let mut s = script();
+        s.set_unit_guids(&UnitGuids {
+            player: ME,
+            target: ME,
+            ..Default::default()
+        });
+        s.set_unit_cast(
+            ME,
+            true,
+            Some(UnitCast {
+                text: "Channeling".into(),
+                ..heal()
+            }),
+        );
+        let text = |s: &UiScript, token: &str| {
+            s.eval::<String>(&format!("return (select(3, UnitChannelInfo({token:?})))"))
+                .unwrap()
+        };
+        assert_eq!(text(&s, "player"), "Channeling");
+        assert_eq!(text(&s, "PLAYER"), "Channeling");
+        assert_eq!(text(&s, "target"), "Lesser Heal");
     }
 
     /// One fire per token naming the caster, the token first.
