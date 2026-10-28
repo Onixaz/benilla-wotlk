@@ -1137,38 +1137,13 @@ mod tests {
         );
     }
 
-    /// The stock unit frames over `TargetFrame`, for [`stock_app`].
-    const TARGET_UI: &[&str] = &[
-        "Interface\\FrameXML\\Fonts.xml",
-        "Interface\\FrameXML\\GlobalStrings.lua",
-        "Interface\\FrameXML\\UIParent.xml",
-        "Interface\\FrameXML\\BasicControls.xml",
-        "Interface\\FrameXML\\MoneyFrame.lua",
-        "Interface\\FrameXML\\MoneyFrame.xml",
-        "Interface\\FrameXML\\GameTooltip.xml",
-        "Interface\\FrameXML\\UIDropDownMenu.xml",
-        "Interface\\FrameXML\\TextStatusBar.lua",
-        "Interface\\FrameXML\\TextStatusBar.xml",
-        "Interface\\FrameXML\\BuffFrame.xml",
-        "Interface\\FrameXML\\CombatFeedback.xml",
-        "Interface\\FrameXML\\UnitPopup.xml",
-        "Interface\\FrameXML\\UnitFrame.xml",
-        "Interface\\FrameXML\\PlayerFrame.xml",
-        "Interface\\FrameXML\\PartyFrame.xml",
-        "Interface\\FrameXML\\TargetFrame.xml",
-    ];
-
-    /// [`tabbed_world`] under the stock `ui` files, with the unit feed and both creatures named.
-    fn stock_app(ui: &[&[&str]]) -> App {
-        use benilla_ui::script::UiScript;
-        let mut s = UiScript::new().expect("VM");
-        s.set_screen_size(1024.0, 768.0);
-        for f in crate::ui_script::test_ui::production_order(ui) {
-            crate::ui_script::test_ui::load_ui(&s, f);
-        }
+    /// [`tabbed_world`] under the stock UI, with the unit feed and both creatures named.
+    fn stock_app() -> App {
+        let s = crate::ui_script::test_ui::stock_ui(1024.0, 768.0);
 
         let mut app = App::new();
         seat_tabbed(app.world_mut());
+        seat_a_real_player(app.world_mut());
         let mut names = crate::names::NameCache::default();
         for (entry, name) in [
             (KOBOLD_ENTRY, "Kobold Vermin"),
@@ -1201,6 +1176,34 @@ mod tests {
         app
     }
 
+    /// Our body as a server sends it: a race, whose side `UnitFactionGroup` reads off the faction
+    /// catalog, and rest state 2, Normal; stock `PLAYER_ENTERING_WORLD` handlers read both
+    /// unguarded (`GetRestState` is nil on 0).
+    fn seat_a_real_player(world: &mut World) {
+        let data = benilla_formats::wow_data().expect("the callers gate on the install");
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let catalog = benilla_formats::load_faction_catalog(&mut chain).expect("Faction.dbc");
+        world.insert_resource(crate::target::Factions::from_catalog(catalog));
+        use crate::net::{ObjectStore, SelfPlayer};
+        use benilla_protocol::field::FIELD_UNIT_HEALTH;
+        use benilla_protocol::messages::{ObjectFields, ObjectType};
+        const UNIT_FIELD_BYTES_0: u16 = 36;
+        const PLAYER_BYTES_2: u16 = 194;
+        let me = world
+            .query_filtered::<Entity, With<SelfPlayer>>()
+            .single(world)
+            .expect("our body");
+        world.entity_mut(me).insert(ObjectStore(
+            ObjectFields::from_pairs(&[
+                (OBJECT_FIELD_TYPE, TYPE_PLAYER),
+                (FIELD_UNIT_HEALTH, 100),
+                (UNIT_FIELD_BYTES_0, crate::target::HUMAN_WARRIOR),
+                (PLAYER_BYTES_2, 2 << 24),
+            ])
+            .into_created(ObjectType::Player),
+        ));
+    }
+
     /// The name on the stock `TargetFrame`, empty while it is hidden.
     fn target_frame_name(app: &App) -> String {
         let s = app
@@ -1215,10 +1218,9 @@ mod tests {
     /// window opens, and the unit feed then names the body there (`TargetFrame.lua:63`,
     /// `UnitFrame.lua:25`).
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_stock_target_frame_names_the_looted_body() {
         benilla_formats::wow_data_or_skip!();
-        let mut app = stock_app(&[TARGET_UI]);
+        let mut app = stock_app();
 
         app.update();
         assert_eq!(target_frame_name(&app), "Kobold Vermin", "the Tab target");
@@ -1382,17 +1384,12 @@ mod tests {
     /// `:53-55`), its one release
     /// sent, and `TargetFrame` lets the body go; standing, the window and the target stay.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_stock_loot_frame_closes_on_a_body_looted_on_the_run() {
         use crate::creature_anim::move_flags as f;
         use benilla_ui::script::UiScript;
         benilla_formats::wow_data_or_skip!();
         for (flags, stays) in [(f::FORWARD, false), (0, true)] {
-            let mut app = stock_app(&[
-                crate::ui_script::test_ui::LOOT_UI,
-                TARGET_UI,
-                &["Interface\\FrameXML\\LootFrame.xml"],
-            ]);
+            let mut app = stock_app();
             let (tx, rx) = crossbeam_channel::unbounded();
             app.insert_resource(crate::net::NetCommands(tx));
             seat_drain(
