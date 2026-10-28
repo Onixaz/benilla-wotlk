@@ -158,9 +158,11 @@ fn on_play_spell_visual(
     mut play_seq: ResMut<PlaySeq>,
     mut out: MessageWriter<KitPush>,
 ) {
-    // `SMSG_PLAY_SPELL_IMPACT` plays at stage 1 (`0x8006c0`), the visual's stage 0 (`0x800610`);
-    // both are the same discrete play (`0x5fbf50`), so they share one push. A push that ever
-    // needs to tell them apart takes a stage field.
+    // `SMSG_PLAY_SPELL_IMPACT` plays at stage 1 (`0x8006c0`), the visual's at stage 0 (`0x800610`).
+    // Both are the same discrete play (`0x5fbf50`), so they share one push. The one difference is
+    // stage 0's flag `0x80`, which latches the kit's anim as the unit's special idle
+    // (`PlaySpellVisualKit_PlayAnims`). Nothing here models that latch yet; the push that does
+    // takes a stage field.
     if let SessionEvent::PlaySpellVisual { unit, kit_id }
     | SessionEvent::PlaySpellImpact { unit, kit_id } = ev
     {
