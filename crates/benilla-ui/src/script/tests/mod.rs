@@ -240,7 +240,7 @@ fn a_self_unregistering_listener_does_not_rob_its_successor_on_the_internal_disp
     assert_eq!(s.eval::<String>("return log").unwrap(), "ab");
 }
 
-/// The handler's own failure goes to the host channel only, never re-queued; the batch stops.
+/// The handler's own failure goes to the host channel only, never re-queued.
 #[test]
 fn an_error_handler_that_errors_does_not_recurse() {
     let mut s = crate::script::UiScript::new().unwrap();
@@ -270,6 +270,30 @@ fn an_error_handler_that_errors_does_not_recurse() {
         s.take_errors().is_empty(),
         "nothing recurses: the queue drained and the handler failure did not re-enter it"
     );
+}
+
+/// A handler that raises on one error still receives the next: the reference calls it once per
+/// caught error (`0x703b40`), so one failed call drops nothing after it.
+#[test]
+fn a_raising_handler_still_receives_the_next_error() {
+    let mut s = crate::script::UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    s.run(
+        "SEEN = {}          seterrorhandler(function(msg)              table.insert(SEEN, msg)              if #SEEN == 1 then error('the handler trips once') end          end)          local f = CreateFrame('Frame')          f:RegisterEvent('ERROR_PROBE')          f:SetScript('OnEvent', function(self, event, which) error(which) end)",
+    )
+    .unwrap();
+    s.fire_event(
+        "ERROR_PROBE",
+        vec![crate::script::ScriptValue::Str("first".into())],
+    );
+    s.fire_event(
+        "ERROR_PROBE",
+        vec![crate::script::ScriptValue::Str("second".into())],
+    );
+    s.dispatch_script_errors_to_handler();
+    let seen: Vec<String> = s.eval("return SEEN").unwrap();
+    assert_eq!(seen.len(), 2, "both errors reached the handler: {seen:?}");
+    assert!(seen[1].contains("second"));
 }
 
 /// `debuglocals` (`0x819a60`) answers nothing outside the handler dispatch, and inside it packs

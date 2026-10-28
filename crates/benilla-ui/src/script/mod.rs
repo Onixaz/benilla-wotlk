@@ -1785,8 +1785,9 @@ impl UiScript {
     /// (`0x703b40`) calls the one `seterrorhandler` (`0x702900`) holds, read from its slot and not
     /// through the `geterrorhandler` global; FrameXML installs `_ERRORMESSAGE`, the ScriptErrors
     /// dialog (`BasicControls.xml:16`). With none installed the error stays on the host channel,
-    /// [`UiScript::errors`], alone; a handler that raises is recorded there only and stops the
-    /// batch, so the path cannot recurse. The call is [`stdlib::protected_call`]'s, so a raising
+    /// [`UiScript::errors`], alone; a handler that raises is recorded there only, never re-queued,
+    /// and costs only its own error: the reference calls the handler once per caught error, so
+    /// the next one still reaches it. The call is [`stdlib::protected_call`]'s, so a raising
     /// handler costs no `_G` search. `debuglocals` answers only inside it, as `s_inErrorHandler`
     /// (`0x819730`) gates it.
     pub fn dispatch_script_errors_to_handler(&mut self) {
@@ -1819,7 +1820,6 @@ impl UiScript {
                 self.model_mut()
                     .errors
                     .push(format!("error handler itself failed: {e}"));
-                break;
             }
         }
     }
