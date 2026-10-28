@@ -13,12 +13,15 @@ mod cinematic;
 mod combat;
 mod creature;
 mod death_thud;
+mod dsp;
 mod emitter_pool;
 mod emote;
+pub(crate) mod engine;
 pub(crate) mod footsteps;
 mod gameobject;
 mod glue;
 mod greeting;
+mod hrtf;
 pub(crate) mod interior;
 mod kit;
 mod limiter;
@@ -125,6 +128,9 @@ pub(crate) struct SoundConfig {
     /// `0x623c80` or on the shared `0x623c10` leg, which `$CSD` also enters; which one is
     /// untraced, and benilla gates the received path alone.
     pub emote_sounds: bool,
+    /// `Sound_EnablePetSounds` (default "1"): off, a unit with a pet number makes no aggro, order or
+    /// attack bark and no emote voice (`0x7474b0`, `0x746d60`).
+    pub pet_sounds: bool,
     /// `Sound_ZoneMusicNoDelay` (default "0", `0x4d1808`), the panel's "Loop Music": drops the
     /// `ZoneMusic.dbc` silence interval between plays of one zone's track
     /// ([`zone::next_track_time`], `0x4601f0`). A zone change is immediate either way.
@@ -167,6 +173,7 @@ impl Default for SoundConfig {
             // The reference's registered defaults: "1", "1", "0".
             listener_at_character: true,
             emote_sounds: true,
+            pet_sounds: true,
             zone_music_no_delay: false,
         }
     }
@@ -229,7 +236,7 @@ pub(crate) struct SoundOutput {
     /// The `$WOW_SOUND_PROBE` recorder, here so the kit player can stamp every play.
     pub(crate) probe: Option<probe::Probe>,
     /// Live stream voices, rewritten each frame by their owners ([`zone`], [`glue`],
-    /// [`cinematic`]). They count against [`kit::SOFTWARE_CHANNELS`] like any sound: the
+    /// [`cinematic`]). They count against the voice ceiling like any sound: the
     /// reference's music and ambience occupy FMOD channels too. One field per owner, since a
     /// shared counter with several writers drifts.
     pub(crate) zone_streams: usize,
@@ -241,12 +248,43 @@ pub(crate) struct SoundOutput {
     pub(crate) voices_denied: u64,
     /// Same-kit copies dropped by [`kit::SAME_KIT_MAX`].
     pub(crate) copies_dropped: u64,
+    /// What the engine was initialised with ([`engine`]): the voice ceiling and the software
+    /// HRTF apply from here.
+    pub(crate) engine: engine::EngineSettings,
+    /// The `SoundFilter.dbc` voice chains ([`dsp`]), used while [`engine::EngineSettings::dsp`].
+    pub(crate) voice_filters: dsp::VoiceFilters,
 }
 
 impl SoundOutput {
-    /// Everything the device is mixing, the number [`kit::SOFTWARE_CHANNELS`] bounds.
+    /// Everything the device is mixing, the number [`engine::EngineSettings::voices`] bounds.
     pub(crate) fn live_voices(&self) -> usize {
         self.channels.len() + self.zone_streams + self.glue_streams + self.cinematic_streams
+    }
+}
+
+/// Build the Death Knight voice chains from `SoundFilter.dbc` and `ChrRaces`; a missing table
+/// leaves them empty and every voice dry.
+fn load_voice_filters(
+    mut out: NonSendMut<SoundOutput>,
+    assets: Option<Res<benilla_assets::WorldAssets>>,
+    races: Option<Res<crate::entities::CharCreate>>,
+) {
+    use benilla_assets::LockRecover;
+    let (Some(assets), Some(races)) = (assets, races) else {
+        return;
+    };
+    let loaded = {
+        let mut chain = assets.chain.lock_recover();
+        benilla_formats::load_sound_filter_catalog(&mut chain)
+    };
+    match loaded {
+        Ok(catalog) => {
+            out.voice_filters = dsp::VoiceFilters::build(&catalog, |race| {
+                races.0.race_file(race).map(str::to_string)
+            });
+            info!("sound: {} voice filter chains", catalog.len());
+        }
+        Err(e) => warn!("sound: voice filters failed to load: {e:#}"),
     }
 }
 
@@ -334,6 +372,7 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut sound: ResMut<Sound
         "soundoutputlimiter" => sound.limiter = v != 0.0,
         "sound_listeneratcharacter" => sound.listener_at_character = v != 0.0,
         "sound_enableemotesounds" => sound.emote_sounds = v != 0.0,
+        "sound_enablepetsounds" => sound.pet_sounds = v != 0.0,
         "sound_zonemusicnodelay" => sound.zone_music_no_delay = v != 0.0,
         _ => {}
     }
@@ -354,11 +393,12 @@ impl Plugin for SoundPlugin {
         } else {
             probe::output_dir()
         };
+        let (drivers, settings) = engine::boot_settings();
         let mixer = if let Some(var) = silent {
             info!("${var} set — audio disabled");
             None
         } else {
-            match Mixer::new(probe_dir.as_deref()) {
+            match Mixer::new(probe_dir.as_deref(), drivers.device(settings.driver)) {
                 Ok(m) => Some(m),
                 Err(e) => {
                     warn!("no audio device — running silent: {e:#}");
@@ -383,12 +423,37 @@ impl Plugin for SoundPlugin {
             voices_stolen: 0,
             voices_denied: 0,
             copies_dropped: 0,
+            engine: settings,
+            voice_filters: dsp::VoiceFilters::default(),
         })
+        .insert_resource(drivers)
+        .init_resource::<engine::DeviceChanged>()
+        .add_message::<engine::SoundRestart>()
+        .add_observer(engine::on_driver_index)
         .init_resource::<SoundConfig>()
         .init_resource::<AudioListener>()
         .add_systems(
             Startup,
-            load_materials.after(benilla_assets::AssetSet::Open),
+            (
+                load_materials.after(benilla_assets::AssetSet::Open),
+                engine::write_back_driver.after(crate::cvars::CvarLoad),
+                // `ChrRaces` arrives with the entity tables.
+                load_voice_filters.after(crate::entities::setup_entities),
+            ),
+        )
+        .add_systems(
+            Update,
+            (
+                ui::drain_restart_request,
+                engine::restart_on_lost_device,
+                engine::restart_sound_system,
+                ui::feed_drivers,
+            )
+                .chain()
+                // After the registry drains the panel's `SetCVar`, which the same click makes.
+                .after(crate::ui_script::UiInput)
+                .after(crate::cvars::sync_cvars)
+                .in_set(engine::RestartSet),
         )
         .add_systems(PreUpdate, feed_world_hold)
         .add_systems(

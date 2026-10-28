@@ -85,13 +85,21 @@ pub(super) fn probe_sample_rate() -> Option<u32> {
     device::default_output().ok().map(|d| d.sample_rate)
 }
 
+/// Every output device's name, the list the reference caches behind its own "System Default"
+/// entry (`s_outputDrivers`, `SE2::Init 0x87c710`).
+pub(super) fn device_names() -> Vec<String> {
+    device::output_names()
+}
+
 /// The dials the mixer opens the device with.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct OutputSettings {
     /// The device IO buffer in frames, clamped to the device's range.
     pub device_buffer_frames: u32,
     /// The mix-ahead in ms, the reference's `SoundBufferSize`: the stall the output absorbs.
     pub mix_ahead_ms: u32,
+    /// The chosen device by name; `None` follows the system default.
+    pub device: Option<String>,
 }
 
 impl Default for OutputSettings {
@@ -99,7 +107,16 @@ impl Default for OutputSettings {
         Self {
             device_buffer_frames: DEVICE_BUFFER_FRAMES,
             mix_ahead_ms: MIX_AHEAD_MS,
+            device: None,
         }
+    }
+}
+
+/// The device a choice names: the system default for `None`, else the named one.
+fn chosen(device: Option<&str>) -> Result<Device> {
+    match device {
+        None => device::default_output(),
+        Some(name) => device::output_named(name),
     }
 }
 
@@ -169,6 +186,9 @@ pub(super) enum Event {
     },
     Lost(&'static str),
     OpenFailed(String),
+    /// The chosen device is gone and the output follows the system default, as the reference
+    /// resets `Sound_OutputDriverIndex` to 0 and restarts (`SI2::ValidateOutputDriver 0x4c6560`).
+    FellBack(String),
     /// The stream is gone for good: the ring's consumer never came back, a bug, not a device.
     Dead(String),
 }
@@ -282,20 +302,30 @@ impl Backend for OutputBackend {
     type Settings = OutputSettings;
     type Error = anyhow::Error;
 
-    fn setup(settings: Self::Settings, _internal_buffer_size: usize) -> Result<(Self, u32)> {
-        let device = device::default_output()?;
+    fn setup(mut settings: Self::Settings, _internal_buffer_size: usize) -> Result<(Self, u32)> {
+        let mut pending = Vec::new();
+        let device = match chosen(settings.device.as_deref()) {
+            Ok(device) => device,
+            Err(e) => {
+                let Some(name) = settings.device.take() else {
+                    return Err(e);
+                };
+                pending.push(Event::FellBack(name));
+                device::default_output()?
+            }
+        };
         let shared = Arc::new(Shared::default());
         shared.meters.reset_extrema();
         let sample_rate = device.sample_rate;
         Ok((
             Self {
+                buffer_frames: settings.device_buffer_frames,
                 settings,
                 shared,
                 stage: Stage::Set(device),
                 sample_rate,
-                buffer_frames: settings.device_buffer_frames,
                 render: None,
-                pending: Vec::new(),
+                pending,
                 overloads_seen: 0,
                 stream_errors: 0,
             },
@@ -377,9 +407,16 @@ impl OutputBackend {
                 }
             }
         }
+        // A chosen device no longer listed is given up for the system default.
+        if let (Stage::Idle { .. }, Some(name)) = (&self.stage, self.settings.device.as_deref()) {
+            if !device::output_names().iter().any(|n| n == name) {
+                events.push(Event::FellBack(name.to_string()));
+                self.settings.device = None;
+            }
+        }
         if let Stage::Idle { since, .. } = &self.stage {
             if since.elapsed() >= REOPEN_EVERY {
-                match device::default_output() {
+                match chosen(self.settings.device.as_deref()) {
                     Ok(device) => {
                         if let Some(event) = self.open(device) {
                             events.push(event);
@@ -396,6 +433,25 @@ impl OutputBackend {
             }
         }
         (self.take_window(), events)
+    }
+
+    /// Move the output to `device` (`None` follows the system default) by rebuilding the stream,
+    /// as the reference's restart reopens FMOD (`Script_Sound_GameSystem_RestartSoundSystem
+    /// 0x985d30`); the next [`Self::service`] opens it.
+    pub(super) fn select(&mut self, device: Option<String>) -> Vec<Event> {
+        self.settings.device = device;
+        let mut events = Vec::new();
+        if matches!(self.stage, Stage::Running { .. }) {
+            if let Err(e) = self.close() {
+                self.stage = Stage::Dead;
+                events.push(Event::Dead(format!("{e:#}")));
+                return events;
+            }
+        }
+        if let Stage::Idle { since, .. } = &mut self.stage {
+            *since = Instant::now() - REOPEN_EVERY;
+        }
+        events
     }
 
     /// Open a stream on `device` with the ring consumer held in `Stage::Idle`; on failure the
@@ -437,7 +493,11 @@ impl OutputBackend {
                         self.shared.control.regroup.store(true, Ordering::Release);
                     }
                 }
-                let listeners = Listeners::arm(&device, Arc::clone(&self.shared.notices));
+                let listeners = Listeners::arm(
+                    &device,
+                    Arc::clone(&self.shared.notices),
+                    self.settings.device.is_none(),
+                );
                 self.shared.meters.reset_extrema();
                 DEVICE_OPEN.store(true, Ordering::Release);
                 let event = Event::Opened {
@@ -771,6 +831,59 @@ mod tests {
         assert_eq!(
             window.underruns, 0,
             "the ring ran dry — the render thread is not keeping ahead: {window:?}"
+        );
+    }
+
+    /// Opt-in like [`live_output_opens_and_runs`]: every listed device opens by name and the
+    /// callback runs on it, and a name no host lists falls back to the system default. Renders
+    /// silence only.
+    #[test]
+    fn live_output_moves_to_each_chosen_device() {
+        if std::env::var("WOW_AUDIO_LIVE").is_err() {
+            eprintln!("skipped: set WOW_AUDIO_LIVE=1 to open the real output devices");
+            return;
+        }
+        let names = device_names();
+        eprintln!("devices: {names:?}");
+        let mut manager = kira::AudioManager::<OutputBackend>::new(kira::AudioManagerSettings::<
+            OutputBackend,
+        >::default())
+        .expect("the output backend opened a device");
+        let settle = |manager: &mut kira::AudioManager<OutputBackend>| {
+            let mut events = Vec::new();
+            let mut window = Window::default();
+            for _ in 0..20 {
+                std::thread::sleep(Duration::from_millis(50));
+                let (w, more) = manager.backend_mut().service();
+                window.merge(w);
+                events.extend(more);
+            }
+            (window, events)
+        };
+        settle(&mut manager);
+        for name in &names {
+            manager.backend_mut().select(Some(name.clone()));
+            let (window, events) = settle(&mut manager);
+            eprintln!("{name}: {events:?}, {} cycles", window.cycles);
+            assert!(
+                events
+                    .iter()
+                    .any(|e| matches!(e, Event::Opened { device, .. } if device == name)),
+                "{name} never opened: {events:?}"
+            );
+            assert!(window.cycles > 0, "{name}: the IO callback never ran");
+        }
+        manager
+            .backend_mut()
+            .select(Some("no such output device".into()));
+        let (_, events) = settle(&mut manager);
+        assert!(
+            events.iter().any(|e| matches!(e, Event::FellBack(_))),
+            "{events:?}"
+        );
+        assert!(
+            events.iter().any(|e| matches!(e, Event::Opened { .. })),
+            "{events:?}"
         );
     }
 }

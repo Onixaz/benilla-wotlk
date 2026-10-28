@@ -82,11 +82,34 @@ pub(super) fn default_output() -> Result<Device> {
     describe(device)
 }
 
-fn describe(device: cpal::Device) -> Result<Device> {
-    let name = device
+/// Every output device's name, in the host's order; empty with no host or no device.
+pub(super) fn output_names() -> Vec<String> {
+    let Ok(devices) = cpal::default_host().output_devices() else {
+        return Vec::new();
+    };
+    devices.map(|d| device_name(&d)).collect()
+}
+
+/// The first output device carrying `name`.
+pub(super) fn output_named(name: &str) -> Result<Device> {
+    now_ns();
+    let device = cpal::default_host()
+        .output_devices()
+        .context("listing output devices")?
+        .find(|d| device_name(d) == name)
+        .with_context(|| format!("no output device named {name}"))?;
+    describe(device)
+}
+
+fn device_name(device: &cpal::Device) -> String {
+    device
         .description()
         .map(|d| d.name().to_string())
-        .unwrap_or_else(|_| "unnamed output device".to_string());
+        .unwrap_or_else(|_| "unnamed output device".to_string())
+}
+
+fn describe(device: cpal::Device) -> Result<Device> {
+    let name = device_name(&device);
     // The default config is the one the host guarantees it can open; cpal prefers f32 stereo.
     let config = device
         .default_output_config()
@@ -329,16 +352,18 @@ pub(super) struct Notices {
     pub last_overload_ns: AtomicU64,
 }
 
-/// The device watch: a thread that re-reads the host's default output every [`WATCH_EVERY`] and
-/// raises a notice when it changes. One-shot: the backend answers a notice by rebuilding the
-/// stream, which arms a fresh watch.
+/// The device watch: a thread that re-reads the watched output every [`WATCH_EVERY`] and raises a
+/// notice when it changes. One-shot: the backend answers a notice by rebuilding the stream, which
+/// arms a fresh watch.
 pub(super) struct Listeners {
     stop: Arc<AtomicBool>,
     thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Listeners {
-    pub(super) fn arm(device: &Device, notices: Arc<Notices>) -> Self {
+    /// `follow_default` watches the host's default output; otherwise `device` itself, whose
+    /// absence is a loss.
+    pub(super) fn arm(device: &Device, notices: Arc<Notices>, follow_default: bool) -> Self {
         let stop = Arc::new(AtomicBool::new(false));
         let watching = Arc::clone(&stop);
         let (was_id, was_name, was_rate) =
@@ -351,7 +376,18 @@ impl Listeners {
                     if watching.load(Ordering::Acquire) {
                         return;
                     }
-                    let Some(now) = cpal::default_host().default_output_device() else {
+                    let host = cpal::default_host();
+                    let now = if follow_default {
+                        host.default_output_device()
+                    } else {
+                        host.output_devices().ok().and_then(|mut all| {
+                            all.find(|d| match (&was_id, d.id()) {
+                                (Some(was), Ok(id)) => *was == id,
+                                _ => device_name(d) == was_name,
+                            })
+                        })
+                    };
+                    let Some(now) = now else {
                         notices.device_died.store(true, Ordering::Release);
                         return;
                     };

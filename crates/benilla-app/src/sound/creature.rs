@@ -73,6 +73,11 @@ const fn bark_kit(voice: &benilla_formats::CreatureVoice, state: u8) -> u32 {
     }
 }
 
+/// Whether `Sound_EnablePetSounds` mutes this bark: states 0-2 of a unit with a pet number.
+const fn pet_bark_muted(pet_sounds: bool, pet: bool, state: u8) -> bool {
+    !pet_sounds && pet && state <= BARK_PET_ATTACK
+}
+
 /// The creature bark dispatcher `0x623a40(unit, state)`: 0 the hostile aggro flare, 1 and 2 the
 /// pet's order and attack barks, 4 the death cry. Its order is the reference's:
 ///
@@ -80,8 +85,11 @@ const fn bark_kit(voice: &benilla_formats::CreatureVoice, state: u8) -> u32 {
 /// 2. A server-pushed object sound live on the unit mutes it (`0x623a59` → `0x4591f0`); a direct
 ///    call, so unlike the class route `0x623490`/`0x62f880` players are not exempt.
 /// 3. While `[unit+0xb20]` holds a live bark, a state at or below its own is dropped.
-/// 4. Stop the old bark and latch the new (`0x623a8d`/`0x623a95`), before the column is read.
-/// 5. Resolve the column and play: a zero column still silences step 4's victim (`0x623aee`).
+/// 4. `Sound_EnablePetSounds` off silences a pet's aggro, order and attack barks
+///    (`CGUnit_C::OnAiReaction 0x7474b0`, `UNIT_FIELD_PETNUMBER` nonzero); the death cry is not
+///    gated.
+/// 5. Stop the old bark and latch the new (`0x623a8d`/`0x623a95`), before the column is read.
+/// 6. Resolve the column and play: a zero column still silences step 5's victim (`0x623aee`).
 fn play_bark(
     kits: &mut SoundKits,
     assets: &WorldAssets,
@@ -92,11 +100,16 @@ fn play_bark(
     pos: Vec3,
     voice: &benilla_formats::CreatureVoice,
     state: u8,
+    pet: bool,
+    voice_filter: Option<super::dsp::VoiceFilter>,
 ) {
     if object_sound_playing(out, unit) {
         return;
     }
     if !bark_admitted(unit_voice_state(out, unit), state) {
+        return;
+    }
+    if pet_bark_muted(config.pet_sounds, pet, state) {
         return;
     }
     stop_unit_voice(out, unit);
@@ -116,6 +129,7 @@ fn play_bark(
         PlayExtras {
             source: Some(unit),
             latch: Latch::Voice(state),
+            voice_filter,
             ..default()
         },
     ) {
@@ -165,9 +179,20 @@ fn death_vocals(
             transform.translation,
             voice,
             BARK_DEATH,
+            false,
+            None,
         );
     }
 }
+
+/// What [`ai_reaction_vocals`] reads of the reacting unit.
+type ReactionUnit = (
+    &'static NetEntity,
+    &'static Transform,
+    Option<&'static MountChild>,
+    Option<&'static ObjectStore>,
+    Has<SelfPlayer>,
+);
 
 /// `SMSG_AI_REACTION` vocals, audio only (`0x6056e0` plays no animation). HOSTILE is the aggro
 /// bark (column 10) through [`play_bark`], whose slot drops a repeat while one sounds: vmangos
@@ -180,7 +205,7 @@ fn death_vocals(
 /// a non-player unit. It stores no latch.
 fn ai_reaction_vocals(
     mut reactions: MessageReader<crate::net::AiReactionMessage>,
-    units: Query<(&NetEntity, &Transform, Option<&MountChild>)>,
+    units: Query<ReactionUnit>,
     mounts: Query<&NetEntity, With<MountBody>>,
     voices: Option<Res<CreatureVoices>>,
     kits: Option<ResMut<SoundKits>>,
@@ -197,7 +222,7 @@ fn ai_reaction_vocals(
     };
     let listener = listener.pos;
     for r in reactions.read() {
-        let Ok((net, transform, mount_child)) = units.get(r.unit) else {
+        let Ok((net, transform, mount_child, store, is_you)) = units.get(r.unit) else {
             continue;
         };
         // ALERT reads the mount-preferred row (`0x60c480`: `+0xb44 ?: +0xb40`), so a mounted unit
@@ -215,6 +240,10 @@ fn ai_reaction_vocals(
         };
         // HOSTILE is the bark route `0x623a40(0)`.
         if r.hostile {
+            // Your own bark takes your Death Knight voice (`0x7474b0`, the active mover).
+            let voice_filter = is_you
+                .then(|| super::kit::voice_filter(&out, store))
+                .flatten();
             play_bark(
                 &mut kits,
                 &assets,
@@ -225,6 +254,8 @@ fn ai_reaction_vocals(
                 transform.translation,
                 voice,
                 BARK_AGGRO,
+                store.is_some_and(|s| s.0.unit_pet_number() != 0),
+                voice_filter,
             );
             continue;
         }
@@ -236,7 +267,12 @@ fn ai_reaction_vocals(
         if net.kind != EntityKind::Player && object_sound_playing(&out, r.unit) {
             continue;
         }
-        if let Err(e) = play_kit(
+        // A player alerts through `CGPlayer_C::PlayUnitSound(8)` (`0x7631a0`), which filters a
+        // Death Knight's voice.
+        let voice_filter = (net.kind == EntityKind::Player)
+            .then(|| super::kit::voice_filter(&out, store))
+            .flatten();
+        if let Err(e) = play_kit_ext(
             &mut kits,
             &assets,
             &mut out,
@@ -245,6 +281,10 @@ fn ai_reaction_vocals(
             KitRef::Id(voice.alert),
             Some(transform.translation),
             SoundCategory::Sfx,
+            PlayExtras {
+                voice_filter,
+                ..default()
+            },
         ) {
             warn!("alert vocal (kit {}): {e:#}", voice.alert);
         }
@@ -257,7 +297,7 @@ fn ai_reaction_vocals(
 /// (`Unit.cpp:8960`, `PetHandler.cpp:522`, `PetAI.cpp:335`).
 fn pet_talk_vocals(
     mut talks: MessageReader<crate::net::PetTalkMessage>,
-    units: Query<(&NetEntity, &Transform)>,
+    units: Query<(&NetEntity, &Transform, Option<&ObjectStore>)>,
     voices: Option<Res<CreatureVoices>>,
     kits: Option<ResMut<SoundKits>>,
     assets: Option<Res<WorldAssets>>,
@@ -278,7 +318,7 @@ fn pet_talk_vocals(
             benilla_protocol::messages::PET_TALK_ATTACK => BARK_PET_ATTACK,
             _ => continue,
         };
-        let Ok((net, transform)) = units.get(t.unit) else {
+        let Ok((net, transform, store)) = units.get(t.unit) else {
             continue;
         };
         // `0x6040c0` resolves the guid with the `TYPEMASK_UNIT` test `0x468460(ecx = 8)`, which a
@@ -300,6 +340,8 @@ fn pet_talk_vocals(
             transform.translation,
             voice,
             state,
+            store.is_some_and(|s| s.0.unit_pet_number() != 0),
+            None,
         );
     }
 }
@@ -661,6 +703,18 @@ mod tests {
         let barking = (Some(a), Latch::Voice(BARK_AGGRO));
         assert!(occupies_voice_slot(barking.0, barking.1, a));
         assert!(!occupies_voice_slot(barking.0, barking.1, b));
+    }
+
+    /// `Sound_EnablePetSounds` off mutes a pet's aggro, order and attack barks, never its death cry
+    /// and never a unit without a pet number (`0x7474b0`).
+    #[test]
+    fn pet_sounds_off_mutes_a_pets_barks_but_not_its_death() {
+        for state in [BARK_AGGRO, BARK_PET_ORDER, BARK_PET_ATTACK] {
+            assert!(pet_bark_muted(false, true, state));
+            assert!(!pet_bark_muted(true, true, state));
+            assert!(!pet_bark_muted(false, false, state));
+        }
+        assert!(!pet_bark_muted(false, true, BARK_DEATH));
     }
 
     /// The priority rule at each boundary; refusing an equal state is what collapses a burst.

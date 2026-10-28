@@ -87,8 +87,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("SkillCostsData", "#240 skill training costs"),
     ("SkillTiers", "#240 skill tiers"),
     ("SoundEntriesAdvanced", "#244 sound entry extensions"),
-    ("SoundFilter", "#244 sound filters"),
-    ("SoundFilterElem", "#244 sound filters"),
     ("SpellDifficulty", "#240 per-difficulty spell variants"),
     ("SpellItemEnchantmentCondition", "#202 meta gem conditions"),
     ("SpellMissile", "#110 spell missiles"),

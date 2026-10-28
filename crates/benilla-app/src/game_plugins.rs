@@ -830,7 +830,13 @@ pub(crate) mod schedule_tests {
     /// - `vplates::read_plate_cvars` against the `Cvars` writers `persist_last_character`,
     ///   `drive_game_tip` and `drain_view_requests`: it reads only the two plate rows, which none of
     ///   them writes, and only when the registry moved.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_862;
+    /// - the sound-system restart (`sound::engine::restart_sound_system`) against the `Cvars`
+    ///   writers and readers `persist_last_character`, `blood_spurts`, `drain_view_requests`,
+    ///   `apply_script_calls`, `movement_clears_afk`, `drain_addon_chat_sends`, `drive_glue_mgr` and
+    ///   `read_plate_cvars`: it writes only the two `Sound_OutputDriver*` rows, which none of them
+    ///   touches; and the restart's `.after(UiInput)` drains and the stream owners' stops against
+    ///   `finish_colliders`, as the other such drains pair.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_875;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
@@ -1250,6 +1256,8 @@ pub(crate) mod schedule_tests {
          "`pending` holds only the VM's own `Screenshot()` asks, and the take spawns a capture, publishing nothing"),
         ("screenshot.rs", "report_captures", Because::FilledByVm,
          "the outcome chain starts with the VM's own `Screenshot()` call"),
+        ("sound/ui.rs", "feed_drivers", Because::MemoLatched,
+         "the device list rides a `VmMemo` seed, glue VM included, which a gate would starve; a `SOUND_DEVICE_UPDATE` taken before the interface is up is the reference's own drop, as `SI2::HandleSoundDeviceChange` signals only once `CGGameUI` is initialised"),
         ("tutorial.rs", "drain_tutorials", Because::FilledByVm,
          "`sends` exist only after Lua acknowledged, cleared or reset a flag, and go to the wire"),
         ("ui_action/drain.rs", "drain_go_openers", Because::FilledByVm,

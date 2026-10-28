@@ -763,7 +763,7 @@ impl Plugin for EntitiesPlugin {
 
 /// Build the cube assets and load the display and data catalogs; a failed load leaves its
 /// resource absent, which every reader treats as optional.
-fn setup_entities(
+pub(crate) fn setup_entities(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,

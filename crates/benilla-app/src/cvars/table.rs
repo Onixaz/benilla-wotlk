@@ -252,8 +252,15 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("Sound_EnableSoftwareHRTF", "0"),
     // "1" on a machine with more than one processor.
     same("Sound_EnableDSPEffects", "1"),
+    // Read by `SE2::Init` only under `Sound_EnableMixMode2` (`0x87d8b4` skips
+    // `setSoftwareFormat` at its "0"), so the slider never changes the mix; benilla mixes at the
+    // device's rate.
     same("Sound_OutputQuality", "1"),
+    // The output device, kept by name and resolved to an index at each init
+    // (`crate::sound::engine`). The name default is DirectSound's primary device, which no host
+    // here lists, so it resolves to the system default.
     same("Sound_OutputDriverIndex", "0"),
+    same("Sound_OutputDriverName", "Primary Sound Driver"),
     same("Sound_NumChannels", "32"),
     // The Effects panel's particle density (`CWorldParam::Initialize 0x78e400`, "1.0", flags 1,
     // callback `0x78d860`: refused outside [0.1, 1.0], else the emission scalar); the first-run
@@ -264,6 +271,9 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     same("gxStereoConvergence", "1"),
     same("gxStereoSeparation", "25"),
     same("extShadowQuality", "0"),
+    // Hardware voices need 12 or more from the driver (`SE2::Init` at `0x87d0e0`); a host without
+    // DirectSound 3D hardware reports none and the reference mixes in software, as benilla always
+    // does.
     same("Sound_EnableHardware", "0"),
     same("Sound_MasterVolume", "1.0"),
     same("Sound_SFXVolume", "1.0"),

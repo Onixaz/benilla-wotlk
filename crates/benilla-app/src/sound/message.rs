@@ -92,7 +92,10 @@ fn play_message_sounds(
     };
     // The reference reads the player's sex per play (`0x49676f` → `0x5ed5b0`); none yet means
     // no voice.
-    let sex = self_q.iter().next().and_then(|s| s.0.unit_gender());
+    let me = self_q.iter().next();
+    let sex = me.and_then(|s| s.0.unit_gender());
+    // A Death Knight's error speech takes its voice chain (`SI2::PlayVocalErrorSound 0x986d00`).
+    let filter = kit::voice_filter(&out, me);
     for id in kit_ids {
         if let Err(e) = kit::play_kit(
             &mut kits,
@@ -150,6 +153,7 @@ fn play_message_sounds(
             &mut out,
             &config,
             listener.pos,
+            filter,
         );
     }
 }

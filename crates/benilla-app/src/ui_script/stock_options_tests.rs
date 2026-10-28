@@ -194,6 +194,54 @@ fn an_interface_panel_okay_writes_its_cvar() {
         .unwrap());
 }
 
+/// The Sound panel's device dropdown lists "System Default" and the engine's devices; a pick writes
+/// `Sound_OutputDriverIndex` and restarts the sound system at once, and Cancel puts the old index
+/// back with another restart (`AudioOptionsPanels.lua`, `AudioOptionsFrame_AudioRestart`).
+#[test]
+fn the_sound_panels_device_pick_writes_the_index_and_restarts() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-device");
+    s.set_sound_output_drivers(Some(vec!["Speakers".into(), "Headphones".into()]));
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let _ = s.take_cvar_changes();
+    assert!(!s.take_sound_restart());
+    s.run(
+        "AudioOptionsFrame_Toggle() \
+         ToggleDropDownMenu(1, nil, AudioOptionsSoundPanelHardwareDropDown)",
+    )
+    .unwrap();
+    let rows: (String, String, String) = s
+        .eval(
+            "return DropDownList1Button1:GetText(), DropDownList1Button2:GetText(), \
+             DropDownList1Button3:GetText()",
+        )
+        .unwrap();
+    assert_eq!(
+        rows,
+        (
+            "System Default".to_string(),
+            "Speakers".to_string(),
+            "Headphones".to_string()
+        )
+    );
+    s.run("DropDownList1Button3:Click()").unwrap();
+    assert_eq!(s.cvar("Sound_OutputDriverIndex").as_deref(), Some("2"));
+    assert!(s.take_sound_restart(), "a device pick restarts at once");
+    assert_eq!(
+        s.eval::<String>("return AudioOptionsSoundPanelHardwareDropDownText:GetText()")
+            .unwrap(),
+        "Headphones"
+    );
+    s.run("AudioOptionsFrameCancel:Click()").unwrap();
+    assert_eq!(s.cvar("Sound_OutputDriverIndex").as_deref(), Some("0"));
+    assert!(s.take_sound_restart(), "Cancel restarts on the old device");
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// ESC on a window opened from the menu cancels it (`UIParent.lua`'s `ToggleGameMenu`), and its
 /// `OnHide` hands the screen back to the menu it came from (`OptionsFrame_OnHide`'s `lastFrame`);
 /// the next press closes the menu.
