@@ -588,6 +588,7 @@ pub(crate) struct UnitTokens<'w, 's> {
     hovered: Option<Res<'w, crate::target::Hovered>>,
     hovered_go: Option<Res<'w, crate::target::HoveredObject>>,
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
+    quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
     group: Res<'w, crate::ui_party::GroupState>,
     pub(crate) stores: Query<'w, 's, &'static ObjectStore>,
     me: Query<'w, 's, (Entity, &'static Guid), With<SelfPlayer>>,
@@ -643,10 +644,10 @@ impl UnitTokens<'_, '_> {
             UnitBase::Party(row) => self.party_member(row).and_then(|guid| self.held(guid)),
             // The interaction NPC's guid, `[0xb4e2d0]` (`0x515c00`).
             UnitBase::Npc => self.held(self.interact.as_ref()?.1?),
+            UnitBase::QuestNpc => self.held(self.quest.as_ref()?.quest_npc()?),
             // 12340's bases the app has no unit for yet (#90).
             UnitBase::Vehicle
             | UnitBase::Focus
-            | UnitBase::QuestNpc
             | UnitBase::Boss(_)
             | UnitBase::Arena(_)
             | UnitBase::ArenaPet(_)
@@ -1224,6 +1225,13 @@ pub(crate) fn fire_transitions(
     }
 }
 
+/// The two interaction sources `feed_units` snapshots: the `"npc"` and the `"questnpc"` units.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Interactions<'w> {
+    npc: Option<Res<'w, crate::ui_session::InteractNpc>>,
+    quest: Option<Res<'w, crate::ui_quest::QuestGiver>>,
+}
+
 fn feed_units(
     script: Option<NonSendMut<UiScript>>,
     tables: SnapshotTables,
@@ -1244,7 +1252,7 @@ fn feed_units(
     mut sink: crate::ui_action::MessageSink,
     // `ResMut` because the guild-identity cache is lazy: a miss sends `CMSG_GUILD_QUERY`.
     mut guild: ResMut<crate::ui_guild::GuildState>,
-    interact: Option<Res<crate::ui_session::InteractNpc>>,
+    interact: Interactions,
     // Rested billing minutes, sent only in `SMSG_AUTH_RESPONSE`; the reference keeps a global.
     entered_world: Option<MessageReader<crate::net::EnteredWorldMessage>>,
 ) {
@@ -1274,7 +1282,8 @@ fn feed_units(
     let reps_changed = reputations.is_changed();
     let factions_changed = factions.as_ref().is_some_and(|r| r.is_changed());
     // The interaction NPC moves when nothing else does, and `MERCHANT_SHOW` reads `"npc"`.
-    let interact_changed = interact.as_ref().is_some_and(|r| r.is_changed());
+    let interact_changed = interact.npc.as_ref().is_some_and(|r| r.is_changed())
+        || interact.quest.as_ref().is_some_and(|r| r.is_changed());
     gate::trace(
         "feed_units",
         &[
@@ -1412,6 +1421,7 @@ fn feed_units(
     // `"npc"`: the interaction NPC, the reference's `[0xb4e2d0]` that `CGGameUI::SetInteractNPC`
     // (`0x4930d0`) writes, which `InteractNpc` models. No guild leg, as for `"targettarget"`.
     let npc = interact
+        .npc
         .as_deref()
         .and_then(|i| Some((i.0?, i.1?)))
         .and_then(|(entity, guid)| Some(held.state(stores.all.get(entity).ok()?, guid)));
@@ -1431,6 +1441,34 @@ fn feed_units(
             }
             None => {
                 memo.last.remove("npc");
+            }
+        }
+    }
+
+    // `"questnpc"`: the questgiver window's source (`0x6081b0`), which `QuestFrame_SetPortrait`
+    // titles the window with. A GameObject or item source is held like a unit.
+    let quest_npc = interact
+        .quest
+        .as_deref()
+        .and_then(crate::ui_quest::QuestGiver::quest_npc)
+        .and_then(|guid| {
+            let entity = *index.as_deref()?.0.get(&guid)?;
+            Some(held.state(stores.all.get(entity).ok()?, guid))
+        });
+    let quest_npc_dirty = match (&quest_npc, memo.last.get("questnpc")) {
+        (Some(cur), Some(prev)) => cur != prev,
+        (None, None) => false,
+        _ => true,
+    };
+    if quest_npc_dirty {
+        gate.audit("feed_units", "the questgiver snapshot");
+        script.set_unit("questnpc", quest_npc.clone());
+        match &quest_npc {
+            Some(cur) => {
+                memo.last.insert("questnpc".to_string(), cur.clone());
+            }
+            None => {
+                memo.last.remove("questnpc");
             }
         }
     }

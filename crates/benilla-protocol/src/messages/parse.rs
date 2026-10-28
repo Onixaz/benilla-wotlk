@@ -458,6 +458,7 @@ fn parse_server_body(
         // Wall-clock unix seconds (`QueryHandler.cpp:418-423`), not the game clock above.
         opcode::SMSG_QUERY_TIME_RESPONSE => ServerPacket::QueryTimeResponse {
             unix_time: read_u32_le(&mut r)?,
+            reset_in: read_u32_le(&mut r)?,
         },
         opcode::SMSG_BINDPOINTUPDATE => {
             // vmangos BindpointUpdate::AppendBodyTo (Packets/Misc.cpp): x, y, z, mapId, areaId.

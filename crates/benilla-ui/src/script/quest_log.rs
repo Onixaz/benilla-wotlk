@@ -120,6 +120,16 @@ pub struct QuestLogState {
     pub hidden_quest_ids: Vec<u32>,
 }
 
+/// `IsQuestCompleteAt` (`0x58bcb0`), which the greeting and gossip active rows read: the quest's
+/// visible log row is complete, or holds no objective and has not failed (`HasNoObjectives`
+/// `0x5e10b0`). A quest off the visible rows answers false, as its index lookup misses.
+pub(crate) fn quest_complete_at(log: &QuestLogState, quest_id: u32) -> bool {
+    log.entries
+        .iter()
+        .find(|e| !e.is_header && e.quest_id == quest_id)
+        .is_some_and(|e| e.complete == 1 || (e.complete == 0 && e.objectives.is_empty()))
+}
+
 impl super::UiScript {
     /// Push the quest-log snapshot. A watch holds while any quest row, visible or folded, carries
     /// its id (`CGQuestLog::Update` `0x5e6940`), so a collapse never prunes.
@@ -170,6 +180,11 @@ impl super::UiScript {
     /// the step changes no time the quest has left.
     pub fn set_server_unix_time(&mut self, unix_secs: f64) {
         self.model_ref().server_unix_time.set(Some(unix_secs));
+    }
+
+    /// Push the daily quest reset in server unix seconds, from the same sample.
+    pub fn set_quest_reset_unix(&mut self, unix_secs: f64) {
+        self.model_ref().quest_reset_unix.set(Some(unix_secs));
     }
 }
 
@@ -730,6 +745,36 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     .and_then(|d| d.reward_spell.clone())
             };
             super::quest::reward_spell_returns(lua, spell)
+        })?,
+    )?;
+    // `GetQuestLogSpellLink` (`0x5e4840`): the selection's reward spell.
+    g.set(
+        "GetQuestLogSpellLink",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            super::quest::reward_spell_link(
+                lua,
+                model
+                    .selected_quest_detail()
+                    .and_then(|d| d.reward_spell.as_ref()),
+            )
+        })?,
+    )?;
+    // `GetQuestResetTime` (`0x5e6de0`): whole seconds to the daily reset the last
+    // `SMSG_QUERY_TIME_RESPONSE` placed; 0 before the first.
+    g.set(
+        "GetQuestResetTime",
+        lua.create_function(|lua, ()| {
+            let model = lua
+                .app_data_ref::<crate::script::ModelCell>()
+                .expect("model app_data");
+            Ok(model
+                .quest_reset_unix
+                .get()
+                .zip(model.server_unix_time.get())
+                .map_or(0, |(reset, now)| reset as i64 - now.floor() as i64))
         })?,
     )?;
     g.set(
@@ -1465,5 +1510,18 @@ mod tests {
             s.take_quest_log_pushes().is_empty(),
             "a header is not a quest"
         );
+    }
+
+    /// `GetQuestResetTime` (`0x5e6de0`): whole seconds from the server clock to the reset the
+    /// last `SMSG_QUERY_TIME_RESPONSE` placed, 0 before either is known.
+    #[test]
+    fn quest_reset_time_counts_down_on_the_server_clock() {
+        let mut s = UiScript::new().unwrap();
+        assert_eq!(s.eval::<i64>("return GetQuestResetTime()").unwrap(), 0);
+        s.set_server_unix_time(1_000_000.0);
+        s.set_quest_reset_unix(1_003_600.0);
+        assert_eq!(s.eval::<i64>("return GetQuestResetTime()").unwrap(), 3600);
+        s.set_server_unix_time(1_000_100.5);
+        assert_eq!(s.eval::<i64>("return GetQuestResetTime()").unwrap(), 3500);
     }
 }

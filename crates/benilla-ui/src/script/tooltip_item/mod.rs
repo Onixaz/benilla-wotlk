@@ -79,9 +79,15 @@ fn compare_against_worn(
     Ok(Value::Integer(1))
 }
 
-/// The cached template; a miss records the ask and the running setter's wait.
+/// The cached template; a miss records the ask and the running setter's wait. The running setter's
+/// tooltip records the item either way, as `GetItem` reads it.
 fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
     let mut model = crate::script::model_mut_of(lua);
+    if let Some(h) = model.item_render.as_ref().map(wait::ItemRender::tooltip) {
+        if let Ok(t) = super::tooltip::tip_mut(&mut model, h) {
+            t.item_id = item_id;
+        }
+    }
     let v = model.item_templates.get(&item_id).cloned();
     if v.is_none() && item_id != 0 {
         model.item_stat_asks.insert(item_id);
@@ -275,8 +281,154 @@ fn equip_slots_for(inventory_type: u32) -> &'static [u32] {
     }
 }
 
+/// `SetCompareItem` (`0x631850`): the worn item a shopping tooltip shows beside `offered`, as a
+/// `GetInventorySlotInfo` id. A one-hander or two-hander against two worn weapons answers the off
+/// hand first; any other item walks its slots, `offset` counting the worn candidates.
+fn compare_slot(
+    model: &crate::script::Model,
+    offered: &ItemTemplateView,
+    offset: i64,
+) -> Option<u32> {
+    const MAIN_HAND: u32 = 16;
+    const OFF_HAND: u32 = 17;
+    let slots = equip_slots_for(offered.inventory_type);
+    let worn = |slot: u32| {
+        model
+            .inv_slot("player", slot as usize)
+            .filter(|s| s.item_id != 0)
+            .map(|s| s.item_id)
+    };
+    let (main, off) = (slots.contains(&MAIN_HAND), slots.contains(&OFF_HAND));
+    if !main && !off {
+        let offset = usize::try_from(offset).ok()?;
+        return slots
+            .iter()
+            .copied()
+            .filter(|&s| worn(s).is_some())
+            .nth(offset);
+    }
+    if (main && off) || offered.inventory_type == 17 {
+        return match (worn(MAIN_HAND), worn(OFF_HAND)) {
+            (Some(_), Some(_)) => Some(if offset != 0 { MAIN_HAND } else { OFF_HAND }),
+            _ if offset != 0 => None,
+            (Some(_), None) => Some(MAIN_HAND),
+            (None, Some(_)) => Some(OFF_HAND),
+            (None, None) => None,
+        };
+    }
+    if offset != 0 {
+        return None;
+    }
+    if main {
+        return worn(MAIN_HAND).map(|_| MAIN_HAND);
+    }
+    // An off-hand item against an empty off hand meets a worn two-hander.
+    worn(OFF_HAND).map(|_| OFF_HAND).or_else(|| {
+        worn(MAIN_HAND)
+            .filter(|id| {
+                model
+                    .item_templates
+                    .get(id)
+                    .is_some_and(|t| t.inventory_type == 17)
+            })
+            .map(|_| MAIN_HAND)
+    })
+}
+
 /// Register the item content channels into the GameTooltip kind method table.
 pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
+    // GameTooltip:GetItem() (`0x61ef10`): the shown item's name and link, nothing without one. A
+    // template in flight answers an empty name.
+    m.set(
+        "GetItem",
+        lua.create_function(|lua, this: Table| {
+            let h = frame_handle_of(lua, &this)?;
+            let shown = {
+                let mut model = crate::script::model_mut_of(lua);
+                let id = super::tooltip::tip_mut(&mut model, h).map_or(0, |t| t.item_id);
+                (id != 0).then(|| {
+                    let v = model.item_templates.get(&id);
+                    (
+                        id,
+                        v.map_or_else(String::new, |v| v.name.clone()),
+                        v.map_or(1, |v| v.quality),
+                    )
+                })
+            };
+            let Some((id, name, quality)) = shown else {
+                return Ok(MultiValue::new());
+            };
+            let link = super::item_stats::item_link(id, &name, quality);
+            Ok(MultiValue::from_vec(vec![
+                Value::String(lua.create_string(&name)?),
+                Value::String(lua.create_string(&link)?),
+            ]))
+        })?,
+    )?;
+
+    // GameTooltip:SetHyperlinkCompareItem("hyperlink" [, offset, shiftButton, mainTooltip])
+    // (`0x631b60`): the worn item the link's item is compared against, under "Currently
+    // Equipped"; the number 1, or nil with the tooltip untouched. Not built: offset 3's heirloom
+    // arm (a scaling item at an open vendor shows itself) and the main tooltip's stat delta.
+    m.set(
+        "SetHyperlinkCompareItem",
+        lua.create_function(|lua, (this, link, offset): (Table, Value, Value)| {
+            let h = frame_handle_of(lua, &this)?;
+            let Some(link) = lua.coerce_string(link)? else {
+                let name = {
+                    let model = lua
+                        .app_data_ref::<crate::script::ModelCell>()
+                        .expect("model app_data");
+                    model
+                        .arena
+                        .frame(h)
+                        .and_then(|f| f.name.clone())
+                        .unwrap_or_else(|| "<unnamed>".into())
+                };
+                return Err(mlua::Error::runtime(format!(
+                    "Usage: {name}:SetHyperlinkCompareItem(\"hyperlink\" [, offset, shiftButton])"
+                )));
+            };
+            let has_player = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                model.unit("player").is_some_and(|u| u.exists)
+            };
+            let Some((item_id, _, _)) = hyperlink_item_fields(&link.to_string_lossy()) else {
+                return Ok(Value::Nil);
+            };
+            if !has_player {
+                return Ok(Value::Nil);
+            }
+            let offset = lua.coerce_number(offset)?.map_or(0, |n| n as i64 - 1);
+            if offset == 2 {
+                return Ok(Value::Nil);
+            }
+            let Some(offered) = view_of(lua, item_id) else {
+                return Ok(Value::Nil);
+            };
+            let slot = {
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                compare_slot(&model, &offered, offset)
+            };
+            let Some(slot) = slot else {
+                return Ok(Value::Nil);
+            };
+            {
+                let mut model = crate::script::model_mut_of(lua);
+                if let Ok(t) = super::tooltip::tip_mut(&mut model, h) {
+                    t.equipped_header_armed = true;
+                }
+            }
+            this.get::<mlua::Function>("SetInventoryItem")?
+                .call::<MultiValue>((this.clone(), "player", slot))?;
+            Ok(Value::Integer(1))
+        })?,
+    )?;
+
     // GameTooltip:SetQuestItem(type, index) / SetQuestLogItem(type, index) (`0x533610`,
     // `0x533760`; `QuestFrameTemplates.xml:148`, `QuestLogFrame.xml:113`), no returns. `type` is
     // `GetQuestItemInfo`'s; an unknown type or index leaves the tooltip empty, as in the reference.

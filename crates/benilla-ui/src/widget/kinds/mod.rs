@@ -278,6 +278,9 @@ pub struct TooltipState {
     /// `AddTexture`'s slots in use (`+0x324`), each the 0-based line it sits on (`+0x2fc`); slot
     /// `i` is the template's `$parentTexture<i+1>`.
     pub texture_lines: Vec<usize>,
+    /// The item shown, which every item setter records, its template held or in flight, and
+    /// `GetItem` (`0x61ef10`) reads; 0 for none.
+    pub item_id: u32,
 }
 
 /// `AddTexture`'s slot count, the template's `$parentTexture1..10` (`0x61c8bd`, `cmp 0xa`).

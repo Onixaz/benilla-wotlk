@@ -83,8 +83,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         Ok(measured_wh(lua, &this)?.1)
     })?;
 
-    // GetLeft/GetRight/GetTop/GetBottom: the resolved edges in the owner's units (y up, screen
-    // over the owner's effective scale, which a region shares); nil for a region never resolved.
+    // GetLeft/GetRight/GetTop/GetBottom: the edges in the owner's units (y up, screen over the
+    // owner's effective scale, which a region shares), resolved first if anything moved, as a
+    // frame's are; nil for a region never resolved. `QuestLogTitleButton_Resize` reads a title's
+    // right edge straight after `SetWidth(0)` and `SetText` (`QuestLogFrame.lua:183-224`).
     for (name, pick) in [
         ("GetLeft", 0u8),
         ("GetRight", 1u8),
@@ -93,6 +95,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     ] {
         set_shared(lua, m, Side::Region, name, move |lua, this: Table| {
             let rh = region_handle_of(lua, &this)?;
+            crate::script::object::layout_methods::settle(lua);
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model");
@@ -187,10 +190,11 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         frame_wrapper(lua, owner)
     })?;
 
-    // GetCenter: the resolved rect's midpoint in the owner's units, as the edge readers answer, or
-    // two nils before the first resolve.
+    // GetCenter: the rect's midpoint in the owner's units, as the edge readers answer, or two nils
+    // before the first resolve.
     set_shared(lua, m, Side::Region, "GetCenter", |lua, this: Table| {
         let rh = region_handle_of(lua, &this)?;
+        crate::script::object::layout_methods::settle(lua);
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
             .expect("model");
@@ -233,7 +237,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 model
                     .region_data
                     .get(&rh)
-                    .and_then(|d| d.anchors.get(idx))
+                    .and_then(|d| crate::script::object::nth_point(&d.anchors, idx, |a| a.point))
                     .cloned()
             };
             let Some(a) = anchor else {

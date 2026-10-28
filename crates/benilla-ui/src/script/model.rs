@@ -709,8 +709,6 @@ pub(crate) struct Model {
     pub(crate) gossip_close: bool,
     /// The open menu's greeting query is out: selects do nothing.
     pub(crate) gossip_pending: bool,
-    /// Quest ids whose log slot is complete, for `GetGossipActiveQuests`.
-    pub(crate) gossip_complete_quests: Vec<u32>,
     /// `SelectGossipQuest` 1-based rows, each sent as `CMSG_QUESTGIVER_QUERY_QUEST` for its quest.
     pub(crate) gossip_quest_selects: Vec<u32>,
 
@@ -921,6 +919,8 @@ pub(crate) struct Model {
     /// deadline is a stamp in it, and `GetQuestTimers` subtracts per call, as the reference does.
     /// A `Cell`: pushed every frame, read by the quest timer verbs alone (`ModelCell`).
     pub(crate) server_unix_time: std::cell::Cell<Option<f64>>,
+    /// The daily quest reset in server unix seconds (`CGQuestLog::SetServerTime` `0x5dff40`).
+    pub(crate) quest_reset_unix: std::cell::Cell<Option<f64>>,
     /// `GetMoney()` in copper, from `PLAYER_FIELD_COINAGE`.
     pub(crate) money: u64,
 
@@ -1464,7 +1464,6 @@ impl Model {
             gossip_selects: Vec::new(),
             gossip_close: false,
             gossip_pending: false,
-            gossip_complete_quests: Vec::new(),
             gossip_quest_selects: Vec::new(),
             merchant: None,
             repair_all_cost: 0,
@@ -1581,6 +1580,7 @@ impl Model {
             quest_watch: Default::default(),
             anims: Default::default(),
             server_unix_time: std::cell::Cell::new(None),
+            quest_reset_unix: std::cell::Cell::new(None),
             worldmap: super::worldmap::WorldMapState::default(),
             nameplates: super::nameplate::NamePlates::default(),
             worldstate: super::worldstate::WorldStateUiState::default(),

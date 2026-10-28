@@ -211,6 +211,14 @@ pub(crate) fn point_from_str(s: &str) -> Option<Point> {
 }
 
 /// The inverse of [`point_from_str`]: the names of the client's point table `0x811a38`.
+/// `GetPoint(n)`'s anchor: the `n`th set point in `FRAMEPOINT` order, `TOPLEFT` first, not in the
+/// order the points were set (`GetPoint` `0x49d950` walks the region's point slots).
+pub(crate) fn nth_point<A>(anchors: &[A], n: usize, point: impl Fn(&A) -> Point) -> Option<&A> {
+    let mut by_point: Vec<&A> = anchors.iter().collect();
+    by_point.sort_by_key(|a| point(a).id());
+    by_point.get(n).copied()
+}
+
 pub(crate) fn point_name(p: Point) -> &'static str {
     match p {
         Point::TopLeft => "TOPLEFT",

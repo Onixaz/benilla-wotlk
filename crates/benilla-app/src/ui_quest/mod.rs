@@ -77,6 +77,15 @@ impl QuestGiver {
         self.view.is_some()
     }
 
+    /// The `"questnpc"` unit (`0x6081b0`): the panel's inform guid, a detail panel's sharer, when
+    /// set, else its source; nobody with the window closed.
+    pub(crate) fn quest_npc(&self) -> Option<u64> {
+        match self.view.as_ref()? {
+            QuestView::Detail(d) if d.sharer != 0 => Some(d.sharer),
+            _ => self.npc,
+        }
+    }
+
     /// The one-shot turn-in fanfare, which the reference plays from the packet, not from Lua.
     pub(crate) fn take_completed_fanfare(&mut self) -> bool {
         std::mem::take(&mut self.completed_fanfare)
@@ -218,9 +227,12 @@ impl Plugin for UiQuestPlugin {
                 (
                     // Range-close before the feed so the close fires the same frame; the feed
                     // before the input pass and the drain after it, so a click goes out the same
-                    // frame.
-                    close_npc_session_out_of_range::<QuestGiver>.before(feed_quest),
-                    feed_quest.in_set(UiFeed),
+                    // frame. The unit feed reads the giver for `"questnpc"` between the two, so
+                    // the panel event's `QuestFrame_SetPortrait` names this frame's giver.
+                    close_npc_session_out_of_range::<QuestGiver>
+                        .before(crate::ui_unit::UnitFeed)
+                        .before(feed_quest),
+                    feed_quest.after(crate::ui_unit::UnitFeed).in_set(UiFeed),
                     drain_quest.after(UiInput),
                     read_trivial_tracking.after(UiInput),
                 ),
@@ -323,9 +335,11 @@ fn resolve_items(
 }
 
 /// The quest's reward spell from `rewSpell`, named through `Spell.dbc`; 0 is none, and an id the
-/// catalog lacks still counts, with nothing to paint.
+/// catalog lacks still counts, with nothing to paint. `cast` is `rewSpellCast`, the spell cast at
+/// turn-in.
 pub(crate) fn reward_spell_view(
     spell_id: u32,
+    cast: i32,
     spells: Option<&Spells>,
 ) -> Option<QuestRewardSpell> {
     if spell_id == 0 {
@@ -338,6 +352,11 @@ pub(crate) fn reward_spell_view(
         texture: d.and_then(|d| d.icon.clone()),
         // `isTradeskillSpell`: `Spell.dbc` col 6 `Attributes` bit `0x20` (`0x501e59`).
         tradeskill: d.is_some_and(|d| d.attributes & 0x20 != 0),
+        // `isSpellLearned`: the cast spell has a learn-spell (36) or learn-pet-spell (57) effect.
+        learned: u32::try_from(cast)
+            .ok()
+            .and_then(|c| spells?.catalog.get(c))
+            .is_some_and(|c| c.effects.iter().any(|&e| e == 36 || e == 57)),
     })
 }
 
@@ -352,24 +371,24 @@ fn snapshot(
     // The wire sends quest text unexpanded; the client substitutes `$N`, `$B` and `$G`.
     let sub = |t: &str| crate::npc_text::substitute(t, macros);
     Some(match giver.view.as_ref()? {
-        QuestView::Greeting(l) => {
-            let mut active_titles = Vec::new();
-            let mut available_titles = Vec::new();
-            for q in &l.quests {
-                if row_is_active(q.icon) {
-                    active_titles.push(q.title.clone());
-                } else {
-                    available_titles.push(q.title.clone());
-                }
-            }
-            QuestState {
-                panel: QuestPanel::Greeting,
-                greeting: sub(&l.greeting),
-                active_titles,
-                available_titles,
-                ..Default::default()
-            }
-        }
+        QuestView::Greeting(l) => QuestState {
+            panel: QuestPanel::Greeting,
+            greeting: sub(&l.greeting),
+            greeting_quests: l
+                .quests
+                .iter()
+                .map(|q| benilla_ui::script::GossipQuestRow {
+                    quest_id: q.quest_id,
+                    title: q.title.clone(),
+                    // The wire's level is a signed word: -1 scales to the player.
+                    level: q.level as i32,
+                    active: row_is_active(q.icon),
+                    daily: q.flags & quest_flags::DAILY != 0,
+                    repeatable: q.repeatable,
+                })
+                .collect(),
+            ..Default::default()
+        },
         QuestView::Detail(d) => QuestState {
             panel: QuestPanel::Detail,
             title: sub(&d.title),
@@ -378,7 +397,7 @@ fn snapshot(
             choices: resolve_items(&d.choices, items, icons, commands),
             rewards: resolve_items(&d.rewards, items, icons, commands),
             reward_money: d.extra.money.max(0) as u32,
-            reward_spell: reward_spell_view(d.extra.spell, spells),
+            reward_spell: reward_spell_view(d.extra.spell, d.extra.spell_cast, spells),
             ..Default::default()
         },
         QuestView::Progress(p) => QuestState {
@@ -397,7 +416,7 @@ fn snapshot(
             choices: resolve_items(&o.choices, items, icons, commands),
             rewards: resolve_items(&o.rewards, items, icons, commands),
             reward_money: o.extra.money.max(0) as u32,
-            reward_spell: reward_spell_view(o.extra.spell, spells),
+            reward_spell: reward_spell_view(o.extra.spell, o.extra.spell_cast, spells),
             ..Default::default()
         },
     })

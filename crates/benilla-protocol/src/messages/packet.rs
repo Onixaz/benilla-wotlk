@@ -193,9 +193,11 @@ pub enum ServerPacket {
         packed: u32,
         zone: i32,
     },
-    /// `SMSG_QUERY_TIME_RESPONSE`: wall-clock unix seconds, the base of absolute descriptor stamps.
+    /// `SMSG_QUERY_TIME_RESPONSE` (`0x5e08a0`): wall-clock unix seconds, the base of absolute
+    /// descriptor stamps, then the seconds to the daily quest reset.
     QueryTimeResponse {
         unix_time: u32,
+        reset_in: u32,
     },
     /// `SMSG_BINDPOINTUPDATE` (login, re-bind): the hearth point and the AreaTable id `$z` names.
     BindPoint {

@@ -791,3 +791,74 @@ fn item_bindings_return_the_pushed_repair_cost() {
     .unwrap();
     assert!(s.take_errors().is_empty());
 }
+
+/// `GetItem` (`0x61ef10`) answers the item a setter showed and nothing on a bare tooltip;
+/// `SetHyperlinkCompareItem` (`0x631b60`) shows the worn item its offset names under
+/// "Currently Equipped", and nil past the worn candidates or at offset 3.
+#[test]
+fn get_item_reads_the_shown_item_and_the_hyperlink_compare_walks_the_worn_slots() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.set_unit(
+        "player",
+        Some(UnitState {
+            exists: true,
+            ..Default::default()
+        }),
+    );
+    let mut inv: InventorySlots = Default::default();
+    for (slot, id, name) in [(11, 7000, "Old Loop"), (12, 7001, "Older Loop")] {
+        inv[slot] = Some(InvSlotView {
+            item_id: id,
+            name: Some(name.into()),
+            quality: 1,
+            ..Default::default()
+        });
+    }
+    s.set_inventory_slots(inv);
+    for (id, name, quality) in [
+        (7000, "Old Loop", 4),
+        (7001, "Older Loop", 1),
+        (7002, "New Loop", 2),
+    ] {
+        s.set_item_template(
+            id,
+            ItemTemplateView {
+                name: name.into(),
+                quality,
+                inventory_type: 11,
+                ..Default::default()
+            },
+        );
+    }
+    s.run(
+        r##"
+        local a = CreateFrame("Button", "Slot"); a:SetPoint("LEFT", 0, 0); a:SetWidth(10); a:SetHeight(10)
+        CreateFrame("GameTooltip", "TT")
+        CreateFrame("GameTooltip", "Shop")
+        assert(select("#", TT:GetItem()) == 0, "a bare tooltip answers nothing")
+        local link = "|cff1eff00|Hitem:7002:0:0:0|h[New Loop]|h|r"
+        TT:SetOwner(Slot, "ANCHOR_RIGHT")
+        TT:SetHyperlink(link)
+        local name, shown = TT:GetItem()
+        assert(name == "New Loop", tostring(name))
+        assert(shown:find("item:7002"), shown)
+
+        Shop:SetOwner(Slot, "ANCHOR_RIGHT")
+        assert(Shop:SetHyperlinkCompareItem(link, 1) == 1, "the first worn ring")
+        assert(ShopTextLeft1:GetText() == "[CURRENTLY_EQUIPPED]")
+        assert(ShopTextLeft2:GetText() == "Old Loop")
+        assert(select(1, Shop:GetItem()) == "Old Loop", "the compare shows the worn item")
+        assert(Shop:SetHyperlinkCompareItem(link, 2) == 1, "the second worn ring")
+        assert(ShopTextLeft2:GetText() == "Older Loop")
+        assert(Shop:SetHyperlinkCompareItem(link, 3) == nil, "offset 3 is the heirloom arm")
+        assert(Shop:SetHyperlinkCompareItem(link, 4) == nil, "past the worn rings")
+        assert(Shop:SetHyperlinkCompareItem("|Hitem:9999|h[Gone]|h", 1) == nil, "an uncached item")
+        assert(not pcall(Shop.SetHyperlinkCompareItem, Shop, nil), "a non-string link raises")
+        TT:ClearLines()
+        assert(select("#", TT:GetItem()) == 0, "a clear drops the item")
+    "##,
+    )
+    .unwrap();
+    assert!(s.take_errors().is_empty());
+}

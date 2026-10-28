@@ -57,21 +57,6 @@ pub(super) fn redress_if_dressup(lua: &Lua, this: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `trunc(tonumber(arg))`, the reference's `__ftol` (`0x40a2b0`) over `lua_tonumber`; anything
-/// else is 0.
-fn item_arg(v: &Value) -> i64 {
-    match v {
-        Value::Integer(i) => *i,
-        Value::Number(n) => n.trunc() as i64,
-        Value::String(s) => s
-            .to_str()
-            .ok()
-            .and_then(|t| t.trim().parse::<f64>().ok())
-            .map_or(0, |n| n.trunc() as i64),
-        _ => 0,
-    }
-}
-
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
@@ -95,16 +80,43 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x504d90` calls `0x504540(itemId)`; item 0 (a non-number or a link) previews nothing, and
-    // so does a negative id here.
+    // TryOn(itemID | "link") (`0x598830`): a number is the item id, an `item:` link its id, as
+    // `DressUpItemLink` passes; anything else answers ERR_NOT_EQUIPPABLE. Not built: an
+    // `enchant:` recipe link's product and a bag item named in full. A negative id previews
+    // nothing.
     m.set(
         "TryOn",
         lua.create_function(|lua, (this, item): (Table, Value)| {
             frame_handle_of(lua, &this)?;
-            if let Ok(id) = u32::try_from(item_arg(&item)) {
-                if id != 0 {
-                    queue(lua, DressUpIntent::TryOn(id));
+            // `lua_isnumber` first, so a digit string is an id; then a link's `item:` id.
+            let id = match lua.coerce_number(item.clone())? {
+                Some(n) => Some(n.trunc() as i64),
+                None => match &item {
+                    Value::String(s) => {
+                        let s = s.to_string_lossy();
+                        s.find("item:").map(|at| {
+                            s[at + 5..]
+                                .chars()
+                                .take_while(char::is_ascii_digit)
+                                .collect::<String>()
+                                .parse::<i64>()
+                                .unwrap_or(0)
+                        })
+                    }
+                    _ => None,
+                },
+            };
+            match id {
+                Some(id) => {
+                    if let Ok(id) = u32::try_from(id) {
+                        if id != 0 {
+                            queue(lua, DressUpIntent::TryOn(id));
+                        }
+                    }
                 }
+                None => crate::script::model_mut_of(lua)
+                    .ui_errors
+                    .push("ERR_NOT_EQUIPPABLE"),
             }
             Ok(())
         })?,
@@ -168,7 +180,8 @@ mod tests {
         }
     }
 
-    /// The stock `DressUpItemLink` passes the link's digits: a digit string is an id, a link is 0.
+    /// Stock `DressUpItemLink` passes the link itself: a digit string is an id, a link its item's,
+    /// and nothing it can read answers ERR_NOT_EQUIPPABLE (`0x598830`).
     #[test]
     fn the_verbs_queue_intents_in_order_and_try_on_reads_its_argument_like_the_client() {
         let mut s = room();
@@ -196,7 +209,13 @@ mod tests {
                 DressUpIntent::Undress,
                 DressUpIntent::Dress,
                 DressUpIntent::Dress,
+                DressUpIntent::TryOn(117),
             ]
+        );
+        assert_eq!(
+            s.take_ui_errors(),
+            vec!["ERR_NOT_EQUIPPABLE"],
+            "the nil argument"
         );
         // The same two PlayerModel verbs on a paper-doll pane queue nothing.
         s.run(r#"pm = CreateFrame("PlayerModel", "PMOnly", UIParent) pm:SetUnit("player") pm:RefreshUnit()"#)
@@ -205,5 +224,36 @@ mod tests {
         // Its yaw is its own facing, read by name like every other pane's.
         s.run("DM:SetRotation(0.61)").unwrap();
         assert!((s.model_pane_facing("DM") - 0.61).abs() < 1e-6);
+    }
+
+    /// `IsDressableItem` (`0x517530`): a cached template with an InventoryType, or a recipe whose
+    /// product is one, by id, link or cached name; nil otherwise.
+    #[test]
+    fn is_dressable_item_reads_the_template_or_the_recipe_product() {
+        let mut s = room();
+        let template = |inventory_type, recipe_creates| crate::script::ItemTemplateView {
+            inventory_type,
+            recipe_creates,
+            ..Default::default()
+        };
+        s.set_item_template(
+            7000,
+            crate::script::ItemTemplateView {
+                name: "Old Loop".into(),
+                ..template(11, 0)
+            },
+        );
+        s.set_item_template(7001, template(0, 7000));
+        s.set_item_template(7002, template(0, 9999));
+        s.set_item_template(7003, template(0, 0));
+        assert!(s
+            .eval::<bool>(
+                r#"return IsDressableItem(7000) == 1 and IsDressableItem(7001) == 1
+                    and IsDressableItem(7002) == nil and IsDressableItem(7003) == nil
+                    and IsDressableItem(9999) == nil
+                    and IsDressableItem("|cffa335ee|Hitem:7000:0:0:0|h[Old Loop]|h|r") == 1
+                    and IsDressableItem("Old Loop") == 1 and IsDressableItem("Nobody") == nil"#
+            )
+            .unwrap());
     }
 }
