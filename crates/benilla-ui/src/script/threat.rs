@@ -59,9 +59,9 @@ pub(crate) fn calculate(model: &Model, mob: u64, guid: u64) -> Calculated {
             percent: if guid == list.highest {
                 100.0
             } else if row.in_melee {
-                f32::from(row.percent) * 0.909_090_88
+                f32::from(row.percent) * 0.909_090_9
             } else {
-                f32::from(row.percent) * 0.769_230_78
+                f32::from(row.percent) * 0.769_230_8
             },
             threat: row.threat,
         },
