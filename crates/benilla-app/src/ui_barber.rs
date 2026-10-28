@@ -46,6 +46,8 @@ pub(crate) struct BarberShop {
     lines: Vec<&'static str>,
     stand: Option<u8>,
     display: Option<i32>,
+    /// A close from `CancelBarberShop()` owes the stand-up, which [`watch_close`] sends.
+    stand_up: bool,
 }
 
 impl BarberShop {
@@ -239,7 +241,6 @@ fn drain_barber(
     commands: Res<NetCommands>,
     mut view: MessageWriter<BarberView>,
     mut zoom: ResMut<ZoomLimit>,
-    mut stand: MessageWriter<StandStateRequest>,
     mut sink: crate::ui_action::MessageSink,
 ) {
     let Some(mut script) = script else {
@@ -271,7 +272,9 @@ fn drain_barber(
             }
             BarberIntent::Cancel => {
                 if shop.close() {
-                    close_effects(&mut view, &mut zoom, &mut stand);
+                    view.write(BarberView::Leave);
+                    zoom.barber_floor = None;
+                    shop.stand_up = true;
                 }
             }
         }
@@ -297,6 +300,9 @@ fn watch_close(
         let state = player.committed_stand_state(f.unit_stand_state());
         shop.watch(state, f.unit_displayid().unwrap_or(0))
     });
+    if std::mem::take(&mut shop.stand_up) {
+        stand.write(StandStateRequest { state: 0 });
+    }
     if (world_changed || watched) && shop.close() {
         close_effects(&mut view, &mut zoom, &mut stand);
     }
