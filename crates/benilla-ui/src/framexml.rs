@@ -324,11 +324,10 @@ fn element_from_node(node: roxmltree::Node) -> Element {
 
 /// Resolve `inherits` into a materialized [`Element`]: the named template, itself expanded first,
 /// then the element on top. Children are the template's then the element's; the element's
-/// attributes override or extend the template's (case-insensitively). The reference merges
-/// nothing: `LoadXML` re-enters itself on the one object against each template, the most distant
-/// first, then the instance (`0x76985c`; `<Frames>` repeat the walk, `0x76a060`), and reads `name`
-/// and `id` from the instance alone (`PreLoadXML 0x769770`). Here `name` and `virtual` merge like
-/// any attribute. A cycle is skipped with a warning.
+/// attributes override or extend the template's (case-insensitively), all but `name`, `id` and
+/// `virtual`, which are the instance's own: `FrameXML_CreateFrame` (`0x812fa0`) runs `PreLoadXML`
+/// (`0x490360`, `0x4814f0` for a region), which reads `name` and `id`, on the instance node alone,
+/// then `LoadXML` walks the templates. A cycle is skipped with a warning.
 pub fn expand(
     element: &Element,
     templates: &HashMap<&str, &Element>,
@@ -405,7 +404,14 @@ fn expand_inner(
     }
 
     match base {
-        Some(base) => merge(&base, element),
+        Some(mut base) => {
+            base.attrs.retain(|(k, _)| {
+                !["name", "id", "virtual"]
+                    .iter()
+                    .any(|own| k.eq_ignore_ascii_case(own))
+            });
+            merge(&base, element)
+        }
         None => element.clone(),
     }
 }
@@ -681,6 +687,44 @@ print(x)</Script>
             2,
             "Root's then Mid's <Layers>, in order"
         );
+    }
+
+    /// `PreLoadXML` (`0x490360`) reads `name` and `id` off the instance node alone, so an unnamed
+    /// child built from a named template stays unnamed and its `$parent` children take the
+    /// nearest named ancestor, not the template's name.
+    #[test]
+    fn an_instance_takes_neither_name_id_nor_virtual_from_its_template() {
+        let doc = parse(
+            r#"<Ui>
+                <CheckButton name="CheckTemplate" virtual="true" id="7" frameStrata="LOW"/>
+                <CheckButton inherits="CheckTemplate"/>
+                <CheckButton name="Named" id="2" inherits="CheckTemplate"/>
+            </Ui>"#,
+        )
+        .unwrap();
+        let templates = doc.templates();
+        let mut warnings = Vec::new();
+        let TopLevel::Instance(bare) = &doc.items[1] else {
+            panic!("expected instance")
+        };
+        let bare = expand(bare, &templates, &mut warnings);
+        assert_eq!(bare.attr("name"), None, "an unnamed instance stays unnamed");
+        assert_eq!(bare.attr("id"), None);
+        assert_eq!(bare.attr("virtual"), None, "nor is it a template");
+        assert_eq!(
+            bare.attr("frameStrata"),
+            Some("LOW"),
+            "other attributes inherit"
+        );
+        let TopLevel::Instance(named) = &doc.items[2] else {
+            panic!("expected instance")
+        };
+        let named = expand(named, &templates, &mut warnings);
+        assert_eq!(
+            (named.attr("name"), named.attr("id")),
+            (Some("Named"), Some("2"))
+        );
+        assert!(warnings.is_empty(), "{warnings:?}");
     }
 
     #[test]

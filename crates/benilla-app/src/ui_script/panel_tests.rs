@@ -6,7 +6,7 @@ use benilla_ui::script::{
 /// Each test loads stock `UIParent.xml` first: its `ShowUIPanel`, `HideUIPanel` and
 /// `UIPanelWindows` are the panel manager every window here seats through. A missing template only
 /// warns under this loader, so a list without `UIPanelTemplates.xml` loses scroll bars silently.
-use super::test_ui::load_ui as load_xml;
+use super::test_ui::stock_ui;
 
 /// The rect of the frame sized `w` by `h`, from the `QuadContent::Frame` quad every frame emits.
 fn frame_rect(quads: &[ExtractedQuad], w: f32, h: f32) -> benilla_ui::layout::Rect {
@@ -24,30 +24,10 @@ fn frame_rect(quads: &[ExtractedQuad], w: f32, h: f32) -> benilla_ui::layout::Re
 /// Stock `GossipFrame.xml` with a two-option menu: `GOSSIP_SHOW` seats it at the left slot, a row
 /// click queues its select, and the close button vacates the slot.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_gossip_frame_drives_end_to_end() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    // `GossipResize` reads `GetTextHeight()` right after `SetText`, so the harness installs the
-    // synchronous measurer the app always has; without one a row sizes from last frame's text.
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-    // 43 frames, 32 of them the row pool that quests and options share (`NUMGOSSIPBUTTONS`).
-    assert_eq!(
-        load_xml(&s, "Interface\\FrameXML\\GossipFrame.xml"),
-        43,
-        "the stock file's own shape — ours materialized 41"
-    );
-    load_xml(&s, "ScrollTemplates.xml"); // our scroll kits
 
     s.resolve();
     let vendor_icon = |quads: &[ExtractedQuad]| {
@@ -58,7 +38,7 @@ fn shipped_gossip_frame_drives_end_to_end() {
     };
     assert!(!vendor_icon(&s.extract()), "gossip window starts hidden");
     assert!(
-        s.eval::<bool>("return GetLeftFrame() == nil").unwrap(),
+        s.eval::<bool>("return GetUIPanel('left') == nil").unwrap(),
         "left slot empty before any panel opens"
     );
 
@@ -88,7 +68,7 @@ fn shipped_gossip_frame_drives_end_to_end() {
             .unwrap(),
         "Greetings, traveler. How may I help you?"
     );
-    // Every row is enabled: `GossipFrameOptionsUpdate` greys none (`GossipFrame.lua:111-128`).
+    // Every row is enabled: `GossipFrameOptionsUpdate` greys none (`GossipFrame.lua`).
     let states: (bool, bool, bool, bool) = s
         .eval(
             "return GossipTitleButton1:IsVisible(), GossipTitleButton1:IsEnabled() ~= 0,\n\
@@ -104,7 +84,7 @@ fn shipped_gossip_frame_drives_end_to_end() {
     s.resolve();
     let quads = s.extract();
 
-    // The left slot is TOPLEFT 0,-104 (`UIParent.lua:818`), so the top edge is 768 - 104.
+    // The left slot is TOPLEFT 0,-104 (`UIParent.lua`), so the top edge is 768 - 104.
     let win = frame_rect(&quads, 384.0, 512.0);
     assert_eq!(
         (win.left, win.top),
@@ -112,7 +92,7 @@ fn shipped_gossip_frame_drives_end_to_end() {
         "gossip window landed at the left slot (TOPLEFT UIParent, 0, -104)"
     );
 
-    // The parchment is four corner quadrants, 256 and 128 wide, 256 tall (`GossipFrame.xml:13-44`).
+    // The parchment is four corner quadrants, 256 and 128 wide, 256 tall (`GossipFrame.xml`).
     let quad_rect = |needle: &str, w: f32, h: f32| {
         let q = quads
             .iter()
@@ -159,7 +139,7 @@ fn shipped_gossip_frame_drives_end_to_end() {
         .iter()
         .find(|q| {
             // Case-folded: the 1.12 client answers the type in lowercase (table `0x84b7ac`), and
-            // `GossipFrame.lua:123` builds the path from it verbatim.
+            // `GossipFrame.lua` builds the path from it verbatim.
             matches!(&q.content, QuadContent::Texture { path: Some(p), .. }
                     if p.to_ascii_lowercase().contains("vendorgossipicon"))
         })
@@ -183,36 +163,23 @@ fn shipped_gossip_frame_drives_end_to_end() {
     assert_eq!(s.take_gossip_selects(), vec![(1, None)]);
     assert!(!s.take_gossip_close());
 
-    // The close button hides the window; its OnHide calls `CloseGossip()` (`GossipFrame.xml:455`).
+    // The close button hides the window; its OnHide calls `CloseGossip()` (`GossipFrame.xml`).
     s.run("GossipFrameCloseButton:Click()").unwrap();
     assert!(s.take_gossip_close());
     assert!(!s.eval::<bool>("return GossipFrame:IsVisible()").unwrap());
     assert!(
-        s.eval::<bool>("return GetLeftFrame() == nil").unwrap(),
+        s.eval::<bool>("return GetUIPanel('left') == nil").unwrap(),
         "HideUIPanel vacated the left slot"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 /// Quest rows fill the shared pool first, available before active, then the options
-/// (`GossipFrame.lua:24-29`), all on one static anchor chain.
+/// (`GossipFrame.lua`), all on one static anchor chain.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_gossip_frame_renders_quest_rows_above_options() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-    load_xml(&s, "Interface\\FrameXML\\GossipFrame.xml");
-    load_xml(&s, "ScrollTemplates.xml"); // our scroll kits
+    let mut s = stock_ui(1024.0, 768.0);
 
     s.set_gossip(Some(GossipMenu {
         greeting: "A word, traveler.".into(),
@@ -260,12 +227,18 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
                         GossipTitleButton6:IsVisible()",
         )
         .unwrap();
-    // Available leads active (`GossipFrame.lua:27-28`), though the packet listed the active quest
+    // Available leads active (`GossipFrame.lua`), though the packet listed the active quest
     // first. Each quest group ends by hiding the next button and skipping it (`:80-84`,
     // `:104-108`): 1 available, 2 spacer, 3 active, 4 spacer, 5 option, the rest hidden.
-    assert_eq!((r1_text.as_str(), r1_vis), ("A Threat Within", true));
+    assert_eq!(
+        (r1_text.as_str(), r1_vis),
+        ("|cff000000A Threat Within|r", true)
+    );
     assert!(!r2_vis, "the available group's trailing spacer");
-    assert_eq!((r3_text.as_str(), r3_vis), ("Report to Goldshire", true));
+    assert_eq!(
+        (r3_text.as_str(), r3_vis),
+        ("|cff000000Report to Goldshire|r", true)
+    );
     assert!(!r4_vis, "the active group's trailing spacer");
     assert_eq!(
         (r5_text.as_str(), r5_vis),
@@ -274,7 +247,7 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
     );
     assert!(!r6_vis, "nothing past the option row");
 
-    // Each group's icon (`GossipFrame.lua:75`, `:99`), read from the painted quads.
+    // Each group's icon (`GossipFrame.lua`), read from the painted quads.
     s.resolve();
     let quads = s.extract();
     let has_icon = |needle: &str| {
@@ -286,7 +259,10 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
         has_icon("AvailableQuestIcon"),
         "row 1 (available) icon renders"
     );
-    assert!(has_icon("ActiveQuestIcon"), "row 2 (active) icon renders");
+    assert!(
+        has_icon("IncompleteQuestIcon"),
+        "row 2 (active, not complete) icon renders"
+    );
 
     // The option sits below the last quest row; rects are y-up, so below is a smaller top.
     let label_top = |needle: &str| {
@@ -299,7 +275,7 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
             .unwrap_or_else(|| panic!("no text quad for {needle:?}"))
             .top
     };
-    let row2_top = label_top("Report to Goldshire");
+    let row2_top = label_top("|cff000000Report to Goldshire|r");
     let row3_top = label_top("Let me browse your goods.");
     assert!(
         row3_top < row2_top,
@@ -307,7 +283,7 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
     );
 
     // Button 3, the active quest, calls `SelectGossipActiveQuest(1)`, its place in the active list
-    // (`GossipFrame.lua:53-61`); the binding maps it to menu position 1, the packet's order.
+    // (`GossipFrame.lua`); the binding maps it to menu position 1, the packet's order.
     s.run("GossipTitleButton3:Click()").unwrap();
     assert_eq!(s.take_gossip_quest_selects(), vec![1]);
     assert!(
@@ -316,31 +292,16 @@ fn shipped_gossip_frame_renders_quest_rows_above_options() {
     );
 }
 
-/// `GossipResize` sizes a row to its label's height + 2 (`GossipFrame.lua:130-132`) and each row
-/// hangs off the previous one's BOTTOMLEFT (`GossipFrame.xml:267`), so wrapped labels stack
+/// `GossipResize` sizes a row to its label's height + 2 (`GossipFrame.lua`) and each row
+/// hangs 3 px below the previous one's BOTTOMLEFT (`GossipFrame.xml`), so wrapped labels stack
 /// without overlapping. The checks pin that rule, not a glyph metric.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_gossip_rows_grow_to_their_wrapped_labels() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    // `GossipResize` reads `GetTextHeight()` right after `SetText`, so the harness installs the
-    // synchronous measurer the app always has; without one a row sizes from last frame's text.
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-    load_xml(&s, "Interface\\FrameXML\\GossipFrame.xml");
-    load_xml(&s, "ScrollTemplates.xml"); // our scroll kits
 
-    // Three options that wrap at the label's 275 px (`GossipFrame.xml:114`).
+    // Three options that wrap at the label's 275 px (`GossipFrame.xml`).
     let long = |t: &str| GossipOptionView {
         label: t.into(),
         icon_type: "gossip".into(),
@@ -413,35 +374,22 @@ fn shipped_gossip_rows_grow_to_their_wrapped_labels() {
             top - bottom
         );
     }
-    // Edge to edge; rects are y-up.
+    // 3 px apart; rects are y-up.
     assert!(
-        (t2 - b1).abs() < 0.5,
-        "row 2 starts where row 1 ends: row1 bottom {b1}, row2 top {t2}"
+        (b1 - t2 - 3.0).abs() < 0.5,
+        "row 2 starts 3 px under row 1: row1 bottom {b1}, row2 top {t2}"
     );
     assert!(
-        (t3 - b2).abs() < 0.5,
-        "row 3 starts where row 2 ends: row2 bottom {b2}, row3 top {t3}"
+        (b2 - t3 - 3.0).abs() < 0.5,
+        "row 3 starts 3 px under row 2: row2 bottom {b2}, row3 top {t3}"
     );
 }
 
-/// The window's OnShow and OnHide play the kits (`GossipFrame.xml:445`, `:454`).
+/// The window's OnShow and OnHide play the kits (`GossipFrame.xml`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn gossip_show_hide_plays_open_and_close_kits() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-    load_xml(&s, "Interface\\FrameXML\\GossipFrame.xml");
-    load_xml(&s, "ScrollTemplates.xml"); // our scroll kits
+    let mut s = stock_ui(1024.0, 768.0);
 
     assert!(
         s.take_sounds().is_empty(),
@@ -472,36 +420,27 @@ fn gossip_show_hide_plays_open_and_close_kits() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_panel_slot_replaces_gossip_with_merchant() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in crate::ui_script::test_ui::production_order(&[
-        &[
-            r"Interface\FrameXML\GlobalStrings.lua",
-            r"Interface\FrameXML\BasicControls.xml",
-            r"Interface\FrameXML\LocaleProperties.lua",
-            r"Interface\FrameXML\UIParent.xml",
-            r"Interface\FrameXML\UIPanelTemplates.lua",
-            r"Interface\FrameXML\UIPanelTemplates.xml",
-            "Interface\\FrameXML\\GossipFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-        super::test_ui::MERCHANT_UI,
-        &["Interface\\FrameXML\\MerchantFrame.xml"],
-    ]) {
-        load_xml(&s, f);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
 
     s.set_gossip(Some(GossipMenu {
         greeting: "Well met.".into(),
         quests: Vec::new(),
-        options: vec![GossipOptionView {
-            label: "Let me browse your goods.".into(),
-            icon_type: "vendor".into(),
-            ..Default::default()
-        }],
+        // Two options: a lone non-gossip option is selected without opening the window
+        // (`GossipFrame_OnEvent`).
+        options: vec![
+            GossipOptionView {
+                label: "Let me browse your goods.".into(),
+                icon_type: "vendor".into(),
+                ..Default::default()
+            },
+            GossipOptionView {
+                label: "Tell me about this place.".into(),
+                icon_type: "gossip".into(),
+                ..Default::default()
+            },
+        ],
         ..Default::default()
     }));
     s.fire_event("GOSSIP_SHOW", vec![]);
@@ -533,7 +472,7 @@ fn shipped_panel_slot_replaces_gossip_with_merchant() {
     s.fire_event("MERCHANT_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
-    // Both rows are pushable 0, so the newcomer replaces gossip (`UIParent.lua:729-732`).
+    // Both rows are pushable 0, so the newcomer replaces gossip (`UIParent.lua`).
     assert!(
         !s.eval::<bool>("return GossipFrame:IsVisible()").unwrap(),
         "opening merchant replaced gossip at the left slot"
@@ -547,12 +486,12 @@ fn shipped_panel_slot_replaces_gossip_with_merchant() {
         "merchant took the left slot gossip vacated"
     );
     assert!(s
-        .eval::<bool>("return GetLeftFrame():GetName() == \"MerchantFrame\"")
+        .eval::<bool>("return GetUIPanel('left'):GetName() == \"MerchantFrame\"")
         .unwrap());
 
     s.fire_event("MERCHANT_CLOSED", vec![]);
     assert!(
-        s.eval::<bool>("return GetLeftFrame() == nil").unwrap(),
+        s.eval::<bool>("return GetUIPanel('left') == nil").unwrap(),
         "the slot is empty once the replacing window also closes"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -561,27 +500,9 @@ fn shipped_panel_slot_replaces_gossip_with_merchant() {
 /// A displaced NPC window's OnHide calls its `CloseX()`, whose intent ends that session; a session
 /// left open keeps its window from reopening.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn displacing_an_npc_window_ends_the_displaced_session() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in crate::ui_script::test_ui::production_order(&[
-        &[
-            r"Interface\FrameXML\GlobalStrings.lua",
-            r"Interface\FrameXML\BasicControls.xml",
-            r"Interface\FrameXML\LocaleProperties.lua",
-            r"Interface\FrameXML\UIParent.xml",
-            r"Interface\FrameXML\UIPanelTemplates.lua",
-            r"Interface\FrameXML\UIPanelTemplates.xml",
-            "Interface\\FrameXML\\GossipFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-        super::test_ui::MERCHANT_UI,
-        &["Interface\\FrameXML\\MerchantFrame.xml"],
-    ]) {
-        load_xml(&s, f);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
 
     // The vendor holds the left slot; drain what opening it queued.
     s.set_merchant(Some(MerchantState::default()));
@@ -589,7 +510,7 @@ fn displacing_an_npc_window_ends_the_displaced_session() {
     let _ = s.take_merchant_close();
     let _ = s.take_gossip_close();
 
-    // Gossip replaces the vendor; its OnHide calls `CloseMerchant()` (`MerchantFrame.lua:51-52`).
+    // Gossip replaces the vendor; its OnHide calls `CloseMerchant()` (`MerchantFrame.lua`).
     s.set_gossip(Some(GossipMenu {
         greeting: "Well met.".into(),
         quests: Vec::new(),
@@ -603,7 +524,7 @@ fn displacing_an_npc_window_ends_the_displaced_session() {
         "gossip displacing the vendor ends the vendor session (OnHide → CloseMerchant)"
     );
 
-    // And back: gossip's OnHide calls `CloseGossip()` (`GossipFrame.xml:455`).
+    // And back: gossip's OnHide calls `CloseGossip()` (`GossipFrame.xml`).
     s.set_merchant(Some(MerchantState::default()));
     s.fire_event("MERCHANT_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -613,34 +534,23 @@ fn displacing_an_npc_window_ends_the_displaced_session() {
     );
 }
 
-/// A left occupant with a higher `pushable` (LootFrame's 7) moves to center when a pushable-0
-/// window arrives (`UIParent.lua:734-741`); a bare 50x50 frame stands in for the loot window.
+/// A left occupant with a higher `pushable` slides to center when a pushable-0 window arrives
+/// (`FramePositionDelegate:ShowUIPanel`, "Highest priority goes to center"); stand-ins with
+/// LootFrame's row (left, 7) and the stock merchant.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_panel_slot_pushable_promotes_to_center() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in crate::ui_script::test_ui::production_order(&[
-        &[
-            r"Interface\FrameXML\GlobalStrings.lua",
-            r"Interface\FrameXML\BasicControls.xml",
-            r"Interface\FrameXML\LocaleProperties.lua",
-            r"Interface\FrameXML\UIParent.xml",
-            r"Interface\FrameXML\UIPanelTemplates.lua",
-            r"Interface\FrameXML\UIPanelTemplates.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-        super::test_ui::MERCHANT_UI,
-        &["Interface\\FrameXML\\MerchantFrame.xml"],
-    ]) {
-        load_xml(&s, f);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
+    let at = |s: &mut UiScript, f: &str| -> (f32, f32) {
+        s.resolve();
+        s.eval::<(f32, f32)>(&format!("return {f}:GetLeft(), {f}:GetTop()"))
+            .unwrap()
+    };
 
-    // A new frame starts shown, and `ShowUIPanel` ignores a visible one (`UIParent.lua:650`).
     s.run(
         r#"
-            local loot = CreateFrame("Frame", "LootFrame")
+            UIPanelWindows["ProbeLoot"] = { area = "left", pushable = 7 }
+            local loot = CreateFrame("Frame", "ProbeLoot", UIParent)
             loot:Hide()
             loot:SetWidth(50); loot:SetHeight(50)
             ShowUIPanel(loot)
@@ -649,163 +559,90 @@ fn shipped_panel_slot_pushable_promotes_to_center() {
     .unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
-        s.eval::<bool>("return GetLeftFrame():GetName() == \"LootFrame\"")
+        s.eval::<bool>("return GetUIPanel('left'):GetName() == 'ProbeLoot'")
             .unwrap(),
         "loot took the empty left slot"
     );
-    s.resolve();
-    let loot_left = frame_rect(&s.extract(), 50.0, 50.0);
-    assert_eq!((loot_left.left, loot_left.top), (0.0, 664.0));
+    assert_eq!(at(&mut s, "ProbeLoot"), (0.0, 664.0));
 
-    // The center slot is TOPLEFT 384,-104 (`UIParent.lua:880`).
-    s.set_merchant(Some(MerchantState {
-        items: vec![MerchantItem {
-            name: Some("Refreshing Spring Water".into()),
-            texture: Some("Interface\\Icons\\INV_Drink_18".into()),
-            price: 25,
-            quantity: 1,
-            num_available: -1,
-            item_id: 159,
-            stats: None,
-            link: None,
-            max_stack: Some(1),
-            extended_cost: None,
-        }],
-        ..Default::default()
-    }));
+    s.set_merchant(Some(MerchantState::default()));
     s.fire_event("MERCHANT_SHOW", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-
     assert!(
-        s.eval::<bool>("return GetCenterFrame():GetName() == \"LootFrame\"")
+        s.eval::<bool>("return GetUIPanel('center'):GetName() == 'ProbeLoot'")
             .unwrap(),
         "loot was pushed to center, not replaced"
     );
     assert!(
-        s.eval::<bool>("return GetLeftFrame():GetName() == \"MerchantFrame\"")
+        s.eval::<bool>("return GetUIPanel('left'):GetName() == 'MerchantFrame'")
             .unwrap(),
         "merchant took the left slot loot vacated"
     );
-    s.resolve();
-    let quads = s.extract();
-    let loot_center = frame_rect(&quads, 50.0, 50.0);
     assert_eq!(
-        (loot_center.left, loot_center.top),
+        at(&mut s, "ProbeLoot"),
         (384.0, 664.0),
-        "loot moved to the center slot (TOPLEFT UIParent, 384, -104)"
+        "loot moved to the center slot (UIParent TOPLEFT 384, -104)"
     );
-    let merchant_left = frame_rect(&quads, 384.0, 512.0);
-    assert_eq!(
-        (merchant_left.left, merchant_left.top),
-        (0.0, 664.0),
-        "merchant landed on the left slot loot vacated"
-    );
+    assert_eq!(at(&mut s, "MerchantFrame"), (0.0, 664.0));
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// vmangos sends only `SMSG_SHOW_BANK` for the bank option (`Player.cpp:12425-12427`), and the
-/// bank (pushable 6) would seat at center, so the app closes gossip itself. Either order ends
-/// with the bank at left; opened first, it slides back when gossip hides (`UIParent.lua:772-783`).
+/// A banker's menu is one non-gossip option, so `GossipFrame_OnEvent` selects it without opening
+/// the window; the bank then opens on `BANKFRAME_OPENED` straight into the left slot.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn gossip_bank_option_hands_the_left_slot_to_the_bank() {
-    let _data = benilla_formats::wow_data_or_skip!();
+fn a_bankers_lone_option_is_selected_without_a_gossip_window() {
     use benilla_ui::script::BankState;
-
     let _data = benilla_formats::wow_data_or_skip!();
+    let mut s = stock_ui(1024.0, 768.0);
 
-    let order_first = |bank_first: bool| {
-        let mut s = UiScript::new().unwrap();
-        s.set_screen_size(1024.0, 768.0);
-        load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-        load_xml(&s, "Interface\\FrameXML\\Fonts.xml");
-        load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-        load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-        load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-        load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-        load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-        load_xml(&s, "Interface\\FrameXML\\GameTooltip.xml");
-        // Before BankFrame: its buttons inherit these templates, and `inherits=` resolves at load.
-        load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-        load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-        load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-        load_xml(&s, "Interface\\FrameXML\\Cooldown.xml");
-        load_xml(&s, "Interface\\FrameXML\\ItemButtonTemplate.xml"); // the bank slots inherit it
-        load_xml(&s, "Interface\\FrameXML\\BankFrame.xml");
-        load_xml(&s, "Interface\\FrameXML\\GossipFrame.xml");
-        load_xml(&s, "ScrollTemplates.xml");
-
-        s.set_gossip(Some(GossipMenu {
-            greeting: "Welcome to the bank of Ironforge!".into(),
-            quests: Vec::new(),
-            options: vec![GossipOptionView {
-                label: "I would like to check my deposit box.".into(),
-                icon_type: "money".into(),
-                ..Default::default()
-            }],
+    s.set_gossip(Some(GossipMenu {
+        greeting: "Welcome to the bank of Ironforge!".into(),
+        quests: Vec::new(),
+        options: vec![GossipOptionView {
+            label: "I would like to check my deposit box.".into(),
+            icon_type: "banker".into(),
             ..Default::default()
-        }));
-        s.fire_event("GOSSIP_SHOW", vec![]);
-        assert!(s
-            .eval::<bool>("return GetLeftFrame():GetName() == \"GossipFrame\"")
-            .unwrap());
+        }],
+        ..Default::default()
+    }));
+    s.fire_event("GOSSIP_SHOW", vec![]);
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(
+        !s.eval::<bool>("return GossipFrame:IsShown()").unwrap(),
+        "no gossip window for a lone non-gossip option"
+    );
+    assert_eq!(
+        s.take_gossip_selects()
+            .iter()
+            .map(|(i, _)| *i)
+            .collect::<Vec<_>>(),
+        vec![1],
+        "the option was selected"
+    );
 
-        // On SMSG_SHOW_BANK the app opens the bank and clears gossip in one pass, in either order.
-        s.set_money(0);
-        s.set_bank(Some(BankState::default()));
-        s.set_gossip(None);
-        if bank_first {
-            s.fire_event("BANKFRAME_OPENED", vec![]);
-            s.fire_event("GOSSIP_CLOSED", vec![]);
-        } else {
-            s.fire_event("GOSSIP_CLOSED", vec![]);
-            s.fire_event("BANKFRAME_OPENED", vec![]);
-        }
-        assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-
-        assert!(
-            !s.eval::<bool>("return GossipFrame:IsVisible()").unwrap(),
-            "the gossip menu is gone once the vault is up (bank_first={bank_first})"
-        );
-        assert!(s.eval::<bool>("return BankFrame:IsVisible()").unwrap());
-        assert!(
-            s.eval::<bool>("return GetLeftFrame():GetName() == \"BankFrame\"")
-                .unwrap(),
-            "the bank ends at the LEFT slot, not parked at center (bank_first={bank_first})"
-        );
-        assert!(
-            s.eval::<bool>("return GetCenterFrame() == nil").unwrap(),
-            "the center slot is empty again (bank_first={bank_first})"
-        );
-    };
-    order_first(true);
-    order_first(false);
+    s.set_money(0);
+    s.set_bank(Some(BankState::default()));
+    s.set_gossip(None);
+    s.fire_event("GOSSIP_CLOSED", vec![]);
+    s.fire_event("BANKFRAME_OPENED", vec![]);
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(s.eval::<bool>("return BankFrame:IsVisible()").unwrap());
+    assert!(
+        s.eval::<bool>("return GetUIPanel('left'):GetName() == 'BankFrame'")
+            .unwrap(),
+        "the bank seats at the left slot"
+    );
 }
 
-/// The rows sit in `GossipGreetingScrollFrame` (`GossipFrame.xml:223-436`): a menu taller than the
+/// The rows sit in `GossipGreetingScrollFrame` (`GossipFrame.xml`): a menu taller than the
 /// frame gets a scroll range and a bar, and every row clips to the frame.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_overflowing_gossip_menu_scrolls_instead_of_spilling() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    // `GossipResize` reads `GetTextHeight()` right after `SetText`, so the harness installs the
-    // synchronous measurer the app always has; without one a row sizes from last frame's text.
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml"); // UIPanelScrollFrameTemplate
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-    load_xml(&s, "Interface\\FrameXML\\GossipFrame.xml");
-    load_xml(&s, "ScrollTemplates.xml");
 
-    // Eight options of about four lines each, far past the 334 px frame (`GossipFrame.xml:225`).
+    // Eight options of about four lines each, far past the 334 px frame (`GossipFrame.xml`).
     let long = |n: usize| GossipOptionView {
         label: format!(
             "Option {n}: I slay the man on the spot as my liege would expect me to, as he has \
@@ -845,7 +682,7 @@ fn an_overflowing_gossip_menu_scrolls_instead_of_spilling() {
     s.resolve();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
-    // The scroll child keeps its declared 300x334 (`GossipFrame.xml:236-238`), so only the range is
+    // The scroll child keeps its declared 300x334 (`GossipFrame.xml`), so only the range is
     // checked: the rows' extents make it.
     let (child_h, range): (f32, f32) = s
         .eval(
@@ -925,22 +762,9 @@ fn an_overflowing_gossip_menu_scrolls_instead_of_spilling() {
 /// An addon makes its frame a panel with a `UIPanelWindows` row, and it seats where a client
 /// window does.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_addons_own_frame_registered_in_uipanelwindows_takes_the_left_slot() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml"); // UIPanelScrollFrameTemplate
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-    load_xml(&s, "Interface\\FrameXML\\GossipFrame.xml");
-    load_xml(&s, "ScrollTemplates.xml");
+    let mut s = stock_ui(1024.0, 768.0);
 
     s.run(
         r#"AddonPanel = CreateFrame("Frame", "AddonPanel", UIParent)
@@ -964,7 +788,7 @@ fn an_addons_own_frame_registered_in_uipanelwindows_takes_the_left_slot() {
     );
 
     // A pushable-0 window arriving moves the addon's pushable-1 frame to center
-    // (`UIParent.lua:735-737`); only two pushable-0 rows replace each other (`:729-732`).
+    // (`UIParent.lua`); only two pushable-0 rows replace each other (`:729-732`).
     s.set_gossip(Some(GossipMenu {
         greeting: "Well met.".into(),
         quests: Vec::new(),
@@ -992,40 +816,31 @@ fn an_addons_own_frame_registered_in_uipanelwindows_takes_the_left_slot() {
 
 // ── The registry, pinned to the reference's rows ──
 
-/// The registry rows as `UIParent.lua:14-50` writes them. An unregistered frame opens with a bare
-/// `Show` and takes no slot (`:658-661`), so a missing row lets the next panel seat over it.
+/// The registry rows as `UIParent.lua` writes them. An unregistered frame opens with a bare
+/// `Show` and takes no slot, so a missing row lets the next panel seat over it.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_panel_registry_rows_match_the_reference_bytes() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let s = UiScript::new().unwrap();
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-    load_xml(&s, "ScrollTemplates.xml"); // our scroll kits
+    let s = stock_ui(1024.0, 768.0);
     for probe in [
-        // UIParent.lua:20
         "UIPanelWindows['ItemTextFrame'].area == 'left'",
         "UIPanelWindows['ItemTextFrame'].pushable == 0",
         "UIPanelWindows['ItemTextFrame'].whileDead == nil",
-        // UIParent.lua:19
-        "UIPanelWindows['CharacterFrame'].pushable == 2",
+        "UIPanelWindows['CharacterFrame'].pushable == 3",
         "UIPanelWindows['CharacterFrame'].whileDead == 1",
-        // UIParent.lua:21 and :25
         "UIPanelWindows['SpellBookFrame'].whileDead == 1",
+        // 3.3.5a's quest log is a doublewide panel.
+        "UIPanelWindows['QuestLogFrame'].area == 'doublewide'",
         "UIPanelWindows['QuestLogFrame'].whileDead == 1",
-        // UIParent.lua:45-50; `TalentFrame`'s row loads with `Blizzard_TalentUI.lua:71`.
-        "table.getn(UIChildWindows) == 4",
+        "#UIChildWindows == 8",
         "UIChildWindows[1] == 'OpenMailFrame'",
         "UIChildWindows[2] == 'GuildControlPopupFrame'",
         "UIChildWindows[3] == 'GuildMemberDetailFrame'",
-        "UIChildWindows[4] == 'GuildInfoFrame'",
+        "UIChildWindows[4] == 'TokenFramePopup'",
+        "UIChildWindows[5] == 'GuildInfoFrame'",
+        "UIChildWindows[6] == 'PVPTeamDetails'",
+        "UIChildWindows[7] == 'GuildBankPopupFrame'",
+        "UIChildWindows[8] == 'GearManagerDialog'",
     ] {
         assert!(
             s.eval::<bool>(&format!("return {probe}")).unwrap(),
@@ -1034,22 +849,11 @@ fn the_panel_registry_rows_match_the_reference_bytes() {
     }
 }
 
-/// While dead, `ShowUIPanel` opens only a `whileDead` row (`UIParent.lua:663-666`).
+/// While dead, `ShowUIPanel` opens only a `whileDead` row (`UIParent.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_dead_player_opens_only_whiledead_windows() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_unit(
         "player",
         Some(benilla_ui::script::UnitState {
@@ -1074,7 +878,7 @@ fn a_dead_player_opens_only_whiledead_windows() {
         "a row without whileDead is refused while dead"
     );
     assert!(
-        s.eval::<bool>("return GetLeftFrame() == nil").unwrap(),
+        s.eval::<bool>("return GetUIPanel('left') == nil").unwrap(),
         "the refused window took no slot"
     );
     // `NotWhileDeadError` (`0x48d340`, error 0x7e) queues its key for the app to show.
@@ -1091,9 +895,9 @@ fn a_dead_player_opens_only_whiledead_windows() {
         "a whileDead = 1 row opens exactly as alive"
     );
     assert!(
-        s.eval::<bool>("return GetLeftFrame():GetName() == 'QuestLogFrame'")
+        s.eval::<bool>("return GetUIPanel('doublewide'):GetName() == 'QuestLogFrame'")
             .unwrap(),
-        "and it seats normally at the left slot"
+        "and it seats normally, in the doublewide slot"
     );
     assert!(
         s.take_ui_errors().is_empty(),
@@ -1101,62 +905,52 @@ fn a_dead_player_opens_only_whiledead_windows() {
     );
 }
 
-/// `SetCenterFrame` hides every `UIChildWindows` frame (`UIParent.lua:839-846`), but
-/// `MovePanelToCenter` seats by assignment (`:877-885`), so a frame pushed to center leaves them.
+/// `FramePositionDelegate:SetUIPanel` runs `CloseChildWindows` whenever it seats a frame, in any
+/// slot, so the open letter goes whether the newcomer lands at center or pushes another there.
+/// Stand-ins carry the merchant (left, 0), trade (left, 1) and loot (left, 7) rows.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn a_frame_arriving_at_center_puts_the_child_windows_away() {
+fn a_seated_panel_puts_the_child_windows_away() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    load_xml(&s, r"Interface\FrameXML\GlobalStrings.lua");
-    load_xml(&s, r"Interface\FrameXML\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-
-    // MerchantFrame (pushable 0) holds left; TradeFrame (pushable 1) arrives at center
-    // (`UIParent.lua:738-739`).
+    let s = stock_ui(1024.0, 768.0);
     s.run(
-        r#"local m = CreateFrame("Frame", "OpenMailFrame") m:SetWidth(50); m:SetHeight(50)
-           local a = CreateFrame("Frame", "MerchantFrame") a:SetWidth(50); a:SetHeight(50) a:Hide()
-           local b = CreateFrame("Frame", "TradeFrame") b:SetWidth(50); b:SetHeight(50) b:Hide()
-           ShowUIPanel(MerchantFrame)
-           ShowUIPanel(TradeFrame)"#,
+        r#"for name, push in pairs({ ProbeMerchant = 0, ProbeTrade = 1, ProbeLoot = 7 }) do
+               UIPanelWindows[name] = { area = "left", pushable = push }
+               local f = CreateFrame("Frame", name, UIParent)
+               f:SetWidth(50); f:SetHeight(50); f:Hide()
+           end
+           OpenMailFrame:Show()
+           ShowUIPanel(ProbeMerchant)
+           OpenMailFrame:Show()
+           ShowUIPanel(ProbeTrade)"#,
     )
     .unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
-        s.eval::<bool>("return GetCenterFrame():GetName() == 'TradeFrame'")
+        s.eval::<bool>("return GetUIPanel('center'):GetName() == 'ProbeTrade'")
             .unwrap(),
         "the pushable=1 newcomer arrived at the center seat"
     );
     assert!(
         !s.eval::<bool>("return OpenMailFrame:IsShown()").unwrap(),
-        "the arriving center frame hid the open letter (the UIChildWindows loop)"
+        "the arriving center frame hid the open letter"
     );
 
-    // LootFrame (pushable 7) holds left; a pushable-0 window slides it to center, the letter stays.
+    // Loot (7) holds left; a pushable-0 window slides it to center and still closes the letter.
     s.run(
-        r#"HideUIPanel(TradeFrame) HideUIPanel(MerchantFrame)
+        r#"HideUIPanel(ProbeTrade) HideUIPanel(ProbeMerchant)
+           ShowUIPanel(ProbeLoot)
            OpenMailFrame:Show()
-           local l = CreateFrame("Frame", "LootFrame") l:SetWidth(50); l:SetHeight(50) l:Hide()
-           ShowUIPanel(LootFrame)
-           ShowUIPanel(MerchantFrame)"#,
+           ShowUIPanel(ProbeMerchant)"#,
     )
     .unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
-        s.eval::<bool>("return GetCenterFrame():GetName() == 'LootFrame'")
+        s.eval::<bool>("return GetUIPanel('center'):GetName() == 'ProbeLoot'")
             .unwrap(),
-        "loot slid to center (MovePanelToCenter), merchant took left"
+        "loot slid to center, merchant took left"
     );
     assert!(
-        s.eval::<bool>("return OpenMailFrame:IsShown()").unwrap(),
-        "a PUSHED frame does not run the child-window loop — the ref's exact trigger"
+        !s.eval::<bool>("return OpenMailFrame:IsShown()").unwrap(),
+        "seating the merchant at left closed the letter too"
     );
 }
