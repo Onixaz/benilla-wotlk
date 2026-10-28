@@ -678,7 +678,6 @@ fn demo_unit_feed(script: Option<NonSendMut<UiScript>>, mut fired: Local<VmMemo<
                 name: "spawn".into(),
                 texture: Some("Interface\\Icons\\Ability_Racial_Cannibalize".into()),
                 body: ".spawn 16032".into(),
-                local_only: false,
             }],
             character: Vec::new(),
         });
@@ -808,6 +807,20 @@ impl benilla_ui::script::TextMeasure for FixedWidthFont {
             Some(w) if w > 0.0 && natural > w => (w, 12.0 * (natural / w).ceil(), natural),
             _ => (natural, 12.0, natural),
         }
+    }
+
+    /// The caret leg's advance table, answered in the call as the app's engine does, so a box's
+    /// `OnCursorChanged` precedes its `OnTextChanged` in one flush; rows break at newlines alone.
+    fn editbox_advances(
+        &mut self,
+        req: &benilla_ui::script::EditBoxAdvanceRequest,
+    ) -> Option<(Vec<f32>, Vec<usize>, f32)> {
+        let cum = (0..=req.text.len()).map(|i| i as f32 * self.0).collect();
+        if req.wrap_width.is_none() {
+            return Some((cum, vec![0], 0.0));
+        }
+        let breaks = req.text.match_indices('\n').map(|(i, _)| i + 1);
+        Some((cum, std::iter::once(0).chain(breaks).collect(), 12.0))
     }
 }
 

@@ -1128,7 +1128,7 @@ pub(super) fn seed_ui_fixture(
             let mut seed = String::new();
             for (name, icon, body) in SEED {
                 seed.push_str(&format!(
-                    "CreateMacro(\"{name}\", {icon}, \"{}\", 1, nil)\n",
+                    "CreateMacro(\"{name}\", {icon}, \"{}\")\n",
                     // Lua-escape the body's quotes and newlines.
                     body.replace('"', "\\\"").replace('\n', "\\n")
                 ));

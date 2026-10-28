@@ -8,7 +8,6 @@ fn macro_view(name: &str, body: &str) -> MacroView {
         name: name.into(),
         texture: Some("Interface\\Icons\\Ability_Ambush".into()),
         body: body.into(),
-        local_only: false,
     }
 }
 
@@ -68,29 +67,13 @@ fn a_saved_macro_table_round_trips_through_the_account_data() {
 /// The real UI, so the whole route is under test: `run_macro` fires `EXECUTE_CHAT_LINE`, and the
 /// stock `ChatFrame1` sends the line through its edit box.
 fn ui() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    // The in-game UI loads on world entry, so a player exists: the stock macro window's OnLoad
-    // formats `UnitName("player")` into its character tab.
-    s.set_unit(
-        "player",
-        Some(benilla_ui::script::UnitState {
-            exists: true,
-            name: Some("Probefour".into()),
-            level: 60,
-            ..Default::default()
-        }),
-    );
-    let failures = crate::ui_script::load_default_ui(&s);
-    assert!(failures.is_empty(), "manifest load errors: {failures:#?}");
-    s
+    crate::ui_script::test_ui::stock_ui(1024.0, 768.0)
 }
 
 /// One `EXECUTE_CHAT_LINE` per non-empty line, in order (`0x4f14e0`), which `ChatFrame_OnEvent`
-/// sends through the edit box (`ChatFrame.lua:1343-1347`): a macro line lands where a typed one
+/// sends through the edit box (`ChatFrame.lua`): a macro line lands where a typed one
 /// does.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn running_a_macro_runs_its_lines_through_the_references_edit_box() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui();
@@ -130,9 +113,8 @@ fn running_a_macro_runs_its_lines_through_the_references_edit_box() {
     assert!(s.take_chat_sends().is_empty());
 }
 
-/// Index 19 is the first per-character macro (18 per tab).
+/// Index 37 is the first per-character macro (36 account slots before it).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_character_macro_runs_by_its_own_index() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui();
@@ -140,7 +122,7 @@ fn a_character_macro_runs_by_its_own_index() {
         account: Vec::new(),
         character: vec![macro_view("Charge", "/say Charge")],
     });
-    assert!(super::run_macro(&mut s, 19));
+    assert!(super::run_macro(&mut s, 37));
     assert_eq!(
         s.take_chat_sends()
             .iter()
@@ -189,7 +171,6 @@ fn the_generation_moves_on_every_write_and_is_not_drained() {
 /// In 1.12 the event is the whole mechanism; `ChatFrame1`'s registration is only the default UI's
 /// use of it.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_registered_frame_sees_every_macro_line_as_an_event() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui();
@@ -230,7 +211,6 @@ fn a_registered_frame_sees_every_macro_line_as_an_event() {
 
 /// The reference's tokenizer (`0x64ae50`) splits on either `\r` or `\n`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn either_line_ending_splits_a_body() {
     benilla_formats::wow_data_or_skip!();
     let mut s = ui();
@@ -253,19 +233,17 @@ fn either_line_ending_splits_a_body() {
 /// one that does not draws as a white square. `Ability_Druid_Mangle.tga` resolves only through the
 /// second `.blp` candidate, since `Ability_Druid_Mangle.tga.blp` is what ships.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_macro_chooser_icon_resolves_in_the_client_archives() {
-    /// A stock 5875 install: `patch.MPQ` 77 + `interface.MPQ` 443 = 520 `Spell_`/`Ability_` names
-    /// under `Interface\Icons\`, less 3 that differ only by case or extension
-    /// (`BuildMacroIconList`, `0x4f0090`).
-    const CHOOSER_ICONS_5875: usize = 517;
+    /// A stock 12340 install: `INV_Misc_QuestionMark`, then 1103 distinct `Spell_`/`Ability_` names
+    /// under `Interface\Icons\` (`CGUIMacros::LoadIcons`, `0x565840`).
+    const CHOOSER_ICONS_12340: usize = 1104;
 
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let icons = benilla_formats::load_macro_icons(&mut chain).expect("load chooser catalog");
     assert_eq!(
         icons.len(),
-        CHOOSER_ICONS_5875,
+        CHOOSER_ICONS_12340,
         "chooser catalog size moved — the enumeration or its filter changed"
     );
 
@@ -284,11 +262,14 @@ fn every_macro_chooser_icon_resolves_in_the_client_archives() {
         "chooser icons that resolve to nothing (each draws as a white square): {missing:#?}"
     );
 
-    // Alphabetical: the reference `qsort`s without case before deduping.
-    let mut sorted = icons.clone();
+    // The question mark first (the comparator pins it, `0x564a20`), then alphabetical: the
+    // reference `qsort`s without case before deduping.
+    assert!(icons[0].ends_with("INV_Misc_QuestionMark"), "{}", icons[0]);
+    let mut sorted = icons[1..].to_vec();
     sorted.sort_by_key(|p| p.to_ascii_lowercase());
     assert_eq!(
-        icons, sorted,
+        &icons[1..],
+        &sorted[..],
         "the chooser list must be case-insensitively sorted"
     );
 }

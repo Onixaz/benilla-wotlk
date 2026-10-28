@@ -1160,7 +1160,6 @@ fn the_shipped_manifest_opens_the_macro_icon_picker() {
             name: "die".into(),
             texture: Some(r"Interface\Icons\Ability_Ambush".into()),
             body: ".die".into(),
-            ..Default::default()
         }],
         character: Vec::new(),
     });
