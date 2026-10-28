@@ -160,6 +160,7 @@ fn feed_taxi(
             crate::target::vendor_price_discount(
                 reactions.factions.as_deref(),
                 &reactions.reputations,
+                reactions.party(),
                 master,
                 me,
             )

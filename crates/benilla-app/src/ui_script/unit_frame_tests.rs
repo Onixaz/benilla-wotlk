@@ -913,7 +913,13 @@ fn an_exalted_npc_target_reads_revered_and_its_plate_is_green() {
             FIELD_UNIT_FACTIONTEMPLATE,
             template,
         )]));
-        let reaction = crate::ui_unit::unit_reaction(Some(&factions), &reps, &guard, Some(&me));
+        let reaction = crate::ui_unit::unit_reaction(
+            Some(&factions),
+            &reps,
+            &crate::target::NoGroup,
+            &guard,
+            Some(&me),
+        );
         s.set_unit(
             "target",
             Some(UnitState {
@@ -927,6 +933,7 @@ fn an_exalted_npc_target_reads_revered_and_its_plate_is_green() {
                     &guard,
                     Some(&factions),
                     &reps,
+                    &crate::target::NoGroup,
                     Some(&me),
                 ),
                 is_connected: true,

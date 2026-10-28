@@ -94,6 +94,8 @@ pub(super) fn feed_action_state(
             Option<Res<crate::ui_rune::RuneCosts>>,
         ),
         Option<Res<crate::spell::ComboPoints>>,
+        // The group, for the reaction's party rung.
+        Option<Res<crate::ui_party::GroupState>>,
     ),
     self_q: Query<(&ObjectStore, &Transform, Has<Engaged>, Option<&Casting>), With<SelfPlayer>>,
     selection: Res<Selection>,
@@ -136,6 +138,7 @@ pub(super) fn feed_action_state(
         range_units,
         rune_inputs,
         combo,
+        group,
     ) = &cast_state;
     let combo_points = combo
         .as_deref()
@@ -238,6 +241,7 @@ pub(super) fn feed_action_state(
                         target_store: target.map(|(s, _)| s),
                         factions: factions.as_deref(),
                         reputations: &reputations,
+                        party: crate::target::party_of(group.as_deref()),
                         cooldowns: &cooldowns,
                         carried: &carried,
                         spell_mods,
@@ -329,6 +333,7 @@ pub(super) fn feed_action_state(
                         target_store: target.map(|(s, _)| s),
                         factions: factions.as_deref(),
                         reputations: &reputations,
+                        party: crate::target::party_of(group.as_deref()),
                         cooldowns: &cooldowns,
                         carried: &carried,
                         spell_mods,

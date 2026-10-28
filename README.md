@@ -93,32 +93,6 @@ New-Item -ItemType Junction -Path target\play\WoW -Target "C:\Games\World of War
 ln -s /path/to/WoW target/play/WoW
 ```
 
-### Releases
-
-[GitHub Releases](../../releases) carry the drop-in binary for Windows and Linux, `cargo ship`'s
-build with fat LTO and PGO as `BENILLA_PGO_LTO=fat cargo play` builds it (see below), each in an
-archive with the licenses and `THIRD-PARTY-LICENSES.txt`, the notices of the open-source code inside
-it.
-
-The release build uses a fat-LTO profile per platform, recorded on a machine with the game and
-uploaded to the `pgo-profile` pre-release. Record and upload one on Windows and on Linux, and again
-after a Rust toolchain update or when the code has moved on a lot:
-
-```sh
-BENILLA_PGO_LTO=fat scripts/pgo-train.sh
-scripts/release/upload-profile.sh   # needs gh, logged in
-```
-
-To cut a release, bump the version on a branch and land it:
-
-```sh
-scripts/release/bump.sh minor   # or major, patch, X.Y.Z; commits "Release vX.Y.Z"
-```
-
-When the new version reaches `main`, `.github/workflows/release.yml` builds both platforms with
-their profiles and publishes release `vX.Y.Z`, creating the tag on that commit. Without a profile
-for a platform and the current toolchain it publishes nothing and says which to upload.
-
 ### Faster with a profile
 
 `cargo play` reads a profile of how the game runs on your machine when you have recorded one, and

@@ -153,6 +153,7 @@ impl TargetRelations<'_> {
                 self.target_store,
                 self.factions,
                 self.reputations,
+                &self.group,
                 self.self_store,
                 self.types.names,
             )
@@ -166,6 +167,7 @@ impl TargetRelations<'_> {
                 self.target_store,
                 self.factions,
                 self.reputations,
+                &self.group,
                 self.self_store,
             )
     }
@@ -462,11 +464,24 @@ impl Default for AutoDismount {
     }
 }
 
-/// `autoSelfCast`'s, `autoDismount`'s and `autoDismountFlying`'s change callbacks: flags.
+/// `secureAbilityToggle` (`[0xbd097c]`, default "1"): a toggle re-pressed within 1.5 s of its
+/// cast keeps its aura (`Spell_C_ClickSpell 0x80da80`).
+#[derive(bevy::prelude::Resource)]
+pub(crate) struct SecureAbilityToggle(pub(crate) bool);
+
+impl Default for SecureAbilityToggle {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// `autoSelfCast`'s, `autoDismount`'s, `autoDismountFlying`'s and `secureAbilityToggle`'s change
+/// callbacks: flags.
 pub(crate) fn on_cvar(
     ev: On<crate::cvars::CvarChanged>,
     mut auto: ResMut<AutoSelfCast>,
     mut dismount: ResMut<AutoDismount>,
+    mut secure: ResMut<SecureAbilityToggle>,
 ) {
     if ev.is("autoSelfCast") {
         auto.0 = ev.flag();
@@ -474,6 +489,8 @@ pub(crate) fn on_cvar(
         dismount.ground = ev.flag();
     } else if ev.is("autoDismountFlying") {
         dismount.flying = ev.flag();
+    } else if ev.is("secureAbilityToggle") {
+        secure.0 = ev.flag();
     }
 }
 

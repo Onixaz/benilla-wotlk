@@ -241,6 +241,7 @@ impl TargetScan<'_, '_> {
                     store,
                     self.factions.as_deref(),
                     &self.reputations,
+                    super::party_of(self.group.as_deref()),
                     self_store,
                 )
             }
@@ -250,6 +251,7 @@ impl TargetScan<'_, '_> {
                     store,
                     self.factions.as_deref(),
                     &self.reputations,
+                    super::party_of(self.group.as_deref()),
                     self_store,
                     Some(&self.names),
                 ) && !store.is_some_and(|s| s.0.unit_is_dead())
@@ -660,6 +662,7 @@ impl AttackPick<'_, '_> {
             Some(store),
             self.scan.factions.as_deref(),
             &self.scan.reputations,
+            super::party_of(self.scan.group.as_deref()),
             self.scan.self_store(),
         ) {
             debug!("attack: {guid:#x} fails the final gate (ERR_INVALID_ATTACK_TARGET)");
@@ -686,6 +689,7 @@ impl AttackPick<'_, '_> {
             reaction_from_player(
                 self.scan.factions.as_deref(),
                 &self.scan.reputations,
+                super::party_of(self.scan.group.as_deref()),
                 Some(store),
                 self.scan.self_store(),
             ) < 4
@@ -700,12 +704,13 @@ pub(super) fn attack_target_valid(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
     reputations: &Reputations,
+    party: &dyn super::GroupMembers,
     self_store: Option<&ObjectStore>,
 ) -> bool {
     let alive = store.is_none_or(|s| {
         s.0.unit_health().is_none_or(|h| h > 0) || s.0.unit_dynamic_flags() & (1 << 5) != 0
     });
-    alive && can_attack(store, factions, reputations, self_store)
+    alive && can_attack(store, factions, reputations, party, self_store)
 }
 
 /// The melee probe's press with nothing selected: the player's Attack, which acquires.
@@ -729,6 +734,7 @@ pub(super) fn remember_last_enemy(
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     factions: Option<Res<Factions>>,
     reputations: Res<Reputations>,
+    group: Option<Res<crate::ui_party::GroupState>>,
     mut last: ResMut<LastEnemy>,
 ) {
     let Some((entity, guid)) = selection.target.zip(selection.guid) else {
@@ -749,7 +755,13 @@ pub(super) fn remember_last_enemy(
         return;
     }
     // Conjunct 5: `CanAttack(player, new)`.
-    if can_attack(store, factions.as_deref(), &reputations, Some(me)) {
+    if can_attack(
+        store,
+        factions.as_deref(),
+        &reputations,
+        super::party_of(group.as_deref()),
+        Some(me),
+    ) {
         last.0 = Some(guid);
     }
 }
@@ -1162,7 +1174,9 @@ mod tests {
         // With no catalog both reactions are neutral, which `CanAttack`'s mixed arm (< 4) admits,
         // so the legs below decide.
         let me = unit(&[(TPL, 1), (FLAGS, 1 << 3)]);
-        let valid = |s: &ObjectStore| attack_target_valid(Some(s), None, &reps, Some(&me));
+        let valid = |s: &ObjectStore| {
+            attack_target_valid(Some(s), None, &reps, &crate::target::NoGroup, Some(&me))
+        };
 
         assert!(valid(&unit(&[(HEALTH, 120)])), "a live mob");
         assert!(!valid(&unit(&[(HEALTH, 0)])), "a corpse");
@@ -1175,11 +1189,18 @@ mod tests {
             "NOT_SELECTABLE is one of CanAttack's disqualifiers"
         );
         // No descriptor on either side is refused.
-        assert!(!attack_target_valid(None, None, &reps, Some(&me)));
+        assert!(!attack_target_valid(
+            None,
+            None,
+            &reps,
+            &crate::target::NoGroup,
+            Some(&me)
+        ));
         assert!(!attack_target_valid(
             Some(&unit(&[(HEALTH, 120)])),
             None,
             &reps,
+            &crate::target::NoGroup,
             None
         ));
     }

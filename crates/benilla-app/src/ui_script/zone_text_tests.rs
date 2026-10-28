@@ -1,10 +1,7 @@
 //! Stock `ZoneText.xml`, driven by hand as `crate::area::feed_zone_events` drives it: zone caches
-//! pushed, the event fired, the clock ticked. A plain `ZONE_CHANGED` re-caches the zone name
-//! silently (`ZoneText.xml:92`), so a later `ZONE_CHANGED_NEW_AREA` on that name never splashes.
+//! pushed, the event fired, the clock ticked.
 
 use benilla_ui::script::{UiScript, ZoneTexts};
-
-use super::test_ui::load_ui as load_xml;
 
 fn visible(s: &UiScript, frame: &str) -> bool {
     s.eval::<bool>(&format!("return {frame}:IsVisible() and true or false"))
@@ -27,7 +24,7 @@ fn area(zone: &str, sub: &str, pvp: &str, faction: &str) -> ZoneTexts {
         minimap: if sub.is_empty() { zone } else { sub }.into(),
         pvp_type: some(pvp),
         pvp_faction: some(faction),
-        is_arena: false,
+        pvp_subzone: false,
     }
 }
 
@@ -36,28 +33,10 @@ fn set_area(s: &mut UiScript, zone: &str, sub: &str, pvp: &str, faction: &str) {
 }
 
 fn harness() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    // The splash formats its territory and autofollow lines straight out of GlobalStrings.
-    load_xml(&s, "Interface\\FrameXML\\GlobalStrings.lua");
-    load_xml(&s, "Interface\\FrameXML\\Fonts.xml");
-    // `TEXT()`, which AutoFollowStatus_OnEvent puts its message through.
-    load_xml(&s, "Interface\\FrameXML\\BasicControls.xml");
-    load_xml(&s, r"Interface\FrameXML\LocaleProperties.lua");
-    load_xml(&s, r"Interface\FrameXML\UIParent.xml");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.lua");
-    load_xml(&s, r"Interface\FrameXML\MoneyFrame.xml");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.lua");
-    load_xml(&s, r"Interface\FrameXML\UIPanelTemplates.xml");
-    load_xml(&s, r"Interface\FrameXML\StaticPopup.xml");
-    // The fading kit, its own `FrameXML.toc` entry.
-    load_xml(&s, "Interface\\FrameXML\\FadingFrame.xml");
-    load_xml(&s, "Interface\\FrameXML\\ZoneText.xml");
-    s
+    super::test_ui::stock_ui(1024.0, 768.0)
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn new_area_splashes_zone_pvp_and_subzone_then_fades_out() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -70,10 +49,10 @@ fn new_area_splashes_zone_pvp_and_subzone_then_fades_out() {
     s.fire_event("ZONE_CHANGED_NEW_AREA", vec![]);
     assert!(visible(&s, "ZoneTextFrame"), "zone splash shows");
     assert_eq!(text_of(&s, "ZoneTextString"), "Westfall");
-    assert_eq!(text_of(&s, "PVPInfoTextString"), "Alliance Territory");
+    assert_eq!(text_of(&s, "PVPInfoTextString"), "(Alliance Territory)");
     assert_eq!(text_of(&s, "SubZoneTextString"), "");
 
-    // The stock timeline: in 0.5 s, hold 1.0 s, out 2.0 s (`ZoneText.xml:5`).
+    // The stock timeline: in 0.5 s, hold 1.0 s, out 2.0 s (`ZoneText.xml`).
     s.tick(0.25);
     let alpha: f32 = s.eval("return ZoneTextFrame:GetAlpha()").unwrap();
     assert!((alpha - 0.5).abs() < 0.05, "mid-fade-in alpha, got {alpha}");
@@ -85,7 +64,6 @@ fn new_area_splashes_zone_pvp_and_subzone_then_fades_out() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn subzone_hop_shows_only_the_small_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -104,9 +82,10 @@ fn subzone_hop_shows_only_the_small_line() {
     assert_eq!(text_of(&s, "SubZoneTextString"), "Goldshire");
 }
 
+/// `ZoneText_OnEvent` splashes a zone name that differs from its cache on any zone event, and on
+/// `ZONE_CHANGED_NEW_AREA` whatever the cache holds.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn plain_zone_changed_recaches_silently_so_new_area_wont_resplash() {
+fn a_new_zone_name_splashes_on_any_zone_event_and_new_area_always_splashes() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
     set_area(&mut s, "Elwynn Forest", "", "friendly", "Alliance");
@@ -123,25 +102,29 @@ fn plain_zone_changed_recaches_silently_so_new_area_wont_resplash() {
     );
     s.fire_event("ZONE_CHANGED", vec![]);
     assert!(
-        !visible(&s, "ZoneTextFrame"),
-        "plain ZONE_CHANGED never splashes the zone name"
+        visible(&s, "ZoneTextFrame"),
+        "a plain ZONE_CHANGED into a new zone name splashes it"
     );
+    assert_eq!(text_of(&s, "ZoneTextString"), "Westfall");
+    s.tick(4.0);
+    assert!(!visible(&s, "ZoneTextFrame"));
+
     s.fire_event("ZONE_CHANGED_NEW_AREA", vec![]);
     assert!(
-        !visible(&s, "ZoneTextFrame"),
-        "NEW_AREA on the already-cached zone text must not re-splash"
+        visible(&s, "ZoneTextFrame"),
+        "NEW_AREA splashes even the cached zone name"
     );
+    s.tick(4.0);
 
     set_area(&mut s, "Duskwood", "", "contested", "");
     s.fire_event("ZONE_CHANGED_NEW_AREA", vec![]);
     assert!(visible(&s, "ZoneTextFrame"));
-    assert_eq!(text_of(&s, "PVPInfoTextString"), "Contested Territory");
+    assert_eq!(text_of(&s, "PVPInfoTextString"), "(Contested Territory)");
 }
 
 /// Northshire Abbey is an outdoor subzone of Elwynn (`AreaTable` row 24, parent 12), so entering
 /// it is a plain `ZONE_CHANGED`; the territory line is `ZoneTextFrame`'s child, which stays hidden.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn abbey_grounds_subzone_hop_shows_no_territory_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -174,7 +157,6 @@ fn abbey_grounds_subzone_hop_shows_no_territory_line() {
 /// Indoors, the zone-name override skips when the whole-WMO name equals the subzone (`0x67e670`),
 /// so the zone stays and the group's name becomes the subzone: no big splash, no territory line.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn abbey_interior_shows_the_room_in_the_small_line_alone() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -204,7 +186,6 @@ fn abbey_interior_shows_the_room_in_the_small_line_alone() {
 /// An inn's WMO name differs from the street's, so the override makes it the zone. Handlers run in
 /// registration order (`0x702140` appends), so `SubZoneTextFrame`'s `SetZoneText(1)` writes last.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn inn_entry_splashes_the_inn_name_with_territory_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -218,13 +199,12 @@ fn inn_entry_splashes_the_inn_name_with_territory_line() {
     assert_eq!(text_of(&s, "ZoneTextString"), "Lion's Pride Inn");
     assert_eq!(
         text_of(&s, "PVPInfoTextString"),
-        "Alliance Territory",
+        "(Alliance Territory)",
         "SubZoneTextFrame fires last (FIFO) — its SetZoneText(1) leaves the territory line set"
     );
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn indoor_exit_returns_the_subzone_line_alone() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -257,7 +237,6 @@ fn indoor_exit_returns_the_subzone_line_alone() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn room_to_room_hop_splashes_the_room_name_alone() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -281,9 +260,9 @@ fn room_to_room_hop_splashes_the_room_name_alone() {
     assert_eq!(text_of(&s, "SubZoneTextString"), "Library Wing");
 }
 
-/// An FFA pit: `GetZonePVPInfo`'s isArena, the leaf area's flag `0x80`.
+/// An FFA pit: `GetZonePVPInfo` answers `"arena"` off the subzone's flag `0x80`, and
+/// `SetZoneText` writes the line into `PVPArenaTextString`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn arena_pit_shows_the_ffa_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -291,19 +270,19 @@ fn arena_pit_shows_the_ffa_line() {
     s.fire_event("ZONE_CHANGED_NEW_AREA", vec![]);
     s.tick(4.0);
 
+    // The pit's own row carries the free-for-all flag: an "arena" type off the subzone.
     s.set_zone_texts(ZoneTexts {
-        is_arena: true,
-        ..area("Stranglethorn Vale", "Gurubashi Arena", "contested", "")
+        pvp_subzone: true,
+        ..area("Stranglethorn Vale", "Gurubashi Arena", "arena", "")
     });
     s.fire_event("ZONE_CHANGED", vec![]);
     assert!(visible(&s, "SubZoneTextFrame"));
     assert_eq!(text_of(&s, "SubZoneTextString"), "Gurubashi Arena");
-    assert_eq!(text_of(&s, "PVPArenaTextString"), "PvP Area");
+    assert_eq!(text_of(&s, "PVPArenaTextString"), "(PvP Area)");
 }
 
 /// With PvP info showing, `SubZoneTextString`'s `TOP` anchors to `PVPInfoTextString`'s `BOTTOM`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn subzone_seat_hangs_under_the_territory_line_on_new_area() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -332,7 +311,6 @@ fn subzone_seat_hangs_under_the_territory_line_on_new_area() {
 /// `AutoFollowStatus`, all of `ZoneText.lua`: END reuses the name BEGIN latched, so the app fires
 /// END with no argument.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_autofollow_status_line_names_the_followee_and_fades_on_end() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -351,7 +329,7 @@ fn the_autofollow_status_line_names_the_followee_and_fades_on_end() {
     let alpha: f32 = s.eval("return AutoFollowStatus:GetAlpha()").unwrap();
     assert!((alpha - 1.0).abs() < 0.01, "full alpha while following");
 
-    // Only END arms the fade; there is no hold timer (`ZoneText.lua:19`).
+    // Only END arms the fade; there is no hold timer (`ZoneText.lua`).
     s.tick(10.0);
     assert!(visible(&s, "AutoFollowStatus"), "no fade while following");
     let alpha: f32 = s.eval("return AutoFollowStatus:GetAlpha()").unwrap();
@@ -374,9 +352,8 @@ fn the_autofollow_status_line_names_the_followee_and_fades_on_end() {
 }
 
 /// A switch of subject fires BEGIN alone, and the stock BEGIN arm clears `fadeTime` and restores
-/// alpha (`ZoneText.lua:11`).
+/// alpha (`ZoneText.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_begin_during_the_end_fade_resets_the_line() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();

@@ -141,10 +141,11 @@ fn rewinding_the_old_clock_name_leaves_the_session_clock_running() {
 }
 
 /// The getters answer what the host pushed, in the reference's shapes: the four zone texts one
-/// string each, never nil (`0x48a0a0`..`0x48a100`); `GetZonePVPInfo` three values, isArena 1 or
-/// nil (`0x48d540`); `GetGameTime` two numbers (`0x515ee0`); `GetTime` one (`0x515ea0`).
+/// string each, never nil (`0x48a0a0`..`0x48a100`); `GetZonePVPInfo` nothing without a type, two
+/// or three values with one (`0x51ba50`); `GetGameTime` two numbers (`0x515ee0`); `GetTime` one
+/// (`0x515ea0`).
 #[test]
-fn the_getters_answer_the_pushed_state_in_their_1_12_shapes() {
+fn the_getters_answer_the_pushed_state_in_their_reference_shapes() {
     let mut s = script();
     for call in [
         "GetZoneText()",
@@ -155,7 +156,11 @@ fn the_getters_answer_the_pushed_state_in_their_1_12_shapes() {
     ] {
         assert_eq!(s.arity(call).unwrap(), 1, "{call}");
     }
-    assert_eq!(s.arity("GetZonePVPInfo()").unwrap(), 3);
+    assert_eq!(
+        s.arity("GetZonePVPInfo()").unwrap(),
+        0,
+        "no type, no values"
+    );
     assert_eq!(s.arity("GetGameTime()").unwrap(), 2);
     assert_eq!(
         s.eval::<String>(
@@ -179,7 +184,7 @@ fn the_getters_answer_the_pushed_state_in_their_1_12_shapes() {
         minimap: "Stormwind City".into(),
         pvp_type: Some("friendly".into()),
         pvp_faction: Some("Alliance".into()),
-        is_arena: true,
+        pvp_subzone: false,
     });
     s.set_game_time(21, 7);
     assert_eq!(
@@ -194,10 +199,25 @@ fn the_getters_answer_the_pushed_state_in_their_1_12_shapes() {
             "Stormwind City".into()
         )
     );
+    // A territory: the type, a nil `isSubZonePvP`, then the faction (`0x51ba50`).
     assert_eq!(
-        s.eval::<(String, String, f64)>("return GetZonePVPInfo()")
+        s.eval::<(String, Option<f64>, String)>("return GetZonePVPInfo()")
             .unwrap(),
-        ("friendly".into(), "Alliance".into(), 1.0)
+        ("friendly".into(), None, "Alliance".into())
+    );
+    // A free-for-all subzone: two values, the type and 1.
+    s.set_zone_texts(crate::script::ZoneTexts {
+        pvp_type: Some("arena".into()),
+        pvp_faction: None,
+        pvp_subzone: true,
+        ..Default::default()
+    });
+    assert_eq!(
+        s.eval::<(String, f64, i64)>(
+            "local t, sub = GetZonePVPInfo() return t, sub, select('#', GetZonePVPInfo())"
+        )
+        .unwrap(),
+        ("arena".into(), 1.0, 2)
     );
     assert_eq!(
         s.eval::<(f64, f64)>("return GetGameTime()").unwrap(),

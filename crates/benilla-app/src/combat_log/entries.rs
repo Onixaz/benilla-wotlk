@@ -164,6 +164,7 @@ pub(crate) fn unit_flags<'s>(
             let rank = crate::target::ring::ring_reaction(
                 inputs.factions,
                 inputs.reputations,
+                inputs.group,
                 Some(unit),
                 Some(me),
             );

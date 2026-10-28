@@ -496,6 +496,7 @@ fn drive_vplates(
         let rank = ring_reaction(
             world.factions.as_deref(),
             &world.reputations,
+            &*group,
             store,
             self_store,
         );
@@ -524,6 +525,7 @@ fn drive_vplates(
             attackable: crate::target::ring::can_attack_from_player(
                 world.factions.as_deref(),
                 &world.reputations,
+                &*group,
                 store,
                 self_store,
                 is_player,

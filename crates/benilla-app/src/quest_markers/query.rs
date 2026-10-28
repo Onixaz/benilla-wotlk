@@ -70,6 +70,7 @@ pub(super) fn query_statuses(
     index: Res<GuidIndex>,
     factions: Option<Res<Factions>>,
     reputations: Res<crate::net::Reputations>,
+    group: Option<Res<crate::ui_party::GroupState>>,
     mut quest: ResMut<QuestGiver>,
     commands: Res<NetCommands>,
     mut ecs: Commands,
@@ -131,6 +132,7 @@ pub(super) fn query_statuses(
                 let reaction = crate::target::ring_reaction(
                     factions.as_deref(),
                     &reputations,
+                    crate::target::party_of(group.as_deref()),
                     Some(&*obj),
                     Some(&store),
                 );

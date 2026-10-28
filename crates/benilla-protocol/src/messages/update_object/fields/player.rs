@@ -8,6 +8,10 @@ impl ObjectFields {
     pub fn object_entry(&self) -> Option<u32> {
         self.get_u32(3)
     }
+    /// `OBJECT_FIELD_GUID` (0-1): the object's own guid, `None` until it streams or when zero.
+    pub fn object_guid(&self) -> Option<u64> {
+        self.get_guid(0).filter(|&g| g != 0)
+    }
     /// `ITEM_FIELD_STACK_COUNT`: an item object's stack size.
     pub fn item_stack_count(&self) -> Option<u32> {
         self.get_u32(FIELD_ITEM_STACK_COUNT)

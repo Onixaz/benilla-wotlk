@@ -31,7 +31,7 @@ use benilla_ui::script::{JustifyH, JustifyV, Outline, TitleRow};
 use crate::entities::{overhead_anchor, BoneAttach, OverheadFallback};
 use crate::names::NameCache;
 use crate::net::{Guid, NetCommands, NetEntity, ObjectStore, Reputations, SelfPlayer};
-use crate::target::{ring_reaction, ring_variant, CombatFlash, Factions, RingVariant, Selection};
+use crate::target::{highlight_variant, CombatFlash, Factions, RingVariant, Selection};
 use crate::ui_text::{layout_text_quads, FontSpec, Justify, TextSeat, UiFontAtlas};
 use benilla_world::view::WorldCamera;
 
@@ -312,13 +312,14 @@ pub(crate) fn height_scale(d: f32) -> f32 {
     }
 }
 
-/// What a name line is painted with: the ring's selector ([`ring_variant`]), which the reference's
-/// name render also calls (`0x605960`), or the combat flash.
+/// What a name line is painted with: the unit's highlight colour, the ring's own, which the
+/// reference's name render reads (`0x725980` → `0x718ac0`): the resolver's class
+/// ([`highlight_variant`]) or the combat flash.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 enum NamePaint {
-    /// The selector's answer.
+    /// The resolver's answer.
     Variant(RingVariant),
-    /// The combat-flash pulse, the selector's first-priority branch; its tint is rewritten each
+    /// The combat-flash pulse, the highlight colour's first branch; its tint is rewritten each
     /// frame from [`CombatFlash::color`].
     Flash,
 }
@@ -478,8 +479,10 @@ pub(crate) fn drive_nameplates(
         Option<Res<crate::player::CameraControl>>,
         Res<crate::vplates::VPlates>,
         Res<crate::chat_bubble::BubblesActive>,
-        // The selector's party roster (`0xbc6f48`), for the pale party variants.
+        // The group roster: the reaction's party rung and the highlight's party colours.
         Res<crate::ui_party::GroupState>,
+        // The friend list: the highlight's friend colour.
+        Res<crate::ui_social::SocialState>,
         // The UnitName* CVar mask.
         Res<NameConfig>,
         // The title rows and medal strings ([`PvpNameStrings`]).
@@ -507,7 +510,8 @@ pub(crate) fn drive_nameplates(
         Query<(), With<crate::entities::mount::MountChild>>,
     ),
 ) {
-    let (selection, flash, rig, vplates, bubbles, group, name_cfg, pvp_strings, index) = gates;
+    let (selection, flash, rig, vplates, bubbles, group, social, name_cfg, pvp_strings, index) =
+        gates;
     let (self_guid, own_store) = self_store
         .single()
         .map_or((None, None), |(g, s)| (Some(g.0), Some(s)));
@@ -601,6 +605,7 @@ pub(crate) fn drive_nameplates(
                 attackable: crate::target::ring::can_attack_from_player(
                     factions.as_deref(),
                     &reputations,
+                    &*group,
                     store,
                     own_store,
                     is_player,
@@ -658,23 +663,21 @@ pub(crate) fn drive_nameplates(
                 .and_then(|s| crate::ui_guild::unit_guild_name(&s.0, &mut guilds, &net_commands)),
             _ => None,
         };
-        // The colour: the ring's reaction rank and the shared selector.
-        let rank = ring_reaction(factions.as_deref(), &reputations, store, own_store);
-        let is_dead = store.is_some_and(|s| s.0.unit_is_dead());
-        // The ring's player inputs, for this unit: PvP flag (`UNIT_FIELD_FLAGS` 0x1000) and party.
-        let pvp = store.is_some_and(|s| s.0.unit_flags() & 0x1000 != 0);
-        let in_party = group.members.iter().any(|m| m.guid == guid.0);
-        // The selector's first-priority branch: the combat flash while we melee this unit.
+        // The highlight colour (`0x718ac0`), the ring's own: the combat flash first, while we
+        // melee this unit, then the resolver. A unit whose fields have not streamed reads neutral.
         let color = if flash.unit == Some(entity) {
             NamePaint::Flash
         } else {
-            NamePaint::Variant(ring_variant(
-                rank,
-                net.kind == EntityKind::Player,
-                is_dead,
-                pvp,
-                in_party,
-            ))
+            NamePaint::Variant(store.map_or(RingVariant::Neutral, |s| {
+                highlight_variant(
+                    s,
+                    factions.as_deref(),
+                    &reputations,
+                    &group,
+                    own_store,
+                    |g| social.is_friend(g),
+                )
+            }))
         };
 
         seen.insert(entity);
@@ -955,46 +958,6 @@ mod tests {
             "ghost/resting/leader don't decorate"
         );
     }
-
-    /// A PvP-flagged friendly player's name is the ring's green, not the soft blue.
-    #[test]
-    fn name_color_is_the_ring_selector_itself() {
-        let paint = |rank, is_player, is_dead, pvp, in_party| {
-            NamePaint::Variant(ring_variant(rank, is_player, is_dead, pvp, in_party))
-        };
-        // Flagged is green, unflagged the soft blue, and the two differ.
-        let flagged = paint(6, true, false, true, false);
-        let unflagged = paint(6, true, false, false, false);
-        assert_eq!(flagged, NamePaint::Variant(RingVariant::Friendly));
-        assert_eq!(unflagged, NamePaint::Variant(RingVariant::Player));
-        assert_ne!(flagged.color(), unflagged.color());
-        assert_eq!(
-            flagged.color(),
-            Color::linear_rgb(0.0, 1.0, 0.0),
-            "0xFF00FF00 — the ring's own green, byte for byte"
-        );
-        assert_eq!(
-            paint(6, true, false, true, true),
-            NamePaint::Variant(RingVariant::PartyPvp)
-        );
-        assert_eq!(
-            paint(6, true, false, false, true),
-            NamePaint::Variant(RingVariant::Party)
-        );
-        assert_eq!(paint(0, false, false, false, false).color(), RED);
-        assert_eq!(
-            paint(6, true, true, false, false),
-            NamePaint::Variant(RingVariant::Player),
-            "dead player never grays"
-        );
-        assert_eq!(paint(1, true, false, true, false).color(), RED, "hostile");
-        assert_eq!(
-            paint(6, false, true, false, false),
-            NamePaint::Variant(RingVariant::Dead)
-        );
-    }
-
-    const RED: Color = Color::linear_rgb(1.0, 0.0, 0.0);
 
     /// The strings a VM defining `pairs` hands over, as the honor feed sets them, and two rows.
     fn strings_of(session: u64, pairs: &[(&str, &str)]) -> PvpNameStrings {

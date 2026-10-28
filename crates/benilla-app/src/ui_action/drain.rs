@@ -247,6 +247,10 @@ pub(crate) fn use_action(
             if let Some(d) = ladder.spells.as_ref().and_then(|s| s.catalog.get(b.action)) {
                 let auras = targeting.self_auras.iter().next();
                 if super::toggle::active_action_toggle(b.action, d, auras) {
+                    if ladder.keeps_fresh_toggle(b.action) {
+                        debug!("ui_action: cast {} re-pressed — just cast, kept", b.action);
+                        return UseOutcome::Done;
+                    }
                     debug!("ui_action: cast {} re-pressed — aura cancels", b.action);
                     let _ = ladder
                         .commands

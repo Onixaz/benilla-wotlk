@@ -162,12 +162,14 @@ fn feed_shapeshift_bar(
     clock: Res<crate::ui_script::UiClock>,
     // One tuple for Bevy's 16-param ceiling: the spell mods, the rune table and costs, and the
     // form byte the auto-tracking edge reads.
-    (spell_mods, runes, rune_costs, mut seen_form, combo): (
+    (spell_mods, runes, rune_costs, mut seen_form, combo, group): (
         Res<crate::spell::SpellModifiers>,
         Option<Res<crate::ui_rune::Runes>>,
         Option<Res<crate::ui_rune::RuneCosts>>,
         ResMut<SeenForm>,
         Option<Res<crate::spell::ComboPoints>>,
+        // The group, for the reaction's party rung.
+        Option<Res<crate::ui_party::GroupState>>,
     ),
     mut memory: Local<crate::ui_script::VmMemo<StanceMemory>>,
 ) {
@@ -254,6 +256,7 @@ fn feed_shapeshift_bar(
                         target_store,
                         factions: factions.as_deref(),
                         reputations: &reputations,
+                        party: crate::target::party_of(group.as_deref()),
                         cooldowns: &cooldowns,
                         carried: &carried,
                         spell_mods: &spell_mods,
@@ -321,6 +324,9 @@ pub(crate) fn cast_form(cast: &mut crate::spell::ScriptCast, spell_id: u32) {
         }
     });
     match disposition {
+        Some(true) if ladder.keeps_fresh_toggle(spell_id) => {
+            debug!("ui_shapeshift: form {spell_id} was just cast, kept");
+        }
         Some(true) => {
             debug!("ui_shapeshift: cancel form aura {spell_id}");
             let _ = ladder

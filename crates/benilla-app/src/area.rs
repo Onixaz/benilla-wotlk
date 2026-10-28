@@ -107,6 +107,7 @@ fn feed_zone_events(
     areas: Option<Res<AreaTableRes>>,
     factions: Option<Res<Factions>>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
+    roster: Option<Res<crate::char_select::Roster>>,
     mut cache: Local<crate::ui_script::VmMemo<ZoneCache>>,
 ) {
     let (Some(mut script), Some(areas)) = (script, areas) else {
@@ -193,26 +194,58 @@ fn feed_zone_events(
         return;
     }
 
-    // GetZonePVPInfo (`0x48d540`): isArena is the leaf's Flags `0x80`; the type is the zone's
-    // FactionGroupMask against the player template's friend then enemy masks, "contested" when
-    // neither; never "arena"; nil only on structural failure. factionName is FactionGroup.dbc's
-    // Name for the zone's mask bit; the realm type never enters.
-    let is_arena = leaf_row.flags & 0x80 != 0;
-    let zone_mask = areas.0.get(zone).map_or(0, |r| r.faction_group_mask);
-    let pvp = factions
+    // GetZonePVPInfo (`0x51ba50`): the subzone's flags when there is one, else the zone's, name a
+    // sanctuary (`0x800`), arena (`0x80`) or combat (`0x1000000`) type. Otherwise a territory, on a
+    // PvP realm or in a zone flagged `0x10`: contested on flag `0x40000`, else the zone's
+    // FactionGroupMask against our template's friend then enemy masks (friendly without one),
+    // contested when neither; factionName is FactionGroup.dbc's name for the zone's mask bit.
+    let zone_row = areas.0.get(zone);
+    let subzone = leaf != zone;
+    let flags = if subzone {
+        leaf_row.flags
+    } else {
+        zone_row.map_or(0, |r| r.flags)
+    };
+    let special = if flags & 0x800 != 0 {
+        Some("sanctuary")
+    } else if flags & 0x80 != 0 {
+        Some("arena")
+    } else if flags & 0x100_0000 != 0 {
+        Some("combat")
+    } else {
+        None
+    };
+    let realm_pvp = roster
         .as_ref()
-        .zip(self_store.single().ok())
-        .and_then(|(f, store)| {
-            let tpl = f.catalog().template(store.0.unit_faction_template()?)?;
-            let ty = if zone_mask & tpl.friend_group_mask != 0 {
-                "friendly"
-            } else if zone_mask & tpl.enemy_group_mask != 0 {
-                "hostile"
-            } else {
-                "contested"
-            };
-            Some((ty, f.catalog().faction_group_name(zone_mask).unwrap_or("")))
-        });
+        .and_then(|r| r.realm_type())
+        .is_some_and(|t| crate::realm_select::pvp_rp(t).0);
+    let territory = || {
+        let row = zone_row?;
+        let store = self_store.single().ok()?;
+        if !realm_pvp && row.flags & 0x10 == 0 {
+            return None;
+        }
+        let catalog = factions.as_ref().map(|f| f.catalog());
+        let tpl = catalog.and_then(|c| c.template(store.0.unit_faction_template()?));
+        let mask = row.faction_group_mask;
+        let ty = match tpl {
+            _ if flags & 0x4_0000 != 0 => "contested",
+            None => "friendly",
+            Some(t) if mask & t.friend_group_mask != 0 => "friendly",
+            Some(t) if mask & t.enemy_group_mask != 0 => "hostile",
+            Some(_) => "contested",
+        };
+        Some((
+            ty,
+            catalog
+                .and_then(|c| c.faction_group_name(mask))
+                .unwrap_or(""),
+        ))
+    };
+    let (pvp, pvp_subzone) = match special {
+        Some(ty) => (Some((ty, "")), subzone),
+        None => (territory(), false),
+    };
     let pvp_type = pvp.map_or("", |(ty, _)| ty);
 
     script.set_zone_texts(benilla_ui::script::ZoneTexts {
@@ -225,7 +258,7 @@ fn feed_zone_events(
             .map(|(_, faction)| faction)
             .filter(|f| !f.is_empty())
             .map(str::to_string),
-        is_arena,
+        pvp_subzone,
     });
 
     if let Some(event) = event {

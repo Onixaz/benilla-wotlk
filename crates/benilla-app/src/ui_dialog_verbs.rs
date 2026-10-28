@@ -666,6 +666,7 @@ fn poll_area_spirit_healer(
     >,
     factions: Option<Res<crate::target::Factions>>,
     reputations: Res<crate::net::Reputations>,
+    group: Option<Res<crate::ui_party::GroupState>>,
     names: Option<Res<crate::names::NameCache>>,
     commands: Res<NetCommands>,
     mut script: Option<NonSendMut<UiScript>>,
@@ -729,6 +730,7 @@ fn poll_area_spirit_healer(
             Some(store),
             factions.as_deref(),
             &reputations,
+            crate::target::party_of(group.as_deref()),
             Some(self_store),
             names.as_deref(),
         ) {
