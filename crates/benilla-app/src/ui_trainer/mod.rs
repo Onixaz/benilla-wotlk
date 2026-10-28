@@ -236,6 +236,38 @@ fn snapshot(open: &TrainerOpen, cx: &ResolveCtx) -> Option<TrainerState> {
     })
 }
 
+/// Each listed spell's own description expanded through `ctx` (`0x5959d0`), `None` when it has
+/// none; a text already cached stands.
+fn describe_services(
+    texts: &mut HashMap<u32, Option<String>>,
+    services: &[TrainerSpell],
+    catalog: &SpellCatalog,
+    ctx: &benilla_formats::TokenContext,
+) {
+    for w in services {
+        texts.entry(w.spell).or_insert_with(|| {
+            let d = catalog.get(w.spell)?;
+            let text = d.description.as_deref().filter(|t| !t.is_empty())?;
+            Some(benilla_formats::substitute(text, d, ctx))
+        });
+    }
+}
+
+/// Whether two snapshots differ only in what an item record fills: a recipe's icon, item link and
+/// product description, all read by the detail pane alone.
+fn only_pane_moved(old: &TrainerState, new: &TrainerState) -> bool {
+    let strip = |t: &TrainerState| {
+        let mut t = t.clone();
+        for s in &mut t.services {
+            s.texture = None;
+            s.item_link = None;
+            s.description = None;
+        }
+        t
+    };
+    old != new && strip(old) == strip(new)
+}
+
 /// The player as the re-evaluator and the requirement getters read it.
 fn player_view(store: Option<&ObjectStore>, known: &BTreeSet<u32>) -> reeval::PlayerView {
     reeval::PlayerView {
@@ -263,11 +295,12 @@ fn player_view(store: Option<&ObjectStore>, known: &BTreeSet<u32>) -> reeval::Pl
 }
 
 /// What the description `$`-tokens read of the player beside its spell modifiers, known spells and
-/// auras: its skills, gender byte and expression operands.
+/// auras: its skills, gender byte, expression operands and the bind point's area (`$z`).
 type TokenReads = (
     crate::spell::SkillSnapshot,
     u8,
     crate::spell::text_caster::Operands,
+    Option<String>,
 );
 
 /// `GetTrainerServiceDescription`'s parser inputs (`SpellParserParseText` over the player with its
@@ -278,6 +311,9 @@ pub(crate) struct DescriptionInputs<'w, 's> {
     caster_sources: crate::spell::text_caster::CasterSources<'w, 's>,
     texts: Local<'s, crate::ui_script::VmMemo<HashMap<u32, Option<String>>>>,
     last_reads: Local<'s, crate::ui_script::VmMemo<Option<TokenReads>>>,
+    // `$z`: the bind point's area (`SMSG_BINDPOINTUPDATE`), named through `AreaTable`.
+    home_bind: Option<Res<'w, crate::net::HomeBind>>,
+    area_names: Option<Res<'w, crate::ui_quest_log::QuestHeaderNamesRes>>,
 }
 
 /// The re-evaluator's inputs and its descriptor triggers: the player's descriptor and its field
@@ -381,11 +417,18 @@ pub(crate) fn feed_trainer(
             .filter(|t| !t.is_empty())
     };
     let store = self_player.map(|(_, s)| s);
+    let home_area: Option<String> = desc
+        .home_bind
+        .as_deref()
+        .and_then(|b| b.0)
+        .and_then(|id| desc.area_names.as_deref()?.0.resolve(id as i32))
+        .map(str::to_string);
     let reads: Option<TokenReads> = store.map(|s| {
         (
             crate::spell::skill_snapshot(Some(s)),
             s.0.unit_gender().unwrap_or(0),
             crate::spell::text_caster::Operands::of(Some(s), &items),
+            home_area.clone(),
         )
     });
     let moved = *desc.last_reads.get(&script) != reads
@@ -422,18 +465,12 @@ pub(crate) fn feed_trainer(
             mods: Some(&*desc.spell_mods as &dyn benilla_formats::SpellMods),
             unmodified_points: false,
             gender: &|| store.0.unit_gender().unwrap_or(0),
-            home_area: &|| None,
+            home_area: &|| home_area.as_deref(),
             caster: Some(&caster),
             global: &global,
             printf: &crate::ui_script::token_printf,
         };
-        for w in &open.services {
-            texts.entry(w.spell).or_insert_with(|| {
-                let d = spells.catalog.get(w.spell)?;
-                let text = d.description.as_deref().filter(|t| !t.is_empty())?;
-                Some(benilla_formats::substitute(text, d, &ctx))
-            });
-        }
+        describe_services(texts, &open.services, &spells.catalog, &ctx);
     }
     let fresh = snapshot(
         &open,
@@ -496,6 +533,11 @@ pub(crate) fn feed_trainer(
     } else {
         match (&*last, &fresh) {
             (None, Some(_)) => script.fire_event("TRAINER_SHOW", name_arg()),
+            // A landed item record changes only the detail pane: the cache callback `0x593ca0`
+            // fires `TRAINER_DESCRIPTION_UPDATE`, which re-selects without re-scrolling.
+            (Some(old), Some(new)) if !name_changed && !forced && only_pane_moved(old, new) => {
+                script.fire_event("TRAINER_DESCRIPTION_UPDATE", vec![])
+            }
             (Some(_), Some(_)) => script.fire_event("TRAINER_UPDATE", name_arg()),
             (Some(_), None) => script.fire_event("TRAINER_CLOSED", vec![]),
             (None, None) => {}

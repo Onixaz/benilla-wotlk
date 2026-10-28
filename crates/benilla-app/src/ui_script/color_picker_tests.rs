@@ -3,32 +3,11 @@
 
 use benilla_ui::script::{QuadContent, UiScript};
 
-use super::test_ui::load_ui as load_xml;
+use super::test_ui::stock_ui;
 
-/// The files the picker needs, in the production order, ending with the window.
+/// The full stock load, the picker hidden in it.
 fn picker() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    for file in [
-        "Interface\\FrameXML\\GlobalStrings.lua",
-        "Interface\\FrameXML\\Fonts.xml",
-        "Interface\\FrameXML\\BasicControls.xml",
-        "Interface\\FrameXML\\LocaleProperties.lua",
-        r"Interface\FrameXML\UIParent.xml",
-        r"Interface\FrameXML\MoneyFrame.lua",
-        r"Interface\FrameXML\MoneyFrame.xml",
-        "Interface\\FrameXML\\GameTooltip.xml",
-        "Interface\\FrameXML\\UIDropDownMenu.xml",
-        r"Interface\FrameXML\UIPanelTemplates.lua",
-        r"Interface\FrameXML\UIPanelTemplates.xml",
-        "Interface\\FrameXML\\StaticPopup.xml",
-        "Interface\\FrameXML\\ColorPickerFrame.xml",
-        "ScrollTemplates.xml",
-    ] {
-        load_xml(&s, file);
-    }
-    s.set_screen_size(1024.0, 768.0);
-    s.resolve();
-    s
+    stock_ui(1024.0, 768.0)
 }
 
 /// What the widget reads back after being set to `(r, g, b)`: `SetColorRGB` (`0x78eae0`) rounds
@@ -45,7 +24,6 @@ fn after_round_trip(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
 /// The four names addons address exist, and both buttons' `OnClick` is fetchable:
 /// `AceConsole-2.0.lua:1402` wraps the Okay button's handler, and skips its option without it.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_named_pieces_exist_and_their_scripts_are_fetchable() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = picker();
@@ -74,11 +52,10 @@ fn the_named_pieces_exist_and_their_scripts_are_fetchable() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `SetColorRGB` paints the swatch through `OnColorSelect` (`ColorPickerFrame.xml:171-176`), and
+/// `SetColorRGB` paints the swatch through `OnColorSelect` (`ColorPickerFrame.xml`), and
 /// `GetColorRGB` reads back the quantized colour. Checked on the draw list: `SetTexture(r, g, b)`
 /// replaces the texture with a solid colour, so `GetVertexColor` still reads the XML's white.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn set_color_rgb_paints_the_swatch_and_reads_back_the_widgets_colour() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = picker();
@@ -106,9 +83,8 @@ fn set_color_rgb_paints_the_swatch_and_reads_back_the_widgets_colour() {
     );
 }
 
-/// `hasOpacity` shows the slider and widens the window to 365 (`ColorPickerFrame.xml:161-170`).
+/// `hasOpacity` shows the slider and widens the window to 365 (`ColorPickerFrame.xml`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn has_opacity_shows_the_slider_and_widens_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = picker();
@@ -145,9 +121,8 @@ fn has_opacity_shows_the_slider_and_widens_the_window() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// Every slider change runs `opacityFunc` (`ColorPickerFrame.xml:147-151`).
+/// Every slider change runs `opacityFunc` (`ColorPickerFrame.xml`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_opacity_slider_drives_opacity_func_on_every_change() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = picker();
@@ -207,7 +182,6 @@ fn dewdrop_open(s: &UiScript, r: f64, g: f64, b: f64, opacity: f64) {
 
 /// Okay: the setter gets the quantized colour and the slider's alpha, and the window closes.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_dewdrop_sequence_commits_on_okay() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = picker();
@@ -250,9 +224,8 @@ fn the_dewdrop_sequence_commits_on_okay() {
     );
 }
 
-/// Cancel restores the addon's pre-open colour through `cancelFunc` (`ColorPickerFrame.xml:71-73`).
+/// Cancel restores the addon's pre-open colour through `cancelFunc` (`ColorPickerFrame.xml`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn cancel_restores_the_previous_colour_through_cancel_func() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = picker();
@@ -288,11 +261,10 @@ fn cancel_restores_the_previous_colour_through_cancel_func() {
 }
 
 /// The ESC ladder (`ToggleGameMenu`) hides the picker as a `UISpecialFrames` row
-/// (`UIParent.lua:52-55`), a bare hide that leaves the previewed colour. `cancelFunc` runs from
-/// the Cancel button and the frame's own ESC `OnKeyDown` (`ColorPickerFrame.xml:177-184`), never
+/// (`UIParent.lua`), a bare hide that leaves the previewed colour. `cancelFunc` runs from
+/// the Cancel button and the frame's own ESC `OnKeyDown` (`ColorPickerFrame.xml`), never
 /// from the ladder.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_hides_the_picker_and_cancel_is_what_reverts() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = picker();
@@ -320,11 +292,11 @@ fn escape_hides_the_picker_and_cancel_is_what_reverts() {
     assert_eq!((r, g, b), (0.1, 0.5, 0.9), "Cancel runs cancelFunc");
 }
 
-/// `AceConsole-2.0.lua:1402-1406` in shape: the Okay button's handler, fetched with `GetScript`
-/// and replaced through `SetScript` by one that calls it first.
+/// An addon chaining the Okay button: the handler, fetched with `GetScript`, is replaced through
+/// `SetScript` by one that calls it first. The 3.3.5a handler reads `self:GetParent()`, so the
+/// chain passes `self` on.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn ace_console_can_chain_the_okay_buttons_onclick() {
+fn an_addon_can_chain_the_okay_buttons_onclick() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = picker();
     s.run(
@@ -333,9 +305,9 @@ fn ace_console_can_chain_the_okay_buttons_onclick() {
         ColorPickerFrame.func = function() table.insert(chained, "original") end
         if ColorPickerOkayButton then
             local ColorPickerOkayButton_OnClick = ColorPickerOkayButton:GetScript("OnClick")
-            ColorPickerOkayButton:SetScript("OnClick", function()
+            ColorPickerOkayButton:SetScript("OnClick", function(self, ...)
                 if ColorPickerOkayButton_OnClick then
-                    ColorPickerOkayButton_OnClick()
+                    ColorPickerOkayButton_OnClick(self, ...)
                 end
                 table.insert(chained, "ace")
             end)
@@ -356,10 +328,9 @@ fn ace_console_can_chain_the_okay_buttons_onclick() {
     );
 }
 
-/// `CloseWindows` walks `UISpecialFrames`, which lists `ColorPickerFrame` (`UIParent.lua:52-55`),
+/// `CloseWindows` walks `UISpecialFrames`, which lists `ColorPickerFrame` (`UIParent.lua`),
 /// and hides it plainly, with no cancel.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_picker_is_a_uispecialframe_and_close_windows_puts_it_away() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = picker();
@@ -386,11 +357,10 @@ fn the_picker_is_a_uispecialframe_and_close_windows_puts_it_away() {
 
 // ── The dropdown's colour-swatch row ─────────────────────────────────────────────────────────────
 
-/// A `hasColorSwatch` row (fields per `UIDropDownMenu.lua:114-125`) shows its square in `r/g/b`;
+/// A `hasColorSwatch` row (fields per `UIDropDownMenu.lua`) shows its square in `r/g/b`;
 /// clicking it opens the picker through `UIDropDownMenuButton_OpenColorPicker`
-/// (`UIDropDownMenu.lua:801-815`), which captures `previousValues` for Cancel to hand back.
+/// (`UIDropDownMenu.lua`), which captures `previousValues` for Cancel to hand back.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_dropdown_row_with_has_color_swatch_opens_the_picker_and_cancel_restores() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = picker();
@@ -474,7 +444,6 @@ fn a_dropdown_row_with_has_color_swatch_opens_the_picker_and_cancel_restores() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_row_without_the_flag_has_no_swatch() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = picker();
@@ -500,10 +469,9 @@ fn a_row_without_the_flag_has_no_swatch() {
 // ── The wheel: the window's generated art ────────────────────────────────────────────────────────
 
 /// The wheel, the value strip and both thumbs sit at the stock geometry
-/// (`ColorPickerFrame.xml:186-221`), and `ColorPickerWheel` publishes its name, which the strip's
+/// (`ColorPickerFrame.xml`), and `ColorPickerWheel` publishes its name, which the strip's
 /// anchor and reskinning addons use.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_shipped_window_carries_the_wheel_at_the_references_geometry() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = picker();
@@ -558,7 +526,6 @@ fn the_shipped_window_carries_the_wheel_at_the_references_geometry() {
 /// A click on the wheel reaches the caller's `func` with the colour under the cursor; the right
 /// rim is hue 180, cyan.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_click_on_the_wheel_reaches_the_callers_func() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = picker();
@@ -605,7 +572,6 @@ fn a_click_on_the_wheel_reaches_the_callers_func() {
 /// The file-less regions carry only what moves a pixel: the disc no colour at all (it draws at
 /// V = 1), the strip hue and saturation but not value.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_generated_art_reaches_the_renderer_carrying_only_what_moves_a_pixel() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = picker();

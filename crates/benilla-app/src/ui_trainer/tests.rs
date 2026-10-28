@@ -384,6 +384,68 @@ fn the_description_is_the_spell_text_else_the_recipes_product() {
     );
 }
 
+/// Astral Recall (556) is the one trainer row whose description names the bind point, `$z`.
+/// Skips without client data.
+#[test]
+fn the_description_names_the_bind_point() {
+    let data = benilla_formats::wow_data_or_skip!();
+    let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+    let spells = benilla_formats::load_spell_catalog(&mut chain).expect("load Spell");
+    let durations = benilla_formats::SpellDurationCatalog::default();
+    let radii = benilla_formats::SpellRadiusCatalog::default();
+    let ctx = benilla_formats::TokenContext {
+        durations: &durations,
+        radii: &radii,
+        ranges: None,
+        variables: None,
+        skill: &|_| 0,
+        lookup: &|id| spells.get(id),
+        mods: None,
+        unmodified_points: false,
+        gender: &|| 0,
+        home_area: &|| Some("Stormwind City"),
+        caster: None,
+        global: &|_| None,
+        printf: &crate::ui_script::token_printf,
+    };
+    let mut texts = HashMap::new();
+    let services = [wire(556, trainer_spell_state::GREEN, 0, 30, 0)];
+    describe_services(&mut texts, &services, &spells, &ctx);
+    let text = texts
+        .get(&556)
+        .cloned()
+        .flatten()
+        .expect("Astral Recall has a description");
+    assert!(text.contains("Stormwind City"), "{text}");
+    assert!(!text.contains("$z"), "{text}");
+}
+
+/// A landed product record moves only the pane's fields, which `TRAINER_DESCRIPTION_UPDATE`
+/// answers; any other change is a `TRAINER_UPDATE`.
+#[test]
+fn only_an_item_record_landing_is_a_pane_update() {
+    let mut open = TrainerOpen::default();
+    open.open(
+        0x42,
+        TRAINER_TYPE_TRADESKILL,
+        vec![wire(100, trainer_spell_state::GREEN, 10, 1, 0)],
+        String::new(),
+    );
+    let before = snap(&open, &icon_catalog()).unwrap();
+    let mut landed = before.clone();
+    landed.services[0].texture = Some("ITEM".into());
+    landed.services[0].item_link = Some("link".into());
+    landed.services[0].description = Some("A sword.".into());
+    assert!(only_pane_moved(&before, &landed));
+    assert!(!only_pane_moved(&before, &before), "nothing moved");
+    let mut learned = landed.clone();
+    learned.services[0].category = TrainerServiceCategory::Used;
+    assert!(
+        !only_pane_moved(&landed, &learned),
+        "a state change re-sorts"
+    );
+}
+
 #[test]
 fn category_maps_the_wire_state_byte() {
     assert_eq!(
