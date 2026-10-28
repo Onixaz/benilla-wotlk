@@ -1,14 +1,14 @@
 //! The stock merchant window (`MerchantFrame.xml`), engine-only, fed a synthetic stock and purse.
 
 use benilla_ui::script::{
-    ContainerState, CursorPayload, DressUpIntent, ExtractedQuad, ItemStatsHead, MerchantItem,
-    MerchantState, QuadContent, ScriptValue, SoundRequest, UiScript,
+    ContainerState, ExtractedQuad, ItemStatsHead, MerchantItem, MerchantState, QuadContent,
+    ScriptValue, SoundRequest, UiScript,
 };
 
-use super::test_ui::{bag_open, load_ui as load_xml, BAG_UI};
+use super::test_ui::{bag_open, stock_ui};
 
 /// Put a bag of `num_slots` empty slots in bag `id`: the stock `OpenBag` opens nothing for a
-/// container with no slots (`ContainerFrame.lua:152-153`).
+/// container with no slots (`ContainerFrame.lua`).
 fn equip_bag(s: &mut UiScript, id: i64, name: &str, num_slots: u32) {
     s.set_container(
         id,
@@ -37,24 +37,10 @@ fn frame_rect(quads: &[ExtractedQuad], w: f32, h: f32) -> benilla_ui::layout::Re
 /// Two items and a purse: `MERCHANT_SHOW` opens the window in the left UIPanel slot, the rows and
 /// coins paint, a right-click buys, and `MERCHANT_CLOSED` hides it and vacates the slot.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn shipped_merchant_frame_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    // The census: every row is a container plus an `ItemButtonTemplate` button, and every price a
-    // `SmallMoneyFrameTemplate` (`MerchantFrame.xml:4-115`).
-    const MERCHANT: &str = "Interface\\FrameXML\\MerchantFrame.xml";
-    assert_eq!(
-        super::test_ui::load_kit_counting(
-            &s,
-            &[super::test_ui::MERCHANT_UI, &[MERCHANT]],
-            MERCHANT
-        ),
-        90,
-        "the stock file's own shape — see the census note above"
-    );
-
+    let mut s = stock_ui(1024.0, 768.0);
     s.resolve();
     let has_icon = |quads: &[ExtractedQuad], needle: &str| {
         quads.iter().any(|q| {
@@ -119,7 +105,7 @@ fn shipped_merchant_frame_drives_end_to_end() {
         "purse shows its silver/copper counts"
     );
 
-    // A filled row's socket is bright, an empty one's 0.4 (`MerchantFrame.lua:108`, `:115`).
+    // A filled row's socket is bright, an empty one's 0.4 (`MerchantFrame.lua`).
     let socket_colors: Vec<[f32; 4]> = quads
         .iter()
         .filter_map(|q| match &q.content {
@@ -131,13 +117,13 @@ fn shipped_merchant_frame_drives_end_to_end() {
             _ => None,
         })
         .collect();
-    // Rows 11 and 12 are hidden on the merchant tab (`MerchantFrame.lua:181-182`).
+    // Rows 11 and 12 are hidden on the merchant tab (`MerchantFrame.lua`).
     assert_eq!(
         socket_colors.len(),
         11,
         "10 merchant rows + the buyback slot render their socket plate"
     );
-    // Three bright: the merchant page never tints the buyback slot (`MerchantFrame.lua:133-152`).
+    // Three bright: the merchant page never tints the buyback slot (`MerchantFrame.lua`).
     assert_eq!(
         socket_colors.iter().filter(|c| c[0] > 0.9).count(),
         3,
@@ -163,7 +149,7 @@ fn shipped_merchant_frame_drives_end_to_end() {
         "10 row label plates + the buyback slot's render"
     );
 
-    // `SetLeftFrame` seats the window at TOPLEFT 0, -104 (`UIParent.lua:818`): top at 768 - 104.
+    // `UpdateUIPanelPositions` seats the left panel at TOPLEFT 0, -104: top at 768 - 104.
     let win = frame_rect(&quads, 384.0, 512.0);
     assert_eq!(
         (win.left, win.top),
@@ -171,7 +157,7 @@ fn shipped_merchant_frame_drives_end_to_end() {
         "merchant window landed at the left slot (TOPLEFT UIParent, 0, -104)"
     );
 
-    // The four quadrants, each pinned to its corner, whole texture (`MerchantFrame.xml:146-177`).
+    // The four quadrants, each pinned to its corner, whole texture (`MerchantFrame.xml`).
     let quad_of = |needle: &str| {
         quads
             .iter()
@@ -253,7 +239,7 @@ fn shipped_merchant_frame_drives_end_to_end() {
         icon_rect.height()
     );
 
-    // The name sits above the price (`MerchantFrame.xml:34-45`, `:99-106`); rects are y-up.
+    // The name sits above the price (`MerchantFrame.xml`); rects are y-up.
     let name_rect = text_rect("Refreshing Spring Water");
     let price_rect = text_rect("25");
     let overlap = name_rect.left < price_rect.right
@@ -269,7 +255,7 @@ fn shipped_merchant_frame_drives_end_to_end() {
         "name {name_rect:?} sits above price {price_rect:?}"
     );
 
-    // A right-click buys; a plain left-click is `PickupMerchantItem` (`MerchantFrame.lua:329`).
+    // A right-click buys; a plain left-click is `PickupMerchantItem` (`MerchantFrame.lua`).
     let (cx, cy) = (
         (icon_rect.left + icon_rect.right) * 0.5,
         (icon_rect.bottom + icon_rect.top) * 0.5,
@@ -291,29 +277,20 @@ fn shipped_merchant_frame_drives_end_to_end() {
         "MERCHANT_CLOSED hides the window"
     );
     assert!(
-        s.eval::<bool>("return GetLeftFrame() == nil").unwrap(),
+        s.eval::<bool>("return GetUIPanel(\"left\") == nil")
+            .unwrap(),
         "HideUIPanel vacated the left slot"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 /// The window's OnShow plays `igCharacterInfoOpen` and its OnHide `igCharacterInfoClose`
-/// (`MerchantFrame.xml:721`, `:714`); nothing plays at load, where the frame starts hidden.
+/// (`MerchantFrame.xml`); nothing plays at load, where the frame starts hidden.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn merchant_show_hide_plays_open_and_close_kits() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in crate::ui_script::test_ui::production_order(&[
-        super::test_ui::MERCHANT_UI,
-        &[
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, f);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
 
     assert!(
         s.take_sounds().is_empty(),
@@ -340,23 +317,12 @@ fn merchant_show_hide_plays_open_and_close_kits() {
 }
 
 /// `MerchantFrame_OnShow` calls `OpenBackpack` before the window's own sound
-/// (`MerchantFrame.lua:35`), so the bag's kit (`ContainerFrame.lua:140`, `:120`) leads each pair.
+/// (`MerchantFrame.lua`), so the bag's kit (`ContainerFrame.lua`) leads each pair.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn vendor_open_opens_the_backpack_and_layers_the_sound() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_money(0);
     equip_bag(&mut s, 0, "Backpack", 16);
     let _ = s.take_sounds(); // ignore anything from load (frames are hidden; nothing should)
@@ -388,23 +354,12 @@ fn vendor_open_opens_the_backpack_and_layers_the_sound() {
 }
 
 /// A bag the player already had open stays open when the vendor closes: the was-open memory, per
-/// bag in `BENILLA_BAG_WAS_OPEN` as in the stock `backpackWasOpen` (`ContainerFrame.lua:198-201`).
+/// bag in `BENILLA_BAG_WAS_OPEN` as in the stock `backpackWasOpen` (`ContainerFrame.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn vendor_leaves_an_already_open_backpack_alone() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_money(0);
     equip_bag(&mut s, 0, "Backpack", 16);
 
@@ -432,25 +387,14 @@ fn vendor_leaves_an_already_open_backpack_alone() {
 }
 
 /// A centre panel opened over a vendor keeps a backpack the player had open before it: the stock
-/// `ShowUIPanel` calls `CloseAllBags` (`UIParent.lua:699-702`), whose `CloseBackpack()` honours
-/// the was-open memory (`ContainerFrame.lua:702-707`, `:210-218`), and then closes bags 1 and up,
+/// `ShowUIPanel` calls `CloseAllBags` (`UIParent.lua`), whose `CloseBackpack()` honours
+/// the was-open memory (`ContainerFrame.lua`), and then closes bags 1 and up,
 /// the ones the vendor opened included.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn a_centre_panel_over_a_vendor_keeps_the_backpack_the_player_had_open() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_money(0);
     equip_bag(&mut s, 0, "Backpack", 16);
     equip_bag(&mut s, 1, "Small Pouch", 6);
@@ -468,7 +412,7 @@ fn a_centre_panel_over_a_vendor_keeps_the_backpack_the_player_had_open() {
         "fixture: the vendor opens the equipped bags"
     );
 
-    // A centre-area panel, as the Help micro button's `HelpFrame` is (`UIParent.lua:35`).
+    // A centre-area panel, as the Help micro button's `HelpFrame` is (`UIParent.lua`).
     s.run(
         r#"local f = CreateFrame("Frame", "CentrePanelProbe", UIParent)
            f:Hide()
@@ -496,21 +440,10 @@ fn a_centre_panel_over_a_vendor_keeps_the_backpack_the_player_had_open() {
 /// `OpenBackpack` does, so every bag is up to sell from. `ContainerFrameAdapters.xml` replaces the
 /// verb after the stock file loads; with the stock body live, bag 2 would not open.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn vendor_opens_and_closes_all_equipped_bags() {
     let _data = benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, file);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_money(0);
     equip_bag(&mut s, 0, "Backpack", 16);
     equip_bag(&mut s, 2, "Small Pouch", 6);
@@ -534,23 +467,13 @@ fn vendor_opens_and_closes_all_equipped_bags() {
 }
 
 /// Switching vendors is a close then an open, since `ShowUIPanel` returns early on a visible frame
-/// (`UIParent.lua:650-652`). The close's OnHide queues a `CloseMerchant` the feed must consume, or
+/// (`UIParent.lua`). The close's OnHide queues a `CloseMerchant` the feed must consume, or
 /// the drain would clear the vendor just reopened.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn merchant_switch_plays_close_then_open_and_queues_the_consumable_close() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in crate::ui_script::test_ui::production_order(&[
-        super::test_ui::MERCHANT_UI,
-        &[
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, f);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
 
     s.set_money(0);
     s.set_merchant(Some(MerchantState::default()));
@@ -577,26 +500,14 @@ fn merchant_switch_plays_close_then_open_and_queues_the_consumable_close() {
     );
 }
 
-/// Hovering a row's icon: the icon button's own 37px glow, a tooltip it owns at `ANCHOR_RIGHT`
-/// (`MerchantFrame.xml:64`), and the item's stat head with no buy-price line.
+/// Hovering a row's icon: the icon button's own 37px glow and a tooltip it owns at `ANCHOR_RIGHT`
+/// (`MerchantItemButton_OnEnter`), "Retrieving item information" while the template is in flight
+/// (`SetItemNoStats` `0x623760`), then the item with no buy-price line.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    // The stock tooltip sizes from its lines, so the harness needs a measurer.
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    for f in crate::ui_script::test_ui::production_order(&[
-        super::test_ui::MERCHANT_UI,
-        &[
-            "Interface\\FrameXML\\UIDropDownMenu.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, f);
-    }
 
     s.set_merchant(Some(MerchantState {
         items: vec![
@@ -684,7 +595,7 @@ fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
     let sword_icon = rect_of_tex(&quads, "INV_Sword_04");
 
     // Hover the icon: a row is an inert container plus an icon-sized `$parentItemButton` that
-    // takes the mouse (`MerchantFrame.xml:49`), so hovering the name shows nothing, as in 1.12.
+    // takes the mouse (`MerchantFrame.xml`), so hovering the name shows nothing.
     let (hx, hy) = (
         (sword_icon.left + sword_icon.right) * 0.5,
         (sword_icon.bottom + sword_icon.top) * 0.5,
@@ -706,6 +617,45 @@ fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
         "highlight sits on the icon, not the row"
     );
 
+    assert!(
+        has_text(&quads, "Retrieving item information"),
+        "the template is in flight"
+    );
+    // The templates land, and the hover re-enters.
+    for (id, view) in [
+        (
+            2131,
+            benilla_ui::script::ItemTemplateView {
+                name: "Vendor Blade".into(),
+                quality: 2,
+                class: 2,
+                subclass: 7,
+                inventory_type: 21,
+                damages: vec![(5.0, 9.0, 0)],
+                delay_ms: 2600,
+                ..Default::default()
+            },
+        ),
+        (
+            2129,
+            benilla_ui::script::ItemTemplateView {
+                name: "Chipped Buckler".into(),
+                quality: 1,
+                class: 4,
+                subclass: 6,
+                inventory_type: 14,
+                armor: 85,
+                block: 1,
+                ..Default::default()
+            },
+        ),
+    ] {
+        s.set_item_template(id, view);
+    }
+    s.mouse_move(600.0, 400.0);
+    s.mouse_move(hx, hy);
+    s.resolve();
+    let quads = s.extract();
     for line in [
         "Vendor Blade",
         "Main Hand",
@@ -715,9 +665,6 @@ fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
     ] {
         assert!(has_text(&quads, line), "tooltip line {line:?} missing");
     }
-    // No type word: this is the stat-head fallback of a hover whose full template is in flight,
-    // and the word is `ItemSubClass.dbc`'s display name, which only the app resolves.
-    assert!(!has_text(&quads, "Sword"), "the head carries no type word");
     // Two "Vendor Blade" quads: the row's gold name and the tooltip's uncommon-green header.
     let name_colors: Vec<[f32; 4]> = quads
         .iter()
@@ -772,10 +719,9 @@ fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
             "shield tooltip line {line:?} missing"
         );
     }
-    assert!(!has_text(&quads, "Shield"), "the head carries no type word");
     assert!(!has_text(&quads, "Main Hand"), "row 1's tooltip cleared");
 
-    s.mouse_move(1000.0, 10.0);
+    s.mouse_move(600.0, 400.0);
     s.resolve();
     let quads = s.extract();
     assert!(!has_text(&quads, "Off Hand"), "tooltip hidden on leave");
@@ -789,23 +735,13 @@ fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The two tabs (`MerchantFrame.lua:57-64`): the merchant page has the buyback slot and repair
+/// The two tabs (`MerchantFrame.lua`): the merchant page has the buyback slot and repair
 /// pair; the buyback page retitles the window and fills the rows from `GetBuybackItemInfo`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn merchant_tabs_drive_buyback_page_and_repair_pair() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in crate::ui_script::test_ui::production_order(&[
-        super::test_ui::MERCHANT_UI,
-        &[
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, f);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_money(500);
 
     let buyback_item = |name: &str, price: u32| MerchantItem {
@@ -845,7 +781,7 @@ fn merchant_tabs_drive_buyback_page_and_repair_pair() {
     );
     assert!(s.errors().is_empty(), "show errors: {:?}", s.errors());
 
-    // Merchant page: the latest sale in the buyback slot (`MerchantFrame.lua:133`), repair up.
+    // Merchant page: the latest sale in the buyback slot (`MerchantFrame.lua`), repair up.
     assert!(s
         .eval::<bool>("return MerchantBuyBackItemName:GetText() == 'Cracked Sword'")
         .unwrap());
@@ -894,7 +830,7 @@ fn merchant_tabs_drive_buyback_page_and_repair_pair() {
         )
         .unwrap());
 
-    // A buyback-page row click is `BuybackItem` (`MerchantFrame.lua:360`).
+    // A buyback-page row click is `BuybackItem` (`MerchantFrame.lua`).
     s.run("MerchantItem1ItemButton:Click(\"LeftButton\")")
         .unwrap();
     assert_eq!(s.take_merchant_buybacks(), vec![1]);
@@ -909,23 +845,16 @@ fn merchant_tabs_drive_buyback_page_and_repair_pair() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The tabs fit their labels once, in `<OnShow>` (`CharacterFrameTemplates.xml:77-80`), so the
+/// The tabs fit their labels once, in `<OnShow>` (`CharacterFrameTemplates.xml`), so the
 /// measurer must answer synchronously, as the app's does.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn merchant_tabs_fit_their_labels() {
     benilla_formats::wow_data_or_skip!();
-    /// `2 * $parentLeft:GetWidth()` (`UIPanelTemplates.lua:41`): the two 20-unit end slices.
+    /// `2 * $parentLeft:GetWidth()` (`UIPanelTemplates.lua`): the two 20-unit end slices.
     const SIDES: f64 = 40.0;
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-    for f in crate::ui_script::test_ui::production_order(&[
-        super::test_ui::MERCHANT_UI,
-        &["Interface\\FrameXML\\MerchantFrame.xml"],
-    ]) {
-        load_xml(&s, f);
-    }
     s.set_money(0);
     s.set_merchant(Some(MerchantState::default()));
     s.fire_event("MERCHANT_SHOW", vec![ScriptValue::Str("Vendor".into())]);
@@ -949,24 +878,14 @@ fn merchant_tabs_fit_their_labels() {
 }
 
 /// A hovered row arms the Buy cursor (UnableBuy when unaffordable, Inspect with ctrl held), which
-/// the frame's OnUpdate re-arms every frame (`MerchantFrame.xml:726-741`); leaving clears it.
+/// the frame's OnUpdate re-arms every frame (`MerchantFrame.xml`); leaving clears it.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn shipped_merchant_frame_arms_the_buy_cursor_on_hover() {
     benilla_formats::wow_data_or_skip!();
     use benilla_ui::script::UiCursorMode;
 
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in crate::ui_script::test_ui::production_order(&[
-        super::test_ui::MERCHANT_UI,
-        &[
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, f);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
 
     // A purse of 50c: row 1 (25c) is affordable, row 2 (100c) is not.
     s.set_money(50);
@@ -1004,7 +923,7 @@ fn shipped_merchant_frame_arms_the_buy_cursor_on_hover() {
     assert_eq!(s.ui_cursor(), None, "no override before any hover");
 
     // The row button's inline `<OnEnter>`, fired as the engine fires it: `this` bound first.
-    s.run("this = MerchantItem1ItemButton MerchantItem1ItemButton:GetScript(\"OnEnter\")() this = nil")
+    s.run("MerchantItem1ItemButton:GetScript(\"OnEnter\")(MerchantItem1ItemButton)")
         .unwrap();
     s.tick(0.016);
     assert!(s.errors().is_empty(), "hover errors: {:?}", s.errors());
@@ -1023,13 +942,13 @@ fn shipped_merchant_frame_arms_the_buy_cursor_on_hover() {
     );
     s.set_modifiers(false, false, false);
 
-    // OnLeave resets the cursor and clears `itemHover` (`MerchantFrame.xml:87-91`).
-    s.run("this = MerchantItem1ItemButton MerchantItem1ItemButton:GetScript(\"OnLeave\")() this = nil")
+    // OnLeave resets the cursor and clears `itemHover` (`MerchantFrame.xml`).
+    s.run("MerchantItem1ItemButton:GetScript(\"OnLeave\")(MerchantItem1ItemButton)")
         .unwrap();
     s.tick(0.016);
     assert_eq!(s.ui_cursor(), None, "leaving the row resets the cursor");
 
-    s.run("this = MerchantItem2ItemButton MerchantItem2ItemButton:GetScript(\"OnEnter\")() this = nil")
+    s.run("MerchantItem2ItemButton:GetScript(\"OnEnter\")(MerchantItem2ItemButton)")
         .unwrap();
     s.tick(0.016);
     assert_eq!(
@@ -1038,7 +957,7 @@ fn shipped_merchant_frame_arms_the_buy_cursor_on_hover() {
         "an unaffordable vendor item grays the coin"
     );
 
-    // Closing resets it with no OnLeave, from `MerchantFrame_OnHide` (`MerchantFrame.lua:54`).
+    // Closing resets it with no OnLeave, from `MerchantFrame_OnHide` (`MerchantFrame.lua`).
     s.fire_event("MERCHANT_CLOSED", vec![]);
     s.tick(0.016);
     assert_eq!(s.ui_cursor(), None, "closing the window resets the cursor");
@@ -1047,23 +966,10 @@ fn shipped_merchant_frame_arms_the_buy_cursor_on_hover() {
 
 /// The trade partner's money (`TradeRecipientMoneyFrame`) shows a single digit, not "...".
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn trade_recipient_money_renders_the_digit_not_ellipsis() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in crate::ui_script::test_ui::production_order(&[
-        super::test_ui::MERCHANT_UI,
-        &[
-            "Interface\\FrameXML\\MoneyInputFrame.lua", // for TradeFrame.xml's OnLoad
-            "Interface\\FrameXML\\MoneyInputFrame.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml", // read by the stock bag-slot click
-            "Interface\\FrameXML\\TradeFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, f);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
 
     let target = benilla_ui::script::TradeSideState {
@@ -1101,35 +1007,14 @@ fn trade_recipient_money_renders_the_digit_not_ellipsis() {
     );
 }
 
-/// The row's left-click fork (`MerchantFrame.lua:301-306`): ctrl dresses up the item and shift
-/// posts its link, both through `GetMerchantItemLink`, and neither buys; a right-click buys unless
-/// ctrl is held (`MerchantFrame.lua:332-333`).
+/// Any modified click on a row goes to `MerchantItemButton_OnModifiedClick` (`MerchantFrame.xml`),
+/// whose `HandleModifiedItemClick` posts the link on shift and dresses up a dressable item on ctrl;
+/// neither buys, and only an unmodified right-click does.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn ctrl_and_shift_on_a_vendor_row_preview_and_post_without_buying() {
+fn ctrl_and_shift_on_a_vendor_row_take_the_modified_click_and_never_buy() {
     benilla_formats::wow_data_or_skip!();
     const WATER_LINK: &str = "|cffffffff|Hitem:159:0:0:0|h[Refreshing Spring Water]|h|r";
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in crate::ui_script::test_ui::production_order(&[
-        super::test_ui::MERCHANT_UI,
-        &[
-            "Interface\\FrameXML\\GlobalStrings.lua",
-            "Interface\\FrameXML\\BasicControls.xml",
-            r"Interface\FrameXML\UIParent.xml", // UIParent and UIParent.lua
-            "Interface\\FrameXML\\UIMenu.xml", // the kit ChatMenu/EmoteMenu/VoiceMacroMenu build from
-            "Interface\\FrameXML\\UIDropDownMenu.xml",
-            "Interface\\FrameXML\\ChatFrame.xml",
-            // Not the panel templates or the dialogs, which MERCHANT_UI has: loading the stock
-            // money kit's frames twice trips its global-named update.
-            "Interface\\FrameXML\\FloatingChatFrame.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "Interface\\FrameXML\\DressUpFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-    ]) {
-        load_xml(&s, f);
-    }
+    let mut s = stock_ui(1024.0, 768.0);
 
     s.set_money(12_345);
     s.set_merchant(Some(MerchantState {
@@ -1182,59 +1067,38 @@ fn ctrl_and_shift_on_a_vendor_row_preview_and_post_without_buying() {
         "a ctrl-held right-click must not buy (ref l.332-333)"
     );
 
-    assert!(s.focus_editbox("ChatFrameEditBox"));
+    // The ctrl arm is `HandleModifiedItemClick`'s DRESSUP leg, and water is not dressable.
+    assert!(
+        s.take_dressup_intents().is_empty(),
+        "an undressable item opens no dressing room"
+    );
+
+    s.run("ChatEdit_ActivateChat(ChatFrame1EditBox)").unwrap();
     s.set_modifiers(true, false, false);
     s.mouse_button(x, y, "LeftButton", true);
     s.mouse_button(x, y, "LeftButton", false);
     s.set_modifiers(false, false, false);
     assert_eq!(
-        s.eval::<String>("return ChatFrameEditBox:GetText()")
+        s.eval::<String>("return ChatFrame1EditBox:GetText()")
             .unwrap(),
-        WATER_LINK,
-        "the vendor row's full escaped link landed in the chat box"
+        format!(" {WATER_LINK}"),
+        "the vendor row's full escaped link landed in the chat box, after `ChatEdit_InsertLink`'s space"
     );
     assert!(
         s.take_merchant_buys().is_empty(),
         "a shift-click must not also buy"
     );
-
-    // Ctrl last: the dressing room takes a UIPanel slot and can move the vendor window.
-    s.set_modifiers(false, true, false);
-    s.mouse_button(x, y, "LeftButton", true);
-    s.mouse_button(x, y, "LeftButton", false);
-    s.set_modifiers(false, false, false);
-    assert_eq!(
-        s.take_dressup_intents(),
-        vec![DressUpIntent::Dress, DressUpIntent::TryOn(159)],
-        "re-dress first, then try the vendor's item on"
-    );
-    assert!(
-        s.take_merchant_buys().is_empty(),
-        "a ctrl-click must not also buy"
-    );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
+/// Shift is `SPLITSTACK`: `MerchantItemButton_OnModifiedClick` opens the split on a single row whose
+/// item stacks, capped by what the purse buys, and the split buys that many; a bundle row or one
+/// that does not stack opens nothing, and the modified click never buys.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn shift_click_takes_one_bundle_and_splits_a_single() {
+fn shift_click_opens_the_split_on_a_stacking_row() {
     benilla_formats::wow_data_or_skip!();
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for f in crate::ui_script::test_ui::production_order(&[
-        super::test_ui::MERCHANT_UI,
-        &[
-            "Interface\\FrameXML\\UIMenu.xml",
-            "Interface\\FrameXML\\UIDropDownMenu.xml",
-            "Interface\\FrameXML\\ChatFrame.xml",
-            "Interface\\FrameXML\\FloatingChatFrame.xml",
-            "Interface\\FrameXML\\StackSplitFrame.xml",
-            "Interface\\FrameXML\\MerchantFrame.xml",
-        ],
-    ]) {
-        load_xml(&s, f);
-    }
-    s.set_money(10_000);
+    let mut s = stock_ui(1024.0, 768.0);
+    s.set_money(1_000);
     s.set_merchant(Some(MerchantState {
         items: vec![
             MerchantItem {
@@ -1255,6 +1119,15 @@ fn shift_click_takes_one_bundle_and_splits_a_single() {
                 max_stack: Some(20),
                 ..Default::default()
             },
+            MerchantItem {
+                name: Some("Simple Dagger".into()),
+                price: 40,
+                quantity: 1,
+                num_available: -1,
+                item_id: 2139,
+                max_stack: Some(1),
+                ..Default::default()
+            },
         ],
         ..Default::default()
     }));
@@ -1268,35 +1141,34 @@ fn shift_click_takes_one_bundle_and_splits_a_single() {
         s.mouse_button(x, y, button, false);
         s.set_modifiers(false, false, false);
     };
-    let split_shown = |s: &UiScript| s.eval::<bool>("return StackSplitFrame:IsShown()").unwrap();
+    let split = |s: &UiScript| {
+        s.eval::<(bool, Option<i64>)>(
+            "return StackSplitFrame:IsShown() and true or false, StackSplitFrame.maxStack",
+        )
+        .unwrap()
+    };
 
-    shift_click(&mut s, 1, "LeftButton");
-    assert!(!split_shown(&s), "a bundle row opens no split");
-    assert!(
-        matches!(s.cursor_payload(), Some(CursorPayload::Merchant(m)) if m.item_id == 159),
-        "the left arm picks one bundle up: {:?}",
-        s.cursor_payload()
-    );
-    s.run("ClearCursor()").unwrap();
-
-    shift_click(&mut s, 1, "RightButton");
-    assert!(!split_shown(&s), "a bundle row opens no split");
-    assert_eq!(
-        s.take_merchant_buys(),
-        vec![(1, 1)],
-        "the right arm buys one bundle"
-    );
+    // `GetMerchantItemMaxStack` (`0x5842d0`) answers 1 for a row sold in bundles.
+    for button in ["LeftButton", "RightButton"] {
+        shift_click(&mut s, 1, button);
+        assert!(!split(&s).0, "a bundle row opens no split");
+        assert!(s.cursor_payload().is_none(), "picks nothing up");
+        assert!(s.take_merchant_buys().is_empty(), "and buys nothing");
+    }
 
     shift_click(&mut s, 2, "RightButton");
-    assert!(split_shown(&s), "a single row opens the split");
     assert_eq!(
-        s.eval::<i64>("return StackSplitFrame.maxStack").unwrap(),
-        20,
-        "the split spans the stack size, under what the purse affords"
+        split(&s),
+        (true, Some(10)),
+        "1000 copper buys ten 100 c flasks, under the stack of 20"
     );
-    assert!(
-        s.take_merchant_buys().is_empty(),
-        "the split buys nothing until it is chosen"
-    );
+    s.run("StackSplitFrame.owner.SplitStack(StackSplitFrame.owner, 3)")
+        .unwrap();
+    assert_eq!(s.take_merchant_buys(), vec![(2, 3)], "the split buys three");
+    s.run("StackSplitFrame:Hide()").unwrap();
+
+    shift_click(&mut s, 3, "LeftButton");
+    assert!(!split(&s).0, "a row that does not stack opens no split");
+    assert!(s.take_merchant_buys().is_empty());
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }

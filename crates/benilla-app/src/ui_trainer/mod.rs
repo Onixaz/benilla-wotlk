@@ -3,16 +3,13 @@
 //! `CloseTrainer` sends nothing. A bought row repaints through the re-evaluator ([`reeval`]),
 //! never through `SMSG_TRAINER_BUY_SUCCEEDED`, and a refusal goes only to the log.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
-use benilla_formats::{SkillLineCatalog, SpellCatalog};
+use benilla_formats::{SkillLineCatalog, SpellCatalog, SPELL_EFFECT_SKILL_STEP};
 use benilla_protocol::messages::TrainerSpell;
 use bevy::prelude::*;
 
-use benilla_ui::script::{
-    ScriptValue, TrainerAbilityReq, TrainerService, TrainerServiceCategory, TrainerSkillReq,
-    TrainerState, TrainerTooltip, UiScript,
-};
+use benilla_ui::script::{ScriptValue, TrainerService, TrainerState, TrainerTooltip, UiScript};
 
 use crate::entities::ItemDisplays;
 use crate::items::Items;
@@ -29,12 +26,8 @@ use crate::ui_script::{UiFeed, UiInput};
 use crate::ui_session::{close_npc_session_out_of_range, npc_switched, NpcSession};
 use crate::ui_spellbook::SkillLines;
 
-/// `SMSG_TRAINER_LIST`'s `trainer_type` for a tradeskill trainer (0 class, 1 mount, 2 tradeskill,
-/// 3 pet). `IsTrainerServiceTradeSkill` answers it for every service, where the 1.12 verb
-/// (`0x4d9f70`) answers per service; the stock window never calls it.
+/// `SMSG_TRAINER_LIST`'s `trainer_type` at a tradeskill trainer (`m_trainerType == 2`).
 const TRAINER_TYPE_TRADESKILL: u32 = 2;
-/// A mount trainer, which the client calls "talent" (`IsTalentTrainer 0x4d8ed0`).
-const TRAINER_TYPE_MOUNT: u32 = 1;
 
 /// The open trainer as `SMSG_TRAINER_LIST` delivered it.
 #[derive(Resource, Default)]
@@ -44,9 +37,9 @@ pub(crate) struct TrainerOpen {
     pub(crate) services: Vec<TrainerSpell>,
     pub(crate) trainer_type: u32,
     pub(crate) greeting: String,
-    /// A list landed and the engine's filter, collapse set and selection are not yet reset, as
-    /// the reference's builder resets them per list (`0x4d7b42` for the selection); an open window
-    /// repaints through [`reeval`], never a second list.
+    /// A list landed and the engine's collapse set and line filter are not yet reset, as
+    /// `AddServices` (`0x596450`) resets them per list; an open window repaints through
+    /// [`reeval`], never a second list.
     pub(crate) fresh_list: bool,
     /// One of the re-evaluator's triggers fired with the window open; the feed re-derives and
     /// fires `TRAINER_UPDATE` even if no state moved, as `0x596b00`'s tail does (`0x597098`), and
@@ -139,10 +132,8 @@ impl Plugin for UiTrainerPlugin {
     }
 }
 
-/// The log line for a `SMSG_TRAINER_BUY_FAILED` code. The 1.12 client shows the player nothing:
-/// its handler (`0x5e5f10`, registered at `0x5e3291`) prints these strings (`0x8604bc`,
-/// `0x860494`, `0x860464`) to the developer console (`0x63cd00`) from its arms (`0x5e5f95`,
-/// `0x5e5fb8`, `0x5e5fdc`), and `BuyTrainerService` (`0x4da210`) tests nothing before sending.
+/// The log line for a `SMSG_TRAINER_BUY_FAILED` code: the reference shows the player nothing, its
+/// handler (`0x6d8410`) only writes these lines to the console.
 fn train_error_log_line(code: u32) -> &'static str {
     use benilla_protocol::messages::train_fail;
     match code {
@@ -152,71 +143,39 @@ fn train_error_log_line(code: u32) -> &'static str {
     }
 }
 
-/// Resolve one wire [`TrainerSpell`] into the Lua [`TrainerService`]; `known` is the player's
-/// known-spell set, which colours each prerequisite ability.
-fn resolve_service(
-    wire: &TrainerSpell,
+/// What resolving a service reads besides its wire record.
+struct ResolveCtx<'a> {
     trainer_type: u32,
-    spells: &SpellCatalog,
-    skill_lines: Option<&SkillLineCatalog>,
+    spells: &'a SpellCatalog,
+    skill_lines: Option<&'a SkillLineCatalog>,
+    /// The player's race and class, which the skill-line lookups key on.
     race_class: (u8, u8),
-    known: &BTreeSet<u32>,
-    icons: Option<&ItemDisplays>,
-    items: &Items,
-    commands: &NetCommands,
-    // The VM's own `GlobalStrings.lua`, for the group header labels.
-    get: &dyn Fn(&str) -> Option<String>,
-) -> TrainerService {
-    // `taught` feeds only the group key (`0x4d7c60`); the name and subtext are the wire wrapper's
-    // own columns (`0x4d8aa0`, `0x4d8b50`), which differ from the taught spell's on every
-    // profession-learn row. The wrapper stays the buy id.
-    let taught = spells.learned_spell(wire.spell).unwrap_or(wire.spell);
+    /// The player's book, skills and level, which the requirement getters test.
+    player: &'a reeval::PlayerView,
+    icons: Option<&'a ItemDisplays>,
+    items: &'a Items,
+    commands: &'a NetCommands,
+    /// Each wire spell's substituted `Spell.dbc` description, `None` when it has none.
+    descriptions: &'a HashMap<u32, Option<String>>,
+    /// The VM's own `GlobalStrings.lua`, for the header labels and the step text.
+    get: &'a dyn Fn(&str) -> Option<String>,
+}
+
+/// Resolve one wire [`TrainerSpell`] into the Lua [`TrainerService`].
+fn resolve_service(wire: &TrainerSpell, cx: &ResolveCtx) -> TrainerService {
+    let spells = cx.spells;
     let display = spells.get(wire.spell);
-    let cat = category(wire.state);
-    // The wire has no per-gate bit, so the skill gate follows the service's category; the 1.12
-    // client compares the player's skill value itself, which is not built here.
-    let skill_met = cat != TrainerServiceCategory::Unavailable;
-    let skill_req = (wire.req_skill != 0).then(|| TrainerSkillReq {
-        name: skill_lines
-            .and_then(|c| c.line(wire.req_skill))
-            .map(|l| l.name.clone())
-            .unwrap_or_else(|| format!("Skill {}", wire.req_skill)),
-        rank: wire.req_skill_value,
-        met: skill_met,
-    });
-    // `GetTrainerServiceAbilityReq`'s hasReq is `IsSpellKnown` per requirement, apart from the
-    // category (`0x4d96e0`), on a real ability id with no hop; the client also ORs
-    // `KnownHigherRank`, which this does not.
-    let ability_reqs = wire
-        .req_spells
-        .iter()
-        .filter(|&&s| s != 0)
-        .map(|&s| {
-            let name = match spells.get(s) {
-                Some(d) => d.ranked_name(),
-                None => format!("Spell {s}"),
-            };
-            TrainerAbilityReq {
-                name,
-                met: known.contains(&s),
-            }
-        })
-        .collect();
-    // The wrapper is never in `SkillLineAbility`, so the skill-line arm keys on the taught spell;
-    // a service it cannot place drops, as in the client's builder, and is logged.
     let (group_key, group_name) = service_group(
         wire.spell,
-        taught,
-        trainer_type,
-        cat,
+        cx.trainer_type,
         spells,
-        skill_lines,
-        race_class,
-        get,
+        cx.skill_lines,
+        cx.race_class,
+        cx.get,
     );
-    if group_key == 0 && skill_lines.is_some() {
+    if group_key == 0 && cx.skill_lines.is_some() {
         debug!(
-            "ui_trainer: trainer spell {} (teaches {taught}) has no skill line — dropped from the tree",
+            "ui_trainer: trainer spell {} has no skill line — dropped from the tree",
             wire.spell
         );
     }
@@ -224,36 +183,45 @@ fn resolve_service(
         spell_id: wire.spell,
         name: display.map(|d| d.name.clone()),
         subtext: display.and_then(|d| d.rank.clone()),
-        // Over the wire spell, like the name and subtext ([`service_icon`]).
-        texture: service_icon(wire.spell, trainer_type, spells, icons, items, commands),
-        // Empty: the 1.12 `GetTrainerServiceDescription` returns `Spell.dbc`'s Description with
-        // its `$s1`/`$o1`/`$d`/`$a1` tokens substituted, and that substitution is not built.
-        description: String::new(),
+        texture: service_icon(
+            wire.spell,
+            cx.trainer_type,
+            spells,
+            cx.icons,
+            cx.items,
+            cx.commands,
+        ),
+        // `0x5959d0`: the spell's description, else a recipe's cached product description.
+        description: cx
+            .descriptions
+            .get(&wire.spell)
+            .cloned()
+            .flatten()
+            .or_else(|| service_item_description(wire.spell, spells, cx.items, cx.commands)),
         cost: wire.cost,
-        prof_first_rank: wire.is_primary_prof_first_rank,
-        category: cat,
+        talent_cost: wire.talent_cost,
+        profession_cost: wire.profession_cost,
+        category: category(wire.state),
         level_req: u32::from(wire.req_level),
-        skill_req,
-        ability_reqs,
-        is_trade_skill: trainer_type == TRAINER_TYPE_TRADESKILL,
+        skill_req: skill_req(
+            wire.req_skill,
+            wire.req_skill_value,
+            cx.skill_lines,
+            cx.player,
+        ),
+        ability_reqs: ability_reqs(wire.req_spells, spells, cx.skill_lines, &cx.player.known),
+        skill_step: display.is_some_and(|d| d.effects.contains(&SPELL_EFFECT_SKILL_STEP)),
+        step_increase: service_step_increase(wire.spell, spells, cx.skill_lines, cx.get),
+        skill_line: service_skill_line(wire.spell, spells, cx.skill_lines, cx.race_class),
+        item_link: service_item_link(wire.spell, cx.trainer_type, spells, cx.items, cx.commands),
         group_key,
         group_name,
         tooltip: service_tooltip(wire.spell, spells),
     }
 }
 
-/// Build the Lua snapshot from [`TrainerOpen`] and the spell and skill catalogs.
-fn snapshot(
-    open: &TrainerOpen,
-    spells: &SpellCatalog,
-    skill_lines: Option<&SkillLineCatalog>,
-    race_class: (u8, u8),
-    known: &BTreeSet<u32>,
-    icons: Option<&ItemDisplays>,
-    items: &Items,
-    commands: &NetCommands,
-    get: &dyn Fn(&str) -> Option<String>,
-) -> Option<TrainerState> {
+/// Build the Lua snapshot from [`TrainerOpen`].
+fn snapshot(open: &TrainerOpen, cx: &ResolveCtx) -> Option<TrainerState> {
     open.trainer?;
     Some(TrainerState {
         greeting: open.greeting.clone(),
@@ -261,24 +229,55 @@ fn snapshot(
         services: open
             .services
             .iter()
-            .map(|w| {
-                resolve_service(
-                    w,
-                    open.trainer_type,
-                    spells,
-                    skill_lines,
-                    race_class,
-                    known,
-                    icons,
-                    items,
-                    commands,
-                    get,
-                )
-            })
+            .map(|w| resolve_service(w, cx))
             .collect(),
         // The engine builds the tree in `set_trainer` from each service's group key.
         groups: Vec::new(),
     })
+}
+
+/// The player as the re-evaluator and the requirement getters read it.
+fn player_view(store: Option<&ObjectStore>, known: &BTreeSet<u32>) -> reeval::PlayerView {
+    reeval::PlayerView {
+        known: known.clone(),
+        level: store.and_then(|s| s.0.unit_level()).unwrap_or(0),
+        skills: store
+            .map(|store| {
+                (0..PLAYER_SKILL_SLOTS)
+                    .filter_map(|i| store.0.player_skill(i))
+                    .filter(|s| s.skill_id != 0)
+                    .map(|s| reeval::SkillSlot {
+                        skill_id: u32::from(s.skill_id),
+                        step: u32::from(s.step),
+                        // The permanent bonus counts only on a non-zero value (`0x51a28c`).
+                        value_plus_perm: if s.value == 0 {
+                            0
+                        } else {
+                            i32::from(s.value) + i32::from(s.perm_bonus)
+                        },
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+/// What the description `$`-tokens read of the player beside its spell modifiers, known spells and
+/// auras: its skills, gender byte and expression operands.
+type TokenReads = (
+    crate::spell::SkillSnapshot,
+    u8,
+    crate::spell::text_caster::Operands,
+);
+
+/// `GetTrainerServiceDescription`'s parser inputs (`SpellParserParseText` over the player with its
+/// modifiers, `0x5959d0`) and the per-spell texts, rebuilt when a token input moves.
+#[derive(SystemParam)]
+pub(crate) struct DescriptionInputs<'w, 's> {
+    spell_mods: Res<'w, crate::spell::SpellModifiers>,
+    caster_sources: crate::spell::text_caster::CasterSources<'w, 's>,
+    texts: Local<'s, crate::ui_script::VmMemo<HashMap<u32, Option<String>>>>,
+    last_reads: Local<'s, crate::ui_script::VmMemo<Option<TokenReads>>>,
 }
 
 /// The re-evaluator's inputs and its descriptor triggers: the player's descriptor and its field
@@ -307,6 +306,7 @@ pub(crate) fn feed_trainer(
     commands: Res<NetCommands>,
     names: Res<NameCache>,
     mut tooltip_subjects: ResMut<TrainerTooltipSubjects>,
+    mut desc: DescriptionInputs,
     mut last: Local<crate::ui_script::VmMemo<Option<TrainerState>>>,
     mut last_trainer: Local<crate::ui_script::VmMemo<Option<u64>>>,
     mut last_name: Local<crate::ui_script::VmMemo<Option<String>>>,
@@ -329,10 +329,9 @@ pub(crate) fn feed_trainer(
     let Some(skill_lines) = skill_lines.as_deref() else {
         return;
     };
-    // The per-list reset goes in before the snapshot, so `TRAINER_SHOW` finds it; the stock window
-    // re-applies its saved filter only on its own `ADDON_LOADED`.
+    // The per-list reset goes in before the snapshot, so `TRAINER_SHOW` finds it.
     if open.fresh_list {
-        script.reset_trainer_list_state(open.trainer_type);
+        script.reset_trainer_list_state();
         open.fresh_list = false;
     }
     // The player's money, level and skill triggers, read every frame so the reader never backs up.
@@ -362,33 +361,10 @@ pub(crate) fn feed_trainer(
         }
     }
     // `0x596b00` over every row, then `TRAINER_UPDATE` unconditionally, as its tail fires it.
+    let player = player_view(self_player.map(|(_, s)| s), &actions.spells);
     let forced = open.re_derive && open.trainer.is_some();
     if forced {
         open.re_derive = false;
-        let player = reeval::PlayerView {
-            known: actions.spells.clone(),
-            level: self_player
-                .and_then(|(_, store)| store.0.unit_level())
-                .unwrap_or(0),
-            skills: self_player
-                .map(|(_, store)| {
-                    (0..PLAYER_SKILL_SLOTS)
-                        .filter_map(|i| store.0.player_skill(i))
-                        .filter(|s| s.skill_id != 0)
-                        .map(|s| reeval::SkillSlot {
-                            skill_id: u32::from(s.skill_id),
-                            step: u32::from(s.step),
-                            // The permanent bonus counts only on a non-zero value (`0x51a28c`).
-                            value_plus_perm: if s.value == 0 {
-                                0
-                            } else {
-                                i32::from(s.value) + i32::from(s.perm_bonus)
-                            },
-                        })
-                        .collect()
-                })
-                .unwrap_or_default(),
-        };
         reeval::re_derive_all(
             &mut open.services,
             &spells.catalog,
@@ -396,22 +372,82 @@ pub(crate) fn feed_trainer(
             &player,
         );
     }
+    let get = |key: &str| {
+        script
+            .lua()
+            .globals()
+            .get::<String>(key)
+            .ok()
+            .filter(|t| !t.is_empty())
+    };
+    let store = self_player.map(|(_, s)| s);
+    let reads: Option<TokenReads> = store.map(|s| {
+        (
+            crate::spell::skill_snapshot(Some(s)),
+            s.0.unit_gender().unwrap_or(0),
+            crate::spell::text_caster::Operands::of(Some(s), &items),
+        )
+    });
+    let moved = *desc.last_reads.get(&script) != reads
+        || desc.spell_mods.is_changed()
+        || desc.caster_sources.changed();
+    *desc.last_reads.get(&script) = reads;
+    let texts = desc.texts.get(&script);
+    if moved {
+        texts.clear();
+    }
+    if let Some(store) = store {
+        let global = |key: &str| benilla_ui::strings::global(script.lua(), key);
+        let skill =
+            |id| crate::spell::spell_skill_value(Some(store), Some(&skill_lines.catalog), id);
+        let operands = crate::spell::text_caster::Operands::of(Some(store), &items);
+        let cost = |d: &benilla_formats::SpellDisplay| {
+            crate::spell::usable::power_cost(d, store, &desc.spell_mods) as i32
+        };
+        let caster = crate::spell::text_caster::untracked(
+            store,
+            (&actions.spells, desc.caster_sources.auras()),
+            &operands,
+            &desc.spell_mods,
+            &skill,
+            &cost,
+        );
+        let ctx = benilla_formats::TokenContext {
+            durations: &spells.durations,
+            radii: &spells.radii,
+            ranges: Some(&spells.ranges),
+            variables: Some(spells.catalog.description_variables()),
+            skill: &skill,
+            lookup: &|id| spells.catalog.get(id),
+            mods: Some(&*desc.spell_mods as &dyn benilla_formats::SpellMods),
+            unmodified_points: false,
+            gender: &|| store.0.unit_gender().unwrap_or(0),
+            home_area: &|| None,
+            caster: Some(&caster),
+            global: &global,
+            printf: &crate::ui_script::token_printf,
+        };
+        for w in &open.services {
+            texts.entry(w.spell).or_insert_with(|| {
+                let d = spells.catalog.get(w.spell)?;
+                let text = d.description.as_deref().filter(|t| !t.is_empty())?;
+                Some(benilla_formats::substitute(text, d, &ctx))
+            });
+        }
+    }
     let fresh = snapshot(
         &open,
-        &spells.catalog,
-        Some(&skill_lines.catalog),
-        crate::spell::race_class(self_player.map(|(_, s)| s)),
-        &actions.spells,
-        icons.as_deref(),
-        &items,
-        &commands,
-        &|key: &str| {
-            script
-                .lua()
-                .globals()
-                .get::<String>(key)
-                .ok()
-                .filter(|t| !t.is_empty())
+        &ResolveCtx {
+            trainer_type: open.trainer_type,
+            spells: &spells.catalog,
+            skill_lines: Some(&skill_lines.catalog),
+            race_class: crate::spell::race_class(self_player.map(|(_, s)| s)),
+            player: &player,
+            icons: icons.as_deref(),
+            items: &items,
+            commands: &commands,
+            descriptions: texts,
+            get: &get,
         },
     );
     // A spell subject's view must be in the store before the detail icon is hovered.
@@ -509,7 +545,10 @@ fn drain_trainer(
 }
 
 mod law;
-use law::{category, service_group, service_icon, service_tooltip};
+use law::{
+    ability_reqs, category, service_group, service_icon, service_item_description,
+    service_item_link, service_skill_line, service_step_increase, service_tooltip, skill_req,
+};
 
 #[cfg(test)]
 mod tests;

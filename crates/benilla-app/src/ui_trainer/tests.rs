@@ -6,7 +6,7 @@ use benilla_formats::{
     SPELL_EFFECT_CREATE_ITEM, SPELL_EFFECT_LEARN_PET_SPELL, SPELL_EFFECT_LEARN_SPELL,
 };
 use benilla_protocol::messages::trainer_spell_state;
-use benilla_ui::script::TrainerTooltip;
+use benilla_ui::script::{TrainerAbilityReq, TrainerServiceCategory, TrainerTooltip};
 use std::collections::HashMap;
 
 /// An empty spell catalog, as before `Spell.dbc` loads.
@@ -22,31 +22,44 @@ fn probe_strings(key: &str) -> Option<String> {
     match key {
         "TRADESKILL_SERVICE_STEP" => Some("<STEP>".into()),
         "TRADESKILL_SERVICE_LEARN" => Some("<LEARN>".into()),
-        "KNOWN_TALENTS_HEADER" => Some("<KNOWN>".into()),
+        "TRADESKILL_SERVICE_PASSIVE" => Some("<PASSIVE>".into()),
+        "INCREASE_POTENTIAL" => Some("Increases potential in %s by %d".into()),
         _ => None,
     }
 }
 
-/// [`resolve_service`] with no icon sources.
+/// A warrior who knows `known`, with no skills.
+fn warrior(known: &[u32]) -> reeval::PlayerView {
+    reeval::PlayerView {
+        known: known.iter().copied().collect(),
+        level: 10,
+        skills: Vec::new(),
+    }
+}
+
+/// [`resolve_service`] with no icon sources, for a human warrior.
 fn resolve_service(
     wire: &TrainerSpell,
     trainer_type: u32,
     spells: &SpellCatalog,
     skill_lines: Option<&SkillLineCatalog>,
-    known: &BTreeSet<u32>,
+    player: &reeval::PlayerView,
 ) -> TrainerService {
     let deps = Deps::new();
     super::resolve_service(
         wire,
-        trainer_type,
-        spells,
-        skill_lines,
-        (0, 0),
-        known,
-        None,
-        &deps.items,
-        &deps.commands,
-        &probe_strings,
+        &ResolveCtx {
+            trainer_type,
+            spells,
+            skill_lines,
+            race_class: (1, 1),
+            player,
+            icons: None,
+            items: &deps.items,
+            commands: &deps.commands,
+            descriptions: &HashMap::from([(78, Some("Teaches a strike.".to_string()))]),
+            get: &probe_strings,
+        },
     )
 }
 
@@ -55,8 +68,8 @@ fn wire(spell: u32, state: u8, cost: u32, req_level: u8, req_skill: u32) -> Trai
         spell,
         state,
         cost,
-        can_learn_primary_prof: false,
-        is_primary_prof_first_rank: false,
+        talent_cost: 0,
+        profession_cost: 0,
         req_level,
         req_skill,
         req_skill_value: if req_skill != 0 { 100 } else { 0 },
@@ -67,36 +80,43 @@ fn wire(spell: u32, state: u8, cost: u32, req_level: u8, req_skill: u32) -> Trai
 /// [`snapshot`] with no icon sources.
 fn snap(open: &TrainerOpen, spells: &SpellCatalog) -> Option<TrainerState> {
     let deps = Deps::new();
+    let player = warrior(&[]);
     snapshot(
         open,
-        spells,
-        None,
-        (0, 0),
-        &BTreeSet::new(),
-        None,
-        &deps.items,
-        &deps.commands,
-        &probe_strings,
+        &ResolveCtx {
+            trainer_type: open.trainer_type,
+            spells,
+            skill_lines: None,
+            race_class: (0, 0),
+            player: &player,
+            icons: None,
+            items: &deps.items,
+            commands: &deps.commands,
+            descriptions: &HashMap::from([(78, Some("Teaches a strike.".to_string()))]),
+            get: &probe_strings,
+        },
     )
 }
 
-/// Wrapper 100 teaches 200 by a slot-0 `LEARN_SPELL`, 200 creates item 777, and 777's display 5
-/// has the item art; every icon is distinct, so a wrong arm is named by the assertion.
+/// Recipe 100 creates item 777 through slot 0; 777's display 5 has the item art, and every icon is
+/// distinct, so a wrong arm is named by the assertion.
 fn icon_catalog() -> SpellCatalog {
-    let wrapper = SpellDisplay {
+    let recipe = SpellDisplay {
         name: "Copper Shortsword".into(),
-        icon: Some("WRAPPER".into()),
-        effects: [SPELL_EFFECT_LEARN_SPELL, 0, 0],
-        effect_trigger_spell: [200, 0, 0],
-        ..Default::default()
-    };
-    let taught = SpellDisplay {
-        name: "Copper Shortsword".into(),
-        icon: Some("TAUGHT".into()),
+        icon: Some("RECIPE".into()),
+        attributes: SPELL_ATTR_IS_TRADESKILL,
+        effects: [SPELL_EFFECT_CREATE_ITEM, 0, 0],
         effect_item_type: [777, 0, 0],
         ..Default::default()
     };
-    SpellCatalog::from_displays(HashMap::from([(100, wrapper), (200, taught)]))
+    // The product in slot 1 only: slot 0 is the one the icon reads.
+    let off_slot = SpellDisplay {
+        icon: Some("OFF_SLOT".into()),
+        effects: [6, SPELL_EFFECT_CREATE_ITEM, 0],
+        effect_item_type: [0, 777, 0],
+        ..Default::default()
+    };
+    SpellCatalog::from_displays(HashMap::from([(100, recipe), (200, off_slot)]))
 }
 
 /// The product item's template and `ItemDisplayInfo` row, landed.
@@ -131,228 +151,237 @@ fn icon_of(
     )
 }
 
+/// `GetTrainerServiceIcon` (`0x595150`): a create effect in slot 0 at a tradeskill trainer.
 #[test]
 fn trainer_icon_substitutes_the_product_only_at_a_tradeskill_trainer() {
     let spells = icon_catalog();
-
-    // All three gates pass and the template landed: the created item's icon.
     assert_eq!(
         icon_of(&spells, TRAINER_TYPE_TRADESKILL, 100, true).as_deref(),
         Some("ITEM")
     );
-
-    // Gate 1 fails (a class trainer): the wire spell's own icon, never the taught spell's.
     assert_eq!(
         icon_of(&spells, 0, 100, true).as_deref(),
-        Some("WRAPPER"),
-        "a class trainer serves the wrapper's own icon, not the taught spell's"
+        Some("RECIPE"),
+        "a class trainer serves the spell's own icon"
     );
-
-    // Gate 2 fails: 200 creates an item but has no learn effect, so its own icon.
     assert_eq!(
         icon_of(&spells, TRAINER_TYPE_TRADESKILL, 200, true).as_deref(),
-        Some("TAUGHT"),
-        "200 IS the wire spell here, so its own icon is the right answer"
+        Some("OFF_SLOT"),
+        "a create effect past slot 0 is not read"
     );
-
-    // A spell with no record: nil, where every failure ends (`0x4d911c`).
     assert_eq!(icon_of(&spells, TRAINER_TYPE_TRADESKILL, 999, true), None);
 }
 
-#[test]
-fn trainer_icon_falls_back_when_the_taught_spell_makes_no_item() {
-    let wrapper = SpellDisplay {
-        icon: Some("WRAPPER".into()),
-        effects: [SPELL_EFFECT_LEARN_SPELL, 0, 0],
-        effect_trigger_spell: [200, 0, 0],
-        ..Default::default()
-    };
-    let taught = SpellDisplay {
-        icon: Some("TAUGHT".into()),
-        ..Default::default() // effect_item_type all zero
-    };
-    let spells = SpellCatalog::from_displays(HashMap::from([(100, wrapper), (200, taught)]));
-    assert_eq!(
-        icon_of(&spells, TRAINER_TYPE_TRADESKILL, 100, true).as_deref(),
-        Some("WRAPPER")
-    );
-}
-
-/// `LEARN_PET_SPELL` (57) counts like `LEARN_SPELL` (36), in any slot (`0x4d8ff5`/`0x4d8ffa`).
-#[test]
-fn trainer_icon_scans_every_effect_slot_for_either_learn_effect() {
-    let wrapper = SpellDisplay {
-        icon: Some("WRAPPER".into()),
-        effects: [0, SPELL_EFFECT_LEARN_PET_SPELL, 0],
-        effect_trigger_spell: [0, 200, 0],
-        ..Default::default()
-    };
-    let taught = SpellDisplay {
-        effect_item_type: [777, 0, 0],
-        ..Default::default()
-    };
-    let spells = SpellCatalog::from_displays(HashMap::from([(100, wrapper), (200, taught)]));
-    assert_eq!(
-        icon_of(&spells, TRAINER_TYPE_TRADESKILL, 100, true).as_deref(),
-        Some("ITEM"),
-        "a pet-learn effect in slot 1 substitutes just the same"
-    );
-}
-
-/// The client pushes nil here and repaints from the cache callback (`0x4d9140`).
+/// The client pushes nil here and repaints from the cache callback.
 #[test]
 fn trainer_icon_is_nil_until_the_product_template_lands_and_asks_once() {
     let spells = icon_catalog();
     let deps = Deps::new();
     let icons = ItemDisplays::icons_for_tests(ItemDisplayCatalog::from_displays(HashMap::new()));
-
-    let first = service_icon(
-        100,
-        TRAINER_TYPE_TRADESKILL,
-        &spells,
-        Some(&icons),
-        &deps.items,
-        &deps.commands,
-    );
-    assert_eq!(first, None, "no template yet → nil, not the wrapper's icon");
+    let icon = || {
+        service_icon(
+            100,
+            TRAINER_TYPE_TRADESKILL,
+            &spells,
+            Some(&icons),
+            &deps.items,
+            &deps.commands,
+        )
+    };
     assert_eq!(
-        deps.queried_entries(),
-        vec![777],
-        "and the created item's template was asked for"
+        icon(),
+        None,
+        "no template yet, so nil, not the spell's icon"
     );
-
-    let _ = service_icon(
-        100,
-        TRAINER_TYPE_TRADESKILL,
-        &spells,
-        Some(&icons),
-        &deps.items,
-        &deps.commands,
-    );
+    assert_eq!(deps.queried_entries(), vec![777]);
+    let _ = icon();
     assert!(
         deps.queried_entries().is_empty(),
         "asked once, not per frame"
     );
 }
 
-/// On the shipped `Spell.dbc`: 2756 is the wrapper a Blacksmithing trainer sends, 2739 the recipe
-/// it teaches, 2847 the sword it makes. Skips without client data.
+/// On 12340 a blacksmith lists the recipe itself: 2739 "Copper Shortsword" creates item 2847 in
+/// slot 0, so the icon and the item link both wait on 2847's template. Skips without client data.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn trainer_icon_on_real_data_reaches_for_the_crafted_item() {
+fn trainer_icon_and_link_on_real_data_reach_for_the_crafted_item() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = benilla_formats::load_spell_catalog(&mut chain).expect("load Spell");
-
-    // The two textures a wrong law produces.
-    let wrapper_icon = spells.get(2756).unwrap().icon.clone();
-    let recipe_icon = spells.get(2739).unwrap().icon.clone();
-    assert_eq!(
-        recipe_icon.as_deref(),
-        Some("Interface\\Icons\\Spell_Shadow_SealOfKings"),
-        "the blue crown on the row IS the recipe spell's own icon"
-    );
-
-    // A tradeskill trainer: gate 3 fires for item 2847 and the icon waits on its template.
     let deps = Deps::new();
     let icons = ItemDisplays::icons_for_tests(ItemDisplayCatalog::from_displays(HashMap::new()));
     let icon = service_icon(
-        2756,
+        2739,
         TRAINER_TYPE_TRADESKILL,
         &spells,
         Some(&icons),
         &deps.items,
         &deps.commands,
     );
+    assert_eq!(icon, None, "waiting on the item template");
+    assert_eq!(deps.queried_entries(), vec![2847]);
     assert_eq!(
-        icon, None,
-        "waiting on the item template, not painting the crown"
+        service_item_link(
+            2739,
+            TRAINER_TYPE_TRADESKILL,
+            &spells,
+            &deps.items,
+            &deps.commands
+        ),
+        None
     );
     assert_eq!(
-        deps.queried_entries(),
-        vec![2847],
-        "the law reached for the crafted sword's template"
+        service_tooltip(2739, &spells),
+        TrainerTooltip::Spell {
+            spell_id: 2739,
+            alt_caster: false,
+        },
+        "a recipe with no learn slot shows its own spell"
     );
-
-    // A class trainer with the same wire spell: the wrapper's own icon, not the recipe's.
-    let deps = Deps::new();
-    let class_icon = service_icon(2756, 0, &spells, None, &deps.items, &deps.commands);
-    assert_eq!(class_icon, wrapper_icon);
-    assert_ne!(
-        class_icon, recipe_icon,
-        "the taught spell's icon is never painted at a trainer"
-    );
+    // A class trainer: the spell's own icon.
+    let class_icon = service_icon(2739, 0, &spells, None, &deps.items, &deps.commands);
+    assert_eq!(class_icon, spells.get(2739).unwrap().icon.clone());
 }
 
-/// On real data: the warrior wrapper 1605 is not in `SkillLineAbility`, so grouping hops to the
-/// taught 78 (Arms, 26) while the buy id stays 1605. Skips without client data.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn resolve_hops_the_learn_wrapper_to_the_taught_ability() {
+fn the_item_link_is_the_cached_product_at_a_tradeskill_trainer_alone() {
+    let spells = icon_catalog();
+    let mut deps = Deps::new();
+    let _ = landed_item(&mut deps);
+    let link = |t| service_item_link(100, t, &spells, &deps.items, &deps.commands);
+    assert_eq!(
+        link(TRAINER_TYPE_TRADESKILL).as_deref(),
+        Some("|cffffffff|Hitem:777:0:0:0|h[Copper Shortsword]|h|r")
+    );
+    assert_eq!(link(0), None);
+}
+
+/// On real data a class trainer lists Heroic Strike (78) itself, under Arms (26) for a warrior.
+/// Skips without client data.
+#[test]
+fn a_class_ability_groups_under_its_own_skill_line() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = benilla_formats::load_spell_catalog(&mut chain).expect("load Spell");
     let skills = benilla_formats::load_skill_line_catalog(&mut chain).expect("load skill lines");
 
     let svc = resolve_service(
-        &wire(1605, trainer_spell_state::GREEN, 10, 1, 0),
+        &wire(78, trainer_spell_state::GREEN, 10, 1, 0),
         0,
         &spells,
         Some(&skills),
-        &BTreeSet::new(),
+        &warrior(&[]),
     );
-    assert_eq!(svc.spell_id, 1605, "the buy id stays the wire wrapper");
-    assert_eq!(
-        svc.group_key, 26,
-        "grouped under the taught ability's Arms line"
-    );
-    assert_eq!(svc.group_name, "Arms");
-    assert_eq!(
-        svc.name.as_deref(),
-        Some("Heroic Strike"),
-        "the WIRE spell's own name — which here happens to match the taught one"
-    );
+    assert_eq!((svc.group_key, svc.group_name.as_str()), (26, "Arms"));
+    assert_eq!(svc.skill_line.as_deref(), Some("Arms"));
+    assert_eq!(svc.name.as_deref(), Some("Heroic Strike"));
+    assert_eq!(svc.subtext.as_deref(), Some("Rank 1"));
+    assert!(!svc.skill_step);
 }
 
-/// Only a profession-learn row tells the two apart: 2020 is "Apprentice Blacksmith" with no rank,
-/// teaching 2018 "Blacksmithing"/"Apprentice". Skips without client data.
+/// A profession opener on 12340: 2020 "Apprentice Blacksmith" steps Blacksmithing (effect 44 in
+/// slot 1), so it files under the step header and answers the step getters. Skips without data.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn display_name_is_the_wire_spell_not_the_taught_one() {
+fn a_profession_opener_files_under_the_step_header() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = benilla_formats::load_spell_catalog(&mut chain).expect("load Spell");
     let skills = benilla_formats::load_skill_line_catalog(&mut chain).expect("load skill lines");
 
-    // A Blacksmithing trainer's learn row as the wire carries it (reqLevel 5, no skill gate).
+    let mut w = wire(2020, trainer_spell_state::GREEN, 9, 5, 0);
+    w.profession_cost = 1;
     let svc = resolve_service(
-        &wire(2020, trainer_spell_state::GREEN, 9, 5, 0),
+        &w,
         TRAINER_TYPE_TRADESKILL,
         &spells,
         Some(&skills),
-        &BTreeSet::new(),
+        &warrior(&[]),
     );
     assert_eq!(svc.name.as_deref(), Some("Apprentice Blacksmith"));
-    assert_eq!(svc.subtext.as_deref(), None);
-    assert_ne!(
-        spells.get(2020).map(|d| d.name.as_str()),
-        spells.get(2018).map(|d| d.name.as_str()),
-        "the two names really do differ on the shipped data — the test is not vacuous"
+    assert_eq!((svc.group_key, svc.group_name.as_str()), (1, "<STEP>"));
+    assert!(svc.skill_step);
+    assert_eq!(svc.skill_line.as_deref(), Some("Blacksmithing"));
+    assert!(
+        svc.step_increase
+            .as_deref()
+            .is_some_and(|t| t.starts_with("Increases potential in Blacksmithing by ")),
+        "{:?}",
+        svc.step_increase
     );
+    assert_eq!(svc.profession_cost, 1, "the wire word rides through raw");
 
-    // The group law puts it first: 2020 carries Effect 44 `SKILL_STEP`, a recipe wrapper does not.
-    assert_eq!(svc.group_key, 1);
-    assert_eq!(svc.group_name, "<STEP>");
     let recipe = resolve_service(
-        &wire(2743, trainer_spell_state::RED, 50, 0, 164),
+        &wire(2739, trainer_spell_state::RED, 50, 0, 164),
         TRAINER_TYPE_TRADESKILL,
         &spells,
         Some(&skills),
-        &BTreeSet::new(),
+        &warrior(&[]),
     );
-    assert_eq!(recipe.group_key, 2);
-    assert_eq!(recipe.group_name, "<LEARN>");
-    assert_eq!(recipe.name.as_deref(), Some("Copper Chain Pants"));
+    assert_eq!(
+        (recipe.group_key, recipe.group_name.as_str()),
+        (2, "<LEARN>")
+    );
+    assert_eq!(recipe.skill_line.as_deref(), Some("Blacksmithing"));
+    assert_eq!(recipe.step_increase, None);
+}
+
+#[test]
+fn a_passive_tradeskill_service_files_under_the_passive_header() {
+    let passive = SpellDisplay {
+        attributes: 0x40,
+        effects: [44, 0, 0],
+        ..Default::default()
+    };
+    let spells = SpellCatalog::from_displays(HashMap::from([(300, passive)]));
+    assert_eq!(
+        service_group(
+            300,
+            TRAINER_TYPE_TRADESKILL,
+            &spells,
+            None,
+            (1, 1),
+            &probe_strings
+        ),
+        (3, "<PASSIVE>".to_string()),
+        "the passive bit outranks the skill step"
+    );
+    assert_eq!(
+        service_group(
+            999,
+            TRAINER_TYPE_TRADESKILL,
+            &spells,
+            None,
+            (1, 1),
+            &probe_strings
+        ),
+        (2, "<LEARN>".to_string()),
+        "no record: the learn header"
+    );
+}
+
+/// `GetTrainerServiceDescription` (`0x5959d0`): the parsed spell text, else a recipe's product
+/// description from the item cache.
+#[test]
+fn the_description_is_the_spell_text_else_the_recipes_product() {
+    let spells = icon_catalog();
+    let w = wire(78, trainer_spell_state::GREEN, 10, 1, 0);
+    let svc = resolve_service(&w, 0, &spells, None, &warrior(&[]));
+    assert_eq!(svc.description.as_deref(), Some("Teaches a strike."));
+
+    let mut deps = Deps::new();
+    let mut t = crate::items::test_template("Copper Shortsword");
+    t.description = "A sword.".into();
+    deps.items.insert_template(777, Some(t));
+    assert_eq!(
+        service_item_description(100, &spells, &deps.items, &deps.commands).as_deref(),
+        Some("A sword."),
+        "recipe 100 has no description of its own"
+    );
+    assert_eq!(
+        service_item_description(200, &spells, &deps.items, &deps.commands),
+        None,
+        "no tradeskill bit, no product leg"
+    );
 }
 
 #[test]
@@ -375,95 +404,100 @@ fn category_maps_the_wire_state_byte() {
 
 #[test]
 fn resolve_reads_cost_state_and_gates_with_no_catalog() {
-    // No catalog: names and icon nil, the wire fields intact, the skill name a fallback.
     let spells = empty_catalog();
     let mut w = wire(2018, trainer_spell_state::RED, 1000, 20, 164);
-    w.req_spells = [78, 0, 0];
-    let svc = resolve_service(&w, TRAINER_TYPE_TRADESKILL, &spells, None, &BTreeSet::new());
+    w.req_spells = [0, 78, 0];
+    w.talent_cost = 2;
+    let svc = resolve_service(&w, TRAINER_TYPE_TRADESKILL, &spells, None, &warrior(&[]));
     assert_eq!(svc.spell_id, 2018);
-    assert!(svc.name.is_none(), "no catalog → name in flight");
-    assert_eq!(svc.cost, 1000);
+    assert!(svc.name.is_none(), "no catalog, so the name is nil");
+    assert_eq!(
+        (svc.cost, svc.talent_cost, svc.profession_cost),
+        (1000, 2, 0)
+    );
     assert_eq!(svc.category, TrainerServiceCategory::Unavailable);
     assert_eq!(svc.level_req, 20);
-    // The skill gate follows the category; the ability gate is unmet as the player lacks 78.
     assert_eq!(
-        svc.skill_req,
-        Some(TrainerSkillReq {
-            name: "Skill 164".to_string(),
-            rank: 100,
-            met: false,
-        })
+        svc.skill_req, None,
+        "a gate whose line has no row reads (nil, 0, 1)"
     );
     assert_eq!(
         svc.ability_reqs,
-        vec![TrainerAbilityReq {
-            name: "Spell 78".to_string(),
-            met: false,
-        }]
+        [
+            None,
+            Some(TrainerAbilityReq {
+                name: None,
+                met: true,
+            }),
+            None,
+        ],
+        "slot 1 holds 78, which has no record here, so nil and met"
     );
-    assert!(svc.is_trade_skill, "trainer_type 2 → tradeskill");
-    assert!(svc.prof_first_rank == w.is_primary_prof_first_rank);
-    // No catalog at a tradeskill trainer: the learn group, as type 2 never drops a row.
-    assert_eq!(svc.group_key, 2);
-    assert_eq!(svc.group_name, "<LEARN>");
-    // No skill gate when req_skill is 0.
-    let plain = resolve_service(
-        &wire(78, trainer_spell_state::GREEN, 50, 5, 0),
-        0,
-        &spells,
-        None,
-        &BTreeSet::new(),
-    );
-    assert_eq!(plain.skill_req, None);
-    assert!(plain.ability_reqs.is_empty());
-    assert!(!plain.is_trade_skill);
+    assert_eq!((svc.group_key, svc.group_name.as_str()), (2, "<LEARN>"));
 }
 
-/// `GetTrainerServiceAbilityReq` (`0x4d96e0`): a level-gated service's known prerequisite still
-/// reads met.
+/// `GetTrainerServiceSkillReq` (`0x595470`) compares the player's skill, not the service state.
 #[test]
-fn ability_req_met_tracks_known_spells_not_the_service_category() {
-    let spells = empty_catalog();
-    let mut w = wire(845, trainer_spell_state::RED, 100, 20, 0); // unavailable (gated by level)
-    w.req_spells = [78, 0, 0]; // requires Heroic Strike (78)
-
-    let unknown = resolve_service(&w, 0, &spells, None, &BTreeSet::new());
-    assert_eq!(unknown.category, TrainerServiceCategory::Unavailable);
-    assert!(!unknown.ability_reqs[0].met, "prereq unknown → unmet");
-
-    let known: BTreeSet<u32> = [78].into_iter().collect();
-    let learned = resolve_service(&w, 0, &spells, None, &known);
-    assert_eq!(learned.category, TrainerServiceCategory::Unavailable);
-    assert!(
-        learned.ability_reqs[0].met,
-        "prereq known → met, decoupled from the unavailable service"
+fn the_skill_gate_reads_the_players_skill_value() {
+    let lines = SkillLineCatalog::from_lines([(
+        164,
+        benilla_formats::SkillLineInfo {
+            name: "Blacksmithing".into(),
+            category_id: 11,
+            icon: None,
+            description: String::new(),
+            alternate_verb: String::new(),
+            can_link: false,
+        },
+    )]);
+    let w = wire(2739, trainer_spell_state::RED, 50, 0, 164); // rank 100
+    let mut player = warrior(&[]);
+    let req = |p: &reeval::PlayerView| {
+        resolve_service(
+            &w,
+            TRAINER_TYPE_TRADESKILL,
+            &empty_catalog(),
+            Some(&lines),
+            p,
+        )
+        .skill_req
+    };
+    assert_eq!(
+        req(&player).map(|r| (r.name, r.rank, r.met)),
+        Some(("Blacksmithing".into(), 100, false)),
+        "no slot fails it"
     );
+    player.skills.push(reeval::SkillSlot {
+        skill_id: 164,
+        step: 1,
+        value_plus_perm: 100,
+    });
+    assert!(req(&player).is_some_and(|r| r.met));
+    player.skills[0].value_plus_perm = 99;
+    assert!(req(&player).is_some_and(|r| !r.met));
 }
 
-/// On real data the prerequisite reads as the client's `"%s (%s)"`: 78 is Heroic Strike Rank 1.
-/// Skips without client data.
+/// `GetTrainerServiceAbilityReq` (`0x5955e0`): a level-gated service's known prerequisite still
+/// reads met, and the name carries its rank. Skips without client data.
 #[test]
-fn ability_req_shows_the_required_rank_on_real_data() {
+fn ability_req_shows_the_required_rank_and_tracks_known_spells_on_real_data() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let spells = benilla_formats::load_spell_catalog(&mut chain).expect("load Spell");
 
-    let mut w = wire(846, trainer_spell_state::RED, 100, 20, 0);
+    let mut w = wire(845, trainer_spell_state::RED, 100, 20, 0);
     w.req_spells = [78, 0, 0]; // Heroic Strike Rank 1
-
-    let known: BTreeSet<u32> = [78].into_iter().collect();
-    let svc = resolve_service(&w, 0, &spells, None, &known);
+    let svc = resolve_service(&w, 0, &spells, None, &warrior(&[78]));
+    assert_eq!(svc.category, TrainerServiceCategory::Unavailable);
     assert_eq!(
-        svc.ability_reqs,
-        vec![TrainerAbilityReq {
-            name: "Heroic Strike (Rank 1)".to_string(),
+        svc.ability_reqs[0],
+        Some(TrainerAbilityReq {
+            name: Some("Heroic Strike (Rank 1)".to_string()),
             met: true,
-        }],
-        "the prereq shows its rank and reads met because the player knows it"
+        })
     );
-    let svc = resolve_service(&w, 0, &spells, None, &BTreeSet::new());
-    assert!(!svc.ability_reqs[0].met);
-    assert_eq!(svc.ability_reqs[0].name, "Heroic Strike (Rank 1)");
+    let svc = resolve_service(&w, 0, &spells, None, &warrior(&[]));
+    assert!(svc.ability_reqs[0].as_ref().is_some_and(|r| !r.met));
 }
 
 #[test]
@@ -481,7 +515,7 @@ fn snapshot_is_none_when_closed_and_lists_services_when_open() {
         ],
         "Learn from me.".into(),
     );
-    let state = snap(&open, &spells).expect("open → Some");
+    let state = snap(&open, &spells).expect("open, so Some");
     assert_eq!(state.greeting, "Learn from me.");
     assert_eq!(state.services.len(), 2);
     assert_eq!(
@@ -494,6 +528,7 @@ fn snapshot_is_none_when_closed_and_lists_services_when_open() {
     assert!(snap(&open, &spells).is_none());
     assert_eq!(open.trainer, None);
 }
+
 /// A wrapper spell whose slot `slot` carries `effect` and triggers `trigger`.
 fn wrapper(effect: u32, slot: usize, trigger: u32) -> SpellDisplay {
     let mut d = SpellDisplay {
@@ -526,7 +561,7 @@ fn taught_recipe() -> SpellDisplay {
     }
 }
 
-/// A taught spell with the tradeskill bit shows its created item's tooltip: 2756 → 2739 → 2847.
+/// `SetTrainerService` (`0x62e900`): a taught recipe shows its slot-0 product.
 #[test]
 fn tooltip_takes_the_item_arm_when_the_taught_spell_is_a_recipe() {
     let spells = SpellCatalog::from_displays(HashMap::from([
@@ -534,6 +569,29 @@ fn tooltip_takes_the_item_arm_when_the_taught_spell_is_a_recipe() {
         (2739, taught_recipe()),
     ]));
     assert_eq!(service_tooltip(2756, &spells), TrainerTooltip::Item(2847));
+    // The learn slot past slot 0 changes nothing: the product is read from slot 0.
+    let mut w = wrapper(SPELL_EFFECT_LEARN_SPELL, 1, 2739);
+    w.effects[0] = 0;
+    let spells = SpellCatalog::from_displays(HashMap::from([(100, w), (2739, taught_recipe())]));
+    assert_eq!(service_tooltip(100, &spells), TrainerTooltip::Item(2847));
+}
+
+/// The tradeskill bit without a create effect in slot 0 is the spell arm.
+#[test]
+fn tooltip_needs_a_create_effect_for_the_item_arm() {
+    let mut odd = taught_recipe();
+    odd.effects[0] = 6;
+    let spells = SpellCatalog::from_displays(HashMap::from([
+        (100, wrapper(SPELL_EFFECT_LEARN_SPELL, 0, 200)),
+        (200, odd),
+    ]));
+    assert_eq!(
+        service_tooltip(100, &spells),
+        TrainerTooltip::Spell {
+            spell_id: 200,
+            alt_caster: false,
+        }
+    );
 }
 
 #[test]
@@ -549,7 +607,6 @@ fn tooltip_hops_to_the_taught_spell_where_the_icon_pins_the_wire() {
             alt_caster: false,
         },
     );
-    // The icon law on the same row paints the wire spell's art.
     let deps = Deps::new();
     assert_eq!(
         super::service_icon(100, 0, &spells, None, &deps.items, &deps.commands),
@@ -589,37 +646,6 @@ fn tooltip_scan_advances_past_an_unresolvable_trigger() {
     );
 }
 
-/// `Attributes & 0x20` alone picks the item arm (`0x52e610`'s redirect at `0x52e6d2`);
-/// `Effect[0] == 24` picks the matched slot, otherwise slot 0.
-#[test]
-fn tooltip_item_slot_follows_the_effect_gate_not_the_attribute_gate() {
-    // The learn effect in slot 1, slot 0 empty. Built per use: SpellDisplay is not Clone.
-    let slot1_wrapper = || {
-        let mut w = wrapper(SPELL_EFFECT_LEARN_SPELL, 1, 200);
-        w.effects[0] = 0;
-        w
-    };
-    let spells = SpellCatalog::from_displays(HashMap::from([
-        (100, slot1_wrapper()),
-        (200, taught_recipe()),
-    ]));
-    assert_eq!(
-        service_tooltip(100, &spells),
-        TrainerTooltip::Item(3333),
-        "Effect[0]==CREATE_ITEM -> EffectItemType[matched slot]"
-    );
-
-    // The bit without Effect[0]==24: still the item arm, off slot 0.
-    let mut odd = taught_recipe();
-    odd.effects[0] = 6;
-    let spells = SpellCatalog::from_displays(HashMap::from([(100, slot1_wrapper()), (200, odd)]));
-    assert_eq!(
-        service_tooltip(100, &spells),
-        TrainerTooltip::Item(2847),
-        "the bit alone still routes to the item builder, from slot 0"
-    );
-}
-
 /// No learn effect, or no `Spell.dbc`: the wire spell.
 #[test]
 fn tooltip_falls_back_to_the_wire_spell() {
@@ -640,8 +666,8 @@ fn tooltip_falls_back_to_the_wire_spell() {
     );
 }
 
-/// The builder resets per list packet (`0x4d75d9`), and an open window repaints through the
-/// re-evaluator (`0x4d7d40`), never a second list, so every list opens and resets.
+/// Every list resets the lines (`0x596450`), and an open window repaints through the
+/// re-evaluator (`0x596b00`), never a second list, so every list opens and resets.
 #[test]
 fn every_list_packet_begins_a_window_session() {
     const TRAINER: u64 = 0xabc;
@@ -665,10 +691,10 @@ fn every_list_packet_begins_a_window_session() {
     open.open(TRAINER, 0, list(), "Greetings".into());
     assert!(
         !open.re_derive,
-        "a fresh list is the server's states — nothing pending against it"
+        "a fresh list is the server's states, nothing pending against it"
     );
 
-    // A trigger with no window open does nothing (`0x4d7d46`'s early-out).
+    // A trigger with no window open does nothing.
     open.clear();
     open.trigger_re_derive();
     assert!(!open.re_derive);

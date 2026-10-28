@@ -650,7 +650,7 @@ fn trainer_service(spell_id: u32, name: &str, tooltip: TrainerTooltip) -> Traine
 }
 
 /// `SetTrainerService` renders no line of its own: it routes to the item or spell builder the app
-/// picked (`altCaster` drops the reagents), and its index is a visible row, so row 1 is a header.
+/// picked (`altCaster` drops the reagents), and its index is a record, so row 1 is a header.
 #[test]
 fn set_trainer_service_selects_the_builder_and_never_renders_its_own_line() {
     let mut s = script();
@@ -706,9 +706,10 @@ fn set_trainer_service_selects_the_builder_and_never_renders_its_own_line() {
         local a = CreateFrame("Button", "AB1"); a:SetPoint("CENTER", 0, 0); a:SetWidth(10); a:SetHeight(10)
         CreateFrame("GameTooltip", "TT")
 
-        -- Row 1 is the "Arms" header: a no-op, not a shifted hit onto a neighbouring service.
+        -- Row 1 is the "Arms" header: it raises (`0x62e900`), not a shifted hit onto a service.
         TT:SetOwner(a, "ANCHOR_RIGHT")
-        TT:SetTrainerService(1)
+        local ok, err = pcall(TT.SetTrainerService, TT, 1)
+        assert(not ok and string.find(tostring(err), "Invalid trainer service", 1, true), tostring(err))
         assert(TT:NumLines() == 0, "a header row renders nothing")
 
         -- Row 2: the recipe -> the ITEM builder, full item tooltip (not the spell's name).

@@ -442,7 +442,7 @@ pub use tradeskill::{
 };
 pub use trainer::{
     TrainerAbilityReq, TrainerGroup, TrainerService, TrainerServiceCategory, TrainerSkillReq,
-    TrainerState, TrainerTooltip, TRAINER_GROUP_KNOWN,
+    TrainerState, TrainerTooltip,
 };
 pub use types::{
     BlendMode, EditAction, EditBoxAdvanceRequest, EditBoxTextUi, EditOutcome, EditUnit,

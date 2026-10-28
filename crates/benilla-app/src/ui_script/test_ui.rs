@@ -239,19 +239,6 @@ pub(crate) fn production_order<'a>(parts: &[&[&'a str]]) -> Vec<&'a str> {
     keyed.into_iter().map(|(_, _, file)| file).collect()
 }
 
-/// Loads `parts` in the production order ([`production_order`]) and returns the frames `counted`
-/// built.
-pub(crate) fn load_kit_counting(s: &UiScript, parts: &[&[&str]], counted: &str) -> usize {
-    let mut built = 0;
-    for file in production_order(parts) {
-        let frames = load_ui(s, file);
-        if file == counted {
-            built = frames;
-        }
-    }
-    built
-}
-
 thread_local! {
     /// Per VM session, the furthest [`production_rank`] a kit has loaded and the file at it.
     static KIT_AT: std::cell::RefCell<std::collections::HashMap<u64, (usize, String)>> =
