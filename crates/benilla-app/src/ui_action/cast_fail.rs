@@ -5,18 +5,18 @@
 //!    a bare `"%s"`, an override replaces the text. The pet's handler `0x6e8eb0` has its own
 //!    overrides ([`Caster`]); layers 1 and 3 are shared.
 //! 3. An argument arm (`0x6e1d8e`) fills the template's `%s`: the DBC arms in [`FailArgs::fill`],
-//!    the item and subclass arms (`0x78`, `0x5c`, `0x19`-`0x1b`, `0x31`) in the drain.
+//!    the item, subclass and two-word arms (`0x78`, `0x5c`, `0x19`-`0x1b`, `0x31`, `0x97`,
+//!    `0x90`) in the drain.
 //!
 //! The combat log (`0x62c360`) reads a second buffer the overrides never touch
 //! ([`CastFailLine::arg_text`]). `0x30`'s arm (`0x6e1e3d`) fills nothing in the reference.
-//! `0x84` and `0x90` are unreachable in 1.12: the server never sends them, and their only client
-//! raise sites (`0x49614e`, `0x496128`) need the prospecting effect `0x7f`, which no shipped
-//! spell has. `0x0a`'s item-target line (`ERR_INVALID_ITEM_TARGET`) is not built.
+//! `0x0a`'s item-target line (`ERR_INVALID_ITEM_TARGET`) is not built.
 
 use std::collections::HashMap;
 
 use benilla_formats::{
     AreaTableCatalog, ShapeshiftForm, SpellDisplay, SpellFocusCatalog, SpellMechanicCatalog,
+    TotemCategoryCatalog,
 };
 
 use super::Caster;
@@ -256,6 +256,8 @@ pub(super) struct FailArgs<'a> {
     pub(super) mechanics: Option<&'a SpellMechanicCatalog>,
     /// `SpellShapeshiftForm.dbc` (`0xc0d76c`), for `0x56`, keyed by form id.
     pub(super) forms: Option<&'a HashMap<u32, ShapeshiftForm>>,
+    /// `TotemCategory.dbc`, for `0x9c`.
+    pub(super) totems: Option<&'a TotemCategoryCatalog>,
 }
 
 /// What an argument arm produced, and when nothing, which exit the reference takes: every arm
@@ -297,6 +299,12 @@ impl FailArgs<'_> {
                 named(id.and_then(|id| self.focus?.name(id)))
             }
             0x56 => self.shapeshift_forms(caster, spell),
+            // `TOTEM_CATEGORY` (12340's 130, `0x808200`), the player's arm only: the category the
+            // word names; a word with no row ends the cast with no line.
+            0x9C if caster == Caster::Player => self
+                .arg
+                .and_then(|id| self.totems?.get(id))
+                .map_or(Fill::Nothing, |t| Fill::Filled(t.name.clone())),
             _ => Fill::Template,
         }
     }
@@ -1168,13 +1176,33 @@ mod tests {
             benilla_formats::load_spell_mechanic_catalog(&mut chain).expect("SpellMechanic");
         let forms =
             benilla_formats::load_shapeshift_forms(&mut chain).expect("SpellShapeshiftForm.dbc");
+        let totems = benilla_formats::load_totem_categories(&mut chain).expect("TotemCategory");
         let args = |arg: u32| FailArgs {
             arg: Some(arg),
             focus: Some(&focus),
             areas: Some(&areas),
             mechanics: Some(&mechanics),
             forms: Some(&forms),
+            totems: Some(&totems),
         };
+        // `TOTEM_CATEGORY` names the tool category: 165 is the Mining Pick. The pet's table has no
+        // such arm, and a word with no row shows nothing.
+        assert_eq!(
+            cast_fail_text(Caster::Player, 0x9C, None, args(165), &g)
+                .unwrap()
+                .text,
+            "Requires Mining Pick"
+        );
+        assert_eq!(
+            cast_fail_text(Caster::Pet, 0x9C, None, args(165), &g)
+                .unwrap()
+                .text,
+            "Requires"
+        );
+        assert_eq!(
+            cast_fail_text(Caster::Player, 0x9C, None, args(9999), &g),
+            None
+        );
         assert_eq!(
             cast_fail_text(Caster::Player, 0x8D, None, args(12), &g)
                 .unwrap()

@@ -296,8 +296,8 @@ fn spell_args(spells: Option<&Spells>, id: u32, cast_count: u8) -> Vec<ScriptVal
 }
 
 /// The cast as `UnitCastingInfo`/`UnitChannelInfo` read it. A cast's text is its name, empty under
-/// `AttributesEx3 & 4` (`0x611e81`); a channel's is its name only with `AttributesEx` bit 29
-/// (`0x612151`), else the Lua global `CHANNELING`.
+/// `AttributesEx3 & 4` (`0x611e81`); a channel's, as the `"player"` token reads it, is its name
+/// only with `AttributesEx` bit 29 (`0x612151`), else the Lua global `CHANNELING`.
 fn unit_cast(
     script: &UiScript,
     spells: Option<&Spells>,

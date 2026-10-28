@@ -223,7 +223,7 @@ fn a_modifier_change_rebuilds_only_the_matching_familys_views() {
     let spell = |family: u32, bits: &[u32], generation: u32| benilla_formats::SpellDisplay {
         name: "Spell".into(),
         spell_family: family,
-        spell_family_flags: bits.iter().fold(0u64, |mask, b| mask | 1 << b),
+        spell_family_flags: bits.iter().fold(0u128, |mask, b| mask | 1 << b),
         description: Some(format!("gen{generation}")),
         ..Default::default()
     };

@@ -23,6 +23,19 @@ pub enum CompanionKind {
 const SPELL_EFFECT_SUMMON: u32 = 28;
 /// `SPELL_AURA_MOUNTED`.
 pub const SPELL_AURA_MOUNTED: u32 = 78;
+
+/// `SpellShapeshiftForm` flag `0x1`: a stance, which `IsShapeShifted` (`0x721ca0`) does not count.
+const FORM_FLAG_STANCE: u32 = 0x1;
+/// `SpellShapeshiftForm` flag `0x400`: a true shapeshift that refuses every spell its mask does
+/// not name (`0x72bac0`); Tharon'ja's skeleton and the Zombie form carry it.
+const FORM_FLAG_NO_CASTS: u32 = 0x400;
+
+/// `Spell_IsAreaAuraEffect` (`0x76bed0`): a passive with one of these effects is still listed.
+const AREA_AURA_EFFECTS: [u32; 7] = [27, 35, 65, 119, 128, 129, 143];
+/// `AttributesEx5` bits 27 and 28, `CanShowAura`'s self-cast pair (`0x53d580`).
+const ATTR_EX5_HIDE_IF_SELF_CAST: u32 = 0x0800_0000;
+const ATTR_EX5_HIDE_IF_NOT_SELF_CAST: u32 = 0x1000_0000;
+const ATTR_EX6_ONLY_VISIBLE_TO_CASTER: u32 = 0x0010_0000;
 /// `AttributesEx4 & 0x8000`: the spell is known but filed in no tab (`0x542856`).
 const ATTR_EX4_NOT_IN_SPELLBOOK: u32 = 0x8000;
 
@@ -69,12 +82,12 @@ pub struct SpellDisplay {
     pub attributes_ex7: u32,
     /// `TotemCategory[2]` (columns 222-223): the tool rows the spell needs, a totem's element.
     pub totem_categories: [u32; 2],
-    /// `SpellFamilyName` (column 208): `GetSpellModifiers` (`0x6e6b30`) applies nothing unless it
-    /// is nonzero and equals the local player's class family (`[0xcecaac]`, `0x6e6b46`).
+    /// `SpellFamilyName` (column 208): `GetSpellModifiers` (`0x7fd970`) applies nothing unless it
+    /// is nonzero and equals the local player's class family.
     pub spell_family: u32,
-    /// `SpellFamilyFlags` (columns 209-210 of three, low dword first): the modifier rows that apply, one
-    /// summed cell per set bit over all 64; Cleanse 4987 sets bits 12 and 33.
-    pub spell_family_flags: u64,
+    /// `SpellFamilyFlags` (columns 209-211, low dword first): the modifier rows that apply, one
+    /// summed cell per set bit over all 96 (`0x7fd970`); bits 96 and up are always clear.
+    pub spell_family_flags: u128,
     /// `PreventionType` (column 214): 1 silence, 2 pacify, 0 neither; the crowd control that
     /// refuses the spell locally (`0x6094f0`, from `TryCast` `0x6e4b60`). A stun refuses all.
     pub prevention_type: u32,
@@ -440,15 +453,15 @@ impl SpellDisplay {
         self.helpful_or_harmful() == SpellIntent::Helpful
     }
 
-    /// The ranged-stance gate, `AttributesEx2 & 0x20` or `Attributes & 0x2`, as tested at
-    /// `0x6e78b6`/`0x6e78f3` (`SMSG_SPELL_START`) and `0x6e5930` (the cast send).
+    /// The ranged-stance gate, `AttributesEx2 & 0x20` or `Attributes & 0x2`, as the cast-start
+    /// visuals (`0x7fa2e0`) and the cast send (`CastSpell 0x80ccd0`) test it.
     pub fn ranged_attack(&self) -> bool {
         self.attributes_ex2 & ATTR_EX2_AUTO_REPEAT != 0 || self.attributes & ATTR_RANGED != 0
     }
 
     /// `Attributes & 0x200`: the cast aims itself at the equipped main hand, so a weapon imbue
-    /// binds on the press with no item cursor (`ArmCast` `0x6e5250`, for a player caster). Only
-    /// the shaman weapon imbues carry it.
+    /// binds on the press with no item cursor (`CastSpell 0x80ccd0`, `BeginCast 0x80c790`, for a
+    /// player caster). Only the shaman weapon imbues carry it.
     pub fn targets_main_hand_item(&self) -> bool {
         self.attributes & ATTR_TARGET_MAIN_HAND_ITEM != 0
     }
@@ -459,8 +472,8 @@ impl SpellDisplay {
         self.attributes_ex2 & ATTR_EX2_AUTO_REPEAT != 0
     }
 
-    /// `AttributesEx4 & 0x20` (`0x4bd355`): a pet-bar spell press takes the generic cast entry
-    /// `0x6e4b60` and returns, sending no pet action and starting no GCD of its own.
+    /// `AttributesEx4 & 0x20` (`SendPetAction 0x5d4210`): a pet-bar spell press takes the generic
+    /// cast entry and returns, sending no pet action and starting no GCD of its own.
     pub fn allows_client_targeting(&self) -> bool {
         self.attributes_ex4 & ATTR_EX4_ALLOW_CLIENT_TARGETING != 0
     }
@@ -483,42 +496,34 @@ impl SpellDisplay {
         self.attributes_ex3 & ATTR_EX3_NORMAL_RANGED_ATTACK != 0
     }
 
-    /// `AttributesEx3 & 0x4`: `SPELLCAST_START` gets an empty name, a blank cast bar label
-    /// (`0x6e7a2d`, the one test of this bit); the channel bar never reads it.
+    /// `AttributesEx3 & 0x4`: `UnitCastingInfo` (`0x611df0`) answers an empty text, a blank cast
+    /// bar label; `UnitChannelInfo` never reads it.
     pub fn no_casting_bar_text(&self) -> bool {
         self.attributes_ex3 & ATTR_EX3_NO_CASTING_BAR_TEXT != 0
     }
 
-    /// `AttributesEx3 & 0x2000`: no channel bar; the handler `0x6e7550` returns at `0x6e7595`
-    /// before `SPELLCAST_CHANNEL_START`. Only Blood Siphon, 24322 and 24323, carries it.
-    pub fn no_channel_bar(&self) -> bool {
-        self.attributes_ex3 & ATTR_EX3_NO_CHANNEL_BAR != 0
-    }
-
-    /// `AttributesEx & 0x80000`: the caster is never a bind candidate, not in `BindTarget`
-    /// (`0x6e5b40` at `6e5bf7`), not for `SpellCanTargetUnit`'s unit leg (`0x6e6460` at `6e6507`)
-    /// and not for the world pick (`0x6e61a0` at `6e61cf`).
+    /// `AttributesEx & 0x80000`: the caster is never a bind candidate, not for the cursor's unit
+    /// test (`0x803a50`) nor the click that binds it (`0x80bc80`).
     pub fn excludes_caster(&self) -> bool {
         self.attributes_ex & ATTR_EX_EXCLUDE_CASTER != 0
     }
 
-    /// `AttributesEx2 & 0x1` (vmangos `SPELL_ATTR_EX2_ALLOW_DEAD_TARGET`, `SpellDefines.h:868`):
-    /// a dead unit stays a bind candidate (`BindTarget` at `6e5c85`).
+    /// `AttributesEx2 & 0x1`: a dead unit stays a bind candidate (`0x80bc80`, `0x809610`).
     pub fn allows_dead_target(&self) -> bool {
         self.attributes_ex2 & ATTR_EX2_ALLOW_DEAD_TARGET != 0
     }
 
-    /// The `TargetCreatureType` gate of `BindTarget` (`6e5c23`-`6e5c53`) and its mirror
-    /// (`6e6544`-`6e656c`): no mask admits any unit, else a unit of type 0 is refused and type `t`
-    /// needs bit `t - 1`. The shift wraps at 32 as the hardware's does.
+    /// The `TargetCreatureType` gate of the bind click (`0x80bc80`) and its mirrors (`0x803a50`,
+    /// `0x809610`): no mask admits any unit, else a unit of type 0 is refused and type `t` needs
+    /// bit `t - 1`. The shift wraps at 32 as the hardware's does.
     pub fn admits_creature_type(&self, creature_type: u32) -> bool {
         self.target_creature_type == 0
             || (creature_type != 0
                 && self.target_creature_type & 1u32.wrapping_shl(creature_type - 1) != 0)
     }
 
-    /// `AttributesEx & 0x2000_0000` (`0x6e759a`): the channel bar shows the spell's own name
-    /// (`0x6e75a9`), else `CHANNELING` (`0x6e75bc`); nine channels set it, Fishing among them.
+    /// `AttributesEx & 0x2000_0000`: `UnitChannelInfo` (`0x612090`) gives the `"player"` token
+    /// the spell's own name, else `CHANNELING`; Fishing sets it.
     pub fn channel_bar_own_name(&self) -> bool {
         self.attributes_ex & ATTR_EX_CHANNEL_BAR_OWN_NAME != 0
     }
@@ -552,7 +557,7 @@ impl SpellDisplay {
     }
 
     /// `Effect[0] == SPELL_EFFECT_ATTACK` (78): the client's trigger for showing the main-hand
-    /// weapon's icon instead (`0x4b3f8a`, `0x4e59de`). In 1.12 only 6603 "Attack" carries it.
+    /// weapon's icon instead, and the usable walk's attack leg (`0x80b5d0`).
     pub fn is_melee_auto_attack(&self) -> bool {
         self.effects[0] == SPELL_EFFECT_ATTACK
     }
@@ -588,12 +593,12 @@ impl SpellDisplay {
         self.attributes & ATTR_RANGED != 0 && self.attributes_ex2 & ATTR_EX2_AUTO_REPEAT != 0
     }
 
-    /// `SPELL_ATTR_COOLDOWN_ON_EVENT`: the cooldown is held until `SMSG_COOLDOWN_EVENT`.
+    /// `Attributes & 0x2000000` (`0x801220`): the cooldown is held until `SMSG_COOLDOWN_EVENT`.
     pub fn cooldown_on_event(&self) -> bool {
         self.attributes & ATTR_COOLDOWN_ON_EVENT != 0
     }
 
-    /// A finisher (`AttributesEx` bit 20 or 22): unusable with no combo points (`0x6e3e7a`).
+    /// A finisher (`AttributesEx` bit 20 or 22): unusable with no combo points (`0x80b5d0`).
     pub fn needs_combo_points(&self) -> bool {
         self.attributes_ex & ATTR_EX_FINISHING_MOVE != 0
     }
@@ -613,38 +618,58 @@ impl SpellDisplay {
         self.attributes_ex & ATTR_EX_CHANNELED != 0
     }
 
-    /// Predicate `0x6e5200`: an on-next-swing, `INITIATES_COMBAT` or `INITIATE_COMBAT_POST_CAST`
-    /// spell. TryCast runs the attack validator's target pick for it (`0x6e4edf`), so a press
-    /// with no hostile selection acquires one, as the Attack button does.
+    /// Predicate `0x7fcc70`: an on-next-swing, `INITIATES_COMBAT` or `INITIATE_COMBAT_POST_CAST`
+    /// spell. The cast runs the attack validator's target pick for it (`CastSpell 0x80ccd0`), so
+    /// a press with no hostile selection acquires one, as the Attack button does.
     pub fn initiates_combat(&self) -> bool {
         self.attributes & ATTR_ON_NEXT_SWING != 0
             || self.attributes_ex & ATTR_EX_INITIATES_COMBAT != 0
             || self.attributes_ex2 & ATTR_EX2_INITIATE_COMBAT_POST_CAST != 0
     }
 
-    /// Casting this starts melee auto-attack at the send unless one runs (`TryCast` tail
-    /// `0x6e51b5`): predicate `0x6e5200` with `AttributesEx2` bit 20 clear, so an on-next-swing
-    /// or `INITIATES_COMBAT` spell. Every cast path shares the tail; there is no macro opt-out.
+    /// Casting this starts melee auto-attack at the send unless one runs (`CastSpell 0x80ccd0`):
+    /// predicate `0x7fcc70` with `AttributesEx2` bit 20 clear, so an on-next-swing or
+    /// `INITIATES_COMBAT` spell. Every cast path shares it; there is no macro opt-out.
     pub fn initiates_auto_attack(&self) -> bool {
         self.initiates_combat() && !self.initiates_auto_attack_at_go()
     }
 
-    /// This spell's own `SMSG_SPELL_GO` starts melee auto-attack (`0x6131a0`) at its first hit
-    /// target: `AttributesEx2` bit 20, the complement of [`Self::initiates_auto_attack`]
-    /// (`0x6e83c0`).
+    /// This spell's own `SMSG_SPELL_GO` starts melee auto-attack at its first hit target:
+    /// `AttributesEx2` bit 20, the complement of [`Self::initiates_auto_attack`] (`0x80e1b0`).
     ///
-    /// Only this leg is built: the handler's other, `0x6e5200` with `InterruptFlags` bit 3
-    /// (`0x6e83d4`), never fires, as its rows already attack from the send (`0x6e83e7`). Built
-    /// here, it would send a second `CMSG_ATTACKSWING`: our engaged state is the server's echo.
+    /// Only this leg is built: the handler's other, `0x7fcc70` with `InterruptFlags` bit 3, never
+    /// fires, as its rows already attack from the send. Built here, it would send a second
+    /// `CMSG_ATTACKSWING`: our engaged state is the server's echo.
     pub fn initiates_auto_attack_at_go(&self) -> bool {
         self.attributes_ex2 & ATTR_EX2_INITIATE_COMBAT_POST_CAST != 0
     }
 
-    /// Hidden from the buff bar (`0x4e4170`, `0x4e42b6`-`0x4e42c8`): `Attributes` read as a byte,
-    /// so `0x80` and not the dword's sign, or `AttributesEx & 0x10000000`. The aura stays live;
-    /// `GetPlayerBuff` never returns it: warrior stances, Defensive State 5302.
-    pub fn hidden_from_aura_bar(&self) -> bool {
-        self.attributes & ATTR_DO_NOT_DISPLAY != 0 || self.attributes_ex & ATTR_EX_NO_AURA_ICON != 0
+    /// The spell's own legs of `CanShowAura` (`0x53d580`), every aura list's filter: not
+    /// `Attributes & 0x80` nor `AttributesEx & 0x10000000` (warrior stances), not a passive
+    /// without an area-aura effect (`0x76bed0`), and not `AttributesEx5` bit 27 on a self-cast
+    /// aura nor bit 28 on another's. The caster and aura-vision legs read the viewer
+    /// ([`Self::only_visible_to_caster`], `required_aura_vision`).
+    pub fn shows_aura(&self, self_cast: bool) -> bool {
+        if self.attributes & ATTR_DO_NOT_DISPLAY != 0
+            || self.attributes_ex & ATTR_EX_NO_AURA_ICON != 0
+        {
+            return false;
+        }
+        if self.passive && !self.effects.iter().any(|&e| AREA_AURA_EFFECTS.contains(&e)) {
+            return false;
+        }
+        let hide = if self_cast {
+            ATTR_EX5_HIDE_IF_SELF_CAST
+        } else {
+            ATTR_EX5_HIDE_IF_NOT_SELF_CAST
+        };
+        self.attributes_ex5 & hide == 0
+    }
+
+    /// `AttributesEx6 & 0x100000`: `CanShowAura` lists the aura only when the active player or
+    /// its pet cast it (`0x53d580`).
+    pub fn only_visible_to_caster(&self) -> bool {
+        self.attributes_ex6 & ATTR_EX6_ONLY_VISIBLE_TO_CASTER != 0
     }
 
     /// The aura vision this aura's state kit needs on the active player (`0x7fe3e0`): bit
@@ -676,22 +701,24 @@ impl SpellDisplay {
     }
 
     /// `AttributesEx2` bit 19: `Stances` lists forms the spell may also be cast in, not forms it
-    /// needs. The form gate `0x612480` and the tooltip's form line (`0x52f115`) both test it; no
-    /// spell that truly needs a form (stances, druid forms, stealth openers) carries it.
+    /// needs. The form gate `0x72bac0` and the tooltip's form line both test it; no spell that
+    /// truly needs a form (stances, druid forms, stealth openers) carries it.
     pub fn form_mask_is_permissive(&self) -> bool {
         self.attributes_ex2 & ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED != 0
     }
 
-    /// The form gate as a boolean, the usable walk's form leg (`0x6e3ec6`).
-    pub fn usable_in_form(&self, form: u8, form_is_stance: bool) -> bool {
-        self.form_refusal(form, form_is_stance).is_none()
+    /// The form gate as a boolean, the usable walk's form leg.
+    pub fn usable_in_form(&self, form: u8, form_flags: u32) -> bool {
+        self.form_refusal(form, form_flags).is_none()
     }
 
-    /// The shapeshift-form gate `0x612480` (usable walk `0x6e3ec6`, cast check `0x6094f0`):
-    /// `StancesNot`, then `Stances`, then `Attributes` bit 16 and `AttributesEx2` bit 19. A form
-    /// flagged as a stance (warrior stances, stealth) does not count as shapeshifted, and the
-    /// refusal reasons split as in vmangos's `SpellEntry::GetErrorAtShapeshiftedCast`.
-    pub fn form_refusal(&self, form: u8, form_is_stance: bool) -> Option<FormRefusal> {
+    /// `CheckShapeshiftRules` (`0x72bac0`) for the caster's form and that form's
+    /// `SpellShapeshiftForm` flags (0 for no row): `StancesNot`, then `Stances`; then, in a true
+    /// shapeshift (`IsShapeShifted 0x721ca0`: a form without flag `0x1`), `Attributes` bit 16 or
+    /// the form's flag `0x400` refuses, while unshifted or in a stance `AttributesEx2` bit 19
+    /// waives the rest; last, any `Stances` bit refuses. Not built: aura 275, which lifts every
+    /// refusal for the spells it names.
+    pub fn form_refusal(&self, form: u8, form_flags: u32) -> Option<FormRefusal> {
         let stance_bit = if form == 0 { 0 } else { 1u32 << (form - 1) };
         if self.stances_not & stance_bit != 0 {
             return Some(FormRefusal::NotShapeshift);
@@ -699,21 +726,14 @@ impl SpellDisplay {
         if self.stances & stance_bit != 0 {
             return None;
         }
-        if form != 0 && !form_is_stance {
-            // A true shapeshift, not a stance.
-            if self.attributes & ATTR_NOT_SHAPESHIFT != 0 {
-                Some(FormRefusal::NotShapeshift)
-            } else if self.stances != 0 {
-                Some(FormRefusal::OnlyShapeshift)
-            } else {
-                None
+        if form != 0 && form_flags & FORM_FLAG_STANCE == 0 {
+            if self.attributes & ATTR_NOT_SHAPESHIFT != 0 || form_flags & FORM_FLAG_NO_CASTS != 0 {
+                return Some(FormRefusal::NotShapeshift);
             }
-        } else if self.stances != 0 && !self.form_mask_is_permissive() {
-            // Unshifted or in a stance: a form requirement holds unless bit 19 waives it.
-            Some(FormRefusal::OnlyShapeshift)
-        } else {
-            None
+        } else if self.form_mask_is_permissive() {
+            return None;
         }
+        (self.stances != 0 || self.stances_high != 0).then_some(FormRefusal::OnlyShapeshift)
     }
     /// The rank number the subtext carries, as `0x53b540` parses `SpellRec+0x224`: the first
     /// run of digits, wherever it starts ("Rank 2" is 2), and 0 when there is none ("Racial",
@@ -842,17 +862,18 @@ pub enum LearnAnnouncement {
     Recipe,
 }
 
-/// A [`SpellDisplay::form_refusal`] verdict: the cast-fail reason `0x612480` writes.
+/// A [`SpellDisplay::form_refusal`] verdict: the cast-fail reason `0x72bac0` writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FormRefusal {
-    /// `SPELL_FAILED_NOT_SHAPESHIFT` (0x3d): a `StancesNot` hit, or a no-shapeshift spell in one.
+    /// `SPELL_FAILED_NOT_SHAPESHIFT` (12340's 68): a `StancesNot` hit, or a no-shapeshift spell
+    /// in a form.
     NotShapeshift,
-    /// `SPELL_FAILED_ONLY_SHAPESHIFT` (0x56, "Must be in %s"): not in a required form.
+    /// `SPELL_FAILED_ONLY_SHAPESHIFT` (12340's 94, "Must be in %s"): not in a required form.
     OnlyShapeshift,
 }
 
 impl FormRefusal {
-    /// The `SPELL_FAILED_*` reason byte.
+    /// The `SPELL_FAILED_*` reason in the shared numbering the cast-failure display keys on.
     pub fn reason(self) -> u8 {
         match self {
             FormRefusal::NotShapeshift => 0x3d,

@@ -8,7 +8,9 @@ mod units;
 use bevy::prelude::*;
 
 use benilla_formats::{SpellCatalog, SpellDurationCatalog};
-use benilla_protocol::messages::{RecordAura, AURA_UPDATE_FLAG_HARMFUL};
+use benilla_protocol::messages::{
+    RecordAura, AURA_UPDATE_FLAG_HARMFUL, AURA_UPDATE_FLAG_SELF_CAST,
+};
 use benilla_ui::script::{AuraState, ScriptValue, UiScript};
 
 use crate::char_select::ClientState;
@@ -128,12 +130,23 @@ impl From<&UnitAura> for AuraInput {
     }
 }
 
-/// The spell tables a list reads, and `GetTime()` minus the real clock, which rebases an expiry.
+/// The spell tables a list reads, the viewer its filter reads, and `GetTime()` minus the real
+/// clock, which rebases an expiry.
 #[derive(Clone, Copy)]
 struct ListCtx<'a> {
     catalog: Option<&'a SpellCatalog>,
     durations: Option<&'a SpellDurationCatalog>,
+    viewer: Viewer,
     clock_offset: f64,
+}
+
+/// What `CanShowAura 0x53d580` reads off the active player: the casters its caster-only leg
+/// admits, the player and its pet, and the aura vision byte (`PLAYER_FIELD_BYTES2` byte 3).
+#[derive(Clone, Copy, Debug, Default)]
+struct Viewer {
+    player: u64,
+    pet: u64,
+    vision: u8,
 }
 
 /// One aura as `0x6147c0` pushes it: helpful unless flagged harmful (`0x72ca9e`), cancelable by
@@ -187,29 +200,29 @@ fn aura_list(ctx: ListCtx, inputs: &[AuraInput]) -> Vec<AuraState> {
 /// ones, the unit-level gate's nil at every index ([`buffs_visible_on`]).
 fn table_inputs<'a>(
     table: &'a UnitAuras,
-    catalog: Option<&'a SpellCatalog>,
+    ctx: ListCtx<'a>,
     buffs_visible: bool,
 ) -> impl Iterator<Item = AuraInput> + 'a {
     table
         .listed()
         .filter(move |a| buffs_visible || a.is_harmful())
-        .filter(move |a| shown_in_aura_ui(catalog, a.spell_id))
+        .filter(move |a| shown_in_aura_ui(ctx, a.spell_id, a.flags, a.caster))
         .map(AuraInput::from)
 }
 
 /// A roster record's aura block as `UnitAura`'s record walk reads it (`0x614a80`-`0x614b9c`):
-/// ascending slot, the display filter alone, no unit gate. Each aura's own flags byte says
-/// harmful (`0x80`) and cancelable (`0x10`); the stack count is always 1 and nothing is timed
-/// (`0x614bab`).
+/// ascending slot, the display filter alone, no unit gate, and no caster, so a caster-only aura
+/// is never listed. Each aura's own flags byte says harmful (`0x80`) and cancelable (`0x10`);
+/// the stack count is always 1 and nothing is timed (`0x614bab`).
 ///
 /// Deviation: 12340 stops at the first empty slot (`0x614a83`), so a hole an expired aura leaves
 /// hides every aura past it; this walks every occupied slot.
 fn record_inputs<'a>(
     auras: impl Iterator<Item = RecordAura> + 'a,
-    catalog: Option<&'a SpellCatalog>,
+    ctx: ListCtx<'a>,
 ) -> impl Iterator<Item = AuraInput> + 'a {
     auras
-        .filter(move |a| a.spell_id != 0 && shown_in_aura_ui(catalog, a.spell_id))
+        .filter(move |a| a.spell_id != 0 && shown_in_aura_ui(ctx, a.spell_id, a.flags, 0))
         .map(|a| AuraInput {
             spell_id: a.spell_id,
             stacks: 1,
@@ -278,16 +291,22 @@ fn until_cancelled(
 /// The filter of every aura display, the player's bar and other units' rows alike, as the display
 /// index rebuild admits a slot (`0x72c510`): an id with no `Spell.dbc` row is never indexed
 /// (`0x72c73d`-`0x72c75f`), so a server-only spell takes no `UnitAura` index; then
-/// `CanShowAura 0x53d580`, whose never-display attributes are modelled here, not its area-aura,
-/// caster or aura-vision arms; tracking spells carry `AttributesEx & 0x10000000`. With no catalog
-/// at all every aura stays listed.
-fn shown_in_aura_ui(catalog: Option<&SpellCatalog>, spell_id: u32) -> bool {
-    let Some(catalog) = catalog else {
+/// `CanShowAura 0x53d580` on the aura's self-cast flag (`0x08`) and caster: the spell's own legs,
+/// a caster-only aura cast by the player or its pet, and the aura vision bit
+/// (`HasAuraVision 0x4f72e0`). With no catalog at all every aura stays listed.
+fn shown_in_aura_ui(ctx: ListCtx, spell_id: u32, flags: u8, caster: u64) -> bool {
+    let Some(catalog) = ctx.catalog else {
         return true;
     };
-    catalog
-        .get(spell_id)
-        .is_some_and(|d| !d.hidden_from_aura_bar())
+    let Some(d) = catalog.get(spell_id) else {
+        return false;
+    };
+    let viewer = ctx.viewer;
+    d.shows_aura(flags & AURA_UPDATE_FLAG_SELF_CAST != 0)
+        && (!d.only_visible_to_caster()
+            || (caster != 0 && (caster == viewer.player || caster == viewer.pet)))
+        && (d.required_aura_vision == 0
+            || u32::from(viewer.vision) & 1u32.wrapping_shl(d.required_aura_vision - 1) != 0)
 }
 
 /// The units the resolver's guid globals name, from `UnitTokens`' own sources.
@@ -327,16 +346,22 @@ fn feed_auras(
     };
 
     let bevy_now = time.elapsed_secs_f64();
+    let pet_guid = units.pet.spells.pet_guid;
     let ctx = ListCtx {
         catalog: spells.as_ref().map(|s| &s.catalog),
         durations: spells.as_ref().map(|s| &s.durations),
+        viewer: Viewer {
+            player: self_guid.0,
+            pet: pet_guid,
+            vision: store.0.player_aura_vision().unwrap_or(0),
+        },
         clock_offset: script.now() - bevy_now,
     };
     let catalog = ctx.catalog;
     let empty = UnitAuras::default();
     let self_table = self_table.unwrap_or(&empty);
     // The player's own buffs are never gated.
-    let inputs: Vec<AuraInput> = table_inputs(self_table, catalog, true).collect();
+    let inputs: Vec<AuraInput> = table_inputs(self_table, ctx, true).collect();
     let list = aura_list(ctx, &inputs);
 
     // The minimap's tracking spell follows a known tracking spell's aura on and off the player
@@ -389,7 +414,6 @@ fn feed_auras(
 
     let held = |guid: u64| index.0.get(&guid).and_then(|&e| stores.get(e).ok());
     let table_of = |guid: u64| index.0.get(&guid).and_then(|&e| tables.get(e).ok());
-    let pet_guid = units.pet.spells.pet_guid;
     // `UnitBuff`'s unit gate on a live unit. `unit` is never `store`, the player's, which is the
     // gate's second argument. The pet is ungated; the reference gates a pet too, but `CanAssist`'s
     // player-controlled arm (`0x60673e`-`0x60679f`, the controlling players' duel and FFA-PvP
@@ -496,12 +520,17 @@ mod tests {
     const NO_SPELLS: ListCtx = ListCtx {
         catalog: None,
         durations: None,
+        viewer: Viewer {
+            player: 0,
+            pet: 0,
+            vision: 0,
+        },
         clock_offset: 0.0,
     };
 
     /// [`table_inputs`] as the list.
     fn other_unit_auras(table: &UnitAuras, buffs_visible: bool) -> Vec<AuraState> {
-        let inputs: Vec<AuraInput> = table_inputs(table, None, buffs_visible).collect();
+        let inputs: Vec<AuraInput> = table_inputs(table, NO_SPELLS, buffs_visible).collect();
         aura_list(NO_SPELLS, &inputs)
     }
 
@@ -546,7 +575,7 @@ mod tests {
             flags,
         };
         let block = [aura(0, 5916, 0x19), aura(1, 22766, 0x81), aura(3, 0, 0x19)];
-        let inputs: Vec<AuraInput> = record_inputs(block.into_iter(), None).collect();
+        let inputs: Vec<AuraInput> = record_inputs(block.into_iter(), NO_SPELLS).collect();
         let read: Vec<(bool, bool)> = aura_list(NO_SPELLS, &inputs)
             .iter()
             .map(|a| (a.helpful, a.cancelable))
@@ -576,7 +605,7 @@ mod tests {
             catalog: Some(&catalog),
             ..NO_SPELLS
         };
-        let inputs: Vec<AuraInput> = table_inputs(&table, Some(&catalog), true).collect();
+        let inputs: Vec<AuraInput> = table_inputs(&table, ctx, true).collect();
         let listed: Vec<(u32, Option<String>)> = aura_list(ctx, &inputs)
             .into_iter()
             .map(|a| (a.spell_id, a.name))
@@ -595,13 +624,73 @@ mod tests {
                 flags: 0x19,
             },
         ];
-        let roster: Vec<u32> = record_inputs(block.into_iter(), Some(&catalog))
+        let roster: Vec<u32> = record_inputs(block.into_iter(), ctx)
             .map(|a| a.spell_id)
             .collect();
         assert_eq!(roster, [6673]);
 
         // No catalog at all: nothing is known to be missing, so both stay.
-        assert_eq!(table_inputs(&table, None, true).count(), 2);
+        assert_eq!(table_inputs(&table, NO_SPELLS, true).count(), 2);
+    }
+
+    /// `CanShowAura`'s viewer legs (`0x53d580`): a caster-only aura lists only when the player or
+    /// its pet cast it, and never from a roster record; an aura-vision aura only while the
+    /// player's vision byte carries its bit; the self-cast flag picks the `AttributesEx5` bit.
+    #[test]
+    fn the_aura_filter_reads_the_caster_the_vision_and_the_self_cast_flag() {
+        use benilla_formats::SpellDisplay;
+        const ME: u64 = 0x10;
+        const PET: u64 = 0xF140_0000_0000_0001;
+        let spell = |id, d: SpellDisplay| (id, SpellDisplay { id, ..d });
+        let catalog = SpellCatalog::from_displays(std::collections::HashMap::from([
+            spell(
+                1,
+                SpellDisplay {
+                    attributes_ex6: 0x10_0000,
+                    ..Default::default()
+                },
+            ),
+            spell(
+                2,
+                SpellDisplay {
+                    required_aura_vision: 3,
+                    ..Default::default()
+                },
+            ),
+            spell(
+                3,
+                SpellDisplay {
+                    attributes_ex5: 0x0800_0000,
+                    ..Default::default()
+                },
+            ),
+        ]));
+        let ctx = ListCtx {
+            catalog: Some(&catalog),
+            viewer: Viewer {
+                player: ME,
+                pet: PET,
+                vision: 0,
+            },
+            ..NO_SPELLS
+        };
+        let shown = |ctx, id, flags, caster| shown_in_aura_ui(ctx, id, flags, caster);
+        assert!(shown(ctx, 1, 0, ME) && shown(ctx, 1, 0, PET));
+        assert!(
+            !shown(ctx, 1, 0, 0x99) && !shown(ctx, 1, 0, 0),
+            "nobody's, or no caster"
+        );
+        assert!(!shown(ctx, 2, 0, ME), "no vision");
+        let seeing = ListCtx {
+            viewer: Viewer {
+                vision: 0b100,
+                ..ctx.viewer
+            },
+            ..ctx
+        };
+        assert!(shown(seeing, 2, 0, ME), "vision 3 is bit 2");
+        assert!(!shown(ctx, 3, AURA_UPDATE_FLAG_SELF_CAST, ME));
+        assert!(shown(ctx, 3, 0, 0x99), "bit 27 hides only a self-cast aura");
     }
 
     // == `UnitBuff`'s unit-level gate (`0x519500`) ==

@@ -840,9 +840,9 @@ mod tests {
         );
     }
 
-    /// Row 2 is the melee family, 114 Auto Shot's 8-35, 95 Charge's 8-25.
+    /// Row 2 is the melee family, 114 Auto Shot's 0-35 with the ranged flag `0x2`, 95 Charge's
+    /// 8-25.
     #[test]
-    #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn real_spell_ranges_read_the_byte_laws_rows() {
         let data = crate::wow_data_or_skip!();
         let mut chain = crate::open_chain(&data).expect("open chain");
@@ -853,7 +853,10 @@ mod tests {
         assert!(melee.is_melee(), "row 2 carries the melee flag");
 
         let auto_shot = ranges.get(114).expect("row 114");
-        assert_eq!((auto_shot.min, auto_shot.max), (8.0, 35.0));
+        assert_eq!(
+            (auto_shot.min, auto_shot.max, auto_shot.flags),
+            (0.0, 35.0, 0x2)
+        );
         assert!(!auto_shot.is_melee());
 
         let charge = ranges.get(95).expect("row 95");

@@ -297,7 +297,7 @@ mod tests {
     /// not cover keeps its 30.
     #[test]
     fn a_range_talent_moves_the_ground_verdict() {
-        let mage = |flags: u64| SpellDisplay {
+        let mage = |flags: u128| SpellDisplay {
             spell_family: 3,
             spell_family_flags: flags,
             ..SpellDisplay::default()

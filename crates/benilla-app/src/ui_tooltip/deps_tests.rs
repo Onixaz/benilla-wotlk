@@ -51,7 +51,7 @@ struct Inputs {
     /// Bit `i`: the skill line `lines[i]` at 300.
     lines: u128,
     /// The `SpellFamilyFlags` bits whose cells hold a modifier.
-    bits: u64,
+    bits: u128,
     /// A run of the player's fields, `(first, count)`, all set to [`POKE`], whatever they hold.
     poke: Option<(u16, u16)>,
 }
@@ -72,7 +72,7 @@ impl Inputs {
         disarm: true,
         unit: 0xf,
         lines: u128::MAX,
-        bits: u64::MAX,
+        bits: u128::MAX,
         poke: None,
     };
 
@@ -206,7 +206,7 @@ impl Inputs {
                 ));
             }
         }
-        for bit in (0..64).filter(|b| self.bits >> b & 1 == 1) {
+        for bit in (0..96).filter(|b| self.bits >> b & 1 == 1) {
             let only = Inputs {
                 bits: 1 << bit,
                 ..alone
@@ -382,8 +382,8 @@ fn mat(layout: &Layout, inputs: Inputs, p: Params) -> Mat {
     }
     let mut mods = SpellModifiers::default();
     mods.set_class_family(p.family);
-    for bit in (0..64u8).filter(|b| inputs.bits >> b & 1 == 1) {
-        for op in 0..29 {
+    for bit in (0..96u8).filter(|b| inputs.bits >> b & 1 == 1) {
+        for op in 0..31 {
             mods.set(true, bit, op, -7);
             mods.set(false, bit, op, 35);
         }
@@ -811,7 +811,7 @@ fn every_view_that_moves_with_an_input_is_requeued_by_that_input() {
             family,
         };
         let inputs = Inputs {
-            bits: u64::MAX,
+            bits: u128::MAX,
             ..empty
         };
         let s = sweep(&mut rig, empty, &any, &params, &cause(inputs));
@@ -1348,7 +1348,7 @@ fn the_search_answers_the_same_wherever_the_watched_state_is_the_same() {
 #[test]
 fn the_modifier_diff_names_the_family_flag_bit_of_a_changed_cell() {
     let base = SpellModifiers::default();
-    for (bit, op) in [(0u8, 0u8), (5, 14), (33, 28), (63, 28)] {
+    for (bit, op) in [(0u8, 0u8), (5, 14), (33, 28), (67, 30), (95, 30)] {
         for flat in [true, false] {
             let mut now = base.clone();
             now.set(flat, bit, op, 9);

@@ -508,14 +508,11 @@ pub(crate) fn spell_usable(
     if d.needs_combo_points() && ctx.store.0.player_combo_points().unwrap_or(0) == 0 {
         return (false, false);
     }
-    // Leg 6 (`0x612480`): the form's `SpellShapeshiftForm.dbc` stance flag decides whether it
-    // counts as shapeshifted.
+    // Leg 6 (`CheckShapeshiftRules 0x72bac0`): the form's `SpellShapeshiftForm.dbc` flags decide
+    // whether it counts as shapeshifted and whether it refuses every unnamed spell.
     let form = ctx.store.0.unit_shapeshift_form();
-    let form_is_stance = spells
-        .forms
-        .get(&u32::from(form))
-        .is_some_and(|f| f.is_stance());
-    if !d.usable_in_form(form, form_is_stance) {
+    let form_flags = spells.forms.get(&u32::from(form)).map_or(0, |f| f.flags);
+    if !d.usable_in_form(form, form_flags) {
         return (false, false);
     }
     // Leg 7: only-stealthed spells need the CREEP vis flag.
