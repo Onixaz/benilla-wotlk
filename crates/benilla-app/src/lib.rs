@@ -191,6 +191,7 @@ mod ui_talent;
 mod ui_talent_wipe;
 mod ui_taxi;
 mod ui_text;
+mod ui_threat;
 mod ui_title;
 mod ui_tooltip;
 mod ui_totem;

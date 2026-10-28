@@ -61,6 +61,8 @@ pub(crate) mod id {
     pub(crate) const BATTLEGROUND_QUEUE: u32 = 0x2f;
     pub(crate) const PORT_TO_BATTLEGROUND: u32 = 0x30;
     pub(crate) const KEYRINGS: u32 = 0x31;
+    /// The player joins a threat list, warning on, at level 14 or more (`0x52b370`).
+    pub(crate) const THREAT: u32 = 0x35;
 }
 
 /// The level-gated arm of the `SMSG_LEVELUP_INFO` handler (`0x5e38c0`): in the handler's own order,

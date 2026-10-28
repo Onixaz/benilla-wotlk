@@ -332,7 +332,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                     }
                 },
             };
-            super::add_texture(lua, &this, texture, coords)
+            super::add_texture(lua, &this, texture, coords, [1.0; 4])
         })?,
     )?;
     // SetMinimumWidth(w [, force]): the auto-size floor `SetTooltipMoney` raises (`0x61d040`).

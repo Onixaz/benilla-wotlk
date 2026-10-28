@@ -621,6 +621,8 @@ pub(crate) struct Model {
     pub(crate) title_throttle: super::title::TitleThrottle,
     /// What `GetSpellInfo` asks; absent before the app installs it.
     pub(crate) spell_info: Option<std::rc::Rc<dyn super::spell_info::SpellInfoSource>>,
+    /// Each held unit's threat list.
+    pub(crate) threat: super::threat::ThreatView,
     /// The four totem slots and their tools.
     pub(crate) totems: super::totem::TotemSlots,
     /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
@@ -1432,6 +1434,7 @@ impl Model {
             title_sets: Vec::new(),
             title_throttle: Default::default(),
             spell_info: None,
+            threat: Default::default(),
             totems: Default::default(),
             totem_destroys: Vec::new(),
             multicast: Default::default(),

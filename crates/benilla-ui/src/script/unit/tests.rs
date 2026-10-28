@@ -2292,11 +2292,16 @@ fn unit_power_reads_a_type_as_12340_gates_it() {
     );
 }
 
-/// `0x613a60`: an unknown token raises; with no threat entry every unit answers nothing.
+/// `0x613a60`: an unknown token raises; with no threat entry every unit answers nothing. A unit
+/// naming nobody answers nothing before the mob is read, so the player has a guid here.
 #[test]
 fn unit_threat_situation_answers_nothing_without_a_threat_entry() {
     let mut s = UiScript::new().unwrap();
     s.set_unit("player", Some(player_with_pools()));
+    s.set_unit_guids(&UnitGuids {
+        player: 0x10,
+        ..Default::default()
+    });
     for call in [
         r#"UnitThreatSituation("player")"#,
         r#"UnitThreatSituation("boss1")"#,
@@ -2341,6 +2346,78 @@ fn unit_detailed_threat_situation_needs_both_tokens() {
             "{call}: {err}"
         );
     }
+}
+
+/// A tank on its target's list with a ranged player over half its threat: the target names the
+/// list, and the player's reading is the raw percent over 1.3; no mob reads the best status.
+#[test]
+fn threat_situation_reads_the_held_mobs_list() {
+    use crate::script::{ThreatEntry, ThreatList, ThreatView};
+    const ME: u64 = 0x10;
+    const TANK: u64 = 0x21;
+    const MOB: u64 = 0xF130_0000_0C35_0001;
+    let mut s = UiScript::new().unwrap();
+    s.set_unit_guids(&UnitGuids {
+        player: ME,
+        target: MOB,
+        party: [TANK, 0, 0, 0],
+        ..Default::default()
+    });
+    let entry = |guid, status, percent, threat| ThreatEntry {
+        guid,
+        status,
+        percent,
+        threat,
+        in_melee: false,
+    };
+    let mut view = ThreatView::default();
+    view.lists.insert(
+        MOB,
+        ThreatList {
+            highest: TANK,
+            entries: vec![entry(TANK, 4, 255, 20_000), entry(ME, 1, 65, 13_000)],
+        },
+    );
+    s.set_threat(view);
+    let all = |s: &UiScript, call: &str| {
+        s.eval::<mlua::MultiValue>(&format!("return {call}"))
+            .unwrap()
+            .into_iter()
+            .map(|v| match v {
+                mlua::Value::Number(n) => Some(n),
+                mlua::Value::Integer(n) => Some(n as f64),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        all(&s, r#"UnitThreatSituation("player", "target")"#),
+        [Some(0.0)]
+    );
+    assert_eq!(all(&s, r#"UnitThreatSituation("party1")"#), [Some(3.0)]);
+    assert_eq!(
+        all(&s, r#"UnitDetailedThreatSituation("player", "target")"#),
+        [
+            None,
+            Some(0.0),
+            Some(f64::from(65.0 * 0.769_230_8_f32)),
+            Some(65.0),
+            Some(13_000.0)
+        ]
+    );
+    assert_eq!(
+        all(&s, r#"UnitDetailedThreatSituation("party1", "target")"#),
+        [
+            Some(1.0),
+            Some(3.0),
+            Some(100.0),
+            Some(255.0),
+            Some(20_000.0)
+        ]
+    );
+    // A unit off the list, and a mob with no list, answer nothing.
+    assert!(all(&s, r#"UnitDetailedThreatSituation("target", "target")"#).is_empty());
+    assert!(all(&s, r#"UnitThreatSituation("player", "player")"#).is_empty());
 }
 
 /// `0x511fe0`: `status + 1` indexes the five colours, entry 1 outside them.
