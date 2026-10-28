@@ -34,6 +34,9 @@ const CAM_MOVE_SPEED: f32 = 8.33;
 pub(crate) struct ZoomLimit {
     /// The live limit, [`orbit_limit`] of the two below: in `[0, 50]`, never NaN.
     pub(crate) max: f32,
+    /// The barber chair's floor, the body's bounds radius (`0x52e480`), while the shop is open;
+    /// the wheel there moves a fifth as far (`0x6017e0`, `0x601840`).
+    pub(crate) barber_floor: Option<f32>,
     distance_max: f32,
     factor: f32,
 }
@@ -43,6 +46,7 @@ impl Default for ZoomLimit {
         let (distance_max, factor) = (CAM_DISTANCE_MAX_DEFAULT, CAM_DISTANCE_MAX_FACTOR_DEFAULT);
         Self {
             max: orbit_limit(distance_max, factor),
+            barber_floor: None,
             distance_max,
             factor,
         }
@@ -96,15 +100,24 @@ fn orbit_limit(distance_max: f32, factor: f32) -> f32 {
 /// Wheel zoom, run every frame: `CAMERAZOOMIN`/`OUT` move the target, and the distance glides to it
 /// at a constant `cameraDistanceMoveSpeed`, as the reference's does. `scroll` is this frame's net
 /// zoom-in in notches (positive is closer). `max` is [`ZoomLimit::max`], CVar-fed, so it bounds by
-/// `max`/`min`, never `f32::clamp`, which panics on a NaN or inverted bound.
-pub(super) fn apply_zoom_scroll(scroll: f32, dt: f32, rig: &mut CameraControl, max: f32) {
+/// `max`/`min`, never `f32::clamp`, which panics on a NaN or inverted bound. `floor` is the
+/// barber chair's ([`ZoomLimit::barber_floor`]).
+pub(super) fn apply_zoom_scroll(
+    scroll: f32,
+    dt: f32,
+    rig: &mut CameraControl,
+    max: f32,
+    floor: Option<f32>,
+) {
+    let (min, step) = match floor {
+        Some(f) => (f, CAM_ZOOM_STEP * 0.2),
+        None => (CAM_DIST_MIN, CAM_ZOOM_STEP),
+    };
     if scroll != 0.0 {
-        rig.target_distance = (rig.target_distance - scroll * CAM_ZOOM_STEP)
-            .max(CAM_DIST_MIN)
-            .min(max);
+        rig.target_distance = (rig.target_distance - scroll * step).max(min).min(max);
     }
     // Re-clamp every frame, so lowering the max-distance slider pulls the camera in.
-    rig.target_distance = rig.target_distance.min(max);
+    rig.target_distance = rig.target_distance.max(min).min(max);
     let max_step = CAM_MOVE_SPEED * dt;
     rig.distance += (rig.target_distance - rig.distance).clamp(-max_step, max_step);
 }
@@ -175,11 +188,28 @@ mod tests {
             distance: 10.0,
             ..default()
         };
-        apply_zoom_scroll(-1.0, 0.1, &mut rig, z.max);
+        apply_zoom_scroll(-1.0, 0.1, &mut rig, z.max, None);
         assert_eq!(rig.target_distance, 11.0);
         // Even a NaN bound handed straight in bounds nothing and panics nowhere.
-        apply_zoom_scroll(-1.0, 0.1, &mut rig, f32::NAN);
+        apply_zoom_scroll(-1.0, 0.1, &mut rig, f32::NAN, None);
         assert_eq!(rig.target_distance, 12.0);
+    }
+
+    #[test]
+    fn the_barber_chair_floors_the_zoom_and_steps_a_fifth() {
+        let mut rig = CameraControl {
+            target_distance: 2.0,
+            distance: 2.0,
+            ..default()
+        };
+        apply_zoom_scroll(1.0, 0.1, &mut rig, 15.0, Some(1.5));
+        assert!((rig.target_distance - 1.8).abs() < 1e-6, "a fifth of a notch");
+        apply_zoom_scroll(10.0, 0.1, &mut rig, 15.0, Some(1.5));
+        assert_eq!(rig.target_distance, 1.5, "held at the body's radius");
+        // A target under the floor when the chair opens is pushed out to it.
+        rig.target_distance = 0.0;
+        apply_zoom_scroll(0.0, 0.1, &mut rig, 15.0, Some(1.5));
+        assert_eq!(rig.target_distance, 1.5);
     }
 
     #[test]
@@ -188,9 +218,9 @@ mod tests {
             target_distance: 44.5,
             ..default()
         };
-        apply_zoom_scroll(-1.0, 0.1, &mut rig, limit(15.0, 3.0));
+        apply_zoom_scroll(-1.0, 0.1, &mut rig, limit(15.0, 3.0), None);
         assert_eq!(rig.target_distance, 45.0);
-        apply_zoom_scroll(1000.0, 0.1, &mut rig, 45.0);
+        apply_zoom_scroll(1000.0, 0.1, &mut rig, 45.0, None);
         assert_eq!(rig.target_distance, CAM_DIST_MIN);
     }
 }

@@ -57,6 +57,7 @@ mod spellbook;
 mod spells;
 mod stable;
 mod summon;
+mod barber;
 mod tabard;
 mod talents;
 mod taxi;
@@ -302,6 +303,7 @@ pub use stable::{
     StabledPet,
 };
 pub use summon::{summon_response, SummonRequest};
+pub use barber::alter_appearance;
 pub use tabard::{
     battlemaster_hello, save_guild_emblem, tabard_vendor_activate, GUILD_EMBLEM_RESULT_MESSAGES,
 };

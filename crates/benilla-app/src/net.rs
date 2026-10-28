@@ -1485,6 +1485,11 @@ pub(crate) enum ClientCommand {
         vendor: u64,
         design: [u32; 5],
     },
+    // ── The barber shop ──
+    /// `ApplyBarberShopStyle()` past its checks: `CMSG_ALTER_APPEARANCE`'s four ids.
+    AlterAppearance {
+        styles: [u32; 4],
+    },
     /// The ladder's BATTLEMASTER arm: `CMSG_BATTLEMASTER_HELLO`.
     BattlemasterHello {
         npc: u64,

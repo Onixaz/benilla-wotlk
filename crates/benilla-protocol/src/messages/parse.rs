@@ -8,7 +8,7 @@ use crate::wire::{
 };
 
 use super::{
-    achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, battlefield,
+    achievement, action_bar, area_trigger, arena_team, attack, auction, aura, bank, barber, battlefield,
     binder, broadcast, calendar, channel, chat, combat_log, death, duel, equipment_set, gameobject,
     gm_ticket, gossip, group, guild, guild_bank, instance, items, lfg, loot, mail, meeting_stone,
     mirror_timer, monster_move, movement, opcode, page_text, pet, petition, pose, progression, pvp,
@@ -606,6 +606,10 @@ fn parse_server_body(
             battlefield::read_group_joined_battleground(&mut r)?,
         ),
         opcode::SMSG_BATTLEFIELD_PORT_DENIED => ServerPacket::BattlefieldPortDenied,
+        opcode::SMSG_ENABLE_BARBER_SHOP => ServerPacket::EnableBarberShop,
+        opcode::SMSG_BARBER_SHOP_RESULT => {
+            ServerPacket::BarberShopResult(barber::read_barber_shop_result(&mut r)?)
+        }
         opcode::SMSG_ARENA_UNIT_DESTROYED => {
             ServerPacket::ArenaUnitDestroyed(crate::wire::read_u64_le(&mut r)?)
         }

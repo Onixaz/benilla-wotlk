@@ -181,6 +181,48 @@ fn load_saved_views(cvars: Res<crate::cvars::Cvars>, mut views: ResMut<CameraVie
     }
 }
 
+/// The barber chair's view (`0x603900`, view 7): level, facing the character from `distance`;
+/// the close goes back to the view the chair left (`0x52ea2e`). Not one of the five saved
+/// views, so it writes no CVar.
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub(crate) enum BarberView {
+    Enter { distance: f32 },
+    Leave,
+}
+
+/// Seat or leave the barber view, before [`super::control`] seats this frame's camera.
+fn drain_barber_view(
+    mut requests: MessageReader<BarberView>,
+    mut targets: ViewTargets,
+    mut left: Local<Option<usize>>,
+) {
+    for request in requests.read() {
+        let Ok(mut cam) = targets.cam.single_mut() else {
+            continue;
+        };
+        let face_yaw = targets.player.facing();
+        match *request {
+            BarberView::Enter { distance } => {
+                left.get_or_insert(targets.views.current);
+                targets.rig.target_distance = distance.clamp(CAM_DIST_MIN, CAM_DIST_MAX);
+                cam.pitch = 0.0;
+                cam.yaw = wrap_pi(face_yaw + std::f32::consts::PI);
+            }
+            BarberView::Leave => {
+                if let Some(view) = left.take() {
+                    apply(
+                        &mut targets.views,
+                        &mut targets.rig,
+                        &mut cam,
+                        face_yaw,
+                        view,
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// Everything one drained request may write.
 #[derive(bevy::ecs::system::SystemParam)]
 struct ViewTargets<'w, 's> {
@@ -306,11 +348,13 @@ fn apply(
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<CameraViews>()
+        .add_message::<BarberView>()
         // After the config load, so the persisted views are in before anything selects one.
         .add_systems(Startup, load_saved_views.after(crate::cvars::CvarLoad))
         .add_systems(
             Update,
-            drain_view_requests
+            (drain_view_requests, drain_barber_view)
+                .chain()
                 // After the Lua tick that queues them, before the control pass seats the pose.
                 .after(crate::ui_script::UiInput)
                 .before(super::control)

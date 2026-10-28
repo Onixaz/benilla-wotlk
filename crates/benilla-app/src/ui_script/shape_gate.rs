@@ -720,8 +720,8 @@ const ARG_LADDER: &[&str] = &["", "\"player\"", "1", "1, 1", "\"player\", 1"];
 #[test]
 #[ignore = "1.12.1's gate rules; port them to the 3.3.5a tables (#54)"]
 fn no_query_binding_answers_a_lua_boolean() {
-    // The reference's own two; the list may only shrink.
-    const REFERENCE_BOOLEANS: &[&str] = &["IsPetAttackActive", "rawequal"];
+    // The reference's own, `(boolean)` in the shapes table; the list may only shrink.
+    const REFERENCE_BOOLEANS: &[&str] = &["CanAlterSkin", "IsPetAttackActive", "rawequal"];
 
     let all = rows();
     let mut s = benilla_ui::script::UiScript::new().expect("VM");

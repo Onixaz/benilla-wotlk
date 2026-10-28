@@ -468,6 +468,29 @@ impl Dispatch<'_, '_> {
             }
             return;
         }
+        // BARBER_CHAIR (type 32) adds to the chair's use check (`0x711eb0`): our own display, and
+        // no form but one flagged `0x1` in `SpellShapeshiftForm.dbc` (`0x721ca0`).
+        if go_type == cursor_mode::GO_TYPE_BARBER_CHAIR && in_reach {
+            let refused = self_store.is_some_and(|s| {
+                let f = &s.0;
+                let form = f.unit_shapeshift_form();
+                let flags = self
+                    .player_actions
+                    .spells
+                    .forms
+                    .get(&u32::from(form))
+                    .map_or(0, |f| f.flags);
+                f.unit_displayid() != f.unit_native_displayid() || (form != 0 && flags & 0x1 == 0)
+            });
+            if refused {
+                debug!("right-click barber chair {guid:#x}: refused, shapeshifted");
+                self.feedback
+                    .errors
+                    .0
+                    .push(crate::ui_action::UiError::key("ERR_NOT_WHILE_SHAPESHIFTED"));
+                return;
+            }
+        }
         // By lock: used, opened by its opener cast, or refused locally (`0x5f3427..`).
         let action = resolve_go_action(
             guid,

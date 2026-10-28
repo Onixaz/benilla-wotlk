@@ -49,6 +49,7 @@ tables! {
         "AuctionHouse" => auction_house::auction_house_schema(),
         "BattlemasterList" => battlemaster_list::battlemaster_list_schema(),
         "BankBagSlotPrices" => bank_bag_slot_prices::schema(),
+        "BarberShopStyle" => barber_shop_style::schema(),
         "CameraShakes" => camera_shakes::camera_shakes_schema(),
         "Cfg_Categories" => cfg_categories::cfg_categories_schema(),
         "CharacterFacialHairStyles" => {
@@ -97,6 +98,7 @@ tables! {
         "GMTicketCategory" => gm_ticket_category::gm_ticket_category_schema(),
         "GroundEffectDoodad" => ground_effects::doodad_schema(),
         "GroundEffectTexture" => ground_effects::ground_effect_texture_schema(),
+        "gtBarberShopCostBase" => game_tables::gt_value_schema("gtBarberShopCostBase"),
         "gtChanceToMeleeCrit" => game_tables::gt_value_schema("gtChanceToMeleeCrit"),
         "gtChanceToMeleeCritBase" => game_tables::gt_value_schema("gtChanceToMeleeCritBase"),
         "gtChanceToSpellCrit" => game_tables::gt_value_schema("gtChanceToSpellCrit"),

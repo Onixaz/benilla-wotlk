@@ -265,6 +265,7 @@ impl PluginGroup for GamePlugins {
             .add(crate::account_data::AccountDataPlugin)
             .add(UiStablePlugin)
             .add(TabardUiPlugin)
+            .add(crate::ui_barber::BarberUiPlugin)
             .add(UiTrainerPlugin)
             .add(UiTaxiPlugin)
             .add(UiTradeSkillPlugin)

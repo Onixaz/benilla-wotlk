@@ -77,6 +77,7 @@ mod aura;
 mod autocomplete;
 mod backdrop;
 mod bank;
+mod barber;
 mod battle_net;
 mod battlefield_positions;
 mod battlefield_queue;
@@ -346,6 +347,7 @@ pub use petition::{
     petition_type_name, validate_guild_name, ArenaBannerChoice, PetitionRecordView,
     PetitionRequest, PetitionState, PetitionVendorItem, PetitionVendorState,
 };
+pub use barber::{BarberHost, BarberIntent, BarberStyle};
 pub use tabard::{
     emblem_mask_path, TabardHost, TabardIntent, EMBLEM_MASK_TOKEN, TABARD_COUNTS,
     TABARD_CREATION_COST,
@@ -1055,6 +1057,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     inspect::install(lua)?;
     dressup::install(lua)?;
     tabard::install(lua)?;
+    barber::install(lua)?;
     tradeskill::install(lua)?;
     lfg::install(lua)?;
     calendar::install(lua)?;
