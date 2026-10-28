@@ -27,6 +27,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::TextEmote, on_text_emote)
         .net_handler(K::Emote, on_emote)
         .net_handler(K::PlaySpellVisual, on_play_spell_visual)
+        .net_handler(K::PlaySpellImpact, on_play_spell_visual)
         .net_handler(K::AttackerState, on_attacker_state)
         .net_handler(K::EnvironmentalDamageLog, on_environmental_damage_log)
         .net_handler(K::AchievementEarned, on_achievement_earned);
@@ -157,7 +158,12 @@ fn on_play_spell_visual(
     mut play_seq: ResMut<PlaySeq>,
     mut out: MessageWriter<KitPush>,
 ) {
-    if let SessionEvent::PlaySpellVisual { unit, kit_id } = ev {
+    // `SMSG_PLAY_SPELL_IMPACT` plays at stage 1 (`0x8006c0`), the visual's stage 0 (`0x800610`);
+    // both are the same discrete play (`0x5fbf50`), so they share one push. A push that ever
+    // needs to tell them apart takes a stage field.
+    if let SessionEvent::PlaySpellVisual { unit, kit_id }
+    | SessionEvent::PlaySpellImpact { unit, kit_id } = ev
+    {
         play_spell_visual(unit, kit_id, &index, &mut play_seq, &mut out);
     }
 }
@@ -329,8 +335,9 @@ fn emote(guid: u64, emote_id: u32, index: &GuidIndex, out: &mut MessageWriter<Em
     });
 }
 
-/// `SMSG_PLAY_SPELL_VISUAL`: a stage-0 kit play on the unit (eating, drinking, mid-channel
-/// swaps). Only a streamed unit takes a [`PlaySeq`] stamp.
+/// `SMSG_PLAY_SPELL_VISUAL` (stage 0: eating, drinking, mid-channel swaps) and
+/// `SMSG_PLAY_SPELL_IMPACT` (stage 1: a trainer's learn effect): a kit play on the unit. Only a
+/// streamed unit takes a [`PlaySeq`] stamp (`ClntObjMgrObjectPtr`, `TYPEMASK_UNIT`).
 fn play_spell_visual(
     unit: u64,
     kit_id: u32,
@@ -413,5 +420,53 @@ pub(super) fn on_achievement_earned(
             e.player, e.achievement
         );
         fx.write(begin);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    /// `0x8006c0` and `0x800610` both play on a streamed unit only (`ClntObjMgrObjectPtr`), and
+    /// AzerothCore's trainer buy sends kit 362 on the buyer through the impact.
+    #[test]
+    fn the_impact_and_the_visual_both_push_their_kit_on_a_streamed_unit() {
+        const BUYER: u64 = 0x42;
+        let mut world = World::new();
+        world.init_resource::<GuidIndex>();
+        world.init_resource::<PlaySeq>();
+        world.init_resource::<Messages<KitPush>>();
+        let e = world.spawn_empty().id();
+        world.resource_mut::<GuidIndex>().0.insert(BUYER, e);
+
+        for ev in [
+            SessionEvent::PlaySpellImpact {
+                unit: BUYER,
+                kit_id: 362,
+            },
+            SessionEvent::PlaySpellVisual {
+                unit: BUYER,
+                kit_id: 179,
+            },
+            SessionEvent::PlaySpellImpact {
+                unit: 0x99,
+                kit_id: 362,
+            },
+        ] {
+            world
+                .run_system_once_with(on_play_spell_visual, ev)
+                .expect("the handler runs as a one-shot system");
+        }
+        let pushes = world.resource::<Messages<KitPush>>();
+        let got: Vec<(Entity, u32)> = pushes
+            .iter_current_update_messages()
+            .map(|p| (p.entity, p.kit_id))
+            .collect();
+        assert_eq!(
+            got,
+            [(e, 362), (e, 179)],
+            "an unstreamed unit plays nothing"
+        );
     }
 }

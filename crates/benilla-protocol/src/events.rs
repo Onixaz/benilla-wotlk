@@ -837,6 +837,9 @@ pub enum SessionEvent {
     AuraUpdate(crate::messages::AuraUpdate),
     /// A spell-visual kit outside the cast sequence (`SMSG_PLAY_SPELL_VISUAL`), such as eat/drink.
     PlaySpellVisual { unit: u64, kit_id: u32 },
+    /// A spell-visual kit at stage 1 (`SMSG_PLAY_SPELL_IMPACT`), such as a trainer's learn effect
+    /// on the buyer.
+    PlaySpellImpact { unit: u64, kit_id: u32 },
     /// Spell damage dealt (`SMSG_SPELLNONMELEEDAMAGELOG`).
     SpellDamageLog(SpellDamageLog),
     /// Periodic aura ticks: DoT, HoT, regen (`SMSG_PERIODICAURALOG`).
