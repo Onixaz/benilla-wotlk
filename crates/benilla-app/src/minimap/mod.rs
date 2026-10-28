@@ -7,7 +7,11 @@
 //! - Zoom to radius (`0x6da9b0`): two zoom indices, picked by WMO containment, each persisted
 //!   (`minimapZoom`, `minimapInsideZoom`); outdoors a chunk-count half-extent, indoors
 //!   [`INTERIOR_ZOOM_RADIUS`] yards.
-//! - North up: screen up is world +X, screen left world +Y.
+//! - North up: screen up is world +X, screen left world +Y. With `rotateMinimap` the whole map,
+//!   its blips and the ping turn clockwise by the player's facing so it points up
+//!   (`CGMinimapFrame::Render` `0x581e80`), the player arrow stays still (`UpdateRotation`
+//!   `0x57bcc0`) and `MinimapCompassTexture` turns the other way (`SetCompassRotation`
+//!   `0x57d5b0`).
 
 pub(crate) mod blips;
 /// Where a party member is, shared with the world map so the two surfaces never disagree.
@@ -174,14 +178,43 @@ pub(crate) struct MinimapZoom {
     pub(crate) inside: u8,
 }
 
+/// `rotateMinimap` (`[0xbd093c]`, default "0"): the Display panel's Rotate Minimap.
+#[derive(Resource, Default)]
+pub(crate) struct MinimapRotate(pub(crate) bool);
+
+impl MinimapRotate {
+    /// The clockwise screen turn for a player facing `facing`: zero while north is up.
+    pub(crate) fn turn(&self, facing: f32) -> f32 {
+        if self.0 {
+            facing
+        } else {
+            0.0
+        }
+    }
+}
+
 /// The zoom CVars' change callback: each lands on its own field, clamped at 5 like the reference's
-/// `set_zoom` (`0x6daa10`).
-pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut zoom: ResMut<MinimapZoom>) {
+/// `set_zoom` (`0x6daa10`); `rotateMinimap` is a flag.
+pub(crate) fn on_cvar(
+    ev: On<crate::cvars::CvarChanged>,
+    mut zoom: ResMut<MinimapZoom>,
+    mut rotate: ResMut<MinimapRotate>,
+) {
     match ev.key().as_str() {
         "minimapzoom" => zoom.outdoor = zoom_index(ev.num()),
         "minimapinsidezoom" => zoom.inside = zoom_index(ev.num()),
+        "rotateminimap" => rotate.0 = ev.flag(),
         _ => {}
     }
+}
+
+/// A y-down screen offset turned clockwise by `turn` radians.
+pub(crate) fn turn_offset(v: Vec2, turn: f32) -> Vec2 {
+    if turn == 0.0 {
+        return v;
+    }
+    let (s, c) = turn.sin_cos();
+    Vec2::new(v.x * c - v.y * s, v.x * s + v.y * c)
 }
 
 /// A stored zoom level to an index, truncated and clamped into `[0, MINIMAP_ZOOM_LEVELS)`.
@@ -350,7 +383,7 @@ fn emit_minimap(
     world: benilla_world::world_point::WorldPoint,
     asset_server: Res<AssetServer>,
     // The last indoor verdict per object blip, and the stamps it was rayed against.
-    (death_net, mut indoor_memo, residency, collider_epoch, mut class_memo, stirred_me): (
+    (death_net, mut indoor_memo, residency, collider_epoch, mut class_memo, stirred_me, rotate): (
         Res<crate::death::DeathNet>,
         Local<IndoorMemo>,
         Res<benilla_world::interior::WmoResidency>,
@@ -365,6 +398,7 @@ fn emit_minimap(
                 Changed<crate::net::ObjectStore>,
             ),
         >,
+        Res<MinimapRotate>,
     ),
     blip_inputs: blips::BlipInputs,
     mut composite: ResMut<composite::MinimapComposite>,
@@ -422,6 +456,7 @@ fn emit_minimap(
 
     let wow = bevy_to_wow(player.pos);
     let (wx, wy) = (wow[0], wow[1]);
+    let turn = rotate.turn(player.facing());
     // The drawn family's world-to-px scale, for the point blips drawn after the tiles.
     let mut blip_px_per_yd = 0.0_f32;
 
@@ -559,6 +594,9 @@ fn emit_minimap(
             uv: UvRect::from_tex_coords([lo, hi, lo, hi]),
             color: [1.0, 1.0, 1.0, slot.alpha],
             mask: mask.clone(),
+            // A turned map turns the north-up target as one (`RenderInside`, `0x581740`): the
+            // square still covers the disc the mask keeps.
+            rotation: turn,
             ..default()
         });
     } else if let Some(dir) = catalog.0.directory(map.0) {
@@ -595,9 +633,20 @@ fn emit_minimap(
                 let top = center.y + (tile_north - wx) * -px_per_yd;
                 let size = TILE_YARDS * px_per_yd;
                 let rect = Rect::new(left, top, left + size, top + size);
-                if rect.intersect(slot.rect).is_empty() {
-                    continue;
-                }
+                // Turned, the tile swings about the widget centre and its own: the cull is the
+                // disc against the tile's circumcircle.
+                let rect = if turn == 0.0 {
+                    if rect.intersect(slot.rect).is_empty() {
+                        continue;
+                    }
+                    rect
+                } else {
+                    let c = center + turn_offset(rect.center() - center, turn);
+                    if (c - center).length() > side * 0.5 + size * std::f32::consts::FRAC_1_SQRT_2 {
+                        continue;
+                    }
+                    Rect::from_center_size(c, rect.size())
+                };
                 quads.overlays.push(UiQuad {
                     rect,
                     z_key: slot.z,
@@ -609,6 +658,7 @@ fn emit_minimap(
                     // No CPU clip: the mask shader zeroes everything outside `mask_rect`, and an
                     // unclipped panning tile is a pure translation that never rewrites its mesh.
                     mask: mask.clone(),
+                    rotation: turn,
                     ..default()
                 });
             }
@@ -668,6 +718,7 @@ fn emit_minimap(
                 .zip(win)
                 .map(|(c, w)| Vec2::new(c.x / seam, (w.height() - c.y) / seam)),
             seam,
+            turn,
         }
     });
     let mut hover = blips::MinimapBlipHover::None;
@@ -710,7 +761,8 @@ fn emit_minimap(
         .as_ref()
         .filter(|_| slot.player_texture.min_element() > 0.0)
     {
-        let rotation = -player.facing();
+        // Still while the map turns (`UpdateRotation` `0x57bcdc`, facing 0).
+        let rotation = if rotate.0 { 0.0 } else { -player.facing() };
         let rect = Rect::from_center_size(center, slot.player_texture);
         quads.overlays.push(UiQuad {
             rect,
@@ -810,9 +862,12 @@ fn emit_minimap(
     // of `0x6dad10`. Same map only: a dungeon corpse's display coords are the entrance.
     if let (Some(poi), Some(cp)) = (&assets.poi, death_net.corpse) {
         if cp.display_map == map.0 as i32 && blip_px_per_yd > 0.0 {
-            let off = Vec2::new(
-                (wy - cp.position[1]) * blip_px_per_yd,
-                -(cp.position[0] - wx) * blip_px_per_yd,
+            let off = turn_offset(
+                Vec2::new(
+                    (wy - cp.position[1]) * blip_px_per_yd,
+                    -(cp.position[0] - wx) * blip_px_per_yd,
+                ),
+                turn,
             );
             if off.length() <= side * 0.5 * 0.8 {
                 let s = side * CORPSE_BLIP_FRACTION;
@@ -942,6 +997,19 @@ fn feed_minimap_player_facing(
     script.set_minimap_player_facing(player.facing().rem_euclid(std::f32::consts::TAU));
 }
 
+/// Turn the compass texture against the map while it rotates (`SetCompassRotation(-facing)`,
+/// `0x57d5b0`, from `Render`); north-up leaves it alone, as the stock file hides it then.
+fn feed_minimap_compass(
+    script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
+    player: Res<Player>,
+    rotate: Res<MinimapRotate>,
+) {
+    let Some(mut script) = script else { return };
+    if rotate.0 {
+        script.set_minimap_compass_rotation(-player.facing().rem_euclid(std::f32::consts::TAU));
+    }
+}
+
 /// Push the game clock `GetGameTime()` answers when the minute ticks, the API's own resolution,
 /// and the calendar's clock with it (`CalendarGetDate()`, an event's alarm). Before the first
 /// `SMSG_LOGIN_SETTIMESPEED` they read 0:00 and the unset date.
@@ -973,6 +1041,7 @@ impl Plugin for MinimapPlugin {
         app.add_observer(on_cvar);
         app.init_resource::<MinimapWidget>()
             .init_resource::<MinimapZoom>()
+            .init_resource::<MinimapRotate>()
             .init_resource::<MinimapTileCache>()
             .init_resource::<blips::MinimapBlipHover>()
             .init_resource::<MinimapInside>()
@@ -996,6 +1065,7 @@ impl Plugin for MinimapPlugin {
                     feed_minimap_inside.in_set(crate::ui_script::UiFeed),
                     // Before the script tick, so an addon's OnUpdate reads this frame's heading.
                     feed_minimap_player_facing.in_set(crate::ui_script::UiFeed),
+                    feed_minimap_compass.in_set(crate::ui_script::UiFeed),
                     // After the tick that can set the mask, before the emit that draws with it.
                     feed_minimap_mask
                         .after(crate::ui_script::UiInput)

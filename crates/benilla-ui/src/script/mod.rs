@@ -506,9 +506,9 @@ pub(crate) const REGION_LEAF_SHARED: [&str; 9] = [
 ];
 
 /// Texture-only, each in the client's Texture map (`0x87c128`): `GetVertexColor` though
-/// `SetVertexColor` is shared, and `SetGradientAlpha`, not FontString's `SetAlphaGradient`. 1.12
-/// has no Texture `SetSize` or `SetRotation` (PlayerModel's, `0x84f1fc`/`0x505f00`).
-pub(crate) const TEXTURE_ONLY_METHODS: [&str; 12] = [
+/// `SetVertexColor` is shared, and `SetGradientAlpha`, not FontString's `SetAlphaGradient`. No
+/// Texture `SetSize`; 3.3.5a's `SetRotation` is `0x48c860`.
+pub(crate) const TEXTURE_ONLY_METHODS: [&str; 13] = [
     "SetGradient",
     "SetGradientAlpha",
     "GetTexture",
@@ -521,6 +521,7 @@ pub(crate) const TEXTURE_ONLY_METHODS: [&str; 12] = [
     "GetTexCoordModifiesRect",
     "SetDesaturated",
     "GetVertexColor",
+    "SetRotation",
 ];
 
 /// FontString-only: the font, text, justify and shadow block and the string metrics.
@@ -1240,6 +1241,26 @@ impl UiScript {
         }
         if !moved {
             model.set_epoch(quiet);
+        }
+    }
+
+    /// Turn `MinimapCompassTexture` to `radians` as `CGMinimapFrame::SetCompassRotation`
+    /// (`0x57d5b0`) does each frame: its corners only, written when the angle moves.
+    pub fn set_minimap_compass_rotation(&mut self, radians: f32) {
+        let Ok(mlua::Value::Table(t)) = self
+            .lua
+            .globals()
+            .get::<mlua::Value>("MinimapCompassTexture")
+        else {
+            return;
+        };
+        let Ok(rh) = region::region_handle_of(&self.lua, &t) else {
+            return;
+        };
+        let coords = Some(region::rotation_corners(radians, 0.5, 0.5));
+        let mut model = self.model_mut();
+        if model.region_data.get(&rh).map(|d| d.tex_coords) != Some(coords) {
+            model.region_data.entry(rh).or_default().tex_coords = coords;
         }
     }
 

@@ -211,6 +211,7 @@ pub(super) fn install_in_game(lua: &Lua) -> mlua::Result<()> {
 
 mod layout;
 mod paint;
+pub(crate) use paint::rotation_corners;
 mod text;
 
 pub(crate) use text::store_text;

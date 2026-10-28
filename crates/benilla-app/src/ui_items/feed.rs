@@ -220,6 +220,7 @@ fn template_view(
         resistances: t.resistances,
         max_durability: t.max_durability,
         required_level: t.required_level,
+        item_level: t.item_level,
         allowable_class: t.allowable_class,
         allowable_race: t.allowable_race,
         required_skill: t.required_skill,

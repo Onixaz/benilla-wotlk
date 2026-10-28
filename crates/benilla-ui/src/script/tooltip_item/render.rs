@@ -104,8 +104,12 @@ pub(super) fn render_view(
     // `None`: a template source, with no item object and no instance block.
     inst: Option<&ItemInstance>,
 ) -> mlua::Result<()> {
-    let (req, known_spell, taught_known, set_view, equipped) = {
+    let (req, known_spell, taught_known, set_view, equipped, show_item_level) = {
         let mut model = crate::script::model_mut_of(lua);
+        let show_item_level = model
+            .cvars
+            .get("showitemlevel")
+            .is_some_and(|c| c.value.trim().parse::<f64>().is_ok_and(|n| n != 0.0));
         // The known bits (`CGUnit_C::IsSpellKnown` `0x7260e0`): a mount or companion counts.
         let knows = |id: u32| model.spellbook.named().any(|s| s.spell_id == id);
         let known = v.required_spell != 0 && knows(v.required_spell);
@@ -131,7 +135,14 @@ pub(super) fn render_view(
             .flatten()
             .map(|s| s.item_id)
             .collect();
-        (model.player_req.clone(), known, taught, set_view, equipped)
+        (
+            model.player_req.clone(),
+            known,
+            taught,
+            set_view,
+            equipped,
+            show_item_level,
+        )
     };
     let add = |l: (String, [f32; 4])| append_line(lua, this, l, None, false);
     let addw = |l: (String, [f32; 4])| append_line(lua, this, l, None, true);
@@ -524,6 +535,11 @@ pub(super) fn render_view(
             req_color(req.level >= v.required_level),
             false,
         )?;
+    }
+    // `showItemLevel` (`0x62b1ad`): ItemClass 2, 4, 5 and 6 (weapon, armor, reagent, projectile,
+    // `0x62b1cf`) take `ITEM_LEVEL` under the level line, which it follows whether or not printed.
+    if show_item_level && matches!(v.class, 2 | 4 | 5 | 6) {
+        keyed("ITEM_LEVEL", &[Arg::D(v.item_level.into())], WHITE, false)?;
     }
     // ITEM_MIN_SKILL with a rank, ITEM_REQ_SKILL without (`0x52d34e`, `0x52d355`); the required
     // spell takes ITEM_REQ_SKILL too (`0x52d650`).
