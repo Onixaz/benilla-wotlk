@@ -4,9 +4,10 @@
 //!
 //! - Toggles: the per-character CVars `nameplateShowEnemies` and `nameplateShowFriends`, both
 //!   `"0"` at registration, which `ShouldShowNamePlate` (`0x72b060`) tests per category.
-//! - Gate: never the own unit or a `NOT_SELECTABLE` one; enemy or friendly by `CanAttack` from the
-//!   player (`0x606980`), and a player subject must also pass `CanCooperate` (equal faction-group
-//!   masks); 20 yd; no occlusion; a unit not projected into view loses its plate (`0x60f600`).
+//! - Gate: `0x72b060`, [`plate_shown`] for the unit's own legs, then 41 yd from the
+//!   camera's unit outside arenas; no occlusion; a unit not projected into view loses its plate.
+//! - Seat: `nameplateAllowOverlap` "1" hangs each plate on its point (`[0xbd09d8]`, read at `0x7258c1`); "0" solves it
+//!   off the plates already placed.
 //! - Anchor: the overhead head point (`0x608640`) plus 2/3 yd (`[0x80abfc]`), projected every
 //!   frame (`0x483ee0`), the plate's top centre on it (`0x509ec0`), sized in gx units of the
 //!   screen diagonal (`0x41ad10`), outside uiScale. Deviation: the basis is damped past
@@ -35,14 +36,103 @@ use benilla_world::view::WorldCamera;
 /// The plate border, sharp-resampled so its 128x32 art stays crisp when magnified.
 pub(crate) mod border;
 
-/// The two plate CVars as the gate reads them (`0x72b144`, `0x72b158`): the V keys' stock bodies
-/// write them (`Bindings.xml:544-573`), as does the Names panel. `class_colours` is
-/// `ShowClassColorInNameplate` (`[0xbd0a20]`), the Combat panel's row.
-#[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
+/// The plate CVars as the gate reads them: `nameplateShowEnemies`/`Friends` (`[0xbd09b8]`,
+/// `[0xbd09c8]`), which the V keys' stock bodies write (`Bindings.xml:544-573`), the six owned-unit
+/// categories (`[0xbd09bc]`-`[0xbd09d4]`) and `nameplateAllowOverlap`, all the Names panel's.
+/// `class_colours` is `ShowClassColorInNameplate` (`[0xbd0a20]`), the Combat panel's row.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct VPlateMode {
     pub(crate) enemies: bool,
     pub(crate) friends: bool,
     pub(crate) class_colours: bool,
+    /// Pets, guardians and totems, `[enemy, friendly]`.
+    pub(crate) pets: [bool; 2],
+    pub(crate) guardians: [bool; 2],
+    pub(crate) totems: [bool; 2],
+    pub(crate) allow_overlap: bool,
+}
+
+impl Default for VPlateMode {
+    /// The registered defaults.
+    fn default() -> Self {
+        Self {
+            enemies: false,
+            friends: false,
+            class_colours: false,
+            pets: [true; 2],
+            guardians: [true; 2],
+            totems: [true; 2],
+            allow_overlap: true,
+        }
+    }
+}
+
+/// What the plate gate (`0x72b060`) reads off one unit before its range and screen legs.
+#[derive(Clone, Copy, Default, Debug)]
+pub(crate) struct PlateSubject {
+    pub(crate) is_player: bool,
+    /// The player can cooperate with it (`0x729b30`).
+    pub(crate) cooperates: bool,
+    /// The player can attack it (`0x729740`).
+    pub(crate) attackable: bool,
+    /// `UNIT_FIELD_BYTES_1` byte 2 bit `0x2`.
+    pub(crate) stealthed: bool,
+    /// The creature template's type flags carry `0x100000` (`0x72b137`).
+    pub(crate) no_plate_type: bool,
+    pub(crate) creature_type: u32,
+    /// `UNIT_DYNAMIC_FLAGS` `0x20`.
+    pub(crate) reads_dead: bool,
+    /// A party or raid member, or one's pet (`0x512a30`).
+    pub(crate) member_or_pet: bool,
+    /// The owner, `CHARMEDBY` else `CREATEDBY`, is a player in view.
+    pub(crate) player_owned: bool,
+    /// `CREATEDBY` set, `SUMMONEDBY` clear and flags bit `0x200` (`0x72b1fa`).
+    pub(crate) created_marker: bool,
+    /// The creator read (`0x71b600`) answers.
+    pub(crate) guardian: bool,
+}
+
+/// The plate gate's unit legs, in its order, for a living, selectable unit that is not the
+/// camera's own.
+pub(crate) fn plate_shown(mode: &VPlateMode, s: &PlateSubject) -> bool {
+    // A player is friendly when it can cooperate, anything else when it cannot be attacked
+    // (`0x72b105`).
+    let friendly = if s.is_player {
+        s.cooperates
+    } else {
+        !s.attackable
+    };
+    if !friendly && s.stealthed || s.no_plate_type {
+        return false;
+    }
+    if !(if friendly { mode.friends } else { mode.enemies }) {
+        return false;
+    }
+    // Critters (8) and non-combat pets (12).
+    if matches!(s.creature_type, 8 | 12) {
+        return false;
+    }
+    if s.reads_dead && !s.member_or_pet {
+        return false;
+    }
+    let side = usize::from(friendly);
+    if s.player_owned {
+        if s.created_marker {
+            return false;
+        }
+        let shown = if s.creature_type == 11 {
+            mode.totems[side]
+        } else if s.guardian {
+            mode.guardians[side]
+        } else {
+            mode.pets[side]
+        };
+        if !shown {
+            return false;
+        }
+    }
+    // A player neither friendly nor attackable has no plate (`0x72b290`).
+    !(s.is_player && !friendly && !s.attackable)
 }
 
 /// The units carrying a live plate this frame; the overhead-name driver draws no name for them
@@ -86,8 +176,10 @@ const SKULL_SIZE: f32 = 0.01;
 const RAID_ICON_SIZE: f32 = 0.02;
 /// `[0x80abfc]`.
 const PLATE_LIFT: f32 = 2.0 / 3.0;
-/// 20 yd, hardcoded in the reference.
-const MAX_DIST_SQ: f32 = 20.0 * 20.0;
+/// 41 yd from the camera's unit (`[0xadaa7c]` = 1681, `0x72b331`).
+const MAX_DIST_SQ: f32 = 1681.0;
+/// `Map.dbc`'s arena instance type, where the range leg is skipped (`0x72b2ef`).
+const INSTANCE_TYPE_ARENA: u32 = 4;
 /// Deviation: the reference dims non-target plates to `0x7F`; raised because that fades them too
 /// far to read.
 const DIM_ALPHA: f32 = 178.0 / 255.0;
@@ -205,10 +297,24 @@ pub(crate) fn read_plate_cvars(
     let Some(cvars) = cvars.filter(DetectChanges::is_changed) else {
         return;
     };
+    let on = |name: &str| cvars.flag(name).unwrap_or(false);
     let now = VPlateMode {
-        enemies: cvars.flag("nameplateShowEnemies").unwrap_or(false),
-        friends: cvars.flag("nameplateShowFriends").unwrap_or(false),
-        class_colours: cvars.flag("ShowClassColorInNameplate").unwrap_or(false),
+        enemies: on("nameplateShowEnemies"),
+        friends: on("nameplateShowFriends"),
+        class_colours: on("ShowClassColorInNameplate"),
+        pets: [
+            on("nameplateShowEnemyPets"),
+            on("nameplateShowFriendlyPets"),
+        ],
+        guardians: [
+            on("nameplateShowEnemyGuardians"),
+            on("nameplateShowFriendlyGuardians"),
+        ],
+        totems: [
+            on("nameplateShowEnemyTotems"),
+            on("nameplateShowFriendlyTotems"),
+        ],
+        allow_overlap: on("nameplateAllowOverlap"),
     };
     if *mode != now {
         info!(
@@ -236,7 +342,16 @@ struct PlateWorld<'w, 's> {
         ),
         Without<SelfPlayer>,
     >,
-    self_q: Query<'w, 's, (&'static Transform, Option<&'static ObjectStore>), With<SelfPlayer>>,
+    self_q: Query<
+        'w,
+        's,
+        (
+            &'static Guid,
+            &'static Transform,
+            Option<&'static ObjectStore>,
+        ),
+        With<SelfPlayer>,
+    >,
     factions: Option<Res<'w, Factions>>,
     reputations: Res<'w, Reputations>,
     selection: Res<'w, Selection>,
@@ -246,6 +361,11 @@ struct PlateWorld<'w, 's> {
     window: Query<'w, 's, &'static Window, With<bevy::window::PrimaryWindow>>,
     // The pending ground-target cast, for the plate's hit-test veto (`0x7cba30`).
     targeting: Res<'w, crate::spell::SpellTargeting>,
+    // An owner guid to its unit, for the owned-unit categories.
+    index: Res<'w, crate::net::GuidIndex>,
+    // The current map's instance type, for the arena range skip.
+    maps: Option<Res<'w, benilla_assets::MapCatalogRes>>,
+    map: Option<Res<'w, benilla_world::world_map::CurrentMap>>,
 }
 
 /// Every frame: gate the units, seat each plate and hand the result to the widget layer as
@@ -289,7 +409,7 @@ fn drive_vplates(
         retire_all(script);
         return;
     }
-    let (Ok((cam, cam_pose)), Ok((self_tf, self_store))) =
+    let (Ok((cam, cam_pose)), Ok((self_guid, self_tf, self_store))) =
         (world.camera.single(), world.self_q.single())
     else {
         retire_all(script);
@@ -298,6 +418,11 @@ fn drive_vplates(
     let Some(mut script) = script else {
         return;
     };
+    // No plate while the game UI is hidden (`[0xac80a8]`, `0x72b0a0`).
+    if !script.world_ui_visible() {
+        script.retire_nameplates();
+        return;
+    }
     let cam_tf = GlobalTransform::from(*cam_pose);
     let Some(viewport) = cam.logical_viewport_size() else {
         script.retire_nameplates();
@@ -339,6 +464,12 @@ fn drive_vplates(
     // solved off those already claimed. The undamped diagonal: this is position, not size.
     let diag = viewport.length();
     let sort_pt = Vec2::new(0.4 * diag, viewport.y - 0.3 * diag);
+    let in_arena = world
+        .maps
+        .as_deref()
+        .zip(world.map.as_deref())
+        .and_then(|(m, id)| m.0.instance_type(id.0))
+        == Some(INSTANCE_TYPE_ARENA);
     let mut cands = Vec::new();
     for (entity, net, guid, tf, store) in &world.units {
         if !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
@@ -356,25 +487,12 @@ fn drive_vplates(
         if store.is_none_or(|s| s.0.unit_health().unwrap_or(0) == 0) {
             continue;
         }
-        // `0x60f62e`: `bytes_1` byte 3 `& 3` (ghost or creep) has no plate.
-        if store.is_some_and(|s| s.0.unit_is_ghost_visual()) {
+        // The range leg, measured from the camera's unit, the player's body; skipped in arenas.
+        if !in_arena && (tf.translation - self_tf.translation).length_squared() > MAX_DIST_SQ {
             continue;
         }
-        if (tf.translation - self_tf.translation).length_squared() > MAX_DIST_SQ {
-            continue;
-        }
-        // A CREATEDBY owner, no SUMMONEDBY owner and flags bit 9 (`0x200`): no plate in either
-        // category (`0x60f70b`-`0x60f72d`); the bit's 1.12 name is unknown.
-        if store.is_some_and(|s| {
-            s.0.unit_created_by().is_some_and(|g| g != 0)
-                && s.0.unit_summoned_by().is_none_or(|g| g == 0)
-                && s.0.unit_flags() & 0x200 != 0
-        }) {
-            continue;
-        }
-        // The category is `CanAttack` from the player (a rep faction answers by its at-war bit);
-        // the bar colour is the unit's reaction toward us (by standing). A not-at-war neutral NPC
-        // is a friendly plate with a yellow bar.
+        // The bar colour is the unit's reaction toward us (by standing); the category is
+        // [`plate_shown`]'s, so a not-at-war neutral NPC is a friendly plate with a yellow bar.
         let rank = ring_reaction(
             world.factions.as_deref(),
             &world.reputations,
@@ -382,19 +500,57 @@ fn drive_vplates(
             self_store,
         );
         let is_player = net.kind == EntityKind::Player;
-        let friendly = crate::target::ring::plate_is_friendly(
-            world.factions.as_deref(),
-            &world.reputations,
-            store,
-            self_store,
+        let fields = store.map(|s| &s.0);
+        let owner = fields.and_then(|f| f.unit_charmed_by().or_else(|| f.unit_created_by()));
+        let player_owned = owner.is_some_and(|g| {
+            g == self_guid.0
+                || world
+                    .index
+                    .0
+                    .get(&g)
+                    .and_then(|&e| world.units.get(e).ok())
+                    .is_some_and(|u| u.1.kind == EntityKind::Player)
+        });
+        let record = fields
+            .and_then(|f| f.object_entry())
+            .and_then(|e| names.creature_record(e));
+        let subject = PlateSubject {
             is_player,
-        );
-        if friendly && !mode.friends || !friendly && !mode.enemies {
-            continue;
-        }
-        // Only on the hostile side, a dead-looking unit has no plate (`0x60f733`): a feigning
-        // hunter's plate hides from enemies and stays for friends.
-        if !friendly && store.is_some_and(|s| s.0.unit_reads_dead()) {
+            cooperates: crate::target::ring::can_cooperate_with_player(
+                world.factions.as_deref(),
+                store,
+                self_store,
+            ),
+            attackable: crate::target::ring::can_attack_from_player(
+                world.factions.as_deref(),
+                &world.reputations,
+                store,
+                self_store,
+                is_player,
+            ),
+            stealthed: fields.is_some_and(|f| f.unit_is_stealthed()),
+            no_plate_type: !is_player && record.is_some_and(|r| r.type_flags & 0x10_0000 != 0),
+            creature_type: if is_player {
+                0
+            } else {
+                record.map_or(0, |r| r.creature_type)
+            },
+            reads_dead: fields.is_some_and(|f| f.unit_dynflag_dead()),
+            member_or_pet: group.is_member_or_pet(guid.0)
+                || self_store.and_then(|s| s.0.unit_pet_guid()) == Some(guid.0),
+            player_owned,
+            created_marker: fields.is_some_and(|f| {
+                f.unit_created_by().is_some()
+                    && f.unit_summoned_by().is_none()
+                    && f.unit_flags() & 0x200 != 0
+            }),
+            guardian: fields.is_some_and(|f| {
+                f.unit_created_by().is_some()
+                    && f.unit_charmed_by().is_none()
+                    && f.unit_summoned_by().is_none()
+            }),
+        };
+        if !plate_shown(&mode, &subject) {
             continue;
         }
         // Behind the camera or outside the viewport there is no plate: `0x60f600` destroys it
@@ -449,7 +605,11 @@ fn drive_vplates(
             screen.x + pw * 0.5,
             screen.y + ph,
         );
-        let solved = bucket.resolve(desired, viewport);
+        let solved = if mode.allow_overlap {
+            desired
+        } else {
+            bucket.resolve(desired, viewport)
+        };
         // Snap the left edge, not the centre, which an odd width would put between texels; the
         // claim takes the snapped rect, so later plates dodge what is drawn.
         let top = device_snap(solved.min.y, scale);
@@ -868,5 +1028,89 @@ mod tests {
             "midway between 220 and 128"
         );
         assert_eq!(gx_px(PLATE_W, plate_basis(Vec2::new(800.0, 600.0))), 100.0);
+    }
+
+    /// The plate gate's unit legs: the side CVars, critters, the dead-flag party rescue,
+    /// the six owned-unit categories by side and the unattackable enemy player.
+    #[test]
+    fn plates_follow_the_side_and_owned_unit_cvars() {
+        let mode = VPlateMode {
+            enemies: true,
+            friends: true,
+            ..Default::default()
+        };
+        let mob = PlateSubject {
+            attackable: true,
+            creature_type: 7,
+            ..Default::default()
+        };
+        assert!(plate_shown(&mode, &mob));
+        let enemies_off = VPlateMode {
+            enemies: false,
+            ..mode
+        };
+        assert!(!plate_shown(&enemies_off, &mob));
+        for creature_type in [8, 12] {
+            let critter = PlateSubject {
+                creature_type,
+                ..mob
+            };
+            assert!(!plate_shown(&mode, &critter), "type {creature_type}");
+        }
+        let dead = PlateSubject {
+            reads_dead: true,
+            ..mob
+        };
+        assert!(!plate_shown(&mode, &dead));
+        assert!(plate_shown(
+            &mode,
+            &PlateSubject {
+                member_or_pet: true,
+                ..dead
+            }
+        ));
+        let owned = |creature_type, guardian, attackable| PlateSubject {
+            player_owned: true,
+            creature_type,
+            guardian,
+            attackable,
+            ..Default::default()
+        };
+        for (side, attackable) in [(0, true), (1, false)] {
+            let mut off = mode;
+            off.totems[side] = false;
+            assert!(!plate_shown(&off, &owned(11, false, attackable)));
+            assert!(plate_shown(&off, &owned(1, false, attackable)));
+            let mut off = mode;
+            off.guardians[side] = false;
+            assert!(!plate_shown(&off, &owned(1, true, attackable)));
+            assert!(plate_shown(&off, &owned(11, true, attackable)));
+            let mut off = mode;
+            off.pets[side] = false;
+            assert!(!plate_shown(&off, &owned(1, false, attackable)));
+            assert!(plate_shown(&off, &owned(1, true, attackable)));
+        }
+        assert!(!plate_shown(
+            &mode,
+            &PlateSubject {
+                created_marker: true,
+                ..owned(1, false, true)
+            }
+        ));
+        let pve_enemy = PlateSubject {
+            is_player: true,
+            ..Default::default()
+        };
+        assert!(
+            !plate_shown(&mode, &pve_enemy),
+            "neither friendly nor attackable"
+        );
+        assert!(plate_shown(
+            &mode,
+            &PlateSubject {
+                cooperates: true,
+                ..pve_enemy
+            }
+        ));
     }
 }
