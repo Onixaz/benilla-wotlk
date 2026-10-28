@@ -1,7 +1,8 @@
 //! benilla's layer ([`super::manifest::LAYER_MANIFEST`]) loads as more of the stock load: after
 //! every core file, before the first third-party addon, with no `ADDON_LOADED` and no AddOn API
-//! row, as 1.12.1 loads FrameXML (`UI_Init 0x48fbf0`: `FrameXML.toc` at `0x48ffed`, the addons at
-//! `0x4900a3`, only the latter through `AddOn_Load`); and a dev build boots without it.
+//! row, as 12340 loads FrameXML (`CGGameUI::InitializeFrameXML` `0x52a980`: `FrameXML.toc` at
+//! `0x52ac26`, then the addon walk `AddOn_LoadAllEnabled` at `0x52ac4e`); and a dev build boots
+//! without it.
 
 use benilla_ui::script::{EditAction, EditUnit, QuadContent, ScriptValue, UiScript};
 
@@ -73,17 +74,34 @@ pub(super) fn production_load_seeded(
 
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
+    // The player and display a login seats, as `test_ui::load_stock_ui` does: the stock files read
+    // the race (`DressUpTexturePath`) and the current mode (`UpdateMenuBarTop`) at load.
+    s.set_player_record(benilla_ui::script::PlayerRecord {
+        name: "Probesix".into(),
+        race: Some(("Human".into(), "Human".into())),
+        class: Some(("Warrior".into(), "WARRIOR".into())),
+        sex: 2,
+    });
     s.set_unit(
         "player",
         Some(benilla_ui::script::UnitState {
             exists: true,
             name: Some("Probesix".into()),
             level: 60,
+            race: Some("Human".into()),
+            race_file: Some("Human".into()),
             class: Some("Warrior".into()),
             class_file: Some("WARRIOR".into()),
+            faction_group: Some("Alliance".into()),
+            faction_group_localized: Some("Alliance".into()),
             ..Default::default()
         }),
     );
+    let mode = benilla_ui::script::ScreenResolution {
+        width: 1024,
+        height: 768,
+    };
+    s.set_screen_resolutions(vec![mode], Some(mode));
     // A reply that hid nothing, so `GetNumAddOns` counts the registry.
     s.note_addon_info_reply(&[]);
     s.register_cvars(crate::cvars::registered_pairs());
@@ -103,6 +121,16 @@ pub(super) fn production_load_seeded(
     (s, failures)
 }
 
+/// Where the first addon begins in [`DEFINE_LOG`]: `Blizzard_TokenUI`, which has no
+/// `## LoadOnDemand`, so the startup walk loads it beside the third-party ones (`0x5f7ff0`).
+fn addons_begin(log: &[String]) -> usize {
+    ["TOKEN_BUTTON_OFFSET", "ZZORDER_SAW_LAYER"]
+        .iter()
+        .map(|n| defined_at(log, n))
+        .min()
+        .unwrap()
+}
+
 /// Where `name` was first defined in [`DEFINE_LOG`].
 fn defined_at(log: &[String], name: &str) -> usize {
     log.iter()
@@ -110,7 +138,7 @@ fn defined_at(log: &[String], name: &str) -> usize {
         .unwrap_or_else(|| panic!("{name} was never defined in the load"))
 }
 
-/// The stock FrameXML's own globals, from the captured 1.12.1 `_G` (`reference/3.3.5a-globals.tsv`):
+/// The stock FrameXML's own globals, from the captured 3.3.5a `_G` (`reference/3.3.5a-globals.tsv`):
 /// the `framexml` rows a FrameXML file defines at load, LoadOnDemand ones aside.
 fn stock_framexml_globals() -> std::collections::HashSet<String> {
     let tsv = include_str!(concat!(
@@ -131,7 +159,6 @@ fn stock_framexml_globals() -> std::collections::HashSet<String> {
 /// rows define before the layer's first, the layer's last before the addon, and nothing first
 /// defined from the layer's start on is a stock FrameXML global.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_layer_loads_after_every_stock_file_and_before_the_addons() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -141,9 +168,8 @@ fn the_layer_loads_after_every_stock_file_and_before_the_addons() {
     assert!(failures.is_empty(), "load failures: {failures:#?}");
     let log: Vec<String> = s.eval("return DEFINE_LOG").unwrap();
 
-    // The core's last row that defines a global (RaidWarning.xml; ClassTrainerFrameTemplates.xml
-    // declares templates alone), the layer's first file (ScrollTemplates.xml) and last
-    // (FrameXMLFixes.xml is all redefinitions, so ScriptLogFrame.xml), then the addon.
+    // The core's last row that defines a global, the layer's first file (ScrollTemplates.xml) and
+    // last (FrameXMLFixes.xml is all redefinitions, so ScriptLogFrame.xml), then the addon.
     let order = [
         "RaidWarningFrame_OnLoad",
         "BenillaScrollBar_Step",
@@ -170,7 +196,7 @@ fn the_layer_loads_after_every_stock_file_and_before_the_addons() {
             || n.strip_prefix("arg")
                 .is_some_and(|d| d.len() == 1 && d.as_bytes()[0].is_ascii_digit())
     };
-    let late: Vec<&String> = log[at[1]..]
+    let late: Vec<&String> = log[at[1]..addons_begin(&log)]
         .iter()
         .filter(|n| stock.contains(n.as_str()) && !dispatch(n))
         .collect();
@@ -188,7 +214,6 @@ fn the_layer_loads_after_every_stock_file_and_before_the_addons() {
 /// The layer is no addon: no `ADDON_LOADED` of its own, no row in the AddOn API, and no row on the
 /// character-select AddOns screen.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_layer_is_absent_from_the_addon_api() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -200,8 +225,8 @@ fn the_layer_is_absent_from_the_addon_api() {
     let loaded: Vec<String> = s.eval("return ADDON_LOADED_LOG").unwrap();
     assert_eq!(
         loaded,
-        ["ZZOrder"],
-        "only the third-party addon announces itself"
+        ["Blizzard_TokenUI", "ZZOrder"],
+        "only the addons announce themselves: the startup walk's Blizzard_TokenUI and the          third-party one"
     );
 
     let names: Vec<String> = s
@@ -254,7 +279,6 @@ fn the_stock_ui_switch_is_a_dev_builds_alone() {
 /// Booted without the layer, as `WOW_STOCK_UI=1` does: no layer file loads and the stock files
 /// raise nothing.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_ui_switch_boots_the_core_without_the_layer() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -282,11 +306,11 @@ fn the_stock_ui_switch_boots_the_core_without_the_layer() {
 }
 
 /// Types `line` into the chat box and sends it through the stock `ChatEdit_ParseText`
-/// (`ChatFrame.lua:2087`), counting the `HELP_TEXT_SIMPLE` lines it prints.
+/// (`ChatFrame.lua`), counting the `HELP_TEXT_SIMPLE` lines it prints.
 fn type_line(s: &UiScript, line: &str) -> i64 {
     s.run(&format!(
         r#"HELPS = 0
-           local box = ChatFrameEditBox
+           local box = ChatFrame1EditBox
            box.chatFrame = box.chatFrame or DEFAULT_CHAT_FRAME
            local frame = box.chatFrame
            local add = frame.AddMessage
@@ -303,11 +327,10 @@ fn type_line(s: &UiScript, line: &str) -> i64 {
 }
 
 /// The layer's player commands are plain `SlashCmdList` rows: `/reload` runs `ReloadUI()`,
-/// `/errors` (`/err`) toggles the log and `/errors clear` empties it. 1.12 has no `/convertraid`
-/// (the Raid tab's button converts, `RaidFrame.lua:63-71`), so it answers `HELP_TEXT_SIMPLE`, and
+/// `/errors` (`/err`) toggles the log and `/errors clear` empties it. 3.3.5a has no `/convertraid`
+/// (the Raid tab's button converts, `RaidFrame.lua`), so it answers `HELP_TEXT_SIMPLE`, and
 /// the forwarding hook `SubmitChatInput` is gone.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_layers_commands_are_slash_rows_and_convertraid_is_unknown() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -355,7 +378,6 @@ fn the_layers_commands_are_slash_rows_and_convertraid_is_unknown() {
 /// `HELP_TEXT_SIMPLE` once and hands the host nothing to re-run; in a dev build each is a host row
 /// that hands the host its line.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_dev_commands_are_host_rows_in_a_dev_build_alone() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -404,11 +426,11 @@ fn the_dev_commands_are_host_rows_in_a_dev_build_alone() {
 }
 
 /// The `/errors` log collects off the Lua error handler, ahead of the stock `_ERRORMESSAGE`
-/// (`BasicControls.xml:16`), which still shows the `ScriptErrors` dialog: an addon's runtime error,
-/// an error in one of the layer's own handlers, and one raised in the stock load before the layer
-/// loaded (the engine hands caught errors to the handler after the load).
+/// (`BasicControls.xml`), which still files each error in `Blizzard_DebugTools`' frame, hidden at
+/// the default `scriptErrors` 0: an addon's runtime error, an error in one of the layer's own
+/// handlers, and one raised in the stock load before the layer loaded (the engine hands caught
+/// errors to the handler after the load).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_error_log_collects_off_the_error_handler() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -455,14 +477,17 @@ fn the_error_log_collects_off_the_error_handler() {
             "{want:?} is in the log: {rows:#?}"
         );
     }
+    let filed: Vec<String> = s.eval("return ScriptErrorsFrame.messages").unwrap();
     assert!(
-        s.eval::<bool>("return ScriptErrors:IsVisible()").unwrap(),
-        "the stock handler still runs after the log"
+        filed
+            .first()
+            .is_some_and(|m| m.contains("before the layer")),
+        "the stock handler still runs after the log, first error first: {filed:#?}"
     );
-    let shown: String = s.eval("return ScriptErrors_Message:GetText()").unwrap();
     assert!(
-        shown.contains("before the layer"),
-        "the first error shows: {shown}"
+        !s.eval::<bool>("return ScriptErrorsFrame:IsShown()")
+            .unwrap(),
+        "kept hidden at scriptErrors 0"
     );
     // A repeat is one row with a count.
     s.run("ZZErrButton:Click() ZZErrButton:Click()").unwrap();
@@ -482,7 +507,6 @@ fn the_error_log_collects_off_the_error_handler() {
 /// form, as `ChatEdit_ParseText` reads it), so no layer name meets a stock or an addon one; a stock
 /// global the layer redefines keeps its name and is not a new definition here.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn every_global_the_layer_defines_takes_the_benilla_prefix() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
@@ -492,7 +516,7 @@ fn every_global_the_layer_defines_takes_the_benilla_prefix() {
     assert!(failures.is_empty(), "load failures: {failures:#?}");
     let log: Vec<String> = s.eval("return DEFINE_LOG").unwrap();
     let start = defined_at(&log, "BenillaScrollBar_Step");
-    let end = defined_at(&log, "ZZORDER_SAW_LAYER");
+    let end = addons_begin(&log);
     let dispatch = |n: &str| {
         n == "this"
             || n == "event"
@@ -526,11 +550,10 @@ fn window_rect(s: &UiScript, window: &str, frame: &str) -> (f32, f32, f32, f32) 
 
 /// The `/errors` window wears the ClassTrainer art, so its frames sit where the class trainer's own
 /// do on it (`Blizzard_TrainerUI.xml`, resized by `ClassTrainer_SetToClassTrainer`,
-/// `Blizzard_TrainerUI.lua:469-475`): the rows, the list, the detail under it, and the two buttons
+/// `Blizzard_TrainerUI.lua`): the rows, the list, the detail under it, and the two buttons
 /// in the art's sockets (`ClassTrainerTrainButton` and `ClassTrainerCancelButton`, 80x22 centred
 /// at 224 and 305, -420). The detail ends above the buttons, as the trainer's does at -407.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_error_log_lays_out_on_the_trainer_art_as_the_class_trainer_does() {
     benilla_formats::wow_data_or_skip!();
     let mut s = super::trainer_tests::trainer_script();
@@ -626,7 +649,7 @@ fn the_error_log_lays_out_on_the_trainer_art_as_the_class_trainer_does() {
     for (i, want) in ref_rows_rects.iter().enumerate() {
         let row = ours(&s, &format!("BenillaScriptLogRow{}", i + 1));
         // The trainer widens a row to 323 while its scroll bar is hidden and keeps the template's
-        // 293 beside it (`Blizzard_TrainerUI.lua:133-137`); the log's rows are the 293.
+        // 293 beside it (`Blizzard_TrainerUI.lua`); the log's rows are the 293.
         assert_eq!(
             (row.0, row.1, row.2, row.3),
             (want.0, want.1, want.0 + 293.0, want.3),
@@ -731,11 +754,10 @@ fn detail_geometry(s: &UiScript) -> (f64, f64, f64, f64, f64) {
 
 /// The selected error's text is in a multi-line EditBox, whole: no `letters` cap, no change to a
 /// newline or a `|`. Opening the window takes no focus, so the movement keys keep working until a
-/// click (the stock mail body's `autoFocus="false"`, `MailFrame.xml:616`). The box is as tall as
+/// click (the stock mail body's `autoFocus="false"`, `MailFrame.xml`). The box is as tall as
 /// its insets and its text, so the scroll frame ranges over the whole traceback and shows its bar;
 /// the text draws once, where the FontString drew it.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_error_logs_detail_is_a_box_holding_the_whole_error() {
     benilla_formats::wow_data_or_skip!();
     let (mut s, msg) = error_log_selected();
@@ -823,9 +845,8 @@ fn the_error_logs_detail_is_a_box_holding_the_whole_error() {
 
 /// A click anywhere in the pane focuses the box and selects all of it, as a click on the text
 /// does: below a short text the click lands on the scroll child, which hands focus to the box
-/// (`SendMailScrollChildFrame`'s `OnMouseUp`, `MailFrame.xml:651`).
+/// (`SendMailScrollChildFrame`'s `OnMouseUp`, `MailFrame.xml`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_click_below_the_detail_text_focuses_the_box_and_selects_it_all() {
     benilla_formats::wow_data_or_skip!();
     let (mut s, _) = error_log_selected();
@@ -870,7 +891,6 @@ fn a_click_below_the_detail_text_focuses_the_box_and_selects_it_all() {
 /// error arriving meanwhile leaves that selection alone, and another row takes the keyboard off
 /// the box with the new text.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_click_on_the_detail_selects_all_and_copy_returns_the_whole_error() {
     benilla_formats::wow_data_or_skip!();
     let (mut s, msg) = error_log_selected();
@@ -896,7 +916,6 @@ fn a_click_on_the_detail_selects_all_and_copy_returns_the_whole_error() {
 /// so a copy still takes it all, and the restore's own change stops after one more round, bar the
 /// box's resize, whose re-seat fires once more with the text unchanged (`0x77ba7f`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_edit_of_the_detail_box_is_undone() {
     benilla_formats::wow_data_or_skip!();
     let (mut s, msg) = error_log_selected();
@@ -952,9 +971,8 @@ fn an_edit_of_the_detail_box_is_undone() {
     assert_eq!(s.editbox_copy().as_deref(), Some(msg.as_str()));
 }
 
-/// Escape clears the box's focus (`MailFrame.xml:644`), and leaves its text.
+/// Escape clears the box's focus (`MailFrame.xml`), and leaves its text.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_clears_the_detail_boxs_focus() {
     benilla_formats::wow_data_or_skip!();
     let (mut s, msg) = error_log_selected();
