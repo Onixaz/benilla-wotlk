@@ -222,12 +222,26 @@ pub(crate) fn queue_cursor_update(model: &mut Model) {
     }
 }
 
-/// Queue `ITEM_LOCK_CHANGED(bag, slot)` for a source slot that a pickup locks or a put-down frees.
+/// Queue `ITEM_LOCK_CHANGED` for a source slot that a pickup locks or a put-down frees.
 pub(crate) fn queue_lock_changed(model: &mut Model, bag: i64, slot: u32) {
-    model.pending_events.push((
-        "ITEM_LOCK_CHANGED".to_string(),
-        vec![ScriptValue::Int(bag), ScriptValue::Int(i64::from(slot))],
-    ));
+    model
+        .pending_events
+        .push(("ITEM_LOCK_CHANGED".to_string(), item_lock_args(bag, slot)));
+}
+
+/// An item event's arguments for the item at `(bag, slot)`, as `CGItem_C::SignalEvent`
+/// (`0x60bfe0`) locates it: an inventory slot alone, but a bank-bag slot as `(-1, slot - 38)`;
+/// anywhere else the container and its 1-based slot, which are the Lua API's numbering.
+pub fn item_lock_args(bag: i64, slot: u32) -> Vec<ScriptValue> {
+    let slot = i64::from(slot);
+    match bag {
+        // Inventory slots 68-74 are the bank's bag slots (0-based 67-73).
+        EQUIPMENT_BAG if (68..=74).contains(&slot) => {
+            vec![ScriptValue::Int(-1), ScriptValue::Int(slot - 39)]
+        }
+        EQUIPMENT_BAG => vec![ScriptValue::Int(slot)],
+        _ => vec![ScriptValue::Int(bag), ScriptValue::Int(slot)],
+    }
 }
 
 /// Queue `DELETE_ITEM_CONFIRM(name, quality)` for an item dropped on the world. The payload stays
@@ -632,6 +646,30 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 mod tests {
     use super::{CursorAction, CursorItem, CursorPayload, CursorSpell};
     use crate::script::UiScript;
+
+    /// `CGItem_C::SignalEvent` (`0x60bfe0`): an inventory slot alone, a bank-bag slot as the bank's
+    /// 29-35, and a container slot as `(bag, slot)`.
+    #[test]
+    fn an_item_event_locates_the_item_as_the_reference_does() {
+        use super::{item_lock_args, EQUIPMENT_BAG};
+        use crate::script::ScriptValue::Int;
+        assert_eq!(
+            item_lock_args(EQUIPMENT_BAG, 1),
+            vec![Int(1)],
+            "the head slot"
+        );
+        assert_eq!(
+            item_lock_args(EQUIPMENT_BAG, 20),
+            vec![Int(20)],
+            "a bag slot"
+        );
+        assert_eq!(item_lock_args(EQUIPMENT_BAG, 68), vec![Int(-1), Int(29)]);
+        assert_eq!(item_lock_args(EQUIPMENT_BAG, 74), vec![Int(-1), Int(35)]);
+        assert_eq!(item_lock_args(0, 3), vec![Int(0), Int(3)], "the backpack");
+        assert_eq!(item_lock_args(-1, 28), vec![Int(-1), Int(28)], "the bank");
+        assert_eq!(item_lock_args(-2, 5), vec![Int(-2), Int(5)], "the keyring");
+        assert_eq!(item_lock_args(7, 12), vec![Int(7), Int(12)], "a bank bag");
+    }
 
     /// A backpack holding a five-stack in slot 1.
     fn one_item_backpack() -> crate::script::container::ContainerState {
