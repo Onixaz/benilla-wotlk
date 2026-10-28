@@ -401,6 +401,7 @@ pub(super) fn drain_chat_input(
                 let rank = crate::target::ring_reaction(
                     factions.as_deref(),
                     reputations,
+                    &*group,
                     target_store,
                     own_store,
                 );
@@ -410,6 +411,7 @@ pub(super) fn drain_chat_input(
                         target_store,
                         factions.as_deref(),
                         reputations,
+                        &*group,
                         own_store
                     )
                 ));
@@ -447,12 +449,14 @@ pub(super) fn drain_chat_input(
                     target_store,
                     factions.as_deref(),
                     reputations,
+                    &*group,
                     own_store,
                 );
                 let attackable = crate::target::can_attack(
                     target_store,
                     factions.as_deref(),
                     reputations,
+                    &*group,
                     own_store,
                 );
                 lines.push(format!(
@@ -478,6 +482,7 @@ pub(super) fn drain_chat_input(
                 let friendly = crate::target::ring::plate_is_friendly(
                     factions.as_deref(),
                     reputations,
+                    &*group,
                     target_store,
                     own_store,
                     is_player,
@@ -497,6 +502,7 @@ pub(super) fn drain_chat_input(
                     crate::target::ring::can_attack_from_player(
                         factions.as_deref(),
                         reputations,
+                        &*group,
                         target_store,
                         own_store,
                         is_player,

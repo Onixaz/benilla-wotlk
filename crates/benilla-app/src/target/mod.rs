@@ -43,12 +43,21 @@ mod scan;
 mod script;
 pub(crate) use script::ScriptSelect;
 
-/// `Faction.dbc` and our reputation table as one [`SystemParam`], since every reaction function
-/// takes both; `factions` is `Option` so a UI-only harness runs without client data.
+/// `Faction.dbc`, our reputation table and the group as one [`SystemParam`], since every reaction
+/// function takes all three; `factions` is `Option` so a UI-only harness runs without client data,
+/// and `group` so one runs without the party plugin.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct ReactionInputs<'w> {
     pub(crate) factions: Option<Res<'w, Factions>>,
     pub(crate) reputations: Res<'w, crate::net::Reputations>,
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
+}
+
+impl ReactionInputs<'_> {
+    /// The group the reaction's party rung asks about; none without the party plugin.
+    pub(crate) fn party(&self) -> &dyn GroupMembers {
+        party_of(self.group.as_deref())
+    }
 }
 
 pub(crate) use cursor_mode::{
@@ -63,8 +72,8 @@ pub(crate) use price_discount::vendor_price_discount;
 #[cfg(test)]
 pub(crate) use price_discount::{stormwind_fixture, HUMAN_WARRIOR};
 pub(crate) use relations::{
-    can_assist, can_assist_dir, can_attack, can_interact, corpse_friendly, is_possessed_by,
-    selection_color, Assist, UNIT_FLAG_POSSESSED,
+    can_assist, can_assist_dir, can_attack, can_interact, corpse_friendly, highlight_variant,
+    is_possessed_by, selection_color, Assist, UNIT_FLAG_POSSESSED,
 };
 // The attack validator's target half, run in the call that asks, for the player's Attack and the
 // pet bar's; the melee probe's press with nothing selected.
@@ -75,8 +84,10 @@ pub(crate) use by_name::{AssistRequest, Match as NameMatch, PlayerLookup, Target
 pub(crate) use by_name::SelectCommit;
 // The reaction decode and its faction catalog, which also tint the target frame
 // (`TargetFrame_CheckFaction`); `duel_rung` is the same walk, for `/reaction`.
+#[cfg(test)]
+pub(crate) use ring::NoGroup;
 pub(crate) use ring::{
-    duel_rung, reaction_from_player, ring_reaction, ring_variant, Factions, RingVariant,
+    duel_rung, party_of, reaction_from_player, ring_reaction, Factions, GroupMembers, RingVariant,
 };
 
 pub(crate) use click::DeselectGuid;

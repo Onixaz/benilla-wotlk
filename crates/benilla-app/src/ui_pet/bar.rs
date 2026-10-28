@@ -24,6 +24,8 @@ pub(super) struct PetSlotWalk<'w, 's> {
     objects: crate::net::Objects<'w, 's>,
     factions: Option<Res<'w, crate::target::Factions>>,
     reputations: Option<Res<'w, crate::net::Reputations>>,
+    /// The group, for the reaction's party rung; a harness without it has no group.
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
     items: Option<Res<'w, crate::items::Items>>,
     commands: Option<Res<'w, crate::net::NetCommands>>,
     combo: Option<Res<'w, crate::spell::ComboPoints>>,
@@ -59,6 +61,7 @@ impl PetSlotWalk<'_, '_> {
             target_store,
             factions: self.factions.as_deref(),
             reputations,
+            party: crate::target::party_of(self.group.as_deref()),
             cooldowns,
             spell_mods: &crate::spell::SpellModifiers::default(),
             carried: &std::collections::HashMap::new(),
