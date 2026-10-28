@@ -964,11 +964,47 @@ fn fitted_window(
     fit_to_work_area(cfg.windowed(), frame, work, cfg.aspect)
 }
 
+/// Frames the born-hidden window waits after the frame its boot mode settles, so the first frame
+/// it shows was presented at the fitted size.
+const SHOW_AFTER_SETTLE: u32 = 2;
+/// The frame a window whose primary monitor is never named (Wayland names none) is shown unfitted.
+const SHOW_UNSETTLED: u32 = 10;
+
+/// The boot window's reveal. `ICreateWindow 0x68ebb0` creates the window at its fitted rect and
+/// shows it; winit names the monitor only after the window exists, so ours is born hidden
+/// (`visible: false` in `lib.rs`) and shown once [`apply_window_mode`] has fitted it.
+#[derive(Default)]
+struct BootReveal {
+    frame: u32,
+    settled: Option<u32>,
+    shown: bool,
+}
+
+impl BootReveal {
+    /// Whether this frame shows the window: [`SHOW_AFTER_SETTLE`] frames after the first one that
+    /// knows the monitor (`settles`), or at [`SHOW_UNSETTLED`] without one. True once.
+    fn tick(&mut self, settles: bool) -> bool {
+        if self.shown {
+            return false;
+        }
+        self.frame += 1;
+        if settles {
+            self.settled.get_or_insert(self.frame);
+        }
+        self.shown = self.settled.map_or(self.frame >= SHOW_UNSETTLED, |at| {
+            self.frame >= at + SHOW_AFTER_SETTLE
+        });
+        self.shown
+    }
+}
+
 /// Push the display mode to the window, gated as [`apply_present_mode`] is, and again the first
 /// frame the primary monitor's modes are known (the boot window cannot name a mode). An unchanged
 /// mode is not re-asserted, so a restart that moved nothing leaves the display alone. A windowed
 /// window is fitted to the monitor ([`fitted_window`]) while `gxResolution` keeps the size asked
-/// for, as `SetGxCVars 0x769950` writes the requested format.
+/// for, as `SetGxCVars 0x769950` writes the requested format. The boot window is shown here
+/// ([`BootReveal`]).
+#[allow(clippy::too_many_arguments)]
 fn apply_window_mode(
     cfg: Res<VideoConfig>,
     restarts: Res<GxRestarts>,
@@ -976,12 +1012,27 @@ fn apply_window_mode(
     monitors: Query<(Entity, &bevy::window::Monitor), With<PrimaryMonitor>>,
     mut last_restart: Local<u32>,
     mut saw_monitor: Local<bool>,
+    mut reveal: Local<BootReveal>,
     // `WINIT_WINDOWS` is the main thread's.
     _main: bevy::ecs::system::NonSendMarker,
 ) {
     let forced = std::mem::replace(&mut *last_restart, restarts.0) != restarts.0;
     let monitor = monitors.iter().next();
     let first_monitor = monitor.is_some() && !std::mem::replace(&mut *saw_monitor, true);
+    if reveal.tick(first_monitor) {
+        if let Ok((entity, mut window)) = windows.single_mut() {
+            if !window.visible {
+                window.visible = true;
+                // The OS window too, this frame: `bevy_winit` keeps updating a hidden window only
+                // while the component says hidden, and applies the component only in an update.
+                bevy::winit::WINIT_WINDOWS.with_borrow(|windows| {
+                    if let Some(w) = windows.get_window(entity) {
+                        w.set_visible(true);
+                    }
+                });
+            }
+        }
+    }
     if !cfg.is_changed() && !forced && !first_monitor {
         return;
     }
@@ -1302,6 +1353,30 @@ mod tests {
         );
         assert_eq!(w.position, bevy::window::WindowPosition::At(at));
         assert_eq!(app.world().resource::<VideoConfig>().resolution, Some(want));
+    }
+
+    /// The born-hidden window shows only after the frame that fitted it, or unfitted at a
+    /// deadline when no primary monitor is ever named.
+    #[test]
+    fn the_boot_window_is_shown_once_fitted() {
+        let visible =
+            |app: &App, win: Entity| app.world().entity(win).get::<Window>().unwrap().visible;
+        for monitor_at in [Some(3), None] {
+            let (mut app, win) = window_app(VideoConfig::default());
+            app.world_mut().get_mut::<Window>(win).unwrap().visible = false;
+            let shown_at = monitor_at.map_or(SHOW_UNSETTLED, |at| at + SHOW_AFTER_SETTLE);
+            for frame in 1..=SHOW_UNSETTLED + 2 {
+                if Some(frame) == monitor_at {
+                    app.world_mut().spawn((monitor(&[]), PrimaryMonitor));
+                }
+                app.update();
+                assert_eq!(
+                    visible(&app, win),
+                    frame >= shown_at,
+                    "{monitor_at:?} {frame}"
+                );
+            }
+        }
     }
 
     /// A VM is handed the device caps at its load, before `PLAYER_ENTERING_WORLD` can read them,

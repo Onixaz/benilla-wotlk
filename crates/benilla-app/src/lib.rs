@@ -450,6 +450,9 @@ fn launch(build: BuildId, extend: Option<Extension<'_>>) -> AppExit {
         // first frame cannot flash it on top. `BgWinPlugin` promotes it to Normal once the launch
         // settles, so it can still be raised.
         focused: !background,
+        // Shown once fitted to the monitor (`video::BootReveal`), never at the OS's default spot
+        // and size, unpainted.
+        visible: false,
         window_level: if background {
             bevy::window::WindowLevel::AlwaysOnBottom
         } else {
