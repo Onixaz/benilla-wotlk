@@ -36,11 +36,13 @@ use benilla_world::view::WorldCamera;
 pub(crate) mod border;
 
 /// The two plate CVars as the gate reads them (`0x72b144`, `0x72b158`): the V keys' stock bodies
-/// write them (`Bindings.xml:544-573`), as does the Names panel.
+/// write them (`Bindings.xml:544-573`), as does the Names panel. `class_colours` is
+/// `ShowClassColorInNameplate` (`[0xbd0a20]`), the Combat panel's row.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct VPlateMode {
     pub(crate) enemies: bool,
     pub(crate) friends: bool,
+    pub(crate) class_colours: bool,
 }
 
 /// The units carrying a live plate this frame; the overhead-name driver draws no name for them
@@ -96,10 +98,33 @@ const PLATE_NEUTRAL: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const PLATE_FRIENDLY: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const PLATE_PLAYER: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 
-/// `0x7cbaa0`'s test order: reaction 1 or less red, else a player blue, else 4 or more green,
-/// else (2 and 3) yellow.
-fn plate_tint(rank: u8, is_player: bool) -> [f32; 4] {
-    if rank <= 1 {
+/// The class bar colours, `s_classColors` at `0xb2da20`, by `UNIT_FIELD_BYTES_0` byte 1.
+const PLATE_CLASS: [[u8; 3]; 12] = [
+    [0x00, 0x00, 0x00],
+    [0xc6, 0x9b, 0x6d],
+    [0xf4, 0x8c, 0xba],
+    [0xaa, 0xd3, 0x72],
+    [0xff, 0xf4, 0x68],
+    [0xff, 0xff, 0xff],
+    [0xc4, 0x1e, 0x3a],
+    [0x00, 0x70, 0xdd],
+    [0x68, 0xcc, 0xef],
+    [0x93, 0x82, 0xc9],
+    [0x00, 0x00, 0x00],
+    [0xff, 0x7c, 0x0a],
+];
+
+/// `UpdateColorDisplay`'s test order (`0x98ee30`): a hostile player in its class colour while
+/// `ShowClassColorInNameplate` is on, then reaction 1 or less red, else a player blue, else 4 or
+/// more green, else (2 and 3) yellow.
+fn plate_tint(rank: u8, is_player: bool, class: Option<u8>) -> [f32; 4] {
+    if let Some(&[r, g, b]) = class
+        .filter(|_| rank <= 1 && is_player)
+        .and_then(|c| PLATE_CLASS.get(usize::from(c)))
+    {
+        let c = |v: u8| f32::from(v) / 255.0;
+        [c(r), c(g), c(b), 1.0]
+    } else if rank <= 1 {
         PLATE_HOSTILE
     } else if is_player {
         PLATE_PLAYER
@@ -183,6 +208,7 @@ pub(crate) fn read_plate_cvars(
     let now = VPlateMode {
         enemies: cvars.flag("nameplateShowEnemies").unwrap_or(false),
         friends: cvars.flag("nameplateShowFriends").unwrap_or(false),
+        class_colours: cvars.flag("ShowClassColorInNameplate").unwrap_or(false),
     };
     if *mode != now {
         info!(
@@ -407,7 +433,11 @@ fn drive_vplates(
         } else {
             DIM_ALPHA
         };
-        let tint = plate_tint(rank, is_player);
+        let class = mode
+            .class_colours
+            .then(|| store.and_then(|s| s.0.unit_class()))
+            .flatten();
+        let tint = plate_tint(rank, is_player, class);
         // `WOW_VPLATE_TRACE=1` prints each plate rect in logical px.
         static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let trace = *TRACE.get_or_init(|| std::env::var("WOW_VPLATE_TRACE").as_deref() == Ok("1"));
@@ -761,13 +791,66 @@ mod tests {
 
     #[test]
     fn plate_tint_matches_the_byte_order() {
-        assert_eq!(plate_tint(1, false), PLATE_HOSTILE);
-        assert_eq!(plate_tint(1, true), PLATE_HOSTILE, "hostile beats player");
-        assert_eq!(plate_tint(2, false), PLATE_NEUTRAL, "unfriendly is yellow");
-        assert_eq!(plate_tint(3, false), PLATE_NEUTRAL);
-        assert_eq!(plate_tint(3, true), PLATE_PLAYER, "player beats neutral");
-        assert_eq!(plate_tint(4, false), PLATE_FRIENDLY);
-        assert_eq!(plate_tint(6, true), PLATE_PLAYER, "player beats friendly");
+        assert_eq!(plate_tint(1, false, None), PLATE_HOSTILE);
+        assert_eq!(
+            plate_tint(1, true, None),
+            PLATE_HOSTILE,
+            "hostile beats player"
+        );
+        assert_eq!(
+            plate_tint(2, false, None),
+            PLATE_NEUTRAL,
+            "unfriendly is yellow"
+        );
+        assert_eq!(plate_tint(3, false, None), PLATE_NEUTRAL);
+        assert_eq!(
+            plate_tint(3, true, None),
+            PLATE_PLAYER,
+            "player beats neutral"
+        );
+        assert_eq!(plate_tint(4, false, None), PLATE_FRIENDLY);
+        assert_eq!(
+            plate_tint(6, true, None),
+            PLATE_PLAYER,
+            "player beats friendly"
+        );
+    }
+
+    /// `ShowClassColorInNameplate` colours a hostile player's bar by class (`0x98ee7e`); a hostile
+    /// creature and a friendly player keep theirs.
+    #[test]
+    fn class_colours_paint_hostile_players_only() {
+        let mage = [0x68, 0xcc, 0xef].map(|v| v as f32 / 255.0);
+        assert_eq!(
+            plate_tint(1, true, Some(8)),
+            [mage[0], mage[1], mage[2], 1.0]
+        );
+        assert_eq!(
+            plate_tint(1, false, Some(8)),
+            PLATE_HOSTILE,
+            "a creature keeps red"
+        );
+        assert_eq!(
+            plate_tint(4, true, Some(8)),
+            PLATE_PLAYER,
+            "a friend keeps blue"
+        );
+    }
+
+    /// The Combat panel's class-colour row reaches the plate mode.
+    #[test]
+    fn the_class_colour_cvar_reaches_the_plate_mode() {
+        let mut app = cvar_app();
+        assert!(
+            !app.world().resource::<VPlateMode>().class_colours,
+            "registered \"0\""
+        );
+        app.world()
+            .non_send_resource::<benilla_ui::script::UiScript>()
+            .run("SetCVar('ShowClassColorInNameplate', '1')")
+            .unwrap();
+        app.update();
+        assert!(app.world().resource::<VPlateMode>().class_colours);
     }
 
     /// At 1024x768 (diagonal 1280) the frame is the border's native 128x32 px; at 1080p the

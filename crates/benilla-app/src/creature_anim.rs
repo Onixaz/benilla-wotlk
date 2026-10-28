@@ -280,6 +280,8 @@ pub(crate) struct AttackSeam<'w, 's> {
     pub(crate) loot: ResMut<'w, crate::ui_loot::LootState>,
     /// The loot latch: the teardown's close drops it, and the right-click loot legs arm it.
     pub(crate) loot_latch: ResMut<'w, crate::ui_loot::LootLatch>,
+    /// `stopAutoAttackOnTargetChange`; a harness without it reads the default, off.
+    pub(crate) stop_on_change: Option<Res<'w, crate::target::StopAttackOnTargetChange>>,
 }
 
 impl AttackSeam<'_, '_> {
@@ -298,6 +300,17 @@ impl AttackSeam<'_, '_> {
                 true,
             );
         }
+    }
+
+    /// Whether a new target stops the attack instead of swinging on (`0x524f59`).
+    pub(crate) fn stops_on_target_change(&self) -> bool {
+        self.stop_on_change.as_deref().is_some_and(|s| s.0)
+    }
+
+    /// `Spell_C_CancelAutoRepeat` (`0x807560`).
+    pub(crate) fn cancel_auto_repeat(&mut self) {
+        let me = self.me.single().ok();
+        cancel_auto_repeat_local(me, &mut self.auto_repeat, &mut self.ecs, &self.net);
     }
 
     /// StopAttack (`0x5ecac0`).
