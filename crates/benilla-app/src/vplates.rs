@@ -622,9 +622,10 @@ fn drive_vplates(
             benilla_assets::trace::line(
                 "vpl",
                 &format!(
-                    "e={} vp=({:.0},{:.0}) anchor=[{:.4},{:.4},{:.4}] cam=[{:.4},{:.4},{:.4}] \
+                    "e={} d={:.1} vp=({:.0},{:.0}) anchor=[{:.4},{:.4},{:.4}] cam=[{:.4},{:.4},{:.4}] \
                      fwd=[{:.4},{:.4},{:.4}] scr=({:.3},{:.3}) solved=({:.3},{:.3}) plate=({:.1},{:.1})",
                     entity.index(),
+                    (anchor - self_tf.translation).length(),
                     viewport.x,
                     viewport.y,
                     anchor.x,

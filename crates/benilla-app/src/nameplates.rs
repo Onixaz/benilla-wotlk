@@ -745,6 +745,7 @@ pub(crate) fn drive_nameplates(
         if seen.contains(unit) {
             true
         } else {
+            debug!("nameplates: drop {unit} {:?}", live.lines);
             if let Ok(mut e) = commands.get_entity(live.plate) {
                 e.despawn();
             }
