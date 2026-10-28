@@ -456,13 +456,19 @@ impl super::UiScript {
         model.exhaustion = rows.into_iter().map(|(id, n, f)| (id, (n, f))).collect();
     }
 
-    /// Push the combo points (`PLAYER_FIELD_BYTES` byte 1) and their target
-    /// (`PLAYER_FIELD_COMBO_TARGET`) together, as `Player::SetComboPoints` writes them. Raw:
-    /// `GetComboPoints`' class and target gates are the binding's.
+    /// Push our combo points and the unit they sit on, as `CGGameUI::UpdateComboPoints`
+    /// (`0x519780`) banks them. Raw: `GetComboPoints`' class gate is the binding's.
     pub fn set_combo_points(&mut self, points: u8, target: u64) {
         let mut model = self.model_mut();
         model.combo_points = points;
         model.combo_target = target;
+    }
+
+    /// Push the pet's combo points and their unit (`CGPetInfo::SetComboPoints` `0x5d34b0`).
+    pub fn set_pet_combo_points(&mut self, points: u8, target: u64) {
+        let mut model = self.model_mut();
+        model.pet_combo_points = points;
+        model.pet_combo_target = target;
     }
 
     /// Take the queued [`SelectionRequest`]s out of the call stream, in call order.

@@ -114,31 +114,7 @@ pub(super) fn refresh_live_display(
                 );
                 net.display_id = Some(live);
                 swapped.write(DisplaySwapped { entity });
-                // `attach_entity_visuals` rebuilds from scratch, fade-skipped by `Reattached`.
-                commands
-                    .entity(entity)
-                    .despawn_related::<Children>()
-                    .remove::<(
-                        VisualAttached,
-                        AppliedDisplay,
-                        super::equipment::AppliedEquipment,
-                        super::mount::AppliedMount,
-                        super::mount::MountChild,
-                        AnimationPlayer,
-                        bevy::animation::transition::AnimationTransitions,
-                        AnimationGraphHandle,
-                        benilla_assets::ModelAnimations,
-                        crate::creature_anim::AnimDriver,
-                        (
-                            benilla_world::rig_anim::RigPose,
-                            crate::creature_anim::BodyTwist,
-                            benilla_world::rig_anim::GlobalSeqDrive,
-                        ),
-                        benilla_world::rig_palette::RigSkin,
-                        super::BoneAttach,
-                        super::equipment::HeldAttached,
-                    )>()
-                    .insert(super::equipment::Reattached);
+                rebuild_visual(&mut commands, entity);
             }
         }
 
@@ -266,6 +242,35 @@ pub(super) fn heal_rig_starved(
             )>()
             .insert((super::equipment::Reattached, ShownRebuild));
     }
+}
+
+/// Tear a unit's visual down for `attach_entity_visuals` to rebuild from scratch, fade-skipped by
+/// `Reattached`: the `0x60abe0` rebuild of a display swap and of a clone's look landing.
+pub(super) fn rebuild_visual(commands: &mut Commands, entity: Entity) {
+    commands
+        .entity(entity)
+        .despawn_related::<Children>()
+        .remove::<(
+            VisualAttached,
+            AppliedDisplay,
+            super::equipment::AppliedEquipment,
+            super::mount::AppliedMount,
+            super::mount::MountChild,
+            AnimationPlayer,
+            bevy::animation::transition::AnimationTransitions,
+            AnimationGraphHandle,
+            benilla_assets::ModelAnimations,
+            crate::creature_anim::AnimDriver,
+            (
+                benilla_world::rig_anim::RigPose,
+                crate::creature_anim::BodyTwist,
+                benilla_world::rig_anim::GlobalSeqDrive,
+            ),
+            benilla_world::rig_palette::RigSkin,
+            super::BoneAttach,
+            super::equipment::HeldAttached,
+        )>()
+        .insert(super::equipment::Reattached);
 }
 
 #[cfg(test)]

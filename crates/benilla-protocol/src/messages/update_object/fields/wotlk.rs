@@ -488,6 +488,7 @@ mod tests {
             (Field::UnitPetNextLevelExp, FIELD_UNIT_PETNEXTLEVELEXP),
             (Field::UnitDynamicFlags, FIELD_UNIT_DYNAMIC_FLAGS),
             (Field::UnitChannelSpell, FIELD_UNIT_CHANNEL_SPELL),
+            (Field::UnitFlags2, FIELD_UNIT_FLAGS_2),
             (Field::UnitCreatedBySpell, FIELD_UNIT_CREATED_BY_SPELL),
             (Field::UnitNpcFlags, FIELD_UNIT_NPC_FLAGS),
             (Field::UnitNpcEmoteState, FIELD_UNIT_NPC_EMOTESTATE),

@@ -49,6 +49,9 @@ pub(crate) struct UsableCtx<'a> {
     /// The rune table and costs leg 12 reads for a rune spell; `None` when the caster is not the
     /// active player, which `Spell_C_HaveSpellPower` refuses (`0x80182d`).
     pub(crate) runes: Option<RuneCheck<'a>>,
+    /// The caster's combo points on the current target: [`super::ComboPoints`]' player bank, or
+    /// the pet's for the pet (`GetComboPoints(target)` with the target 0, `0x513920`, `0x5d3520`).
+    pub(crate) combo_points: u8,
 }
 
 /// The player's runes and `SpellRuneCost.dbc`, for [`RuneCheck::has_runes`].
@@ -501,11 +504,11 @@ pub(crate) fn spell_usable(
     if !equipped_item_fits(d, ctx.store, objects, items, commands) {
         return (false, false);
     }
-    // Leg 5 (`0x6e3e7a`..`0x6e3eb2`): a finishing move (`AttributesEx & 0x500000`, one any-of
-    // test) fails while the caster's combo-point byte (`PLAYER_FIELD_BYTES` byte 1) is 0. It reads
-    // no target, so a point banked on another mob leaves the button lit and the server refuses the
-    // cast. No class gate, unlike Lua `GetComboPoints 0x51a190`: a warrior's Overpower greys here.
-    if d.needs_combo_points() && ctx.store.0.player_combo_points().unwrap_or(0) == 0 {
+    // Leg 5 (`Spell_C_IsUsableAction` `0x80b5d0`): a finishing move (`AttributesEx & 0x500000`,
+    // one any-of test) fails while the caster holds no combo points on the current target, so a
+    // point banked on another mob greys the button. No class gate, unlike Lua `GetComboPoints`:
+    // a warrior's Overpower greys here. The player's aura-262 exemption is not built.
+    if d.needs_combo_points() && ctx.combo_points == 0 {
         return (false, false);
     }
     // Leg 6 (`CheckShapeshiftRules 0x72bac0`): the form's `SpellShapeshiftForm.dbc` flags decide
@@ -870,12 +873,17 @@ mod tests {
             carried,
             spell_mods,
             runes: None,
+            combo_points: 0,
         }
     }
 
     fn walk(d: &SpellDisplay, store: &ObjectStore) -> (bool, bool) {
+        walk_with_combo(d, store, 0)
+    }
+
+    fn walk_with_combo(d: &SpellDisplay, store: &ObjectStore, combo_points: u8) -> (bool, bool) {
         let cooldowns = Cooldowns::default();
-        let reputations = Reputations(Vec::new());
+        let reputations = Reputations(Vec::new(), Vec::new());
         let spells = Spells::empty_for_tests();
         let items = Items::default();
         let (tx, _rx) = crossbeam_channel::unbounded();
@@ -888,7 +896,10 @@ mod tests {
             1,
             d,
             &spells,
-            &ctx(store, &cooldowns, &reputations, &carried, &spell_mods),
+            &UsableCtx {
+                combo_points,
+                ..ctx(store, &cooldowns, &reputations, &carried, &spell_mods)
+            },
             &objects,
             &items,
             &commands,
@@ -1086,17 +1097,16 @@ mod tests {
         };
         assert_eq!(walk(&reagent, &alive), (false, false));
 
-        // Leg 5: Overpower's shape with no combo points (field 1222 byte 1).
+        // Leg 5: Overpower's shape with no combo points on the target.
         let overpower = SpellDisplay {
             attributes_ex: 0x4810_0200,
             ..Default::default()
         };
         assert!(overpower.needs_combo_points());
         assert_eq!(walk(&overpower, &alive), (false, false));
-        let dodged = player(&[(1222, 0x05_03_01_01)]);
-        assert_eq!(walk(&overpower, &dodged), (true, false));
-        // The neighbouring bytes are not combo points.
-        let ranked = player(&[(1222, 0x05_03_00_01)]);
+        assert_eq!(walk_with_combo(&overpower, &alive, 1), (true, false));
+        // `PLAYER_FIELD_BYTES` byte 1 is not combo points on 3.3.5a.
+        let ranked = player(&[(1222, 0x05_03_01_01)]);
         assert_eq!(walk(&overpower, &ranked), (false, false));
 
         // Leg 6: a cat-form spell out of form.
@@ -1165,7 +1175,7 @@ mod tests {
     fn target_aura_state_reads_the_current_target() {
         let me = player(&[]);
         let cooldowns = Cooldowns::default();
-        let reputations = Reputations(Vec::new());
+        let reputations = Reputations(Vec::new(), Vec::new());
         let spells = Spells::empty_for_tests();
         let items = Items::default();
         let (tx, _rx) = crossbeam_channel::unbounded();
@@ -1191,6 +1201,7 @@ mod tests {
                 carried: &carried,
                 spell_mods: &SpellModifiers::default(),
                 runes: None,
+                combo_points: 0,
             };
             assert_eq!(
                 spell_usable(5308, &execute, &spells, &ctx, &objects, &items, &commands),

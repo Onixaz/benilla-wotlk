@@ -16,9 +16,13 @@ use super::{AudioListener, SoundConfig, SoundOutput};
 /// The client's fixed dismount kit by SoundEntries `Name`, the constant at `0x8627bc`.
 const DISMOUNT_KIT: &str = "SpiritWolf (DONOTRENAME)";
 
-/// Play the dismount kit on any streamed unit's `UNIT_FIELD_MOUNTDISPLAYID` edge to zero. The edge
-/// stream skips creates, so streaming in unmounted is not a dismount.
+/// Play the dismount kit on any streamed unit's `UNIT_FIELD_MOUNTDISPLAYID` edge to zero, or at an
+/// `SMSG_DISMOUNT` drop, whose field edge then plays nothing: the drop already destroyed the mount.
+/// The edge stream skips creates, so streaming in unmounted is not a dismount.
+#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn dismount_sounds(
+    mut drops: MessageReader<crate::entities::MountDropped>,
+    mut dropped: Local<std::collections::HashSet<Entity>>,
     mut edges: MessageReader<FieldChanged>,
     poses: Query<&Transform>,
     kits: Option<ResMut<SoundKits>>,
@@ -31,14 +35,25 @@ fn dismount_sounds(
         return;
     };
     let listener = listener.pos;
+    let mut plays = Vec::new();
+    for d in drops.read() {
+        dropped.insert(d.entity);
+        plays.push((d.entity, d.display));
+    }
     for e in edges.read() {
-        if !e.unit_field(benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID) || e.new != 0 {
+        if !e.unit_field(benilla_protocol::field::FIELD_UNIT_MOUNTDISPLAYID) {
             continue;
         }
-        let Ok(transform) = poses.get(e.entity) else {
+        // Any move of the field ends the drop's stand-in, a remount included.
+        if !dropped.remove(&e.entity) && e.new == 0 {
+            plays.push((e.entity, e.old));
+        }
+    }
+    for (entity, old) in plays {
+        let Ok(transform) = poses.get(entity) else {
             continue;
         };
-        debug!("dismount kit on {:?} (was mount {})", e.entity, e.old);
+        debug!("dismount kit on {entity:?} (was mount {old})");
         if let Err(err) = play_kit(
             &mut kits,
             &assets,
@@ -56,5 +71,6 @@ fn dismount_sounds(
 
 /// Registration hook for [`super::SoundPlugin`].
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(Update, dismount_sounds.in_set(WorldStage::Present));
+    app.add_message::<crate::entities::MountDropped>()
+        .add_systems(Update, dismount_sounds.in_set(WorldStage::Present));
 }

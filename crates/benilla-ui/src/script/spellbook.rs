@@ -586,30 +586,70 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, ()| Ok((0.0, 0.0, 1i64)))?,
     )?;
 
-    // GetSpellCooldown(id, bookType) -> start, duration, enable in `GetTime` seconds, as
-    // `GetActionCooldown`: enable 0 for an on-hold cooldown; an expired or empty one answers the
-    // reference's no-cooldown `(0, 0, 1)`, so a re-feed cannot replay the finish flash.
+    // GetSpellCooldown (`0x540e80`) -> start, duration, enable in `GetTime` seconds, as
+    // `GetActionCooldown`: a lone number is a spell id, read from the pet's list when only the
+    // pet's book holds it; else a book slot or a name (`GetSlotFromLua` `0x540670`), and a name the
+    // book lacks returns nothing. Enable is 0 for an on-hold cooldown; an expired or empty one
+    // answers the no-cooldown `(0, 0, 1)`, so a re-feed cannot replay the finish flash. The VM
+    // holds cooldowns per book slot, so a spell id in neither book reads cold, where the reference
+    // asks its history.
     g.set(
         "GetSpellCooldown",
-        lua.create_function(|lua, (id, book_type): (Value, Value)| {
-            let (id, book_type) = spell_slot_args(id, book_type, "GetSpellCooldown")?;
+        lua.create_function(|lua, args: MultiValue| {
+            let by_id = args.len() == 1
+                && matches!(
+                    args.front(),
+                    Some(Value::Integer(_) | Value::Number(_) | Value::String(_))
+                )
+                && lua.coerce_number(args[0].clone())?.is_some();
+            let spell = if by_id {
+                let n = lua.coerce_number(args[0].clone())?.unwrap_or(0.0);
+                let id = super::binding_abi::ftol(n) as u32;
+                let model = lua
+                    .app_data_ref::<crate::script::ModelCell>()
+                    .expect("model app_data");
+                let in_book = |slots: &[SpellSlotView]| slots.iter().any(|s| s.spell_id == id);
+                let pet = !in_book(&model.spellbook.slots) && in_book(&model.pet_book.slots);
+                Some((id, pet))
+            } else {
+                // A slot past the book's spells reads spell 0, cold; only a name misses.
+                let slot = lua.coerce_number(args.front().cloned().unwrap_or(Value::Nil))?;
+                super::spell_info::spell_of(lua, &args, "GetSpellCooldown")?
+                    .or(slot.map(|_| (0, false)))
+            };
+            let Some((spell_id, pet)) = spell else {
+                return Ok(MultiValue::new());
+            };
             let now = crate::script::clock::now(lua);
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let cooldown = book_slot(&model, id, &book_type).and_then(|s| s.cooldown);
-            Ok(match cooldown {
+            let slots = if pet {
+                &model.pet_book.slots
+            } else {
+                &model.spellbook.slots
+            };
+            let cooldown = slots
+                .iter()
+                .find(|s| spell_id != 0 && s.spell_id == spell_id)
+                .and_then(|s| s.cooldown);
+            let (start, duration, enable) = match cooldown {
                 Some((start_ms, duration_ms, enabled)) => {
                     let (start, duration) =
                         (start_ms as f64 / 1000.0, f64::from(duration_ms) / 1000.0);
                     if start + duration > now || !enabled {
-                        (start, duration, i32::from(enabled))
+                        (start, duration, i64::from(enabled))
                     } else {
                         (0.0, 0.0, 1)
                     }
                 }
                 None => (0.0, 0.0, 1),
-            })
+            };
+            Ok(MultiValue::from_vec(vec![
+                Value::Number(start),
+                Value::Number(duration),
+                Value::Integer(enable),
+            ]))
         })?,
     )?;
 
@@ -1034,6 +1074,39 @@ mod tests {
             s.eval::<(f64, f64, i64)>("return GetSpellCooldown(99, BOOKTYPE_SPELL)")
                 .unwrap(),
             (0.0, 0.0, 1)
+        );
+    }
+
+    /// `0x540e80`: a lone number is a spell id, a string a book name; a name the book lacks
+    /// returns nothing.
+    #[test]
+    fn get_spell_cooldown_takes_a_spell_id_or_a_name() {
+        let mut s = UiScript::new().unwrap();
+        let mut b = book();
+        b.slots[0].cooldown = Some((14_000, 10_000, true));
+        s.set_spellbook(b);
+        s.tick(20.0);
+        assert_eq!(
+            s.eval::<(f64, f64, i64)>("return GetSpellCooldown(133)")
+                .unwrap(),
+            (14.0, 10.0, 1),
+            "Fireball's id, not slot 133"
+        );
+        assert_eq!(
+            s.eval::<(f64, f64, i64)>("return GetSpellCooldown('Fireball')")
+                .unwrap(),
+            (14.0, 10.0, 1)
+        );
+        assert_eq!(
+            s.eval::<(f64, f64, i64)>("return GetSpellCooldown(9999)")
+                .unwrap(),
+            (0.0, 0.0, 1),
+            "an id in no book reads cold"
+        );
+        assert_eq!(
+            s.eval::<i64>("return select('#', GetSpellCooldown('Nonesuch'))")
+                .unwrap(),
+            0
         );
     }
 

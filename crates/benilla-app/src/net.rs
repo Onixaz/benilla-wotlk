@@ -723,9 +723,19 @@ pub(crate) fn send_query_time(
 /// Our `(flags, standing)` per slot, indexed by `Faction.dbc`'s `reputationIndex`. The standing
 /// excludes the DBC race/class base, which consumers add before ranking. Filled by
 /// `SMSG_INITIALIZE_FACTIONS`, kept current by `SMSG_SET_FACTION_STANDING` (which also reveals)
-/// and `SMSG_SET_FACTION_VISIBLE`. Flag bit `0x08` marks a pane header.
+/// and `SMSG_SET_FACTION_VISIBLE`. Flag bit `0x08` marks a pane header. Then the `(faction,
+/// reaction)` list `SMSG_SET_FORCED_REACTIONS` replaces whole (`CGReputationInfo`'s forced
+/// reactions), emptied when the world is left (`CGReputationInfo::LeaveWorld` `0x5d24c0`).
 #[derive(Resource, Default)]
-pub(crate) struct Reputations(pub(crate) Vec<(u8, i32)>);
+pub(crate) struct Reputations(pub(crate) Vec<(u8, i32)>, pub(crate) Vec<(u32, u32)>);
+
+impl Reputations {
+    /// `CGReputationInfo::GetForcedReaction` (`0x5d06a0`): the first entry naming the
+    /// `Faction.dbc` faction.
+    pub(crate) fn forced_reaction(&self, faction: u32) -> Option<u32> {
+        self.1.iter().find(|&&(f, _)| f == faction).map(|&(_, r)| r)
+    }
+}
 
 /// The hearthstone bind point (`SMSG_BINDPOINTUPDATE`): the AreaTable id the tooltip's `$z`
 /// token names.
@@ -1055,6 +1065,10 @@ pub(crate) enum ClientCommand {
     WorldportAck,
     /// `CMSG_SET_SELECTION`; `guid == 0` clears.
     SetSelection {
+        guid: u64,
+    },
+    /// `CMSG_GET_MIRRORIMAGE_DATA`: ask for a clone's caster look.
+    GetMirrorImageData {
         guid: u64,
     },
     /// `CMSG_MESSAGECHAT`. A plain line, `.` GM commands included, goes as `Say`.

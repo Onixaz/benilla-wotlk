@@ -1284,3 +1284,22 @@ pub const SMSG_CALENDAR_CLEAR_PENDING_ACTION: u16 = 0x04BB; // 1211
 
 /// The group outside a battleground, sent while in one (`Packet_SMSG_REAL_GROUP_UPDATE` `0x6cc300`).
 pub const SMSG_REAL_GROUP_UPDATE: u16 = 0x0397; // 919
+
+/// A unit's power, set outright (`Packet_SMSG_POWER_UPDATE` `0x7236c0`).
+pub const SMSG_POWER_UPDATE: u16 = 0x0480; // 1152
+/// Our combo points and the unit they sit on (`CGGameUI::MessageHandler` `0x526530`).
+pub const SMSG_UPDATE_COMBO_POINTS: u16 = 0x039D; // 925
+/// The pet's combo points (`Packet_SMSG_PET_UPDATE_COMBO_POINTS` `0x5d36a0`).
+pub const SMSG_PET_UPDATE_COMBO_POINTS: u16 = 0x0492; // 1170
+/// One spell's cooldown moved by a signed delay (`0x804010`'s `0x491` arm).
+pub const SMSG_MODIFY_COOLDOWN: u16 = 0x0491; // 1169
+/// Drop the named target (`0x756800`'s `0x3bf` arm).
+pub const SMSG_CLEAR_TARGET: u16 = 0x03BF; // 959
+/// A unit dismounts now, ahead of its descriptor (`Packet_SMSG_DISMOUNT` `0x741a40`).
+pub const SMSG_DISMOUNT: u16 = 0x03AC; // 940
+/// Ask for a clone's caster look (`CGUnit_C::RequestMirrorImageData` `0x716f10`).
+pub const CMSG_GET_MIRRORIMAGE_DATA: u16 = 0x0401; // 1025
+/// A clone's caster look, the answer to [`CMSG_GET_MIRRORIMAGE_DATA`] (`0x7324b0`).
+pub const SMSG_MIRRORIMAGE_DATA: u16 = 0x0402; // 1026
+/// The faction reactions the server forces (`Packet_SMSG_SET_FORCED_REACTIONS` `0x5d15d0`).
+pub const SMSG_SET_FORCED_REACTIONS: u16 = 0x02A5; // 677

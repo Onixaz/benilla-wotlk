@@ -47,8 +47,17 @@ impl ObjectFields {
     pub fn unit_native_displayid(&self) -> Option<i32> {
         self.get_i32(FIELD_UNIT_NATIVEDISPLAYID)
     }
-    /// `UNIT_FIELD_MOUNTDISPLAYID`: the mount's `CreatureDisplayInfo` id, the only mounted signal.
+    /// `UNIT_FIELD_FLAGS_2` (`[unit+0xd0]+0xd8`); bit `0x10` makes the unit a clone whose look
+    /// comes from `SMSG_MIRRORIMAGE_DATA` (`CGUnit_C::InitializeComponent` `0x730100`).
+    pub fn unit_flags2(&self) -> u32 {
+        self.get_u32(FIELD_UNIT_FLAGS_2).unwrap_or(0)
+    }
+    /// `UNIT_FIELD_MOUNTDISPLAYID`: the mount's `CreatureDisplayInfo` id, the only mounted signal;
+    /// 0 once `SMSG_DISMOUNT` dropped it, until the field moves (`0x741a40`).
     pub fn unit_mount_display_id(&self) -> u32 {
+        if self.mount_dropped() {
+            return 0;
+        }
         self.get_u32(FIELD_UNIT_MOUNTDISPLAYID).unwrap_or(0)
     }
     /// `UNIT_FIELD_TARGET`: the guid this unit is attacking or interacting with.
@@ -260,8 +269,13 @@ impl ObjectFields {
     pub fn unit_shapeshift_form(&self) -> u8 {
         (self.get_u32(FIELD_UNIT_BYTES_2).unwrap_or(0) >> 24) as u8
     }
-    /// `UNIT_FIELD_POWER1..7`: current power of type `ty`, on the wire's raw scale (`0x71c2e0`).
+    /// `UNIT_FIELD_POWER1..7`: current power of type `ty`, on the wire's raw scale (`0x71c2e0`);
+    /// a predicted value `SMSG_POWER_UPDATE` set reads first, as `UnitPower` reads the client's
+    /// copy (`GetPredictedPower`).
     pub fn unit_power(&self, ty: u8) -> Option<u32> {
+        if let Some(predicted) = self.predicted_power(ty) {
+            return Some(predicted);
+        }
         match ty {
             0..5 => self.get_u32(FIELD_UNIT_POWER1 + u16::from(ty)),
             5..7 => self.get_u32(FIELD_UNIT_POWER6 + u16::from(ty - 5)),

@@ -405,11 +405,12 @@ pub(super) fn push_ring(
 /// The target's reaction toward our player as a rank `0..=6`, the direction every NPC colour
 /// uses (`0x605960` and `0x7cbaa0` ask `UnitReaction 0x6061e0` with the unit as `this`). When
 /// both carry `UNIT_FIELD_FLAGS` bit 3, a duel (`0x606296`) or mutual FFA decides first. Then
-/// `0x606530`: a faction with a reputation slot (`0x605fc0`) answers with our reputation rank
-/// (`0x4d63a0`), even in GM mode; any other goes to the template comparator (`0x606640`). Neutral
-/// when anything is missing. `0x606439` caps that answer at 6, so Revered and Exalted both read 6.
-/// Not applied: the party rung (`0x6062b0`), the contested guard, forced reactions and the summon
-/// tail.
+/// `0x606530`: a reaction the server forces on the target's faction answers first (`0x71f822`,
+/// `GetForcedReaction 0x5d06a0`); then a faction with a reputation slot (`0x605fc0`) answers with
+/// our reputation rank (`0x4d63a0`), even in GM mode; any other goes to the template comparator
+/// (`0x606640`). Neutral when anything is missing. `0x606439` caps that answer at 6, so Revered
+/// and Exalted both read 6. Not applied: the party rung (`0x6062b0`), the contested guard and the
+/// summon tail.
 pub(crate) fn ring_reaction(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -428,6 +429,12 @@ pub(crate) fn ring_reaction(
         let catalog = &factions?.0;
         let self_store = self_store?;
         let target_tpl = catalog.template(target_store?.0.unit_faction_template()?)?;
+        // A forced reaction, for a player-controlled viewer (`0x71f7d5`).
+        if self_store.0.unit_flags() & UNIT_FLAG_PVP_ATTACKABLE != 0 {
+            if let Some(forced) = reputations.forced_reaction(target_tpl.faction) {
+                return Some(u8::try_from(forced).unwrap_or(u8::MAX));
+            }
+        }
         // A reputation faction: our rank with it.
         if let Some(info) = catalog.reputation_faction(target_tpl.faction) {
             let standing = reputations
@@ -503,8 +510,9 @@ const PLAYER_FLAGS_NO_ATTACK: u32 = 0x8_0000;
 /// The local player's reaction toward a unit, `0x6061e0` with the player as `this`. This direction
 /// reaches leg 3 (`0x606372`), which answers a reputation faction by the at-war bit alone, never
 /// the standing, so a not-at-war neutral NPC is friendly here and neutral to [`ring_reaction`]: a
-/// friendly-category plate with a yellow bar. Not applied, each only ever making a unit
-/// friendlier: forced reactions (`0x4d6490`), the party rung and the charmed-player case.
+/// friendly-category plate with a yellow bar. A reaction the server forces on the target's faction
+/// answers ahead of it (`0x725439`). Not applied, each only ever making a unit friendlier: the
+/// party rung and the charmed-player case.
 pub(crate) fn reaction_from_player(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -523,6 +531,12 @@ pub(crate) fn reaction_from_player(
     let resolved = (|| {
         let catalog = &factions?.0;
         let target_tpl = catalog.template(target_store?.0.unit_faction_template()?)?;
+        // A forced reaction, for a player-controlled viewer; capped as every answer is (`0x7254cb`).
+        if self_store?.0.unit_flags() & UNIT_FLAG_PVP_ATTACKABLE != 0 {
+            if let Some(forced) = reputations.forced_reaction(target_tpl.faction) {
+                return Some(u8::try_from(forced.min(7)).unwrap_or(7));
+            }
+        }
         // Leg 3: a reputation faction answers by the at-war bit alone.
         if let Some(at_war) = at_war_with(catalog, reputations, target_tpl.faction) {
             return Some(if at_war {
@@ -835,6 +849,40 @@ mod tests {
         );
     }
 
+    /// A reaction forced on the target's faction answers both directions ahead of every other leg
+    /// for a player-controlled viewer, and not for one without the flag (`0x71f822`, `0x725439`).
+    #[test]
+    fn a_forced_reaction_answers_ahead_of_the_comparator() {
+        use crate::net::{ObjectStore, Reputations};
+        use benilla_protocol::ObjectFields;
+
+        let data = benilla_formats::wow_data_or_skip!();
+        let mut chain = benilla_formats::open_chain(&data).expect("open chain");
+        let factions = Factions(benilla_formats::load_faction_catalog(&mut chain).expect("dbc"));
+        // A Chicken, template 31: neutral by the comparator.
+        let chicken = ObjectStore(ObjectFields::from_pairs(&[(35, 31)]));
+        let me = ObjectStore(ObjectFields::from_pairs(&[
+            (35, 1),
+            (46, UNIT_FLAG_PVP_ATTACKABLE),
+        ]));
+        let faction = factions.0.template(31).expect("template 31").faction;
+        let forced = Reputations(Vec::new(), vec![(faction + 1, 4), (faction, 1)]);
+        let both = |reps: &Reputations, me: &ObjectStore| {
+            (
+                ring_reaction(Some(&factions), reps, Some(&chicken), Some(me)),
+                super::reaction_from_player(Some(&factions), reps, Some(&chicken), Some(me)),
+            )
+        };
+        assert_eq!(both(&Reputations::default(), &me), (3, 3));
+        assert_eq!(both(&forced, &me), (1, 1), "hostile by force");
+        let uncontrolled = ObjectStore(ObjectFields::from_pairs(&[(35, 1)]));
+        assert_eq!(
+            both(&forced, &uncontrolled),
+            (3, 3),
+            "no flag 0x8, no forced leg"
+        );
+    }
+
     /// The emissary's rank stays neutral, which paints its bar yellow, while its plate category is
     /// friendly: the two run the reaction in opposite directions.
     #[test]
@@ -880,7 +928,7 @@ mod tests {
         assert!(category(&goblin, &quiet), "Booty Bay: friendly, not at war");
         let mut slots = vec![(0u8, 0i32); 64];
         slots[1] = (benilla_formats::faction_flags::AT_WAR, 0); // Booty Bay = slot 1
-        let at_war = Reputations(slots);
+        let at_war = Reputations(slots, Vec::new());
         assert!(!category(&goblin, &at_war), "at war → enemy category");
         assert!(
             category(&emissary, &at_war),
@@ -956,7 +1004,7 @@ mod tests {
         let quiet = Reputations::default(); // nothing at war
         let mut slots = vec![(0u8, 0i32); 64];
         slots[36] = (benilla_formats::faction_flags::AT_WAR, 0); // Cenarion Circle = slot 36
-        let at_war = Reputations(slots);
+        let at_war = Reputations(slots, Vec::new());
 
         let attackable = |u: &ObjectStore, r: &Reputations| {
             can_attack_from_player(Some(&factions), r, Some(u), Some(&me), false)

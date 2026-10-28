@@ -344,6 +344,44 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::ClearCooldown { spell_id, caster }]
         }
         ServerPacket::CooldownCheat { caster } => vec![SessionEvent::CooldownCheat { caster }],
+        ServerPacket::ModifyCooldown {
+            spell_id,
+            caster,
+            delay_ms,
+        } => vec![SessionEvent::ModifyCooldown {
+            spell_id,
+            caster,
+            delay_ms,
+        }],
+        ServerPacket::PowerUpdate {
+            guid,
+            power_type,
+            value,
+        } => vec![SessionEvent::PowerUpdate {
+            guid,
+            power_type,
+            value,
+        }],
+        ServerPacket::ComboPoints { target, points } => {
+            vec![SessionEvent::ComboPoints { target, points }]
+        }
+        ServerPacket::PetComboPoints {
+            pet,
+            target,
+            points,
+        } => vec![SessionEvent::PetComboPoints {
+            pet,
+            target,
+            points,
+        }],
+        ServerPacket::ClearTarget { guid } => vec![SessionEvent::ClearTarget { guid }],
+        ServerPacket::Dismount { guid } => vec![SessionEvent::Dismount { guid }],
+        ServerPacket::MirrorImageData { guid, image } => {
+            vec![SessionEvent::MirrorImageData { guid, image }]
+        }
+        ServerPacket::ForcedReactions { reactions } => {
+            vec![SessionEvent::ForcedReactions { reactions }]
+        }
         ServerPacket::ChannelStart {
             caster,
             spell_id,

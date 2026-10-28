@@ -49,9 +49,11 @@ mod item_glow;
 pub(crate) use item_glow::ItemGlowAttached;
 use item_glow::{attach_item_glows, ItemGlows};
 
+mod mirror_image;
 /// Mounts: a second creature visual the rider's model is re-parented onto, never rebuilt.
 pub(crate) mod mount;
 use mount::reseat_mounts;
+pub(crate) use mount::MountDropped;
 
 /// The corpse object, drawn as the dressed body or, once it turns to bones, a skeleton prop.
 pub(crate) mod corpse;
@@ -597,6 +599,9 @@ pub(crate) struct EntitiesPlugin;
 
 impl Plugin for EntitiesPlugin {
     fn build(&self, app: &mut App) {
+        app.add_message::<mount::MountDropped>();
+        mount::register(app);
+        mirror_image::register(app);
         app.add_systems(
             Update,
             publish_world_units
@@ -691,7 +696,8 @@ impl Plugin for EntitiesPlugin {
                 (attach::redress_player_looks, corpse::pose_corpses),
                 // A mount change re-seats the rig on the mount's attachment 0 or back, as the
                 // reference re-parents the body model (`0x712f70`, `0x713020`).
-                reseat_mounts,
+                // A clone asks for its caster's look once its model is in.
+                (reseat_mounts, mirror_image::request_mirror_images).chain(),
                 // A display swap rebuilds, a scale change eases over the reference's 2 s, and a
                 // unit denied a palette rig rebuilds once the table has room.
                 (

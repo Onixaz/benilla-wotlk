@@ -259,7 +259,7 @@ mod tests {
             target_owner_store: None,
             self_store: Some(&me),
             factions: Some(&factions),
-            reputations: &Reputations(Vec::new()),
+            reputations: &Reputations(Vec::new(), Vec::new()),
             types: Default::default(),
             group: Default::default(),
         };
@@ -363,7 +363,7 @@ mod tests {
             target_owner_store: None,
             self_store: Some(&me),
             factions: Some(&factions),
-            reputations: &Reputations(Vec::new()),
+            reputations: &Reputations(Vec::new(), Vec::new()),
             types: Default::default(),
             group: Default::default(),
         };
@@ -445,7 +445,7 @@ mod tests {
         world.init_resource::<GroupRoster>();
         world.init_resource::<SpellTargeting>();
         world.insert_resource(fx::factions());
-        world.insert_resource(Reputations(Vec::new()));
+        world.insert_resource(Reputations(Vec::new(), Vec::new()));
         world.init_resource::<GuidIndex>();
         world.init_resource::<crate::ui_party::GroupState>();
         world.insert_resource(SelfGuid(Some(1)));

@@ -16,7 +16,8 @@ use benilla_ui::script::{
 use crate::creature_type::CreatureTypeSources;
 use crate::names::NameCache;
 use crate::net::{
-    FieldChanged, FieldEdges, Guid, NetCommands, ObjectStore, Reputations, SelfPlayer,
+    FieldChanged, FieldEdges, Guid, NetCommands, NetHandlerApp, ObjectStore, Reputations,
+    SelfPlayer,
 };
 use crate::target::{ring_reaction, Factions, Selection};
 use crate::ui_script::{gate, UiInput};
@@ -112,8 +113,6 @@ struct UnitFeedMemo {
     last_rest: Option<(u8, u32, u32)>,
     /// Our last level; the first sighting is the login descriptor, not a ding.
     last_level: Option<u32>,
-    /// `(count, banked target)`, diffed as a pair because the server writes them as one.
-    last_combo: Option<(u8, u64)>,
     /// Our last in-combat flag; first sight fires only when already in combat.
     in_combat: Option<bool>,
     /// Our last PvP-preference bit; the first descriptor is silent, as the reference diffs bits.
@@ -167,7 +166,19 @@ impl Plugin for UiUnitPlugin {
                 .chain()
                 .in_set(UnitFeed),
         )
+        // After the unit snapshots and the resolver's guids, which its handlers read.
+        .add_systems(
+            Update,
+            feed_combo_points
+                .in_set(UnitFeed)
+                .after(feed_units)
+                .after(crate::ui_aura::AuraEvents),
+        )
         .add_systems(Update, drain_pvp_toggles.after(UiInput))
+        .net_handler(
+            benilla_protocol::SessionEventKind::PowerUpdate,
+            on_power_update,
+        )
         .add_systems(Update, drain_worn_display_toggles.after(UiInput))
         .add_systems(Update, drain_action_bar_toggles.after(UiInput))
         .add_systems(Update, feed_default_language.in_set(UnitFeed))
@@ -1609,7 +1620,6 @@ fn feed_units(
         memo.last_xp = None;
         memo.last_rest = None;
         memo.last_level = None;
-        memo.last_combo = None;
         memo.in_combat = None;
         memo.pvp_desired = None;
         // Edge-only pushes: a stale memo would skip a new character whose values match it.
@@ -1710,30 +1720,73 @@ fn feed_units(
             script.set_worn_display(!hidden.0, !hidden.1);
         }
     }
+}
 
-    // The combo count and its banked target, pushed as a pair since `GetComboPoints` reads both;
-    // only the count fires `PLAYER_COMBO_POINTS` (`0x5ddff0`).
-    if let Some((store, _)) = self_q.iter().next() {
-        let banked = (
-            store.0.player_combo_points().unwrap_or(0),
-            store.0.player_combo_target(),
-        );
-        if let Some(fire) = combo_edge(memo.last_combo, banked) {
-            gate.audit("feed_units", "the combo-point edge");
-            memo.last_combo = Some(banked);
-            script.set_combo_points(banked.0, banked.1);
-            if fire {
-                script.fire_event("PLAYER_COMBO_POINTS", vec![]);
-            }
+/// The combo banks into the VM, then `UNIT_COMBO_POINTS` once per packet, changed or not, to every
+/// token naming the bank's unit: ours (`0x519780`) and the pet's (`0x5d34b0`), each through
+/// `Script_SendUnitSignal` (`0x60bf10`); the pet's packet then fires `PET_BAR_UPDATE_USABLE`
+/// (`0x5d3507`). A fresh VM takes the banks silently.
+fn feed_combo_points(
+    script: Option<NonSendMut<UiScript>>,
+    combo: Option<Res<crate::spell::ComboPoints>>,
+    self_guid: Option<Res<crate::net::SelfGuid>>,
+    pet_bar: Option<Res<crate::ui_pet::PetBar>>,
+    mut memo: Local<crate::ui_script::VmMemo<Option<(u64, u64)>>>,
+) {
+    let (Some(mut script), Some(combo)) = (script, combo) else {
+        return;
+    };
+    let memo = memo.get(&script);
+    let epochs = (combo.player_epoch, combo.pet_epoch);
+    if *memo == Some(epochs) {
+        return;
+    }
+    let fire = memo.map(|(player, pet)| (player != epochs.0, pet != epochs.1));
+    *memo = Some(epochs);
+    script.set_combo_points(combo.player.points, combo.player.target);
+    script.set_pet_combo_points(combo.pet.points, combo.pet.target);
+    let Some((player_moved, pet_moved)) = fire else {
+        return;
+    };
+    if player_moved {
+        if let Some(me) = self_guid.and_then(|g| g.0) {
+            script.fire_unit_event(me, "UNIT_COMBO_POINTS", vec![]);
         }
+    }
+    if pet_moved {
+        if let Some(pet) = pet_bar.as_deref().map(|b| b.spells.pet_guid) {
+            script.fire_unit_event(pet, "UNIT_COMBO_POINTS", vec![]);
+        }
+        script.fire_event("PET_BAR_UPDATE_USABLE", vec![]);
     }
 }
 
-/// The combo feed's edge: `None` when nothing moved, else whether `PLAYER_COMBO_POINTS` fires.
-/// Event 202 is a one-byte watch on the count (`+0x1029`, registered at `0x5dd9d9`) with no value
-/// test, so the drop to zero fires; the target has no watch, so a same-count re-bank is silent.
-fn combo_edge(last: Option<(u8, u64)>, now: (u8, u64)) -> Option<bool> {
-    (last != Some(now)).then(|| last.map(|(count, _)| count) != Some(now.0))
+/// `SMSG_POWER_UPDATE` (`0x7236c0`): the unit's predicted power, which `UnitPower` reads until the
+/// field moves ([`benilla_protocol::ObjectFields::set_predicted_power`]). The reference signals
+/// `UNIT_<POWER>` from here only at the maximum (`0x722ca9`); the feed's diff fires on any move.
+fn on_power_update(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    index: Res<crate::net::GuidIndex>,
+    mut stores: Query<&mut ObjectStore>,
+) {
+    let benilla_protocol::SessionEvent::PowerUpdate {
+        guid,
+        power_type,
+        value,
+    } = ev
+    else {
+        return;
+    };
+    let Some(mut store) = index.0.get(&guid).and_then(|&e| stores.get_mut(e).ok()) else {
+        return;
+    };
+    if store
+        .bypass_change_detection()
+        .0
+        .set_predicted_power(power_type, value)
+    {
+        store.set_changed();
+    }
 }
 
 /// The bare unit feed, for a test driving the stock unit frames off engine state.
@@ -3222,35 +3275,6 @@ mod tests {
         );
     }
 
-    /// Either half moving pushes; only the count, the one byte the client watches, fires.
-    #[test]
-    fn only_the_count_fires_the_combo_event() {
-        const A: u64 = 0xF130_0000_0000_0001;
-        const B: u64 = 0xF130_0000_0000_0002;
-
-        assert_eq!(combo_edge(Some((1, A)), (1, A)), None, "nothing moved");
-        assert_eq!(
-            combo_edge(Some((1, A)), (2, A)),
-            Some(true),
-            "a builder lands: push and speak"
-        );
-        assert_eq!(
-            combo_edge(Some((5, A)), (0, 0)),
-            Some(true),
-            "the clear speaks too — the falling edge is what hides the dots"
-        );
-        assert_eq!(
-            combo_edge(Some((1, A)), (1, B)),
-            Some(false),
-            "re-banked onto another unit at the same count: pushed, but silent like the client"
-        );
-        assert_eq!(
-            combo_edge(None, (0, 0)),
-            Some(true),
-            "first sight announces once, as the descriptor block's first write does"
-        );
-    }
-
     /// `UNIT_DYNFLAG_DEAD` alone makes empty bars over real maxima, through `snapshot`'s wiring.
     #[test]
     fn a_feigning_unit_snapshots_empty_bars_over_a_real_maximum() {
@@ -3852,5 +3876,103 @@ mod tests {
         app.world_mut().write_message(port(true));
         app.update();
         assert_eq!(left(&mut app), 2, "the next world's departure fires again");
+    }
+
+    /// Every combo packet fires `UNIT_COMBO_POINTS` to the tokens naming its unit, an unchanged
+    /// bank too, and the pet's adds `PET_BAR_UPDATE_USABLE`; a fresh VM takes the banks silently
+    /// (`0x519780`, `0x5d34b0`).
+    #[test]
+    fn each_combo_packet_fires_unit_combo_points_to_its_unit() {
+        const ME: u64 = 0x7;
+        const PET: u64 = 0xF140_0000_0000_0001;
+        const MOB: u64 = 0xF130_0000_0000_0009;
+        let mut world = World::new();
+        world.insert_resource(crate::net::SelfGuid(Some(ME)));
+        world.init_resource::<crate::spell::ComboPoints>();
+        let mut bar = crate::ui_pet::PetBar::default();
+        bar.spells.pet_guid = PET;
+        world.insert_resource(bar);
+        let mut s = UiScript::new().unwrap();
+        s.set_unit_guids(&benilla_ui::script::UnitGuids {
+            player: ME,
+            pet: PET,
+            ..Default::default()
+        });
+        s.run(
+            r#"
+            SEEN = {}
+            local f = CreateFrame("Frame")
+            f:RegisterEvent("UNIT_COMBO_POINTS")
+            f:RegisterEvent("PET_BAR_UPDATE_USABLE")
+            f:SetScript("OnEvent", function(self, event, unit) table.insert(SEEN, event .. ":" .. tostring(unit)) end)
+        "#,
+        )
+        .unwrap();
+        world.insert_non_send_resource(s);
+        // One registered system, so its memo outlives each run as the app's does.
+        let feed = world.register_system(feed_combo_points);
+        let bank = |world: &mut World, pet: bool, points: u8| {
+            let mut c = world.resource_mut::<crate::spell::ComboPoints>();
+            let banked = crate::spell::combo::Banked {
+                target: MOB,
+                points,
+            };
+            if pet {
+                c.pet = banked;
+                c.pet_epoch += 1;
+            } else {
+                c.player = banked;
+                c.player_epoch += 1;
+            }
+        };
+        let seen = |world: &mut World| -> Vec<String> {
+            world.run_system(feed).unwrap();
+            let s = world.non_send_resource_mut::<UiScript>();
+            let out = s.eval::<Vec<String>>("return SEEN").unwrap();
+            s.run("SEEN = {}").unwrap();
+            out
+        };
+
+        bank(&mut world, false, 2);
+        assert!(
+            seen(&mut world).is_empty(),
+            "a fresh VM takes the bank silently"
+        );
+        let points = |world: &mut World, unit: &str| -> i64 {
+            world
+                .non_send_resource_mut::<UiScript>()
+                .eval(&format!("return GetComboPoints('{unit}', 'target')"))
+                .unwrap()
+        };
+        world
+            .non_send_resource_mut::<UiScript>()
+            .set_player_req_state(benilla_ui::script::PlayerReqState {
+                class_id: 4,
+                ..Default::default()
+            });
+        world.non_send_resource_mut::<UiScript>().set_unit(
+            "target",
+            Some(UnitState {
+                exists: true,
+                guid: MOB,
+                ..Default::default()
+            }),
+        );
+        assert_eq!(points(&mut world, "player"), 2);
+
+        bank(&mut world, false, 2);
+        assert_eq!(
+            seen(&mut world),
+            ["UNIT_COMBO_POINTS:player"],
+            "unchanged still fires"
+        );
+        assert!(seen(&mut world).is_empty(), "no packet, no event");
+
+        bank(&mut world, true, 1);
+        assert_eq!(
+            seen(&mut world),
+            ["UNIT_COMBO_POINTS:pet", "PET_BAR_UPDATE_USABLE:nil"]
+        );
+        assert_eq!(points(&mut world, "pet"), 1);
     }
 }

@@ -17,6 +17,50 @@ use bevy::prelude::*;
 use crate::net::{NetEntity, ObjectStore};
 use benilla_world::rig_anim::RigPose;
 
+/// A mount `SMSG_DISMOUNT` dropped ahead of its field: the dismount sound plays at the drop, and
+/// not again when the field follows.
+#[derive(bevy::ecs::message::Message, Clone, Copy, Debug)]
+pub(crate) struct MountDropped {
+    pub(crate) entity: Entity,
+    pub(crate) display: u32,
+}
+
+/// Registers the `SMSG_DISMOUNT` handler.
+pub(super) fn register(app: &mut App) {
+    use crate::net::NetHandlerApp;
+    app.net_handler(benilla_protocol::SessionEventKind::Dismount, on_dismount);
+}
+
+/// `SMSG_DISMOUNT` (`0x741a40`): the unit's own mount copy (`[unit+0x9c0]`) goes to 0 now, so
+/// [`reseat_mounts`] tears the mount down this frame, ahead of the descriptor. A unit with no
+/// mount is left alone (`0x741a76`). The vehicle leg that keeps a mount carrying passengers
+/// (`0x741a7f`) is not built: benilla seats no passengers.
+fn on_dismount(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    index: Res<crate::net::GuidIndex>,
+    mut stores: Query<&mut ObjectStore>,
+    mut dropped: MessageWriter<MountDropped>,
+) {
+    let benilla_protocol::SessionEvent::Dismount { guid } = ev else {
+        return;
+    };
+    let Some(&entity) = index.0.get(&guid) else {
+        return;
+    };
+    let Ok(mut store) = stores.get_mut(entity) else {
+        return;
+    };
+    let mount = store.0.unit_mount_display_id();
+    if store.bypass_change_detection().0.drop_mount() {
+        store.set_changed();
+        debug!("net: dismount {guid:#x} ahead of its field (mount {mount})");
+        dropped.write(MountDropped {
+            entity,
+            display: mount,
+        });
+    }
+}
+
 /// The mount child, the client's `unit+0xdc` second model.
 #[derive(Component)]
 pub(crate) struct MountBody {

@@ -279,6 +279,7 @@ pub(crate) struct TargetPlugin;
 impl Plugin for TargetPlugin {
     fn build(&self, app: &mut App) {
         app.add_observer(on_cvar);
+        click::register_clear_target(app);
         app.init_resource::<Selection>()
             .init_resource::<ClickConfig>()
             .init_resource::<AssistAttack>()

@@ -663,7 +663,10 @@ fn demo_unit_feed(script: Option<NonSendMut<UiScript>>, mut fired: Local<VmMemo<
             ..Default::default()
         });
         script.set_combo_points(4, DEMO_TARGET_GUID);
-        script.fire_event("PLAYER_COMBO_POINTS", vec![]);
+        script.fire_event(
+            "UNIT_COMBO_POINTS",
+            vec![benilla_ui::script::ScriptValue::Str("player".into())],
+        );
     }
     if !*fired {
         // Battle-stance page slots (actions 73..); slot 80 is a consumable stack of 5, since stock

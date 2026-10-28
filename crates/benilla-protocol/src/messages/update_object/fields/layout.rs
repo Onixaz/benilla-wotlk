@@ -70,6 +70,7 @@ pub enum Field {
     /// A creature's weapon display ids.
     UnitVirtualItemDisplay,
     UnitFlags,
+    UnitFlags2,
     UnitAura,
     UnitAuraFlags,
     UnitAuraLevels,
@@ -394,6 +395,8 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         // 3.3.5a's runes and runic power, in 1.12.1's `UNIT_VIRTUAL_ITEM_INFO`, which it lacks.
         run(F::UnitRunePower, Unit, 40, 2),
         run(F::UnitMaxRunePower, Unit, 42, 2),
+        // 3.3.5a's second flags word, in the tail of the same 1.12.1 run.
+        one(F::UnitFlags2, Unit, 44),
         one(F::UnitFlags, Unit, 46),
         run(F::UnitAura, Unit, 47, 48),
         run(F::UnitAuraFlags, Unit, 95, 6),
@@ -620,6 +623,7 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         one(F::UnitLevel, Unit, 54),
         one(F::UnitFactionTemplate, Unit, 55),
         one(F::UnitFlags, Unit, 59),
+        one(F::UnitFlags2, Unit, 60),
         one(F::UnitAuraState, Unit, 61),
         run(F::UnitBaseAttackTime, Unit, 62, 2),
         one(F::UnitRangedAttackTime, Unit, 64),

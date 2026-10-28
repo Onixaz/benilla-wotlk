@@ -533,18 +533,6 @@ impl ObjectFields {
     pub fn player_release_timer_running(&self) -> bool {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES).unwrap_or(0) & 0x08 != 0
     }
-    /// `PLAYER_FIELD_BYTES` byte 1 (private): combo points, 0-5, read at `[player+0xe68]+0x1029`.
-    /// vmangos also sets one when a warrior's target dodges (the 4 s Overpower window): the usable
-    /// check reads it for any class, `GetComboPoints` (`0x51a190`) only for rogues and druids.
-    pub fn player_combo_points(&self) -> Option<u8> {
-        self.get_u32(FIELD_PLAYER_FIELD_BYTES)
-            .map(|b| ((b >> 8) & 0xff) as u8)
-    }
-    /// `PLAYER_FIELD_COMBO_TARGET` (field 714, guid, private): the unit the combo points sit on;
-    /// `GetComboPoints` shows 0 unless it is the current target (`0xb4e2d8`).
-    pub fn player_combo_target(&self) -> u64 {
-        self.get_guid(FIELD_PLAYER_FIELD_COMBO_TARGET).unwrap_or(0)
-    }
     /// `PLAYER_FIELD_BYTES` byte 2 (private, field 1222): the four extra action bars' toggles,
     /// bits `0x01..0x08` (`Player.h:360-363`), read by `GetActionBarToggles` (`0x4e7660`) at
     /// `[[player+0xe68]+0x102a]`. The client never writes it and no event fires when it moves.

@@ -1390,6 +1390,46 @@ pub enum ServerPacket {
         /// One status per record, in arrival order.
         statuses: Vec<u8>,
     },
+    /// `SMSG_POWER_UPDATE`: a unit's power of one type, set outright.
+    PowerUpdate {
+        guid: u64,
+        power_type: u8,
+        value: u32,
+    },
+    /// `SMSG_UPDATE_COMBO_POINTS`: our combo points and the unit they sit on.
+    ComboPoints {
+        target: u64,
+        points: u8,
+    },
+    /// `SMSG_PET_UPDATE_COMBO_POINTS`: a pet's combo points and the unit they sit on.
+    PetComboPoints {
+        pet: u64,
+        target: u64,
+        points: u8,
+    },
+    /// `SMSG_MODIFY_COOLDOWN`: shift one spell's cooldown by a signed delay.
+    ModifyCooldown {
+        spell_id: u32,
+        caster: u64,
+        delay_ms: i32,
+    },
+    /// `SMSG_CLEAR_TARGET`: drop the target when it is this unit.
+    ClearTarget {
+        guid: u64,
+    },
+    /// `SMSG_DISMOUNT`: the unit dismounts now.
+    Dismount {
+        guid: u64,
+    },
+    /// `SMSG_MIRRORIMAGE_DATA`: a clone's caster look.
+    MirrorImageData {
+        guid: u64,
+        image: super::MirrorImage,
+    },
+    /// `SMSG_SET_FORCED_REACTIONS`: the whole forced `(faction, reaction)` list.
+    ForcedReactions {
+        reactions: Vec<(u32, u32)>,
+    },
     Other {
         opcode: u16,
     },
@@ -1580,6 +1620,14 @@ impl ServerPacket {
             ServerPacket::CooldownEvent { .. } => "SMSG_COOLDOWN_EVENT".into(),
             ServerPacket::ClearCooldown { .. } => "SMSG_CLEAR_COOLDOWN".into(),
             ServerPacket::CooldownCheat { .. } => "SMSG_COOLDOWN_CHEAT".into(),
+            ServerPacket::PowerUpdate { .. } => "SMSG_POWER_UPDATE".into(),
+            ServerPacket::ComboPoints { .. } => "SMSG_UPDATE_COMBO_POINTS".into(),
+            ServerPacket::PetComboPoints { .. } => "SMSG_PET_UPDATE_COMBO_POINTS".into(),
+            ServerPacket::ModifyCooldown { .. } => "SMSG_MODIFY_COOLDOWN".into(),
+            ServerPacket::ClearTarget { .. } => "SMSG_CLEAR_TARGET".into(),
+            ServerPacket::Dismount { .. } => "SMSG_DISMOUNT".into(),
+            ServerPacket::MirrorImageData { .. } => "SMSG_MIRRORIMAGE_DATA".into(),
+            ServerPacket::ForcedReactions { .. } => "SMSG_SET_FORCED_REACTIONS".into(),
             ServerPacket::ChannelStart { .. } => "MSG_CHANNEL_START".into(),
             ServerPacket::ChannelUpdate { .. } => "MSG_CHANNEL_UPDATE".into(),
             ServerPacket::AuraUpdate(u) if u.all => "SMSG_AURA_UPDATE_ALL".into(),
