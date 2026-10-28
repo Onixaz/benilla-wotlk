@@ -7,10 +7,11 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use super::{
-    move_trace, Player, CAPSULE_HEIGHT, FEATHER_TERMINAL_VELOCITY, FOOT_CONE_HEIGHT, GRAVITY,
-    GROUND_COS, GROUND_PROBE, HOVER_CLIMB_RATE, HOVER_HEIGHT, JUMP_SPEED, LAND_PROBE, SKIN_WIDTH,
-    STEP_SLOPE_RATIO, STEP_SNAP_SLACK, STEP_UP_ADVANCE_PER_YARD, STEP_UP_HEIGHT, TERMINAL_VELOCITY,
-    WATER_WALK_PITCH_FLOOR, WEDGE_MIN_FALL, WEDGE_STALL_RATIO, WEDGE_STILL_FRAMES,
+    move_trace, Player, CAPSULE_HEIGHT, CAPSULE_RADIUS, FEATHER_TERMINAL_VELOCITY,
+    FOOT_CONE_HEIGHT, GRAVITY, GROUND_COS, GROUND_PROBE, HOVER_CLIMB_RATE, HOVER_HEIGHT,
+    JUMP_SPEED, LAND_PROBE, SKIN_WIDTH, STEP_SLOPE_RATIO, STEP_SNAP_SLACK,
+    STEP_UP_ADVANCE_PER_YARD, STEP_UP_HEIGHT, TERMINAL_VELOCITY, WATER_WALK_PITCH_FLOOR,
+    WEDGE_MIN_FALL, WEDGE_STALL_RATIO, WEDGE_STILL_FRAMES,
 };
 
 /// The trace-mask arm `0x6315f0` as a predicate: the liquid surface [`step`] may stand on this
@@ -238,6 +239,7 @@ pub(super) fn step(
                 offset: hover_offset,
                 water: water_floor,
                 steep: player.steep_support,
+                step_start: player.step_start,
             },
         );
         // Only this mover has a fall to elect, so it spends the no-floor drop (`pos.z -= achieved`
@@ -257,6 +259,7 @@ pub(super) fn step(
         climb = g.climb;
         snap_probe = g.snap;
         player.steep_support = g.steep_support;
+        player.step_start = g.step_start;
         if let Some(e) = g.ground {
             ground_entity = Some(e);
         }
@@ -268,6 +271,7 @@ pub(super) fn step(
         };
         center = airborne_step(world, capsule, center, velocity, time.delta());
         player.steep_support = false;
+        player.step_start = None;
     }
     // The wedge rest: falling, yet achieving under [`WEDGE_STALL_RATIO`] of gravity's intent for
     // [`WEDGE_STILL_FRAMES`] frames, is a capsule pinched between steep faces with no way down
@@ -398,9 +402,9 @@ pub(super) fn buried_floor_lift(
 /// The body facts [`grounded_step`] cannot work out for itself, passed in by its caller.
 #[derive(Clone, Copy)]
 pub(crate) struct Support {
-    /// The rise budget, the reference's `H` (`0x617430`), which also scales the certify reach:
-    /// [`STEP_UP_HEIGHT`] for a player body, [`super::CREATURE_STEP_UP_HEIGHT`] for a creature
-    /// (`0x5fa550`'s false leg).
+    /// The rise budget, the reference's `H` (`GetStepUpHeight` `0x6e8fc0`), which also scales the
+    /// certify reach: [`STEP_UP_HEIGHT`] for a player body, [`super::CREATURE_STEP_UP_HEIGHT`] for
+    /// a unit no client controls.
     pub(crate) rise: f32,
     /// How far above the floor the body rests: [`super::HOVER_HEIGHT`] while hovering, else 0.
     pub(crate) offset: f32,
@@ -411,6 +415,10 @@ pub(crate) struct Support {
     /// The support entering the frame is a certified steep contact, the reference's `0x4000000`,
     /// which opens the step-down's deep reach.
     pub(crate) steep: bool,
+    /// The feet height a climb in progress began at, the reference's `stepUpStartZ` (`+0x88`,
+    /// written at `0x7620c9`): the climb never ends more than [`Self::rise`] above it
+    /// (`GetRemainingStepUpHeight` `0x6e9520`). `None` when not climbing.
+    pub(crate) step_start: Option<f32>,
 }
 
 impl Default for Support {
@@ -421,6 +429,7 @@ impl Default for Support {
             offset: 0.0,
             water: None,
             steep: false,
+            step_start: None,
         }
     }
 }
@@ -431,8 +440,10 @@ pub(crate) struct GroundedStep {
     pub(crate) center: Vec3,
     /// The walkable floor's collider the snap settled onto; `None` keeps what the caller believed.
     pub(crate) ground: Option<Entity>,
-    /// The height (yd) this frame's pop or cone ride gained.
+    /// The height (yd) this frame's climb or cone ride gained.
     pub(crate) climb: Option<f32>,
+    /// The climb's start height to carry into the next frame's [`Support::step_start`].
+    pub(crate) step_start: Option<f32>,
     /// On a certified steep contact, the reference's `0x4000000`: riding a cone up, or following a
     /// surface down off a ledge. The caller keeps it grounded until a walkable floor takes over.
     pub(crate) steep_support: bool,
@@ -446,10 +457,9 @@ pub(crate) struct GroundedStep {
 }
 
 /// One grounded walk step against the world: step-up, slide, then the step-down snap. The
-/// reference runs every mover through one controller (`0x616620`, whose local-player compare at
-/// `0x6166a9` gates only a timing budget) and reads a grounded mover's Z off the surface
-/// (`0x633840`, `0x6367b0`), so our mover, the remote dead-reckon and the creature path clamp all
-/// walk through here; airborne and swimming frames do not.
+/// reference walks every grounded mover through one surface trace (`TraceSurface` `0x7620f0`,
+/// under `CollideRequestMove` `0x762e00`), so our mover, the remote dead-reckon and the creature
+/// path clamp all walk through here; airborne and swimming frames do not.
 pub(crate) fn grounded_step(
     world: &benilla_world::collision::WorldCollision<'_, '_>,
     capsule: &Collider,
@@ -460,18 +470,30 @@ pub(crate) fn grounded_step(
 ) -> GroundedStep {
     let surface_offset = support.offset;
     let cast = |from: Vec3, disp: Vec3| world.cast_mover(capsule, from, disp, SKIN_WIDTH);
+    let floor = |from: Vec3, len: f32| {
+        world
+            .ray_body(from, Dir3::NEG_Y, len)
+            .map(|h| (h.distance, h.normal.y))
+    };
+    let feet = center.y - CAPSULE_HEIGHT * 0.5;
     let speed = horiz_vel.length();
+    let travel = speed * dt.as_secs_f32();
+    // `GetRemainingStepUpHeight` (`0x6e9520`): the rise budget less what the climb in progress has
+    // already gained.
+    let remaining = support
+        .step_start
+        .map_or(support.rise, |s| (support.rise - (feet - s)).max(0.0));
     let attempt = if speed > 1.0e-6 {
-        let travel = speed * dt.as_secs_f32();
-        // The look-ahead is this frame's travel; the advance is the body's certify reach,
-        // `rise · tan 50°`, or the travel when a long frame covers more.
+        // The look-ahead is this frame's travel; the advance is the certify reach
+        // `H · 1.1917536` (`0x761c6b`), or the travel when a long frame covers more.
         step_up(
             &cast,
+            &floor,
             center,
             horiz_vel / speed,
             travel,
             travel.max(support.rise * STEP_UP_ADVANCE_PER_YARD),
-            support.rise,
+            remaining,
         )
     } else {
         StepAttempt {
@@ -498,10 +520,10 @@ pub(crate) fn grounded_step(
             );
         }
     }
-    // The regime (`0x631be0`, `0x635c00`): the reference's solid is a cone below
+    // The regime (`BuildCollisionVolume` `0x75ca80`): the reference's solid is a cone below
     // [`FOOT_CONE_HEIGHT`] and a box above it, so a certified obstacle whose blocking edge sits
-    // inside the cone is ridden up the 61.6° skirt, and one above it pops. The certification is
-    // the gate, since a wall's capsule contact also sits in the band; and the edge is measured,
+    // inside the cone is ridden up the 61.6° skirt, and one above it is climbed. The certification
+    // is the gate, since a wall's capsule contact also sits in the band; and the edge is measured,
     // not the certified rise, which grows with the advance.
     let ride_to = match (attempt.verdict, attempt.contact) {
         (StepVerdict::Commit { landed, .. }, Some((p, _)))
@@ -511,16 +533,37 @@ pub(crate) fn grounded_step(
         }
         _ => None,
     };
-    // The pop is a rise in place, never a lunge: the reference's certify distance is only a sweep
-    // length (`ebx` at `0x636193`, fed to `0x632ba0` alone), its walk resolver writes position
-    // only relatively (`0x6367b0`-`0x637140`), and the certified arm rises `(0, 0, H)`
-    // (`0x635d5b`) before `0x63694d` resumes the heading. The snap then reaches past the rise, as
-    // the reference keeps `0x4000000` set until its settle has sized the probe (`0x636edf`).
-    let popped = match attempt.verdict {
-        StepVerdict::Commit { up, .. } if ride_to.is_none() => Some(up),
+    // A certified edge above the cone is climbed, never popped: `TraceSurface` (`0x7620f0`) turns
+    // the blocked move into a vertical push (`CalcRunWalkWalkableObstaclePush` `0x75e0c0`) and
+    // clips every rise in the frame, the cone's ride included, to its climb budget, the travel
+    // over the body radius. Short of the landing the frame only rises; the frame that reaches it
+    // clears the edge by the snap slack and walks on, the snap settling the slack in the same
+    // frame.
+    let budget = travel / CAPSULE_RADIUS;
+    let lift = match attempt.verdict {
+        StepVerdict::Commit { landed, up, .. } if ride_to.is_none() => {
+            let need = landed.y - center.y;
+            Some(if budget >= need {
+                ((need + STEP_SNAP_SLACK).min(up), true)
+            } else {
+                (budget, false)
+            })
+        }
         _ => None,
     };
-    let start = center + Vec3::Y * popped.unwrap_or(0.0);
+    if let Some((rise, false)) = lift {
+        return GroundedStep {
+            center: center + Vec3::Y * rise,
+            ground: None,
+            climb: Some(rise),
+            step_start: Some(support.step_start.unwrap_or(feet)),
+            steep_support: true,
+            snap: None,
+            unsupported: None,
+        };
+    }
+    let lifted = lift.map(|(rise, _)| rise);
+    let start = center + Vec3::Y * lifted.unwrap_or(0.0);
     let mut rode = false;
     let out = world.slide_mover(
         capsule,
@@ -549,14 +592,19 @@ pub(crate) fn grounded_step(
         },
     );
     let mut slid = out.position;
-    // The step-down snap, the reference's step-vs-fall election (`0x6367b0`): it reaches
-    // `travel · slope + slack` below, plus `H` on a steep support (`0x636dfc`) or a pop, plus the
-    // hover offset (`0x633e35`), and settles only onto a walkable floor. A deeper drop is a fall,
+    if rode {
+        // The ride ends at its certified landing, a frame's budget at a time.
+        let ceiling = ride_to.map_or(f32::MAX, |c| c + STEP_SNAP_SLACK);
+        slid.y = slid.y.min(start.y + budget).min(ceiling.max(start.y));
+    }
+    // The step-down snap, `TraceSurface`'s settle (`0x7620f0`, `distance · 1.849399`): it reaches
+    // `travel · slope + slack` below, plus `H` on a steep support or a climb, plus the hover
+    // offset, and settles only onto a walkable floor. A deeper drop is a fall,
     // and a body at rest reaches only the slack, so it falls instead of being pulled down.
     let d = slid - start;
     let reach = d.x.hypot(d.z) * STEP_SLOPE_RATIO
         + STEP_SNAP_SLACK
-        + if support.steep || popped.is_some() {
+        + if support.steep || lifted.is_some() {
             support.rise
         } else {
             0.0
@@ -613,11 +661,16 @@ pub(crate) fn grounded_step(
         // ride is exempt, since mid-ride the body hangs clear by design.
         unsupported = Some((reach - surface_offset).max(0.0).min(cone_reach));
     }
+    // A ride or a climb that found no walkable floor is held up by the edge it climbs.
+    let steep_support = ((rode || lifted.is_some()) && ground.is_none()) || steep_support;
     GroundedStep {
         center: slid,
-        climb: (rode || popped.is_some()).then_some(slid.y - center.y),
-        // A ride or a pop that found no walkable floor is held up by the edge it climbs.
-        steep_support: ((rode || popped.is_some()) && ground.is_none()) || steep_support,
+        climb: (rode || lifted.is_some()).then_some(slid.y - center.y),
+        // A walkable floor ends the climb (`0x75d1c0`, `TraceSurface`'s settle), as does any frame
+        // that is no longer held up by the edge.
+        step_start: (steep_support && ground.is_none() && (rode || lifted.is_some()))
+            .then(|| support.step_start.unwrap_or(feet)),
+        steep_support,
         ground,
         snap,
         unsupported,
@@ -800,14 +853,16 @@ pub(crate) struct StepAttempt {
     pub(crate) verdict: StepVerdict,
 }
 
-/// The step-up certification, a standard kinematic-controller probe rather than the reference
-/// resolver's: against a steep opposing face within `look`, rise by the free headroom (at most
-/// `rise`), advance by `advance` along the input, and settle by the snap's reach onto a walkable
-/// floor that is higher. A graze or a wall taller than `rise` lands no higher, and a pinch between
-/// trunks only on steep faces, so none commits and the plain slide keeps the frame.
+/// The step-up certification, `CMovement_C::AttemptStepUp` (`0x761b00`): against a steep opposing
+/// face within `look`, rise by the free headroom (at most `rise`, the remaining step-up height),
+/// advance by `advance` along the input, and settle by the snap's reach onto a walkable floor that
+/// is higher. It only certifies: the reference restores the position on every exit
+/// (`0x762093`, `0x7620b3`). A graze or a wall taller than `rise` lands no higher, and a pinch
+/// between trunks only on steep faces, so none commits and the plain slide keeps the frame.
 /// [`super::step_probe`] sweeps `advance` to find where a step would clear.
 pub(crate) fn step_up(
     cast: &impl Fn(Vec3, Vec3) -> Option<MoveHitData>,
+    floor: &impl Fn(Vec3, f32) -> Option<(f32, f32)>,
     center: Vec3,
     dir_h: Vec3,
     look: f32,
@@ -846,7 +901,17 @@ pub(crate) fn step_up(
     let Some(down) = cast(over, Vec3::NEG_Y * reach) else {
         return at(StepVerdict::NoFloor { up, fwd });
     };
-    let (dist, ny) = (down.distance, down.normal1.y);
+    let (mut dist, mut ny) = (down.distance, down.normal1.y);
+    // The reference judges the landing by the hit facet's own plane (`IsSurfaceTooSteep`,
+    // `0x76205d`); a capsule settled on a tread's edge reports the edge's contact normal instead,
+    // which reads steep where every face is flat or plumb. The face under the body's axis decides.
+    if ny < GROUND_COS {
+        if let Some((d, face_ny)) =
+            floor(over, reach + CAPSULE_HEIGHT * 0.5).filter(|&(_, face_ny)| face_ny >= GROUND_COS)
+        {
+            (dist, ny) = (d - CAPSULE_HEIGHT * 0.5, face_ny);
+        }
+    }
     if ny < GROUND_COS {
         return at(StepVerdict::SteepFloor { up, fwd, dist, ny });
     }
@@ -937,11 +1002,17 @@ mod tests {
                 let capsule = player_capsule();
                 let cast =
                     |from: Vec3, disp: Vec3| world.cast_mover(&capsule, from, disp, SKIN_WIDTH);
+                let floor = |from: Vec3, len: f32| {
+                    world
+                        .ray_body(from, Dir3::NEG_Y, len)
+                        .map(|h| (h.distance, h.normal.y))
+                };
                 let start = Vec3::new(-1.0, CAPSULE_HEIGHT * 0.5, 0.0);
                 let run = cast(start, Vec3::X).map_or(1.0, |h| h.distance);
                 let center = start + Vec3::X * run;
                 step_up(
                     &cast,
+                    &floor,
                     center,
                     Vec3::X,
                     TRAVEL_60FPS,
@@ -988,6 +1059,7 @@ mod tests {
                         let g = grounded_step(&world, &capsule, center, dir * 7.0, dt, support);
                         center = g.center;
                         support.steep = g.steep_support;
+                        support.step_start = g.step_start;
                         (
                             center.y - CAPSULE_HEIGHT * 0.5,
                             g.climb,
@@ -1049,6 +1121,109 @@ mod tests {
         assert!(
             frames[0].0 < 0.3,
             "a 0.91 yd gain in one frame is the teleport the ride avoids: {frames:?}"
+        );
+    }
+
+    /// The Stormwind canal stairs at WoW `(-8798.4, 757.4, 95.8)`: flat treads under 1.2 yd and
+    /// vertical risers of 0.43 and 0.70 yd.
+    fn world_with_canal_stairs() -> App {
+        const P: [(f32, f32); 6] = [
+            (-2.0, 0.0),
+            (0.35, 0.0),
+            (0.35, 0.43),
+            (1.20, 0.43),
+            (1.20, 1.13),
+            (4.0, 1.13),
+        ];
+        world_from_profile(&P)
+    }
+
+    /// A 0.70 yd vertical riser, above the foot cone, so it is no ride.
+    fn world_with_tall_riser() -> App {
+        const P: [(f32, f32); 4] = [(-2.0, 0.0), (0.35, 0.0), (0.35, 0.70), (4.0, 0.70)];
+        world_from_profile(&P)
+    }
+
+    #[test]
+    fn short_treaded_stairs_are_climbed() {
+        // The certify advance overruns a short tread onto the next riser's edge; a contact normal
+        // there reads steep although every face is flat or vertical, which used to block the climb.
+        let frames = walk_profile(world_with_canal_stairs(), 0.0, 40);
+        assert!(
+            frames.last().unwrap().0 > 1.10,
+            "the body must climb both risers onto the 1.13 yd landing: {frames:?}"
+        );
+    }
+
+    #[test]
+    fn a_step_rises_at_most_the_frames_climb_budget() {
+        // `TraceSurface` clips each frame's rise to `travel / radius` (`0x7620f0`), so a riser above
+        // the foot cone is climbed over frames, never taken in one.
+        let frames = walk_profile(world_with_tall_riser(), 0.0, 20);
+        let budget = TRAVEL_60FPS / CAPSULE_RADIUS;
+        let worst = frames
+            .windows(2)
+            .map(|w| w[1].0 - w[0].0)
+            .fold(frames[0].0, f32::max);
+        assert!(
+            worst <= budget + 1.0e-3,
+            "no frame may rise more than {budget:.3} yd; worst was {worst:.3}\n{frames:#?}"
+        );
+    }
+
+    #[test]
+    fn a_long_frame_rides_no_faster_than_the_budget() {
+        // The canal risers' blocking edges sit inside the foot cone, so they ride; at 18 fps the
+        // ride must still keep to `travel / radius` a frame, and never stand above where it ends.
+        let dt = std::time::Duration::from_secs_f32(0.056);
+        let rows = world_with_canal_stairs()
+            .world_mut()
+            .run_system_once(move |world: benilla_world::collision::WorldCollision| {
+                let capsule = player_capsule();
+                let mut center = Vec3::new(-0.5, CAPSULE_HEIGHT * 0.5, 0.0);
+                let mut support = Support::default();
+                (0..30)
+                    .map(|_| {
+                        let g = grounded_step(&world, &capsule, center, Vec3::X * 7.0, dt, support);
+                        center = g.center;
+                        support.steep = g.steep_support;
+                        support.step_start = g.step_start;
+                        center.y - CAPSULE_HEIGHT * 0.5
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap();
+        let budget = 7.0 * 0.056 / CAPSULE_RADIUS;
+        let worst = rows.windows(2).map(|w| w[1] - w[0]).fold(rows[0], f32::max);
+        assert!(
+            worst <= budget + 1.0e-3,
+            "no frame may rise more than {budget:.3} yd; worst was {worst:.3}
+{rows:?}"
+        );
+        let end = *rows.last().unwrap();
+        assert!(end > 1.10, "the body must reach the landing: {rows:?}");
+        for w in rows.windows(2) {
+            assert!(
+                w[1] >= w[0] - STEP_SNAP_SLACK - 1.0e-3,
+                "a climb must never hand back more than the snap slack: {rows:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_step_never_overshoots_its_landing() {
+        // The climb stops at the certified landing: no frame stands above the floor it ends on.
+        let frames = walk_profile(world_with_tall_riser(), 0.0, 20);
+        let top = frames.last().unwrap().0;
+        assert!(
+            top > 0.68,
+            "the body must end on the 0.70 yd step: {frames:?}"
+        );
+        let peak = frames.iter().map(|f| f.0).fold(f32::MIN, f32::max);
+        assert!(
+            peak <= top + 0.02,
+            "the body must never stand above the step it ends on: peak {peak:.3}, end {top:.3}\n\
+             {frames:#?}"
         );
     }
 
@@ -1163,6 +1338,7 @@ mod tests {
                     rows.push((g.center.x - center.x, g.center.y - CAPSULE_HEIGHT * 0.5));
                     center = g.center;
                     support.steep = g.steep_support;
+                    support.step_start = g.step_start;
                 }
                 rows
             })
@@ -1273,6 +1449,7 @@ mod tests {
                     let g = grounded_step(&world, &capsule, center, v, dt, support);
                     center = g.center;
                     support.steep = g.steep_support;
+                    support.step_start = g.step_start;
                     rows.push((v.length() > 0.0, g.steep_support));
                 }
                 rows
@@ -1370,11 +1547,11 @@ mod tests {
 
     #[test]
     fn the_kerb_is_out_of_reach_of_one_frames_travel() {
-        // At one frame's travel the settle lands on the bevel, which the walkable gate refuses.
+        // At one frame's travel the body's axis is still over the street: no gain, no climb.
         let v = step_at(TRAVEL_60FPS);
         assert!(
-            matches!(v, StepVerdict::SteepFloor { .. }),
-            "one frame's travel should still be over the bevel, got {v}"
+            !matches!(v, StepVerdict::Commit { .. }),
+            "one frame's travel must not certify the kerb, got {v}"
         );
     }
 
@@ -1401,10 +1578,16 @@ mod tests {
                 let capsule = player_capsule();
                 let cast =
                     |from: Vec3, disp: Vec3| world.cast_mover(&capsule, from, disp, SKIN_WIDTH);
+                let floor = |from: Vec3, len: f32| {
+                    world
+                        .ray_body(from, Dir3::NEG_Y, len)
+                        .map(|h| (h.distance, h.normal.y))
+                };
                 let start = Vec3::new(-1.0, CAPSULE_HEIGHT * 0.5 - 2.0, 0.0);
                 let run = cast(start, Vec3::X).map_or(1.0, |h| h.distance);
                 step_up(
                     &cast,
+                    &floor,
                     start + Vec3::X * run,
                     Vec3::X,
                     TRAVEL_60FPS,
