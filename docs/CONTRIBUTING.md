@@ -53,11 +53,11 @@ pins the benilla revision it builds on. What a crate cannot reach stays a fork's
 ## How a change is judged
 
 1. `scripts/gates.sh` is green: fmt, clippy with warnings denied, the workspace tests, the
-   doc-link and render-pass lints, the player build with its own tests, and the engine boot. It
-   is the gate for a pull request from an external contributor, and CI runs the same script on
-   one, on Linux. It reads no client data, so a test that reads the install has to declare it.
-   `scripts/check.sh` runs all of it plus the tests that read the client data, where the data
-   is; the maintainers' own pull requests run that instead.
+   doc-link and render-pass lints, and the engine boot. It is the gate for a pull request from an
+   external contributor, and CI runs the same script on one, on Linux. It reads no client data, so
+   a test that reads the install has to declare it. `scripts/check.sh` runs all of it plus the
+   tests that read the client data, where the data is, and the player build without `dev` with
+   its own tests; the maintainers' own pull requests run that instead.
 2. The reference fact is stated: what 3.3.5a does, and where that is known from (the client's
    behaviour you observed, a DBC field, a FrameXML line, a packet capture). The names and shapes
    under `reference/` are the surface benilla tracks.
@@ -158,8 +158,8 @@ out of scope is closed with the reason.
   `BENILLA_PGO_LTO=fat` on both builds `release` instead, with a profile of its own: 3–7% less
   frame time for a build three times as long.
   `scripts/check.sh` verifies a round on the whole workspace,
-  with the data and without it; `scripts/gates.sh` is its chain without the data, the one your
-  pull request needs green. Both open a window for the engine boot, so they need a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface alone,
+  with the data and without it; `scripts/gates.sh` is its chain without the data and the player
+  build, the one your pull request needs green. Both open a window for the engine boot, so they need a display. `WOW_STOCK_UI=1` boots a dev build on the stock interface alone,
   without benilla's layer. Work on a branch.
 
 ## Reporting a bug

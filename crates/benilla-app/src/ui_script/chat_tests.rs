@@ -371,6 +371,7 @@ fn chat_type_info_matches_the_host_color_table() {
     const PAIRS: &[(&str, K, i64)] = &[
         ("SAY", K::Say, 2),
         ("PARTY", K::Party, 3),
+        ("PARTY_LEADER", K::PartyLeader, 52),
         ("RAID", K::Raid, 4),
         ("GUILD", K::Guild, 5),
         ("OFFICER", K::Officer, 6),

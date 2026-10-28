@@ -432,6 +432,182 @@ fn escape_on_an_options_window_returns_to_the_menu() {
         .unwrap());
 }
 
+/// The Objectives panel's checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+const OBJECTIVES_CHECKBOXES: [(&str, &str, &str); 6] = [
+    ("InstantQuestText", "questFadingDisable", "1"),
+    ("AutoQuestTracking", "autoQuestWatch", "1"),
+    ("AutoQuestProgress", "autoQuestProgress", "1"),
+    ("MapQuestDifficulty", "mapQuestDifficulty", "0"),
+    ("AdvancedWorldMap", "advancedWorldMap", "0"),
+    ("WatchFrameWidth", "watchFrameWidth", "0"),
+];
+
+/// Each Objectives checkbox boots at its CVar's 12340 default, a click and Okay writes the flip
+/// and its effect, a click and Cancel writes nothing, and Defaults puts the registered value
+/// back. The rows reach the stock readers: the `QUEST_FADING_DISABLE`, `AUTO_QUEST_WATCH`,
+/// `AUTO_QUEST_PROGRESS` and `MAP_QUEST_DIFFICULTY` uvars `QuestFrame.lua`, `QuestLogFrame.lua`
+/// and `WorldMapFrame.lua` test, `WORLDMAP_SETTINGS.advanced`, and the tracker's expanded width
+/// (`WatchFrame_SetWidth`, 204 or 306).
+#[test]
+fn every_objectives_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-objectives");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsObjectivesPanel)";
+    let effect = |s: &mut UiScript, cvar: &str| -> String {
+        let lua = match cvar {
+            "questFadingDisable" => "return QUEST_FADING_DISABLE",
+            "autoQuestWatch" => "return AUTO_QUEST_WATCH",
+            "autoQuestProgress" => "return AUTO_QUEST_PROGRESS",
+            "mapQuestDifficulty" => "return MAP_QUEST_DIFFICULTY",
+            "advancedWorldMap" => "return WORLDMAP_SETTINGS.advanced and '1' or '0'",
+            _ => "return WATCHFRAME_EXPANDEDWIDTH == 306 and '1' or '0'",
+        };
+        s.eval::<String>(lua).unwrap()
+    };
+    for (suffix, cvar, default) in OBJECTIVES_CHECKBOXES {
+        let button = format!("InterfaceOptionsObjectivesPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        assert_eq!(
+            effect(&mut s, cvar),
+            flip(default),
+            "{cvar} reaches its reader"
+        );
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+        assert_eq!(effect(&mut s, cvar), default, "{cvar}'s reader is back");
+    }
+    let errors: Vec<String> = s
+        .take_errors()
+        .into_iter()
+        .filter(|e| {
+            ["Options", "WorldMap", "WatchFrame", "Quest"]
+                .iter()
+                .any(|k| e.contains(k))
+        })
+        .collect();
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
+/// The Social panel's checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`). `showChatIcons`, in
+/// `SocialPanelOptions`, has no checkbox and no registration in 12340.
+const SOCIAL_CHECKBOXES: [(&str, &str, &str); 9] = [
+    ("ProfanityFilter", "profanityFilter", "1"),
+    ("ChatBubbles", "chatBubbles", "1"),
+    ("PartyChat", "chatBubblesParty", "1"),
+    ("SpamFilter", "spamFilter", "1"),
+    ("ChatHoverDelay", "removeChatDelay", "0"),
+    ("GuildMemberAlert", "guildMemberNotify", "0"),
+    ("GuildRecruitment", "guildRecruitmentChannel", "1"),
+    ("ChatMouseScroll", "chatMouseScroll", "1"),
+    ("WholeChatWindowClickable", "wholeChatWindowClickable", "1"),
+];
+
+/// Each Social checkbox boots at its CVar's 12340 default, a click and Okay writes the flip, a
+/// click and Cancel writes nothing, and Defaults puts the registered value back; the hover delay
+/// reaches `REMOVE_CHAT_DELAY`, the uvar `FloatingChatFrame.lua` reads.
+#[test]
+fn every_social_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-social");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsSocialPanel)";
+    for (suffix, cvar, default) in SOCIAL_CHECKBOXES {
+        let button = format!("InterfaceOptionsSocialPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        // Disable Spam Filter shows `spamFilter` inverted (`self.invert`).
+        let shown = (default == "1") != (cvar == "spamFilter");
+        assert_eq!(checked, shown, "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        if cvar == "removeChatDelay" {
+            assert_eq!(
+                s.eval::<String>("return REMOVE_CHAT_DELAY").unwrap(),
+                "1",
+                "the uvar follows"
+            );
+        }
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    assert!(
+        s.eval::<bool>("return GetGuildRecruitmentMode == nil")
+            .unwrap(),
+        "3.3.5a's panel binds the CVar; the 1.12 verb pair is gone"
+    );
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The ActionBars panel's CVar checkboxes, `(button suffix, CVar, registered default)`
 /// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
 const ACTIONBARS_CHECKBOXES: [(&str, &str, &str); 3] = [

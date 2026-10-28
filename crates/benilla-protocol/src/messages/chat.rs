@@ -43,6 +43,8 @@ pub const CHAT_MSG_BATTLEGROUND_LEADER: u8 = 0x5D;
 /// $a!", the earner in the receiver guid and the id after the chat tag (`0x50c1cd`).
 pub const CHAT_MSG_ACHIEVEMENT: u8 = 0x5E;
 pub const CHAT_MSG_GUILD_ACHIEVEMENT: u8 = 0x5F;
+/// 3.3.5a's party leader's own party line, `CHAT_MSG_PARTY_LEADER`, past the shared numbering.
+pub const CHAT_MSG_PARTY_LEADER: u8 = 0x60;
 
 /// The only chat types the 1.12 client runs its `$`-macro expander over; the rest reach the frame
 /// verbatim. This is the wire gate (`0x49d5e4-0x49d606`); the re-expansion after a name query
@@ -155,6 +157,7 @@ pub mod wotlk_chat_type {
     pub const BATTLENET: u8 = 0x2F;
     pub const ACHIEVEMENT: u8 = 0x30;
     pub const GUILD_ACHIEVEMENT: u8 = 0x31;
+    pub const PARTY_LEADER: u8 = 0x33;
 }
 
 /// The shared [`ChatMessage::chat_type`], 1.12.1's numbering, of a 3.3.5a type byte; `None` for a
@@ -192,6 +195,7 @@ pub fn wotlk_chat_type_shared(wire: u8) -> Option<u8> {
         w::BATTLEGROUND_LEADER => CHAT_MSG_BATTLEGROUND_LEADER,
         w::ACHIEVEMENT => CHAT_MSG_ACHIEVEMENT,
         w::GUILD_ACHIEVEMENT => CHAT_MSG_GUILD_ACHIEVEMENT,
+        w::PARTY_LEADER => CHAT_MSG_PARTY_LEADER,
         _ => return None,
     })
 }
@@ -327,4 +331,27 @@ pub(super) fn read_random_roll(r: &mut &[u8]) -> io::Result<(u32, u32, u32, u64)
     let roll = read_u32_le(r)?;
     let guid = read_u64_le(r)?;
     Ok((min, max, roll, guid))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A party leader's `/p` arrives as 3.3.5a type `0x33` (`ChatBubbleShow`'s 51), in the default
+    /// shape: language, sender, flags, receiver, text, tag. It parses to its own lane.
+    #[test]
+    fn a_party_leader_line_parses_to_its_own_lane() {
+        let mut body = vec![wotlk_chat_type::PARTY_LEADER];
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&0x77u64.to_le_bytes());
+        body.extend_from_slice(&0u32.to_le_bytes());
+        body.extend_from_slice(&0x77u64.to_le_bytes());
+        body.extend_from_slice(&6u32.to_le_bytes());
+        body.extend_from_slice(b"pull!\0");
+        body.push(0);
+        let msg = read_message_chat_wotlk(&mut body.as_slice(), false).expect("parses");
+        assert_eq!(msg.chat_type, CHAT_MSG_PARTY_LEADER);
+        assert_eq!(msg.sender_guid, 0x77);
+        assert_eq!(msg.text, "pull!");
+    }
 }

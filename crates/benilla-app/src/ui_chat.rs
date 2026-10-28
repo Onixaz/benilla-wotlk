@@ -69,6 +69,7 @@ pub(crate) struct ChatDrain;
 impl Plugin for UiChatPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
+        app.add_observer(recruitment::on_cvar);
         app.init_resource::<ChatLog>()
             .init_resource::<away::AfkMirror>()
             .init_resource::<away::AfkMirrorMemo>()

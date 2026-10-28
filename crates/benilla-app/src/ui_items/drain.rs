@@ -4,7 +4,7 @@
 use bevy::prelude::*;
 
 use benilla_protocol::messages::BAG_PLAYER_INVENTORY;
-use benilla_ui::script::{UiScript, EQUIPMENT_BAG};
+use benilla_ui::script::{item_lock_args, UiScript, EQUIPMENT_BAG};
 
 use crate::items::Items;
 use crate::net::{ClientCommand, NetCommands, ObjectStore, Objects, SelfPlayer};
@@ -464,7 +464,7 @@ impl ScriptItemUse<'_, '_> {
                 .map(|store| slot_guid_count(Some(store), bag, slot, &ladder.objects))
                 .unwrap_or((0, 0));
             pending_items.add([(bag, slot, guid, count)]);
-            script.fire_event("ITEM_LOCK_CHANGED", Vec::new());
+            script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
             let _ = ladder.commands.0.send(ClientCommand::OpenItem {
                 bag_index,
                 slot: wire_slot,
@@ -741,9 +741,15 @@ pub(crate) fn send_container_move(
             (mv.src_bag, mv.src_slot, src_guid, src_count),
             (mv.dst_bag, mv.dst_slot, dst_guid, dst_count),
         ]);
-        // One argless event per locked end, as the reference fires per slot.
-        for _ in 0..2 {
-            script.fire_event("ITEM_LOCK_CHANGED", Vec::new());
+        // One event per end that holds an item: the reference locks items, not slots
+        // (`CGItem_C::Lock` `0x706fe0`).
+        for (bag, slot, guid) in [
+            (mv.src_bag, mv.src_slot, src_guid),
+            (mv.dst_bag, mv.dst_slot, dst_guid),
+        ] {
+            if guid != 0 {
+                script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
+            }
         }
     }
     true
@@ -776,7 +782,7 @@ pub(super) fn drain_container_destroys(
         });
         let (guid, stack) = slot_guid_count(store, bag, slot, &objects);
         pending.add([(bag, slot, guid, stack)]);
-        script.fire_event("ITEM_LOCK_CHANGED", Vec::new());
+        script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
     }
 }
 

@@ -4,15 +4,15 @@
 //! - Spawn (`0x608ac0`, from the `SMSG_MESSAGECHAT` display path): the sender resolves to a live
 //!   unit, its CVar is on, the text is non-empty, the unit carries no V-plate (`0x608adc`; a live
 //!   bubble in turn hides the overhead name, [`BubblesActive`]), and the local player is within
-//!   20 yd (3-D). Self is not excluded. A new line replaces the old bubble, never queues.
+//!   25 yd (3-D). Self is not excluded. A new line replaces the old bubble, never queues.
 //! - Anchor (`0x4b0c30`): unit z + height × model scale + 0.7, bottom-seated, growing upward. The
 //!   height is the Stand sequence box's Z extent from the model header (`0x711a20`), not the posed
 //!   attachment the overhead name reads (`0x608640`), latched once per chat line.
 //! - Stacking (`0x4b1060`): every frame the bubbles sort farthest-first by camera distance and
 //!   take frame levels 2, 3, 4…, so whole cards stack with the nearest speaker's on top.
 //!
-//! Only say, yell, party and monster say/yell bubble: the reference's gate is "sender resolves",
-//! but the wire-type remap (`0x49a870`) that would admit other kinds is untraced.
+//! Only say, party, yell, monster say/yell and the party leader's line bubble: `ChatBubbleShow`
+//! (`0x720010`) admits types 1, 2, 6, 12, 14 and 51.
 //!
 //! Deviation: sizes ride the plates' damped diagonal basis ([`plate_basis`]), not the unbounded
 //! reference law, so bubble text and plate text keep one em at every window size.
@@ -63,8 +63,9 @@ const TAIL_TEXTURE: &str = "Interface\\Tooltips\\ChatBubble-Tail";
 
 /// The 0.7 yd lift over the anchor height (`[0x7ffd7c]`).
 const LIFT: f32 = 0.7;
-/// The spawn and per-frame range gate, 20 yd squared (`[0x806798]`, the plates' too).
-const MAX_DIST_SQ: f32 = 400.0;
+/// The spawn and per-frame range gate, 25 yd squared (`[0xa104b0]`, read at `0x7200ce` and
+/// `CGChatBubbleFrame::Update` `0x56c5e9`).
+const MAX_DIST_SQ: f32 = 625.0;
 /// The 250 ms linear fade, in and out (`0x4b0ea0`/`0x4b0ee0`).
 const FADE_SECS: f32 = 0.25;
 /// `NAMEPLATE_FONT` at 0.01 gx, the plate name's em.
@@ -90,11 +91,12 @@ fn level_z(rank: usize) -> u64 {
     overlay_z::BUBBLE + level * overlay_z::BUBBLE_STRIDE
 }
 
-/// The CVar gating this kind's bubble (`0x608b0d`); `None` for a kind that does not bubble.
+/// The CVar gating this kind's bubble (`ChatBubbleShow 0x720010`: types 2 and 51 read
+/// `chatBubblesParty`, 1, 6, 12 and 14 `chatBubbles`); `None` for a kind that does not bubble.
 fn bubble_cvar(kind: ChatEventKind, cfg: &BubbleConfig) -> Option<bool> {
     use ChatEventKind as K;
     match kind {
-        K::Party => Some(cfg.party),
+        K::Party | K::PartyLeader => Some(cfg.party),
         K::Say | K::Yell | K::MonsterSay | K::MonsterYell => Some(cfg.all),
         _ => None,
     }
@@ -283,7 +285,7 @@ fn load_bubble_art(
 }
 
 /// Every frame: drain the queue through the spawn gate (`0x608ac0`), ramp each bubble's fade
-/// against its lifetime and the 20 yd re-test (`0x4b0c30`), publish [`BubblesActive`], and draw.
+/// against its lifetime and the 25 yd re-test (`0x4b0c30`), publish [`BubblesActive`], and draw.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn drive_bubbles(
     mut queue: ResMut<BubbleQueue>,
@@ -387,7 +389,7 @@ fn drive_bubbles(
                 continue;
             }
         } else {
-            // The 20 yd gate, re-tested every frame: out of range fades out, back in fades in.
+            // The 25 yd gate, re-tested every frame: out of range fades out, back in fades in.
             let eligible = self_tf
                 .is_some_and(|s| (tf.translation - s.translation).length_squared() <= MAX_DIST_SQ);
             b.alpha = if eligible {
@@ -764,6 +766,11 @@ mod tests {
             party: false,
         };
         assert_eq!(bubble_cvar(K::Party, &no_party), Some(false));
+        assert_eq!(
+            bubble_cvar(K::PartyLeader, &no_party),
+            Some(false),
+            "the leader's party line rides the party switch (type 51)"
+        );
         assert_eq!(
             bubble_cvar(K::Say, &no_party),
             Some(true),

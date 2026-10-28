@@ -97,11 +97,11 @@ fn an_achievement_line_keeps_its_id() {
     assert_eq!((m.target_guid, m.achievement), (0x21, 6));
 }
 
-/// A 3.3.5a-only lane (here `PARTY_LEADER`, `0x33`) is read through and then refused, never
-/// handed on under a guessed 1.12.1 type.
+/// A 3.3.5a-only lane with no shared type yet (here `ARENA_POINTS`, `0x32`) is read through and
+/// then refused, never handed on under a guessed 1.12.1 type.
 #[test]
 fn a_lane_without_a_shared_type_fails_visibly() {
-    let mut body = vec![0x33];
+    let mut body = vec![0x32];
     body.extend(0u32.to_le_bytes());
     body.extend(0x21u64.to_le_bytes());
     body.extend(0u32.to_le_bytes());

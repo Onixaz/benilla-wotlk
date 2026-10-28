@@ -1140,6 +1140,10 @@ fn parse_server_body(
             let (unit, kit_id) = spells::read_play_spell_visual(&mut r)?;
             ServerPacket::PlaySpellVisual { unit, kit_id }
         }
+        opcode::SMSG_PLAY_SPELL_IMPACT => {
+            let (unit, kit_id) = spells::read_play_spell_visual(&mut r)?;
+            ServerPacket::PlaySpellImpact { unit, kit_id }
+        }
         opcode::SMSG_SPELLNONMELEEDAMAGELOG => {
             ServerPacket::SpellDamageLog(combat_log::read_spell_damage_log(&mut r)?)
         }

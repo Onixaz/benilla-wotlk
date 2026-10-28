@@ -1,9 +1,11 @@
 //! The `AUTO_JOIN_GUILD_CHANNEL` cascade (`0x49ea90`), the one place the client joins or leaves
-//! `GuildRecruitment - City` on its own. On AUTO (`[0x843608]`, the default) a guilded player
-//! leaves it (`0x49ee70`) and an unguilded one in a capital joins it (`0x49eb70`), with no
-//! membership check; otherwise a retry waits for the next zone change. Once joined, the zone walk
-//! owns it as it owns Trade. Triggers: `SetGuildRecruitmentMode(1)` and the `PLAYER_GUILDID`
-//! watcher (`0x5e2770`), whose first sight is the player create (`0x5dec1e`). Deviation: no re-run
+//! `GuildRecruitment - City` on its own. On AUTO (`CGChat::m_guildRecruitmentMode`, the default)
+//! a guilded player leaves it (`0x49ee70`) and an unguilded one in a capital joins it
+//! (`0x49eb70`), with no membership check; otherwise a retry waits for the next zone change. Once
+//! joined, the zone walk owns it as it owns Trade. Triggers: the `guildRecruitmentChannel` CVar
+//! moving to 1 (`0x512750` → `SetGuildRecruitmentMode`) and the `PLAYER_GUILDID` watcher
+//! (`0x5e2770`), whose first sight is the player create (`0x5dec1e`); its move to 0 leaves a
+//! joined channel. Deviation: no re-run
 //! when a remote player streams in, because the reference's re-run only repeats the join, which
 //! vmangos swallows, or the leave, whose "Not on channel" notice nothing prints.
 
@@ -29,10 +31,12 @@ pub(crate) struct GuildRecruitmentCascade {
     pending: bool,
     /// The last `PLAYER_GUILDID` seen; `None` makes the first sight a change, the create trigger.
     last_guild_id: Option<u32>,
+    /// A `guildRecruitmentChannel` move the cascade system applies, as it owns the VM.
+    cvar: Option<u8>,
 }
 
 impl GuildRecruitmentCascade {
-    /// A trigger fired: `SetGuildRecruitmentMode(1)`, or the watcher.
+    /// A trigger fired: the CVar's move to 1, or the watcher.
     pub(super) fn request(&mut self) {
         self.pending = true;
     }
@@ -47,10 +51,24 @@ impl GuildRecruitmentCascade {
         true
     }
 
-    /// Session end: forget the owed run and the last guild id.
+    /// Session end: forget the owed run, the last guild id and a queued CVar move.
     pub(super) fn clear_session(&mut self) {
         self.pending = false;
         self.last_guild_id = None;
+        self.cvar = None;
+    }
+}
+
+/// `guildRecruitmentChannel`'s change callback (`CVarHandler_guildRecruitmentChannel 0x512750`),
+/// queued for [`guild_recruitment_cascade`]. Before the chat cache seats the latch it is dropped:
+/// the restore overwrites the mode (`LoadChatSettingsCallback 0x508320`).
+pub(crate) fn on_cvar(
+    ev: On<crate::cvars::CvarChanged>,
+    mut state: ResMut<GuildRecruitmentCascade>,
+    channels: Res<ChannelState>,
+) {
+    if ev.is("guildRecruitmentChannel") && channels.zone_mask.is_some() {
+        state.cvar = Some(ev.num().clamp(0.0, 255.0) as u8);
     }
 }
 
@@ -92,9 +110,27 @@ pub(super) fn guild_recruitment_cascade(
     commands: Res<NetCommands>,
 ) {
     let Some(mut script) = script else { return };
-    // `SetGuildRecruitmentMode(1)` runs it even when the value did not move (`0x49ea70`).
-    if script.take_guild_recruitment_cascade() {
-        state.request();
+    // `SetGuildRecruitmentMode(mode, 0)` (`0x508260`): unmoved is a no-op; 1 runs the cascade
+    // (`UpdateGuildStatus`), 0 leaves a joined recruitment channel and refreshes the windows.
+    if let Some(mode) = state.cvar.take() {
+        if script.set_guild_recruitment_mode_from_cvar(mode) {
+            if mode == 1 {
+                state.request();
+            } else if let Some(name) = areas.as_deref().and_then(|a| {
+                let row = channels
+                    .channels
+                    .rows()
+                    .iter()
+                    .find(|r| r.is_guild_recruitment())?;
+                Some(row.joinable_name("", city_word(&a.0)?))
+            }) {
+                if channels.number_of(&name).is_some() {
+                    info!("chat: guildRecruitmentChannel 0 — leaving {name:?}");
+                    cascade_leave(&mut channels, &commands, name);
+                    script.fire_event("UPDATE_CHAT_WINDOWS", vec![]);
+                }
+            }
+        }
     }
     // Only while the avatar is streamed: a despawned body has not "left the guild".
     let Some(guild_id) = self_q.iter().next().map(|s| s.0.player_guild_id()) else {

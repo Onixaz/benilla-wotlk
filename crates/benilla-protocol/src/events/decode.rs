@@ -404,6 +404,9 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::PlaySpellVisual { unit, kit_id } => {
             vec![SessionEvent::PlaySpellVisual { unit, kit_id }]
         }
+        ServerPacket::PlaySpellImpact { unit, kit_id } => {
+            vec![SessionEvent::PlaySpellImpact { unit, kit_id }]
+        }
         ServerPacket::SpellDamageLog(s) => vec![SessionEvent::SpellDamageLog(s)],
         ServerPacket::PeriodicAuraLog(s) => vec![SessionEvent::PeriodicAuraLog(s)],
         ServerPacket::SpellHealLog(s) => vec![SessionEvent::SpellHealLog(s)],

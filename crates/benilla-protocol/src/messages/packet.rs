@@ -748,6 +748,11 @@ pub enum ServerPacket {
         unit: u64,
         kit_id: u32,
     },
+    /// `SMSG_PLAY_SPELL_IMPACT`: a spell-visual kit on a unit at the fixed stage 1 (`0x8006c0`).
+    PlaySpellImpact {
+        unit: u64,
+        kit_id: u32,
+    },
     /// `SMSG_SPELLNONMELEEDAMAGELOG`: non-melee (spell) damage dealt.
     SpellDamageLog(SpellDamageLog),
     /// `SMSG_PERIODICAURALOG`: periodic (DoT, HoT, regen) aura ticks.
@@ -1633,6 +1638,7 @@ impl ServerPacket {
             ServerPacket::AuraUpdate(u) if u.all => "SMSG_AURA_UPDATE_ALL".into(),
             ServerPacket::AuraUpdate(_) => "SMSG_AURA_UPDATE".into(),
             ServerPacket::PlaySpellVisual { .. } => "SMSG_PLAY_SPELL_VISUAL".into(),
+            ServerPacket::PlaySpellImpact { .. } => "SMSG_PLAY_SPELL_IMPACT".into(),
             ServerPacket::SpellDamageLog(_) => "SMSG_SPELLNONMELEEDAMAGELOG".into(),
             ServerPacket::PeriodicAuraLog(_) => "SMSG_PERIODICAURALOG".into(),
             ServerPacket::SpellHealLog(_) => "SMSG_SPELLHEALLOG".into(),

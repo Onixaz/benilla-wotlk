@@ -1118,7 +1118,7 @@ fn every_kind_is_in_all() {
     seen.sort_unstable();
     seen.dedup();
     assert_eq!(seen.len(), before, "a kind is listed twice in ALL");
-    assert_eq!(before, 45, "45 kinds — update this when the kind set grows");
+    assert_eq!(before, 46, "46 kinds — update this when the kind set grows");
 }
 
 #[test]

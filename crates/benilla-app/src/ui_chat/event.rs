@@ -9,6 +9,8 @@ use benilla_ui::script::ScriptValue;
 pub(crate) enum ChatEventKind {
     Say,
     Party,
+    /// 3.3.5a's party line from the group's leader, a lane of its own (`0x33`).
+    PartyLeader,
     Raid,
     Guild,
     Officer,
@@ -81,6 +83,7 @@ impl ChatEventKind {
         &[
             K::Say,
             K::Party,
+            K::PartyLeader,
             K::Raid,
             K::Guild,
             K::Officer,
@@ -237,6 +240,7 @@ pub(crate) fn event_name(kind: ChatEventKind) -> &'static str {
     match kind {
         K::Say => "CHAT_MSG_SAY",
         K::Party => "CHAT_MSG_PARTY",
+        K::PartyLeader => "CHAT_MSG_PARTY_LEADER",
         K::Raid => "CHAT_MSG_RAID",
         K::Guild => "CHAT_MSG_GUILD",
         K::Officer => "CHAT_MSG_OFFICER",
@@ -355,6 +359,7 @@ pub(crate) fn kind_of_wire(chat_type: u8) -> Option<ChatEventKind> {
     Some(match chat_type {
         m::CHAT_MSG_SAY => K::Say,
         m::CHAT_MSG_PARTY => K::Party,
+        m::CHAT_MSG_PARTY_LEADER => K::PartyLeader,
         m::CHAT_MSG_RAID => K::Raid,
         m::CHAT_MSG_GUILD => K::Guild,
         m::CHAT_MSG_OFFICER => K::Officer,
