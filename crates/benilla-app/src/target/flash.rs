@@ -64,6 +64,7 @@ pub(super) fn drive_flash(
     engaged: Query<(), (With<Engaged>, With<SelfPlayer>)>,
     factions: Option<Res<Factions>>,
     reputations: Res<Reputations>,
+    group: Option<Res<crate::ui_party::GroupState>>,
     self_store: Query<&ObjectStore, With<SelfPlayer>>,
     units: Query<Option<&ObjectStore>, Without<SelfPlayer>>,
 ) {
@@ -81,6 +82,7 @@ pub(super) fn drive_flash(
             store,
             factions.as_deref(),
             &reputations,
+            super::party_of(group.as_deref()),
             self_store.single().ok(),
         )
         .then_some(target)

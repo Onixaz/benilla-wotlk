@@ -238,6 +238,8 @@ pub(crate) struct SkinInputs<'w> {
     learned: Res<'w, crate::ui_action::LearnedAbilities>,
     factions: Option<Res<'w, super::ring::Factions>>,
     reputations: Res<'w, crate::net::Reputations>,
+    /// The group, for the reaction's party rung; none without the party plugin.
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
     names: Option<Res<'w, crate::names::NameCache>>,
 }
 
@@ -250,6 +252,7 @@ impl SkinInputs<'_> {
             self_store,
             self.factions.as_deref(),
             &self.reputations,
+            super::party_of(self.group.as_deref()),
             self.names.as_deref(),
         )
     }

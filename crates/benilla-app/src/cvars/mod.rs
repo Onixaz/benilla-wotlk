@@ -1968,6 +1968,7 @@ mod tests {
             .init_resource::<crate::ui_trade::BlockTrades>()
             .init_resource::<crate::spell::AutoSelfCast>()
             .init_resource::<crate::spell::AutoDismount>()
+            .init_resource::<crate::spell::SecureAbilityToggle>()
             .init_resource::<crate::perf::FpsJournalSetting>()
             .init_resource::<crate::text_filter::TextFilterSwitches>()
             .init_resource::<crate::game_tip::GameTipSetting>()

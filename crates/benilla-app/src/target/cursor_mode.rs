@@ -221,12 +221,13 @@ pub(super) fn unit_skin_spell(
     self_store: Option<&ObjectStore>,
     factions: Option<&Factions>,
     reputations: &Reputations,
+    party: &dyn super::GroupMembers,
     names: Option<&crate::names::NameCache>,
 ) -> Option<u32> {
     skin_leg_spell(
         learned,
         crate::ui_action::SkinSubject::of(store, names),
-        || super::can_assist(Some(store), factions, reputations, self_store, names),
+        || super::can_assist(Some(store), factions, reputations, party, self_store, names),
     )
 }
 
@@ -720,6 +721,8 @@ pub(super) fn classify_cursor(
 pub(super) struct CursorInputs<'w, 's> {
     factions: Option<Res<'w, Factions>>,
     reputations: Res<'w, Reputations>,
+    /// The group, for the reaction's party rung; none without the party plugin.
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
     // `control_lost` is the attack leg's `[0xb4b3e4]` clear.
     player: Res<'w, crate::player::Player>,
     approach: Res<'w, crate::player::Approach>,
@@ -758,6 +761,7 @@ pub(super) fn classify(
     let CursorInputs {
         factions,
         reputations,
+        group,
         player,
         approach,
         units,
@@ -772,6 +776,7 @@ pub(super) fn classify(
         stone,
         names,
     } = inputs;
+    let party = super::party_of(group.as_deref());
     let can_auto_interact = crate::player::can_auto_interact(
         approach.enabled,
         self_q.single().ok().map(|(_, s)| s),
@@ -865,6 +870,7 @@ pub(super) fn classify(
                     Some(self_store),
                     factions.as_deref(),
                     reputations,
+                    party,
                     names.as_deref(),
                 )
                 .is_some()
@@ -880,6 +886,7 @@ pub(super) fn classify(
             Some(store),
             factions.as_deref(),
             reputations,
+            party,
             Some(self_store),
         ) {
             let status = hovered.guid.and_then(|g| quest.status(g));
@@ -899,6 +906,7 @@ pub(super) fn classify(
             Some(store),
             factions.as_deref(),
             reputations,
+            party,
             Some(self_store),
         ) {
             return None;

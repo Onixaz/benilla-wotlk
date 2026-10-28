@@ -188,6 +188,8 @@ pub(crate) struct ByNameScan<'w, 's> {
     /// The reaction inputs behind `CanAssist`, for [`Filter::AssistableAlive`] and the follow gate.
     factions: Option<Res<'w, super::Factions>>,
     reputations: Res<'w, crate::net::Reputations>,
+    /// The group, for the reaction's party rung; none without the party plugin.
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
 }
 
 /// The per-candidate filter, the mode argument the reference hands `0x493e40`.
@@ -218,6 +220,7 @@ impl ByNameScan<'_, '_> {
         super::ring_reaction(
             self.factions.as_deref(),
             &self.reputations,
+            super::party_of(self.group.as_deref()),
             store,
             self_store,
         ) >= 4
@@ -237,6 +240,7 @@ impl ByNameScan<'_, '_> {
             super::ring_reaction(
                 self.factions.as_deref(),
                 &self.reputations,
+                super::party_of(self.group.as_deref()),
                 followee_store,
                 self_store,
             ) >= 4,
@@ -548,6 +552,8 @@ pub(crate) struct SelectCommit<'w, 's> {
     index: Res<'w, GuidIndex>,
     factions: Option<Res<'w, super::Factions>>,
     reputations: Res<'w, crate::net::Reputations>,
+    /// The group, for the reaction's party rung; none without the party plugin.
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
     /// `assistAttack`, the assist tail's second leg.
     assist_attack: Res<'w, super::AssistAttack>,
 }
@@ -585,6 +591,7 @@ impl SelectCommit<'_, '_> {
             self.stores.get(entity).ok(),
             self.factions.as_deref(),
             &self.reputations,
+            super::party_of(self.group.as_deref()),
             me.and_then(|(_, store, _)| store),
         );
         self.commit(entity, guid);
@@ -626,6 +633,7 @@ impl SelectCommit<'_, '_> {
             self.stores.get(entity).ok(),
             self.factions.as_deref(),
             &self.reputations,
+            super::party_of(self.group.as_deref()),
             me.and_then(|(_, store, _)| store),
         );
         scan::commit(

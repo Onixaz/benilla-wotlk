@@ -16,14 +16,14 @@ pub struct ZoneTexts {
     pub subzone: String,
     /// `GetMinimapZoneText`: the subzone, else the zone.
     pub minimap: String,
-    /// `GetZonePVPInfo`'s type, `"friendly"`, `"hostile"` or `"contested"`; `None` when the
-    /// player, the zone or its faction template is missing.
+    /// `GetZonePVPInfo`'s type: `"sanctuary"`, `"arena"` or `"combat"` off the area's flags, else
+    /// `"friendly"`, `"hostile"` or `"contested"`; `None` when it answers nothing.
     pub pvp_type: Option<String>,
-    /// `GetZonePVPInfo`'s faction, `FactionGroup.dbc`'s name for the zone's mask bit; `None` for
-    /// none.
+    /// `GetZonePVPInfo`'s faction, `FactionGroup.dbc`'s name for the zone's mask bit, for the
+    /// territory types; `None` for none.
     pub pvp_faction: Option<String>,
-    /// `GetZonePVPInfo`'s isArena: the leaf area's flag `0x80`, the free-for-all pit.
-    pub is_arena: bool,
+    /// `GetZonePVPInfo`'s `isSubZonePvP`: a sanctuary, arena or combat type read off the subzone.
+    pub pvp_subzone: bool,
 }
 
 impl super::UiScript {
@@ -56,8 +56,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetMinimapZoneText",
         lua.create_function(text(|z| &z.minimap))?,
     )?;
-    // GetZonePVPInfo() (`0x48d540`): always three values, `pvpType, factionName, isArena`; the
-    // type is never `"arena"`, and isArena is 1 or nil, never a boolean.
+    // GetZonePVPInfo() (`0x51ba50`): `pvpType, isSubZonePvP` for a sanctuary, arena or combat
+    // area, `pvpType, nil, factionName` for a territory, nothing without a type. `isSubZonePvP` is
+    // 1 or nil, and the faction an empty string for no name.
     g.set(
         "GetZonePVPInfo",
         lua.create_function(|lua, ()| {
@@ -65,18 +66,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             let z = &model.zone;
-            let string = |s: &Option<String>| match s {
-                Some(s) => lua.create_string(s).map(Value::String),
-                None => Ok(Value::Nil),
+            let Some(ty) = z.pvp_type.as_deref() else {
+                return Ok(MultiValue::new());
             };
-            Ok(MultiValue::from_vec(vec![
-                string(&z.pvp_type)?,
-                string(&z.pvp_faction)?,
-                if z.is_arena {
+            let ty = Value::String(lua.create_string(ty)?);
+            if matches!(
+                z.pvp_type.as_deref(),
+                Some("sanctuary" | "arena" | "combat")
+            ) {
+                let sub = if z.pvp_subzone {
                     Value::Number(1.0)
                 } else {
                     Value::Nil
-                },
+                };
+                return Ok(MultiValue::from_vec(vec![ty, sub]));
+            }
+            let faction = z.pvp_faction.as_deref().unwrap_or("");
+            Ok(MultiValue::from_vec(vec![
+                ty,
+                Value::Nil,
+                Value::String(lua.create_string(faction)?),
             ]))
         })?,
     )?;

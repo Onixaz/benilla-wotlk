@@ -87,6 +87,14 @@ pub(crate) struct GroupInputs<'a> {
     pub(crate) roster: Option<&'a GroupRoster>,
 }
 
+/// The reaction's party rung over the roster the pick published: a guid in the party slots or
+/// the raid roster that is not the active player's.
+impl crate::target::GroupMembers for GroupInputs<'_> {
+    fn is_member(&self, guid: u64) -> bool {
+        Some(guid) != self.self_guid && self.roster.is_some_and(|r| r.in_group(None, guid))
+    }
+}
+
 impl TargetRelations<'_> {
     /// `0x606c20(caster, candidate)`: the candidate is the caster (`606c3d`), or a member of his
     /// party, or a unit that answers to one ([`Self::related`]).

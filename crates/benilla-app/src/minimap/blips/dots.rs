@@ -224,6 +224,7 @@ impl BlipWorld<'_> {
                     Some(store),
                     self.factions,
                     self.reputations,
+                    self.group,
                     self.me,
                 )
             {
@@ -243,7 +244,13 @@ impl BlipWorld<'_> {
             return None;
         }
         let blip = if kind == EntityKind::Player {
-            if crate::target::can_attack(Some(store), self.factions, self.reputations, self.me) {
+            if crate::target::can_attack(
+                Some(store),
+                self.factions,
+                self.reputations,
+                self.group,
+                self.me,
+            ) {
                 Blip::AttackablePlayer
             } else if self.pvp_side(store) == self.me.and_then(|m| self.pvp_side(m)) {
                 Blip::FriendlyPlayer
@@ -251,8 +258,13 @@ impl BlipWorld<'_> {
                 Blip::EnemyFactionPlayer
             }
         } else {
-            let reaction =
-                crate::target::ring_reaction(self.factions, self.reputations, Some(store), self.me);
+            let reaction = crate::target::ring_reaction(
+                self.factions,
+                self.reputations,
+                self.group,
+                Some(store),
+                self.me,
+            );
             match reaction {
                 0 | 1 => Blip::HostileNpc,
                 2 | 3 => Blip::NeutralNpc,

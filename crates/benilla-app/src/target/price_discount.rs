@@ -5,7 +5,7 @@
 
 use crate::net::{ObjectStore, Reputations};
 
-use super::{ring_reaction, Factions};
+use super::{ring_reaction, Factions, GroupMembers};
 
 /// `0x801620`, the f32 0.1 the reputation term loads (`0x612b9d`).
 const REPUTATION_TERM: f32 = 0.1;
@@ -41,11 +41,12 @@ fn price_discount(reaction: u8, vendor_unit_flags: u32, pvp_rank: u8) -> f64 {
 pub(crate) fn vendor_price_discount(
     factions: Option<&Factions>,
     reputations: &Reputations,
+    party: &dyn GroupMembers,
     vendor: &ObjectStore,
     player: &ObjectStore,
 ) -> f64 {
     price_discount(
-        ring_reaction(factions, reputations, Some(vendor), Some(player)),
+        ring_reaction(factions, reputations, party, Some(vendor), Some(player)),
         vendor.0.unit_flags(),
         player.0.player_pvp_rank().unwrap_or(0),
     )
@@ -166,8 +167,9 @@ mod tests {
         let rank_8 = store(&[(PLAYER_BYTES_3, 8 << 24), (PLAYER_FIELD_BYTES, 0)]);
         let held_8 = store(&[(PLAYER_BYTES_3, 0), (PLAYER_FIELD_BYTES, 8 << 24)]);
         let flagged_player = store(&[(PLAYER_BYTES_3, 8 << 24), (FIELD_UNIT_FLAGS, UNIT_FLAG_PVP)]);
-        let disc =
-            |v: &ObjectStore, p: &ObjectStore| vendor_price_discount(None, &reps, v, p).to_bits();
+        let disc = |v: &ObjectStore, p: &ObjectStore| {
+            vendor_price_discount(None, &reps, &crate::target::NoGroup, v, p).to_bits()
+        };
         assert_eq!(disc(&pvp_vendor, &rank_8), D10, "two honor steps");
         assert_eq!(
             disc(&pvp_vendor, &held_8),
@@ -198,7 +200,13 @@ mod tests {
                 template,
             )]));
             let me = ObjectStore(ObjectFields::from_pairs(&[(BYTES_0, HUMAN_WARRIOR)]));
-            let got = vendor_price_discount(Some(&factions), &reps, &vendor, &me);
+            let got = vendor_price_discount(
+                Some(&factions),
+                &reps,
+                &crate::target::NoGroup,
+                &vendor,
+                &me,
+            );
             assert_eq!(got.to_bits(), want, "standing {total}: got {got:e}");
         }
     }

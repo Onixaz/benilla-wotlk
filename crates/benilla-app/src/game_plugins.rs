@@ -838,6 +838,12 @@ pub(crate) mod schedule_tests {
     ///   `read_plate_cvars`: it writes only the two `Sound_OutputDriver*` rows, which none of them
     ///   touches; and the restart's `.after(UiInput)` drains and the stream owners' stops against
     ///   `finish_colliders`, as the other such drains pair.
+    /// - The relation colours (#83) add 14: the nameplate, ring, flash, cursor and last-enemy
+    ///   readers, and the systems sharing the relation param, read `GroupState` and `SocialState`
+    ///   for the party rung and the friend colour, against their writers `drain_party`,
+    ///   `drain_social` and `drain_chat_input`. They only read membership, so a frame on either
+    ///   side of a roster change gives the same colour a frame late, and nothing else they touch is
+    ///   written by those drains.
     /// - `ui_threat::feed_threat` (#629) adds 10: against the `Transform` writers
     ///   `transport::tick_transports`, `reseek_ridden_transport_at_worldport`, `compose_riders`,
     ///   `ground_deck_riders` and `portrait::booth::face_booth_billboards`, whose poses its melee
@@ -846,7 +852,9 @@ pub(crate) mod schedule_tests {
     ///   against the `TutorialEvent` writers `tutorial::watch_self`, `watch_windows`,
     ///   `ui_battlefield::feed_battlefield` and `ui_dialog_verbs::feed_meeting_stone` and the
     ///   drain `tutorial::feed_tutorials`: it only appends one fire-once ask.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_877;
+    /// - `main` at `8c4f8ff` already counts 3895 against its 3889: 6 more pairs this branch does
+    ///   not add and does not argue, carried here so the ratchet measures only this change.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_905;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
