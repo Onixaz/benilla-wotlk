@@ -378,7 +378,7 @@ fn drive_vplates(
         let rank = ring_reaction(
             world.factions.as_deref(),
             &world.reputations,
-            &group,
+            &*group,
             store,
             self_store,
         );
@@ -386,7 +386,7 @@ fn drive_vplates(
         let friendly = crate::target::ring::plate_is_friendly(
             world.factions.as_deref(),
             &world.reputations,
-            &group,
+            &*group,
             store,
             self_store,
             is_player,

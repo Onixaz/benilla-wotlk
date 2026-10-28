@@ -209,6 +209,7 @@ pub(super) fn inspect_ui(
     let (factions, self_store) = (stores.factions.as_deref(), stores.self_store.single().ok());
     let (reputations, plates, plate_mode) =
         (&*stores.reputations, &stores.plates.0, &*stores.plate_mode);
+    let party = crate::target::party_of(stores.group.as_deref());
     let go_templates = &*stores.go_templates;
     let queued_area = stores.stone.as_deref().map_or(0, |s| s.area);
     let hovered_go = &*stores.hovered_go;
@@ -437,13 +438,8 @@ pub(super) fn inspect_ui(
     // Why this unit does or does not carry a plate: every input of `vplates::drive_vplates`'s
     // gate and the verdict read from [`crate::vplates::VPlates`].
     let plate_line = store.filter(|_| is_unit).map(|s| {
-        let rank = crate::target::ring::ring_reaction(
-            factions,
-            reputations,
-            crate::target::party_of(stores.group.as_deref()),
-            Some(s),
-            self_store,
-        );
+        let rank =
+            crate::target::ring::ring_reaction(factions, reputations, party, Some(s), self_store);
         let word = match rank {
             0 => "hated",
             1 => "hostile",

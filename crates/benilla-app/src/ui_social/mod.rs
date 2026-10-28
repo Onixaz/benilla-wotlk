@@ -74,11 +74,6 @@ pub(crate) struct SocialState {
 }
 
 impl SocialState {
-    /// Whether `guid` is on the friend list, online or not: the highlight colour's friend test.
-    pub(crate) fn is_friend(&self, guid: u64) -> bool {
-        self.friends.iter().any(|f| f.guid == guid)
-    }
-
     /// Drop the session's state: the server re-sends every list at login, and a stale ignore list
     /// would silence the wrong guids. The `/who` rows and sort chain go too, as the reference
     /// reseeds both at each world entry (`FriendList::Initialize` `0x6b8990`, from `0x405653`).
