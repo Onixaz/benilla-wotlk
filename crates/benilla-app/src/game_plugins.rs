@@ -836,7 +836,13 @@ pub(crate) mod schedule_tests {
     ///   `read_plate_cvars`: it writes only the two `Sound_OutputDriver*` rows, which none of them
     ///   touches; and the restart's `.after(UiInput)` drains and the stream owners' stops against
     ///   `finish_colliders`, as the other such drains pair.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_875;
+    /// - The relation colours (#83) add 14: the nameplate, ring, flash, cursor and last-enemy
+    ///   readers, and the systems sharing the relation param, read `GroupState` and `SocialState`
+    ///   for the party rung and the friend colour, against their writers `drain_party`,
+    ///   `drain_social` and `drain_chat_input`. They only read membership, so a frame on either
+    ///   side of a roster change gives the same colour a frame late, and nothing else they touch is
+    ///   written by those drains.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_889;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
