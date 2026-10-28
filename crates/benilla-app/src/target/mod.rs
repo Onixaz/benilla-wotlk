@@ -260,15 +260,22 @@ impl Default for ClickConfig {
 #[derive(Resource, Default)]
 pub(crate) struct AssistAttack(pub(crate) bool);
 
-/// The targeting rows' change callback: two flags.
+/// `stopAutoAttackOnTargetChange` (`[0xbd0924]`, default "0"), read at `CGGameUI::Target`'s tail
+/// (`0x524f59`): on, a new target cancels auto-repeat; off, a player in melee swings on at it.
+#[derive(Resource, Default)]
+pub(crate) struct StopAttackOnTargetChange(pub(crate) bool);
+
+/// The targeting rows' change callback: three flags.
 pub(crate) fn on_cvar(
     ev: On<crate::cvars::CvarChanged>,
     mut click: ResMut<ClickConfig>,
     mut assist: ResMut<AssistAttack>,
+    mut stop: ResMut<StopAttackOnTargetChange>,
 ) {
     match ev.key().as_str() {
         "deselectonclick" => click.deselect_on_click = ev.flag(),
         "assistattack" => assist.0 = ev.flag(),
+        "stopautoattackontargetchange" => stop.0 = ev.flag(),
         _ => {}
     }
 }
@@ -282,6 +289,7 @@ impl Plugin for TargetPlugin {
         app.init_resource::<Selection>()
             .init_resource::<ClickConfig>()
             .init_resource::<AssistAttack>()
+            .init_resource::<StopAttackOnTargetChange>()
             .init_resource::<Hovered>()
             .init_resource::<HoveredObject>()
             .init_resource::<PickOcclusion>()
