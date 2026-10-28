@@ -478,7 +478,13 @@ pub(super) fn commit(
         seam.stop(engaged);
     }
     let _ = seam.net.0.send(ClientCommand::SetSelection { guid });
-    let swung = stop_and_repoint && new_attackable && self_guid != Some(guid);
+    // `CGGameUI::Target`'s tail (`0x524f59`): `stopAutoAttackOnTargetChange` cancels auto-repeat and
+    // leaves the swing stopped; off, the swing moves to the new target.
+    let stop_on_change = seam.stops_on_target_change();
+    if stop_on_change {
+        seam.cancel_auto_repeat();
+    }
+    let swung = stop_and_repoint && !stop_on_change && new_attackable && self_guid != Some(guid);
     if swung {
         // `0x4938c8`: the swing goes out despite the lock, and cancels auto-repeat (`0x6ea080`).
         seam.start(guid, engaged, true);
@@ -977,6 +983,36 @@ mod tests {
             None,
             "and the re-swing killed Auto Shot"
         );
+    }
+
+    /// `stopAutoAttackOnTargetChange` on (`0x524f59`): an engaged switch stops and selects but
+    /// swings at nothing, and a running Auto Shot is cancelled (`Spell_C_CancelAutoRepeat
+    /// 0x807560`).
+    #[test]
+    fn stop_on_target_change_ends_the_attack_instead_of_moving_it() {
+        let (mut world, rx) = commit_world();
+        world.insert_resource(crate::target::StopAttackOnTargetChange(true));
+        let drain = |rx: &crossbeam_channel::Receiver<ClientCommand>| {
+            rx.try_iter()
+                .map(|c| match c {
+                    ClientCommand::SetSelection { .. } => "select",
+                    ClientCommand::AttackStop => "stop",
+                    ClientCommand::AttackSwing { .. } => "swing",
+                    ClientCommand::CancelAutoRepeat => "cancel-repeat",
+                    _ => "other",
+                })
+                .collect::<Vec<_>>()
+        };
+        assert!(go(&mut world, 0xA, false, Some(1), true).changed);
+        let _ = drain(&rx);
+        let out = go(&mut world, 0xB, true, Some(1), true);
+        assert!(out.changed && !out.swung);
+        assert_eq!(drain(&rx), ["stop", "select"]);
+        world.resource_mut::<crate::spell::AutoRepeatActive>().0 = Some(75);
+        let out = go(&mut world, 0xC, false, Some(1), true);
+        assert!(out.changed && !out.swung);
+        assert_eq!(drain(&rx), ["select", "cancel-repeat"]);
+        assert_eq!(world.resource::<crate::spell::AutoRepeatActive>().0, None);
     }
 
     /// `IsSelectable` refuses the whole commit before the dedup (`0x4935ee`/`0x4935f3`): nothing is

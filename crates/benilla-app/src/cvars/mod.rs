@@ -1946,6 +1946,7 @@ mod tests {
             .init_resource::<crate::ui_gamma::DisplayGamma>()
             .init_resource::<ClickConfig>()
             .init_resource::<crate::target::AssistAttack>()
+            .init_resource::<crate::target::StopAttackOnTargetChange>()
             .init_resource::<LootConfig>()
             .init_resource::<NameConfig>()
             .init_resource::<ClutterConfig>()

@@ -431,3 +431,110 @@ fn escape_on_an_options_window_returns_to_the_menu() {
         .eval::<bool>("return GameMenuFrame:IsShown() == 1")
         .unwrap());
 }
+
+/// The Combat panel's checkboxes, `(button path, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+const COMBAT_CHECKBOXES: [(&str, &str, &str); 8] = [
+    ("AttackOnAssist", "assistAttack", "0"),
+    ("AutoRange", "autoRangedCombat", "1"),
+    ("StopAutoAttack", "stopAutoAttackOnTargetChange", "0"),
+    ("NameplateClassColors", "ShowClassColorInNameplate", "0"),
+    ("AutoSelfCast", "autoSelfCast", "1"),
+    ("EnemyCastBarsOnPortrait", "showTargetCastbar", "1"),
+    ("EnemyCastBarsOnNameplates", "showVKeyCastbar", "1"),
+    ("TargetOfTarget", "showTargetOfTarget", "0"),
+];
+
+/// Each Combat checkbox boots at its CVar's 12340 default, a click and Okay writes the flip, a
+/// click and Cancel writes nothing, and Defaults puts the registered value back.
+#[test]
+fn every_combat_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-combat");
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsCombatPanel)";
+    for (suffix, cvar, default) in COMBAT_CHECKBOXES {
+        let button = format!("InterfaceOptionsCombatPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
+/// The rows the stock target frame reads: the portrait cast bar follows `showTargetCastbar` through
+/// `CVAR_UPDATE("SHOW_TARGET_CASTBAR")` (`Target_Spellbar_OnEvent`), and Target of Target writes
+/// the `SHOW_TARGET_OF_TARGET`/`_STATE` globals `TargetofTarget_Update` tests.
+#[test]
+fn the_combat_panel_reaches_the_target_frame() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-combat-tf");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let show_castbar = |s: &mut UiScript| {
+        s.eval::<bool>("return TargetFrameSpellBar.showCastbar == true")
+            .unwrap()
+    };
+    assert!(show_castbar(&mut s), "on at the default");
+    s.run(
+        "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsCombatPanel) \
+         InterfaceOptionsCombatPanelEnemyCastBarsOnPortrait:Click() \
+         InterfaceOptionsFrameOkay:Click()",
+    )
+    .unwrap();
+    assert!(!show_castbar(&mut s), "unchecked, the portrait bar is off");
+    s.run(
+        "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsCombatPanel) \
+         InterfaceOptionsCombatPanelTargetOfTarget:Click() \
+         InterfaceOptionsCombatPanelTOTDropDown:SetValue('3') \
+         InterfaceOptionsFrameOkay:Click()",
+    )
+    .unwrap();
+    let tot: (String, String, String) = s
+        .eval(
+            "return SHOW_TARGET_OF_TARGET, SHOW_TARGET_OF_TARGET_STATE, \
+             GetCVar('targetOfTargetMode')",
+        )
+        .unwrap();
+    assert_eq!(tot, ("1".into(), "3".into(), "3".into()));
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
