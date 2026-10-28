@@ -838,7 +838,15 @@ pub(crate) mod schedule_tests {
     ///   `read_plate_cvars`: it writes only the two `Sound_OutputDriver*` rows, which none of them
     ///   touches; and the restart's `.after(UiInput)` drains and the stream owners' stops against
     ///   `finish_colliders`, as the other such drains pair.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_875;
+    /// - `ui_threat::feed_threat` (#629) adds 10: against the `Transform` writers
+    ///   `transport::tick_transports`, `reseek_ridden_transport_at_worldport`, `compose_riders`,
+    ///   `ground_deck_riders` and `portrait::booth::face_booth_billboards`, whose poses its melee
+    ///   test reads one frame late at worst, as `ui_unit::feed_unit_reach`'s range test does
+    ///   (`UiFeed` runs before `WorldStage::Input`, so it cannot follow the transport chain); and
+    ///   against the `TutorialEvent` writers `tutorial::watch_self`, `watch_windows`,
+    ///   `ui_battlefield::feed_battlefield` and `ui_dialog_verbs::feed_meeting_stone` and the
+    ///   drain `tutorial::feed_tutorials`: it only appends one fire-once ask.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_877;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
