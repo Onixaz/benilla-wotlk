@@ -2,13 +2,13 @@
 # The gate for a pull request from an external contributor: every gate in order, stopping at the
 # first failure.
 #
-# fmt, clippy, test, doc-links, pass-span-lint, player-tests, enforcer-build, enforcer-no-install.
+# fmt, clippy, test, doc-links, pass-span-lint, enforcer-build, enforcer-no-install.
 # The chain is synthetic: it reads no WoW install and no addon corpus (`WOW_DATA=` and
 # `BENILLA_ADDON_CORPUS=`, set and empty), so it runs the same on a fresh clone, a CI runner and a
 # machine with the data.
-# `scripts/check.sh` runs all of it and the tests that read the data, so our own pull requests run
-# that instead. Everything builds in `dev`, so the chain reuses the artifacts a
-# `cargo dev` or a probe build left.
+# `scripts/check.sh` runs all of it, the tests that read the data and the player build without
+# `dev` with its own tests, so our own pull requests run that instead. Everything here builds in
+# `dev`, so the chain reuses the artifacts a `cargo dev` or a probe build left.
 # A failure prints the gate's log tail and exits nonzero; a green run stamps the tree, which then
 # re-greens without running. GATES_FORCE=1 runs the chain anyway; TMPDIR holds the scratch files.
 # `.github/workflows/ci.yml` runs this script on a fork's pull request.
@@ -123,14 +123,6 @@ run doc-links $python scripts/doc-links.py
 # pass-span-lint: refuses a second `pass_span` on a render pass whose span is still open, a fatal
 # wgpu validation error on Vulkan and a silent no-op on Metal and DX12, which no macOS run sees.
 run pass-span-lint $python scripts/pass-span-lint.py
-
-# player-tests: the player build, `benilla-app` without `dev`, which compiles out the debug panel,
-# perf HUD, inspector, capture harness and probes, so it fails when any other code names one of
-# them. Its test build compiles every line of the player graph but the `benilla` launcher, a shim
-# with no `dev` seam, so a `cargo build -p benilla --no-default-features` would add only the shim
-# and a link. It runs the unit tests of the `cfg(not(feature = "dev"))` code (the resolver skips
-# the source tree; the state folder sits beside the binary), which no other gate runs.
-run player-tests cargo test -p benilla-formats -p benilla-app --no-default-features --lib
 
 # enforcer-no-install: `benilla-worldview` boots the engine plugins with no server, login, UI,
 # player or client data, in a small window, and refuses any system whose parameters need a resource
