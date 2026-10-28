@@ -432,6 +432,99 @@ fn escape_on_an_options_window_returns_to_the_menu() {
         .unwrap());
 }
 
+/// The ActionBars panel's CVar checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+const ACTIONBARS_CHECKBOXES: [(&str, &str, &str); 3] = [
+    ("LockActionBars", "lockActionBars", "1"),
+    ("AlwaysShowActionBars", "alwaysShowActionBars", "0"),
+    ("SecureAbilityToggle", "secureAbilityToggle", "1"),
+];
+
+/// The ActionBars panel: its three CVar rows boot at their 12340 defaults, Okay writes, Cancel
+/// writes nothing and Defaults restores; the four bar rows have no CVar, so each Okay posts its
+/// bit through `SetActionBarToggles` (`InterfaceOptions_UpdateMultiActionBars`) and the bottom
+/// bars show.
+#[test]
+fn every_actionbars_checkbox_writes_its_cvar_or_its_toggle_bit() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-actionbars");
+    s.set_action_bar_toggles(0);
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsActionBarsPanel)";
+    for (suffix, cvar, default) in ACTIONBARS_CHECKBOXES {
+        let button = format!("InterfaceOptionsActionBarsPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let _ = s.take_action_bar_toggle_sends();
+    let mut want = 0u8;
+    for (bit, suffix) in ["BottomLeft", "BottomRight", "Right", "RightTwo"]
+        .into_iter()
+        .enumerate()
+    {
+        s.run(&format!(
+            "{open} InterfaceOptionsActionBarsPanel{suffix}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        want |= 1 << bit;
+        assert_eq!(
+            s.take_action_bar_toggle_sends().last().copied(),
+            Some(want),
+            "{suffix} posts its bit"
+        );
+    }
+    let shown: (bool, bool) = s
+        .eval("return MultiBarBottomLeft:IsShown() == 1, MultiBarBottomRight:IsShown() == 1")
+        .unwrap();
+    assert_eq!(shown, (true, true), "the bottom bars show");
+    let errors: Vec<String> = s
+        .take_errors()
+        .into_iter()
+        .filter(|e| {
+            ["Options", "MultiActionBar", "ActionBar"]
+                .iter()
+                .any(|k| e.contains(k))
+        })
+        .collect();
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Combat panel's checkboxes, `(button path, CVar, registered default)`
 /// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
 const COMBAT_CHECKBOXES: [(&str, &str, &str); 8] = [

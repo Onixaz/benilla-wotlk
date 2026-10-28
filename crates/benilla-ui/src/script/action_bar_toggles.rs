@@ -1,13 +1,13 @@
 //! `GetActionBarToggles` and `SetActionBarToggles`: the four extra action bars' visibility, the
 //! low nibble of the server's `PLAYER_FIELD_BYTES` byte 2.
 //!
-//! The setter (`0x4e76e0`) only posts `CMSG_SET_ACTIONBAR_TOGGLES`; the getter (`0x4e7660`) reads
-//! the live descriptor byte, written only by the `SMSG_UPDATE_OBJECT` apply (`0x466590`), with no
-//! field-change hook (`0x468070`). A `Get` right after a `Set` returns the old value for a round
-//! trip; the stock UI reads it once, at `PLAYER_ENTERING_WORLD` (`UIParent.lua:364`).
+//! The setter (`Script_SetActionBarToggles 0x5a8290`) only posts `CMSG_SET_ACTIONBAR_TOGGLES`
+//! (`0x2bf`, `0x5a82cf`); the getter (`Script_GetActionBarToggles 0x5a8790`) reads the live
+//! descriptor byte, which only the server moves. A `Get` right after a `Set` returns the old value
+//! for a round trip; the stock UI reads it at `PLAYER_ENTERING_WORLD` and keeps its own uvars.
 //!
-//! The setter builds the byte from zero out of four arguments (`0x4e76eb`, `0x4e7709`): a fifth,
-//! which `UIOptionsFrame.lua:363` passes, is dropped, and a high nibble the server held is cleared.
+//! The setter builds the byte from zero out of four arguments, so a high nibble the server held
+//! is cleared.
 
 use mlua::{Lua, MultiValue, Value};
 
