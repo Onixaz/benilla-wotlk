@@ -126,6 +126,8 @@ pub(crate) struct CastLadder<'w, 's> {
     /// The pet's cooldown list and pending cast, which a cast as the pet reads; its writes are
     /// queued, as the script appliers share the bar.
     pub(crate) pet_bar: Option<Res<'w, crate::ui_pet::PetBar>>,
+    /// `secureAbilityToggle`; a harness without it reads the default, on.
+    pub(crate) secure_toggle: Option<Res<'w, super::SecureAbilityToggle>>,
 }
 
 /// What a targeting-cursor click bound: what `BindLocation 0x6e60f0` or `BindTarget 0x6e5b40`
@@ -150,6 +152,14 @@ pub(crate) enum TargetedBind {
 }
 
 impl CastLadder<'_, '_> {
+    /// `Spell_C_ClickSpell`'s guard on an active toggle (`0x80da80`): with `secureAbilityToggle`
+    /// on, a spell cast under 1.5 s ago (`SpellHistory::RecentlyCast`) keeps its aura, and the
+    /// press does nothing.
+    pub(crate) fn keeps_fresh_toggle(&self, spell_id: u32) -> bool {
+        self.secure_toggle.as_deref().is_none_or(|s| s.0)
+            && self.cooldowns.recently_cast(spell_id, 0, Instant::now())
+    }
+
     /// The targeting cursor's commit: the ladder ran when the cursor went up, so the click owes
     /// only `SendCast 0x6e54f0`'s tail (the packet, the pending arm, the GCD), then clears the
     /// word.
@@ -1281,6 +1291,43 @@ mod tests {
             ),
             "an allowed-while-mounted spell keeps the mount: {sent:?}"
         );
+    }
+
+    /// `Spell_C_ClickSpell`'s guard (`0x80da80`): a toggle cast under 1.5 s ago keeps its aura
+    /// while `secureAbilityToggle` is on, and is free to cancel with it off or once the window
+    /// has passed.
+    #[test]
+    fn a_fresh_toggle_keeps_its_aura_only_under_secure_ability_toggle() {
+        use benilla_formats::SpellDisplay;
+        const STEALTH: u32 = 1784;
+        let (mut world, _rx) = world();
+        let gcd = SpellDisplay {
+            start_recovery_ms: 1000,
+            ..Default::default()
+        };
+        world.resource_mut::<crate::spell::Cooldowns>().start_gcd(
+            STEALTH,
+            &gcd,
+            Instant::now(),
+            &crate::spell::SpellModifiers::default(),
+        );
+        let keeps = |world: &mut World| {
+            world
+                .run_system_once(|ladder: CastLadder| ladder.keeps_fresh_toggle(STEALTH))
+                .expect("one-shot")
+        };
+        assert!(
+            keeps(&mut world),
+            "no resource reads the registered default, on"
+        );
+        world.insert_resource(crate::spell::SecureAbilityToggle(false));
+        assert!(!keeps(&mut world), "off: the press cancels");
+        world.insert_resource(crate::spell::SecureAbilityToggle(true));
+        assert!(keeps(&mut world));
+        let other = world
+            .run_system_once(|ladder: CastLadder| ladder.keeps_fresh_toggle(STEALTH + 1))
+            .expect("one-shot");
+        assert!(!other, "another spell's cast does not guard this one");
     }
 
     /// A mashed chest opener goes out once as the GameObject block; the re-click is `6e4d43`'s

@@ -543,6 +543,10 @@ pub(crate) fn cast_spell(
         if let Some(d) = sp.catalog.get(spell_id) {
             let auras = targeting.self_auras.iter().next();
             if crate::ui_action::toggle::active_action_toggle(spell_id, d, auras) {
+                if ladder.keeps_fresh_toggle(spell_id) {
+                    debug!("ui_spellbook: cast {spell_id} re-pressed — just cast, kept");
+                    return;
+                }
                 debug!("ui_spellbook: cast {spell_id} re-pressed — aura cancels");
                 let _ = ladder
                     .commands
@@ -553,6 +557,10 @@ pub(crate) fn cast_spell(
             let form = store.0.unit_shapeshift_form();
             let row = sp.forms.get(&u32::from(form));
             match crate::ui_action::toggle::form_recast_disposition(d, form, row) {
+                Some(true) if ladder.keeps_fresh_toggle(spell_id) => {
+                    debug!("ui_spellbook: cast {spell_id} — the form was just cast, kept");
+                    return;
+                }
                 Some(true) => {
                     debug!("ui_spellbook: cast {spell_id} — the active form cancels");
                     let _ = ladder

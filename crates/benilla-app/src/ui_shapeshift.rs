@@ -321,6 +321,9 @@ pub(crate) fn cast_form(cast: &mut crate::spell::ScriptCast, spell_id: u32) {
         }
     });
     match disposition {
+        Some(true) if ladder.keeps_fresh_toggle(spell_id) => {
+            debug!("ui_shapeshift: form {spell_id} was just cast, kept");
+        }
         Some(true) => {
             debug!("ui_shapeshift: cancel form aura {spell_id}");
             let _ = ladder
