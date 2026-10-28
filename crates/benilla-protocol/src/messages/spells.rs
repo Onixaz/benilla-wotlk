@@ -589,8 +589,9 @@ pub(super) fn read_set_spell_modifier(r: &mut impl Read) -> io::Result<(u8, u8, 
     Ok((mask_bit, op, value))
 }
 
-/// Read `SMSG_PLAY_SPELL_VISUAL` (vmangos `Packets/Spell.cpp:54-58`): raw `u64` unit, `u32` kit
-/// id. The client (`0x6e98d0`) checks the kit against `SpellVisualKit.dbc` and plays it at stage 0.
+/// Read `SMSG_PLAY_SPELL_VISUAL` and `SMSG_PLAY_SPELL_IMPACT`: raw `u64` unit, `u32` kit id. 12340
+/// (`0x800610`, `0x8006c0`) checks the kit against `SpellVisualKit.dbc` and plays it on a streamed
+/// unit, at stage 0 and 1 respectively.
 pub(super) fn read_play_spell_visual(r: &mut impl Read) -> io::Result<(u64, u32)> {
     let unit = read_u64_le(r)?;
     let kit_id = read_u32_le(r)?;
@@ -740,6 +741,21 @@ pub fn dismiss_critter(critter_guid: u64) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// AzerothCore's trainer buy: `SendPlaySpellImpact(player, 362)`, `u64` guid then `u32` kit.
+    #[test]
+    fn play_spell_impact_wire() {
+        use crate::messages::{opcode, parse_server, ServerPacket};
+        let mut body = 0x0000_0000_0000_0042u64.to_le_bytes().to_vec();
+        body.extend_from_slice(&362u32.to_le_bytes());
+        match parse_server(opcode::SMSG_PLAY_SPELL_IMPACT, &body).unwrap() {
+            ServerPacket::PlaySpellImpact { unit, kit_id } => {
+                assert_eq!((unit, kit_id), (0x42, 362));
+            }
+            other => panic!("expected PlaySpellImpact, got {}", other.name()),
+        }
+        assert!(parse_server(opcode::SMSG_PLAY_SPELL_IMPACT, &body[..11]).is_err());
+    }
 
     #[test]
     fn wire_reasons_map_onto_the_shared_numbering() {

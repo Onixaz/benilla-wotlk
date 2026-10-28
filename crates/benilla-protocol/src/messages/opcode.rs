@@ -210,6 +210,8 @@ pub const SMSG_SPELL_GO: u16 = 0x0132; // 306
 /// A cast failed or was interrupted, sent to the caster and its observers (handler `0x809c70`).
 pub const SMSG_SPELL_FAILURE: u16 = 0x0133; // 307
 pub const SMSG_PLAY_SPELL_VISUAL: u16 = 0x01F3; // 499
+/// A spell-visual kit on a unit at stage 1 (`0x8006c0`): a trainer's learn effect on the buyer.
+pub const SMSG_PLAY_SPELL_IMPACT: u16 = 0x01F7; // 503
 /// Save the tabard design, both ways; the reply is one of six results.
 pub const MSG_SAVE_GUILD_EMBLEM: u16 = 0x01F1; // 497
 pub const MSG_TABARDVENDOR_ACTIVATE: u16 = 0x01F2; // 498

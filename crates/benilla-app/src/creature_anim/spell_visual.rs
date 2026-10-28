@@ -382,8 +382,8 @@ fn resolve_kit_effects(visuals: &SpellVisualCatalog, kit: &VisualKit) -> Vec<FxS
         .collect()
 }
 
-/// A server-pushed kit (`SMSG_PLAY_SPELL_VISUAL`), played at stage 0 with spell id 0: its effects
-/// end only on their own (`0x6e98d0` → `0x60edf0`).
+/// A server-pushed kit (`SMSG_PLAY_SPELL_VISUAL` at stage 0, `SMSG_PLAY_SPELL_IMPACT` at stage 1),
+/// played with spell id 0: its effects end only on their own (`0x800610`/`0x8006c0` → `0x60edf0`).
 #[derive(Message, Clone, Copy)]
 pub(crate) struct KitPush {
     pub(crate) entity: Entity,
