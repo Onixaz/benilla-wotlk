@@ -179,8 +179,14 @@ if [ -n "$had_data" ]; then
     run test-no-install no_data cargo test $pflags
 fi
 
-# player-tests: `benilla-app` without `dev` with the data, for the shipped-UI tests that read
-# FrameXML off the install. Without `dev` only $BENILLA_ADDON_CORPUS finds the corpus.
+# player-tests: the player build, `benilla-app` without `dev`, which compiles out the debug panel,
+# perf HUD, inspector, capture harness and probes, so it fails when any other code names one of
+# them. Its test build compiles every line of the player graph but the `benilla` launcher, a shim
+# with no `dev` seam, so a `cargo build -p benilla --no-default-features` would add only the shim
+# and a link. It runs the unit tests of the `cfg(not(feature = "dev"))` code (the resolver skips
+# the source tree; the state folder sits beside the binary), which no other gate runs, with the data
+# for the shipped-UI tests that read FrameXML off the install. Without `dev` only
+# $BENILLA_ADDON_CORPUS finds the corpus.
 if in_scope benilla-app || in_scope benilla-formats; then
     run player-tests env ${wow_data:+WOW_DATA="$wow_data"} ${corpus:+BENILLA_ADDON_CORPUS="$corpus"} \
         ${require_data:+BENILLA_REQUIRE_DATA=1} BENILLA_SKIP_LOG="$skips" \

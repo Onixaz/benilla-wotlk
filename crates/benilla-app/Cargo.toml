@@ -9,7 +9,7 @@ description = "The Bevy app as a library: everything but the build-id stamp, whi
 workspace = true
 
 [features]
-# `dev` compiles in the instruments; the player build (`scripts/gates.sh`) has no defaults.
+# `dev` compiles in the instruments; the player build (`scripts/check.sh`) has no defaults.
 default = ["dev"]
 # The asset, format and world crates default `dev` on, so they come in without it, forwarded here.
 dev = ["benilla-assets/dev", "benilla-formats/dev", "benilla-world/dev"]

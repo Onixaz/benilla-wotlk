@@ -1,7 +1,7 @@
 # scripts/gates.sh, the land gates, on Linux for a pull request from a fork: a red one is seen
 # before anyone builds it. The chain reads no WoW install, so it runs here as it runs anywhere; the
-# engine boot draws to Xvfb through Mesa's software Vulkan. The data-gated tests (scripts/check.sh)
-# and a live run happen on the maintainer's machine.
+# engine boot draws to Xvfb through Mesa's software Vulkan. The data-gated tests and the player
+# build (scripts/check.sh) and a live run happen on the maintainer's machine.
 name: CI
 
 on:

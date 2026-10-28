@@ -97,8 +97,9 @@ crate of its own or a fork, and benilla opens a piece of itself to such a crate 
   is absent and the check prints the count; where the data is, a skip is a failure
   (`BENILLA_REQUIRE_DATA=1`). Run it once per round; `tee` the output to a file and grep the
   file.
-- **The land gates**: `scripts/gates.sh`, the check's chain without the data, for a pull request
-  from an external contributor; CI runs it on a fork's pull request. It is memoized on the tree.
+- **The land gates**: `scripts/gates.sh`, the check's chain without the data and the player
+  build, for a pull request from an external contributor; CI runs it on a fork's pull request. It
+  is memoized on the tree.
 - **A clean run** is the fourth gate: `scripts/smoke.sh`, a live login and logout against the
   local server. For wire work the gate is a live run with a trace (`WOW_MOVE_TRACE=<path>`,
   tags filtered), never a capture: capture mode has no network.
