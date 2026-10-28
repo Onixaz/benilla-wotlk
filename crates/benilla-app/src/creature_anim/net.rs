@@ -160,9 +160,8 @@ fn on_play_spell_visual(
 ) {
     // `SMSG_PLAY_SPELL_IMPACT` plays at stage 1 (`0x8006c0`), the visual's at stage 0 (`0x800610`).
     // Both are the same discrete play (`0x5fbf50`), so they share one push. The one difference is
-    // stage 0's flag `0x80`, which latches the kit's anim as the unit's special idle
-    // (`PlaySpellVisualKit_PlayAnims`). Nothing here models that latch yet; the push that does
-    // takes a stage field.
+    // stage 0's flag `0x80`, which latches the kit's anim as the unit's special idle (`0x73b140`).
+    // Nothing here models that latch yet; the push that does takes a stage field.
     if let SessionEvent::PlaySpellVisual { unit, kit_id }
     | SessionEvent::PlaySpellImpact { unit, kit_id } = ev
     {
@@ -339,7 +338,7 @@ fn emote(guid: u64, emote_id: u32, index: &GuidIndex, out: &mut MessageWriter<Em
 
 /// `SMSG_PLAY_SPELL_VISUAL` (stage 0: eating, drinking, mid-channel swaps) and
 /// `SMSG_PLAY_SPELL_IMPACT` (stage 1: a trainer's learn effect): a kit play on the unit. Only a
-/// streamed unit takes a [`PlaySeq`] stamp (`ClntObjMgrObjectPtr`, `TYPEMASK_UNIT`).
+/// streamed unit takes a [`PlaySeq`] stamp (`0x468460`, unit typemask).
 fn play_spell_visual(
     unit: u64,
     kit_id: u32,
@@ -430,7 +429,7 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
 
-    /// `0x8006c0` and `0x800610` both play on a streamed unit only (`ClntObjMgrObjectPtr`), and
+    /// `0x8006c0` and `0x800610` both play on a streamed unit only (`0x468460`), and
     /// AzerothCore's trainer buy sends kit 362 on the buyer through the impact.
     #[test]
     fn the_impact_and_the_visual_both_push_their_kit_on_a_streamed_unit() {
