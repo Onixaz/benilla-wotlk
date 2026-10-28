@@ -5,8 +5,8 @@ use std::io;
 
 use crate::wire::{capacity_hint, read_cstring, read_u32_le, read_u64_le, read_u8};
 
-/// One 38-byte `SMSG_TRAINER_LIST` service (`NPCHandler.cpp:97-139`); the server already filters
-/// the list to the player's class and race.
+/// One 38-byte `SMSG_TRAINER_LIST` service, as `CGPlayer_C::OnTrainerList` (`0x6d12c0`) reads
+/// it; the server already filters the list to the player's class and race.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrainerSpell {
     /// The service spell id, which `CMSG_TRAINER_BUY_SPELL` names to buy it.
@@ -15,20 +15,20 @@ pub struct TrainerSpell {
     pub state: u8,
     /// In copper, already reputation-discounted by the server.
     pub cost: u32,
-    /// Sent as `first_rank && can_learn`; the client enables Learn only when it equals
-    /// `is_primary_prof_first_rank`, which greys a third primary profession.
-    pub can_learn_primary_prof: bool,
-    /// Taking it spends a profession slot, so the client asks for confirmation.
-    pub is_primary_prof_first_rank: bool,
+    /// The talent-point cost, which `GetTrainerServiceCost` returns second.
+    pub talent_cost: u32,
+    /// The profession-point cost, returned third; the stock window confirms a service that has
+    /// one and greys it when the player has no profession slot left.
+    pub profession_cost: u32,
     pub req_level: u8,
     /// A `SkillLine.dbc` id, 0 for none.
     pub req_skill: u32,
     pub req_skill_value: u32,
-    /// The `SpellChainNode` req and prev spells, then a slot vmangos always sends as 0.
+    /// The three required-ability slots, read raw.
     pub req_spells: [u32; 3],
 }
 
-/// `TrainerSpellState` (`Player.h:119-122`); `GREEN_DISABLED` (10) is sent as `GREEN`.
+/// The state byte `0x594260` maps to a type string: 0 available, 2 used, anything else unavailable.
 pub mod trainer_spell_state {
     /// Learnable now.
     pub const GREEN: u8 = 0;
@@ -38,7 +38,7 @@ pub mod trainer_spell_state {
     pub const GRAY: u8 = 2;
 }
 
-/// `SMSG_TRAINER_BUY_FAILED` error codes (vmangos `SharedDefines.h:1120-1122` `TRAIN_FAIL_*`).
+/// `SMSG_TRAINER_BUY_FAILED` error codes, each a console line in `0x6d8410`.
 pub mod train_fail {
     /// Not your trainer, out of line of sight, or not a listed service.
     pub const UNAVAILABLE: u32 = 0;
@@ -60,15 +60,15 @@ pub fn trainer_buy_spell(trainer_guid: u64, spell_id: u32) -> Vec<u8> {
     body
 }
 
-/// `SMSG_TRAINER_LIST` (`NPCHandler.cpp:141-241`): the type is 0 class, 1 mount, 2 tradeskill or
-/// 3 pet, and the title is the greeting line.
+/// `SMSG_TRAINER_LIST` (`0x6d12c0`): the type is 2 at a tradeskill trainer, and the title is the
+/// greeting line.
 pub(super) fn read_trainer_list(
     r: &mut &[u8],
 ) -> io::Result<(u64, u32, Vec<TrainerSpell>, String)> {
     let trainer = read_u64_le(r)?;
     let trainer_type = read_u32_le(r)?;
     let count = read_u32_le(r)?;
-    // No protocol bound (`NPCHandler.cpp:170` sums two lists); 1024 is past any real trainer.
+    // No protocol bound (`0x6d12c0` sizes its arrays by the count); 1024 is past any real trainer.
     let mut services = Vec::with_capacity(capacity_hint(count, 1024));
     for _ in 0..count {
         // Struct-literal fields evaluate top to bottom, so this reads in wire order.
@@ -76,8 +76,8 @@ pub(super) fn read_trainer_list(
             spell: read_u32_le(r)?,
             state: read_u8(r)?,
             cost: read_u32_le(r)?,
-            can_learn_primary_prof: read_u32_le(r)? != 0,
-            is_primary_prof_first_rank: read_u32_le(r)? != 0,
+            talent_cost: read_u32_le(r)?,
+            profession_cost: read_u32_le(r)?,
             req_level: read_u8(r)?,
             req_skill: read_u32_le(r)?,
             req_skill_value: read_u32_le(r)?,

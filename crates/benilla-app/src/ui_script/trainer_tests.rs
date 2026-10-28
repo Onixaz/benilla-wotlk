@@ -6,64 +6,25 @@ use benilla_ui::script::{
     TrainerServiceCategory, TrainerSkillReq, TrainerState, UiScript,
 };
 
-use super::test_ui::load_ui as load_xml;
+use super::test_ui::stock_ui;
 
-/// The trainer window with every state filter on, for the full tree at fixed indices.
+/// The trainer window over the full stock load, the addon loaded as `ClassTrainerFrame_LoadUI`
+/// loads it, with every state filter on for the full tree at fixed indices.
 pub(super) fn trainer_script() -> UiScript {
-    let mut s = trainer_script_base();
-    load_xml(
-        &s,
-        "Interface\\AddOns\\Blizzard_TrainerUI\\Blizzard_TrainerUI.xml",
-    );
-    finish_trainer_load(&mut s);
+    let s = trainer_script_base();
+    s.run("ClassTrainerFrame_LoadUI()").unwrap();
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    s.run("SetTrainerServiceTypeFilter('all')").unwrap();
     s
 }
 
-/// What the manifest loads before the trainer addon, with a text measurer: the stock row's label
-/// is a width-0 `<ButtonText>`, sized to its text.
+/// The full stock load with the trainer addon seated on the chain, unloaded, and a text measurer:
+/// the stock row's label is a width-0 `<ButtonText>`, sized to its text. The title reads
+/// `UnitName("npc")`, so the NPC is seated.
 fn trainer_script_base() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
+    let mut s = stock_ui(1024.0, 768.0);
     s.set_text_measurer(Box::new(super::FixedWidthFont(7.0)));
-    // In the production order: the window calls
-    // `UpdateMicroButtons` and inherits the panel templates.
-    for f in [
-        "Interface\\FrameXML\\GlobalStrings.lua",
-        "Interface\\FrameXML\\Fonts.xml",
-        "Interface\\FrameXML\\BasicControls.xml",
-        "Interface\\FrameXML\\LocaleProperties.lua",
-        r"Interface\FrameXML\UIParent.xml",
-        r"Interface\FrameXML\MoneyFrame.lua",
-        r"Interface\FrameXML\MoneyFrame.xml",
-        "Interface\\FrameXML\\GameTooltip.xml",
-        "Interface\\FrameXML\\UIDropDownMenu.xml",
-        r"Interface\FrameXML\UIPanelTemplates.lua",
-        r"Interface\FrameXML\UIPanelTemplates.xml",
-        r"Interface\FrameXML\OptionsFrameTemplates.xml",
-        "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-        "Interface\\FrameXML\\StaticPopup.xml",
-        "Interface\\FrameXML\\TextStatusBar.lua",
-        "Interface\\FrameXML\\TextStatusBar.xml",
-        "Interface\\FrameXML\\MainMenuBar.xml",
-        r"Interface\FrameXML\MainMenuBarMicroButtons.xml",
-        "Interface\\FrameXML\\Cooldown.xml",
-        "Interface\\FrameXML\\ActionButtonTemplate.xml",
-        "Interface\\FrameXML\\ActionBarFrame.xml",
-        "Interface\\FrameXML\\MultiActionBars.xml",
-        r"Interface\FrameXML\ReputationFrame.xml",
-        "Interface\\FrameXML\\MerchantFrame.xml",
-        "Interface\\FrameXML\\BonusActionBarFrame.xml",
-        "Interface\\FrameXML\\ClassTrainerFrameTemplates.xml",
-        "ScrollTemplates.xml",
-    ] {
-        load_xml(&s, f);
-    }
-    s
-}
-
-/// The rest of a LoadOnDemand load: `ADDON_LOADED` pushes the filter globals, "used" on, into the
-/// engine. The title reads `UnitName("npc")`, so the NPC is seated.
-fn finish_trainer_load(s: &mut UiScript) {
+    super::test_ui::seat_chain_addon(&mut s, "Blizzard_TrainerUI");
     s.set_unit(
         "npc",
         Some(benilla_ui::script::UnitState {
@@ -72,11 +33,7 @@ fn finish_trainer_load(s: &mut UiScript) {
             ..Default::default()
         }),
     );
-    s.run("TRAINER_FILTER_USED = 1").unwrap();
-    s.fire_event(
-        "ADDON_LOADED",
-        vec![ScriptValue::Str("Blizzard_TrainerUI".into())],
-    );
+    s
 }
 
 /// Whether any text quad renders in `color`: the red cost's `(1.0, 0.1, 0.1)` is distinct from an
@@ -130,16 +87,15 @@ fn service(
         name: Some(name.into()),
         subtext: None,
         texture: Some("Interface\\Icons\\INV_Sword_04".into()),
-        description: String::new(),
         cost,
-        prof_first_rank: false,
         category,
         level_req,
         skill_req,
-        ability_reqs,
-        is_trade_skill: false,
+        // The wire's slots in order.
+        ability_reqs: std::array::from_fn(|i| ability_reqs.get(i).cloned()),
         group_key: skill_line,
         group_name: line_name.into(),
+        ..Default::default()
     }
 }
 
@@ -178,7 +134,7 @@ pub(super) fn menu() -> TrainerState {
                 }),
                 // Gated by level and skill, but the prerequisite is learned, so it reads white.
                 vec![TrainerAbilityReq {
-                    name: "Charge (Rank 1)".into(),
+                    name: Some("Charge (Rank 1)".into()),
                     met: true,
                 }],
             ),
@@ -209,7 +165,7 @@ pub(super) fn menu() -> TrainerState {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn shipped_trainer_frame_drives_end_to_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -267,7 +223,7 @@ fn shipped_trainer_frame_drives_end_to_end() {
     assert!(s.take_trainer_buys().is_empty(), "drained");
 
     // Thunder Clap (row 6) is available but unaffordable: Train disables and the cost reddens.
-    s.run("this = ClassTrainerSkill6; ClassTrainerSkillButton_OnClick('LeftButton')")
+    s.run("ClassTrainerSkillButton_OnClick(ClassTrainerSkill6, 'LeftButton')")
         .unwrap();
     assert!(!s
         .eval::<bool>("return ClassTrainerTrainButton:IsEnabled() ~= 0")
@@ -279,7 +235,7 @@ fn shipped_trainer_frame_drives_end_to_end() {
     );
 
     // Cleave (row 3) is gated: the `Requires:` line lists its level, skill and ability gates.
-    s.run("this = ClassTrainerSkill3; ClassTrainerSkillButton_OnClick('LeftButton')")
+    s.run("ClassTrainerSkillButton_OnClick(ClassTrainerSkill3, 'LeftButton')")
         .unwrap();
     let reqs = s
         .eval::<String>("return ClassTrainerSkillRequirements:GetText()")
@@ -306,7 +262,7 @@ fn shipped_trainer_frame_drives_end_to_end() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn clicking_a_header_row_collapses_its_group() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -324,7 +280,7 @@ fn clicking_a_header_row_collapses_its_group() {
     );
 
     // Folding Arms leaves 4 rows: H:Arms, H:Fury, Rend, Thunder Clap.
-    s.run("this = ClassTrainerSkill1; ClassTrainerSkillButton_OnClick('LeftButton')")
+    s.run("ClassTrainerSkillButton_OnClick(ClassTrainerSkill1, 'LeftButton')")
         .unwrap();
     assert_eq!(s.eval::<i64>("return GetNumTrainerServices()").unwrap(), 4);
     assert_eq!(
@@ -334,14 +290,14 @@ fn clicking_a_header_row_collapses_its_group() {
         "Arms folded; its header (row 1) now abuts the Fury header (row 2)"
     );
 
-    s.run("this = ClassTrainerSkill1; ClassTrainerSkillButton_OnClick('LeftButton')")
+    s.run("ClassTrainerSkillButton_OnClick(ClassTrainerSkill1, 'LeftButton')")
         .unwrap();
     assert_eq!(s.eval::<i64>("return GetNumTrainerServices()").unwrap(), 6);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn filter_hides_a_state_keeping_headers() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -354,7 +310,7 @@ fn filter_hides_a_state_keeping_headers() {
     // Button 3 is the "used" row, clicked through the kit's own handler.
     s.run("ToggleDropDownMenu(1, nil, ClassTrainerFrameFilterDropDown)")
         .unwrap();
-    s.run("this = DropDownList1Button3; UIDropDownMenuButton_OnClick()")
+    s.run("UIDropDownMenuButton_OnClick(DropDownList1Button3)")
         .unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert_eq!(
@@ -372,7 +328,7 @@ fn filter_hides_a_state_keeping_headers() {
 /// `UIDropDownMenuButton_OnClick` flips a `keepShownOnClick` row's check after running its func:
 /// click, re-click and re-open must agree on screen and in the engine.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn filter_rows_toggle_through_the_dropdown_kit() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -391,7 +347,7 @@ fn filter_rows_toggle_through_the_dropdown_kit() {
     assert!(row_checked(&mut s), "Unavailable starts checked");
     assert_eq!(s.eval::<i64>("return GetNumTrainerServices()").unwrap(), 6);
 
-    s.run("this = DropDownList1Button2; UIDropDownMenuButton_OnClick()")
+    s.run("UIDropDownMenuButton_OnClick(DropDownList1Button2)")
         .unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(!row_checked(&mut s), "the click clears the row's check");
@@ -406,7 +362,7 @@ fn filter_rows_toggle_through_the_dropdown_kit() {
         "Cleave is hidden"
     );
 
-    s.run("this = DropDownList1Button2; UIDropDownMenuButton_OnClick()")
+    s.run("UIDropDownMenuButton_OnClick(DropDownList1Button2)")
         .unwrap();
     assert!(row_checked(&mut s), "the re-click restores the check");
     assert!(
@@ -417,7 +373,7 @@ fn filter_rows_toggle_through_the_dropdown_kit() {
     assert_eq!(s.eval::<i64>("return GetNumTrainerServices()").unwrap(), 6);
 
     // Off again, then close and re-open: `Initialize` re-derives every row from the engine.
-    s.run("this = DropDownList1Button2; UIDropDownMenuButton_OnClick()")
+    s.run("UIDropDownMenuButton_OnClick(DropDownList1Button2)")
         .unwrap();
     s.run("ToggleDropDownMenu(1, nil, ClassTrainerFrameFilterDropDown)")
         .unwrap(); // same owner → closes
@@ -455,7 +411,7 @@ fn long_menu() -> TrainerState {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn wheel_over_a_row_scrolls_the_list() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -464,7 +420,12 @@ fn wheel_over_a_row_scrolls_the_list() {
     s.fire_event("TRAINER_SHOW", vec![ScriptValue::Str("Sana".into())]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
+    // The engine picks Service 01 at index 2, and `ClassTrainer_SelectFirstLearnableSkill`
+    // scrolls a pick at index 2 or past to `(index - 1) * 16`: the list opens one row down.
     let row1 = "return ClassTrainerSkill1Text:GetText()";
+    assert_eq!(s.eval::<String>(row1).unwrap(), "  Service 01");
+    s.run("ClassTrainerListScrollFrameScrollBar:SetValue(0)")
+        .unwrap();
     assert_eq!(s.eval::<String>(row1).unwrap(), "Arms");
     assert_eq!(
         s.eval::<String>("return ClassTrainerSkill2Text:GetText()")
@@ -477,7 +438,7 @@ fn wheel_over_a_row_scrolls_the_list() {
     let (x, y) = text_center(&s.extract(), "Service 03");
 
     // Negative is down. The reference's wheel moves half the bar's height, a page and not a row
-    // (`ScrollFrameTemplate_OnMouseWheel`, `UIPanelTemplates.lua:150-157`).
+    // (`ScrollFrameTemplate_OnMouseWheel`, `UIPanelTemplates.lua`).
     s.mouse_wheel(x, y, -1.0);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     // The wiring is the subject (wheel, bar, `FauxScrollFrame_OnVerticalScroll`, repaint), so the
@@ -516,10 +477,10 @@ fn wheel_over_a_row_scrolls_the_list() {
 }
 
 /// The row's name is its button's `<ButtonText>`: hover swaps in the `GameFontHighlight` font and
-/// `LockHighlight()` pins it for the selection (`Blizzard_TrainerUI.lua:183`), while `SetTextColor`
+/// `LockHighlight()` pins it for the selection (`Blizzard_TrainerUI.lua`), while `SetTextColor`
 /// writes only the normal font, so both states read white.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn a_selected_or_hovered_service_row_paints_its_name_white() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -534,7 +495,7 @@ fn a_selected_or_hovered_service_row_paints_its_name_white() {
         "the row name is the Button's ButtonText, the only region per-state fonts reach"
     );
 
-    s.run("this = ClassTrainerSkill3; ClassTrainerSkillButton_OnClick('LeftButton')")
+    s.run("ClassTrainerSkillButton_OnClick(ClassTrainerSkill3, 'LeftButton')")
         .unwrap();
     s.resolve();
     assert!(
@@ -542,7 +503,7 @@ fn a_selected_or_hovered_service_row_paints_its_name_white() {
         "the selected row's name renders white"
     );
 
-    s.run("this = ClassTrainerSkill2; ClassTrainerSkillButton_OnClick('LeftButton')")
+    s.run("ClassTrainerSkillButton_OnClick(ClassTrainerSkill2, 'LeftButton')")
         .unwrap();
     s.resolve();
     assert!(
@@ -577,7 +538,7 @@ fn a_selected_or_hovered_service_row_paints_its_name_white() {
 /// The wheel scrolls silently, as the stock `ScrollFrameTemplate_OnMouseWheel` plays no sound; the
 /// arrow buttons play `UChatScrollButton`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn wheel_scroll_is_silent_but_the_arrows_click() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -598,7 +559,7 @@ fn wheel_scroll_is_silent_but_the_arrows_click() {
 
     // One notch reaches the bottom: half the 152-tall bar is 76px, which `SetValue` snaps to the
     // 16px step as the range's 80, as the reference does; `FauxScrollFrame_Update` then disables
-    // the down arrow (`UIPanelTemplates.lua:199`).
+    // the down arrow (`UIPanelTemplates.lua`).
     assert_eq!(
         s.eval::<f64>("return ClassTrainerListScrollFrameScrollBar:GetValue()")
             .unwrap(),
@@ -615,9 +576,9 @@ fn wheel_scroll_is_silent_but_the_arrows_click() {
 }
 
 /// The arrows step half the bar's height (`UIPanelScrollBarTemplate`,
-/// `UIPanelTemplates.xml:137-149`), several rows at a time, and stop at the top.
+/// `UIPanelTemplates.xml`), several rows at a time, and stop at the top.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn the_scrollbar_arrows_step_the_list_the_way_they_point() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -634,8 +595,15 @@ fn the_scrollbar_arrows_step_the_list_the_way_they_point() {
         ))
         .unwrap();
     };
-    // Pixels round to rows as `floor(v/itemHeight + 0.5)` (`UIPanelTemplates.lua:231`).
-    assert_eq!(offset(&mut s), 0, "opens at the top");
+    // Pixels round to rows as `floor(v/itemHeight + 0.5)` (`UIPanelTemplates.lua`).
+    assert_eq!(
+        offset(&mut s),
+        1,
+        "opens scrolled to the first learnable service, index 2"
+    );
+    s.run("ClassTrainerListScrollFrameScrollBar:SetValue(0)")
+        .unwrap();
+    assert_eq!(offset(&mut s), 0);
     click(&mut s, "Down");
     let step = offset(&mut s);
     assert!(
@@ -650,144 +618,95 @@ fn the_scrollbar_arrows_step_the_list_the_way_they_point() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// A dropdown click writes the global, `## SavedVariables` saves it, and on a restart `LoadAddOn`
-/// runs the files, the saved file, then `ADDON_LOADED`, whose arm pushes it into the engine.
+/// 3.3.5a's addon saves nothing (its toc has no `## SavedVariables`): the state filter is the
+/// per-account `serviceTypeFilter` CVar (`0x594ba0`), registered at 3, so "used" starts off and a
+/// dropdown click outlives the window and the session through the config cache.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn the_state_filter_survives_a_restart_through_the_saved_variables_file() {
-    let _data = benilla_formats::wow_data_or_skip!();
+fn the_state_filter_is_the_service_type_filter_cvar() {
+    benilla_formats::wow_data_or_skip!();
     let toc =
         super::reference_ui::read("Interface/AddOns/Blizzard_TrainerUI/Blizzard_TrainerUI.toc")
             .map(|b| benilla_ui::toc::Toc::parse(&benilla_ui::source::decode(&b)))
             .expect("the addon's toc off the chain");
     assert!(toc.load_on_demand(), "the reference ships it LoadOnDemand");
-    let info = || {
-        let mut i = super::addons::info_from_toc("Blizzard_TrainerUI", &toc);
-        i.chain = true;
-        i
-    };
-    let saved_dir =
-        std::env::temp_dir().join(format!("benilla-trainer-saved-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&saved_dir);
-    std::fs::create_dir_all(&saved_dir).unwrap();
-    let boot = |s: &mut UiScript| {
-        s.set_addon_chain_reader(Box::new(super::reference_ui::read));
-        s.register_addons(vec![info()], None, Some(saved_dir.clone()), None);
-        s.set_unit(
-            "npc",
-            Some(benilla_ui::script::UnitState {
-                exists: true,
-                name: Some("Sana Winterhoof".into()),
-                ..Default::default()
-            }),
-        );
+    assert!(
+        super::addons::info_from_toc("Blizzard_TrainerUI", &toc)
+            .saved_variables
+            .is_empty(),
+        "no saved variables"
+    );
+    let open = |s: &mut UiScript| {
         s.set_money(50);
         s.set_trainer(Some(menu()));
         // The reference's arm: TRAINER_SHOW → ClassTrainerFrame_LoadUI → UIParentLoadAddOn.
         s.fire_event("TRAINER_SHOW", vec![ScriptValue::Str("Sana".into())]);
         assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-        assert!(
-            s.eval::<bool>("return IsAddOnLoaded('Blizzard_TrainerUI') == 1")
-                .unwrap(),
-            "loaded on demand, off the chain"
-        );
     };
 
     let mut s = trainer_script_base();
-    boot(&mut s);
-    // The stock default `TRAINER_FILTER_USED = 0` hides the known service: 2 headers, 3 services.
-    assert_eq!(s.eval::<i64>("return GetNumTrainerServices()").unwrap(), 5);
-    assert_eq!(
-        info().saved_variables,
-        vec![
-            "TRAINER_FILTER_AVAILABLE",
-            "TRAINER_FILTER_UNAVAILABLE",
-            "TRAINER_FILTER_USED",
-        ],
-        "the toc's own three, in its order"
-    );
-
-    // Toggle "Unavailable" off through the dropdown row's own handler.
-    s.run("ToggleDropDownMenu(1, nil, ClassTrainerFrameFilterDropDown)")
-        .unwrap();
-    s.run("this = DropDownList1Button2; UIDropDownMenuButton_OnClick()")
-        .unwrap();
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-    assert_eq!(
-        s.eval::<i64>("return TRAINER_FILTER_UNAVAILABLE").unwrap(),
-        0,
-        "the click must write the SAVED global, not just the engine mask"
-    );
-    let text = String::from_utf8(s.saved_variables_bytes_for(&info().saved_variables)).unwrap();
-    assert!(
-        text.contains("TRAINER_FILTER_UNAVAILABLE = 0"),
-        "the file carries the toggle: {text}"
-    );
-    std::fs::write(saved_dir.join("Blizzard_TrainerUI.lua"), &text).unwrap();
-
-    // The restart: a fresh VM loads the addon on demand, and its first paint is filtered.
-    let mut fresh = trainer_script_base();
-    boot(&mut fresh);
-    assert!(
-        !fresh
-            .eval::<bool>("return GetTrainerServiceTypeFilter('unavailable') == 1")
-            .unwrap(),
-        "the remembered filter reached the engine"
-    );
-    assert_eq!(
-        fresh.eval::<i64>("return GetNumTrainerServices()").unwrap(),
-        4,
-        "Cleave (the unavailable service) is hidden on the very first paint after the restart"
-    );
-    let _ = std::fs::remove_dir_all(&saved_dir);
-}
-
-/// A new list resets the filter mask to 3 (available|unavailable), or 5 (available|used) at a
-/// mount trainer, and clears the collapse set, as the reference's list builder does (`0x4d75d9`).
-#[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn a_new_list_packet_resets_the_filter_mask_and_the_collapse_set() {
-    benilla_formats::wow_data_or_skip!();
-    let mut s = trainer_script();
-    s.set_trainer(Some(menu()));
-    s.fire_event(
-        "ADDON_LOADED",
-        vec![ScriptValue::Str("Blizzard_TrainerUI".into())],
-    );
-    // Engine-side state only: a collapsed group, and `used` set with no global.
-    s.run("CollapseTrainerSkillLine(1) SetTrainerServiceTypeFilter('used', 1)")
-        .unwrap();
+    open(&mut s);
     assert!(s
-        .eval::<bool>("return GetTrainerServiceTypeFilter('used') == 1")
-        .unwrap());
-    assert!(s.eval::<i64>("return GetNumTrainerServices()").unwrap() < 6);
-
-    s.reset_trainer_list_state(0);
-    assert!(
-        !s.eval::<bool>("return GetTrainerServiceTypeFilter('used') == 1")
-            .unwrap(),
-        "mask 3: available|unavailable, already-known OFF"
-    );
-    assert!(s
-        .eval::<bool>("return GetTrainerServiceTypeFilter('available') == 1")
-        .unwrap());
-    assert!(s
-        .eval::<bool>("return GetTrainerServiceTypeFilter('unavailable') == 1")
+        .eval::<bool>("return IsAddOnLoaded('Blizzard_TrainerUI') == 1")
         .unwrap());
     assert_eq!(
         s.eval::<i64>("return GetNumTrainerServices()").unwrap(),
         5,
-        "nothing collapsed any more (6 rows less the already-known service the mask now hides)"
+        "the default 3 hides Rend, the known service"
     );
+    s.run("ToggleDropDownMenu(1, nil, ClassTrainerFrameFilterDropDown)")
+        .unwrap();
+    s.run("UIDropDownMenuButton_OnClick(DropDownList1Button2)")
+        .unwrap();
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert_eq!(s.cvar("serviceTypeFilter").as_deref(), Some("1"));
+    assert_eq!(s.eval::<i64>("return GetNumTrainerServices()").unwrap(), 4);
 
-    // A mount trainer gets available|used, which is what shows a known mount at all.
-    s.reset_trainer_list_state(1);
-    assert!(s
-        .eval::<bool>("return GetTrainerServiceTypeFilter('used') == 1")
-        .unwrap());
-    assert!(!s
-        .eval::<bool>("return GetTrainerServiceTypeFilter('unavailable') == 1")
-        .unwrap());
+    // The next session reads the account's config cache before any trainer.
+    let mut fresh = UiScript::new().unwrap();
+    fresh.set_screen_size(1024.0, 768.0);
+    fresh.set_cvar_saved_base([("serviceTypeFilter".to_string(), "1".to_string())]);
+    super::test_ui::load_stock_ui(&mut fresh);
+    super::test_ui::seat_chain_addon(&mut fresh, "Blizzard_TrainerUI");
+    fresh.set_unit(
+        "npc",
+        Some(benilla_ui::script::UnitState {
+            exists: true,
+            name: Some("Sana Winterhoof".into()),
+            ..Default::default()
+        }),
+    );
+    open(&mut fresh);
+    assert_eq!(
+        fresh.eval::<i64>("return GetNumTrainerServices()").unwrap(),
+        4,
+        "Cleave, the unavailable service, is hidden on the very first paint"
+    );
+}
+
+/// A new list resets the lines, expanded and all passing the line filter (`0x596450`); the
+/// state filter is the CVar and stands.
+#[test]
+fn a_new_list_resets_the_lines_and_keeps_the_state_filter() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = trainer_script();
+    s.set_trainer(Some(menu()));
+    s.run("CollapseTrainerSkillLine(1) SetTrainerServiceTypeFilter('used', 0)")
+        .unwrap();
+    s.run("SetTrainerSkillLineFilter(2, 0)").unwrap();
+    assert!(s.eval::<i64>("return GetNumTrainerServices()").unwrap() < 5);
+
+    s.reset_trainer_list_state();
+    s.set_trainer(Some(menu()));
+    assert!(
+        !s.eval::<bool>("return GetTrainerServiceTypeFilter('used') == 1")
+            .unwrap(),
+        "used stays off"
+    );
+    assert_eq!(
+        s.eval::<i64>("return GetNumTrainerServices()").unwrap(),
+        5,
+        "both lines back and expanded; six records less the used Rend"
+    );
 }
 
 /// One profession skill line: a long recipe name and a short one, each with a rank subtext.
@@ -824,12 +743,11 @@ fn recipe_menu() -> TrainerState {
     }
 }
 
-/// The stock row is a flow: its `<ButtonText>` has width 0 (ClassTrainerFrameTemplates.xml), so a
-/// long name stays on one line in its 16 px row, and the rank is anchored 10 px past the name's
-/// right edge (`Blizzard_TrainerUI.lua:157`).
+/// 3.3.5a's row label is a 270 x 13 `<ButtonText>` (ClassTrainerFrameTemplates.xml), narrowed to
+/// `CLASS_TRAINER_SKILL_SUBTEXT_WIDTH` (210) when the row has a rank, which `ClassTrainerFrame_Update`
+/// anchors to the row's right edge, 2 px in; a long name stays one 13 px line.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn a_long_row_name_stays_on_one_line_and_carries_its_rank_along() {
+fn a_long_row_name_keeps_to_its_column_and_the_rank_to_the_row_end() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
     s.set_money(5000);
@@ -837,8 +755,7 @@ fn a_long_row_name_stays_on_one_line_and_carries_its_rank_along() {
     s.fire_event("TRAINER_SHOW", vec![ScriptValue::Str("Nadyia".into())]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
-    // A host measure of 6 px per character and 14 px per line; the name's requests are kept, since
-    // what it asks for is the fact under test.
+    // A host measure of 6 px per character and 14 px per line; the name's requests are kept.
     let mut name_wraps: Vec<Option<f32>> = Vec::new();
     let mut answer = |s: &mut UiScript, collect: bool| {
         let reqs = s.fontstrings_needing_measure();
@@ -867,17 +784,14 @@ fn a_long_row_name_stays_on_one_line_and_carries_its_rank_along() {
     answer(&mut s, false);
     s.resolve();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-
     assert!(
-        !name_wraps.is_empty() && name_wraps.iter().all(|w| w.is_none()),
-        "the row name must ask for NO wrap width — it is a single line whatever the name is; \
-         got {name_wraps:?}"
+        !name_wraps.is_empty() && name_wraps.iter().all(|w| *w == Some(210.0)),
+        "a ranked row's name keeps to the 210 px column: {name_wraps:?}"
     );
 
-    // Find each name's row by what it painted (the group comparator owns the order, not this test).
     let row_of = |s: &mut UiScript, needle: &str| -> i64 {
         s.eval::<i64>(&format!(
-            "for i = 1, 11 do local b = getglobal('ClassTrainerSkill' .. i) \
+            "for i = 1, 11 do local b = _G['ClassTrainerSkill' .. i] \
              local t = b:GetText() if t and strfind(t, '{needle}', 1, 1) then return i end \
              end return 0"
         ))
@@ -886,63 +800,42 @@ fn a_long_row_name_stays_on_one_line_and_carries_its_rank_along() {
     let long_row = row_of(&mut s, "Handstitched");
     let short_row = row_of(&mut s, "Belt");
     assert!(long_row > 0 && short_row > 0, "both services painted");
-
     let geom = |s: &mut UiScript, row: i64| -> (f32, f32, f32, f32) {
         s.eval::<(f32, f32, f32, f32)>(&format!(
-            "local b = getglobal('ClassTrainerSkill{row}') \
-             local n = b:GetFontString() \
-             return n:GetHeight(), n:GetRight(), getglobal(b:GetName() .. 'SubText'):GetLeft(), b:GetHeight()"
+            "local b = _G['ClassTrainerSkill{row}'] \
+             return b:GetFontString():GetHeight(), b:GetHeight(), \
+             _G[b:GetName() .. 'SubText']:GetRight(), b:GetRight()"
         ))
         .unwrap()
     };
-    let (long_h, long_name_right, long_sub_left, row_h) = geom(&mut s, long_row);
-    let (short_h, short_name_right, short_sub_left, _) = geom(&mut s, short_row);
-
-    assert!(
-        long_h <= row_h + 0.5,
-        "the long name is one line inside its own row: name {long_h} px, row {row_h} px"
-    );
-    assert!((long_h - short_h).abs() < 0.5, "and so is the short one");
-    for (name, right, left) in [
-        ("long", long_name_right, long_sub_left),
-        ("short", short_name_right, short_sub_left),
-    ] {
+    for row in [long_row, short_row] {
+        let (name_h, row_h, sub_right, row_right) = geom(&mut s, row);
         assert!(
-            (left - right - 10.0).abs() < 0.5,
-            "the {name} row's rank sits 10 px past its NAME's right edge (the reference's own \
-             offset), not at a fixed column: name right {right}, subtext left {left}"
+            name_h <= row_h,
+            "row {row}: the name is one line inside its row: {name_h} in {row_h}"
+        );
+        assert!(
+            (row_right - 2.0 - sub_right).abs() < 0.5,
+            "row {row}: the rank ends 2 px in from the row's right edge: {sub_right} vs {row_right}"
         );
     }
-    assert!(
-        long_sub_left > short_sub_left + 50.0,
-        "so a longer name pushes its rank along instead of running under it: {long_sub_left} vs \
-         {short_sub_left}"
-    );
 }
 
-/// A purchase repaints in place, as the reference's state re-evaluator (`0x4d7d40`) does, so the
-/// player's filter and collapse stand; only a fresh list resets the mask (`0x4d75d9`).
+/// A purchase repaints in place: the re-evaluator (`0x596b00`) keeps the state filter and the
+/// collapse, while a fresh list resets the collapse alone (`0x596450`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn learning_a_spell_keeps_the_filter_and_the_collapse_a_re_open_still_resets() {
+fn learning_a_spell_keeps_the_filter_and_a_re_open_resets_the_collapse_alone() {
     benilla_formats::wow_data_or_skip!();
     use crate::ui_trainer::TrainerOpen;
     const DAZALAR: u64 = 0xabc;
 
-    let mut s = trainer_script();
-    // The stock file-scope defaults.
-    s.run("TRAINER_FILTER_AVAILABLE = 1 TRAINER_FILTER_UNAVAILABLE = 1 TRAINER_FILTER_USED = 0")
-        .unwrap();
-    s.fire_event(
-        "ADDON_LOADED",
-        vec![ScriptValue::Str("Blizzard_TrainerUI".into())],
-    );
+    let mut s = trainer_script_base();
     s.set_money(5000);
 
     // `ui_trainer::feed_trainer`, reduced to its reset-then-fire.
     fn feed(s: &mut UiScript, open: &mut TrainerOpen, state: TrainerState, event: &str) {
         if open.fresh_list {
-            s.reset_trainer_list_state(open.trainer_type);
+            s.reset_trainer_list_state();
             open.fresh_list = false;
         }
         s.set_trainer(Some(state));
@@ -956,109 +849,58 @@ fn learning_a_spell_keeps_the_filter_and_the_collapse_a_re_open_still_resets() {
     };
     let rows = |s: &mut UiScript| s.eval::<i64>("return GetNumTrainerServices()").unwrap();
 
-    // He opens the trainer and filters the list down to what he can actually learn.
+    // He opens the trainer and filters the list down to what he can learn.
     let mut open = TrainerOpen::default();
     open.open(DAZALAR, 0, vec![], "Hello, hunter!".into());
     feed(&mut s, &mut open, menu(), "TRAINER_SHOW");
+    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     s.run("ToggleDropDownMenu(1, nil, ClassTrainerFrameFilterDropDown)")
         .unwrap();
-    s.run("this = DropDownList1Button2; UIDropDownMenuButton_OnClick()")
+    s.run("UIDropDownMenuButton_OnClick(DropDownList1Button2)")
         .unwrap();
     s.run("ToggleDropDownMenu(1, nil, ClassTrainerFrameFilterDropDown)")
         .unwrap();
-    assert!(
-        !filter_on(&mut s, "unavailable"),
-        "his choice reached the engine"
-    );
+    assert!(!filter_on(&mut s, "unavailable"));
     assert_eq!(
         rows(&mut s),
         4,
         "two headers over the two learnable services"
     );
     s.run("CollapseTrainerSkillLine(1)").unwrap();
-    assert_eq!(rows(&mut s), 3, "the folded group keeps its header only");
+    assert_eq!(rows(&mut s), 3, "the folded line keeps its header only");
 
-    // He trains: the state re-evaluator (the reference's `0x4d7d40`) repaints the bought row gray
-    // in place, with no second list to reset anything.
+    // He trains: the re-evaluator repaints the bought row gray in place.
     let mut learned = menu();
     learned.services[0].category = TrainerServiceCategory::Used;
-    feed(&mut s, &mut open, learned, "TRAINER_UPDATE");
+    feed(&mut s, &mut open, learned.clone(), "TRAINER_UPDATE");
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-    assert!(
-        !filter_on(&mut s, "unavailable"),
-        "learning a spell is a repaint, not a new window: his filter stands"
-    );
+    assert!(!filter_on(&mut s, "unavailable"), "his filter stands");
     assert_eq!(
         rows(&mut s),
         2,
-        "and the list is still his — the folded Arms group is empty of learnables now, so it goes \
-         with its header, leaving Fury over Thunder Clap"
+        "Arms holds nothing learnable now, so it goes with its header, leaving Fury over \
+         Thunder Clap"
     );
-    s.run("ToggleDropDownMenu(1, nil, ClassTrainerFrameFilterDropDown)")
-        .unwrap();
-    assert!(
-        !s.eval::<bool>("return DropDownList1Button2Check:IsVisible() and true or false")
-            .unwrap(),
-        "the dropdown agrees with the list, instead of claiming a filter the list ignores"
-    );
-    s.run("ToggleDropDownMenu(1, nil, ClassTrainerFrameFilterDropDown)")
-        .unwrap();
 
-    // He walks away and back: a fresh list resets the mask to 3 (`0x4d75d9`), and the stock addon
-    // pushes its globals only on its one `ADDON_LOADED`, so nothing restores his choice; the
-    // collapse clears too.
+    // He walks away and back: the collapse resets, the CVar filter does not.
     open.clear();
     open.open(DAZALAR, 0, vec![], "Hello, hunter!".into());
-    let mut learned = menu();
-    learned.services[0].category = TrainerServiceCategory::Used;
+    s.run("CollapseTrainerSkillLine(0)").unwrap();
     feed(&mut s, &mut open, learned, "TRAINER_SHOW");
-    assert!(
-        filter_on(&mut s, "unavailable"),
-        "a fresh list is the reference's reset: unavailable shows again"
-    );
+    assert!(!filter_on(&mut s, "unavailable"));
     assert!(filter_on(&mut s, "available"));
-    assert!(
-        !filter_on(&mut s, "used"),
-        "and the reset's mask is 3 — used stays hidden"
-    );
-    assert_eq!(
-        s.eval::<i64>("return TRAINER_FILTER_UNAVAILABLE").unwrap(),
-        0,
-        "his saved choice is still the global's, for the next session's first trainer"
-    );
+    assert!(!filter_on(&mut s, "used"));
+    assert_eq!(rows(&mut s), 2, "Fury expanded again, over Thunder Clap");
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// After a purchase the reference shows an empty detail pane and no highlight: the Train click
-/// clears `showSkillDetails`, which `TRAINER_UPDATE` restores only for a selection index of 0 or
-/// 1, and the engine answers the learned service's index in the hidden tail, past
-/// `GetNumTrainerServices()` (`0x4d7520`), so the stock arm hides the pane.
+/// After a purchase the re-evaluator re-runs the selection pick (`0x594ba0`), so `TRAINER_UPDATE`
+/// moves the detail pane to the next learnable service.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn learning_a_spell_takes_the_detail_pane_with_it_instead_of_stranding_the_last_one() {
+fn learning_a_spell_moves_the_detail_pane_to_the_next_learnable_service() {
     benilla_formats::wow_data_or_skip!();
-    use crate::ui_trainer::TrainerOpen;
-    const DAZALAR: u64 = 0xabc;
-
-    let mut s = trainer_script();
-    // The stock defaults: "already known" off, so a learned service leaves the list.
-    s.run("TRAINER_FILTER_AVAILABLE = 1 TRAINER_FILTER_UNAVAILABLE = 1 TRAINER_FILTER_USED = 0")
-        .unwrap();
-    s.fire_event(
-        "ADDON_LOADED",
-        vec![ScriptValue::Str("Blizzard_TrainerUI".into())],
-    );
+    let mut s = trainer_script_base();
     s.set_money(5000);
-
-    // `ui_trainer::feed_trainer`, reduced to its reset-then-fire.
-    fn feed(s: &mut UiScript, open: &mut TrainerOpen, state: TrainerState, event: &str) {
-        if open.fresh_list {
-            s.reset_trainer_list_state(open.trainer_type);
-            open.fresh_list = false;
-        }
-        s.set_trainer(Some(state));
-        s.fire_event(event, vec![ScriptValue::Str("Dazalar".into())]);
-    }
     let pane = |s: &mut UiScript| -> (bool, String) {
         s.eval::<(bool, String)>(
             "return ClassTrainerSkillName:IsVisible() and true or false, \
@@ -1066,67 +908,36 @@ fn learning_a_spell_takes_the_detail_pane_with_it_instead_of_stranding_the_last_
         )
         .unwrap()
     };
-    let row_name = |s: &mut UiScript, row: i64| {
-        s.eval::<String>(&format!("return (GetTrainerServiceInfo({row})) or ''"))
-            .unwrap()
-    };
-
-    let mut open = TrainerOpen::default();
-    open.open(DAZALAR, 0, vec![], "Hello, warrior!".into());
-    feed(&mut s, &mut open, menu(), "TRAINER_SHOW");
-
-    assert_eq!(row_name(&mut s, 2), "Heroic Strike");
+    s.set_trainer(Some(menu()));
+    s.fire_event("TRAINER_SHOW", vec![ScriptValue::Str("Dazalar".into())]);
     assert_eq!(
         pane(&mut s),
         (true, "Heroic Strike".into()),
-        "the window opens describing its own selection"
+        "the window opens describing the engine's pick"
     );
     s.run("ClassTrainerTrainButton:Click()").unwrap();
-    assert_eq!(
-        s.take_trainer_buys(),
-        vec![78],
-        "the Train button bought the selected row"
-    );
+    assert_eq!(s.take_trainer_buys(), vec![78]);
 
-    // The re-evaluator greys the bought row in place; with "already known" off it leaves the
-    // list, and Cleave slides up into row 2.
     let mut learned = menu();
     learned.services[0].category = TrainerServiceCategory::Used;
-    feed(&mut s, &mut open, learned, "TRAINER_UPDATE");
+    s.set_trainer(Some(learned));
+    s.fire_event("TRAINER_UPDATE", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-
     assert_eq!(
-        row_name(&mut s, 2),
-        "Cleave",
-        "the trained row is gone from the list and the next one took its place"
+        pane(&mut s),
+        (true, "Thunder Clap".into()),
+        "the next available service is described"
     );
-    assert!(
-        !pane(&mut s).0,
-        "and the pane below is empty rather than still describing the spell he just learned: {:?}",
-        pane(&mut s).1
-    );
-    assert!(
-        !s.eval::<bool>("return ClassTrainerSkillHighlightFrame:IsVisible()")
-            .unwrap(),
-        "nothing is highlighted either — the selection is off screen, not on Cleave"
-    );
-    assert!(
-        s.eval::<i64>("return GetTrainerSelectionIndex()").unwrap()
-            > s.eval::<i64>("return GetNumTrainerServices()").unwrap(),
-        "because the engine answers with the hidden row, which is what steers the window there"
-    );
-
-    s.run("this = ClassTrainerSkill2 ClassTrainerSkillButton_OnClick('LeftButton')")
-        .unwrap();
-    assert_eq!(pane(&mut s), (true, "Cleave".into()));
-    assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
+    assert!(s
+        .eval::<bool>("return ClassTrainerTrainButton:IsEnabled() == 1")
+        .unwrap());
 }
 
 /// A filter click repaints the row buttons, not just the engine's count: the stock click handler
-/// fires no update, because in the reference the engine's mask-commit thunk fires `TRAINER_UPDATE`
-/// (`0x4d8c90`: `mov ecx,0x136; jmp 0x703e50`), whose arm runs `ClassTrainerFrame_Update`.
+/// fires no update, because the engine's mask commit signals `TRAINER_UPDATE` (`0x594fe0`), whose
+/// arm runs `ClassTrainerFrame_Update`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
+
 fn a_filter_click_repaints_the_rows_the_player_is_looking_at() {
     benilla_formats::wow_data_or_skip!();
     let mut s = trainer_script();
@@ -1147,7 +958,7 @@ return n";
 
     s.run("ToggleDropDownMenu(1, nil, ClassTrainerFrameFilterDropDown)")
         .unwrap();
-    s.run("this = DropDownList1Button3; UIDropDownMenuButton_OnClick()")
+    s.run("UIDropDownMenuButton_OnClick(DropDownList1Button3)")
         .unwrap();
     // The engine's queued `TRAINER_UPDATE` lands on the next tick: a binding cannot re-enter the
     // handler dispatch from inside Lua.
@@ -1163,7 +974,7 @@ return n";
 }
 
 /// 3.3.5a colours a row by its normal font object (`SetNormalFontObject(GameFontNormalLeftRed)`,
-/// `Blizzard_TrainerUI.lua:169`), and `ClassTrainerSkillButtonTemplate`'s
+/// `Blizzard_TrainerUI.lua`), and `ClassTrainerSkillButtonTemplate`'s
 /// `<HighlightFont style="GameFontHighlightLeft"/>` turns a hovered row white; the selection's
 /// `LockHighlight` (`:179`) keeps it white with the cursor elsewhere. Production load.
 #[test]

@@ -30,13 +30,17 @@ pub(super) struct PlayerView {
 
 impl PlayerView {
     /// The first slot holding the line, as both slot scans stop on it (`0x596c3d`, `0x596d84`).
-    fn skill(&self, skill_id: u32) -> Option<&SkillSlot> {
+    pub(super) fn skill(&self, skill_id: u32) -> Option<&SkillSlot> {
         self.skills.iter().find(|s| s.skill_id == skill_id)
     }
 }
 
 /// `TalentInfoIsSpellKnown(id) || Spell_KnownHigherRank(id)` (`0x7260e0`, `0x726160`).
-fn known_or_higher(id: u32, known: &BTreeSet<u32>, skill_lines: &SkillLineCatalog) -> bool {
+pub(super) fn known_or_higher(
+    id: u32,
+    known: &BTreeSet<u32>,
+    skill_lines: &SkillLineCatalog,
+) -> bool {
     known.contains(&id) || skill_lines.higher_rank_known(id, known)
 }
 

@@ -20,7 +20,7 @@ fn trainer_send_bodies_golden() {
         "CMSG_TRAINER_LIST body"
     );
 
-    // CMSG_TRAINER_BUY_SPELL: u64 trainerGuid + u32 spellId (vmangos `TrainerBuySpell::Read`).
+    // CMSG_TRAINER_BUY_SPELL: u64 trainerGuid + u32 spellId, as `0x594da0` writes it.
     assert_eq!(
         messages::trainer_buy_spell(0x1234_5678_9abc_def0, 78),
         hx(concat!("f0debc9a78563412", "4e000000")),
@@ -28,14 +28,14 @@ fn trainer_send_bodies_golden() {
     );
 }
 
-/// Appends one 38-byte service record in wire order (vmangos `NPCHandler.cpp:97-139`).
+/// Appends one 38-byte service record in the order `0x6d12c0` reads it.
 fn push_service(
     body: &mut Vec<u8>,
     spell: u32,
     state: u8,
     cost: u32,
-    can_learn: u32,
-    is_prof: u32,
+    talent_cost: u32,
+    profession_cost: u32,
     req_level: u8,
     req_skill: u32,
     req_skill_value: u32,
@@ -44,8 +44,8 @@ fn push_service(
     body.extend_from_slice(&spell.to_le_bytes());
     body.push(state);
     body.extend_from_slice(&cost.to_le_bytes());
-    body.extend_from_slice(&can_learn.to_le_bytes());
-    body.extend_from_slice(&is_prof.to_le_bytes());
+    body.extend_from_slice(&talent_cost.to_le_bytes());
+    body.extend_from_slice(&profession_cost.to_le_bytes());
     body.push(req_level);
     body.extend_from_slice(&req_skill.to_le_bytes());
     body.extend_from_slice(&req_skill_value.to_le_bytes());
@@ -56,7 +56,7 @@ fn push_service(
 
 #[test]
 fn trainer_list_wire() {
-    // SMSG_TRAINER_LIST, per vmangos `SendTrainerList` (`NPCHandler.cpp:141-241`).
+    // SMSG_TRAINER_LIST, as `0x6d12c0` reads it.
     let mut body = 0xCCu64.to_le_bytes().to_vec();
     body.extend_from_slice(&0u32.to_le_bytes()); // trainerType 0 = class
     body.extend_from_slice(&2u32.to_le_bytes()); // count
@@ -80,8 +80,8 @@ fn trainer_list_wire() {
                         spell: 78,
                         state: trainer_spell_state::GREEN,
                         cost: 100,
-                        can_learn_primary_prof: false,
-                        is_primary_prof_first_rank: false,
+                        talent_cost: 0,
+                        profession_cost: 0,
                         req_level: 10,
                         req_skill: 0,
                         req_skill_value: 0,
@@ -91,8 +91,8 @@ fn trainer_list_wire() {
                         spell: 2018,
                         state: trainer_spell_state::GRAY,
                         cost: 1000,
-                        can_learn_primary_prof: true,
-                        is_primary_prof_first_rank: true,
+                        talent_cost: 1,
+                        profession_cost: 1,
                         req_level: 5,
                         req_skill: 164,
                         req_skill_value: 1,
@@ -149,7 +149,7 @@ fn trainer_buy_result_wire() {
         other => panic!("trainer buy succeeded, got {}", other.name()),
     }
 
-    // SMSG_TRAINER_BUY_FAILED (vmangos `TrainerBuyFailed`): u64 guid, u32 serviceId, u32 error.
+    // SMSG_TRAINER_BUY_FAILED: u64 guid, u32 serviceId, u32 error, as `0x6d8410` reads it.
     let mut failed = 0xCCu64.to_le_bytes().to_vec();
     failed.extend_from_slice(&78u32.to_le_bytes());
     failed.extend_from_slice(&train_fail::NOT_ENOUGH_MONEY.to_le_bytes());

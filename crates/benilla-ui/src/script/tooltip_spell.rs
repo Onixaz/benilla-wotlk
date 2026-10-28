@@ -919,26 +919,30 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GameTooltip:SetTrainerService(index): the trainer detail icon's hover
-    // (`Blizzard_TrainerUI.xml:452`); list rows have no tooltip. `0x5338b0` writes no line itself
-    // and hands a shared builder the subject the app resolved (`TrainerService::tooltip`). `index`
-    // is a visible row, headers included; a header is a no-op.
+    // GameTooltip:SetTrainerService(index) (`0x62e900`): the trainer detail icon's hover
+    // (`Blizzard_TrainerUI.xml:442`). It writes no line itself and hands a shared builder the
+    // subject the app resolved (`TrainerService::tooltip`); a header or past the end raises.
     m.set(
         "SetTrainerService",
-        lua.create_function(|lua, (this, index): (Table, usize)| {
+        lua.create_function(|lua, (this, index): (Table, Value)| {
+            const INVALID: &str = "Invalid trainer service in SetTrainerService(index)";
+            let index = match index {
+                Value::Integer(i) => i,
+                Value::Number(n) => n as i64,
+                _ => return Err(mlua::Error::runtime(INVALID)),
+            };
             let subject = {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
                 match super::trainer::service(&model, index) {
                     Some(s) => s.tooltip.clone(),
-                    None => return Ok(()),
+                    None => return Err(mlua::Error::runtime(INVALID)),
                 }
             };
             match subject {
-                // The item builder (`0x52b650`), with no fallback name: id 0 or a template in
-                // flight renders empty, the builder's own early-out.
-                // `skipSellPrice` set (`0x62e900`).
+                // The item builder (`0x6277f0`) with its last flag set, which skips the sell
+                // price; id 0 or a template in flight renders empty.
                 TrainerTooltip::Item(item_id) => super::tooltip_item::render_by_id(
                     lua,
                     &this,

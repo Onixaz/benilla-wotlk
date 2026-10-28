@@ -752,10 +752,10 @@ pub(crate) struct Model {
     pub(crate) trainer_buys: Vec<u32>,
     pub(crate) trainer_selection: Option<u32>,
     pub(crate) trainer_close: bool,
-    /// Available, unavailable and used filters, all on by default; they hide services, not headers.
-    pub(crate) trainer_filter: [bool; 3],
-    /// Collapsed skill-line ids, kept across a re-push and cleared when the trainer closes.
+    /// Collapsed skill-line ids (the complement of `m_expandedSkillLines`), reset per list.
     pub(crate) trainer_collapsed: HashSet<u32>,
+    /// Skill-line ids `SetTrainerSkillLineFilter` turned off (`m_skillLineFilter`), reset per list.
+    pub(crate) trainer_lines_off: HashSet<u32>,
 
     /// The open taxi map, the `TakeTaxiNode` calls, whether `CloseTaxiMap` ran and whether we ride.
     pub(crate) taxi: Option<taxi::TaxiUiState>,
@@ -1493,8 +1493,8 @@ impl Model {
             trainer_buys: Vec::new(),
             trainer_selection: None,
             trainer_close: false,
-            trainer_filter: [true; 3],
             trainer_collapsed: HashSet::new(),
+            trainer_lines_off: HashSet::new(),
             taxi: None,
             taxi_takes: Vec::new(),
             taxi_close: false,
