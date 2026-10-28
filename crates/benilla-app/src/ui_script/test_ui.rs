@@ -621,11 +621,10 @@ pub(super) const BAG_UI: &[&str] = &[
     "ContainerFrameAdapters.xml",
 ];
 
-/// The whole production interface, the core then the layer, as the app loads it into a VM with a
-/// seated player, its character record and the display's mode list; fails on any load raise but
-/// the frames still waiting on a port of their own.
-pub(super) fn load_stock_ui(s: &mut UiScript) {
-    // A default player unless the caller seated one.
+/// What a login seats before the in-game load: a default player unless the caller seated one,
+/// with the race and class the stock files read at load (`DressUpTexturePath`), and the display's
+/// mode list (`UpdateMenuBarTop`).
+pub(crate) fn seat_login(s: &mut UiScript) {
     if s.eval::<Option<String>>("return UnitName('player')")
         .ok()
         .flatten()
@@ -664,6 +663,13 @@ pub(super) fn load_stock_ui(s: &mut UiScript) {
         height: 768,
     };
     s.set_screen_resolutions(vec![mode], Some(mode));
+}
+
+/// The whole production interface, the core then the layer, as the app loads it into a VM with a
+/// seated player, its character record and the display's mode list; fails on any load raise but
+/// the frames still waiting on a port of their own.
+pub(super) fn load_stock_ui(s: &mut UiScript) {
+    seat_login(s);
     let failures: Vec<String> = super::load_default_ui(s)
         .into_iter()
         .filter(|f| {
