@@ -74,50 +74,9 @@ fn click(s: &mut UiScript, name: &str, button: &str) {
     s.mouse_button(x, y, button, false);
 }
 
-/// The stock spellbook in the production order, over the multibar grids and `UpdateMicroButtons`
-/// its show and hide call (`SpellBookFrame.lua:94-104`, `:186-203`).
+/// The stock spellbook on the full stock load, whose layer carries `SpellBookAdapters.xml`.
 pub(super) fn spellbook_ui(w: f32, h: f32) -> UiScript {
-    spellbook_ui_with(w, h, &[])
-}
-
-/// [`spellbook_ui`] with `extra` files merged into it in the production order.
-pub(super) fn spellbook_ui_with(w: f32, h: f32, extra: &[&str]) -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(w, h);
-    for f in super::test_ui::production_order(&[
-        &[
-            "Interface\\FrameXML\\GlobalStrings.lua",
-            "Interface\\FrameXML\\Fonts.xml",
-            "Interface\\FrameXML\\BasicControls.xml",
-            "Interface\\FrameXML\\LocaleProperties.lua",
-            r"Interface\FrameXML\UIParent.xml",
-            r"Interface\FrameXML\MoneyFrame.lua",
-            r"Interface\FrameXML\MoneyFrame.xml",
-            "Interface\\FrameXML\\GameTooltip.xml",
-            "Interface\\FrameXML\\UIDropDownMenu.xml",
-            r"Interface\FrameXML\UIPanelTemplates.lua",
-            r"Interface\FrameXML\UIPanelTemplates.xml",
-            r"Interface\FrameXML\OptionsFrameTemplates.xml",
-            "Interface\\FrameXML\\StaticPopup.xml",
-            "Interface\\FrameXML\\TextStatusBar.lua",
-            "Interface\\FrameXML\\TextStatusBar.xml",
-            "Interface\\FrameXML\\MainMenuBar.xml",
-            r"Interface\FrameXML\MainMenuBarMicroButtons.xml",
-            "Interface\\FrameXML\\Cooldown.xml",
-            "Interface\\FrameXML\\ActionButtonTemplate.xml",
-            "Interface\\FrameXML\\ActionBarFrame.xml",
-            "Interface\\FrameXML\\MultiActionBars.xml",
-            "Interface\\FrameXML\\SpellBookFrame.xml",
-            r"Interface\FrameXML\ReputationFrame.xml",
-            "Interface\\FrameXML\\BonusActionBarFrame.xml",
-            "ScrollTemplates.xml",
-            "SpellBookAdapters.xml",
-        ],
-        extra,
-    ]) {
-        load_xml(&s, f);
-    }
-    s
+    super::test_ui::stock_ui(w, h)
 }
 
 #[test]
