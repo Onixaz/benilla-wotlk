@@ -444,27 +444,6 @@ pub(super) fn read(req: &str) -> Option<Vec<u8>> {
     std::fs::read(dir.join(req)).ok()
 }
 
-/// What stock `MerchantFrame.xml` needs to load and behave, including `BasicControls.xml` for the
-/// `TEXT()` that `MerchantFrame.lua:70` calls on first show and `ItemButtonTemplate.xml`, whose
-/// absence only warns. Needs client data: open with `benilla_formats::wow_data_or_skip!()`.
-pub(super) const MERCHANT_UI: &[&str] = &[
-    "Interface\\FrameXML\\GlobalStrings.lua",
-    "Interface\\FrameXML\\Fonts.xml",
-    "Interface\\FrameXML\\BasicControls.xml", // TEXT()
-    "Interface\\FrameXML\\LocaleProperties.lua",
-    r"Interface\FrameXML\UIParent.xml",
-    r"Interface\FrameXML\MoneyFrame.lua",
-    r"Interface\FrameXML\MoneyFrame.xml",
-    "Interface\\FrameXML\\GameTooltip.xml", // app load order: tooltip before merchant
-    r"Interface\FrameXML\UIPanelTemplates.lua",
-    r"Interface\FrameXML\UIPanelTemplates.xml",
-    // The stock window tab, whose `<OnShow>` needs the `UIPanelTemplates` pair above it.
-    r"Interface\FrameXML\CharacterFrameTemplates.xml",
-    "Interface\\FrameXML\\StaticPopup.xml",
-    "Interface\\FrameXML\\ItemButtonTemplate.xml",
-    "ScrollTemplates.xml",
-];
-
 /// Stock `GossipFrame.xml`'s dependencies in the production order, shared with `ui_gossip`'s feed
 /// tests. The greeting pane inherits `UIPanelScrollFrameTemplate`, and a missing template only
 /// warns, losing the scrollbar silently. Needs client data.

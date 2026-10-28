@@ -4,34 +4,11 @@
 
 use benilla_ui::script::UiScript;
 
-use super::test_ui::load_ui as load_xml;
+use super::test_ui::stock_ui;
 
-/// The files under test on the manifest prefix they sit on, in the production order.
+/// The full stock load, where an addon's template calls land.
 fn harness() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for file in [
-        "Interface\\FrameXML\\GlobalStrings.lua",
-        "Interface\\FrameXML\\Fonts.xml",
-        "Interface\\FrameXML\\BasicControls.xml",
-        "Interface\\FrameXML\\LocaleProperties.lua",
-        r"Interface\FrameXML\UIParent.xml",
-        r"Interface\FrameXML\MoneyFrame.lua",
-        r"Interface\FrameXML\MoneyFrame.xml",
-        "Interface\\FrameXML\\GameTooltip.xml",
-        // `UIOptionsCheckButtonTemplate`'s home (`UIOptionsFrame.xml:6`), after the dropdown kit
-        // its window uses.
-        r"Interface\FrameXML\UIDropDownMenu.xml",
-        r"Interface\FrameXML\UIPanelTemplates.lua",
-        r"Interface\FrameXML\UIPanelTemplates.xml",
-        r"Interface\FrameXML\OptionsFrameTemplates.xml",
-        r"Interface\FrameXML\CharacterFrameTemplates.xml",
-        r"Interface\FrameXML\UIOptionsFrame.xml",
-        "Interface\\FrameXML\\StaticPopup.xml",
-        "ScrollTemplates.xml",
-    ] {
-        load_xml(&s, file);
-    }
+    let s = stock_ui(1024.0, 768.0);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     s
 }
@@ -51,7 +28,6 @@ fn drawn_textures(s: &mut UiScript) -> Vec<String> {
 /// The label publishes as `MyCheckText`, the global an addon reads next through
 /// `getglobal(this:GetName().."Text")`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_check_button_from_the_template_names_its_label_after_the_caller() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -68,6 +44,16 @@ fn a_check_button_from_the_template_names_its_label_after_the_caller() {
         s.eval::<bool>(r#"return getglobal("UICheckButtonTemplateText") == nil"#)
             .unwrap(),
         "and never under the template's"
+    );
+    // The stock `BNConversations.xml` builds unnamed check buttons from the same template: their
+    // `$parentText` takes the nearest named ancestor (`CreateName`), not the template's name.
+    assert!(
+        s.eval::<bool>(
+            "return BNConversationInviteDialogListFriend1.checkButton:GetName() == nil \
+             and BNConversationInviteDialogListFriend1Text ~= nil"
+        )
+        .unwrap(),
+        "an unnamed templated button's label names itself after its named ancestor"
     );
 
     s.run(r#"getglobal("MyCheckText"):SetText("Show my thing")"#)
@@ -87,7 +73,6 @@ fn a_check_button_from_the_template_names_its_label_after_the_caller() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_templated_check_button_draws_the_reference_checkbox_art() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -128,7 +113,6 @@ fn the_templated_check_button_draws_the_reference_checkbox_art() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_templated_check_button_toggles_before_its_on_click_runs() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -163,10 +147,9 @@ fn a_templated_check_button_toggles_before_its_on_click_runs() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Its face is `<NormalTexture inherits="UIPanelButtonUpTexture"/>` (`UIPanelTemplates.xml:23`),
+/// Its face is `<NormalTexture inherits="UIPanelButtonUpTexture"/>` (`UIPanelTemplates.xml`),
 /// which the loader expands, and its `<ButtonText>` still publishes as `$parentText`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_panel_button_from_the_template_labels_and_paints() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -197,9 +180,8 @@ fn a_panel_button_from_the_template_labels_and_paints() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Its OnClick is `HideUIPanel(this:GetParent())` (`UIPanelTemplates.xml:96-98`).
+/// Its OnClick is `HideUIPanel(this:GetParent())` (`UIPanelTemplates.xml`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_templated_close_button_hides_the_frame_it_sits_on() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -228,9 +210,8 @@ fn the_templated_close_button_hides_the_frame_it_sits_on() {
 }
 
 /// Its border slices are named `<Layers>` regions; its direct-child `<FontString>` is the box's
-/// text, not a layer (`UIPanelTemplates.xml:226-278`).
+/// text, not a layer (`UIPanelTemplates.xml`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn an_input_box_from_the_template_carries_its_border_and_takes_text() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -262,10 +243,9 @@ fn an_input_box_from_the_template_carries_its_border_and_takes_text() {
 
 /// The arrows sit two `$parent` levels deep (`MyScrollScrollBarScrollUpButton`), where
 /// `ScrollFrame_OnLoad` looks them up, and `ScrollFrame_OnScrollRangeChanged` reaches the thumb
-/// by `getglobal(bar:GetName().."ThumbTexture")` (`UIPanelTemplates.lua:244-283`), so a named
+/// by `getglobal(bar:GetName().."ThumbTexture")` (`UIPanelTemplates.lua`), so a named
 /// `<ThumbTexture>` must publish as a global.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_scroll_frame_from_the_template_wires_its_bar_two_parents_deep() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -338,40 +318,33 @@ fn a_scroll_frame_from_the_template_wires_its_bar_two_parents_deep() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Three links: `UIOptionsCheckButtonTemplate`'s size (`UIOptionsFrame.xml:6-10`) over
-/// `OptionsCheckButtonTemplate`'s hit rect and click sound (`OptionsFrameTemplates.xml:40-51`) over
-/// `UICheckButtonTemplate`.
+/// Two links: `OptionsCheckButtonTemplate`'s label over `OptionsBaseCheckButtonTemplate`'s size,
+/// hit rect and click sound (`OptionsPanelTemplates.xml`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_options_check_button_resolves_its_whole_inheritance_chain() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
-    s.run(
-        r#"MyOpt = CreateFrame("CheckButton", "MyOpt", UIParent, "UIOptionsCheckButtonTemplate")"#,
-    )
-    .unwrap();
+    s.run(r#"MyOpt = CreateFrame("CheckButton", "MyOpt", UIParent, "OptionsCheckButtonTemplate")"#)
+        .unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 
     assert_eq!(
         s.eval::<(f64, f64)>("return MyOpt:GetWidth(), MyOpt:GetHeight()")
             .unwrap(),
         (26.0, 26.0),
-        "UIOptionsFrame.xml's own size override, the LAST link in the chain"
+        "the base link's size"
     );
     let (_, right, _, _) = s
         .eval::<(f64, f64, f64, f64)>("return MyOpt:GetHitRectInsets()")
         .unwrap();
-    assert_eq!(
-        right, -100.0,
-        "OptionsCheckButtonTemplate's label-catching hit rect, the MIDDLE link"
-    );
+    assert_eq!(right, -100.0, "the base link's label-catching hit rect");
     assert!(
         s.eval::<bool>(r#"return getglobal("MyOptText") ~= nil"#)
             .unwrap(),
-        "and UICheckButtonTemplate's label, the ROOT link — still named after the caller"
+        "and the top link's label, named after the caller"
     );
 
-    // The middle link's OnClick plays the option toggle sounds.
+    // The base link's OnClick plays the option toggle sounds.
     let _ = s.take_sounds();
     s.run("MyOpt:Click()").unwrap();
     assert!(
@@ -381,11 +354,10 @@ fn the_options_check_button_resolves_its_whole_inheritance_chain() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// `PanelTemplates_TabResize`'s `tab` defaults to `this` (`UIPanelTemplates.lua:33-38`), and stock
-/// tabs call it without one from `OnLoad` or `OnShow`; a real `OnLoad` is what sets `this`.
+/// 3.3.5a's `PanelTemplates_TabResize(tab, padding, ...)` takes the tab first, with no `this`
+/// fallback; an `OnLoad` passes `self`.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn tab_resize_falls_back_to_this_when_no_tab_is_passed() {
+fn tab_resize_sizes_the_tab_its_on_load_passes() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
     s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
@@ -393,7 +365,7 @@ fn tab_resize_falls_back_to_this_when_no_tab_is_passed() {
         r#"<Ui>
             <Button name="ProbeTab" inherits="CharacterFrameTabButtonTemplate" text="Macros">
                 <Anchors><Anchor point="TOPLEFT"/></Anchors>
-                <Scripts><OnLoad>PanelTemplates_TabResize(0)</OnLoad></Scripts>
+                <Scripts><OnLoad>PanelTemplates_TabResize(self, 0)</OnLoad></Scripts>
             </Button>
         </Ui>"#,
     )
@@ -409,11 +381,10 @@ fn tab_resize_falls_back_to_this_when_no_tab_is_passed() {
     assert!(width > 0.0, "the tab got a width, got {width}");
 }
 
-/// The stock tab fits its text once, in `<OnShow>` (`CharacterFrameTemplates.xml:77-80`), so the
+/// The stock tab fits its text once, in `<OnShow>` (`CharacterFrameTemplates.xml`), so the
 /// text must measure synchronously. Its highlight is anchored 10 in from each side (`:94-107`),
 /// which leaves both `SetWidth` calls on it inert, and nothing caps a tab at its window's edge.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_stock_tab_fits_its_text_on_the_first_show() {
     let _data = benilla_formats::wow_data_or_skip!();
     /// `2 * $parentLeft:GetWidth()`: the template's two 20-unit end slices.
