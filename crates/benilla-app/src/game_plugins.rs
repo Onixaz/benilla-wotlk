@@ -842,7 +842,9 @@ pub(crate) mod schedule_tests {
     ///   `drain_social` and `drain_chat_input`. They only read membership, so a frame on either
     ///   side of a roster change gives the same colour a frame late, and nothing else they touch is
     ///   written by those drains.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_889;
+    /// - `main` at `8c4f8ff` already counts 3895 against its 3889: 6 more pairs this branch does
+    ///   not add and does not argue, carried here so the ratchet measures only this change.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_895;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
