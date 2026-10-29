@@ -220,7 +220,7 @@ impl AuraQuery {
     }
 }
 
-/// `SStrCmpUTF8I`'s fold: the whole string, case-insensitively.
+/// The reference's UTF-8 case-insensitive compare: the whole string, case-insensitively.
 fn same_text(a: &str, b: &str) -> bool {
     a.chars()
         .flat_map(char::to_lowercase)

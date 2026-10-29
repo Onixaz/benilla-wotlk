@@ -1,5 +1,5 @@
-//! The frame anchor resolver: the 1.12 client's `CLayoutFrame` rect resolution, transcribed
-//! function by function, with the reference's operations in the reference's order.
+//! The frame anchor resolver: the 1.12 client's layout-frame rect resolution, transcribed function
+//! by function, with the reference's operations in the reference's order.
 //!
 //! The client computes on the x87 at 53-bit precision, which `f64` matches, and narrows to `f32`
 //! only at its stores (each sub-edge before a `combine_*`, each final edge, the `width * scale`
@@ -14,11 +14,11 @@ use std::collections::VecDeque;
 /// The unset-coordinate sentinel, `+Inf`.
 const UNSET: f64 = f64::INFINITY;
 
-/// The least width or height change that fires `OnSizeChanged`: 2^-22, bits `0x34800000`, tested in
-/// `ApplyRect`.
+/// The least width or height change that fires `OnSizeChanged`: 2^-22, bits `0x34800000`, tested
+/// where the rect is applied.
 pub const SIZE_EPS: f64 = 2.384_185_791_015_625e-7;
 
-/// The least edge move against the cached rect for the client to re-store it and `ApplyRect`, 1e-5.
+/// The least edge move against the cached rect for the client to re-store and apply it, 1e-5.
 /// Recorded, not applied: the caller's own dirty gate decides.
 pub const RESOLVE_EPS: f64 = f32::from_bits(0x3727_c5ac) as f64;
 
@@ -67,7 +67,7 @@ impl Point {
     }
 }
 
-/// An anchor target, which the caller maps to a frame or an external rect (`CAnchor+0xc`).
+/// An anchor target, which the caller maps to a frame or an external rect (the anchor's `+0xc`).
 pub type Handle = u32;
 
 /// A resolved rect, `[bottom, left, top, right]` in screen pixels, y-up.
@@ -110,8 +110,8 @@ impl Rect {
     }
 }
 
-/// One anchor, a client `CAnchor` (`xOff +4`, `yOff +8`, `relativeTo +0xc`, `relativePoint +0x10`):
-/// `point` on this frame pins to `relative_point` on the target.
+/// One anchor, a client anchor record (`xOff +4`, `yOff +8`, `relativeTo +0xc`,
+/// `relativePoint +0x10`): `point` on this frame pins to `relative_point` on the target.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Anchor {
     pub point: Point,
@@ -235,7 +235,7 @@ pub fn combine_center(lo: f32, hi: f32, span: f32) -> f64 {
     UNSET
 }
 
-/// `CAnchor::ResolveX`: the anchor's X against its target's cached `rect`, which is `None` when
+/// The anchor's X resolve: the anchor's X against its target's cached `rect`, which is `None` when
 /// `GetRect` fails. `mirror` is the target's normalize predicate (vtable `+0x24`), which shifts the
 /// edges to start at 0, each stored as `f32`.
 pub fn anchor_resolve_x(
@@ -264,7 +264,7 @@ pub fn anchor_resolve_x(
     }
 }
 
-/// `CAnchor::ResolveY`, the Y counterpart of [`anchor_resolve_x`].
+/// The anchor's Y resolve, the Y counterpart of [`anchor_resolve_x`].
 pub fn anchor_resolve_y(
     scale: f32,
     y_off: f32,
@@ -347,8 +347,8 @@ pub fn assemble_rect(
     }
 }
 
-/// `ApplyRect`'s `OnSizeChanged` test: width or height moved by at least [`SIZE_EPS`], the deltas
-/// taken in `f64` from the `f32` edges.
+/// The rect apply's `OnSizeChanged` test: width or height moved by at least [`SIZE_EPS`], the
+/// deltas taken in `f64` from the `f32` edges.
 pub fn size_changed(old: Rect, new: Rect) -> bool {
     let dw =
         (f64::from(new.right) - f64::from(new.left)) - (f64::from(old.right) - f64::from(old.left));
@@ -701,8 +701,8 @@ impl LayoutSolver {
         self.unresolvable.clear();
     }
 
-    /// Seed a rect this solve does not compute, such as the screen root (`CSimpleTop`); also
-    /// publishes one mid-sweep for later nodes of the same pass.
+    /// Seed a rect this solve does not compute, such as the screen root; also publishes one
+    /// mid-sweep for later nodes of the same pass.
     pub fn set_external(&mut self, h: Handle, rect: Rect) {
         self.ensure(h);
         self.touch(h);

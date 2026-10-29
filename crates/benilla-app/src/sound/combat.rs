@@ -45,8 +45,8 @@ const VICTIM_EVADE: u32 = 6;
 const VICTIM_IMMUNE: u32 = 7;
 const VICTIM_DEFLECT: u32 = 8;
 
-/// `HITINFO_LEFTSWING`, the offhand swing; the reference picks the hand by it (:
-/// `(hitInfo >> 2) & 1`).
+/// `HITINFO_LEFTSWING`, the offhand swing; the reference picks the hand by it
+/// (`(hitInfo >> 2) & 1`).
 const HITINFO_LEFTSWING: u32 = 0x4;
 
 /// The `(DONOTRENAME)Combat Miss 1H/2H` whooshes, cached by name at startup.
@@ -63,8 +63,8 @@ const ABSORB_KIT: u32 = 3334;
 const HITINFO_ABSORB_OR_RESIST: u32 = benilla_protocol::messages::hit_info::FULL_ABSORB
     | benilla_protocol::messages::hit_info::FULL_RESIST;
 
-/// The stub emitters' lift (`fadd`), as the armor foley's; the generic weapon impact passes its
-/// position through unlifted.
+/// The stub emitters' lift, a constant add as the armor foley's; the generic weapon impact passes
+/// its position through unlifted.
 const STUB_HEIGHT: f32 = 2.0;
 
 /// `ItemClass` 2, a weapon; any other held item swings in silence.
@@ -121,7 +121,7 @@ fn swing_weapon(
     offhand: bool,
     materials: Option<&benilla_formats::MaterialCatalog>,
 ) -> (u32, bool) {
-    // The reference pass `visFlag = 0`: a disarmed hand swings as unarmed.
+    // The reference's weapon reads pass `visFlag = 0`: a disarmed hand swings as unarmed.
     let hand = wielded.and_then(|w| {
         if offhand {
             w.armed_off()
@@ -202,8 +202,9 @@ fn defended(victim_state: u32) -> bool {
     matches!(victim_state, VICTIM_PARRY | VICTIM_BLOCK)
 }
 
-/// The victim's defending item as `(class, material)` (`(sel)`): a parry takes a mainhand weapon,
-/// else the offhand; a block takes the offhand; it must be class 2 or 4. `None` plays no clang.
+/// The victim's defending item as `(class, material)`, picked by a selector: a parry takes a
+/// mainhand weapon, else the offhand; a block takes the offhand; it must be class 2 or 4. `None`
+/// plays no clang.
 fn defending_item(wielded: Option<&Wielded>, block: bool) -> Option<(u8, u8)> {
     let w = wielded?;
     // `visFlag = 0`: a disarmed mainhand falls through to the offhand.
@@ -253,7 +254,7 @@ type CombatUnit = (
     Option<&'static crate::net::ObjectStore>,
 );
 
-/// The attachment a whiffed swing's whoosh plays.
+/// The attachment a whiffed swing's whoosh plays from.
 const MISS_ATTACH: u16 = 1;
 
 /// The DBC tables the melee sounds read, each optional: a missing one silences its own branch.
@@ -420,7 +421,7 @@ fn combat_sounds(
             continue;
         };
         let Some(weight) = swing_weight(wielded, offhand, &subs.0) else {
-            continue; // a non-weapon in the hand: the reference returns false and nothing plays
+            continue; // a non-weapon in the hand: the weight read returns false and nothing plays
         };
         let Some(kit) = swings.0.kit(weight, swing.hit_info & HITINFO_CRITICAL != 0) else {
             continue; // the reference's `swingType >= 3` bail: silence, never a fallback weight
@@ -537,7 +538,7 @@ fn combat_sounds(
             );
             if let (true, Some(row), Some(item)) = (defended, row, defending) {
                 let kit = defense_clang(row, Some(item), mats);
-                // The clang is lifted two yards (`fadd`).
+                // The clang is lifted two yards, a constant add.
                 let at = victim.map(|(t, ..)| t.translation).unwrap_or(pos) + Vec3::Y * STUB_HEIGHT;
                 play(
                     &mut kits,
@@ -645,7 +646,7 @@ fn combat_sounds(
 }
 
 /// A player's exertion (classes 0/1) and wound (2/3/9) vocals take a Death Knight's voice chain:
-/// `CGPlayer_C::PlayUnitSound` (`0x7631a0`) filters every class but 5-7 and 10-13. The creature
+/// the player's unit-sound play (`0x7631a0`) filters every class but 5-7 and 10-13. The creature
 /// route never does.
 fn player_voice_filter(
     out: &SoundOutput,
@@ -670,7 +671,7 @@ pub(super) fn plugin(app: &mut App) {
 mod tests {
     use super::*;
 
-    /// The reference's `{0, 2, 6}`; immune and deflect take the connecting swing.
+    /// The reference's whoosh split is `{0, 2, 6}`; immune and deflect take the connecting swing.
     #[test]
     fn only_unaffected_dodge_and_evade_take_the_miss_whoosh() {
         for whiff in [0, VICTIM_DODGE, VICTIM_EVADE] {
@@ -691,7 +692,8 @@ mod tests {
         }
     }
 
-    /// The reference's three answers on the shipped `ItemSubClass.dbc`. Skips without client data.
+    /// The reference weight read's three answers on the shipped `ItemSubClass.dbc`. Skips without
+    /// client data.
     #[test]
     fn the_swing_weight_is_the_dbc_column_not_a_guess() {
         let Some(data) = benilla_formats::wow_data() else {
@@ -839,7 +841,7 @@ mod tests {
         assert_eq!(defense_clang(&row, Some((4, 0)), m), 3262, "no material");
     }
 
-    /// `(sel)`.
+    /// The selector picks the hand the outcome names.
     #[test]
     fn the_defending_item_is_the_hand_the_outcome_names() {
         let sword_and_board = Wielded {

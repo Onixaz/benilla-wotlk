@@ -14,7 +14,7 @@ use super::mixer::{self, StreamingSoundHandle};
 use super::{kit::SoundKits, SoundOutput};
 use crate::cinematic::Cinematic;
 
-/// A stopped narration is cut with no fade: every release of the reference is plain. The 0.25 s
+/// A stopped narration is cut with no fade: every release in the reference is plain. The 0.25 s
 /// fade the reference schedules at both edges is a screen fade.
 const CUT_FADE_MS: u64 = 0;
 

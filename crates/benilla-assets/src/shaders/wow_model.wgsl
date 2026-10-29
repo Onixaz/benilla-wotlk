@@ -95,7 +95,7 @@ struct WowLight {
     // Per rig slot (sizes mirrored in rig_palette.rs): the base bone index into `palettes`, whose
     // 3 rows per bone are `rig_from_joint × inverse_bindpose` from the rig's own origin.
     rig_table: array<u32, 2048>,
-    // Per rig slot: the CM2 body tint (`model+0x184/188/18c`) packed `0xFFRRGGBB` like the
+    // Per rig slot: the M2 body tint (`model+0x184/188/18c`) packed `0xFFRRGGBB` like the
     // reference's node value (`param | 0xff000000`); 0 is identity.
     rig_tint: array<u32, 2048>,
     // Per rig slot: the world origin its palette rows are measured from.
@@ -620,7 +620,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
             vo.uv,
             view.mip_bias,
         );
-        // Stage 1's own texture transform (`SetupTextures 0x81f450`), the stage-0 law on the
+        // Stage 1's own texture transform (the texture setup, `0x81f450`), the stage-0 law on the
         // second coordinate; a sphere-map stage takes none.
         var uv1 = in.uv2;
         if ((u32(m.combiner.y) & 1u) == 0u) {
@@ -672,7 +672,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     }
 
     // The body tint (an aura colouring the whole model), by rig slot, 0 = identity: the material
-    // ambient+diffuse colour (gx SetState(1), GL_COLOR_MATERIAL), so it multiplies the light sum
+    // ambient+diffuse colour (gx render state 1, GL_COLOR_MATERIAL), so it multiplies the light sum
     // inside the clamp, never the emission.
     let tint_word = wow_light.rig_tint[(fade_tag >> 19u) & 0x7ffu];
     let inst_tint = select(
@@ -714,7 +714,7 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
     // I, `[node+0xa4]` (animator targets 2.5 lit and 0.5 shadowed; 1.0
     // indoors). `sun_scale.x` picks the family:
     //   ≥ 0.85: an entity M2, 2.5 mixed toward 0.5 by the tag's shade byte
-    //   0.5..0.85: a doodad (ADT MDDF or WMO MODD, both `CMapDoodadDef`): 1.0, never 2.5
+    //   0.5..0.85: a doodad (ADT MDDF or WMO MODD, both one doodad-def kind): 1.0, never 2.5
     //   < 0.5: a doodad on MCSH-shadowed ground: 0.5
     // Deviation: `min(I, 1)`. The reference bakes I into the SH unclamped, so a lit
     // entity commits ×2.5 there and ×1.0 here; lifting the cap takes sun-facing surfaces past 1.0.

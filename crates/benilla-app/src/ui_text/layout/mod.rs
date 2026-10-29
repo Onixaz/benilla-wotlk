@@ -55,12 +55,12 @@ pub(crate) struct FontSpec<'a> {
     /// whole device pixels ([`TextEngine::ppem`]).
     pub height: Option<f32>,
     /// The glyph outline: it picks the ring-and-fill cell and, for THICK only, the step law's extra
-    /// `+1` (`GlyphStepBase`), so it changes measured width too.
+    /// `+1`, so it changes measured width too.
     pub outline: Outline,
     /// The `SetAlphaGradient` reveal `(start, length)`; on the spec, shadows fade with their fill.
     pub alpha_gradient: Option<(f32, f32)>,
     /// The line gap (`SetSpacing`), seam folded in like [`Self::height`]: lines step the font
-    /// height plus it (`CSimpleFontString::UpdateString` hands `+0xf8` to the text block).
+    /// height plus it (the FontString's string update hands `+0xf8` to the text block).
     pub spacing: f32,
 }
 
@@ -71,17 +71,17 @@ pub(crate) fn text_block_h(lines: usize, size: f32, spacing: f32) -> f32 {
 }
 
 /// The reference's per-glyph step in device px: the FreeType advance floored plus one (`out[5]`),
-/// one more for THICK (`GlyphStepBase`), both in `step_extra`. Divided by the DPI once per line:
-/// flooring logical px instead over-tracks.
+/// one more for THICK, both in `step_extra`. Divided by the DPI once per line: flooring logical px
+/// instead over-tracks.
 ///
-/// Deviation: `ComputeStep`'s negative-only pair kern is dropped, because at UI sizes it rounds to
+/// Deviation: the reference's negative-only pair kern is dropped, because at UI sizes it rounds to
 /// 0 almost always.
 fn client_step(raw_physical_advance: f32, step_extra: f32) -> f32 {
     raw_physical_advance.floor() + step_extra
 }
 
-/// [`client_step`]'s bias: `+1`, or `+2` for THICK, as `GlyphStepBase` tests the THICK flag alone;
-/// a NORMAL outline steps like a plain font, though its cell grows.
+/// [`client_step`]'s bias: `+1`, or `+2` for THICK, as the reference's step base tests the THICK
+/// flag alone; a NORMAL outline steps like a plain font, though its cell grows.
 fn step_extra_of(outline: Outline) -> f32 {
     match outline {
         Outline::Thick => 2.0,
@@ -182,7 +182,8 @@ fn layout_text_quads_inner(
 ) -> Vec<UiQuad> {
     let gradient = font.alpha_gradient;
     let r = measure::resolve(e, &font);
-    // One pass fills the caches, as `AllGlyphsCached`; the layout below is lookups.
+    // One pass fills the caches, as the reference's all-glyphs-cached pass; the layout below is
+    // lookups.
     e.ensure_str(r.face, r.ppem, r.radius, text);
     let e = &*e;
     let dpi = e.dpi();
@@ -206,7 +207,7 @@ fn layout_text_quads_inner(
     } else {
         lines
     };
-    // The line stack (`CGxString+0x40`): a height-pinned rect stops emitting lines once the pitch
+    // The line stack (`[string+0x40]`): a height-pinned rect stops emitting lines once the pitch
     // sum passes it, even for a caller that skips the ellipsis seam.
     if rect.height() > HEIGHT_LIMIT_MIN {
         render_lines.truncate(overflow::lines_allowed(
@@ -230,10 +231,9 @@ fn layout_text_quads_inner(
     } else {
         0.0
     };
-    // The first baseline hangs at the face's pixel ascender,
-    // `[CGxFont+0x17c] = round(size · asc/(asc+|desc|))`, as the placement kernel sets
-    // `baseline = cellTop + ascender`; the FreeType hhea `asc/upem` is not on that path and seats
-    // text ~3 px low.
+    // The first baseline hangs at the face's pixel ascender, `[font+0x17c] = round(size ·
+    // asc/(asc+|desc|))`, as the placement kernel sets `baseline = cellTop + ascender`; the
+    // FreeType hhea `asc/upem` is not on that path and seats text ~3 px low.
     let ascent_ratio = e.ascent_ratio_of(r.face);
     let baseline_in_cell = (f64::from(r.size) * f64::from(ascent_ratio) + 0.5).floor() as f32;
     let block_top = if seat == TextSeat::UiGrid && rect.height() > f32::EPSILON {

@@ -1,7 +1,7 @@
-//! The CVar registry, host side: the reference's engine-side table (`ConsoleVar.cpp`, records of
-//! name, value, default, latch slot and the change callback handed to `CVar::Register`). [`Cvars`]
-//! holds every registered row's live value, survives a VM replacement and is what the archives are
-//! composed from; the script VM keeps a mirror for Lua's synchronous `GetCVar`/`SetCVar`
+//! The CVar registry, host side: the reference's engine-side table (records of name, value,
+//! default, latch slot and the change callback handed over at registration). [`Cvars`] holds every
+//! registered row's live value, survives a VM replacement and is what the archives are composed
+//! from; the script VM keeps a mirror for Lua's synchronous `GetCVar`/`SetCVar`
 //! ([`benilla_ui::script::UiScript::seed_cvars`]) whose writes queue back here.
 //!
 //! - [`REGISTERED`] holds only vars something reads, a host knob or a Lua consumer. A row's default
@@ -9,8 +9,8 @@
 //! - The change callback is a Bevy observer on [`CvarChanged`], beside the knob it writes; the
 //!   registry applies nothing itself.
 //! - A latched row's write is staged in [`Row::pending`] until [`Cvars::commit_latched`], the
-//!   reference's inside `RestartGx`; the archive writes the stage, as `CVar::IterateForArchive`
-//!   (`0x767030`) prefers the latched value.
+//!   reference's commit inside `RestartGx`; the archive writes the stage, as the reference's
+//!   archive walk (`0x767030`) prefers the latched value.
 //! - Each row is archived in one file by its [`table::Scope`]: `WTF\Config.wtf`, or the account's
 //!   or the character's `config-cache.wtf`, account-data slots 0 and 1 ([`crate::account_data`]).
 //!   All three are `SET name "value"` lines ([`wtf`]), every row off its default (compared
@@ -19,7 +19,7 @@
 //! - Boot folds `Config.wtf`, then `RunOnce*.wtf` and `realmlist.wtf`, in and fires the observers
 //!   before anything after [`CvarLoad`]; each frame drains the VM's writes in and pushes the
 //!   registry's out. `Config.wtf` is written when something moved, at Enter World, at the UI
-//!   shutdown and at exit (`CVar::SaveAll` `0x767100`); the scoped files at the UI shutdown.
+//!   shutdown and at exit (`0x767100`); the scoped files at the UI shutdown.
 //!
 //! Env overrides (`WOW_UI_SCALE`, `WOW_FARCLIP`, …) win for the session and never touch the file
 //! ([`Cvars::own_for_session`]).
@@ -106,9 +106,8 @@ impl Row {
         self.default.trim().parse::<f32>().is_ok()
     }
 
-    /// What the archive writes for the row, or `None` at the reference's default (`0x767030`:
-    /// the latched value first, compared case-blind with `SStrCmpI`); an addon's row is never
-    /// archived.
+    /// What the archive writes for the row, or `None` at the reference's default (`0x767030`: the
+    /// latched value first, compared case-blind); an addon's row is never archived.
     fn archived(&self) -> Option<&str> {
         if self.addon {
             return None;
@@ -153,7 +152,8 @@ pub(crate) struct Cvars {
     events: Vec<CvarChanged>,
     /// Host-side writes the VM's mirror has not seen; cleared by a seed.
     outbox: Vec<(String, String)>,
-    /// A value moved since the last `Config.wtf` save (`m_needsSave` `0xca19f8`).
+    /// A value moved since the last `Config.wtf` save (the reference's needs-save flag,
+    /// `0xca19f8`).
     dirty: bool,
 }
 
@@ -277,9 +277,9 @@ impl Cvars {
             return SetOutcome::Refused;
         }
         if row.latched {
-            // The reference's `Set` on flag bit1 stores `latchedValue` and skips `InternalSet`: no
-            // dirty, no callback. The stage lives here, not in the mirror, which only ever learns
-            // applied values.
+            // The reference's set on flag bit1 stores the latched value and skips the internal
+            // write: no dirty, no callback. The stage lives here, not in the mirror, which only
+            // ever learns applied values.
             let staged = (value != row.value).then(|| value.to_string());
             if row.pending == staged {
                 return SetOutcome::Unchanged;
@@ -339,9 +339,9 @@ impl Cvars {
         true
     }
 
-    /// The latch boundary `RestartGx` crosses: the reference's, which calls `CVar::Commit` on the
-    /// fourteen gx records …. Each staged `gx*` value is applied, fires, persists and reaches the
-    /// mirror; returns how many moved.
+    /// The latch boundary `RestartGx` crosses, where the reference commits its fourteen gx records.
+    /// Each staged `gx*` value is applied, fires, persists and reaches the mirror; returns how many
+    /// moved.
     ///
     /// Only `gx*` rows: `SoundBufferSize`'s register site discards its record, so nothing commits
     /// it and its stage is lost at exit, as in the reference. The reference runs a gx callback at
@@ -458,9 +458,9 @@ impl Cvars {
         self.file = file;
     }
 
-    /// `CVar::DeleteCharacterCVars` (`0x767350`) at the UI shutdown, and
-    /// `CVar::DeleteAccountCVars` (`0x7673a0`) at an account login: every row of the scope back at
-    /// its default, silently, as the reference deletes the records without a callback.
+    /// The character rows' delete (`0x767350`) at the UI shutdown, and the account rows' delete
+    /// (`0x7673a0`) at an account login: every row of the scope back at its default, silently, as
+    /// the reference deletes the records without a callback.
     pub(crate) fn reset_scope(&mut self, scope: Scope) {
         for row in self.rows.iter_mut().filter(|r| r.scope == scope) {
             row.value = row.default.clone();
@@ -506,8 +506,8 @@ impl Cvars {
         }
     }
 
-    /// A scoped file's body (`SaveGameCVarsCallback` `0x512890`): the scope's rows off their
-    /// default, in creation order, then the names it held that no row claims.
+    /// A scoped file's body (`0x512890`): the scope's rows off their default, in creation order,
+    /// then the names it held that no row claims.
     pub(crate) fn compose_scope(&self, scope: Scope) -> String {
         wtf::compose(
             self.rows
@@ -636,8 +636,8 @@ impl Plugin for CvarPlugin {
                     .chain()
                     .after(crate::ui_script::UiInput),
             )
-            // Enter World's save (`CGlueMgr::EnterWorld` `0x4d9ed8`), in `Last`, after every
-            // `Update` writer of the registry.
+            // Enter World's save (`0x4d9ed8`), in `Last`, after every `Update` writer of the
+            // registry.
             .add_message::<SaveConfig>()
             .add_systems(
                 Last,
@@ -746,7 +746,7 @@ fn load_config(world: &mut World) {
             }
         }
         // `RunOnce*.wtf` and the realmlist files run after `Config.wtf`, each `SET` a write that
-        // reaches the file at the next save (`InitializeGlobal` `0x4067f0`, `0x6b0bf0`).
+        // reaches the file at the next save (`0x4067f0`, `0x6b0bf0`).
         for (name, value) in extra {
             if cvars.row(&name).is_some() {
                 if !cvars.is_session_owned(&name) {
@@ -809,8 +809,8 @@ fn stored_config() -> StoredConfig {
 }
 
 /// The `SET`s that run after `Config.wtf` at startup: each `WTF\RunOnce*.wtf`, names sorted
-/// case-blind (`ForEveryRunOnceWTF` `0x406740`), then `Data\<locale>\realmlist.wtf` and the
-/// root's `realmlist.wtf` (`ClientServices::InitLoginServerCVars` `0x6b0bf0`).
+/// case-blind (`0x406740`), then `Data\<locale>\realmlist.wtf` and the root's `realmlist.wtf`
+/// (`0x6b0bf0`).
 fn startup_extras() -> Vec<(String, String)> {
     let mut files = crate::local_state::run_once_files();
     if let Some(data) = benilla_formats::wow_data() {
@@ -957,16 +957,15 @@ pub(crate) fn fold_dying_vm_cvars(world: &mut World) {
     }
 }
 
-/// The UI shutdown's `CVar::DeleteCharacterCVars` (`0x767350`), after the fold kept the dying
-/// VM's last writes and the character's file took them, so the next character starts from the
-/// defaults.
+/// The UI shutdown's delete of the character rows (`0x767350`), after the fold kept the dying VM's
+/// last writes and the character's file took them, so the next character starts from the defaults.
 pub(crate) fn drop_character_cvars(world: &mut World) {
     if let Some(mut cvars) = world.get_resource_mut::<Cvars>() {
         cvars.reset_scope(Scope::Character);
     }
 }
 
-/// Ask for `Config.wtf`'s save this frame: Enter World's (`CGlueMgr::EnterWorld` `0x4d9ed8`).
+/// Ask for `Config.wtf`'s save this frame: Enter World's (`0x4d9ed8`).
 #[derive(Message)]
 pub(crate) struct SaveConfig;
 
@@ -976,8 +975,8 @@ fn save_config_on_request(mut asks: MessageReader<SaveConfig>, mut cvars: ResMut
     }
 }
 
-/// The exit frame (`CVar::Destroy` `0x7673f7`): the `RunOnce*.wtf` files go first
-/// (`BeginCloseGame` `0x406b70`), then whatever is dirty is saved.
+/// The exit frame (`0x7673f7`): the `RunOnce*.wtf` files go first (`0x406b70`), then whatever is
+/// dirty is saved.
 fn save_config_on_exit(mut cvars: ResMut<Cvars>) {
     for path in crate::local_state::run_once_files() {
         if let Err(e) = std::fs::remove_file(&path) {
@@ -989,7 +988,8 @@ fn save_config_on_exit(mut cvars: ResMut<Cvars>) {
     }
 }
 
-/// `CVar::SaveAll` (`0x767100`) from a world handle: the UI shutdown's, after the scoped files.
+/// The reference's save of every row (`0x767100`), from a world handle: the UI shutdown's, after
+/// the scoped files.
 pub(crate) fn save_config_now(world: &mut World) {
     if let Some(mut cvars) = world.get_resource_mut::<Cvars>() {
         if cvars.dirty {
@@ -2253,8 +2253,8 @@ mod tests {
     }
 
     /// A latched row's write is staged: the applied value stands and nothing fires or dirties (the
-    /// reference's `Set` stores `latchedValue` and skips `InternalSet`) until the commit applies,
-    /// fires, persists and mirrors it.
+    /// reference's set stores the latched value and skips the internal write) until the commit
+    /// applies, fires, persists and mirrors it.
     #[test]
     fn a_latched_row_stages_the_write_until_the_boundary_commits_it() {
         let mut cvars = Cvars::default();

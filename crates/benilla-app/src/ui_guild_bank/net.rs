@@ -153,7 +153,7 @@ fn apply_event(state: &mut GuildBankState, commands: &NetCommands, notice: &Guil
             state.owe_tabs += 1;
             state.dirty = true;
         }
-        // `UpdateTabInfo` (`0x5a4220`): tab, name, icon.
+        // The tab info update (`0x5a4220`): tab, name, icon.
         guild_event::BANK_TAB_UPDATED => {
             let tab = notice.params.first().and_then(|p| p.parse::<usize>().ok());
             if let Some(t) = tab.and_then(|i| state.tabs.get_mut(i)) {

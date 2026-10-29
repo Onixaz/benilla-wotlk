@@ -1,7 +1,7 @@
 //! benilla's layer ([`super::manifest::LAYER_MANIFEST`]) loads as more of the stock load: after
 //! every core file, before the first third-party addon, with no `ADDON_LOADED` and no AddOn API
-//! row, as 12340 loads FrameXML (`CGGameUI::InitializeFrameXML` `0x52a980`: `FrameXML.toc` at
-//! `0x52ac26`, then the addon walk `AddOn_LoadAllEnabled` at `0x52ac4e`); and a dev build boots
+//! row, as 12340 loads FrameXML (`0x52a980`: `FrameXML.toc` at `0x52ac26`, then the addon walk at
+//! `0x52ac4e`); and a dev build boots
 //! without it.
 
 use benilla_ui::script::{EditAction, EditUnit, QuadContent, ScriptValue, UiScript};

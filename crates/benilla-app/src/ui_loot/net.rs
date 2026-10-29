@@ -28,14 +28,14 @@ pub(super) fn register(app: &mut App) {
 /// The rows 12340 reads off a response: the count clamps to 18 (`0x6d55e7`).
 const MAX_LOOT_ROWS: usize = 18;
 
-/// 12340's moving test after `OpenLoot` (`0x6d57a6`, `0xc000ff`), in benilla's flag layout.
+/// 12340's moving test after the loot open (`0x6d57a6`, `0xc000ff`), in benilla's flag layout.
 const MOVING_CLOSES_LOOT: u32 = {
     use crate::creature_anim::move_flags as f;
     f::STEERING | f::ASCENDING | f::DESCENDING
 };
 
-/// `OnLootResponse 0x6d53b0`'s item shape: an object we do not hold is released (`0x6d560f`), one
-/// we hold is latched (`0x6d56c8`), targeted and opened (`OpenLoot 0x5264f0`).
+/// The loot response handler's item shape (`0x6d53b0`): an object we do not hold is released
+/// (`0x6d560f`), one we hold is latched (`0x6d56c8`), targeted and opened (`0x5264f0`).
 fn on_response(
     In(ev): In<SessionEvent>,
     mut select: crate::target::SelectCommit,
@@ -137,7 +137,7 @@ fn on_release_response(
     }
 }
 
-/// `UnlockItem` on the loot guid, as the loot closes call it: only an item we locked at its
+/// The item unlock on the loot guid, as the loot closes call it: only an item we locked at its
 /// `CMSG_OPEN_ITEM` send unlocks, and its slot queues for `ITEM_LOCK_CHANGED`.
 struct ItemUnlock<'a> {
     pending: &'a mut PendingItemOps,
@@ -209,7 +209,7 @@ fn admit_response(guid: u64, loot_type: u8, latch: &mut LootLatch, net: &NetComm
 
 /// `SMSG_FISH_ESCAPED` (the skill roll failed) or `SMSG_FISH_NOT_HOOKED` (clicked before the
 /// splash, or expired): a yellow toast, as the handlers push ids `0x13e`/`0x13f`, type-1 entries
-/// that `DisplayError` fires as `UI_INFO_MESSAGE`.
+/// that the error display fires as `UI_INFO_MESSAGE`.
 fn fish_verdict(escaped: bool, errors: &mut UiErrorKeys) {
     let key = if escaped {
         "ERR_FISH_ESCAPED"
@@ -227,10 +227,10 @@ const DEFAULT_ARM_RELEASES: bool = true;
 /// One arm of the loot-refusal jump table: the message it pushes, and whether it falls into the
 /// release tail.
 struct LootRefusal {
-    /// The `GlobalStrings` key of the id the arm hands `CGGameUI::DisplayError`.
+    /// The `GlobalStrings` key of the id the arm hands the UI's error display.
     key: &'static str,
-    /// The tail zeroes the loot guid (our [`LootLatch`]), runs `UnlockItem` and
-    /// `RecomputeBaseAnim (-1)`: it ends the kneel.
+    /// The tail zeroes the loot guid (our [`LootLatch`]), runs the item unlock and the
+    /// base-animation recompute with `-1`: it ends the kneel.
     releases: bool,
 }
 
@@ -968,7 +968,7 @@ mod tests {
             .expect("the handler runs as a one-shot system");
     }
 
-    /// `SetSelection` on the looted unit's guid.
+    /// The selection set on the looted unit's guid.
     #[test]
     fn a_loot_window_opening_on_a_unit_selects_it() {
         let (mut world, rx) = tabbed_world();
@@ -984,7 +984,7 @@ mod tests {
         assert_eq!(
             selection.last,
             Some(KOBOLD),
-            "…through SetSelection's stamp"
+            "…through the selection set's stamp"
         );
         let sent: Vec<_> = rx.try_iter().collect();
         assert!(
@@ -997,8 +997,8 @@ mod tests {
         assert!(rx.try_recv().is_err());
     }
 
-    /// The reference tests `TYPEMASK_UNIT`; `SetSelection`'s `IsSelectable` refuses the flagged
-    /// unit; a refused response never reaches.
+    /// The reference tests `TYPEMASK_UNIT`; the selection set's selectable test refuses the flagged
+    /// unit; a refused response never reaches the select.
     #[test]
     fn a_chest_an_unselectable_unit_and_a_refusal_leave_the_target() {
         for (guid, latched, loot_type) in [
@@ -1046,8 +1046,8 @@ mod tests {
         assert_eq!(world.resource::<LootLatch>().0, Some(CORPSE));
     }
 
-    /// `SetSelection`'s switch while swinging: the swing at the Tab target stops, and none opens on
-    /// the body.
+    /// The selection set's switch while swinging: the swing at the Tab target stops, and none opens
+    /// on the body.
     #[test]
     fn looting_while_swinging_at_the_tab_target_stops_the_swing() {
         use crate::net::SelfPlayer;
@@ -1316,8 +1316,8 @@ mod tests {
         }
     }
 
-    /// `SetObject 0x5896b0` sweeps an armed auto-loot window (`DoAutoLoot 0x588f90`) before the
-    /// response's movement close (`0x6d57b5`), so a body auto-looted on the run is taken, then
+    /// The window's object set (`0x5896b0`) sweeps an armed auto-loot window (`0x588f90`) before
+    /// the response's movement close (`0x6d57b5`), so a body auto-looted on the run is taken, then
     /// released.
     #[test]
     fn auto_loot_on_the_run_takes_the_rows_before_the_release() {
@@ -1450,7 +1450,7 @@ mod tests {
         }
     }
 
-    /// Only a releasing arm reaches `UnlockItem`, through the tail.
+    /// Only a releasing arm reaches the item unlock, through the tail.
     #[test]
     fn a_releasing_loot_error_on_the_opened_item_unlocks_it() {
         let mut world = opened_lockbox_world();

@@ -1,6 +1,6 @@
-//! The calendar's messages, as 12340's `PH_CALENDAR_GROUP` (`0x5c3fe0`) and
-//! `Packet_SMSG_CALENDAR_COMMAND_RESULT` (`0x6cd380`) read them, and the bodies the calendar's
-//! verbs send. A date on the wire is a packed `WowTime` word; `server_now` is unix seconds.
+//! The calendar's messages, as 12340's calendar packet handlers (`0x5c3fe0`) and its command-result
+//! handler (`0x6cd380`) read them, and the bodies the calendar's verbs send. A date on the wire is
+//! a packed `WowTime` word; `server_now` is unix seconds.
 
 use std::io;
 
@@ -631,7 +631,7 @@ pub struct CalendarNewInvite {
     pub moderator: u8,
 }
 
-/// The event an add or an update sends, `CGCalendarEvent`'s fields.
+/// The event an add or an update sends, the reference calendar event's fields.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CalendarEventFields {
     pub title: String,

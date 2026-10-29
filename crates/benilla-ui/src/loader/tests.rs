@@ -14,9 +14,9 @@ mod loader_tests {
         framexml::parse(text).expect("valid FrameXML")
     }
 
-    /// `CMinimap::LoadXML`: `minimapArrowModel` goes to engine children 1-8, `minimapPlayerModel`
-    /// to child 9 alone (`[Minimap+0x338]`); without the attributes the defaults are.
-    /// `Minimap.xml:97` sets both.
+    /// The minimap's XML load: `minimapArrowModel` goes to engine children 1-8,
+    /// `minimapPlayerModel` to child 9 alone (`[Minimap+0x338]`); without the attributes the
+    /// engine's default models stand. `Minimap.xml:97` sets both.
     #[test]
     fn the_minimap_model_attributes_name_the_nine_engine_children() {
         let mut s = UiScript::new().unwrap();
@@ -529,7 +529,7 @@ mod loader_tests {
             .unwrap());
     }
 
-    /// `CSimpleFrame::LoadXML`: a strata does not know logs at severity 1 and skips
+    /// The frame's XML load: a strata it does not know logs at severity 1 and skips
     /// `SetFrameStrata`.
     #[test]
     fn an_unknown_xml_frame_strata_warns_and_leaves_the_stratum_alone() {
@@ -669,7 +669,7 @@ mod loader_tests {
         assert!(s.eval::<bool>("return Still ~= nil").unwrap());
     }
 
-    /// An `<Anchor>` with no `<Offset>` takes its own `x`/`y` (`CLayoutFrame::LoadXML`,
+    /// An `<Anchor>` with no `<Offset>` takes its own `x`/`y` (the layout frame's XML load,
     /// `0x48b2d0`), the form 3.3.5a's `CharacterCreate.xml` writes, for a frame and a texture.
     #[test]
     fn an_anchor_without_an_offset_takes_its_own_x_and_y() {
@@ -845,7 +845,7 @@ mod loader_tests {
             .any(|w| w.contains("OnMessageScrollChanged")));
     }
 
-    /// `Instantiate` logs `"Unknown frame type: %s"` and builds nothing for the node or its
+    /// The frame factory logs `"Unknown frame type: %s"` and builds nothing for the node or its
     /// `<Frames>`; only the Lua `CreateFrame` raises.
     #[test]
     fn an_unknown_xml_frame_type_is_logged_and_its_node_skipped() {
@@ -878,8 +878,8 @@ mod loader_tests {
         assert!(err.contains("unknown frame type 'Bogus'"), "{err}");
     }
 
-    /// A `.toc` line hands a listed `Bindings.xml` to, so each `<Binding>` logs as an unknown frame
-    /// type; the reference reads the bindings regardless.
+    /// A `.toc` line hands a listed `Bindings.xml` to the XML loader, so each `<Binding>` logs as
+    /// an unknown frame type; the reference reads the bindings regardless.
     #[test]
     fn a_bindings_document_loaded_as_framexml_raises_nothing() {
         let s = UiScript::new().unwrap();
@@ -925,7 +925,7 @@ mod loader_tests {
         assert!(s.eval::<bool>("return Another == nil").unwrap());
     }
 
-    /// `<StatusBar>` LoadXML extras.
+    /// `<StatusBar>` XML-load extras.
     #[test]
     fn statusbar_xml_extras_apply() {
         let mut s = UiScript::new().unwrap();
@@ -978,7 +978,7 @@ mod loader_tests {
         );
     }
 
-    /// An anchorless `<Texture>` gets `SetAllPoints` after its LoadXML, so its `<Size>` goes
+    /// An anchorless `<Texture>` gets `SetAllPoints` after its XML load, so its `<Size>` goes
     /// unread: `StackSplitFrame.xml:10` authors 256×32 and draws 172×96.
     #[test]
     fn sized_anchorless_layer_texture_fills_its_frame() {
@@ -1098,7 +1098,7 @@ mod loader_tests {
     }
 
     /// The reference names a handler chunk `"%s:%s"` from the object's `GetName`, or `<unnamed>`,
-    /// and the reference loads the raw body, so body line n is chunk line n.
+    /// and loads the raw body, so body line n is chunk line n.
     #[test]
     fn an_xml_handler_chunk_is_named_by_its_frame_and_handler() {
         let s = UiScript::new().unwrap();
@@ -1288,7 +1288,7 @@ mod loader_tests {
         assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 
-    /// `<EditBox>` LoadXML extras.
+    /// `<EditBox>` XML-load extras.
     #[test]
     fn editbox_xml_extras_apply() {
         let mut s = UiScript::new().unwrap();
@@ -1362,7 +1362,7 @@ mod loader_tests {
         assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 
-    /// The flags read by `StringToBOOL` (`0x815400`): GlueXML's `AccountLoginPasswordEdit` says
+    /// The flags read by the boolean parse (`0x815400`): GlueXML's `AccountLoginPasswordEdit` says
     /// `password="1"`, and the reference masks it.
     #[test]
     fn an_editbox_flag_written_as_a_digit_turns_the_flag_on() {
@@ -1585,7 +1585,7 @@ mod loader_tests {
     }
 
     /// The chat edit box's shape. The engine assigns the text slot from the direct-child
-    /// `<FontString>` at LoadXML; it never searches the regions, so the header stays its own.
+    /// `<FontString>` at its XML load; it never searches the regions, so the header stays its own.
     #[test]
     fn editbox_adopts_special_fontstring_not_a_layers_header() {
         let mut s = UiScript::new().unwrap();
@@ -1786,10 +1786,10 @@ mod loader_tests {
         );
     }
 
-    /// `CSimpleButton::LoadXML 0x96fed0` reads one attribute on each state font, `style=`, and
-    /// stores the named font object itself (`0x97001d`, `0x970088`, `0x9700ec` →
-    /// `CSimpleFont::GetFont 0x496f70`), which the 3.3.5a getters hand back (`0x977450`,
-    /// `0x977750`, `0x9775d0`). The label takes the normal object's justify and paint.
+    /// The button's XML load (`0x96fed0`) reads one attribute on each state font, `style=`, and
+    /// stores the named font object itself (`0x97001d`, `0x970088`, `0x9700ec` → the font lookup,
+    /// `0x496f70`), which the 3.3.5a getters hand back (`0x977450`, `0x977750`, `0x9775d0`). The
+    /// label takes the normal object's justify and paint.
     #[test]
     fn a_button_state_font_is_the_object_its_style_names() {
         let mut s = UiScript::new().unwrap();
@@ -1952,8 +1952,8 @@ mod loader_tests {
         );
     }
 
-    /// `text=` resolves as a global (`FrameScript_GetText`) on all three element shapes; a miss
-    /// shows the raw value, as the reference's readers do, and a key-shaped miss warns.
+    /// `text=` resolves as a global on all three element shapes; a miss shows the raw value, as the
+    /// reference's readers do, and a key-shaped miss warns.
     #[test]
     fn a_text_attribute_resolves_through_the_global_strings() {
         let mut s = UiScript::new().unwrap();
@@ -2065,9 +2065,9 @@ mod loader_tests {
         assert_eq!(s.eval::<i64>("return Gone:GetNumRegions()").unwrap(), 0);
     }
 
-    /// A direct-child `<FontString>` declares `elementFont[0]` and `<FontStringHeader1>`
-    /// `elementFont[1]`, neither a region, and `hyperlinkFormat=` lands at `+0x360`; stock
-    /// `ItemTextFrame.xml:214` uses the first.
+    /// A direct-child `<FontString>` declares element font 0 and `<FontStringHeader1>` element font
+    /// 1, neither a region, and `hyperlinkFormat=` lands at `+0x360`; stock `ItemTextFrame.xml:214`
+    /// uses the first.
     #[test]
     fn simplehtml_xml_declares_element_fonts_not_regions() {
         let mut s = UiScript::new().unwrap();
@@ -2161,8 +2161,8 @@ mod loader_tests {
         assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 
-    /// `CSimpleButton::LoadXML` builds any `<...Texture>` child through the `<Layers>` texture
-    /// adder; `SpellBookFrame.xml:36` writes a bare `<NormalTexture/>`.
+    /// The button's XML load builds any `<...Texture>` child through the `<Layers>` texture adder;
+    /// `SpellBookFrame.xml:36` writes a bare `<NormalTexture/>`.
     #[test]
     fn a_bare_state_texture_element_still_builds_its_region() {
         let mut s = UiScript::new().unwrap();
@@ -2350,7 +2350,7 @@ mod region_template_tests {
         );
     }
 
-    /// The reference's font registry compares names with `SStrCmpI`.
+    /// The reference's font registry compares names case-insensitively.
     #[test]
     fn a_font_object_inherits_resolves_whatever_its_case() {
         let s = UiScript::new().unwrap();

@@ -33,8 +33,8 @@ pub enum EditAction {
     SelectAll,
 }
 
-/// A `CSimpleEditBox`'s runtime state; `E+` offsets are from its `CScriptObject` `this`. Byte
-/// offsets stay on char boundaries, as the client's boundary snap keeps them.
+/// An `EditBox`'s runtime state; `E+` offsets are from the reference object's script-object base.
+/// Byte offsets stay on char boundaries, as the client's boundary snap keeps them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditBoxState {
     /// The real text (`E+0x32c`); `password` masks only the display (`E+0x334`).
@@ -84,11 +84,12 @@ pub struct EditBoxState {
     /// `SetTextInsets(l, r, t, b)` (`+0x3ec`, `+0x3f4`, `+0x3f0`, `+0x3e8`), which seat the text
     /// region and pad a multi-line box's height.
     pub text_insets: [f32; 4],
-    /// One line's measured height in the text region's font (`(fs, 1)`), the height of an empty
-    /// multi-line box's text, with the measure key it was taken under.
+    /// One line's measured height in the text region's font (a one-line measure of the font
+    /// string), the height of an empty multi-line box's text, with the measure key it was taken
+    /// under.
     pub line_height: Option<(u64, f32)>,
-    /// The box's rect when its resize was last checked, `ApplyRect`'s old rect; `None` before its
-    /// first resolve, which compares against the ctor's zero rect.
+    /// The box's rect when its resize was last checked, the rect apply's old rect; `None` before
+    /// its first resolve, which compares against the ctor's zero rect.
     pub notified_rect: Option<crate::layout::Rect>,
     /// The host-measured width of `display[..i]` per byte `i`, a continuation byte repeating its
     /// lead's; hit-testing and the scroll window read it. Empty until answered.
@@ -291,7 +292,7 @@ impl EditBoxState {
     }
 
     /// The display index nearest pixel `x` from the text origin, the caller adding the scroll
-    /// offset. It rounds to the nearest stop; the reference's rounding is untraced.
+    /// offset. It rounds to the nearest stop; the reference's hit test's rounding is untraced.
     pub fn index_at_x(&self, x: f32) -> usize {
         let display = self.display();
         self.index_at_x_in(x, 0, display.len(), &display)
@@ -565,9 +566,9 @@ impl EditBoxState {
         EditOutcome::changed(self.insert(&cleaned).text_changed)
     }
 
-    /// `SetText`, in order: collapse the selection even when the text is equal; stop if equal
-    /// (`SStrCmp`, case-sensitive), firing nothing; else clear all, then `Insert` with its gates.
-    /// So a `numeric` box given a non-digit, as by `SetNumber(-5)`, ends empty and still reports a
+    /// `SetText`, in order: collapse the selection even when the text is equal; stop if equal (a
+    /// case-sensitive compare), firing nothing; else clear all, then `Insert` with its gates. So a
+    /// `numeric` box given a non-digit, as by `SetNumber(-5)`, ends empty and still reports a
     /// change.
     pub fn set_text(&mut self, s: &str) -> bool {
         self.collapse(); // even when the text is equal
@@ -826,9 +827,9 @@ impl EditBoxState {
     }
 
     /// One extending caret move to `to`, the Shift leg: an empty selection first collapses onto the
-    /// caret, then the reference moves one edge by the move's delta. A move left past `sel_start`
-    /// moves `sel_start`, any other move left moves `sel_end`, and a move right mirrors that, so a
-    /// caret inside a selection trims it.
+    /// caret, then the reference's extend step moves one edge by the move's delta. A move left past
+    /// `sel_start` moves `sel_start`, any other move left moves `sel_end`, and a move right mirrors
+    /// that, so a caret inside a selection trims it.
     pub fn extend_to(&mut self, to: usize) {
         if self.sel_start == self.sel_end {
             self.collapse();
@@ -853,10 +854,11 @@ impl EditBoxState {
     /// click and the drag. Bit 2 rises only when the caret moved; a click raises it on its own.
     ///
     /// Deviation: the drag selects from its anchor, as every OS's own text fields do, where the
-    /// reference's applies to each mouse move's whole delta. The two part in two cases. One move
-    /// that carries the caret across the anchor keeps the far end selected too in the reference.
-    /// And a drag that starts with the caret inside a selection, as after a focus that selects all,
-    /// gives `(0, t)` here dragging right to `t`, where the reference gives `(t, len)`.
+    /// reference applies its extend step to each mouse move's whole delta. The two part in two
+    /// cases. One move that carries the caret across the anchor keeps the far end selected too in
+    /// the reference. And a drag that starts with the caret inside a selection, as after a focus
+    /// that selects all, gives `(0, t)` here dragging right to `t`, where the reference gives `(t,
+    /// len)`.
     pub fn move_caret_to(&mut self, target: usize, extend: bool) {
         let from = self.cursor;
         let target = snap_down(&self.text, target.min(self.text.len()));
@@ -924,9 +926,9 @@ impl EditBoxState {
             }
         }
         if self.max_letters > 0 {
-            // Letters, not chars: the reference counts classes 2, 3 and 6, so an item link costs
-            // only its visible name. The trim is the Backspace step (links atomic), re-counting
-            // after each pop, so it sheds a whole link at once.
+            // Letters, not chars: the reference's letter count takes classes 2, 3 and 6, so an item
+            // link costs only its visible name. The trim is the Backspace step (links atomic),
+            // re-counting after each pop, so it sheds a whole link at once.
             loop {
                 let map = crate::markup::ClassMap::new(&self.text);
                 if map.num_letters() <= self.max_letters {

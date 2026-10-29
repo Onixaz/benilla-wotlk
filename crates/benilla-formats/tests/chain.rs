@@ -362,7 +362,7 @@ fn terrain_chunks_carry_unit_upward_mcnr_normals() {
 }
 
 /// Terrain winds CCW seen from above, so it draws backface-culled as the reference does: its chunk
-/// pass never sets `EGxRs 0x14` and inherits `CULL_FACE = 1`. Exact on the XY lattice (the
+/// pass never sets render state `0x14` and inherits `CULL_FACE = 1`. Exact on the XY lattice (the
 /// reference takes X and Y from the grid, only Z from MCVT); against the authored MCNR normals it
 /// holds bar outliers, 4 of 196368 pairs on this tile, hence the 0.01% ceiling.
 #[test]

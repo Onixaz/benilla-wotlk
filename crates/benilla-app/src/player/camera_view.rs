@@ -244,7 +244,7 @@ fn drain_view_requests(
         return;
     }
     let Ok(mut cam) = targets.cam.single_mut() else {
-        return; // no camera: a silent drop, as the reference's miss
+        return; // no camera: a silent drop, as on the reference's camera-lookup miss
     };
     let face_yaw = targets.player.facing();
     // Written to the CVars after the batch: the slots a save or reset moved, and the live index.

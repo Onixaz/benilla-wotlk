@@ -268,8 +268,8 @@ fn a_field_that_moves_mid_load_drops_the_pending_mount() {
     );
 }
 
-/// A mount with no attachment 0 fails the reference's present test: the reference logs and leaves
-/// the body at the unit matrix. The field is still stamped, so the diff cannot churn.
+/// A mount with no attachment 0 fails the reference's seat-present test: it logs and leaves the
+/// body at the unit matrix. The field is still stamped, so the diff cannot churn.
 #[test]
 fn a_mount_without_a_seat_leaves_the_body_at_the_unit_matrix() {
     let mut s = stand();

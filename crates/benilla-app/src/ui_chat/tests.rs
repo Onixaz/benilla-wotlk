@@ -289,7 +289,7 @@ fn a_received_text_emote_composes_its_sentence_and_names_the_performer() {
 }
 
 /// `COMBATLOG_HONORAWARD`, `COMBATLOG_HONORGAIN` and `COMBATLOG_HONORGAIN_NO_RANK`, the forks of
-/// `CGChat::LogHonorGain` (`0x50b6d0`).
+/// the honor line (`0x50b6d0`).
 #[test]
 fn honor_gain_lines_pick_the_reference_form() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -1229,7 +1229,7 @@ fn action_commands_parse() {
     // /pvp takes no argument; a trailing word is ignored.
     assert_eq!(parse_line("/pvp"), ParsedChat::Pvp);
     assert_eq!(parse_line("/pvp on"), ParsedChat::Pvp);
-    // /r rides its own arm: the reply state lives on ChatEditState.
+    // /r rides its own arm: the reply state lives on the chat edit state.
     assert_eq!(
         parse_line("/r hey"),
         ParsedChat::Reply { text: "hey".into() }
@@ -1597,8 +1597,8 @@ fn the_standing_still_arm_reports_moving_and_ignores_swimming() {
     );
 }
 
-/// `IsSelfControlled` is false only while confused, fleeing or move-disabled, the `0xc00004` mask,
-/// which leaves STUNNED out.
+/// Self-control is false only while confused, fleeing or move-disabled, the `0xc00004` mask, which
+/// leaves STUNNED out.
 #[test]
 fn self_controlled_is_true_for_an_ordinary_player() {
     use crate::player::self_controlled;
@@ -1614,7 +1614,7 @@ fn self_controlled_is_true_for_an_ordinary_player() {
     );
 }
 
-// ── the send-side emote gate, `CheckEmoteEligible`, on real `EmoteFlags` values ──
+// ── the send-side emote gate, the emote eligibility check, on real `EmoteFlags` values ──
 const BOW: u32 = 0x4801;
 const RUDE: u32 = 0x0001;
 const APPLAUD: u32 = 0x0000;
@@ -1896,7 +1896,7 @@ fn the_language_header_suppresses_only_the_frames_own_default_tongue() {
     );
 }
 
-/// The gesture selector in the parser matches the plaintext that the reference then hands to the
+/// The gesture selector in the parser matches the plaintext that the handler then hands to the
 /// display path, so a laugh is language-independent.
 #[test]
 fn the_talk_gesture_reads_the_plaintext_not_the_garbled_line() {
@@ -2563,7 +2563,7 @@ fn afk_then_dnd_clears_the_afk_first() {
 }
 
 /// `SendChatMessage`'s language through the real drain: the id the binding resolved rides every
-/// type's packet but AFK's, whose `SetAFK` never reads it.
+/// type's packet but AFK's, whose AFK mark never reads it.
 #[test]
 fn a_named_language_rides_the_chat_command() {
     use crate::net::{ChatKind, ClientCommand, NetCommands};
@@ -2612,9 +2612,9 @@ fn a_named_language_rides_the_chat_command() {
     );
 }
 
-/// `SendChatMessage`'s `CHANNEL` target through the real drain: `SStrToInt`, so the packet carries
-/// the numbered slot's name, and a number naming no confirmed slot, or a name, sends nothing at
-/// all.
+/// `SendChatMessage`'s `CHANNEL` target through the real drain: an integer parse, so the packet
+/// carries the numbered slot's name, and a number naming no confirmed slot, or a name, sends
+/// nothing at all.
 #[test]
 fn a_channel_send_carries_the_numbered_slots_name() {
     use super::edit::{ChannelSlot, ChannelState, SlotState};

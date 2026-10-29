@@ -1,7 +1,7 @@
 //! Frame methods: the `toplevel` flag, `Raise` and `Lower`, and the raise every trigger runs.
 //!
 //! The flag is bit `0x1` of `[frame+0xb4]`, set by the reference from XML or `SetToplevel`, and
-//! setting it raises nothing. `CSimpleTop::Raise`:
+//! setting it raises nothing. The reference's raise:
 //!
 //! 1. Walks up `+0x9c` to the nearest toplevel self-or-ancestor; with none it does nothing.
 //! 2. With `force`, resolves the frame's layout and tests whether it is overlapped: a visible frame
@@ -63,7 +63,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `CSimpleTop::Raise(frame, force = 1)`, the module doc's three steps; true, as in the reference,
+/// The reference's raise with `force = 1`, the module doc's three steps; true, as in the reference,
 /// when a toplevel self-or-ancestor was found, whether or not it moved.
 pub(in crate::script) fn raise(model: &mut Model, frame: FrameHandle) -> bool {
     // 1. The nearest toplevel self-or-ancestor, else nothing.

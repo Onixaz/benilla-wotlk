@@ -467,7 +467,7 @@ fn monster_move_carries_every_waypoint() {
     );
 }
 
-/// `MSG_MOVE_TIME_SKIPPED` is `[CMovement+0xac] += lag`: the next packet schedules as if nothing
+/// `MSG_MOVE_TIME_SKIPPED` is `[mover+0xac] += lag`: the next packet schedules as if nothing
 /// were skipped.
 #[test]
 fn a_reported_skip_keeps_the_relay_chain_level_with_the_sender() {
@@ -1147,8 +1147,8 @@ fn an_observed_levitate_lands_all_three_granted_bits() {
     assert_eq!(landed.flags, 0, "the revoke is the absence of the bits");
 }
 
-/// Tag `0x26`, skipped, is the teleport's: `push 0x26` occurs only, reached only from the teleport
-/// arms (the reference sends `MSG_MOVE_TELEPORT_ACK` on its other branch).
+/// Tag `0x26`, which both pre-fire reconciles skip, is the teleport's: the reference pushes it only
+/// from the teleport arms (sending `MSG_MOVE_TELEPORT_ACK` on its other branch).
 #[test]
 fn the_teleport_is_the_only_relay_the_reconcile_skips() {
     let dest = [20.0, 5.0, 3.0];
@@ -1237,7 +1237,7 @@ fn an_ascent_while_swimming_forward_climbs_at_forty_five_degrees() {
 }
 
 /// A flyer strokes like a swimmer at the flight speeds: pitched forward, and the vertical channel
-/// at the flight speed (`GetBaseSpeed` `0x987570` puts flight first).
+/// at the flight speed (the base-speed getter `0x987570` puts flight first).
 #[test]
 fn a_flyer_takes_the_flight_speed_along_its_pitch() {
     let s = speeds();
@@ -1287,8 +1287,9 @@ fn a_relayed_ascent_lands_integrates_and_a_root_ends_it() {
     );
 }
 
-/// After the merge the client runs `SetRoot` unconditionally, so the opcode roots the mover even
-/// when the word disagrees; vmangos always sends a wiped word, so no live run would catch this.
+/// After the merge the client runs its root apply unconditionally, so the opcode roots the mover
+/// even when the word disagrees; vmangos always sends a wiped word, so no live run would catch
+/// this.
 #[test]
 fn the_root_opcode_wins_over_a_word_that_disagrees_with_it() {
     // The opcode says root, the word says running forward.
@@ -1301,7 +1302,7 @@ fn the_root_opcode_wins_over_a_word_that_disagrees_with_it() {
         "and the one-shot wipe took the direction bits with it — this is what stops the slide"
     );
 
-    // `ClearRoot` is `and ~0x1000`.
+    // The unroot is `and ~0x1000`.
     let freed = apply_observed(rooted, &observed(0, [0.0; 3], RelayVerb::Root(false)));
     assert_eq!(freed.flags, 0, "cleared, and still not moving");
 }

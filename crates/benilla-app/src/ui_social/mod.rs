@@ -1,9 +1,9 @@
 //! The social session: the friend, ignore and mute lists, `/who`, and the system lines they print.
-//! The reference's `FriendList` holds guids, not names: a row's name comes from the name cache when
+//! The reference's friend list holds guids, not names: a row's name comes from the name cache when
 //! it is read, and each list's selection is a guid too.
 //!
-//! Every friend, ignore and mute result prints to the chat frame through `DisplayError`, the line
-//! `HandleStatus` (`0x6b73a0`) picks per result code.
+//! Every friend, ignore and mute result prints to the chat frame through the error display, the
+//! line the status handler (`0x6b73a0`) picks per result code.
 
 use benilla_protocol::messages::{
     contact_flag, friend_result, friend_status, ContactList, FriendStatusUpdate,
@@ -18,13 +18,13 @@ mod query;
 pub(crate) use feed::feed_social;
 pub(crate) use query::parse as who_query;
 
-/// The friend array's slots (`FriendList` `+0x0`).
+/// The friend array's slots (the friend list's `+0x0`).
 const MAX_FRIENDS: usize = 100;
 /// The ignore and mute arrays' slots (`+0xd490`, `+0xd7c0`).
 const MAX_IGNORES: usize = 50;
 
 /// One friend as the reference's `FriendInfo` holds it. A logout clears only `connected`: the
-/// level, class and zone stay as last sent (`SetConnected` `0x6b3d10`).
+/// level, class and zone stay as last sent (`0x6b3d10`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Friend {
     pub(crate) guid: u64,
@@ -76,7 +76,7 @@ pub(crate) struct SocialState {
 impl SocialState {
     /// Drop the session's state: the server re-sends every list at login, and a stale ignore list
     /// would silence the wrong guids. The `/who` rows and sort chain go too, as the reference
-    /// reseeds both at each world entry (`FriendList::Initialize` `0x6b8990`, from `0x405653`).
+    /// reseeds both at each world entry (`0x6b8990`, from `0x405653`).
     pub(crate) fn clear_session(&mut self) {
         *self = Self::default();
     }
@@ -97,14 +97,14 @@ impl SocialState {
         self.friends.iter().map(|f| f.guid).collect()
     }
 
-    /// Is `guid` on the friend list? The reference's `IsFriend` (`0x6b3920`), which keeps the
+    /// Is `guid` on the friend list? The reference's friend test (`0x6b3920`), which keeps the
     /// guild sign-on line from announcing a friend twice.
     pub(crate) fn is_friend(&self, guid: u64) -> bool {
         guid != 0 && self.friends.iter().any(|f| f.guid == guid)
     }
 
-    /// `SMSG_CONTACT_LIST` (`ReadPacket` `0x6b7dd0`): each list the mask names is replaced by the
-    /// entries carrying its bit, up to its slot count; the other lists stand.
+    /// `SMSG_CONTACT_LIST` (`0x6b7dd0`): each list the mask names is replaced by the entries
+    /// carrying its bit, up to its slot count; the other lists stand.
     fn apply_contact_list(&mut self, list: ContactList) {
         let on = |flag: u32| list.mask & flag != 0;
         let guids = |flag: u32| -> Vec<u64> {
@@ -150,8 +150,8 @@ impl SocialState {
         self.ignores_dirty = true;
     }
 
-    /// `SMSG_FRIEND_STATUS` (`HandleStatus` `0x6b73a0`): apply the result and queue its line. The
-    /// server sends no fresh list after an add or a remove, so the result codes maintain the lists.
+    /// `SMSG_FRIEND_STATUS` (`0x6b73a0`): apply the result and queue its line. The server sends no
+    /// fresh list after an add or a remove, so the result codes maintain the lists.
     fn apply_friend_status(&mut self, update: FriendStatusUpdate) {
         use friend_result as R;
         match update.result {
@@ -177,7 +177,7 @@ impl SocialState {
                 self.friends.retain(|f| f.guid != update.guid);
                 self.friends_dirty = true;
             }
-            // `GetFriendIndexByGuid` seats an unlisted guid: an add, and also the already-listed
+            // The friend index lookup seats an unlisted guid: an add, and also the already-listed
             // refusal.
             R::ADDED_ONLINE | R::ADDED_OFFLINE | R::ALREADY => {
                 let friend = self.seat_friend(update.guid);
@@ -258,7 +258,8 @@ impl SocialState {
         row_guid(&self.display_order, row)
     }
 
-    /// `SetNotes` (`0x6b5540`): the note the VM already stored, mirrored so the next push agrees.
+    /// The note write (`0x6b5540`): the note the VM already stored, mirrored so the next push
+    /// agrees.
     fn set_note(&mut self, guid: u64, note: &str) {
         if let Some(friend) = self.friend_mut(guid) {
             friend.note = note.to_string();
@@ -275,7 +276,7 @@ impl SocialState {
     }
 }
 
-/// `IgnoreAdded`/`MuteAdded` (`0x6b7200`, `0x6b72e0`): the guid takes the first free slot of 50,
+/// An ignore or mute added (`0x6b7200`, `0x6b72e0`): the guid takes the first free slot of 50,
 /// unless it is listed already.
 fn seat(list: &mut Vec<u64>, guid: u64) {
     if !list.contains(&guid) && list.len() < MAX_IGNORES {
@@ -294,8 +295,8 @@ fn row_guid(order: &[u64], row: u32) -> Option<u64> {
 /// The rows the reference keeps of an answer (`cmp ecx,0x32` at `0x6b8751`).
 const WHO_MAX_RESULTS: usize = 50;
 
-/// The `GlobalStrings.lua` key a friend, ignore or mute result prints (`HandleStatus`
-/// `0x6b73a0`), resolved at the feed; `None` prints nothing.
+/// The `GlobalStrings.lua` key a friend, ignore or mute result prints (`0x6b73a0`), resolved at the
+/// feed; `None` prints nothing.
 fn result_key(result: u8) -> Option<&'static str> {
     use friend_result as R;
     Some(match result {
@@ -519,13 +520,13 @@ mod tests {
         social.apply_friend_status(status(friend_result::REMOVED, 7));
         assert!(social.friends.is_empty());
 
-        // `ALREADY` seats a guid the client did not hold (`GetFriendIndexByGuid`).
+        // `ALREADY` seats a guid the client did not hold (the friend index lookup).
         social.apply_friend_status(status(friend_result::ALREADY, 8));
         assert_eq!(social.friends.len(), 1);
     }
 
-    /// A logout clears only the connected bit (`SetConnected` `0x6b3d10`): the row keeps the last
-    /// level, class and zone it was sent.
+    /// A logout clears only the connected bit (`0x6b3d10`): the row keeps the last level, class and
+    /// zone it was sent.
     #[test]
     fn presence_broadcasts_patch_the_row() {
         let mut social = SocialState::default();
@@ -586,7 +587,7 @@ mod tests {
         assert_eq!(social.pending_lines.len(), 1);
     }
 
-    /// `HandleStatus` (`0x6b73a0`): codes 0 and 4 share the not-found line, 0x12-0x18 are the
+    /// The status handler (`0x6b73a0`): codes 0 and 4 share the not-found line, 0x12-0x18 are the
     /// voice twins, 0x19-0x1b print nothing and anything past them is `ERR_FRIEND_ERROR`.
     #[test]
     fn every_result_code_maps_to_its_line() {
@@ -704,7 +705,7 @@ mod tests {
         for key in keys {
             let text: String = s.lua().globals().get(key).expect(key);
             assert!(!text.is_empty(), "{key} resolves empty");
-            // The away tags are a row field, not a `DisplayError` message: no catalog row.
+            // The away tags are a row field, not an error display message: no catalog row.
             if !key.starts_with("CHAT_FLAG_") {
                 assert!(
                     benilla_ui::messages::by_key(key).is_some(),

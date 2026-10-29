@@ -6,7 +6,7 @@ use std::io::{self, Read};
 
 use crate::wire::{capacity_hint, read_cstring, read_u32_le, read_u64_le, read_u8};
 
-/// Slots per tab: a virtual slot is `tab * 98 + slot` (`GetTabAndSlotFromVirtual`, `0x5a42e0`).
+/// Slots per tab: a virtual slot is `tab * 98 + slot` (`0x5a42e0`).
 pub const GUILD_BANK_TAB_SLOTS: u8 = 98;
 /// The money log's tab index, past the six item tabs (`GetNumGuildBankMoneyTransactions` reads
 /// row 6, `0x5a45b0`).
@@ -31,7 +31,7 @@ pub fn guild_bank_query_tab(banker: u64, tab: u8, full_update: bool) -> Vec<u8> 
 /// and the item id the client last saw there, 0 for an empty slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GuildBankSwap {
-    /// A bag item dropped on a bank slot (`SwapItems`, `0x5a50c0`): `count` 0 moves the stack.
+    /// A bag item dropped on a bank slot (`0x5a50c0`): `count` 0 moves the stack.
     Deposit {
         tab: u8,
         slot: u8,
@@ -40,7 +40,7 @@ pub enum GuildBankSwap {
         bag_slot: u8,
         count: u32,
     },
-    /// A held bank item dropped on a bag slot (`SwapGuildBankItem`, `0x6db880`).
+    /// A held bank item dropped on a bag slot (`0x6db880`).
     Withdraw {
         tab: u8,
         slot: u8,
@@ -56,7 +56,7 @@ pub enum GuildBankSwap {
         item: u32,
         count: u32,
     },
-    /// A held bank item dropped on another bank slot (`SwapBankItems`, `0x5a5410`).
+    /// A held bank item dropped on another bank slot (`0x5a5410`).
     BankToBank {
         tab: u8,
         slot: u8,

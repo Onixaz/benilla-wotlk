@@ -22,7 +22,7 @@ fn byte(c: f32) -> u8 {
     (c.clamp(0.0, 1.0) * 255.0 + 0.5) as u8
 }
 
-/// The hue disc as the reference fills it: integer `X, Y ∈ [−64, 63]`, drawn iff `X² + Y² ≤ 0x1000`
+/// The hue disc as the client fills it: integer `X, Y ∈ [−64, 63]`, drawn iff `X² + Y² ≤ 0x1000`
 /// (the rim inside, a hard alpha cut, `0x00000000` outside), `S = √(X² + Y²)/64` and
 /// `H = atan2(Y, X)` in degrees plus 180. Row 0 is the top, `Y = +63`. Not recentred or
 /// anti-aliased: the pick law inverts exactly this lattice.
@@ -198,7 +198,7 @@ mod tests {
         }
     }
 
-    /// The disc does not read the widget's brightness at all (the reference's literal `1.0f`).
+    /// The disc does not read the widget's brightness at all (the fill loop's literal `1.0f`).
     #[test]
     fn the_disc_ignores_the_brightness_slider() {
         assert_eq!(wheel_tint(1.0), [1.0, 1.0, 1.0, 1.0]);

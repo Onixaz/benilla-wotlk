@@ -6,10 +6,10 @@
 //! plain `<Model>` has no `SetUnit`:
 //!
 //! ```text
-//! CSimpleFrame
-//! └─ CSimpleModel   table (23)   <Model>          ← here
-//!    └─ CGCharacterModelBase  table (3)   <PlayerModel>    ← here
-//!       ├─ DressUpModelFrame  table (3)   <DressUpModel>   ← `dressup`
+//! Frame
+//! └─ Model   table (23)   <Model>          ← here
+//!    └─ PlayerModel  table (3)   <PlayerModel>    ← here
+//!       ├─ DressUpModel  table (3)   <DressUpModel>   ← `dressup`
 //!       └─ TabardModel  table (10)  <TabardModel>    ← `tabard`
 //! ```
 //!
@@ -137,7 +137,7 @@ fn facts_of_pane(lua: &Lua, this: &Table) -> mlua::Result<Option<Arc<ModelFileFa
 pub(super) const REG_MODEL_METHODS: &str = "__benilla_model_methods";
 
 /// Registry key of the `PlayerModel` table, its own three methods only: `Model`'s 23 are reached on
-/// a miss, as the reference falls through.
+/// a miss, as the reference's lookup falls through to the base table.
 pub(super) const REG_PLAYERMODEL_METHODS: &str = "__benilla_playermodel_methods";
 
 /// Run `f` on a frame's Model state under one short write borrow. Errors on a receiver that is not
@@ -186,12 +186,12 @@ fn number(v: &Value) -> Option<f32> {
     }
 }
 
-/// The client's float-zero epsilon: `SetLight`'s intensity gate, the reference's direction
-/// normalise and the paint's degenerate-rect test.
+/// The client's float-zero epsilon: `SetLight`'s intensity gate, the light's direction normalise
+/// and the paint's degenerate-rect test.
 const FLOAT_EPS: f32 = 2.384_185_8e-7;
 
-/// `Model:SetLight`'s usage error. The reference's names the receiver through `%s` and ends in `)`;
-/// this one names `Model` and drops the `)`.
+/// `Model:SetLight`'s usage error. The reference's string names the receiver through `%s` and ends
+/// in `)`; this one names `Model` and drops the `)`.
 const SET_LIGHT_USAGE: &str = "Usage: Model:SetLight(enabled[, omni, dirX, dirY, dirZ, \
      ambIntensity[, ambR, ambG, ambB], dirIntensity[, dirR, dirG, dirB]]";
 
@@ -208,7 +208,8 @@ enum SetLight {
 /// `Model:SetLight`'s argument walk over the arguments after `self` (`a[0]` is Lua index 2), into a
 /// local light whose colours start black, not the widget's white. A colour triple is read only when
 /// its intensity is nonzero and all three are numbers; otherwise it is white and the cursor does
-/// not advance, so `SetLight(1, 0, x, y, z, ambI, dirI)` reads the second intensity at index 8, not 11.
+/// not advance, so `SetLight(1, 0, x, y, z, ambI, dirI)` reads the second intensity at index 8,
+/// not 11.
 fn parse_set_light(a: &[Value]) -> SetLight {
     let Some(enabled) = a.first().and_then(number) else {
         return SetLight::Raise;
@@ -720,12 +721,11 @@ pub struct ModelPaneFrame {
 /// The registry key of `ModelFFX`'s own method table (`0xac465c`), chained over `Model`'s.
 pub(super) const REG_MODELFFX_METHODS: &str = "__benilla_modelffx_methods";
 
-/// `ModelFFX`'s four light methods (`CSimpleModelFFX`,-`0x4e6d60`): `ResetLights` clears the three
-/// sets; `AddLight`, `AddCharacterLight` and `AddPetLight` take an optional array index (nonzero
-/// picks the second) and `SetLight`'s arguments, and append the light to the background's, the
-/// character's or the pet's set while it holds fewer than four. A disabled light is appended too
-/// (`SetLightHelper` `0x960a10` returns success for it), so it still marks the set custom while
-/// adding no light.
+/// `ModelFFX`'s four light methods (`0x4e6d60`): `ResetLights` clears the three sets; `AddLight`,
+/// `AddCharacterLight` and `AddPetLight` take an optional array index (nonzero picks the second)
+/// and `SetLight`'s arguments, and append the light to the background's, the character's or the
+/// pet's set while it holds fewer than four. A disabled light is appended too (the light helper
+/// `0x960a10` returns success for it), so it still marks the set custom while adding no light.
 pub(super) fn install_ffx(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
     m.set(

@@ -1,10 +1,9 @@
 //! The channel pane's engine, the social window's Chat tab (`ChannelFrame.lua`): the display list
-//! of category headers over the group sessions and the joined channels
-//! (`RebuildDisplayChannelList`, `0x504840`), the selected entry (`0xb743dc`/`0xb743e0`) and its
-//! roster (`0xbcfb68`). A channel's roster is the server's display `SMSG_CHANNEL_LIST`
-//! (`0x503990`), named by the app off its name cache; a party's or raid's is built from the group
-//! roster (`0x5045c0`, `0x504720`). benilla runs no voice chat, so no entry carries voice and no
-//! voice session is active.
+//! of category headers over the group sessions and the joined channels (`0x504840`), the selected
+//! entry (`0xb743dc`/`0xb743e0`) and its roster (`0xbcfb68`). A channel's roster is the server's
+//! display `SMSG_CHANNEL_LIST` (`0x503990`), named by the app off its name cache; a party's or
+//! raid's is built from the group roster (`0x5045c0`, `0x504720`). benilla runs no voice chat, so
+//! no entry carries voice and no voice session is active.
 
 use std::cmp::Ordering;
 
@@ -15,14 +14,14 @@ use super::channel::ChannelCommand;
 use super::get_text::global_text;
 use super::{Model, ScriptValue};
 
-/// `s_channelCategories` (`0xac7a48`): the header tokens, also the entries' category returns.
+/// The category table (`0xac7a48`): the header tokens, also the entries' category returns.
 const CATEGORIES: [&str; 3] = [
     "CHANNEL_CATEGORY_GROUP",
     "CHANNEL_CATEGORY_WORLD",
     "CHANNEL_CATEGORY_CUSTOM",
 ];
 
-/// `Map.dbc` `InstanceType` 3, a battleground, and 4, an arena: `IsPVPRaid` (`0x572f76`).
+/// `Map.dbc` `InstanceType` 3, a battleground, and 4, an arena: the PvP-raid test (`0x572f76`).
 const PVP_INSTANCE_TYPES: [u32; 2] = [3, 4];
 
 /// One joined channel slot as the pane lists it.
@@ -37,7 +36,7 @@ pub struct ChannelSlotInfo {
     pub active: bool,
 }
 
-/// `DisplayChannel::m_type`: a channel or a group session; a header's 4 is `None`.
+/// A display entry's type: a channel or a group session; a header's 4 is `None`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Kind {
     Channel,
@@ -46,7 +45,7 @@ enum Kind {
     Raid,
 }
 
-/// One `DisplayChannel` (`0xb74468`, stride `0x20`).
+/// One display entry (`0xb74468`, stride `0x20`).
 #[derive(Clone, Debug)]
 struct Entry {
     /// `+0x00`: a channel's slot index; -1 the party, -2 the raid, -3 the battleground.
@@ -95,7 +94,7 @@ impl Entry {
     }
 }
 
-/// One `PENDINGUSERLIST` row.
+/// One pending-user row.
 #[derive(Clone, Debug)]
 struct Member {
     guid: u64,
@@ -108,7 +107,7 @@ struct Member {
     asked: bool,
 }
 
-/// A joined slot, with the channel flags its display lists carry (`ChatChannel+0x90`).
+/// A joined slot, with the channel flags its display lists carry (the channel record's `+0x90`).
 #[derive(Clone, Debug)]
 struct PaneSlot {
     info: ChannelSlotInfo,
@@ -119,31 +118,31 @@ struct PaneSlot {
 #[derive(Debug, Default)]
 pub(crate) struct ChannelPane {
     slots: Vec<Option<PaneSlot>>,
-    /// `s_displayChannels` (`0xb74468`), its length the count (`0xb74460`).
+    /// The display list (`0xb74468`), its length the count (`0xb74460`).
     entries: Vec<Entry>,
-    /// `s_collapsedHeaders` (`0xb743d0`).
+    /// The collapsed headers (`0xb743d0`).
     collapsed: [bool; 3],
-    /// `s_activeDisplayChannelType` and `Name` (`0xb743dc`, `0xb743e0`); `None` is type 4. A
-    /// group's name is empty.
+    /// The selected entry's type and name (`0xb743dc`, `0xb743e0`); `None` is type 4. A group's
+    /// name is empty.
     selected: Option<(Kind, String)>,
-    /// `s_activeDisplayChannelFlags` (`0xb743d4`): the player's own row's flags.
+    /// The selection's flags (`0xb743d4`): the player's own row's flags.
     own_flags: u8,
-    /// `s_pendingUsers` (`0xbcfb68`): the selected entry's roster.
+    /// The pending users (`0xbcfb68`): the selected entry's roster.
     roster: Vec<Member>,
-    /// `s_displayChannelMemberCount` (`0xb743d8`): the name answers the roster waits for.
+    /// The member count (`0xb743d8`): the name answers the roster waits for.
     unnamed: u32,
-    /// `s_activeVoiceChannel` (`0xb743cc`): with no voice session, the first entry (`0x504d42`).
+    /// The active voice channel (`0xb743cc`): with no voice session, the first entry (`0x504d42`).
     active_voice: usize,
 }
 
-/// `SStrCmpUTF8I`'s equality.
+/// A case-insensitive UTF-8 compare's equality.
 fn names_equal(a: &str, b: &str) -> bool {
     a.to_lowercase() == b.to_lowercase()
 }
 
 impl ChannelPane {
-    /// `GetChannelStringForDisplay` (`0x4fe1c0`): the entry's kind with a channel's full name or
-    /// a group's empty one; `None` for a header or an index past the list.
+    /// The entry's display string (`0x4fe1c0`): its kind with a channel's full name or a group's
+    /// empty one; `None` for a header or an index past the list.
     fn target(&self, index: i64) -> Option<(Kind, String)> {
         let entry = self.entries.get(usize::try_from(index).ok()?)?;
         match entry.kind? {
@@ -158,15 +157,15 @@ impl ChannelPane {
         }
     }
 
-    /// `ChannelNamesEqual` (`0x4fca90`) against the selection.
+    /// The channel-name compare (`0x4fca90`) against the selection.
     fn is_selected(&self, kind: Kind, name: &str) -> bool {
         self.selected
             .as_ref()
             .is_some_and(|(k, n)| *k == kind && (kind != Kind::Channel || names_equal(n, name)))
     }
 
-    /// `FindDisplayChannelIndex` (`0x4ff4f0`): the 1-based entry naming `kind` and, for a
-    /// channel, `name`; 0 for none.
+    /// The entry lookup (`0x4ff4f0`): the 1-based entry naming `kind` and, for a channel, `name`; 0
+    /// for none.
     fn find(&self, kind: Kind, name: &str) -> usize {
         (0..self.entries.len())
             .find(|&i| {
@@ -196,7 +195,7 @@ struct Group {
 }
 
 fn group(model: &Model) -> Group {
-    // `CGPartyInfo::m_members[0]` (`0xbd1948`) and the raid count (`0xbeb608`).
+    // The party's first member (`0xbd1948`) and the raid count (`0xbeb608`).
     let party = model.party.members.first().is_some_and(|m| m.guid != 0);
     let raid = !model.party.raid.is_empty();
     if raid
@@ -218,7 +217,7 @@ fn group(model: &Model) -> Group {
     }
 }
 
-/// `RebuildDisplayChannelList` (`0x504840`) without its signal. Every entry is rebuilt, so a
+/// The list rebuild (`0x504840`) without its signal. Every entry is rebuilt, so a
 /// channel's listed roster size lasts only until the next rebuild, as in the reference.
 fn rebuild(model: &mut Model) {
     let g = group(model);
@@ -293,7 +292,7 @@ fn non_empty(name: &str) -> Option<String> {
     (!name.is_empty()).then(|| name.to_string())
 }
 
-/// `QSortDisplayListMembers` (`0x4fb0f0`): unnamed rows first, the rest by name, case-folded.
+/// The roster sort (`0x4fb0f0`): unnamed rows first, the rest by name, case-folded.
 fn sort_members(roster: &mut [Member]) {
     roster.sort_by(|a, b| match (&a.name, &b.name) {
         (None, None) => Ordering::Equal,
@@ -303,8 +302,8 @@ fn sort_members(roster: &mut [Member]) {
     });
 }
 
-/// `BuildPartyDisplayList` (`0x5045c0`): the player and the party, the leader as owner (`5`, else
-/// `4`), each with the `0x10` of a member not silenced; the count, 0 outside a party.
+/// The party roster (`0x5045c0`): the player and the party, the leader as owner (`5`, else `4`),
+/// each with the `0x10` of a member not silenced; the count, 0 outside a party.
 fn build_party(model: &mut Model) -> u32 {
     let own = model.unit_guids.player;
     if own == 0 {
@@ -343,7 +342,7 @@ fn build_party(model: &mut Model) -> u32 {
     count
 }
 
-/// `BuildRaidDisplayList` (`0x504720`), for the raid and the battleground: the leader as owner
+/// The raid roster (`0x504720`), for the raid and the battleground: the leader as owner
 /// and moderator (`7`), an assistant as moderator (`6`), others `4`, each with the not-silenced
 /// `0x10`; the count, 0 outside a raid.
 fn build_raid(model: &mut Model) -> u32 {
@@ -388,9 +387,8 @@ fn build_raid(model: &mut Model) -> u32 {
     count
 }
 
-/// `SetCurrentActiveDisplayChannel`: a new selection drops the roster and the own flags and, for a
-/// channel, watches it; the current one does nothing. The pending name count stays, as in the
-/// reference.
+/// The selection setter: a new selection drops the roster and the own flags and, for a channel,
+/// watches it; the current one does nothing. The pending name count stays, as in the reference.
 fn select(model: &mut Model, kind: Kind, name: &str) {
     let pane = &mut model.channel_pane;
     if pane.is_selected(kind, name) {
@@ -406,8 +404,8 @@ fn select(model: &mut Model, kind: Kind, name: &str) {
     }
 }
 
-/// The selection's roster ask: a channel's display list (`ChannelDisplayCommand`, `0x4fe530`),
-/// which answers later, or the group roster built now; the group legs answer its count.
+/// The selection's roster ask: a channel's display list (`0x4fe530`), which answers later, or the
+/// group roster built now; the group legs answer its count.
 fn fetch(model: &mut Model, kind: Kind, name: &str) -> u32 {
     match kind {
         Kind::Channel => {
@@ -568,8 +566,8 @@ impl super::UiScript {
             .collect()
     }
 
-    /// The name cache answered for `guid` (`NameDisplayQueryCallback`, `0x4ffe30`), `None` a
-    /// negative answer; the last awaited one sorts the roster and fires its count and roster.
+    /// The name cache answered for `guid` (`0x4ffe30`), `None` a negative answer; the last awaited
+    /// one sorts the roster and fires its count and roster.
     pub fn channel_roster_named(&mut self, guid: u64, name: Option<String>) {
         let mut events: Vec<(&str, Vec<ScriptValue>)> = Vec::new();
         {
@@ -645,7 +643,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 else {
                     return Ok(MultiValue::new());
                 };
-                // `GetChannelShortName` (`0x4fdf50`): a DBC channel's Shortcut, else its name.
+                // The channel's short name (`0x4fdf50`): a DBC channel's Shortcut, else its name.
                 let label = usize::try_from(entry.channel)
                     .ok()
                     .and_then(|i| pane.slots.get(i))

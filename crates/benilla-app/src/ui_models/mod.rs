@@ -76,7 +76,7 @@ pub(crate) struct TileRequest {
     /// The installed camera index (ctor 0, `SetCamera(n)`); `None` is the NULL camera an index past
     /// the file's cameras installs, the orthographic leg of every shipped pane.
     pub camera: Option<u32>,
-    /// The pane's embedded `CGLight`, disabled on a fresh `<Model>`, so a lit batch draws black.
+    /// The pane's embedded light, disabled on a fresh `<Model>`, so a lit batch draws black.
     pub light: ModelLight,
     pub fog: Option<ModelFog>,
     /// `ReplaceIconTexture`'s path, the texture of the file's type-14 batches.
@@ -113,8 +113,8 @@ pub(crate) struct UiModelTiles {
     pub dpi: f32,
 }
 
-/// A pane's light input: its embedded `CGLight` and its armed fog. Panes with the same scene
-/// share one light buffer and twin cache; the default, a disabled light and no fog, is slot 0.
+/// A pane's light input: its embedded light and its armed fog. Panes with the same scene share one
+/// light buffer and twin cache; the default, a disabled light and no fog, is slot 0.
 #[derive(Clone, Copy, PartialEq)]
 struct TileScene {
     light: ModelLight,
@@ -145,8 +145,9 @@ impl TileScene {
                 Vec::new(),
                 Some((benilla_assets::coords::wow_to_bevy(l.vector), l.diffuse)),
             ),
-            // Type 0, directional: `CGLight+0x24` is the direction the light travels. The SH lobe
-            // takes it negated (`fchs`), while the moments at `collector+0x18…+0x50` take it as is.
+            // Type 0, directional: the light's `+0x24` is the direction the light travels. The SH
+            // lobe takes it negated (`fchs`), while the moments at `collector+0x18…+0x50` take it
+            // as is.
             (true, false) => (
                 l.ambient,
                 vec![(
@@ -521,7 +522,7 @@ fn setup_tiles(
             Camera {
                 order: TILE_CAMERA_ORDER + 1 + slot as isize,
                 // Load, never clear: the orthographic camera clears the atlas first. Depth clears
-                // per camera, the reference's per-widget `GxClear(2)`.
+                // per camera, the reference's per-widget depth clear.
                 clear_color: ClearColorConfig::None,
                 is_active: false,
                 ..default()
@@ -1075,7 +1076,7 @@ fn sync_tiles(
         let gseq_s = pane.clock_ms as f64 / 1000.0;
         // The bone global sequences read the pane's clock too: the kernel's cursor,
         // `[[model+0x2c]+0xc] − [model+0x68]`, is the owning scene's clock minus the attach
-        // snapshot, and a `<Model>` owns a private `CM2Scene` (`CSimpleModel+0x314`) that only its
+        // snapshot, and a `<Model>` owns a private scene (`+0x314` on the widget) that only its
         // `OnUpdate` advances. So the ping's 4833 ms spinner resumes where the last ping stopped;
         // the drive anchors on its first tick, the attach.
         if let Some(mut d) = drive {
@@ -1231,12 +1232,12 @@ struct PerspectiveRig {
     projection: WowPortraitProjection,
 }
 
-/// Build the rig. The authored eye and target ride the root transform (publishes
+/// Build the rig. The authored eye and target ride the root transform (the camera publish computes
 /// `eye = (position_base + posTrack) · M_root`), so `SetModelScale` and `SetPosition` cancel for
 /// framing. Scale still matters: near and far are copied unscaled while eye depth scales with `s`,
 /// so a large scale pushes it through the far plane, a small one the near.
 ///
-/// The reference builds up from `CCamera` fields the publish never writes, as
+/// The reference builds up from camera fields the publish never writes, as
 /// `(sin(a₆)·sin(roll), −cos(a₆)·sin(roll), cos(roll))`; `a₆` has no writer and stays 0, so at roll
 /// 0 up is model-space `+Z`, the axis `SetFacing` turns about, and the facing cancels too.
 ///
@@ -2064,7 +2065,7 @@ mod tests {
         }
     }
 
-    /// The client's, a diagonal fov: `t = tan(fovy / (2·√(aspect²+1)))`, `m11 = 1/t`,
+    /// The client's projection, a diagonal fov: `t = tan(fovy / (2·√(aspect²+1)))`, `m11 = 1/t`,
     /// `m00 = m11/aspect`. The numbers are the reference's worked checks: `θ = 0.287938 · fov` at
     /// 318×224, `0.346523 · fov` at 233×224, and `t = 0.1449700` for the fallback camera's
     /// `fov = 0.5`.
@@ -2160,9 +2161,9 @@ mod tests {
         );
     }
 
-    /// At roll 0 the up builds is model-space `+Z`, the axis `SetFacing` turns about, so eye,
-    /// target, geometry and up turn together; on `<PlayerModel>`'s frozen camera a facing does
-    /// show.
+    /// At roll 0 the up the reference builds is model-space `+Z`, the axis `SetFacing` turns about,
+    /// so eye, target, geometry and up turn together; on `<PlayerModel>`'s frozen camera a facing
+    /// does show.
     #[test]
     fn facing_cancels_on_the_perspective_leg_too() {
         use bevy::camera::CameraProjection;

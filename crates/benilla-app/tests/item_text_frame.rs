@@ -277,9 +277,9 @@ fn the_reported_html_page_draws_as_blocks_not_as_its_own_markup() {
     );
 }
 
-/// An unsized `<IMG>` draws at its texture's texel extent, one texel to one FrameXML unit
-/// (`CSimpleTexture`): the crest on `page_text` 2654, quoted below, is a 128×128 BLP inside a
-/// 270-wide page.
+/// An unsized `<IMG>` draws at its texture's texel extent, one texel to one FrameXML unit, as the
+/// reference's texture region sizes it: the crest on `page_text` 2654, quoted below, is a 128×128
+/// BLP inside a 270-wide page.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_reported_book_crest_draws_at_the_blps_own_size() {

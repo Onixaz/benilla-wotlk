@@ -1,4 +1,4 @@
-//! Water foam: the reference's `CWater0Ripple` wade wake, standing ring and step-in splash, as its
+//! Water foam: the reference's water-ripple wade wake, standing ring and step-in splash, as its
 //! pool records. A record holds a feet-anchored centre on the liquid surface, a heading, a start
 //! size, a growth rate, a lifetime and a peak alpha.
 //!
@@ -47,12 +47,12 @@ const POOL_SIZE: usize = 128;
 const SELF_SLOTS: usize = 32;
 
 /// The step-in and step-out one-shot depth as a fraction of the unit's own collision height
-/// (CMovement+0xb4), latched either way: about 0.81 yd for a human.
+/// (the movement's `+0xb4`), latched either way: about 0.81 yd for a human.
 const ONESHOT_DEPTH_FRAC: f32 = 0.4;
 
 /// The emission depth gate, `max(2 × collision height, 1.0)`: about 4.06 yd for a human, so a
 /// surface swimmer at its 1.52-yd rest depth still foams. The field, `[unit+0x297]`, is
-/// CMovement+0xb4, the collision height, not `UNIT_FIELD_BOUNDINGRADIUS`.
+/// the movement's `+0xb4`, the collision height, not `UNIT_FIELD_BOUNDINGRADIUS`.
 const GATE_DEPTH_FRAC: f32 = 2.0;
 
 /// Speed (yd/s) past which a streamed unit counts as translating: its `MOVEMENTFLAGS & 0xf` proxy.
@@ -60,7 +60,7 @@ const MOVE_EPSILON: f32 = 0.5;
 /// Yaw rate (rad/s) past which a still streamed unit counts as turning: its `& 0x30` proxy.
 const TURN_EPSILON: f32 = 0.35;
 
-/// A `CWater0Ripple` pool record: static geometry, with size and alpha derived from `born`.
+/// A water-ripple pool record: static geometry, with size and alpha derived from `born`.
 struct FoamRecord {
     /// Feet position at emission, WoW XY.
     center: [f32; 2],

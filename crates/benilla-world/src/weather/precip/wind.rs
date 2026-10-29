@@ -128,8 +128,8 @@ impl WeatherWind {
         self.heading
     }
 
-    /// The mist spawn yaw, `+heading`: the reference passes `−heading`, whose core negates it, so
-    /// the −1.57 stream blows into a moving player's face.
+    /// The mist spawn yaw, `+heading`: the reference passes `−heading` to a rotation builder whose
+    /// core negates it, so the −1.57 stream blows into a moving player's face.
     pub(crate) fn mist_yaw(&self) -> Quat {
         Quat::from_rotation_y(self.heading_wow())
     }

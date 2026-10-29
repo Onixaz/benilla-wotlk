@@ -1,18 +1,19 @@
 //! The process texture policy: `textureFilteringMode` resolved into a filter and an anisotropy,
 //! and `baseMip`, the first mip a world texture samples.
 //!
-//! `InitializeEngineCallback` (`0x4047e0`) reads `textureFilteringMode` once and hands the engine
-//! `s_textureFilterModes[mode]` (`0xab6128`: LinearMipNearest, LinearMipLinear, then Anisotropic
-//! four times) and `s_textureMaxAnisotropy[mode]` (`0xab6140`: 1, 1, 2, 4, 8, 16), so the stock
-//! slider's six stops are bilinear, trilinear and anisotropic 2x to 16x, and its tooltip says
-//! "enabled upon restart". The world's terrain, WMO, M2 and liquid textures take the policy; the
-//! interface's keep their own filter.
+//! The engine-init callback (`0x4047e0`) reads `textureFilteringMode` once and hands the engine the
+//! mode's filter (`0xab6128`: LinearMipNearest, LinearMipLinear, then Anisotropic four times) and
+//! the mode's anisotropy (`0xab6140`: 1, 1, 2, 4, 8, 16), so the stock slider's six stops are
+//! bilinear, trilinear and anisotropic 2x to 16x, and its tooltip says "enabled upon restart". The
+//! world's terrain, WMO, M2 and liquid textures take the policy; the interface's keep their own
+//! filter.
 //!
 //! A process global because a sampler is baked into the [`Image`] at load, by an async loader
 //! ([`crate::blp`]) and by systems ([`crate::world_assets`]) that share no resource. A change
 //! applies live ([`TexPolicyPlugin`]): every image built by [`policy_sampler`] takes the new
 //! sampler in place and the world's materials rebuild their bind groups, where the reference
-//! reloads its textures (`TextureNotifyGxRestart`, from the `baseMip` callback `0x78df00`).
+//! reloads its textures (its device-restart texture notice, from the `baseMip` callback
+//! `0x78df00`).
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::RwLock;
@@ -29,7 +30,7 @@ use bevy::render::{Extract, ExtractSchedule, RenderApp};
 /// be in range 0 to 6.", which refuses 6).
 pub const TEXTURE_FILTERING_RANGE: std::ops::RangeInclusive<u8> = 0..=5;
 
-/// The anisotropy per mode, `s_textureMaxAnisotropy` (`0xab6140`).
+/// The anisotropy per mode, the reference's table at `0xab6140`.
 const MAX_ANISOTROPY: [u16; 6] = [1, 1, 2, 4, 8, 16];
 
 /// The highest anisotropy a mode asks for, which `GetVideoCaps` reports as the device's.

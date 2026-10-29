@@ -71,7 +71,7 @@ struct LiquidVsOut {
     @location(4) secondary_vtx: vec3<f32>,
     // A WMO interior pool's `MOMT.diffColor`, as its reference vertex carries; white elsewhere.
     @location(5) vcolor: vec4<f32>,
-    // `MeshTag` bit 30: the room's per-frame interior-fog gate, the reference's.
+    // `MeshTag` bit 30: the room's per-frame interior-fog gate, as in the reference.
     @location(6) @interpolate(flat) room_fog: u32,
 }
 
@@ -83,10 +83,11 @@ fn sun_sheen(world_normal: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     let to_view = normalize(view.world_position.xyz - world_pos);
     let half_v = normalize(to_light + to_view);
     let ndoth = max(dot(n, half_v), 0.0);
-    // No `N·L > 0` specular gate: the sun stays between +20° and +37° (`DayNight::SetDirection`),
-    // so N·L on the flat up normal is always > 0. Shininess is water's own (6.0) and
+    // No `N·L > 0` specular gate: the sun stays between +20° and +37° (the day-night sun
+    // direction), so N·L on the flat up normal is always > 0. Shininess is water's own (6.0) and
     // material specular is white (`SetRenderState(3, 0xffffffff)`). The reference's specular light
-    // colour (`CGLight+0x48` to `glLightfv(GL_SPECULAR)`) is not pinned; row 9 stands in for it.
+    // colour (the light object's `+0x48` to `glLightfv(GL_SPECULAR)`) is not pinned; row 9 stands
+    // in for it.
     return wow_light.light_spec.rgb * pow(ndoth, max(w.kind.w, 1.0));
 }
 
@@ -242,8 +243,8 @@ fn fragment(in: LiquidVsOut) -> @location(0) vec4<f32> {
         // No `+0.25`, which is the ADT program's own. Lighting is on (`0x0e` never set), so
         // primary = band · clamp(ambient + diffuse·max(N·L, 0)), the band one flat colour for
         // every nibble: the deep river row, `LightIntBand` sub-17 (`water_river[1]`), an immediate
-        //. A DayNight slot is not a sub: the reference moves sub-8 out to `+0x4c`, so
-        // the kernel's slot 16 is sub-17.
+        // in the reference's code. A day-night slot is not a sub: the reference moves sub-8 out to
+        // `+0x4c`, so the kernel's slot 16 is sub-17.
         let n_ext = normalize(in.world_normal);
         let to_light_ext = -normalize(wow_light.light_sun.xyz);
         let primary_ext = clamp(

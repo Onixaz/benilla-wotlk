@@ -1,7 +1,7 @@
 //! Where interfaces come from: addon discovery under [`root`] and the load walk ([`Walk::load`]).
 //! An [`Addon`] is a name, a parsed `.toc` and the [`Source`] its files come from. The core
 //! interface (the chain's own FrameXML) and benilla's layer (the compiled-in tree) are two more,
-//! but not for the lifecycle: they load outside `AddOn_Load`
+//! but not for the lifecycle: they load outside the addon load
 //! ([`super::manifest::load_ingame_ui`]), get no `ADDON_LOADED` and have no registry row.
 
 use std::collections::HashSet;
@@ -159,7 +159,7 @@ impl Addon {
             };
             if is_lua(file) {
                 // What `<Script file=>` gets: one chunk in the one global state, in manifest order,
-                // as `AddOn_Load` hands every listed file.
+                // as the addon load hands every listed file.
                 match script.run_chunk_named(&bytes, &self.chunk_name(file, &path)) {
                     Ok(()) => info!("ui_script: {}/{file} ran", self.name),
                     Err(e) => {
@@ -255,10 +255,10 @@ fn read_under(root: &Path, rel: &str) -> Option<Vec<u8>> {
     std::fs::read(root.join(rel)).ok()
 }
 
-/// The one file namespace, install-relative, as in the reference: the reference answers a name from
-/// the install tree's hash index, then the archive chain, after the reference collapses `..`. So an
-/// addon's `..\Blizzard_AuctionUI\…` reaches the archive behind a `.pub`-only folder. Only a path
-/// under `Interface/AddOns/` touches the filesystem, and never above the AddOns root.
+/// The one file namespace, install-relative, as in the reference: it answers a name from the
+/// install tree's hash index, then the archive chain, after collapsing `..`. So an addon's
+/// `..\Blizzard_AuctionUI\…` reaches the archive behind a `.pub`-only folder. Only a path under
+/// `Interface/AddOns/` touches the filesystem, and never above the AddOns root.
 pub(crate) fn read_addon_file(root: &Path, req: &str) -> Option<Vec<u8>> {
     under_addons(req)
         .and_then(|rel| read_under(root, rel))
@@ -314,7 +314,7 @@ const BLIZZARD_ADDONS: [&str; 23] = [
 
 /// The Blizzard addons the chain carries as registry rows: the LoadOnDemand ones for
 /// `UIParentLoadAddOn`, and `Blizzard_TokenUI`, which has no `## LoadOnDemand`, so the startup
-/// walk loads it (`AddOn_LoadAllEnabled` `0x5f7ff0`).
+/// walk loads it (`0x5f7ff0`).
 fn chain_addons() -> Vec<Addon> {
     BLIZZARD_ADDONS
         .iter()
@@ -331,8 +331,8 @@ fn chain_addons() -> Vec<Addon> {
 }
 
 /// Every registered addon in registration order, the archive pass before the loose folders and a
-/// name's first registration winning: `AddOn_ScanAddOnDir` walks each archive's `(listfile)` in
-/// line order before the `FindFirstFileW` walk, and the reference returns on a name-hash hit and
+/// name's first registration winning: the addon scan walks each archive's `(listfile)` in line
+/// order before the `FindFirstFileW` walk, and the registration returns on a name-hash hit and
 /// tail-inserts. That order is the Lua index space, and in the one shared Lua state it decides
 /// whose copy of a global wins.
 fn discover() -> Vec<Addon> {
@@ -466,7 +466,7 @@ pub(crate) fn info_from_toc(name: &str, toc: &Toc) -> benilla_ui::script::AddOnI
     }
 }
 
-/// Parse `AddOns.txt` as `LoadAddOnEnableState` (`0x5f91e0`) does: tokens split on `\r`, `\n` and
+/// Parse `AddOns.txt` as the enable-state read (`0x5f91e0`) does: tokens split on `\r`, `\n` and
 /// `"`, each `<AddOnName>: <value>` at its first `:`, spaces skipped; `disabled` in any case
 /// disables, any other value enables, and a token with no name or no value is skipped.
 fn parse_enable_state(text: &str) -> Vec<(String, bool)> {
@@ -480,7 +480,7 @@ fn parse_enable_state(text: &str) -> Vec<(String, bool)> {
         .collect()
 }
 
-/// The file as `SaveAddOnEnableState` writes it, `"%s: %s\r\n"` a row (`0xa1d8e8`).
+/// The file as the enable-state write writes it, `"%s: %s\r\n"` a row (`0xa1d8e8`).
 fn render_enable_state(states: &[(String, bool)]) -> String {
     let mut out = String::new();
     for (name, enabled) in states {
@@ -502,8 +502,8 @@ pub(crate) fn enable_state_path(identity: Option<&(String, String)>) -> Option<P
 
 // ── The enable store: the reference's `ADDONSTATELIST` ──
 
-/// The reference's `ADDONSTATELIST`: a node per character in `SMSG_CHAR_ENUM` order, rebuilt whole
-/// (then callback fills a node per record through `AddOnList_LoadCharacter`), each holding that
+/// The reference's addon-state list: a node per character in `SMSG_CHAR_ENUM` order, rebuilt whole
+/// (then a callback fills a node per record through the per-character load), each holding that
 /// character's enable hash. A character with no file is an empty node, whose enable bit is answered
 /// from the others.
 #[derive(Default)]
@@ -646,7 +646,7 @@ pub(super) fn save_enable_state(script: &UiScript, identity: Option<&(String, St
     }
 }
 
-/// Write every loaded addon's saved variables at shutdown, as `UnloadAddOns` (`0x5f5620`) does
+/// Write every loaded addon's saved variables at shutdown, as the addon unload (`0x5f5620`) does
 /// after the flat files and before `AddOns.txt`: both `SavedVariables` folders are made, then each
 /// loaded addon's declared set is written, with the one-time `.bak`, or its file deleted when it
 /// declares none, the per-character one from the realm-less folder too (`0xa1d7e8`). An addon that
@@ -754,7 +754,7 @@ pub(super) fn save_glue_addons(
     store.save();
 }
 
-/// Load every discovered third-party addon at world entry (`UI_Init`), returning every load error
+/// Load every discovered third-party addon at world entry (the UI init), returning every load error
 /// tagged by addon. `&mut` because each `ADDON_LOADED` fires ([`UiScript::fire_event`]) before the
 /// next addon's files run, as in the reference.
 pub(super) fn load_third_party(
@@ -860,8 +860,8 @@ struct Walk {
 
 impl Walk {
     /// Load one addon by name; `Err` means it did not load, which a hard dependent propagates. The
-    /// order is `AddOn_Load`'s: optional dependencies (failures ignored), required ones (a failure
-    /// aborts only this addon), the `.toc` files in order, `Bindings.xml`, the account then
+    /// order is the addon load's: optional dependencies (failures ignored), required ones (a
+    /// failure aborts only this addon), the `.toc` files in order, `Bindings.xml`, the account then
     /// per-character saved variables, then `ADDON_LOADED` (event 429), whose handlers see the
     /// restored values. The reference then loads the addons whose `## LoadWith` names this one;
     /// this walk does not.
@@ -885,7 +885,7 @@ impl Walk {
             self.failed.insert(addon.name.clone());
             return Err(());
         }
-        // The version arm, `AddOn_CanLoad` check 6 (`0x5f7f17`): after the enable state, before
+        // The version arm, the load gate's check 6 (`0x5f7f17`): after the enable state, before
         // the dependency loop. Not a failure either: the AddOns screens show it, and the Load out
         // of date AddOns checkbox loads an out-of-date addon anyway, never an incompatible one.
         if let Some(reason) = benilla_ui::script::addon_gate::version_reason(
@@ -1047,8 +1047,8 @@ mod tests {
         assert_eq!(upcase_unit('é'), 'É');
     }
 
-    /// `AddOn_ScanAddOnDir` scans the archives before the loose folders, and the reference returns
-    /// on a name already registered.
+    /// The addon scan reads the archives before the loose folders, and returns on a name already
+    /// registered.
     #[test]
     fn the_archive_pass_registers_first_and_wins_a_duplicate() {
         let _data = benilla_formats::wow_data_or_skip!();
@@ -1646,7 +1646,7 @@ mod tests {
             event_log(&script),
             vec!["files-ran", "ADDON_LOADED:EventProbe"],
             "the addon's own files run first, THEN ADDON_LOADED with its own folder name as arg1 \
-             (`AddOn_Load`: files)"
+             (the addon load: files)"
         );
     }
 
@@ -1694,7 +1694,7 @@ mod tests {
         );
     }
 
-    /// `UI_Init` loads the addons (each `ADDON_LOADED`) and fires `VARIABLES_LOADED`;
+    /// The UI init loads the addons (each `ADDON_LOADED`) and fires `VARIABLES_LOADED`;
     /// `PLAYER_LOGIN` comes after, on a fresh login from the player's create, on a `/reload`.
     #[test]
     fn the_ui_init_events_fire_in_the_reference_order() {
@@ -1758,9 +1758,9 @@ mod tests {
         (home, guard)
     }
 
-    /// `AddOn_CanLoad` check 6: exact `==` to 30300, a missing `## Interface` is 0 and incompatible,
-    /// and a gated addon's dependent is blocked; `checkAddonVersion` off loads the out-of-date
-    /// ones and still holds the incompatible one.
+    /// The load gate's check 6: exact `==` to 30300, a missing `## Interface` is 0 and
+    /// incompatible, and a gated addon's dependent is blocked; `checkAddonVersion` off loads the
+    /// out-of-date ones and still holds the incompatible one.
     #[test]
     fn the_version_gate_holds_the_walk_and_force_load_opens_it() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2366,7 +2366,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
-    /// `AddOn_CanLoad` check 3 is `(name, character, useDefault = 1)`. `Contested` is the control:
+    /// The load gate's check 3 is `(name, character, useDefault = 1)`. `Contested` is the control:
     /// the roster disagrees about it, so the newcomer gets its `## DefaultState`.
     #[test]
     fn a_character_with_no_file_inherits_the_rosters_unanimous_disable() {
@@ -2897,8 +2897,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
-    /// `AddOn_Load` has no re-entrancy guard (the visiting byte `[UIADDON+0x2d]` lives in
-    /// `AddOn_CanLoad 0x5f7e90`) but stamps the loaded byte before the dependency loops
+    /// The addon load has no re-entrancy guard (the visiting byte, the record's `+0x2d`, lives in
+    /// the load gate `0x5f7e90`) but stamps the loaded byte before the dependency loops
     /// (`mov byte [rec+0x18],1`), so the re-entered frame exits with 1. A cycle loads both with no
     /// reason token, `ADDON_LOADED` fires B then A, and `IsAddOnLoaded('Ping')` is 1 while Pong's
     /// files run.

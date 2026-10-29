@@ -325,7 +325,7 @@ fn text_rect(s: &UiScript, text: &str) -> Option<(f32, f32, f32, f32)> {
 }
 
 /// A box built in Lua, with no `<FontString>` and no `SetTextInsets`, has its text seated at its
-/// first resolve: `ApplyRect` sees it resized from the ctor's zero rect and the override runs.
+/// first resolve: the rect apply sees it resized from the ctor's zero rect and the override runs.
 #[test]
 fn a_lua_box_with_a_font_seats_its_text_at_its_first_resolve() {
     let mut s = script();

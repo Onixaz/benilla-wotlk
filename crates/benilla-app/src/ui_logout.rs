@@ -20,7 +20,7 @@ use crate::net::{ClientCommand, LoggedOutMessage, NetCommands, SelfGuid};
 use crate::ui_script::{UiFeed, UiInput};
 
 /// The refusal line for every non-zero reason, never `PLAYER_LOGOUT_FAILED_ERROR`: message `0x180`
-/// of the `DisplayError`, a key so the player's `GlobalStrings.lua` supplies it.
+/// of the error display, a key so the player's `GlobalStrings.lua` supplies it.
 const LOGOUT_FAILED_KEY: &str = "ERR_LOGOUT_FAILED";
 
 /// What the wire told us to say next, queued because a cancel can land in its response's frame.
@@ -161,8 +161,8 @@ pub(crate) fn drain_logout(
                 info!("logout: force quit");
                 exit.write(AppExit::Success);
             }
-            // `CMSG_PLAYER_LOGOUT`, only with a world session: the reference with force 1, which
-            // skips the pending bail and does not set the latch.
+            // `CMSG_PLAYER_LOGOUT`, only with a world session: the reference's request with force
+            // 1, which skips the pending bail and does not set the latch.
             SessionRequest::ForceLogout => {
                 if self_guid.0.is_some() {
                     info!("logout: forced");

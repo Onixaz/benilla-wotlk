@@ -1,6 +1,6 @@
 //! Projectile flight sound: the `SpellVisual` field 10 loop a missile carries in flight. The
-//! reference's first flight step starts it (handle at `CMissile+0x44`), each later step moves it,
-//! and arrival kills it. Here it is a channel tagged to the missile entity from
+//! reference's first flight step starts it (handle at the missile's `+0x44`), each later step moves
+//! it, and arrival kills it. Here it is a channel tagged to the missile entity from
 //! [`MissileSound::Start`] to [`MissileSound::Stop`]. Force-looped: the loop handle makes it loop,
 //! not the kit's `0x200` flag.
 

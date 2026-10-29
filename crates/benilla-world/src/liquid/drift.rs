@@ -1,5 +1,5 @@
 //! The underwater drift cloud: 4000 world-fixed motes the reference draws while the camera eye is
-//! inside a liquid. The object is `World.cpp`'s own (`0xfa40` bytes), sharing nothing with the
+//! inside a liquid. The object is the world's own (`0xfa40` bytes), sharing nothing with the
 //! weather manager. The advect and the draw both need the render-flag bit and a camera-eye liquid
 //! type ([`Underwater`]). The draw is the frame's last world content, after the water surface and
 //! both M2 transparent passes ([`Rung::DRIFT_CLOUD`](crate::sky_order::Rung::DRIFT_CLOUD)), and no
@@ -31,7 +31,7 @@ const COUNT: usize = 4000;
 const BOX_EDGE: f32 = 30.0;
 const BOX_HALF: f32 = BOX_EDGE * 0.5;
 
-/// A one-frame camera jump this long re-scatters the field (not half).
+/// A one-frame camera jump this long re-scatters the field (the full edge, not half).
 const TELEPORT: f32 = BOX_EDGE;
 
 /// The mote edge base (`+0xfa18`): `1/36` for water and ocean, `1/9` for magma. An edge is uniform
@@ -86,8 +86,8 @@ const ATLAS: [(f32, f32); 13] = [
 const CELLS_WATER: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 const CELLS_MAGMA: [usize; 8] = [9, 10, 11, 12, 9, 10, 11, 12];
 
-/// The cull's per-axis tangent limits: the reference's fixed 90° cone about the view axis (:
-/// `vz > 0 && |vx| < vz && |vy| < vz`), which sizes [`SUBMIT_CAP`]. Deviation: floored at the
+/// The cull's per-axis tangent limits: the reference's fixed 90° cone about the view axis
+/// (`vz > 0 && |vx| < vz && |vy| < vz`), which sizes [`SUBMIT_CAP`]. Deviation: floored at the
 /// frustum, because the cone stops containing the view at about 21:9, and a wider window would lose
 /// motes in bands down its sides.
 fn cull_limits(fov_y: f32, aspect: f32) -> (f32, f32) {
@@ -309,7 +309,7 @@ fn simulate_drift(
     if now != cloud.was {
         cloud.was = now;
         match now {
-            // Going dry keeps the configuration: the reference intercepts `0xf` before the type
+            // Going dry keeps the configuration: the camera probe intercepts `0xf` before the type
             // dispatch, and the frame gate alone hides the field.
             Submersion::Dry => {}
             // Slime disables outright, with no re-scatter.

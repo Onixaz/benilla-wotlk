@@ -1,6 +1,6 @@
-//! The objective tracker's feeds: the quest POI wire (`CMSG_QUEST_POI_QUERY` for the quests the
-//! VM holds no POI for, `SMSG_QUEST_POI_QUERY_RESPONSE` into its store) and each quest's special
-//! item (`GetQuestSpecialItem` `0x5e0da0`), found in the bags with its charges and range.
+//! The objective tracker's feeds: the quest POI wire (`CMSG_QUEST_POI_QUERY` for the quests the VM
+//! holds no POI for, `SMSG_QUEST_POI_QUERY_RESPONSE` into its store) and each quest's special item
+//! (`0x5e0da0`), found in the bags with its charges and range.
 
 use std::collections::HashMap;
 
@@ -52,7 +52,7 @@ fn on_session_end(In(_): In<SessionEvent>, mut pending: ResMut<PendingPois>) {
     pending.0.clear();
 }
 
-/// The response's outline centres, the integer mean `HandlePOIQueryResponse` sums (`0x5e7370`).
+/// The response's outline centres, the integer mean the response's handler sums (`0x5e7370`).
 fn view(poi: QuestPoi) -> QuestPoiView {
     QuestPoiView {
         quest_id: poi.quest_id,
@@ -105,9 +105,9 @@ fn feed_quest_pois(
     }
 }
 
-/// `GetQuestSpecialItem` (`0x5e0da0`) for each logged quest: the template's source item, else
+/// The quest's special item (`0x5e0da0`) for each logged quest: the template's source item, else
 /// under flag `0x20000` its drop items in order, the first carried copy with an on-use spell
-/// (`CanBeUsed` `0x708c10`); its range against the target as `IsItemInRange` asks it.
+/// (`0x708c10`); its range against the target as `IsItemInRange` asks it.
 #[allow(clippy::too_many_arguments)] // a Bevy system's inputs
 fn feed_special_items(
     script: Option<NonSendMut<UiScript>>,

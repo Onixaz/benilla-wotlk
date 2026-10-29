@@ -85,7 +85,7 @@ const fn pet_bark_muted(pet_sounds: bool, pet: bool, state: u8) -> bool {
 ///    route players are not exempt.
 /// 3. While `[unit+0xb20]` holds a live bark, a state at or below its own is dropped.
 /// 4. `Sound_EnablePetSounds` off silences a pet's aggro, order and attack barks
-///    (`CGUnit_C::OnAiReaction 0x7474b0`, `UNIT_FIELD_PETNUMBER` nonzero); the death cry is not
+///    (the AI-reaction handler `0x7474b0`, `UNIT_FIELD_PETNUMBER` nonzero); the death cry is not
 ///    gated.
 /// 5. Stop the old bark and latch the new, before the column is read.
 /// 6. Resolve the column and play: a zero column still silences step 5's victim.
@@ -197,9 +197,10 @@ type ReactionUnit = (
 /// sends HOSTILE on every target acquisition (`Unit::Attack`) and every pet autocast or self-picked
 /// target (`Unit::SendPetAIReaction`), so a pet draws them in bursts.
 ///
-/// ALERT is the class-8 route (`vtable+0x88(8,0)` → → column 13): its roll threshold is 100,
-/// inclusive, so it always plays unless a server-pushed object sound (`SMSG_PLAY_OBJECT_SOUND`,
-/// registered as `Latch::ObjectSound`) is live on a non-player unit. It stores no latch.
+/// ALERT is the class-8 route (`vtable+0x88(8,0)` → the class play → column 13): its roll
+/// threshold is 100, inclusive, so it always plays unless a server-pushed object sound
+/// (`SMSG_PLAY_OBJECT_SOUND`, registered as `Latch::ObjectSound`) is live on a non-player unit. It
+/// stores no latch.
 fn ai_reaction_vocals(
     mut reactions: MessageReader<crate::net::AiReactionMessage>,
     units: Query<ReactionUnit>,
@@ -257,15 +258,15 @@ fn ai_reaction_vocals(
             continue;
         }
         // ALERT neither tests nor stores the voice slot. Its object-sound mute runs through a
-        // virtual whose CGPlayer twin omits it.
+        // virtual whose player twin omits it.
         if voice.alert == 0 {
             continue;
         }
         if net.kind != EntityKind::Player && object_sound_playing(&out, r.unit) {
             continue;
         }
-        // A player alerts through `CGPlayer_C::PlayUnitSound(8)` (`0x7631a0`), which filters a
-        // Death Knight's voice.
+        // A player alerts through the player's unit-sound play with class 8 (`0x7631a0`), which
+        // filters a Death Knight's voice.
         let voice_filter = (net.kind == EntityKind::Player)
             .then(|| super::kit::voice_filter(&out, store))
             .flatten();
@@ -288,8 +289,8 @@ fn ai_reaction_vocals(
     }
 }
 
-/// `SMSG_PET_ACTION_SOUND`: the reference plays selector 0 as the reference, 1 as the reference,
-/// and any other value not at all. Only the Imp, Succubus, Doomguard and Voidwalker voices carry
+/// `SMSG_PET_ACTION_SOUND`: the reference plays selector 0 as bark state 1, 1 as bark state 2, and
+/// any other value not at all. Only the Imp, Succubus, Doomguard and Voidwalker voices carry
 /// these columns, and vmangos sends it only for a `SUMMON_PET`, on a 10% roll per order
 /// (`Unit.cpp:8960`, `PetHandler.cpp:522`, `PetAI.cpp:335`).
 fn pet_talk_vocals(
@@ -488,7 +489,7 @@ fn creature_anim_vocals(
     mut events: MessageReader<AnimSoundEvent>,
     // GlobalTransform: the mount child's local Transform is seat-relative.
     units: Query<(&NetEntity, &GlobalTransform, Has<SelfPlayer>)>,
-    // The class-5 window: one timestamp for the whole world, the reference's.
+    // The class-5 window: one timestamp for the whole world, as in the reference.
     mut stand_window: Local<Option<std::time::Duration>>,
     time: Res<Time>,
     voices: Option<Res<CreatureVoices>>,

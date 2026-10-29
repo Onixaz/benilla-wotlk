@@ -7,11 +7,11 @@ use super::{FrameHandle, RegionHandle, WidgetArena, SCALE_EPS};
 impl WidgetArena {
     // ── Visibility ───────────────────────────────────────────────────────────────────────────────
 
-    /// Set `shown` and cascade effective visibility through the subtree (`Show` `0x48f660` →
-    /// `ShowThis` `0x4918f0`, `Hide` `0x48f620` → `HideThis` `0x491830`), returning the frames that
-    /// changed in the order the reference notifies them: each frame after its descendants. For a
-    /// caller with no handlers to run in between; `script::event::set_shown` runs the same cascade
-    /// live, firing each frame's `OnShow`/`OnHide` at its own step.
+    /// Set `shown` and cascade effective visibility through the subtree (`Show` `0x48f660` → the
+    /// per-frame show step `0x4918f0`, `Hide` `0x48f620` → the hide step `0x491830`), returning the
+    /// frames that changed in the order the reference notifies them: each frame after its
+    /// descendants. For a caller with no handlers to run in between; `script::event::set_shown`
+    /// runs the same cascade live, firing each frame's `OnShow`/`OnHide` at its own step.
     pub fn set_shown(&mut self, h: FrameHandle, shown: bool) -> Vec<FrameHandle> {
         let mut changed = Vec::new();
         match self.frame_mut(h) {
@@ -22,9 +22,9 @@ impl WidgetArena {
         changed
     }
 
-    /// The live gate and own step of `ShowThis` (`0x4918f0`): a frame that is shown, under a
-    /// visible parent or none, and not yet visible becomes visible and links at its bucket's tail;
-    /// false, with nothing changed, otherwise. Its children are the caller's to step next.
+    /// The live gate and own step of the per-frame show (`0x4918f0`): a frame that is shown, under
+    /// a visible parent or none, and not yet visible becomes visible and links at its bucket's
+    /// tail; false, with nothing changed, otherwise. Its children are the caller's to step next.
     pub fn show_this(&mut self, h: FrameHandle) -> bool {
         let gate = self
             .frame(h)
@@ -37,8 +37,8 @@ impl WidgetArena {
         true
     }
 
-    /// The own step of `HideThis` (`0x491830`): a visible frame stops being visible; false, with
-    /// nothing changed, for a frame already hidden.
+    /// The own step of the per-frame hide (`0x491830`): a visible frame stops being visible; false,
+    /// with nothing changed, for a frame already hidden.
     pub fn hide_this(&mut self, h: FrameHandle) -> bool {
         if !self.frame(h).is_some_and(|f| f.effective_visible) {
             return false;
@@ -104,9 +104,9 @@ impl WidgetArena {
 
     // ── Level ────────────────────────────────────────────────────────────────────────────────────
 
-    /// Set `h`'s level (`CSimpleFrame::SetFrameLevel` `0x4910a0`): the step up is capped at
-    /// `0x80` (`0x4910d9`), so the level moves by `min(new - old, 128)`; with `propagate`,
-    /// same-strata children move by the same step. A same-value call returns before relinking.
+    /// Set `h`'s level (the frame-level set, `0x4910a0`): the step up is capped at `0x80`
+    /// (`0x4910d9`), so the level moves by `min(new - old, 128)`; with `propagate`, same-strata
+    /// children move by the same step. A same-value call returns before relinking.
     pub fn set_frame_level(&mut self, h: FrameHandle, level: u16, propagate: bool) {
         let (delta, strata, children) = match self.frame_mut(h) {
             Some(f) => {
@@ -138,7 +138,7 @@ impl WidgetArena {
         }
     }
 
-    /// `CSimpleTop::CompressStrata` (`0x495060`), run by the raise before it lifts the frame to the
+    /// The strata compression (`0x495060`), run by the raise before it lifts the frame to the
     /// returned bound: below the stratum's bound, a level is in use when any frame of the stratum
     /// sits there, hidden ones included. At each used level past a run of empty ones, every frame
     /// from there up to the bound drops by the run's length through the non-propagating level

@@ -27,14 +27,14 @@ pub(crate) struct CastFail {
     /// Whose refusal this is, which picks the reference's message table ([`Caster`]).
     pub caster: Caster,
     /// A retry after the item template landed (the `0x78`/`0x5c` cache miss). The reference's first
-    /// pass exits past both the line and the log; its retry, the cache callback, calls
-    /// `DisplayError` directly and never, so a redisplay is not logged.
+    /// pass exits past both the line and the log; its retry, the cache callback, calls the error
+    /// display directly and never the combat log, so a redisplay is not logged.
     pub redisplay: bool,
 }
 
-/// Who failed to cast, which picks the reference's handler: `SMSG_CAST_RESULT` lands and
-/// `SMSG_PET_CAST_FAILED`, each with its own reason-to-errorId map; the rest of
-/// [`super::cast_fail::cast_fail_text`] is shared.
+/// Who failed to cast, which picks the reference's handler: `SMSG_CAST_RESULT` and
+/// `SMSG_PET_CAST_FAILED` land in separate handlers, each with its own reason-to-errorId map; the
+/// rest of [`super::cast_fail::cast_fail_text`] is shared.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Caster {
     /// Ours: `SMSG_CAST_RESULT` and every local refusal.
@@ -106,8 +106,8 @@ impl CastErrors {
 pub(crate) struct MountErrors(pub Vec<(bool, u32)>);
 
 /// Taming refusals as the raw `SMSG_PET_TAME_FAILURE` reason. The reference resolves the reason's
-/// `PETTAME_*` string through the VM and passes it as `ERR_TAME_FAILED`'s `%s`
-/// (`DisplayError(0xee)`), so both lookups wait for the VM at the drain.
+/// `PETTAME_*` string through the VM and passes it as `ERR_TAME_FAILED`'s `%s` (error id `0xee`),
+/// so both lookups wait for the VM at the drain.
 #[derive(Resource, Default)]
 pub(crate) struct PetTameFailures(pub Vec<u8>);
 
@@ -121,14 +121,14 @@ pub(crate) use benilla_ui::messages::MsgKind;
 pub(crate) enum FillArg {
     S(String),
     D(i64),
-    /// A GlobalStrings key whose text fills a `%s`, as `FrameScript_GetText` (`0x819d40`) reads it;
-    /// a missing key shows the key itself.
+    /// A GlobalStrings key whose text fills a `%s`, as the VM's string lookup (`0x819d40`) reads
+    /// it; a missing key shows the key itself.
     Global(String),
 }
 
-/// One `DisplayError` message, whatever its surface: a GlobalStrings key and the argText the
+/// One error-display message, whatever its surface: a GlobalStrings key and the argText the
 /// reference pushes after the id, at most three strings. Extra arguments are ignored and a starved
-/// specifier shows verbatim, as `SStrPrintf` does, so a short list is passed short.
+/// specifier shows verbatim, as the reference's printf does, so a short list is passed short.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct UiError {
     pub key: &'static str,
@@ -184,32 +184,33 @@ impl UiError {
     }
 }
 
-/// Client-local refusals queued by GlobalStrings key: the `DisplayError` route for errors with no
+/// Client-local refusals queued by GlobalStrings key: the error-display route for errors with no
 /// wire code and no spell record.
 #[derive(Resource, Default)]
 pub(crate) struct UiErrorKeys(pub Vec<UiError>);
 
 /// Lines that arrive already resolved, with no key and no catalog record: they reach the
-/// reference's sink `(text, flag)` without `DisplayError`, flag 1 firing `UI_ERROR_MESSAGE` and 0
-/// `UI_INFO_MESSAGE`. `SMSG_NOTIFICATION` passes 1, `SMSG_AREA_TRIGGER_MESSAGE` passes 0.
+/// reference's message sink, called as `(text, flag)` without the error display, flag 1 firing
+/// `UI_ERROR_MESSAGE` and 0 `UI_INFO_MESSAGE`. `SMSG_NOTIFICATION` passes 1,
+/// `SMSG_AREA_TRIGGER_MESSAGE` passes 0.
 #[derive(Resource, Default)]
 pub(crate) struct UiErrorTexts(pub Vec<(String, MsgKind)>);
 
 impl UiErrorTexts {
-    /// The red `UI_ERROR_MESSAGE` arm (`(text, 1)`).
+    /// The red `UI_ERROR_MESSAGE` arm (the sink's `(text, 1)`).
     pub(crate) fn error(&mut self, text: String) {
         self.0.push((text, MsgKind::Error));
     }
 
-    /// The yellow `UI_INFO_MESSAGE` arm (`(text, 0)`).
+    /// The yellow `UI_INFO_MESSAGE` arm (the sink's `(text, 0)`).
     pub(crate) fn info(&mut self, text: String) {
         self.0.push((text, MsgKind::Info));
     }
 }
 
 /// Resolve a [`UiError`] to its text, the template filled in push order. Deviation: an absent or
-/// empty result shows nothing, where the reference shows an empty line (no test of the string
-/// between), because a blank line is worse than none; only a chain missing a stock key reaches it.
+/// empty result shows nothing, where the reference shows an empty line (it never tests the string),
+/// because a blank line is worse than none; only a chain missing a stock key reaches it.
 pub(crate) fn ui_error_text(e: &UiError, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     let globals: Vec<Option<String>> = e
         .args
@@ -234,7 +235,7 @@ pub(crate) fn ui_error_text(e: &UiError, get: &dyn Fn(&str) -> Option<String>) -
 }
 
 /// One resolved line: its text, its surface, and its catalog record, whose sound fields
-/// (`+0x08`/`+0x0c`) `DisplayError` reads with the kind (`+0x04`).
+/// (`+0x08`/`+0x0c`) the error display reads with the kind (`+0x04`).
 pub(crate) struct Shown {
     record: Option<&'static MessageRecord>,
     kind: MsgKind,
@@ -247,10 +248,10 @@ impl Shown {
         &self.text
     }
 
-    /// A catalog message by GlobalStrings key, the reference's `DisplayError(id)`: its record gives
-    /// the surface and the sound. A key with no row cannot occur in the reference, where a message
-    /// is an index, so it warns and falls back to a silent [`MsgKind::Error`]; the warning is the
-    /// only check on keys the source walk for `ERR_` literals cannot see.
+    /// A catalog message by GlobalStrings key, the reference's error display by id: its record
+    /// gives the surface and the sound. A key with no row cannot occur in the reference, where a
+    /// message is an index, so it warns and falls back to a silent [`MsgKind::Error`]; the warning
+    /// is the only check on keys the source walk for `ERR_` literals cannot see.
     pub(crate) fn keyed(key: &str, text: String) -> Self {
         let record = benilla_ui::messages::by_key(key);
         if record.is_none() {
@@ -360,8 +361,9 @@ pub(crate) fn attack_actor_refusal(
 }
 
 /// The same ladder without the message, in the reference's gate order. The world right-click asks
-/// this: its path shows no error text and never reaches, whose callers are the pet bar, Attack and
-/// TryCast. That path's own gate set overlaps this one but is not transcribed.
+/// this: its path shows no error text and never reaches the attack-start validator, whose callers
+/// are the pet bar, Attack and the cast attempt. That path's own gate set overlaps this one but is
+/// not transcribed.
 pub(crate) fn attack_actor_blocked(
     actor: Option<&ObjectStore>,
     self_guid: Option<u64>,
@@ -399,13 +401,12 @@ pub(crate) struct ToolCheck<'a> {
     pub(crate) commands: &'a crate::net::NetCommands,
 }
 
-/// The reference's pre-send check `HaveSpellTokens 0x8091d0`, run on every cast path before any
-/// packet: the first missing totem item (a presence test), then the first `TotemCategory` no
-/// carried tool covers, then the first short reagent (a count), refuses locally as `0x78`,
-/// `0x9c` (naming the category) or `0x5c` and returns `true`. On 12340 the gathering tools are
-/// categories, so the tool leg is the source of "Requires Mining Pick". Without `tools` the
-/// category leg is skipped; a missing self store skips the check, as the reference's
-/// active-player gate does.
+/// The reference's pre-send token check (`0x8091d0`), run on every cast path before any packet: the
+/// first missing totem item (a presence test), then the first `TotemCategory` no carried tool
+/// covers, then the first short reagent (a count), refuses locally as `0x78`, `0x9c` (naming the
+/// category) or `0x5c` and returns `true`. On 12340 the gathering tools are categories, so the tool
+/// leg is the source of "Requires Mining Pick". Without `tools` the category leg is skipped; a
+/// missing self store skips the check, as the reference's active-player gate does.
 pub(crate) fn reagent_totem_refusal(
     spell_id: u32,
     def: Option<&benilla_formats::SpellDisplay>,
@@ -459,7 +460,7 @@ fn first_missing_tool(
     required.find(|&c| !tools.categories.covered_by(c, carried.iter().copied()))
 }
 
-/// The first totem item absent from our bags: the reference's failing slot.
+/// The first totem item absent from our bags: the slot the token check fails on.
 pub(super) fn first_missing_totem(
     d: &benilla_formats::SpellDisplay,
     store: &ObjectStore,
@@ -472,7 +473,7 @@ pub(super) fn first_missing_totem(
         .find(|&t| count_of(&store.0, objects, t, InventoryScope::CARRIED) == 0)
 }
 
-/// The first reagent we hold too few of: the reference's failing slot.
+/// The first reagent we hold too few of: the slot the token check fails on.
 pub(super) fn first_short_reagent(
     d: &benilla_formats::SpellDisplay,
     store: &ObjectStore,
@@ -735,7 +736,7 @@ mod attack_actor_tests {
         errors.0.first().map(|e| e.key)
     }
 
-    /// Every gate of the reference's Phase A, each on its own, against an otherwise-healthy actor.
+    /// Every gate of the validator's Phase A, each on its own, against an otherwise-healthy actor.
     #[test]
     fn each_actor_gate_raises_its_own_error() {
         assert_eq!(

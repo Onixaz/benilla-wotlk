@@ -163,7 +163,7 @@ impl ModelAnimations {
 
     /// Resolve a requested id before a sequence lookup: inside a baked playable lookup, the
     /// model's own substitute; otherwise, and always on a 3.3.5a model, which carries no such
-    /// table, the `AnimationData.dbc` fallback walk of `SequenceFallbackById` (`0x826350`).
+    /// table, the reference's `AnimationData.dbc` fallback walk (`0x826350`).
     pub fn resolve(&self, requested: u16, catalog: &AnimDataCatalog) -> ResolvedAnim {
         if let Some(row) = self.playable_animation_lookup.get(requested as usize) {
             return ResolvedAnim {

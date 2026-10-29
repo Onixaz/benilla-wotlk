@@ -44,7 +44,8 @@ use bevy::mesh::MeshTag;
 
 use crate::entities::overhead_slot;
 
-/// The bobs arms: low, and raised while the unit shows a name ([`Nameplates::shows`]).
+/// The bobs the reference arms: low, and raised while the unit shows a name
+/// ([`Nameplates::shows`]).
 const ANIM_MARKER_LOW: u16 = 0;
 const ANIM_MARKER_RAISED: u16 = 190;
 
@@ -58,8 +59,8 @@ fn seq_loop(info: &BillboardInfo, anim_id: u16) -> Option<BoneScaleAnim> {
 
 /// The marker M2 per dialog status: 12340 maps the status to a row through `0xa34f5c` and the row
 /// to a file through `0xadaca0` (12-byte rows of handle, scale and path), loading the `.mdx` names
-/// as `.m2`. The low-level statuses 2-4 draw only under the minimap's low-level quest tracking
-/// (`UpdateInteractIcon` reads `IsTrackingTrivialQuests 0x57bf30`); NONE 0 draws nothing.
+/// as `.m2`. The low-level statuses 2-4 draw only under the minimap's low-level quest tracking (the
+/// interact icon's update reads the trivial-quest tracking test, `0x57bf30`); NONE 0 draws nothing.
 fn marker_model(status: u32, trivial: bool) -> Option<&'static str> {
     use benilla_protocol::messages::dialog_status::*;
     match status {
@@ -401,7 +402,7 @@ fn build_markers(
 ///
 /// Deviation: a live V-plate ([`VPlates`](crate::vplates::VPlates)) raises the marker too, because
 /// the reference's marker sits low behind the plate: it arms anim 0 under a plate, whose name
-/// suppression nulls the `desc+0x8` handle tests.
+/// suppression nulls the `desc+0x8` handle the name test reads.
 #[allow(clippy::type_complexity)] // a Bevy system: each param is one resource, the app's convention
 fn pose_markers(
     plates: Res<Nameplates>,
@@ -557,10 +558,10 @@ mod tests {
         }
     }
 
-    /// A mount keeps the rider's visual and so the seat, so only this comparison sees the slot
-    /// move between 18 and 29.
-    /// `s_questStatusIcons` (`0xa34f5c`) maps the low-level statuses to rows 1-3 of the file
-    /// table (`0xadaca0`), shown only while the low-level quest type is tracked.
+    /// A mount keeps the rider's visual and so the seat, so only this comparison sees the slot move
+    /// between 18 and 29. The quest status icon table (`0xa34f5c`) maps the low-level statuses to
+    /// rows 1-3 of the file table (`0xadaca0`), shown only while the low-level quest type is
+    /// tracked.
     #[test]
     fn low_level_markers_show_only_under_trivial_quest_tracking() {
         for status in 2..=4 {

@@ -52,7 +52,7 @@ pub(crate) fn wrap_pi(angle: f32) -> f32 {
 }
 
 /// The `(spine, head)` twist angles. The reference's full-share branch fires only for the local
-/// player during a click-to-move action (the reference holds `0xc`, disabled, in ordinary play),
+/// player during a click-to-move action (whose state holds `0xc`, disabled, in ordinary play),
 /// which benilla does not have.
 fn twist_shares(gap: f32) -> (f32, f32) {
     use std::f32::consts::FRAC_PI_4;
@@ -61,9 +61,9 @@ fn twist_shares(gap: f32) -> (f32, f32) {
     (spine, head)
 }
 
-/// [`twist_shares`] with the mount gate: the tail arms SpineLow only while `CGUnit+0xdc`, the mount
-/// model, is null, and Head always, so a rider's head keeps its share and stops short of the aim. A
-/// mounted spine share is zero, not skipped: the zero write restores the animated base, the
+/// [`twist_shares`] with the mount gate: the turn tail arms SpineLow only while `unit+0xdc`, the
+/// mount model, is null, and Head always, so a rider's head keeps its share and stops short of the
+/// aim. A mounted spine share is zero, not skipped: the zero write restores the animated base, the
 /// reference's disarm, where skipping would freeze the last twist.
 fn armed_shares(gap: f32, mounted: bool) -> (f32, f32) {
     let (spine, head) = twist_shares(gap);

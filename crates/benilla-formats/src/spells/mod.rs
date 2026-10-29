@@ -56,7 +56,7 @@ const SPELL: &str = "DBFilesClient\\Spell.dbc";
 const SPELL_FIELDS: usize = 234;
 /// `Category` (`+0x4`): the shared-cooldown `SpellCategory.dbc` id, such as potions 4.
 const COL_CATEGORY: usize = 1;
-/// `RecoveryTime` (`+0x74`) and `CategoryRecoveryTime` (`+0x78`), in ms, read by `StartCooldown`
+/// `RecoveryTime` (`+0x74`) and `CategoryRecoveryTime` (`+0x78`), in ms, read by the cooldown start
 /// and the `SMSG_SPELL_COOLDOWN` handler (`0x806dd0`).
 const COL_RECOVERY_TIME: usize = 29;
 const COL_CATEGORY_RECOVERY_TIME: usize = 30;
@@ -71,12 +71,12 @@ const COL_MANA_COST_PCT: usize = 204;
 const COL_MANA_COST_PER_LEVEL: usize = 43;
 const COL_MANA_PER_SECOND: usize = 44;
 const COL_MANA_PER_SECOND_PER_LEVEL: usize = 45;
-/// `rangeIndex` (`+0xb8`), resolved by `GetMinMaxRange`.
+/// `rangeIndex` (`+0xb8`), resolved by the range lookup.
 const COL_RANGE_INDEX: usize = 46;
 /// `modalNextSpell` (`+0xc0`): 52 of its 57 nonzero rows are hunter shots naming Auto Shot.
 const COL_MODAL_NEXT_SPELL: usize = 48;
-/// `StartRecoveryCategory` (`+0x334`) and `StartRecoveryTime` (`+0x338`): the global cooldown
-/// `StartGlobalCooldown` starts at the cast send.
+/// `StartRecoveryCategory` (`+0x334`) and `StartRecoveryTime` (`+0x338`): the global cooldown the
+/// client starts at the cast send.
 const COL_START_RECOVERY_CATEGORY: usize = 205;
 const COL_START_RECOVERY_TIME: usize = 206;
 const COL_PREVENTION_TYPE: usize = 214;
@@ -84,14 +84,14 @@ const COL_SPELL_FAMILY_NAME: usize = 208;
 const COL_SPELL_FAMILY_FLAGS_LOW: usize = 209;
 /// `Targets` (`+0x40`): the seed the cast arm loads into its targeting word.
 const COL_TARGETS: usize = 16;
-/// `TargetCreatureType` (`+0x44`): the creature-type mask `BindTarget` and `SpellCanTargetUnit`'s
-/// mirror test the unit's type against, bit `type - 1`.
+/// `TargetCreatureType` (`+0x44`): the creature-type mask the target bind and
+/// `SpellCanTargetUnit`'s mirror test the unit's type against, bit `type - 1`.
 const COL_TARGET_CREATURE_TYPE: usize = 17;
 /// `EffectImplicitTargetA[0]` (`+0x158`), the key of the cast arm's 62-case switch.
 const COL_IMPLICIT_TARGET_A1: usize = 86;
 /// `EffectImplicitTargetB[0]` (`+0x164`), walked beside A by the classifier.
 const COL_IMPLICIT_TARGET_B1: usize = 89;
-/// The usable walk's gate columns (`IsSpellUsableNow`).
+/// The usable walk's gate columns.
 const COL_STANCES: usize = 12;
 const COL_STANCES_HIGH: usize = 13;
 const COL_STANCES_NOT: usize = 14;
@@ -142,8 +142,7 @@ const COL_EFFECT_TRIGGER_1: usize = 116;
 /// `SPELL_EFFECT_LEARN_SPELL`: teaches its `EffectTriggerSpell`, as a trainer's wrapper does.
 pub const SPELL_EFFECT_LEARN_SPELL: u32 = 36;
 
-/// One `Effect[]` slot as the trainer's state re-evaluator reads it
-/// (`Trainer_ReEvaluateServices`, `0x596b00`).
+/// One `Effect[]` slot as the trainer's state re-evaluator reads it (`0x596b00`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LearnEffect {
     /// `Effect` 0: the slot is skipped (`0x596bcc`).
@@ -195,9 +194,9 @@ const COL_NAME_SUBTEXT_ENUS: usize = 153;
 const COL_DESCRIPTION_ENUS: usize = 170;
 const COL_AURA_DESCRIPTION_ENUS: usize = 187;
 
-/// `DurationIndex` (`+0xa0`): `Spell_C::GetSpellDuration` looks it up.
+/// `DurationIndex` (`+0xa0`): the duration read looks it up.
 const COL_DURATION_INDEX: usize = 40;
-/// `CastingTimeIndex` (`+0x70`): `Spell_C::GetCastTime` looks it up.
+/// `CastingTimeIndex` (`+0x70`): the cast-time read looks it up.
 const COL_CASTING_TIME_INDEX: usize = 28;
 const COL_PROC_FLAGS: usize = 34;
 const COL_PROC_CHANCE: usize = 35;
@@ -263,7 +262,7 @@ const ATTR_EX_EXCLUDE_CASTER: u32 = 0x0008_0000;
 /// `SPELL_EFFECT_ATTACK`: only 6603 "Attack" has it, but the client tests the effect, not the id.
 const SPELL_EFFECT_ATTACK: u32 = 78;
 
-/// The tracking aura types, which no aura display shows (`IsAuraDisplayable`).
+/// The tracking aura types, which no aura display shows.
 const TRACKING_AURA_TYPES: [u32; 3] = [44, 45, 151];
 
 /// The on-next-swing pair `0x4` and `0x400`, always tested as one mask.
@@ -291,8 +290,8 @@ const ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED: u32 = 0x0008_0000;
 /// The combo-point consumers, `AttributesEx` bits 20 and 22 (vmangos `NeedsComboPoints`), read by
 /// the usable walk: the rogue and druid finishers, and Overpower.
 const ATTR_EX_FINISHING_MOVE: u32 = 0x0050_0000;
-/// `SPELL_EFFECT_TRADE_SKILL`: usable with no other gate, and `TryCast` opens the crafting window
-/// itself instead of sending the cast.
+/// `SPELL_EFFECT_TRADE_SKILL`: usable with no other gate, and the cast attempt opens the crafting
+/// window itself instead of sending the cast.
 pub const SPELL_EFFECT_TRADE_SKILL: u32 = 47;
 /// `SPELL_EFFECT_CREATE_ITEM`: a recipe's product, its `EffectItemType`.
 pub const SPELL_EFFECT_CREATE_ITEM: u32 = 24;
@@ -311,7 +310,7 @@ pub const SPELL_EFFECT_APPLY_GLYPH: u32 = 74;
 
 /// `SPELL_EFFECT_PROSPECTING`: handled by the client but on no 5875 spell, so the cast-fail reasons
 /// only its legs raise, `0x83`, `0x84` and `0x90`, never show. The number is this build's own:
-/// `TryCast` pairs 99 with disenchant and 127 with prospect.
+/// the cast attempt pairs 99 with disenchant and 127 with prospect.
 pub const SPELL_EFFECT_PROSPECTING: u32 = 127;
 
 /// `Spell.dbc` joined with `SpellIcon.dbc`, plus the learn-spell map: a trainer offers a learn
@@ -534,7 +533,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
     let dispel_types = load_spell_dispel_types(chain)?;
     let description_variables = load_spell_description_variables(chain)?;
     // Categories whose `SpellCategory.dbc` flags carry `0x2` match every cooldown query
-    // (`GetCooldownInfo`); only wand Shoot's 351 does.
+    // (the cooldown info read); only wand Shoot's 351 does.
     let wildcard_categories: std::collections::HashSet<u32> = {
         let bytes = chain
             .read_file("DBFilesClient\\SpellCategory.dbc")

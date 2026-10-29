@@ -159,7 +159,7 @@ fn shapeshift_bonus_bars_match_the_verified_table() {
 }
 
 /// The stance bar's Spell.dbc columns: the MOD_SHAPESHIFT form id, the signed StanceBarOrder that
-/// the reference sorts by, and the ActiveIconID reads.
+/// the stance bar sorts by, and the ActiveIconID its button reads.
 #[test]
 fn stance_bar_spell_columns_match_the_probed_values() {
     let data = benilla_formats::wow_data_or_skip!();

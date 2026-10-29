@@ -7,10 +7,10 @@
 //! on the press frame would still show a second press's fading status; [`ask_for_captures`]
 //! therefore holds each ask exactly one frame.
 //!
-//! The file is `CaptureScreen`'s (`0x4a8570`): `Screenshots\WoWScrnShot_<%m%d%y_%H%M%S>` in local
+//! The file is the capture's (`0x4a8570`): `Screenshots\WoWScrnShot_<%m%d%y_%H%M%S>` in local
 //! time, a run-length Targa with no alpha when `screenshotFormat` is `tga` in any case, else a
 //! JPEG at `screenshotQuality` ([`jpeg_quality`]). Deviation: the JPEG carries no hidden client
-//! stamp, the reference's watermark (`ImageWriterEmbedData`, `0x4a8633`).
+//! stamp, the reference's watermark (`0x4a8633`).
 //!
 //! The reference fires `SCREENSHOT_SUCCEEDED` even when the write fails, a bug not copied:
 //! [`report_captures`] answers `SCREENSHOT_FAILED` and logs the reason.
@@ -59,7 +59,7 @@ impl Format {
     }
 }
 
-/// `ScrnSetScreenshotQuality` (`0x4a84a0`): the CVar's integer clamped unsigned to 1..10, then
+/// The quality setter (`0x4a84a0`): the CVar's integer clamped unsigned to 1..10, then
 /// `n * 5.5 + 45` truncated, so the default 3 is 61.
 fn jpeg_quality(value: &str) -> u8 {
     let n = atoi(value) as u32;
@@ -109,7 +109,7 @@ impl Default for ScreenshotState {
 }
 
 impl ScreenshotState {
-    /// `WoWScrnShot_MMDDYY_HHMMSS.<ext>` (`OsGetTimeStamp` `0x86d490`, `"%m%d%y_%H%M%S"`).
+    /// `WoWScrnShot_MMDDYY_HHMMSS.<ext>` (`0x86d490`, `"%m%d%y_%H%M%S"`).
     ///
     /// A second capture in the same second gets `_2`, `_3`: the reference overwrites, so a burst
     /// leaves one file, a data loss not copied.

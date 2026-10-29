@@ -1,7 +1,8 @@
-//! The spell tooltip views: the builder the reference's cells resolved here where the catalogs
-//! live, and the feed that pushes a view for every spell the UI can hover before it is hovered. The
-//! reference builds at the hover and keeps nothing; the feed keeps what each pushed view read
-//! ([`super::spell_deps`]) and builds again only the views a change of the player's state reaches.
+//! The spell tooltip views: the reference's spell tooltip builder's cells, resolved here where the
+//! catalogs live, and the feed that pushes a view for every spell the UI can hover before it is
+//! hovered. The reference builds at the hover and keeps nothing; the feed keeps what each pushed
+//! view read ([`super::spell_deps`]) and builds again only the views a change of the player's state
+//! reaches.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -20,7 +21,7 @@ use crate::ui_action::{PlayerActions, Spells};
 use crate::ui_items::{count_of, InventoryScope};
 use crate::ui_trainer::TrainerTooltipSubjects;
 
-/// The unit a view's caster cells are computed against, the spell builder the reference's fourth
+/// The unit a view's caster cells are computed against, the spell tooltip builder's fourth
 /// argument: the level the `$`-tokens, the cost and the cast time scale by, and the cost's basis.
 #[derive(Clone, Copy)]
 pub(super) enum ViewCaster<'a> {
@@ -31,9 +32,9 @@ pub(super) enum ViewCaster<'a> {
 }
 
 impl ViewCaster<'_> {
-    /// The pet's `[vtbl+0xa8]`, `CGUnit`'s: `UNIT_FIELD_LEVEL × 5`, which
+    /// The pet's `[vtbl+0xa8]`, the unit's skill-value slot: `UNIT_FIELD_LEVEL × 5`, which
     /// [`benilla_formats::SpellDisplay::skill_level`] caps at `maxLevel × 5` and divides by 5 as
-    /// the reference do. No unit reads 0.
+    /// the reference does. No unit reads 0.
     fn pet_skill_value(pet: Option<&benilla_protocol::ObjectFields>) -> u32 {
         pet.and_then(|p| p.unit_level())
             .unwrap_or(0)
@@ -52,11 +53,11 @@ pub(super) struct ViewCtx<'a, 'w, 's> {
     /// Whom the level terms and the cost read: the player or its pet. The form and the reaches
     /// are that same unit's.
     pub(super) caster: ViewCaster<'a>,
-    /// The caster as the reference reads it: its `UNIT_FIELD_COMBATREACH` (1.5 is the descriptor
+    /// The caster as the range getter reads it: its `UNIT_FIELD_COMBATREACH` (1.5 is the descriptor
     /// default) and its motion.
     pub(super) range_caster: benilla_formats::RangeUnit,
-    /// The caster's auto-attack target, which the reference looks up itself (`[caster+0xc48]`) for
-    /// its melee arm alone, reading its reach and motion; with none, the caster's reach counts
+    /// The caster's auto-attack target, which the range getter looks up itself (`[caster+0xc48]`)
+    /// for its melee arm alone, reading its reach and motion; with none, the caster's reach counts
     /// twice and there is no moving bonus.
     pub(super) attack_target: Option<benilla_formats::RangeUnit>,
     /// The object index the worn-item search and each reagent's carried count resolve through.
@@ -94,7 +95,7 @@ pub(super) fn build_view(
     deps.borrow_mut().mod_bits |= vctx.spell_mods.read_bits(d);
     let form = vctx.form;
     let caster = vctx.caster;
-    // The `$`-tokens' level (`507645`-).
+    // The `$`-tokens' level, by the view's caster selector.
     let skill = |id| match caster {
         ViewCaster::Player => {
             let (race, class) = crate::spell::race_class(vctx.store);
@@ -125,7 +126,8 @@ pub(super) fn build_view(
         deps.borrow_mut().gender = true;
         vctx.store.and_then(|s| s.0.unit_gender()).unwrap_or(0)
     };
-    // The reference for this spell: the level the cost's and the cast time's per-level terms read.
+    // The caster's skill level for this spell: the level the cost's and the cast time's per-level
+    // terms read.
     let pet_level = |pet| d.skill_level(ViewCaster::pet_skill_value(pet));
     // `$c` reads the view's caster's cost, as the cost cell does.
     let text_cost = |t: &benilla_formats::SpellDisplay| match caster {
@@ -224,7 +226,7 @@ pub(super) fn build_view(
             Some(format!("{} {unit}", resolved_cost / div))
         }
     };
-    // The range cell: two attribute gates, `GetMinMaxRange`, then `max <= 0`. There is no melee
+    // The range cell: two attribute gates, the range getter, then `max <= 0`. There is no melee
     // wording: the melee row (flags bit 0, row 2 only) resolves to
     // `max(reach + casterReach + 1.3333334, 5.0)` and prints like any other, usually "5 yd range".
     let range = (!d.tooltip_omits_range_line())
@@ -259,14 +261,14 @@ pub(super) fn build_view(
             keyed(vctx.get, "SPELL_RANGE", &[Arg::S(&yards)])
         })
         .flatten();
-    // The cast line: gate also omits it for a TRADE_SKILL or ATTACK `Effect[0]`; then the ladder
-    // over `GetCastTime(1)`, unclamped, where a negative time is "Instant cast" and a zero one is
-    // "Instant cast" only for a mana spell with a cost.
+    // The cast line: its gate also omits it for a TRADE_SKILL or ATTACK `Effect[0]`; then the
+    // ladder over the cast-time getter with selector 1, unclamped, where a negative time is
+    // "Instant cast" and a zero one is "Instant cast" only for a mana spell with a cost.
     let cast_time = if d.tooltip_omits_cast_line() {
         None
     } else {
-        // `GetCastTime` takes the selector too, and its level term is the reference's. The player's
-        // is its level only where the row scales by one.
+        // The cast-time getter takes the selector too, and its level term is the skill level's.
+        // The player's is its level only where the row scales by one.
         if matches!(caster, ViewCaster::Player)
             && spells
                 .cast_times
@@ -526,8 +528,8 @@ pub(super) fn reagent_state(
     (owned, named)
 }
 
-/// The pet unit's fields a pet view reads: its level, the cost bases reads, its form, and its and
-/// its melee target's reach and motion.
+/// The pet unit's fields a pet view reads: its level, the cost bases the power-cost getter reads,
+/// its form, and its and its melee target's reach and motion.
 #[derive(Clone, Copy, PartialEq, Default)]
 pub(super) struct PetInputs {
     guid: Option<u64>,

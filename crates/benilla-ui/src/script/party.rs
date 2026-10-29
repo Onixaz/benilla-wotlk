@@ -38,7 +38,7 @@ pub struct SavedInstanceInfo {
     pub extended: bool,
     /// `Map.dbc` `InstanceType` is 2.
     pub is_raid: bool,
-    /// `GetMaxPlayersForMap` over the difficulty.
+    /// The map's player cap over the difficulty.
     pub max_players: u32,
     /// The `MapDifficulty` row's difficulty string through `GetText`; empty with no row.
     pub difficulty_name: String,
@@ -54,7 +54,7 @@ pub struct RaidMemberInfo {
     /// The identity `UnitInRaid` matches a token against; `0` never matches, as the reference's
     /// membership test rejects a zero guid (`0x60ca20`).
     pub guid: u64,
-    /// Return 2, exposed as stored (`m_rank`): 0 member, 1 assistant, 2 leader,
+    /// Return 2, exposed as stored: 0 member, 1 assistant, 2 leader,
     /// the convention addons read (`ChatLog.lua:351-353`).
     pub rank: u32,
     /// Return 3, stored 0-based as the wire's `GroupMemberEntry::flags` bits 0-2 carry it; the
@@ -76,7 +76,7 @@ pub struct RaidMemberInfo {
     /// vmangos's `ONLINE` and `DEAD`, from which the app fills it. Addons read it as `isDead`.
     pub ninth: bool,
     /// The member's assignment bits, main tank 0x2 and main assist 0x4: return 10's role and
-    /// `GetPartyAssignment`'s source (`m_assignments`).
+    /// `GetPartyAssignment`'s source.
     pub assignments: u8,
     /// The LFG role bits, tank 0x2, healer 0x4, damage 0x8: returns 12 to 14.
     pub roles: u8,
@@ -111,15 +111,14 @@ pub struct PartyState {
     pub master_looter: Option<u32>,
     /// `GetLootThreshold`'s item quality, `2..=4` once grouped.
     pub loot_threshold: u32,
-    /// `CGPartyInfo::m_realNumMembers` and `CGRaidInfo::m_realNumMembers`: the group outside a
-    /// battleground, which a battleground's list leaves as it was (`0x6d8d42`-`0x6d8d84`).
+    /// The party's and the raid's real member counts: the group outside a battleground, which a
+    /// battleground's list leaves as it was (`0x6d8d42`-`0x6d8d84`).
     pub real_party_members: u32,
     pub real_raid_members: u32,
-    /// The master looter's guid (`CGPartyInfo::m_lootMaster`), 0 unless the method is master
-    /// loot: `GetRaidRosterInfo`'s eleventh return.
+    /// The master looter's guid, 0 unless the method is master loot: `GetRaidRosterInfo`'s eleventh
+    /// return.
     pub loot_master_guid: u64,
-    /// The party slots' assignment bits (`CGPartyInfo::m_memberAssignments`), as
-    /// [`RaidMemberInfo::assignments`].
+    /// The party slots' assignment bits, as [`RaidMemberInfo::assignments`].
     pub member_assignments: [u8; 4],
 }
 
@@ -335,7 +334,7 @@ fn raid_roster_info(
     ]))
 }
 
-/// A member's assignment bits (`CGRaidMember::m_assignments`): main tank, main assist.
+/// A member's assignment bits: main tank, main assist.
 pub(crate) const ASSIGNMENT_MAIN_TANK: u8 = 0x2;
 pub(crate) const ASSIGNMENT_MAIN_ASSIST: u8 = 0x4;
 
@@ -561,7 +560,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // UninviteUnit (`0x51a7a0`): the reason cut to 64 characters (`ScrubString`).
+    // UninviteUnit (`0x51a7a0`): the reason cut to 64 characters.
     g.set(
         "UninviteUnit",
         lua.create_function(|lua, (unit, reason): (Value, Value)| {
@@ -871,7 +870,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 return Ok(());
             };
             row.extended = extend;
-            // `GetMapNameWithDifficulty` (`0x4fe070`): "Name (difficulty)" when the row has one.
+            // The map name with difficulty (`0x4fe070`): "Name (difficulty)" when the row has one.
             let name = row.name.clone().unwrap_or_default();
             let shown = if row.difficulty_name.is_empty() {
                 name

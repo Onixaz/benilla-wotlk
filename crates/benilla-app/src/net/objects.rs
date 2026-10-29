@@ -176,7 +176,8 @@ fn on_item(In(ev): In<SessionEvent>, mut sc: Scene) {
             debug!("net: item template {entry} → {info:?}");
             sc.items.insert_template(entry, info);
         }
-        // The reference's two arms share the item lookup (`TYPEMASK_ITEM`) and differ on a miss.
+        // The reference's item-time handler has two arms that share the item lookup
+        // (`TYPEMASK_ITEM`) and differ on a miss.
         SessionEvent::ItemTime { item_guid, seconds } => {
             // An unheld item drops the update, with no queue (`0x1EA`'s arm returns), so an item
             // created after the login re-send (`Player::SendItemDurations`) waits for the next.
@@ -235,7 +236,7 @@ fn on_object_move(In(ev): In<SessionEvent>, mut sc: Scene) {
 }
 
 /// An observed mover skipped time: only its relay chain moves, as the reference's handler does
-/// (`[CMovement+0xac] += lag`); an unknown guid is dropped, as there.
+/// (`[mover+0xac] += lag`); an unknown guid is dropped, as there.
 fn on_move_time_skipped(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::MoveTimeSkipped { guid, lag_ms } = ev {
         if let Some(mut m) = sc
@@ -784,9 +785,9 @@ fn object_values(
 
 /// `SMSG_DESTROY_OBJECT`: corpse decay ahead of respawn, or a despawn.
 fn object_destroyed(guid: u64, commands: &mut Commands, index: &mut GuidIndex) {
-    // The object is freed now and its model fades out, as the reference's OnDeactivate (called by
-    // the reference on DESTROY and OUT_OF_RANGE alike) hands the model to the `SWModelFadeout`
-    // scheduler. The guid leaves the index at once ([`tear_down`]).
+    // The object is freed now and its model fades out, as the reference's object deactivation (on
+    // DESTROY and OUT_OF_RANGE alike) hands the model to its model fade-out scheduler. The guid
+    // leaves the index at once ([`tear_down`]).
     //
     // A pinned object only gets its pending-destroy bit and is freed when the last pin drops. Our
     // one pin is an announced `SMSG_GAMEOBJECT_DESPAWN_ANIM`, whose end runs the deferred teardown
@@ -814,8 +815,8 @@ fn object_destroyed(guid: u64, commands: &mut Commands, index: &mut GuidIndex) {
 
 /// The `OutOfRange` block: the object still exists, out of our range.
 fn objects_removed(guids: Vec<u64>, commands: &mut Commands, index: &mut GuidIndex) {
-    // Faded, not popped: OUT_OF_RANGE reaches like DESTROY, and the object ends now while its model
-    // fades ([`tear_down`]).
+    // Faded, not popped: OUT_OF_RANGE reaches the same teardown as DESTROY, and the object ends now
+    // while its model fades ([`tear_down`]).
     for g in guids {
         if let Some(e) = index.0.remove(&g) {
             commands.entity(e).queue(tear_down);
@@ -823,8 +824,8 @@ fn objects_removed(guids: Vec<u64>, commands: &mut Commands, index: &mut GuidInd
     }
 }
 
-/// An object's teardown, the reference's: the object is freed and its detached model fades out
-/// ([`DespawnFade`]); its OnDeactivate clears the selection and sends `CMSG_SET_SELECTION 0` at
+/// An object's teardown, as in the reference: the object is freed and its detached model fades out
+/// ([`DespawnFade`]); its deactivation clears the selection and sends `CMSG_SET_SELECTION 0` at
 /// once.
 ///
 /// The model stays on the same entity, so removing its [`Guid`] is what ends the object for every
@@ -989,9 +990,9 @@ fn modes_of(guid: u64, index: &GuidIndex, modes: &Query<&mut UnitMoveModes>) -> 
         .unwrap_or_default()
 }
 
-/// `MOVEFLAG_PITCH_UP | PITCH_DOWN`, which StopFlying clears with the flight bits.
+/// `MOVEFLAG_PITCH_UP | PITCH_DOWN`, which the flight stop clears with the flight bits.
 const PITCH_BITS: u32 = 0xc0;
-/// `MOVEFLAG_SPLINE_ELEVATION`, which StartFlight clears.
+/// `MOVEFLAG_SPLINE_ELEVATION`, which the flight start clears.
 const SPLINE_ELEVATION: u32 = 0x400_0000;
 
 /// `SMSG_SPLINE_MOVE_*`: a mode on a unit we do not control, with no ack. An unknown guid is
@@ -1010,7 +1011,7 @@ fn spline_move_mode(
         return; // the reference drops it too
     };
     // Flight and gravity write the one flags word (`0x740ba0`), which for a unit we do not
-    // control is the pose's: StartFlight takes only on a unit that may fly (`0x989890`).
+    // control is the pose's: the flight start takes only on a unit that may fly (`0x989890`).
     if mode == SplineMode::Flying {
         if let Ok(mut rm) = remote.get_mut(e) {
             use crate::creature_anim::move_flags as f;
@@ -1021,7 +1022,7 @@ fn spline_move_mode(
                 rm.vertical_velocity = 0.0;
                 rm.fall_start_z = None;
             } else if !apply {
-                // StopFlying (`0x98c240`): the pitch and the flight bits go.
+                // The flight stop (`0x98c240`): the pitch and the flight bits go.
                 rm.flags &= !(PITCH_BITS | f::ASCENDING | f::DESCENDING | f::FLYING);
             }
         }
@@ -1045,9 +1046,9 @@ fn spline_move_mode(
         }
     }
 
-    // `SetRoot`'s one-shot wipe: it clears `0xffe07f00`'s complement and stops the fall, so the
-    // unit fails the integration gate and a relayed player stops dead. A creature has no direction
-    // bits; `monster_move` refuses its path instead.
+    // The root apply's one-shot wipe: it clears `0xffe07f00`'s complement and stops the fall, so
+    // the unit fails the integration gate and a relayed player stops dead. A creature has no
+    // direction bits; `monster_move` refuses its path instead.
     if mode == SplineMode::Root && apply {
         if let Ok(mut rm) = remote.get_mut(e) {
             use crate::creature_anim::move_flags;
@@ -1393,7 +1394,7 @@ mod tests {
             assert_eq!(
                 m.0,
                 move_flags::HOVER | move_flags::WATER_WALKING,
-                "two grants accumulate in one word — the reference has one CMovement+0x40"
+                "two grants accumulate in one word — the reference has one flags word"
             );
 
             grant(&mut w, SplineMode::Hover, false);
@@ -1420,7 +1421,7 @@ mod tests {
             assert_eq!(w.entity(e).get::<UnitMoveModes>().unwrap().0, 0);
         }
 
-        /// `SetRoot` wipes the direction bits, so the unit fails the integration gate
+        /// The root apply wipes the direction bits, so the unit fails the integration gate
         /// (`test [esi+0x40], 0x20ff`) and is not stepped.
         #[test]
         fn a_root_wipes_the_direction_bits_the_dead_reckon_runs_on() {
@@ -1439,7 +1440,7 @@ mod tests {
             assert!(w.entity(e).get::<UnitMoveModes>().unwrap().rooted());
         }
 
-        /// `ClearRoot` only clears the bit.
+        /// The unroot only clears the bit.
         #[test]
         fn an_unroot_clears_the_bit_and_invents_no_movement() {
             let (mut w, e) = world_with_unit(Some(remote_walking_forward()));
@@ -1477,7 +1478,8 @@ mod tests {
             assert!(w.entity(e).get::<UnitMoveModes>().is_none());
         }
 
-        /// The reference returns on ROOT, so a queued path does not move a pinned body.
+        /// The reference's server-position apply returns on ROOT, so a queued path does not move a
+        /// pinned body.
         #[test]
         fn a_rooted_unit_refuses_the_path_the_server_queued() {
             let mut w = World::new();

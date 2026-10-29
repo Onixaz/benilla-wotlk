@@ -125,7 +125,7 @@ pub(crate) fn fire_widget_handler(
 
 /// Drain [`Model::pending_size_changed`], queued by the resolve pass, and fire `OnSizeChanged` for
 /// each, recording errors. It drains once: a size a handler changes fires on the next resolve, as
-/// the reference's `ApplyRect` does, so a handler that grows its own frame cannot spin forever.
+/// the reference's rect apply does, so a handler that grows its own frame cannot spin forever.
 pub(super) fn fire_size_changes(lua: &Lua) {
     let pending = std::mem::take(&mut crate::script::model_mut_of(lua).pending_size_changed);
     for (id, w, h) in pending {
@@ -164,10 +164,10 @@ pub(super) fn set_shown(lua: &Lua, h: FrameHandle, shown: bool) {
     }
 }
 
-/// `ShowThis` (`0x4918f0`), live: the frame's own step under its gate, then each child's, then the
-/// raise of a toplevel frame (`0x4951a0`) and its `OnShow`, so a frame hears of its show after its
-/// whole subtree has. Each step re-reads the gate, so a frame an earlier handler hid, or whose
-/// parent it hid, is not shown.
+/// The frame's show (`0x4918f0`), live: the frame's own step under its gate, then each child's,
+/// then the raise of a toplevel frame (`0x4951a0`) and its `OnShow`, so a frame hears of its show
+/// after its whole subtree has. Each step re-reads the gate, so a frame an earlier handler hid, or
+/// whose parent it hid, is not shown.
 pub(super) fn show_this(lua: &Lua, h: FrameHandle) {
     if is_tooltip(lua, h) && !super::tooltip::show_this_override(lua, h) {
         return;
@@ -197,14 +197,14 @@ pub(super) fn show_this(lua: &Lua, h: FrameHandle) {
     notify_visibility(lua, h, true);
 }
 
-/// `HideThis` (`0x491830`), live: the frame's own step, in which the hovered frame loses the hover
-/// and hears `OnLeave` (`CSimpleTop::UnregisterForEvent` `0x495900`), then each child's, then its
-/// `OnHide`.
+/// The frame's hide (`0x491830`), live: the frame's own step, in which the hovered frame loses the
+/// hover and hears `OnLeave` (the UI root's event unregister, `0x495900`), then each child's, then
+/// its `OnHide`.
 pub(super) fn hide_this(lua: &Lua, h: FrameHandle) {
     hide_step(lua, h, true);
 }
 
-/// `Hide` on `h` without its kind's `HideThis` override; its descendants still take theirs.
+/// `Hide` on `h` without its kind's hide override; its descendants still take theirs.
 pub(super) fn hide_without_override(lua: &Lua, h: FrameHandle) {
     {
         let mut model = crate::script::model_mut_of(lua);
@@ -258,7 +258,7 @@ fn hide_step(lua: &Lua, h: FrameHandle, kind_override: bool) {
     notify_visibility(lua, h, false);
 }
 
-/// Whether `h` is a live GameTooltip, whose `ShowThis`/`HideThis` overrides run before the base.
+/// Whether `h` is a live GameTooltip, whose show and hide overrides run before the base.
 fn is_tooltip(lua: &Lua, h: FrameHandle) -> bool {
     lua.app_data_ref::<crate::script::ModelCell>()
         .expect("model app_data")
@@ -267,7 +267,7 @@ fn is_tooltip(lua: &Lua, h: FrameHandle) -> bool {
         .is_some_and(|g| g.kind == crate::widget::FrameKind::GameTooltip)
 }
 
-/// A frame's own show or hide notify (`OnLayerShow` `0x4902d0`, `OnLayerHide` `0x490300`): its
+/// A frame's own show or hide notify (the layer show `0x4902d0`, the layer hide `0x490300`): its
 /// `OnShow` or `OnHide` unless it is in its XML load, and the kind overrides around it.
 fn notify_visibility(lua: &Lua, h: FrameHandle, visible: bool) {
     let id = {
@@ -276,8 +276,8 @@ fn notify_visibility(lua: &Lua, h: FrameHandle, visible: bool) {
             return;
         }
         if !visible {
-            // `CSimpleButton`'s hide notify un-presses it, unless disabled or locked, before the
-            // base notify, so a button hidden while held comes back unpushed.
+            // The button's hide notify un-presses it, unless disabled or locked, before the base
+            // notify, so a button hidden while held comes back unpushed.
             super::button::edge(&mut model, h, ButtonState::on_hide);
         }
         (!model.xml_loading.contains(&h)).then(|| model.frame_id(h))
@@ -345,8 +345,8 @@ pub(super) fn fire_visibility_changes(lua: &Lua, changed: Vec<FrameHandle>) {
             let mut model = crate::script::model_mut_of(lua);
             super::object::toplevel::raise_on_show(&mut model, h);
         } else {
-            // `CSimpleButton`'s hide notify (`+0x34`) un-presses it, unless disabled or locked,
-            // before the base notify, so a button hidden while held comes back unpushed.
+            // The button's hide notify (`+0x34`) un-presses it, unless disabled or locked, before
+            // the base notify, so a button hidden while held comes back unpushed.
             let mut model = crate::script::model_mut_of(lua);
             super::button::edge(&mut model, h, ButtonState::on_hide);
         }

@@ -10,8 +10,8 @@
 //!   counts only within the 0.1 yd snap of its plane, and a crossing within about 1e-4 of the
 //!   nearest face hit still wins.
 //! - The terrain race: the WMO hit is dropped only when terrain on the same segment is strictly
-//!   nearer (`GetAreaID` arbitrates alike). Terrain above the eye is off the segment, so a tunnel
-//!   under a hill stays inside.
+//!   nearer (the area lookup arbitrates alike). Terrain above the eye is off the segment, so a
+//!   tunnel under a hill stays inside.
 //!
 //! The verdict is the in-group plus, for a portal win, the across-group: the containing-group set,
 //! each flooded as its own root. An exterior winner or no crossing is outside.
@@ -204,10 +204,10 @@ pub(crate) fn down_ray_pick(
     }
 }
 
-/// The zone-text ray length, the client's1000.0; the render probe's is 1760.
+/// The zone-text ray length, the client's 1000.0; the render probe's is 1760.
 const ZONE_RAY_LEN: f32 = 1000.0;
 
-/// The position-cast indoor predicate, faces only: the CGLight node's down-ray attach casts
+/// The position-cast indoor predicate, faces only: the light node's down-ray attach casts
 /// [`ZONE_RAY_LEN`] down, races terrain against WMO faces with the WMO winning ties, and classifies
 /// the winning group's flags against `outdoor_mask`. The classify has two sinks:
 ///
@@ -229,9 +229,9 @@ pub(crate) fn area_down_ray(
         .and_then(|c| (!c.outdoor).then_some(c.group))
 }
 
-/// [`area_down_ray`] for linking a world object to a group (`CMap::LinkIntersectMapObjDef`
-/// `0x7c25d0`): an interior group takes part only when the object's own point `mid` lies in its
-/// authored box, so a cast through a hole in an exterior floor cannot claim a room beneath it.
+/// [`area_down_ray`] for linking a world object to a group (the map's object link, `0x7c25d0`): an
+/// interior group takes part only when the object's own point `mid` lies in its authored box, so a
+/// cast through a hole in an exterior floor cannot claim a room beneath it.
 pub(crate) fn link_down_ray(
     tris: &[Vec<[[f32; 3]; 3]>],
     bounds: &[Option<([f32; 3], [f32; 3])>],
@@ -256,7 +256,7 @@ pub(crate) fn link_down_ray(
 }
 
 /// Whether a group can take a link from an object at `mid`: an exterior one always, an interior
-/// one only when its MOGI box contains the point (`0x7c26a1` → `CAaBox::ContainsPoint`, no slack).
+/// one only when its MOGI box contains the point (`0x7c26a1`, a box containment test, no slack).
 /// A missing row admits.
 fn admits_link(nav: Option<&WmoGroupNav>, mid: [f32; 3]) -> bool {
     nav.is_none_or(|g| {
@@ -303,9 +303,9 @@ pub(crate) fn down_ray_claim(
 
 /// The same claim cast upward: the containment lane's retry, and only that. The reference anchors a
 /// GameObject's light node at its world bounding-box centre (`[node+0x5c]`), and that box is the M2
-/// header's authored one (the reference copies `MD20+0xB4`, not the collision box copies), which
-/// can put a particle-heavy model's anchor 40 yd under its floor. The reference retries 1000 yd
-/// upward. No terrain race: a cast up from under a floor cannot lose to the ground below it.
+/// header's authored one (the model load copies `MD20+0xB4`, not the collision box), which can put
+/// a particle-heavy model's anchor 40 yd under its floor. The reference retries 1000 yd upward. No
+/// terrain race: a cast up from under a floor cannot lose to the ground below it.
 pub(crate) fn up_ray_claim(
     tris: &[Vec<[[f32; 3]; 3]>],
     bounds: &[Option<([f32; 3], [f32; 3])>],

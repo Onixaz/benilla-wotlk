@@ -1,15 +1,15 @@
-//! The chat language scramble, the reference's: the server sends foreign speech in plaintext beside
-//! a language id, and the client garbles it.
+//! The chat language scramble, as the reference does it: the server sends foreign speech in
+//! plaintext beside a language id, and the client garbles it.
 //!
-//! The line alternates separator runs and words. Each word is hashed once with case-folded
-//! `SStrHash`; it is understood when `hash % 300 < skill`, and otherwise the same hash picks a
+//! The line alternates separator runs and words. Each word is hashed once with the case-folded
+//! string hash; it is understood when `hash % 300 < skill`, and otherwise the same hash picks a
 //! substitute of its byte length from `LanguageWords.dbc`, which takes the source's case letter by
 //! letter. The result is a pure function of the word's bytes. The three call sites differ only in
 //! [`Garble`]'s flags and cap: chat, the gossip greeting, item text.
 
 use crate::LanguageWords;
 
-/// `SStrHash`'s 16-entry mix table, not Storm's 0x500-entry crypt table: a byte mixes as
+/// The string hash's 16-entry mix table, not the 0x500-entry crypt table: a byte mixes as
 /// `T[hi] - T[lo]`.
 const HASH_TABLE: [u32; 16] = [
     0x486e26ee, 0xdcaa16b3, 0xe1918eef, 0x202dafdb, 0x341c7dc7, 0x1c365303, 0x40ef2d37, 0x65fd5e49,
@@ -64,7 +64,7 @@ impl Garble {
     };
 }
 
-/// `SStrHash`, case-folded with a zero seed as the reference calls it. The fold is ASCII-only
+/// The string hash, case-folded with a zero seed as the reference calls it. The fold is ASCII-only
 /// (`a`-`z` up, `/` to `\`), and the walk stops at a NUL, both as the reference does.
 fn sstr_hash_folded(bytes: &[u8]) -> u32 {
     let mut s1: u32 = 0x7FED_7FED;
@@ -142,7 +142,7 @@ fn is_word_char(cp: u32) -> bool {
 pub fn garble(words: &LanguageWords, language: u32, skill: u32, src: &str, mode: Garble) -> String {
     let cap = mode.dst_size.saturating_sub(1);
     if language == 0 || skill >= FLUENT_SKILL {
-        // `SStrCopy`: untokenized, so separator runs stay as they are.
+        // A plain string copy: untokenized, so separator runs stay as they are.
         return truncate_utf8(src, cap).to_string();
     }
     let Some(pool) = words.pool(language) else {
@@ -253,7 +253,7 @@ fn stamp_case(out: &mut Vec<u8>, source: &[u8], substitute: &[u8], cap: usize) {
     }
 }
 
-/// The verbatim paths' `SStrCopy`, at most `cap` bytes. Deviation: it stops at a codepoint
+/// The verbatim paths' string copy, at most `cap` bytes. Deviation: it stops at a codepoint
 /// boundary where the reference's byte copy can split one, because a `&str` must stay UTF-8.
 fn truncate_utf8(s: &str, cap: usize) -> &str {
     if s.len() <= cap {

@@ -59,7 +59,7 @@ impl<T: Copy> IdMap<T> {
 /// The Rust-side model behind the Lua VM, in `lua.app_data`. It holds no mlua handles, whose
 /// persistent count the vendored `LUAI_MAXCSTACK` caps.
 pub(crate) struct Model {
-    /// Which FrameScript state this VM is: it picks the event table and the frame types.
+    /// Which script state this VM is: it picks the event table and the frame types.
     pub(crate) vm: super::glue::VmKind,
     /// Every discovered addon in load order: the AddOn API's registry, filled at world entry.
     pub(crate) addons: Vec<super::addon::AddOnInfo>,
@@ -157,10 +157,11 @@ pub(crate) struct Model {
     pub(crate) region_data: crate::widget::HandleMap<RegionHandle, RegionData>,
     /// Each frame's backdrop plate (`<Backdrop>` or `SetBackdrop`, the client's `frame+0x1ac`).
     pub(crate) backdrops: crate::widget::HandleMap<FrameHandle, backdrop::Backdrop>,
-    /// `CSimpleHTML`'s state: element fonts `+0x350`, link format `+0x360`, content nodes `+0x340`.
+    /// The SimpleHTML widgets' state: element fonts `+0x350`, link format `+0x360`, content nodes
+    /// `+0x340`.
     pub(crate) simple_html: simplehtml::SimpleHtmlStates,
-    /// Named `<Font>` objects by lowercased name, as 1.12 matches them with `SStrCmpI`; read them
-    /// only through `font_object`, where the fold lives.
+    /// Named `<Font>` objects by lowercased name, as 1.12 matches them case-insensitively; read
+    /// them only through `font_object`, where the fold lives.
     pub(crate) font_objects_by_lower: HashMap<String, FontObject>,
     /// Anchored regions' owner-relative rects from the last resolve; anchor-less ones are absent.
     pub(crate) region_resolved: crate::widget::HandleMap<RegionHandle, Rect>,
@@ -188,7 +189,7 @@ pub(crate) struct Model {
     pub(crate) on_size_changed_frames: Vec<FrameHandle>,
     /// Frames with an `OnUpdateModel` script, fired as a visible model pane paints.
     pub(crate) on_update_model_frames: Vec<FrameHandle>,
-    /// Frames inside their XML load, from `LoadXML` to their own `OnLoad` (`+0x130`, set at
+    /// Frames inside their XML load, from its start to their own `OnLoad` (`+0x130`, set at
     /// `0x4903b2`, cleared at `0x490421` before `OnLoad`): their `OnEnable`/`OnDisable` stay quiet.
     pub(crate) xml_loading: HashSet<FrameHandle>,
     /// Per model file, a pane clock's sequences and bounds, read by the host off the `MD20`.
@@ -197,7 +198,7 @@ pub(crate) struct Model {
     pub(crate) model_facts_wanted: Vec<String>,
     /// The model instances `SetModel` has made in this state, the last one's number.
     pub(crate) model_instances: u64,
-    /// Event name to its frames in registration order, never a set: `SignalEvent` dispatches in
+    /// Event name to its frames in registration order, never a set: the event signal dispatches in
     /// that order across frames. Re-registering keeps a frame's position.
     pub(crate) event_to_frames: HashMap<String, Vec<FrameHandle>>,
     pub(crate) frame_events: HashMap<FrameHandle, HashSet<String>>,
@@ -224,7 +225,7 @@ pub(crate) struct Model {
     /// capture, else the hovered frame, so a chorded press keeps the capture; cleared once no
     /// button is down. A title-region press captures nothing.
     pub(crate) mouse_capture: Option<FrameHandle>,
-    /// Per frame, when its last single `OnClick` fired: the client's `[CButton+0x334]`, the whole
+    /// Per frame, when its last single `OnClick` fired: the client's button `[+0x334]`, the whole
     /// double-click state. It has no button identity (left then right makes a double), is zeroed
     /// when a double fires, and nothing else clears it, not hide, disable or the cursor leaving.
     pub(crate) last_click: HashMap<FrameHandle, f64>,
@@ -245,7 +246,7 @@ pub(crate) struct Model {
     pub(crate) screen: Rect,
 
     /// Each unit token's state as pushed this frame, keyed lowercased because 1.12's resolver
-    /// matches with `SStrCmpI`: read it only through `unit`, where the fold lives.
+    /// matches case-insensitively: read it only through `unit`, where the fold lives.
     pub(crate) units_by_lower: HashMap<String, UnitState>,
     /// The snapshot of each unit a `target` chain can end on, by guid, which the app pushes for
     /// [`super::UnitGuids::chain_ends`]: a token with a hop that no push names reads its
@@ -312,8 +313,7 @@ pub(crate) struct Model {
     pub(crate) social: social::SocialState,
     /// Social calls (`AddFriend`, `RemoveFriend`, `SendWho`, …) queued.
     pub(crate) social_requests: Vec<social::SocialRequest>,
-    /// The client-local LFG slot words and comment (0x80 bytes) that Guild roster, ranks, MOTD and
-    /// info, sorted and filtered by the app, which holds the toggles.
+    /// Guild roster, ranks, MOTD and info, sorted and filtered by the app, which holds the toggles.
     pub(crate) guild: guild::GuildState,
     /// The rank editor's unsaved edits, apart from `guild` so a push cannot discard them.
     pub(crate) guild_control: guild::GuildRankEdit,
@@ -349,7 +349,7 @@ pub(crate) struct Model {
     pub(crate) language_table: Vec<(u32, String)>,
     pub(crate) zone_channel_catalog: Vec<super::channel::ZoneChannelRow>,
     pub(crate) channel_commands: Vec<super::channel::ChannelCommand>,
-    /// The recruitment auto-join latch `CGChat::m_guildRecruitmentMode`: 0 `STANDARD`, 1 `AUTO`.
+    /// The recruitment auto-join latch, the chat's guild-recruitment mode: 0 `STANDARD`, 1 `AUTO`.
     /// Boots at 1, as the reference writes `AUTO` for an untouched option.
     pub(crate) guild_recruitment_mode: u8,
     /// The recruitment mode moved: the chat cache's dirty signal.
@@ -370,7 +370,7 @@ pub(crate) struct Model {
     pub(crate) duel_requests: Vec<duel::DuelRequest>,
     /// The three mirror-timer records (`0xbd0b80`); `None` is an empty one.
     pub(crate) mirror_timers: [Option<mirror_timer::MirrorTimer>; 3],
-    /// `FollowUnit` and `FollowByName` calls; Lua sees following only as `AUTOFOLLOW_*` events.
+    /// `FollowUnit` and follow-by-name calls; Lua sees following only as `AUTOFOLLOW_*` events.
     pub(crate) follow_requests: Vec<follow::FollowRequest>,
     /// `SetView`, `SaveView`, `ResetView`, `NextView`, `PrevView` and `FlipCameraYaw` calls; the
     /// views reach Lua only as CVars, `cameraView` and `camera{Distance,Pitch,Yaw}{,A..D}`.
@@ -383,11 +383,11 @@ pub(crate) struct Model {
     pub(crate) pvp_toggles: u32,
     /// `SetPVP` calls, each the byte its `CMSG_TOGGLE_PVP` carries.
     pub(crate) pvp_sets: Vec<u8>,
-    /// `CGPlayer_C::GetPVPToggleTimer` (`0x6de7a0`) as the app computed it this frame, ms.
+    /// The player's PvP toggle timer (`0x6de7a0`) as the app computed it this frame, ms.
     pub(crate) pvp_toggle_timer: i32,
     /// The inspected player's arena teams by slot, resolved by the app.
     pub(crate) inspect_arena_teams: [Option<pvp::InspectArenaTeamView>; 3],
-    /// The `CGArenaTeamInfo` mirror: the three teams, the roster's sort and selection.
+    /// The arena-team mirror: the three teams, the roster's sort and selection.
     pub(crate) arena_teams: super::arena_team::ArenaTeams,
     /// The player's private honor fields; before the first push the six self getters read zeros.
     pub(crate) honor: Option<pvp::HonorState>,
@@ -418,10 +418,10 @@ pub(crate) struct Model {
     /// `PlayMusic` and `StopMusic` calls in call order, for the Lua music stream.
     pub(crate) music_queue: Vec<MusicRequest>,
 
-    /// The UI-load sound-suppression depth, the reference's, held across the whole UI load, so
-    /// login and `/reloadui` are silent. Only name-keyed `PlaySound` reads it: the call is dropped
-    /// before any lookup yet answers `(willPlay, handle)` as usual. `PlaySound(kitId)`,
-    /// `PlaySoundFile` and music play normally.
+    /// The UI-load sound-suppression depth, the reference's suppression counter, held across the
+    /// whole UI load, so login and `/reloadui` are silent. Only name-keyed `PlaySound` reads it:
+    /// the call is dropped before any lookup yet answers `(willPlay, handle)` as usual.
+    /// `PlaySound(kitId)`, `PlaySoundFile` and music play normally.
     pub(crate) sound_suppression: u32,
 
     /// The output devices the engine cached at its last init, after the "System Default" entry
@@ -443,8 +443,8 @@ pub(crate) struct Model {
     /// `(name, default)` per addon `RegisterCVar` that created a slot.
     pub(crate) cvar_registrations: Vec<(String, String)>,
     pub(crate) cvars_warned: HashSet<String>,
-    /// The lowercased names a Lua `SetCVar` refuses, the reference's flag bit2 (`rec+0x1c & 4`,
-    /// `CVar::SetReadOnly`). Kept beside the rows, so a host re-seed never clears it.
+    /// The lowercased names a Lua `SetCVar` refuses, the reference's read-only flag bit2
+    /// (`rec+0x1c & 4`). Kept beside the rows, so a host re-seed never clears it.
     pub(crate) cvars_read_only: HashSet<String>,
 
     /// The adapter's multisample formats in dropdown order, the reference's list of
@@ -481,7 +481,7 @@ pub(crate) struct Model {
     pub(crate) currency_holdings: Option<super::currency::CurrencyHoldings>,
     /// Categories closed by `ExpandCurrencyList`; every one starts open (`0x5afd90`).
     pub(crate) currency_collapsed: HashMap<u32, bool>,
-    /// The saved sets and the swap state (`CGEquipmentManager`).
+    /// The equipment manager's saved sets and swap state.
     pub(crate) equipment_manager: super::equipment_manager::EquipmentManager,
     /// Equipment set sends, for the app.
     pub(crate) equipment_set_requests: Vec<super::equipment_manager::EquipmentSetRequest>,
@@ -494,7 +494,7 @@ pub(crate) struct Model {
     /// `CMSG_SET_ACTION_BUTTON` each, so a drag swap is two sends.
     pub(crate) action_sets: Vec<(u32, u32)>,
     /// GlobalStrings keys of refusals this crate raises, fired by the app as `UI_ERROR_MESSAGE`
-    /// (the reference's `DisplayError`), each a literal from (stride `0x14`).
+    /// (the reference's error display), each a literal from its table (stride `0x14`).
     pub(crate) ui_errors: Vec<&'static str>,
 
     pub(crate) spellbook: spellbook::SpellBookState,
@@ -573,7 +573,7 @@ pub(crate) struct Model {
     pub(crate) battlefield_board: super::battlefield_score::ScoreBoard,
     /// `RequestBattlefieldScoreData()` calls.
     pub(crate) battlefield_score_requests: u32,
-    /// The `CGBattlefieldInfo` queue mirror: types, list, selection, slots and the sends.
+    /// The battlefield queue mirror: types, list, selection, slots and the sends.
     pub(crate) battlefield: super::battlefield_queue::BattlefieldInfo,
     /// Teammates' map positions, the flag carriers, the icon scale and position requests.
     pub(crate) battlefield_positions: Vec<super::battlefield_positions::BattlefieldPositionView>,
@@ -598,7 +598,7 @@ pub(crate) struct Model {
 
     /// The stance bar's forms, in bar order.
     pub(crate) shapeshift_forms: Vec<super::shapeshift::StoredShapeshiftForm>,
-    /// The player's raw form byte (`CGUnit_C::GetShapeshiftForm`), 0 unshifted or no player.
+    /// The player's raw shapeshift form byte, 0 unshifted or no player.
     pub(crate) shapeshift_form_byte: u8,
     /// The rune table `GetRuneType` reads.
     pub(crate) runes: super::rune::RuneState,
@@ -636,8 +636,8 @@ pub(crate) struct Model {
     pub(crate) pet_autocast_toggles: Vec<u32>,
     /// `PetStopAttack()` calls.
     pub(crate) pet_stop_attacks: u32,
-    /// `HasFullControl`, the reference's: set by `SMSG_CLIENT_CONTROL_UPDATE` for the player, boots
-    /// 1, and every cast, item and cursor gate refuses at 0.
+    /// `HasFullControl`, the reference's control flag: set by `SMSG_CLIENT_CONTROL_UPDATE` for the
+    /// player, boots 1, and every cast, item and cursor gate refuses at 0.
     pub(crate) player_control: bool,
     /// One `CMSG_PET_SET_ACTION` per entry, its one or two `(position, packed word)` pairs: the
     /// server tells the forms apart by body size, so a move's two pairs must not be flattened.
@@ -750,9 +750,9 @@ pub(crate) struct Model {
     pub(crate) trainer_buys: Vec<u32>,
     pub(crate) trainer_selection: Option<u32>,
     pub(crate) trainer_close: bool,
-    /// Collapsed skill-line ids (the complement of `m_expandedSkillLines`), reset per list.
+    /// Collapsed skill-line ids (the complement of the expanded set), reset per list.
     pub(crate) trainer_collapsed: HashSet<u32>,
-    /// Skill-line ids `SetTrainerSkillLineFilter` turned off (`m_skillLineFilter`), reset per list.
+    /// Skill-line ids `SetTrainerSkillLineFilter` turned off, reset per list.
     pub(crate) trainer_lines_off: HashSet<u32>,
 
     /// The open taxi map, the `TakeTaxiNode` calls, whether `CloseTaxiMap` ran and whether we ride.
@@ -761,13 +761,13 @@ pub(crate) struct Model {
     pub(crate) taxi_close: bool,
     pub(crate) taxi_riding: bool,
 
-    /// The open tradeskill window, its filters and repeat (`CGTradeSkillInfo`).
+    /// The open tradeskill window, its filters and repeat.
     pub(crate) trade_skill: tradeskill::TradeSkillModel,
 
-    /// The dungeon finder (`CGLookingForGroup`).
+    /// The dungeon finder.
     pub(crate) lfg: lfg::LfgModel,
 
-    /// The calendar (`CGCalendar`).
+    /// The calendar.
     pub(crate) calendar: calendar::CalendarModel,
 
     /// `EquipPendingItem`/`CancelPendingEquip` answers in order, and `ConfirmBindOnUse()` calls.
@@ -795,25 +795,25 @@ pub(crate) struct Model {
     pub(crate) item_text: Option<item_text::ItemTextState>,
     pub(crate) item_text_close: bool,
     pub(crate) item_text_page_turns: Vec<i32>,
-    /// The inbox, rows 1-based, kept past the window's close as `CGMailInfo::m_inbox` is.
+    /// The inbox, rows 1-based, kept past the window's close as the reference's inbox is.
     pub(crate) mail: mail::MailState,
-    /// A mailbox is open (`CGMailInfo::m_object`).
+    /// A mailbox is open.
     pub(crate) mail_mailbox: bool,
     /// The mail verbs' packets, in call order.
     pub(crate) mail_commands: Vec<mail::MailCommand>,
-    /// A mail command awaits its result (`m_commandPending`); most verbs wait it out.
+    /// A mail command awaits its result; most verbs wait it out.
     pub(crate) mail_command_pending: bool,
-    /// A send awaits its result (`m_sendPending`).
+    /// A send awaits its result.
     pub(crate) mail_send_pending: bool,
-    /// `CheckInbox`'s next allowed list query, on the `GetTime` clock (`m_nextUpdateTime`).
+    /// `CheckInbox`'s next allowed list query, on the `GetTime` clock.
     pub(crate) mail_next_update: Option<f64>,
     pub(crate) mail_send_money: u32,
     pub(crate) mail_send_cod: u32,
     /// The Send tab's attachments by send slot, each resolved to its guid when the send fires.
     pub(crate) mail_send_items: [Option<cursor::CursorItem>; 16],
-    /// `SetSendMailShowing`: the Send tab is up, so a bag click attaches (`m_sendMailShowing`).
+    /// `SetSendMailShowing`: the Send tab is up, so a bag click attaches.
     pub(crate) mail_send_showing: bool,
-    /// The refund-lock prompt is up (`m_lockSendItems`).
+    /// The refund-lock prompt is up.
     pub(crate) mail_lock_send_items: bool,
     /// `GetLatestThreeSenders`' answer, one entry per delivered sender.
     pub(crate) mail_latest_senders: Vec<Option<String>>,
@@ -823,7 +823,7 @@ pub(crate) struct Model {
     pub(crate) mail_stationery: u32,
     /// `Package.dbc`'s rows in file order, `GetPackageInfo`'s list.
     pub(crate) mail_packages: Vec<mail::PackageView>,
-    /// `SelectPackage`'s `Package.dbc` id (`m_selectedPackage`); 0 is none.
+    /// `SelectPackage`'s `Package.dbc` id; 0 is none.
     pub(crate) mail_package: u32,
     /// `HasNewMail()` (`0x56f350`), from `MSG_QUERY_NEXT_MAIL_TIME` and `SMSG_RECEIVED_MAIL`.
     pub(crate) has_new_mail: bool,
@@ -835,7 +835,7 @@ pub(crate) struct Model {
     pub(crate) auction_item_classes: Vec<auction::AuctionCategory>,
     pub(crate) auction_selected: [u32; 3],
     pub(crate) auction_sort: [Vec<(u8, bool)>; 3],
-    /// `CanSendQuery` per list and the get-all gate, the app's throttle.
+    /// The query gate per list and the get-all gate, the app's throttle.
     pub(crate) auction_can_query: [bool; 3],
     pub(crate) auction_can_get_all: bool,
     /// `SetAuctionsTabShowing`, which routes a bag right-click to the sell slot.
@@ -905,7 +905,7 @@ pub(crate) struct Model {
     pub(crate) spell_tooltips: HashMap<u32, super::SpellTooltipView>,
     pub(crate) spell_tooltip_asks: HashSet<u32>,
     /// The same for the views built against the player's pet, which the spell builder's unit
-    /// selector asks for (the reference's fourth argument).
+    /// selector asks for (the spell builder's fourth argument).
     pub(crate) pet_spell_tooltips: HashMap<u32, super::SpellTooltipView>,
     pub(crate) pet_spell_tooltip_asks: HashSet<u32>,
     /// The tooltips whose spell render missed its view, re-rendered when the app answers.
@@ -924,7 +924,7 @@ pub(crate) struct Model {
     /// deadline is a stamp in it, and `GetQuestTimers` subtracts per call, as the reference does.
     /// A `Cell`: pushed every frame, read by the quest timer verbs alone (`ModelCell`).
     pub(crate) server_unix_time: std::cell::Cell<Option<f64>>,
-    /// The daily quest reset in server unix seconds (`CGQuestLog::SetServerTime` `0x5dff40`).
+    /// The daily quest reset in server unix seconds (`0x5dff40`).
     pub(crate) quest_reset_unix: std::cell::Cell<Option<f64>>,
     /// `GetMoney()` in copper, from `PLAYER_FIELD_COINAGE`.
     pub(crate) money: u64,
@@ -1097,7 +1097,7 @@ impl Model {
 }
 
 impl Model {
-    /// A named font object, matched case-insensitively (ASCII) as the client's `SStrCmpI` does.
+    /// A named font object, matched case-insensitively (ASCII) as the client's compare does.
     pub(crate) fn font_object(&self, name: &str) -> Option<&FontObject> {
         if name.bytes().any(|b| b.is_ascii_uppercase()) {
             self.font_objects_by_lower.get(&name.to_ascii_lowercase())

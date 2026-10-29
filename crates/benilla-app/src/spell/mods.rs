@@ -1,6 +1,6 @@
 //! The talent spell-modifier tables: two `i32[96][31]` tables, filled by `0x7fdc60` from
-//! `SMSG_SET_FLAT_SPELL_MODIFIER` / `SMSG_SET_PCT_SPELL_MODIFIER` and read by `GetSpellModifiers
-//! 0x7fd970`.
+//! `SMSG_SET_FLAT_SPELL_MODIFIER` / `SMSG_SET_PCT_SPELL_MODIFIER` and read by the modifier pass
+//! (`0x7fd970`).
 //!
 //! The cell index is `mask_bit * 31 + op` on both sides: the first wire byte is the
 //! `SpellFamilyFlags` bit (0..95), the second the SpellModOp (0..30), then the `u32` value. A
@@ -26,15 +26,16 @@ const OPS: usize = 31;
 const BITS: usize = 96;
 const CELLS: usize = BITS * OPS;
 
-/// `SPELLMOD_COST`, read by [`crate::spell::usable::power_cost`] (`GetPowerCost 0x8012f0`).
+/// `SPELLMOD_COST`, read by [`crate::spell::usable::power_cost`] (the power-cost lookup,
+/// `0x8012f0`).
 pub(crate) const OP_COST: u8 = 14;
-/// `SPELLMOD_CASTING_TIME`, applied by `GetCastTime 0x7ff180`.
+/// `SPELLMOD_CASTING_TIME`, applied by the cast-time lookup (`0x7ff180`).
 pub(crate) const OP_CAST_TIME: u8 = 10;
-/// `GetMinMaxRange 0x7ff480` applies op 5 to its maximum.
+/// The range lookup (`0x7ff480`) applies op 5 to its maximum.
 pub(crate) const OP_RANGE: u8 = 5;
-/// `GetSpellRadius 0x8019c0` applies op 6 before the reticle's 20-yard cap.
+/// The radius lookup (`0x8019c0`) applies op 6 before the reticle's 20-yard cap.
 pub(crate) const OP_RADIUS: u8 = 6;
-/// `StartSpellCooldown 0x805d70` applies op 21 to `startRecoveryTime`.
+/// The cooldown start (`0x805d70`) applies op 21 to `startRecoveryTime`.
 pub(crate) const OP_GCD: u8 = 21;
 /// `0x7fef60` and the tooltip apply op 11 to both recovery columns.
 pub(crate) const OP_COOLDOWN: u8 = 11;
@@ -126,7 +127,7 @@ impl SpellModifiers {
         self.class_family = 0;
     }
 
-    /// The two family gates of `GetSpellModifiers 0x7fd970` (`SpellFamilyName` nonzero and the
+    /// The two family gates of the modifier pass, `0x7fd970` (`SpellFamilyName` nonzero and the
     /// class's, `AttributesEx3` bit 29 clear).
     fn gates_pass(&self, d: &SpellDisplay) -> bool {
         d.spell_family != 0
@@ -160,9 +161,9 @@ impl SpellModifiers {
         }
     }
 
-    /// `GetSpellModifiers 0x7fd970` for one spell and op. `None` covers all four of its false
-    /// exits: the three gates and both sums zero. The op range check is ours; the reference's
-    /// call sites all pass a literal.
+    /// The modifier pass (`0x7fd970`) for one spell and op. `None` covers all four of its false
+    /// exits: the three gates and both sums zero. The op range check is ours; the reference's call
+    /// sites all pass a literal.
     fn modifiers(&self, d: &SpellDisplay, op: u8) -> Option<SpellMod> {
         if !self.gates_pass(d) || usize::from(op) >= OPS {
             return None;
@@ -215,7 +216,7 @@ impl SpellModifiers {
         })
     }
 
-    /// The software-float applier `0x7fdbe0` that `GetEffectPoints` calls
+    /// The software-float applier `0x7fdbe0` that the effect-points lookup calls
     /// ([`benilla_formats::soft_modify`]).
     pub(crate) fn apply_soft(&self, d: &SpellDisplay, op: u8, value: f32) -> f32 {
         self.modifiers(d, op).map_or(value, |m| {
@@ -223,7 +224,7 @@ impl SpellModifiers {
         })
     }
 
-    /// `GetMinMaxRange` modifies only the maximum at its common tail, after the moving bonus. The
+    /// The range lookup modifies only the maximum at its common tail, after the moving bonus. The
     /// on-next-swing `Attributes & 0x404` arm returns before that tail.
     pub(crate) fn min_max_range(
         &self,
@@ -477,8 +478,8 @@ mod tests {
         );
     }
 
-    /// `GetCastTime` applies op 10 after resolving the DBC row; an instant modifier lifts the
-    /// moving-cast refusal for Frostbolt, while another class's spell keeps its cast time.
+    /// The cast-time lookup applies op 10 after resolving the DBC row; an instant modifier lifts
+    /// the moving-cast refusal for Frostbolt, while another class's spell keeps its cast time.
     #[test]
     fn cast_time_uses_the_live_modifier() {
         let data = benilla_formats::wow_data_or_skip!();

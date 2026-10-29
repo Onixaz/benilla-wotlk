@@ -55,7 +55,7 @@ pub struct QuestLogEntryView {
     /// `GetQuestLogCompletionText` (`0x5e06d0`): the template's end text, or its objectives text
     /// when the end text is empty or flag `0x40000` is set, through the quest text parser.
     pub completion_text: String,
-    /// `ComputeBlobQuestObjectives` (`0x5e2950`): bit `i` an open kill or GameObject objective,
+    /// The map blob's objective mask (`0x5e2950`): bit `i` an open kill or GameObject objective,
     /// `4 + i` an item short, `10 + i` a drop not carried, `0x10000` an unmet event; all ones once
     /// complete, 0 when failed.
     pub poi_objectives: u32,
@@ -118,9 +118,9 @@ pub struct QuestLogState {
     pub hidden_quest_ids: Vec<u32>,
 }
 
-/// `IsQuestCompleteAt` (`0x58bcb0`), which the greeting and gossip active rows read: the quest's
-/// visible log row is complete, or holds no objective and has not failed (`HasNoObjectives`
-/// `0x5e10b0`). A quest off the visible rows answers false, as its index lookup misses.
+/// The quest-complete test (`0x58bcb0`), which the greeting and gossip active rows read: the
+/// quest's visible log row is complete, or holds no objective and has not failed (`0x5e10b0`). A
+/// quest off the visible rows answers false, as its index lookup misses.
 pub(crate) fn quest_complete_at(log: &QuestLogState, quest_id: u32) -> bool {
     log.entries
         .iter()
@@ -130,7 +130,7 @@ pub(crate) fn quest_complete_at(log: &QuestLogState, quest_id: u32) -> bool {
 
 impl super::UiScript {
     /// Push the quest-log snapshot. A watch holds while any quest row, visible or folded, carries
-    /// its id (`CGQuestLog::Update` `0x5e6940`), so a collapse never prunes.
+    /// its id (`0x5e6940`), so a collapse never prunes.
     pub fn set_quest_log(&mut self, state: QuestLogState) {
         let mut model = self.model_mut();
         model.quest_log = state;

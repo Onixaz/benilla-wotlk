@@ -1,4 +1,4 @@
-//! The focus `[0xbd07d0]`: `FocusUnit` and `ClearFocus` set it through `CGGameUI::SetFocusTarget`
+//! The focus `[0xbd07d0]`: `FocusUnit` and `ClearFocus` set it through the game UI's focus setter
 //! (`0x51ff20`), which signals `PLAYER_FOCUS_CHANGED` on a change. It rides
 //! [`super::UnitGuids::focus`], which the app's pushes keep, so `focus` resolves like any base.
 
@@ -13,14 +13,14 @@ impl super::UiScript {
         self.model_ref().unit_guids.focus
     }
 
-    /// `SetFocusTarget` from the engine: `BreakTarget`, `LeaveWorld` and `PetChangeHandler` clear
-    /// the focus with it.
+    /// The focus setter from the engine: the target break, the world leave and the pet-change
+    /// handler clear the focus with it.
     pub fn set_focus_guid(&mut self, guid: u64) {
         set_focus_target(&self.lua, guid);
     }
 }
 
-/// `CGGameUI::SetFocusTarget` (`0x51ff20`): a new guid is stored and signals
+/// The game UI's focus setter (`0x51ff20`): a new guid is stored and signals
 /// `PLAYER_FOCUS_CHANGED`. Its blocked arm, for tainted code, never runs here: benilla runs every
 /// chunk untainted.
 fn set_focus_target(lua: &Lua, guid: u64) {

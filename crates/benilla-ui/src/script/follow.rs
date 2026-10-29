@@ -1,9 +1,9 @@
 //! `FollowUnit` and `FollowByName`; each call queues a [`FollowRequest`] the app drains.
 //! `FollowUnit("target")` is a bare `/follow` and the `FOLLOWTARGET` binding. `FollowByName` calls
-//! the by-name resolver for players (`0x10`) who `CanAssist` and are alive, with its second
-//! argument as the exact-only flag: `UnitPopup.lua:623` passes 1, so the menu never prefix-matches
-//! someone else, while `/follow rag` may. benilla parses `/follow` in Rust, so these globals serve
-//! the stock UI and addons.
+//! the by-name resolver for players (`0x10`) who pass the assist check and are alive, with its
+//! second argument as the exact-only flag: `UnitPopup.lua:623` passes 1, so the menu never
+//! prefix-matches someone else, while `/follow rag` may. benilla parses `/follow` in Rust, so these
+//! globals serve the stock UI and addons.
 
 use mlua::Lua;
 
@@ -41,8 +41,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "FollowByName",
         lua.create_function(|lua, (name, exact): (String, Option<mlua::Value>)| {
-            // The reference reads this with `GetBoolOrDefault`, default false; here nil, false and
-            // 0 are false and any other value is true.
+            // The reference reads this as a boolean with default false; here nil, false and 0 are
+            // false and any other value is true.
             let exact = match exact {
                 None | Some(mlua::Value::Nil) | Some(mlua::Value::Boolean(false)) => false,
                 Some(mlua::Value::Integer(n)) => n != 0,

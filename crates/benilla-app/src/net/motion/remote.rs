@@ -20,7 +20,7 @@ use super::{yaw_of, Spline};
 pub(crate) struct RemoteMotion {
     pub(crate) wow_pos: [f32; 3],
     pub(crate) orientation: f32,
-    /// The `CMovement` `moveFlags` the mover last reported.
+    /// The movement object's `moveFlags` the mover last reported.
     pub(crate) flags: u32,
     /// The reported swim pitch, radians up, `0.0` unless `SWIMMING`.
     pub(crate) pitch: f32,
@@ -33,7 +33,7 @@ pub(crate) struct RemoteMotion {
     /// The takeoff Z of this arc, `None` if the mover entered view airborne; on landing,
     /// `fall_start_z - landing_z` is the fall height that gates the grunt and dust puff.
     pub(crate) fall_start_z: Option<f32>,
-    /// Not-yet-due relayed moves by fire-time, the reference's `CMovement+0x150` queue.
+    /// Not-yet-due relayed moves by fire-time, the reference's movement `+0x150` queue.
     pub(crate) pending: std::collections::VecDeque<PendingMove>,
     pub(crate) relay: RelayChain,
     /// Real-time ms and position of the last applied packet, `0.0` before the first; everything
@@ -190,7 +190,8 @@ fn idle_gate_disabled() -> bool {
     })
 }
 
-/// Square yards (0.0278 yd squared), compared in 2D; Z joins only while swimming.
+/// The reconcile tolerance in square yards (0.0278 yd squared), compared in 2D; Z joins only while
+/// swimming.
 const RECONCILE_TOL_SQ: f32 = 7.716e-4;
 
 /// One frame of the pre-fire reconcile: when the pose predicted at the fire-time misses `target`,
@@ -219,7 +220,7 @@ pub(super) fn reconcile_lerp(
     pos
 }
 
-/// The guard on the angular velocity.
+/// The dead zone on the facing interp's angular velocity.
 const FACING_DEAD_ZONE: f32 = 9.5367e-7;
 
 /// One frame of the pre-fire facing interp, a remote's only smoothed facing (shortest-arc rate into
@@ -281,8 +282,8 @@ pub(in crate::net) fn apply_move(
     // A merge through `0x75a07dff`: client-owned bits such as `ON_TRANSPORT` survive a relayed
     // word.
     rm.flags = move_flags::merge_server_authored(rm.flags, ev.flags);
-    // The root verb outranks the word, after the merge: `SetRoot` sets `0x1000` and wipes the
-    // motion bits (`& 0xffe07f00`); `ClearRoot` only clears the bit.
+    // The root verb outranks the word, after the merge: rooting sets `0x1000` and wipes the motion
+    // bits (`& 0xffe07f00`); unrooting only clears the bit.
     match ev.verb {
         benilla_protocol::RelayVerb::Root(true) => {
             rm.flags = (rm.flags | move_flags::ROOT) & super::modes::ROOT_APPLY_WIPE;
@@ -346,7 +347,7 @@ pub(in crate::net) fn extrapolate_remote_units(
             // Trace-only: joins a `rem` line to its `rly` lines.
             Option<&crate::net::Guid>,
             // Modes from `SMSG_SPLINE_MOVE_*`, which vmangos sends only for a unit it drives; a
-            // player's ride the pose, so the union is the reference's one `CMovement+0x40` word.
+            // player's ride the pose, so the union is the reference's one movement `+0x40` word.
             Option<&crate::net::UnitMoveModes>,
         ),
         (Without<Spline>, Without<ActiveMover>),
@@ -378,7 +379,7 @@ pub(in crate::net) fn extrapolate_remote_units(
         // transport rider (a transport-local pose) are not resolved.
         let airborne = rm.flags & move_flags::FALLING != 0;
         let afloat = rm.flags & (move_flags::SWIMMING | move_flags::FLYING) != 0;
-        // A flag-still mover is not integrated: `CMovement::Update`'s substep loop and the
+        // A flag-still mover is not integrated: the movement update's substep loop and the
         // per-mover tick both bail on `0x20ff`, so its pose is the last packet's. This also keeps a
         // standing mover from sinking where a WMO floor collider has not attached yet. `modes` is
         // the whole flags word and feeds `Support`; the gate reads only the pose's bits.
@@ -415,7 +416,8 @@ pub(in crate::net) fn extrapolate_remote_units(
                     vel,
                     time.delta(),
                     crate::player::mover::Support {
-                        // The reference is true for an uncharmed player, so the step height is 1.0.
+                        // The reference's step-height predicate is true for an uncharmed player, so
+                        // the step height is 1.0.
                         rise: crate::player::STEP_UP_HEIGHT,
                         offset: if modes & move_flags::HOVER != 0 {
                             crate::player::HOVER_HEIGHT
@@ -451,7 +453,7 @@ pub(in crate::net) fn extrapolate_remote_units(
             }
         }
         // A mouse-turning mover sends no turn flag, only facing packets, so a standing, grounded
-        // mover's applied yaw latches the shuffle (the reference's display-facing latch, to
+        // mover's applied yaw latches the shuffle (the reference's display-facing latch, which sets
         // `+0xd58` `0x800`/`0x1000`, anims 11 and 12).
         let grounded_still = rm.flags
             & (move_flags::ANY_MOVE
@@ -522,8 +524,8 @@ pub(in crate::net) fn extrapolate_remote_units(
 
 /// A jump packet's ballistic seed: the vertical speed now (+Z up) and the frozen horizontal. The
 /// wire `zspeed` is down-positive (the 1.12 client sends -7.955547 rising; vmangos sets 7.958 up at
-/// `MovementHandler.cpp:322`), so the speed is `-zspeed - g * t`. `feather` picks7.0 over60.148 (on
-/// the mover's `SAFE_FALL`).
+/// `MovementHandler.cpp:322`), so the speed is `-zspeed - g * t`. `feather` picks 7.0 over 60.148
+/// (on the mover's `SAFE_FALL`).
 pub(crate) fn jump_seed(jump: Option<JumpInfo>, fall_time: u32, feather: bool) -> (f32, [f32; 2]) {
     let terminal = if feather {
         crate::player::FEATHER_TERMINAL_VELOCITY
@@ -576,7 +578,7 @@ impl RemoteMotion {
             pos[0] += self.jump_xy_vel[0] * dt;
             pos[1] += self.jump_xy_vel[1] * dt;
             // The local mover's own fall step. `SAFE_FALL` is inside the server-authored merge
-            // mask, so this word is the one tests.
+            // mask, so this word is the one the fall step tests.
             let terminal = if self.flags & move_flags::SAFE_FALL != 0 {
                 crate::player::FEATHER_TERMINAL_VELOCITY
             } else {
@@ -652,8 +654,8 @@ impl RemoteMotion {
         };
 
         let len = (dx * dx + dy * dy + dz * dz).sqrt();
-        // `GetCurrentSpeed`, shared with the local controller; its walk arm comes before the run
-        // arm, so a walking backpedal is a walk.
+        // The current-speed pick, shared with the local controller; its walk arm comes before the
+        // run arm, so a walking backpedal is a walk.
         let base = crate::net::current_speed(&speeds, self.flags);
         let mut pos = self.wow_pos;
         let speed = if len > 1.0e-4 {

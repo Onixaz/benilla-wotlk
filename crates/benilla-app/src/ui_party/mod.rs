@@ -1,5 +1,5 @@
 //! Group session state: the `SMSG_GROUP_LIST` mirror and the party system lines. vmangos sends no
-//! text for party events, so, as the reference does through `DisplayError`, each opcode composes
+//! text for party events, so, as the reference does through its error display, each opcode composes
 //! its own line and `SMSG_GROUP_LIST` composes joins and leaves from what the list finds held: the
 //! party slots and the raid roster.
 
@@ -102,8 +102,8 @@ pub struct GroupState {
     pub lfg_restricted: bool,
     /// Each list that set the LFG bit, one `PARTY_LFG_RESTRICTED` apiece.
     pub lfg_signals: u32,
-    /// `CGPartyInfo::m_realNumMembers` and `CGRaidInfo::m_realNumMembers`: the group outside a
-    /// battleground (`0x52bd60`, `0x572530`), kept across groups like the difficulties.
+    /// The party's and the raid's real member counts: the group outside a battleground
+    /// (`0x52bd60`, `0x572530`), kept across groups like the difficulties.
     pub real_party_members: u32,
     pub real_raid_members: u32,
 }

@@ -53,9 +53,9 @@ fn tab_trace_on() -> bool {
 /// and the mode reaches only the per-candidate filter.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ScanSide {
-    /// Mode 1: alive by the reads-dead triple, and `CanAttack`.
+    /// Mode 1: alive by the reads-dead triple, and the attack check.
     Enemy,
-    /// Mode 2: `CanAssist`, friendly or better, whose `IsPvP` leg refuses a creature without
+    /// Mode 2: the assist check, friendly or better, whose PvP-test leg refuses a creature without
     /// `UNIT_FLAG_PVP`; then health > 0 with no dynflag leg, so a feigning ally counts.
     Friend,
     /// Mode 3: not us, then, a member of our party slots. No health, dead or reaction leg.
@@ -171,8 +171,8 @@ pub(super) fn load_creature_types(mut commands: Commands, world_assets: Option<R
 /// Everything the scan reads, shared by TAB, the attack acquire and the pet bar's Attack.
 ///
 /// Deviation: our own body is never a candidate. The reference's friendly scan picks the player at
-/// some facings (`CanAssist(P, P)` is true), but our scoring always puts the player dead centre at
-/// distance 0, so CTRL-TAB would pick us on every press.
+/// some facings (the assist check of the player on itself is true), but our scoring always puts the
+/// player dead centre at distance 0, so CTRL-TAB would pick us on every press.
 #[derive(SystemParam)]
 #[allow(clippy::type_complexity)] // one bundled system param, the app's convention
 pub(crate) struct TargetScan<'w, 's> {
@@ -209,7 +209,7 @@ pub(crate) struct TargetScan<'w, 's> {
     reputations: Res<'w, Reputations>,
     names: Res<'w, NameCache>,
     creature_types: Option<Res<'w, CreatureTypes>>,
-    /// Every store, ours included: `CanAssist`'s owner chase must reach our body.
+    /// Every store, ours included: the assist check's owner chase must reach our body.
     stores: Query<'w, 's, &'static ObjectStore>,
     /// The owner chase's guid → entity map; `Option` because a UI-only harness has no net stack.
     index: Option<Res<'w, GuidIndex>>,
@@ -227,7 +227,7 @@ impl TargetScan<'_, '_> {
         self_store: Option<&ObjectStore>,
     ) -> bool {
         match side {
-            // Mode 1: the reads-dead triple, then `CanAttack`.
+            // Mode 1: the reads-dead triple, then the attack check.
             ScanSide::Enemy => {
                 if store.is_some_and(|s| s.0.unit_reads_dead()) {
                     return false;
@@ -240,7 +240,7 @@ impl TargetScan<'_, '_> {
                     self_store,
                 )
             }
-            // Mode 2: `CanAssist 0x7293d0`, then raw health (no reads-dead triple).
+            // Mode 2: the assist check (`0x7293d0`), then raw health (no reads-dead triple).
             ScanSide::Friend => {
                 can_assist(
                     store,
@@ -264,7 +264,7 @@ impl TargetScan<'_, '_> {
         }
     }
 
-    /// A guid's descriptor, whichever entity holds it: `CanAssist`'s owner chase.
+    /// A guid's descriptor, whichever entity holds it: the assist check's owner chase.
     fn store_of(&self, guid: u64) -> Option<&ObjectStore> {
         let entity = *self.index.as_ref()?.0.get(&guid)?;
         self.stores.get(entity).ok()
@@ -452,8 +452,8 @@ pub(super) fn commit(
     self_guid: Option<u64>,
     new_attackable: bool,
 ) -> CommitOutcome {
-    // `IsSelectable`, before the dedup: a non-selectable unit is a complete no-op that keeps the
-    // current target, for every selection writer.
+    // The selectable test, before the dedup: a non-selectable unit is a complete no-op that keeps
+    // the current target, for every selection writer.
     if !super::relations::is_selectable(target_store, self_guid) {
         return CommitOutcome::default();
     }
@@ -475,8 +475,8 @@ pub(super) fn commit(
         seam.stop(engaged);
     }
     let _ = seam.net.0.send(ClientCommand::SetSelection { guid });
-    // `CGGameUI::Target`'s tail (`0x524f59`): `stopAutoAttackOnTargetChange` cancels auto-repeat and
-    // leaves the swing stopped; off, the swing moves to the new target.
+    // The UI target change's tail (`0x524f59`): `stopAutoAttackOnTargetChange` cancels auto-repeat
+    // and leaves the swing stopped; off, the swing moves to the new target.
     let stop_on_change = seam.stops_on_target_change();
     if stop_on_change {
         seam.cancel_auto_repeat();
@@ -562,11 +562,11 @@ pub(super) fn cycle(
         guid,
         scan.store_at(entity),
         engaged,
-        // `IsSelectable`'s `CREATEDBY` clause reads it.
+        // The selectable test's `CREATEDBY` clause reads it.
         scan.self_guid(),
-        // `Attack`'s validation, which a mode-2 pick fails (reaction >= 4 against `CanAttack`'s <
-        // 4). A duelling friendly passes `CanAttack`'s duel arm, which reads no reaction, so the
-        // reference's `Attack` would re-swing at it; here it gets none.
+        // `Attack`'s validation, which a mode-2 pick fails (reaction >= 4 against the attack
+        // check's < 4). A duelling friendly passes the attack check's duel arm, which reads no
+        // reaction, so the reference's `Attack` would re-swing at it; here it gets none.
         side == ScanSide::Enemy,
     );
     if out.changed {
@@ -610,8 +610,8 @@ impl AttackPick<'_, '_> {
 
     /// The guid the swing, the pet's order or the cast goes at, or `None` once the refusal is
     /// raised. The candidate is the guid the caller passed, else the selection: `AttackTarget`
-    /// passes none, nor does the pet bar; TryCast passes the caster on a self-cast press. An empty
-    /// candidate or a unit the actor is friendly toward, the caster included, runs
+    /// passes none, nor does the pet bar; the cast attempt passes the caster on a self-cast press.
+    /// An empty candidate or a unit the actor is friendly toward, the caster included, runs
     /// `TargetNearestEnemy`, which commits its pick before this returns, so a call after this one
     /// reads it. The target is then the selection as it stands: a fruitless scan leaves a friendly
     /// unit selected for the final gate to refuse, and only an empty selection is
@@ -667,11 +667,11 @@ impl AttackPick<'_, '_> {
     }
 
     /// The reference's keep test: the actor's reaction to the held unit alone, not the final gate's
-    /// `CanAttack`, so a neutral mob is kept. A guid that does not resolve is kept as well, for the
-    /// second resolve to refuse. Actor → target is [`reaction_from_player`] (the at-war bit), never
-    /// `ring_reaction`. The reference's actor is the caller, a pet on the pet arm, which vmangos
-    /// gives its owner's faction (`Pet.cpp:248`). The reaction to oneself is 4 before any faction
-    /// rung, so a passed caster is never kept, FFA flag or not.
+    /// attack check, so a neutral mob is kept. A guid that does not resolve is kept as well, for
+    /// the second resolve to refuse. Actor → target is [`reaction_from_player`] (the at-war bit),
+    /// never `ring_reaction`. The reference's actor is the caller, a pet on the pet arm, which
+    /// vmangos gives its owner's faction (`Pet.cpp:248`). The reaction to oneself is 4 before any
+    /// faction rung, so a passed caster is never kept, FFA flag or not.
     fn keeps(&self, guid: u64) -> bool {
         if self.scan.self_guid() == Some(guid) {
             return false;
@@ -689,7 +689,7 @@ impl AttackPick<'_, '_> {
 }
 
 /// The final gate's target legs: alive, where a zero-health target passes iff `UNIT_DYNAMIC_FLAGS`
-/// bit 5 is set, and the full `CanAttack`. A target with no descriptor fails [`can_attack`]; the
+/// bit 5 is set, and the full attack check. A target with no descriptor fails [`can_attack`]; the
 /// reference always holds a live unit here.
 pub(super) fn attack_target_valid(
     store: Option<&ObjectStore>,
@@ -745,7 +745,7 @@ pub(super) fn remember_last_enemy(
     if !alive_enough {
         return;
     }
-    // Conjunct 5: `CanAttack(player, new)`.
+    // Conjunct 5: the attack check of the player on the new target.
     if can_attack(
         store,
         factions.as_deref(),
@@ -763,7 +763,7 @@ pub(super) fn auto_acquire_attacker(
     mut swings: MessageReader<SwingMessage>,
     self_player: Query<(Entity, &Guid), With<SelfPlayer>>,
     guids: Query<&Guid>,
-    // For `IsSelectable`: a `NOT_SELECTABLE` attacker is not acquired.
+    // For the selectable test: a `NOT_SELECTABLE` attacker is not acquired.
     stores: Query<&ObjectStore>,
     mut selection: ResMut<Selection>,
     mut seam: crate::creature_anim::AttackSeam,
@@ -815,8 +815,8 @@ mod tests {
         go_with(world, guid, None, engaged, self_guid, attackable)
     }
 
-    /// `go` with the new target's descriptor; `None` is an unresolved object, which skips
-    /// `IsSelectable`.
+    /// `go` with the new target's descriptor; `None` is an unresolved object, which skips the
+    /// selectable test.
     fn go_with(
         world: &mut World,
         guid: u64,
@@ -988,8 +988,7 @@ mod tests {
     }
 
     /// `stopAutoAttackOnTargetChange` on (`0x524f59`): an engaged switch stops and selects but
-    /// swings at nothing, and a running Auto Shot is cancelled (`Spell_C_CancelAutoRepeat
-    /// 0x807560`).
+    /// swings at nothing, and a running Auto Shot is cancelled (`0x807560`).
     #[test]
     fn stop_on_target_change_ends_the_attack_instead_of_moving_it() {
         let (mut world, rx) = commit_world();
@@ -1017,7 +1016,7 @@ mod tests {
         assert_eq!(world.resource::<crate::spell::AutoRepeatActive>().0, None);
     }
 
-    /// `IsSelectable` refuses the whole commit before the dedup: nothing is sent and the held
+    /// The selectable test refuses the whole commit before the dedup: nothing is sent and the held
     /// target survives. vmangos flags the pre-event Baron Rivendare this way
     /// (`instance_stratholme.cpp:224`).
     #[test]
@@ -1161,8 +1160,8 @@ mod tests {
         const TPL: u16 = 35;
         let reps = Reputations::default();
         let unit = |pairs: &[(u16, u32)]| ObjectStore(ObjectFields::from_pairs(pairs));
-        // With no catalog both reactions are neutral, which `CanAttack`'s mixed arm (< 4) admits,
-        // so the legs below decide.
+        // With no catalog both reactions are neutral, which the attack check's mixed arm (< 4)
+        // admits, so the legs below decide.
         let me = unit(&[(TPL, 1), (FLAGS, 1 << 3)]);
         let valid = |s: &ObjectStore| {
             attack_target_valid(Some(s), None, &reps, &crate::target::NoGroup, Some(&me))
@@ -1176,7 +1175,7 @@ mod tests {
         );
         assert!(
             !valid(&unit(&[(HEALTH, 120), (FLAGS, 1 << 25)])),
-            "NOT_SELECTABLE is one of CanAttack's disqualifiers"
+            "NOT_SELECTABLE is one of the attack check's disqualifiers"
         );
         // No descriptor on either side is refused.
         assert!(!attack_target_valid(
@@ -1245,8 +1244,8 @@ mod tests {
     const F_DUEL_ARBITER: u16 = 188;
     const F_PLAYER_FLAGS: u16 = 190;
     const F_DUEL_TEAM: u16 = 196;
-    /// `UNIT_FLAG_PVP_ATTACKABLE`, always on a player: it selects the player arms of `CanAttack`
-    /// and `CanAssist`.
+    /// `UNIT_FLAG_PVP_ATTACKABLE`, always on a player: it selects the player arms of the attack
+    /// check and the assist check.
     const CONTROLLED: u32 = 0x8;
     /// `OBJECT_FIELD_TYPE` for a Player object (OBJECT|UNIT|PLAYER).
     const TYPE_PLAYER: u32 = 0x19;
@@ -1255,9 +1254,9 @@ mod tests {
         ObjectStore(benilla_protocol::ObjectFields::from_pairs(pairs))
     }
 
-    /// With no `FactionTemplate.dbc` every reaction is neutral: attackable (`CanAttack`'s mixed arm
-    /// is < 4), not assistable (`CanAssist` needs >= 4). A same-team duel partner is friendly from
-    /// descriptor fields alone. Mode 2 keeps a feigning ally and drops a corpse.
+    /// With no `FactionTemplate.dbc` every reaction is neutral: attackable (the attack check's
+    /// mixed arm is < 4), not assistable (the assist check needs >= 4). A same-team duel partner is
+    /// friendly from descriptor fields alone. Mode 2 keeps a feigning ally and drops a corpse.
     #[test]
     fn the_two_sides_of_the_scan_never_pick_each_others_units() {
         use bevy::ecs::system::RunSystemOnce;
@@ -1326,7 +1325,7 @@ mod tests {
                 .expect("the scan runs as a one-shot system")
         };
 
-        // Mode 1: the neutral mob only; `CanAttack`'s player arm refuses every duel-team ally.
+        // Mode 1: the neutral mob only; the attack check's player arm refuses every duel-team ally.
         assert_eq!(pool(&mut world, ScanSide::Enemy), [MOB]);
         // Mode 2: with no camera the order is pure distance.
         assert_eq!(pool(&mut world, ScanSide::Friend), [ALLY, ALLY_FEIGN]);
@@ -1469,7 +1468,7 @@ mod tests {
         };
         let a = mob(&mut world);
         let b = mob(&mut world);
-        // A same-team duel partner: friendly reaction, so `CanAttack`'s PvP arm refuses.
+        // A same-team duel partner: friendly reaction, so the attack check's PvP arm refuses.
         let friend = world
             .spawn(store(&[
                 (F_TYPE, TYPE_PLAYER),
@@ -1503,7 +1502,7 @@ mod tests {
         // So does a clear.
         assert_eq!(select(&mut world, None), Some(0xB));
 
-        // The four conjuncts besides `CanAttack`, one state at a time.
+        // The four conjuncts besides the attack check, one state at a time.
         let dead_mob = world
             .spawn(store(&[(F_HEALTH, 0), (F_MAXHEALTH, 100)]))
             .id();

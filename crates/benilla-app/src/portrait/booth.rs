@@ -692,10 +692,10 @@ const STAND: u16 = 0;
 const SHUFFLE_LEFT: u16 = 11;
 const SHUFFLE_RIGHT: u16 = 12;
 
-/// The sequence a facing change arms (the `fcomp`): current facing below the angle arms
-/// ShuffleRight, above it ShuffleLeft; equal or NaN arms Stand, an active play, which is why
-/// `Model:SetSequence` cannot stick on these panes. Compared on the Lua-facing scalar `SetRotation`
-/// takes, so no sign conversion is involved.
+/// The sequence a facing change arms: current facing below the angle arms ShuffleRight, above it
+/// ShuffleLeft; equal or NaN arms Stand, an active play, which is why `Model:SetSequence` cannot
+/// stick on these panes. Compared on the Lua-facing scalar `SetRotation` takes, so no sign
+/// conversion is involved.
 pub(super) fn turn_shuffle(faced: f32, angle: f32) -> u16 {
     if faced < angle {
         SHUFFLE_RIGHT
@@ -707,9 +707,9 @@ pub(super) fn turn_shuffle(faced: f32, angle: f32) -> u16 {
 }
 
 /// How long one rotation keeps its shuffle stepping: the reference's `[+0x3ec] = clock() + 100`
-/// (milliseconds), drained per paint. Every path through the reference sets it, so a held arrow
-/// pushes it out each frame. Taking `spun` before the expiry check matches the `[+0x3e8]` latch: a
-/// paint after a `SetRotation` never expires.
+/// (milliseconds), drained per paint. Every path through the reference's rotation sets it, so a
+/// held arrow pushes it out each frame. Taking `spun` before the expiry check matches the
+/// `[+0x3e8]` latch: a paint after a `SetRotation` never expires.
 const SHUFFLE_HOLD_SECS: f64 = 0.100;
 
 /// The fraction of a cross-fade still to run, 1 to 0: the client's `(blendEnd − now) · blendRate`,
@@ -718,7 +718,7 @@ fn fade_frac(fade: &super::Fade, now: f64) -> f32 {
     ((fade.until - now) / f64::from(fade.span)) as f32
 }
 
-/// Arms one `AnimationData` id as the reference's turn does,
+/// Arms one `AnimationData` id as the reference's turn does, with arguments
 /// `(bone -1, id, variation -1, offset 0, rate 1.0, blend 1, primary 1)`:
 ///
 /// - variation -1: a frequency-weighted roll on every arm, expiry included (HumanMale authors
@@ -1521,8 +1521,8 @@ mod tests {
         player.animation(node(n)).map(|a| a.weight())
     }
 
-    /// Every arm makes carries `blendFlag = 1`, each over the incoming clip's `blendTime`; the
-    /// weights sum to 1 throughout.
+    /// Every arm the turn makes carries `blendFlag = 1`, each over the incoming clip's `blendTime`;
+    /// the weights sum to 1 throughout.
     #[test]
     fn a_turn_blends_both_ways_over_the_incoming_clips_own_time() {
         let (anims, catalog) = (
@@ -1593,8 +1593,8 @@ mod tests {
         );
     }
 
-    /// Inside a blend's first half refuses the arm; at or past halfway the arm takes the one
-    /// secondary slot.
+    /// Inside a blend's first half the reference refuses the arm; at or past halfway the arm takes
+    /// the one secondary slot.
     #[test]
     fn a_reversal_is_refused_inside_the_half_blend_and_displaces_it_after() {
         let (anims, catalog) = (

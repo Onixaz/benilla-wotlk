@@ -342,7 +342,7 @@ pub(super) fn spawn_loaded_placements(
                     // The MCSH ground shade, by a global world→tile→chunk lookup at the doodad's
                     // origin as the reference does, whatever tile registered it. An ADT doodad is
                     // the fixed 1.0 family, one class with the exterior WMO prop: its
-                    // `CMapDoodadDef` `[+0xa4]` is only ever 0.0, 0.5 or 1.0. The 2.5 boost and its
+                    // placement's `[+0xa4]` is only ever 0.0, 0.5 or 1.0. The 2.5 boost and its
                     // 3.3333/s ramp belong to the entity light node, which a doodad lacks; the
                     // 2.5's one reader.
                     let shade =
@@ -410,7 +410,7 @@ pub(super) fn spawn_loaded_placements(
                         mode,
                     );
                     // ADT doodads are exterior scene: from inside a WMO they draw only through a
-                    // portal window (`CWorldScene::CullDoodadsExterior` `0x799980`). Tagged per
+                    // portal window (the exterior doodad cull, `0x799980`). Tagged per
                     // submesh, as a placement has no root entity, each testing the placement's
                     // sphere (`DoodadFade::sphere`).
                     if !matches!(mode, SpawnMode::DivertOnly) {

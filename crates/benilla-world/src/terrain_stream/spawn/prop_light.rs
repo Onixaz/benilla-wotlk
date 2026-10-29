@@ -67,12 +67,12 @@ pub struct PropLobeLight {
 }
 
 /// The fixed-function light at world up that every lit particle of a model in a WMO room takes. A
-/// particle batch (TYPE 4) goes, which binds no vertex program, so the reference takes the
+/// particle batch (TYPE 4) goes through a draw path that binds no vertex program, so it takes the
 /// device-light commit: `max(N·L, 0)` over the room's committed words, not
-/// [`fold_interior_probe`]'s SH lobe. Slot 0 is the committed diffuse (rebuilds `1.25·P − 0.25·DC`,
-/// and one directional has `P == DC`), with `N·L` 0.9 on the fixed axis; slots 1..3 are the ≤3
-/// nearest MOLT points, diffuse only, under `1/(0.7d + 0.03d²)`. Unclamped: GL clamps the lit
-/// colour, the product, which the particle sim does.
+/// [`fold_interior_probe`]'s SH lobe. Slot 0 is the committed diffuse (the commit rebuilds
+/// `1.25·P − 0.25·DC`, and one directional has `P == DC`), with `N·L` 0.9 on the fixed axis; slots
+/// 1..3 are the ≤3 nearest MOLT points, diffuse only, under `1/(0.7d + 0.03d²)`. Unclamped: GL
+/// clamps the lit colour, the product, which the particle sim does.
 pub fn interior_light_up(
     ambient: [f32; 3],
     diffuse: [f32; 3],
@@ -83,8 +83,8 @@ pub fn interior_light_up(
     let axis = Vec3::new(-0.30822, 0.9, -0.30822).normalize();
     let mut lit = Vec3::from_array(ambient) + Vec3::from_array(diffuse) * axis.y.max(0.0);
     // The ≤3 nearest: the reference's 4-entry max-heap by squared distance minus slot 0. Membership
-    // is the light's disk window, as in the SH fold; the reference's is the reference's radius test
-    // against the proxy's WMO instances.
+    // is the light's disk window, as in the SH fold; the reference's is a radius test against the
+    // proxy's WMO instances.
     let mut near: Vec<(f32, &PropLobeLight)> = lights
         .iter()
         .map(|l| ((l.pos - ref_point).length(), l))

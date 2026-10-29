@@ -85,8 +85,8 @@ fn lines_view(s: &UnitState) -> UnitState {
 }
 
 /// The "Locked" line's colour (`0x6267fa`-`0x626840`): red while locked; opened by a known spell
-/// and no key, `GetSkillColor`'s rung for the match; else (a key, no requirement, no `Lock.dbc`
-/// row) the ramp's green. The line never takes the colourblind prefix.
+/// and no key, the skill colour ramp's rung for the match; else (a key, no requirement, no
+/// `Lock.dbc` row) the ramp's green. The line never takes the colourblind prefix.
 fn locked_line_tint(
     outcome: Option<crate::target::lock::LockOutcome>,
     matched: Option<crate::target::lock::LockMatch>,
@@ -170,8 +170,8 @@ fn drive_mouseover_tooltip(
             store,
             self_store,
         );
-        // The hovered guid, the pair writes to the reference and the token resolver reads for
-        // `"mouseover"`, so `UnitIsUnit` can match it.
+        // The hovered guid, the pair the mouseover publisher writes and the token resolver reads
+        // for `"mouseover"`, so `UnitIsUnit` can match it.
         let mut s = snapshot(store, guid, name, reaction, chr, types);
         enrich_unit(
             &mut s,
@@ -252,7 +252,7 @@ fn drive_mouseover_tooltip(
         return;
     }
     if let Some((entity, guid)) = go {
-        // The plate follows the cursor iff 12340 `CGGameObject_C::FloatingTooltip` (`0x70f630`)
+        // The plate follows the cursor iff 12340's GameObject floating-tooltip test (`0x70f630`)
         // finds the type's property `0x13` slot set; hoverability is a different slot.
         let cursor_seated = go_inputs
             .templates
@@ -317,7 +317,7 @@ fn drive_mouseover_tooltip(
         let mut lines: Vec<(String, TooltipTint)> = Vec::new();
         // The lock lines' keys all read "Requires %s" in enUS; only the binary tells them apart.
         let go_get = |key: &str| benilla_ui::strings::global(script.lua(), key);
-        // Both lock lines ask `IsLocked` (`0x70f160`), the resolver the click uses.
+        // Both lock lines ask the lock test (`0x70f160`), the resolver the click uses.
         let facts = crate::target::lock::go_facts(go_store.map(|s| (s, state)));
         let mut matched = None;
         let outcome = slots.map(|slots| {

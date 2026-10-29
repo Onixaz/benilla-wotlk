@@ -1,6 +1,6 @@
 //! The possess spell `[0xc234e0]`, which the stock possess bar (`BonusActionBarFrame.lua`) reads
-//! through `IsPossessBarVisible` and `GetPossessInfo`. `CGPetInfo::FindPossessedSpell` (`0x5d62a0`)
-//! takes it from the active player's own auras; it runs at world entry (`SendRequestPetInfo`,
+//! through `IsPossessBarVisible` and `GetPossessInfo`. The possess-spell lookup (`0x5d62a0`) takes
+//! it from the active player's own auras; it runs at world entry (the pet-info request,
 //! `0x5d6ede`), on a move of our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON` (`0x6d1ab1`) and on a
 //! far-sight change whose subject resolves (`0x6e5034`); a far sight with no subject clears it
 //! (`0x6e5042`), as does leaving the world. Every change fires `UPDATE_BONUS_ACTIONBAR`

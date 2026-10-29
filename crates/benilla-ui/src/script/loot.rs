@@ -291,8 +291,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // CloseLoot([noUI]) (`0x5888b0` → `CloseLoot(1, 0, noUI)`): `noUI` through `GetBoolOrDefault`
-    // with false, `LootFrame.lua:21`'s "unable to open the UI".
+    // CloseLoot([noUI]) (`0x5888b0` → the internal close with `(1, 0, noUI)`): `noUI` through the
+    // bool-or-default read with false, `LootFrame.lua:21`'s "unable to open the UI".
     g.set(
         "CloseLoot",
         lua.create_function(|lua, args: MultiValue| {

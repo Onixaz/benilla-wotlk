@@ -66,7 +66,7 @@ struct ZoneCache {
     zone_text: String,
     subzone_text: String,
     minimap_text: String,
-    /// .
+    /// Whether the last resolve was indoors.
     indoor: bool,
     /// The previous hit group (keyed as the module doc's deviation says).
     wmo_id: u32,
@@ -124,7 +124,7 @@ fn feed_zone_events(
     let real_zone_text = areas.0.name(zone).unwrap_or_default().to_string();
     let indoor = world.area_interior().is_some();
 
-    // The outdoor texts starts from.
+    // The outdoor texts the indoor naming starts from.
     let mut zone_text = real_zone_text.clone();
     let mut subzone_text = if leaf == zone {
         String::new()

@@ -1,4 +1,4 @@
-//! The `CWater0Ripple` driver math as pure functions: the reference's per-emission parameters, the
+//! The water-ripple driver math as pure functions: the reference's per-emission parameters, the
 //! record lifecycle and the render texgen.
 
 /// Ring pulse interval in seconds: `400 + U[0, 50)` ms (the roll `(50·rng) >> 32`).

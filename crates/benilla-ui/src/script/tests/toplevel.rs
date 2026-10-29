@@ -104,7 +104,8 @@ fn the_xml_toplevel_and_enable_keyboard_attributes_both_reach_their_methods() {
         s.eval::<bool>("return XmlTop:IsKeyboardEnabled()").unwrap(),
         "the XML attribute must reach the flag"
     );
-    // Off by default: the reference runs from the attribute or a call, never a constructor.
+    // Off by default: the reference's keyboard enable runs from the attribute or a call, never a
+    // constructor.
     s.run("Plain = CreateFrame('Frame', 'PlainKbd')").unwrap();
     assert!(!s.eval::<bool>("return Plain:IsKeyboardEnabled()").unwrap());
     s.run("Plain:EnableKeyboard(true)").unwrap();
@@ -257,8 +258,8 @@ fn the_scan_excludes_the_raised_frames_own_subtree() {
     );
 }
 
-/// The reference never writes the stratum (`+0xc0`), so a LOW toplevel frame raises within LOW
-/// only.
+/// The reference's raise never writes the stratum (`+0xc0`), so a LOW toplevel frame raises within
+/// LOW only.
 #[test]
 fn a_raise_can_never_lift_a_frame_out_of_its_stratum() {
     let mut s = script();
@@ -747,9 +748,9 @@ fn a_raise_with_a_hidden_child_keeps_the_windows_own_siblings_level() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `SetFrameLevel` (`0x49e9d0`) calls `CSimpleFrame::SetFrameLevel` with `propagate = 1`
-/// (`0x49ea50`): same-strata children move by the parent's step, a child in another strata stays,
-/// and a step up is capped at 128 (`0x4910d9`).
+/// `SetFrameLevel` (`0x49e9d0`) calls the frame's level set with `propagate = 1` (`0x49ea50`):
+/// same-strata children move by the parent's step, a child in another strata stays, and a step up
+/// is capped at 128 (`0x4910d9`).
 #[test]
 fn a_script_level_change_carries_the_same_strata_children() {
     let mut s = script();

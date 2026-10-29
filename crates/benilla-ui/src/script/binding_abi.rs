@@ -1,16 +1,16 @@
 //! The argument and error ABI every registered Lua C-binding of the 1.12 client opens with.
 //!
-//! The reference's helpers: `is-number` accepts tag 3 or a string coerced; `is-number-or-string`
-//! accepts tag 3 or 4; `tonumber` feeds, a double-to-int32 cast that truncates toward zero (the x87
-//! rounding control set to chop), so -2.9 is -2.
+//! The reference's helpers: `is-number` accepts tag 3 or a string that coerces to a number;
+//! `is-number-or-string` accepts tag 3 or 4; `tonumber` feeds a double-to-int32 cast that truncates
+//! toward zero (the x87 rounding control set to chop), so -2.9 is -2.
 //!
-//! A bad argument raises: the reference is `luaL_error`, which never returns (it ends in `longjmp`
-//! or `exit(1)`), so the `xor eax,eax; ret` after it is unreachable and the caller's statement is
-//! abandoned. An empty answer is settled per binding:
+//! A bad argument raises: the reference's error call is `luaL_error`, which never returns (it ends
+//! in `longjmp` or `exit(1)`), so the `xor eax,eax; ret` after it is unreachable and the caller's
+//! statement is abandoned. An empty answer is settled per binding:
 //!
 //! 1. push nil, one value (`UnitAffectingCombat` on a unit out of combat, or a token naming none);
 //! 2. zero values, distinct from nil to anything counting the returns (`arg.n`), reached only by a
-//!    `xor eax,eax; ret` that skips (`GetDefaultLanguage`'s failure edges);
+//!    `xor eax,eax; ret` that skips the raise (`GetDefaultLanguage`'s failure edges);
 //! 3. raise.
 
 use mlua::{Lua, Value};
@@ -28,10 +28,10 @@ pub(crate) fn ftol(n: f64) -> i32 {
     }
 }
 
-/// Shape A: `is-number`, `tonumber`, then the truncating, raising the binding's `Usage:` on
-/// failure. A missing argument fails like a wrong-typed one (the reference returns NULL past
-/// `L->top`); a numeric string passes. The reference stores a qword but the bindings consume only
-/// the low dword, hence `i32`.
+/// Shape A: `is-number`, `tonumber`, then the truncating cast, raising the binding's `Usage:` on
+/// failure. A missing argument fails like a wrong-typed one (the argument fetch returns NULL past
+/// `L->top`); a numeric string passes. The cast stores a qword but the bindings consume only the
+/// low dword, hence `i32`.
 ///
 /// Deviation: past ±2^63 Rust saturates where the x87 stores its integer-indefinite pattern,
 /// because no real argument reaches that range.
@@ -58,9 +58,9 @@ pub(crate) fn coerced_number(lua: &Lua, v: Option<Value>) -> f64 {
         .unwrap_or(0.0)
 }
 
-/// `is-number-or-string` then, raising the binding's `Usage:` on failure: a number is stringified
-/// (`UnitAffectingCombat(5)` passes here, then the unit resolver raises `Unknown unit name` for
-/// `"5"`), and nil, a boolean, a table or a function raises.
+/// `is-number-or-string` then the string fetch, raising the binding's `Usage:` on failure: a number
+/// is stringified (`UnitAffectingCombat(5)` passes here, then the unit resolver raises
+/// `Unknown unit name` for `"5"`), and nil, a boolean, a table or a function raises.
 pub(crate) fn string_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<String> {
     match lua.coerce_string(v)? {
         // Lossy: a Lua string is bytes, so invalid UTF-8 costs a glyph, never the call.
@@ -126,7 +126,7 @@ pub(crate) fn lua_number_text(v: f64) -> String {
     }
     const SIG: i32 = 14;
     let exp = v.abs().log10().floor() as i32;
-    // Re-derive the exponent from the rounded form: 9. rounds to 1e3 and changes style.
+    // Re-derive the exponent from the rounded form: 9.9999e2 rounds to 1e3 and changes style.
     let exp = {
         let probe = format!("{:.*e}", (SIG - 1) as usize, v);
         probe
@@ -157,7 +157,7 @@ fn trim_g(s: &str) -> &str {
     s.trim_end_matches('0').trim_end_matches('.')
 }
 
-/// `GetBoolOrDefault`, the reference's boolean argument coercion, which is not Lua truthiness:
+/// The reference's boolean argument coercion, which is not Lua truthiness:
 ///
 /// - absent (`None`, `LUA_TNONE`) takes `default`, but nil is false; a binding whose default is
 ///   true takes a `MultiValue`, since mlua turns a missing argument into nil
@@ -177,7 +177,7 @@ pub(crate) fn bool_or_default(v: Option<&Value>, default: bool) -> bool {
         Value::Nil => false,
         Value::Boolean(b) => *b,
         Value::LightUserData(_) => default,
-        // Truncated like the reference, testing only the low dword.
+        // Truncated like a number argument's cast, testing only the low dword.
         Value::Integer(i) => (*i as i32) != 0,
         Value::Number(n) => (*n as i64 as i32) != 0,
         Value::String(s) => {

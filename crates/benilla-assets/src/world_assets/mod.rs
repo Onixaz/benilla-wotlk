@@ -78,10 +78,10 @@ pub fn sprite_key(path: &str) -> String {
     }
 }
 
-/// The two files a UI sprite reference may live in, in the order of `TextureCreate`'s two-candidate
-/// chain (extension table `= {".tga", ".blp"}`): `.tga` first for a `.tga` reference, `.blp` first
-/// otherwise, and a miss on the first is silent. The sweeps that assert our own paths resolve call
-/// this too, so they cannot disagree with what draws.
+/// The two files a UI sprite reference may live in, in the order of the texture create's
+/// two-candidate chain (extension table `= {".tga", ".blp"}`): `.tga` first for a `.tga` reference,
+/// `.blp` first otherwise, and a miss on the first is silent. The sweeps that assert our own paths
+/// resolve call this too, so they cannot disagree with what draws.
 pub fn sprite_candidates(path: &str) -> [String; 2] {
     let stem = sprite_key(path);
     let normalized = normalize_path(path);
@@ -93,7 +93,7 @@ pub fn sprite_candidates(path: &str) -> [String; 2] {
     }
 }
 
-/// The texel size of a UI sprite, which `CSimpleTexture`'s size getters read (`[tex+0x144]`,
+/// The texel size of a UI sprite, which the texture region's size getters read (`[tex+0x144]`,
 /// `[tex+0x148]`) for a region with no authored size, one texel per FrameXML unit. Decoded, so
 /// layout gets the size the screen shows.
 pub fn sprite_dimensions(
@@ -172,8 +172,8 @@ fn decode_sprite_bytes(bytes: &[u8]) -> anyhow::Result<(u32, u32, Vec<u8>)> {
 }
 
 /// Read a file from the patch chain, then, for an `Interface\AddOns\` path, the loose addon folder:
-/// how art, fonts and audio an addon ships all load. The reference asks the install tree first (the
-/// reference's attempt #4 is the MPQ); the chain holds no `AddOns\` path, so the order is moot.
+/// how art, fonts and audio an addon ships all load. The reference asks the install tree first (its
+/// file open tries the MPQ fourth); the chain holds no `AddOns\` path, so the order is moot.
 pub fn read_chain_or_loose(
     chain: &Mutex<Chain>,
     loose_root: Option<&Path>,

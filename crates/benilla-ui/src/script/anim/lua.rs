@@ -35,8 +35,8 @@ const ANIM_SCRIPTS: [&str; 6] = [
     "OnUpdate",
 ];
 
-/// The compiled parameter list of an XML handler (`GetScriptByName`'s wrappers): an Animation's
-/// `OnFinished` takes `self` alone, a group's `self,requested`.
+/// The compiled parameter list of an XML handler (the reference's per-handler wrappers): an
+/// Animation's `OnFinished` takes `self` alone, a group's `self,requested`.
 pub(crate) fn script_parameters(script: &str, group: bool) -> &'static str {
     match script {
         "OnStop" => "self,requested",
@@ -193,7 +193,7 @@ fn usage(lua: &Lua, id: u32, text: &str) -> mlua::Error {
     mlua::Error::RuntimeError(format!("Usage: {}:{text}", name_of(lua, id)))
 }
 
-/// `CScriptRegion:CreateAnimationGroup([name [, inherits]])` (`0x49e350`).
+/// `Region:CreateAnimationGroup([name [, inherits]])` (`0x49e350`).
 pub(crate) fn create_group(lua: &Lua, owner: Owner, name: Option<String>) -> mlua::Result<Table> {
     let id = crate::script::model_mut_of(lua)
         .anims
@@ -227,8 +227,8 @@ pub(crate) fn create_anim(
     Ok((id, t))
 }
 
-/// An XML-built animation, not yet in an order list: `SortAnimations` places it at the group's
-/// `PostLoadXML` (`0x49c2a0`).
+/// An XML-built animation, not yet in an order list: the animation sort places it at the group's
+/// post-load (`0x49c2a0`).
 pub(crate) fn xml_anim(
     lua: &Lua,
     group: u32,
@@ -243,7 +243,7 @@ pub(crate) fn xml_anim(
     Ok((id, t))
 }
 
-/// `SortAnimations` (`0x49b1c0`): stop, then rebuild the order lists.
+/// The animation sort (`0x49b1c0`): stop, then rebuild the order lists.
 pub(crate) fn sort(lua: &Lua, group: u32) {
     run::group_stop(lua, group, false);
     crate::script::model_mut_of(lua).anims.sort(group);
@@ -325,7 +325,7 @@ fn install_script_methods(lua: &Lua, m: &Table, group: bool) -> mlua::Result<()>
                 Some(t) => t.get::<Option<Function>>(k)?,
                 None => None,
             };
-            // `FrameScript_HookWrapper`: the original, then the hook, with the same arguments.
+            // The script hook wrapper: the original, then the hook, with the same arguments.
             let func = match current {
                 None => hook,
                 Some(orig) => lua
@@ -339,7 +339,7 @@ fn install_script_methods(lua: &Lua, m: &Table, group: bool) -> mlua::Result<()>
     Ok(())
 }
 
-/// `GetObjectType`, `IsObjectType`, `GetName`, `GetParent` (`CScriptObject`, `0xac1520`'s base).
+/// `GetObjectType`, `IsObjectType`, `GetName`, `GetParent` (the script object base, `0xac1520`'s).
 fn install_object_methods(lua: &Lua, m: &Table, type_name: &'static str) -> mlua::Result<()> {
     let group = type_name == "AnimationGroup";
     let chain: &'static [&'static str] = match type_name {

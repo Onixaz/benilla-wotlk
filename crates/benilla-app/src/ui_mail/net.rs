@@ -81,7 +81,7 @@ fn on_next_mail_time(In(ev): In<SessionEvent>, mut pending: ResMut<MailPending>)
     }
 }
 
-/// `SMSG_SHOW_MAILBOX` (`0x56dbc0`): the server opens the window, as `TalkToMailbox` does.
+/// `SMSG_SHOW_MAILBOX` (`0x56dbc0`): the server opens the window, as the mailbox open does.
 fn on_show_mailbox(In(ev): In<SessionEvent>, mut mail: ResMut<MailOpen>) {
     if let SessionEvent::ShowMailbox { mailbox } = ev {
         mail.click(mailbox);
@@ -211,7 +211,7 @@ fn send_mail_result(result: MailResult, mail: &mut MailOpen, commands: &NetComma
     });
 }
 
-/// `ProcessAutoLootAttachments` (`0x570270`): the next attachment's take, refused locally when the
+/// The attachment auto-loot step (`0x570270`): the next attachment's take, refused locally when the
 /// purse cannot pay the COD; true when a take went out.
 fn next_auto_loot(
     mail: &mut MailOpen,
@@ -265,7 +265,7 @@ fn purge_if_empty(mail: &mut MailOpen, commands: &NetCommands, i: usize, reason:
     mail.effects.push(MailEffect::CloseInboxItem(i as u32 + 1));
 }
 
-/// `RemoveMoney` (`0x56f770`).
+/// The money take's result (`0x56f770`).
 fn remove_money(mail: &mut MailOpen, commands: &NetCommands, mail_id: u32) {
     let Some(i) = mail.index_of(mail_id) else {
         return;
@@ -275,7 +275,7 @@ fn remove_money(mail: &mut MailOpen, commands: &NetCommands, mail_id: u32) {
     mail.effects.push(MailEffect::InboxUpdate);
 }
 
-/// `RemoveItem` (`0x56f8d0`): the attachment by its guid low part, and the COD with it.
+/// The item take's result (`0x56f8d0`): the attachment by its guid low part, and the COD with it.
 fn remove_item(mail: &mut MailOpen, commands: &NetCommands, mail_id: u32, item_guid: u32) {
     let Some(i) = mail.index_of(mail_id) else {
         return;
@@ -292,7 +292,7 @@ fn remove_item(mail: &mut MailOpen, commands: &NetCommands, mail_id: u32, item_g
     mail.effects.push(MailEffect::InboxUpdate);
 }
 
-/// `RemoveMail` (`0x56dc70`): a returned or deleted mail leaves the rows and the total.
+/// The mail removal (`0x56dc70`): a returned or deleted mail leaves the rows and the total.
 fn remove_mail(mail: &mut MailOpen, mail_id: u32) {
     let Some(i) = mail.index_of(mail_id) else {
         return;

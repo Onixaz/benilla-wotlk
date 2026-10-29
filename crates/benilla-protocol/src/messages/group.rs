@@ -19,7 +19,7 @@ pub const GROUP_MEMBER_MAIN_TANK: u8 = 0x08;
 pub const GROUP_MEMBER_MAIN_ASSIST: u8 = 0x10;
 
 /// The member status bits: an `SMSG_GROUP_LIST` row's byte and the low byte of a member record's
-/// `u16` (`[rec+8]`, written by `0x6cfa96` and `FillPartyMemberState 0x6e12e0`).
+/// `u16` (`[rec+8]`, written by `0x6cfa96` and the member-state fill `0x6e12e0`).
 pub mod member_status {
     pub const OFFLINE: u8 = 0x00;
     pub const ONLINE: u8 = 0x01;
@@ -151,7 +151,7 @@ pub(super) struct GroupList {
 const GROUP_TYPE_BATTLEGROUND: u8 = 0x01;
 /// 3.3.5a's group-type raid bit (`0x6d8870` tests `& 2`); `& 1` is a battleground group.
 const GROUP_TYPE_RAID: u8 = 0x02;
-/// 3.3.5a's group-type LFG-restricted bit, `SetLfgRestricted`'s argument (`0x6d8da2`).
+/// 3.3.5a's group-type LFG-restricted bit, the argument of the LFG-restricted set (`0x6d8da2`).
 const GROUP_TYPE_LFG_RESTRICTED: u8 = 0x04;
 /// 3.3.5a's group-type LFG bit: an LFG list carries a status byte and the dungeon slot.
 const GROUP_TYPE_LFG: u8 = 0x08;
@@ -395,7 +395,7 @@ impl PartyMemberStatsInfo {
         self.status = Some(if online { status | bit } else { status & !bit });
     }
 
-    /// Fill the record from a member's live descriptor as `FillPartyMemberState 0x6e12e0` does,
+    /// Fill the record from a member's live descriptor as the member-state fill `0x6e12e0` does,
     /// when the member's object leaves view and just before the stats request, so the frame never
     /// reads 0/0. Values are raw; [`Self::shown_power`] divides at the read. `auras` are the
     /// member's live `(spell id, flags)` in slot order: each with an effect bit (`flags & 0x7`) is

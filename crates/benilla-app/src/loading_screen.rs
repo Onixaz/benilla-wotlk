@@ -4,10 +4,10 @@
 //! drawn in 1.12).
 //!
 //! Event-raised and readiness-cleared, as in the reference: it rises at the character pick's
-//! `Connected` edge and at `SMSG_TRANSFER_PENDING` (the reference's two entries into the
-//! reference's tail) and clears on a per-frame readiness poll. The reference's one blocking stretch
-//! (`SMSG_NEW_WORLD`'s defers onto the deadline heap) also suppresses input, which this client
-//! builds explicitly ([`input`]).
+//! `Connected` edge and at `SMSG_TRANSFER_PENDING` (the reference's two entries into the raise's
+//! tail) and clears on a per-frame readiness poll. The reference's one blocking stretch
+//! (`SMSG_NEW_WORLD`'s handler defers its work onto the deadline heap) also suppresses input, which
+//! this client builds explicitly ([`input`]).
 //!
 //! A destination snap only ends a raise's wait ([`LoadingScreen::snap_landed`]). The screen clears
 //! when the destination is scene-presentable ([`WorldLoadProgress`]), never on the body reaching
@@ -29,7 +29,7 @@ use benilla_world::world_map::CurrentMap;
 mod input;
 pub(crate) use input::CoverInput;
 
-// The bar, from the `LoadingScreen.cpp` descriptor table: entry {cx, cy, halfW, halfH}, rect [cx ±
+// The bar, from the loading screen's descriptor table: entry {cx, cy, halfW, halfH}, rect [cx ±
 // halfW·0.5] × [cy ± halfH·0.5], fill right edge left + progress·halfW; Border {0.5, 0.075, 0.600,
 // 0.050}, Fill {0.5, 0.075, 0.525, 0.025}. Viewport fractions, `cy` measured up from the bottom
 // edge (Bevy UI `bottom:`).
@@ -136,14 +136,14 @@ pub(crate) struct LoadingScreen {
     /// residency cannot clear a screen raised for the new one (at world entry the login vista is
     /// resident well before `SMSG_LOGIN_VERIFY_WORLD`).
     awaiting_snap: bool,
-    /// The map this screen's art resolves from, the reference's, set by every raise; `None` is its
-    /// `-1`, no backdrop. Not `CurrentMap`: vmangos can relocate a character inside
-    /// `Player::LoadFromDB` (`Player.cpp:15020`), under a live screen. Its writers: the reference
-    /// store a map id, store `-1`.
+    /// The map this screen's art resolves from, as the reference keeps one, set by every raise;
+    /// `None` is its `-1`, no backdrop. Not `CurrentMap`: vmangos can relocate a character inside
+    /// `Player::LoadFromDB` (`Player.cpp:15020`), under a live screen. Its writers: the two raises
+    /// store a map id, three other sites store `-1`.
     map: Option<u32>,
-    /// The reference's texture handle, which latches the art: the reference reads the map id only
-    /// to reject `-1`, and the reference skip the resolver while it is set. Cleared by
-    /// [`Self::dismiss`], never by a raise.
+    /// The reference's texture handle, which latches the art: the draw reads the map id only to
+    /// reject `-1`, and skips the resolver while the handle is set. Cleared by [`Self::dismiss`],
+    /// never by a raise.
     art_resolved: bool,
     /// Plain black cover with no art or bar, for the world→glue cut; dropped once the state leaves
     /// `InWorld`.
@@ -214,8 +214,8 @@ impl LoadingScreen {
 
     /// The destination snap (`SMSG_NEW_WORLD` or `SMSG_LOGIN_VERIFY_WORLD`) landed: it ends the
     /// raise's wait and nothing else, not the art, the tip or the bar. The reference's handlers
-    /// never touch the screen: the raise has three call sites, all inside `LoadingScreen.cpp`.
-    /// `map` is `None` for a same-map teleport ack.
+    /// never touch the screen: the raise has three call sites, all inside the loading screen's own
+    /// code. `map` is `None` for a same-map teleport ack.
     fn snap_landed(&mut self, map: Option<u32>) {
         if let (Some(raised), Some(dest)) = (self.map, map) {
             if raised != dest {
@@ -237,13 +237,13 @@ impl LoadingScreen {
         false
     }
 
-    /// The dismiss, the only place a tip clears: the reference's writers are the `EnterWorld`
-    /// setter here.
+    /// The dismiss, the only place a tip clears: the tip's only writers in the reference are the
+    /// world entry's setter and this.
     fn dismiss(&mut self) {
         self.active = false;
         self.blackout = false;
         self.tip_edge = Some(TipEdge::Clear);
-        // The reference clears: the next screen resolves its own art.
+        // The reference clears the texture handle here: the next screen resolves its own art.
         self.art_resolved = false;
     }
 }
@@ -462,8 +462,8 @@ fn drive_loading_screen(
     if entered.read().next().is_some() && *state.get() != crate::char_select::ClientState::InWorld {
         let map = roster.as_ref().and_then(|r| r.pending_map());
         screen.raise("world entry", true, map, now);
-        // The tip rides this edge alone: the reference's setter has one caller, in
-        // `CGlueMgr::EnterWorld`, which neither `SMSG_TRANSFER_PENDING` arm reaches.
+        // The tip rides this edge alone: the reference's setter has one caller, in the glue's world
+        // entry, which neither `SMSG_TRANSFER_PENDING` arm reaches.
         screen.tip_edge = Some(TipEdge::Pick);
     }
     // A portal (`SMSG_TRANSFER_PENDING`, no transport): cover now, before the server unloads us, as
@@ -646,8 +646,7 @@ fn drive_loading_screen(
                     screen.art_resolved = true;
                     info!("loading screen: backdrop for map {map_id} resolved");
                 }
-                // No retry: the reference writes `-1` into the map id and the reference returns on
-                // it.
+                // No retry: the reference writes `-1` into the map id and the draw returns on it.
                 _ => {
                     warn!("loading screen: no backdrop for map {map_id} — plain black this load");
                     screen.map = None;

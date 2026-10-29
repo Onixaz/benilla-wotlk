@@ -156,8 +156,8 @@ impl Glance {
     }
 }
 
-/// A frame node, the modelled subset of `CSimpleFrame`. The `effective_*` fields and the tree
-/// links belong to the [`WidgetArena`] mutators: change state through them so it propagates.
+/// A frame node, the modelled subset of the client's frame object. The `effective_*` fields and the
+/// tree links belong to the [`WidgetArena`] mutators: change state through them so it propagates.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
     pub kind: FrameKind,
@@ -172,7 +172,7 @@ pub struct Frame {
     pub children: Vec<FrameHandle>,
     /// Owned regions in link order, a detached one included so `destroy` frees it.
     pub regions: Vec<RegionHandle>,
-    /// The title region (`CSimpleFrame+0xA8`), also in `regions`. One per frame: a second
+    /// The title region (frame `+0xA8`), also in `regions`. One per frame: a second
     /// `CreateTitleRegion` returns it with its anchors cleared.
     pub title_region: Option<RegionHandle>,
     /// The draw stratum (`frameStrata +0xc0`, default MEDIUM).
@@ -223,8 +223,8 @@ pub struct Frame {
     /// cache also requires `movable` or `resizable`, at write and at apply.
     pub user_placed: bool,
     /// `SetToplevel`: bit `0x1` of the flag word `[frame+0xb4]` (`movable` `0x100`, `resizable`
-    /// `0x200`). It raises nothing; `CSimpleTop::Raise` raises the nearest toplevel
-    /// self-or-ancestor of a clicked or shown frame.
+    /// `0x200`). It raises nothing; the UI root's raise lifts the nearest toplevel self-or-ancestor
+    /// of a clicked or shown frame.
     pub toplevel: bool,
     /// This frame's own scale (`ownScale +0xb8`, default 1.0).
     pub scale: f32,
@@ -239,7 +239,7 @@ pub struct Frame {
     /// Drawing puts the later-linked frame on top; the hit test probes the earlier-linked first.
     pub insertion_seq: u32,
     /// The creation stamp: the order of the client's frame registry, which each frame joins at its
-    /// tail when constructed (`CSimpleTop::RegisterFrame` `0x494f90`) and level compaction walks.
+    /// tail when constructed (`0x494f90`) and level compaction walks.
     pub created_seq: u32,
     pub kind_state: KindState,
     next_decl: u32,
@@ -275,8 +275,8 @@ pub struct WidgetArena {
     shared_names: std::collections::HashSet<String>,
     next_insertion: u32,
     next_created: u32,
-    /// Each stratum's level bound (`CFrameStrata::m_topLevel`), indexed by [`Strata::index`]: one
-    /// past the highest level a frame linked into since the last compaction, which alone lowers it.
+    /// Each stratum's level bound, indexed by [`Strata::index`]: one past the highest level a frame
+    /// linked into since the last compaction, which alone lowers it.
     top_level: [u16; Strata::ALL.len()],
     /// The draw list's fingerprint cache ([`crate::order::traversal`]).
     pub(crate) order_cache: crate::order::OrderCache,
@@ -300,7 +300,7 @@ pub struct WidgetArena {
     /// Bumped by every link into a level list and every unlink from one ([`Self::link_epoch`]).
     link_epoch: u64,
     /// Bumped by every show or hide that changed what is visible, a frame's or a region's: a
-    /// scroll child's span moves with it (`NotifyScrollParent` `0x48fea0`).
+    /// scroll child's span moves with it (`0x48fea0`).
     visibility_epoch: u64,
 }
 
@@ -321,7 +321,7 @@ pub fn mouse_enabled_by_ctor(kind: FrameKind) -> bool {
         FrameKind::Button
             | FrameKind::CheckButton
             | FrameKind::EditBox
-            // `CGWorldFrame`'s ctor enables key, mouse, wheel.
+            // The world frame's constructor enables key, mouse, wheel.
             | FrameKind::WorldFrame
             | FrameKind::Slider
             | FrameKind::ColorSelect
@@ -456,7 +456,7 @@ impl WidgetArena {
     }
 
     /// Move `h` to its bucket's tail and grow its stratum's level bound, as the client's level-list
-    /// add does (`CFrameStrata::AddFrame` `0x495de0`): show on becoming visible, and strata or
+    /// add does (`0x495de0`): show on becoming visible, and strata or
     /// level on a visible frame.
     pub(crate) fn resequence_to_tail(&mut self, h: FrameHandle) {
         if let Some(f) = self.frame(h) {
@@ -593,7 +593,8 @@ impl WidgetArena {
             created_seq,
             kind_state: match kind {
                 FrameKind::StatusBar => KindState::StatusBar(StatusBarState::default()),
-                // `CSimpleCheckbox` extends `CSimpleButton` by one field, `ButtonState::checked`.
+                // The check button class extends the button class by one field,
+                // `ButtonState::checked`.
                 FrameKind::Button | FrameKind::CheckButton => {
                     KindState::Button(ButtonState::default())
                 }
@@ -607,8 +608,8 @@ impl WidgetArena {
                 FrameKind::ColorSelect => {
                     KindState::ColorSelect(kinds::ColorSelectState::default())
                 }
-                // `CGCharacterModelBase` extends `CSimpleModel`, adding only a turn-animation pair,
-                // which is not modelled.
+                // The character model base extends the model class, adding only a turn-animation
+                // pair, which is not modelled.
                 k if k.is_model() => KindState::Model(kinds::ModelState::default()),
                 FrameKind::Minimap => KindState::Minimap(kinds::MinimapState::default()),
                 FrameKind::GameTooltip => KindState::Tooltip(kinds::TooltipState::default()),
@@ -691,7 +692,7 @@ impl WidgetArena {
         handle
     }
 
-    /// Build the five regions the `CSimpleEditBox` ctor gives every EditBox, in its order: the text
+    /// Build the five regions the edit box constructor gives every EditBox, in its order: the text
     /// FontString `E+0x328` (`(E, 2, 1)`), three selection quads `E+0x350/0x354/0x358`
     /// (`(E, 2, 0)`) and the caret `E+0x368` (`(E, 3, 1)`). `GetRegions` lists them first, hidden
     /// or not, so authored `<Layers>` regions start at index 6. The quads carry no texture: caret
@@ -712,7 +713,7 @@ impl WidgetArena {
     }
 
     /// Build a Minimap's nine engine `Model` children, the ninth its player arrow. They are born
-    /// anonymous and without a model file; `CMinimap::LoadXML` assigns the paths.
+    /// anonymous and without a model file; the minimap's XML load assigns the paths.
     fn build_minimap_engine_children(&mut self, minimap: FrameHandle) {
         let mut ninth = None;
         for _ in 0..kinds::MINIMAP_ENGINE_CHILDREN {
@@ -792,7 +793,7 @@ impl WidgetArena {
         Some(handle)
     }
 
-    /// Free one region, as only `CSimpleHTML::SetText` does in the client, pool-freeing the last
+    /// Free one region, as only the SimpleHTML text set does in the client, pool-freeing the last
     /// parse's blocks. The caller drops the region's script-model state too, and never frees a
     /// region some state holds by handle.
     pub fn destroy_region(&mut self, h: RegionHandle) -> bool {

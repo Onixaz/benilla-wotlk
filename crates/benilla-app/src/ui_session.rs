@@ -2,7 +2,7 @@
 //! rest) closes client-side, sending nothing as 1.12 does, when the player walks out of range or
 //! the NPC despawns; the window's feed then fires its `*_CLOSED`.
 //!
-//! The reference's watchdog, run every frame from `CGWorldFrame`'s layer update. The NPC range is
+//! The reference's watchdog, run every frame from the world frame's layer update. The NPC range is
 //! the cursor's own 50/9 yd service gate ([`SERVICE_RANGE_SQ`], 5.5556 yd centre to centre), and
 //! the leash belongs to the latched object, 14 yd for a player ([`leash_sq`]).
 
@@ -100,7 +100,7 @@ pub(crate) fn close_npc_session_out_of_range<T: NpcSession>(
     }
 }
 
-/// The windows `CloseInteraction 0x512e60` walks, in its order; trade, the item text, the mail
+/// The windows the interaction close `0x512e60` walks, in its order; trade, the item text, the mail
 /// and the guild bank close by their own paths.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct InteractWindows<'w> {
@@ -165,10 +165,10 @@ impl InteractWindows<'_> {
     }
 }
 
-/// The interact slot's clear (`ClearInteractTarget 0x518d50`): a window closing on an NPC closes
-/// the first window, in `CloseInteraction`'s order, still open on it. A lone-option gossip that
-/// handed off to a trainer, vendor or flight master is that window, so closing the hand-off's
-/// window frees the re-click gate. The gossip menu's own close finds itself first (`0x58a576`).
+/// The interact slot's clear (`0x518d50`): a window closing on an NPC closes the first window, in
+/// the interaction close's order, still open on it. A lone-option gossip that handed off to a
+/// trainer, vendor or flight master is that window, so closing the hand-off's window frees the
+/// re-click gate. The gossip menu's own close finds itself first (`0x58a576`).
 pub(crate) fn close_interaction(
     mut windows: InteractWindows,
     mut last: Local<[Option<u64>; INTERACT_WINDOWS]>,
@@ -214,7 +214,7 @@ pub(crate) fn feed_interact_npc(
     stable: Option<Res<crate::ui_stable::StableOpen>>,
     tabard: Option<Res<crate::ui_tabard::TabardOpen>>,
     // The arena registrar's vendor and the battlemaster each set the interact target
-    // (`0x5a22a0`, `SetBattlemaster` `0x5496d0`).
+    // (`0x5a22a0`, `0x5496d0`).
     petition_vendor: Option<Res<crate::ui_petition::PetitionVendorState>>,
     battlemaster: Option<Res<crate::ui_battlefield::Battlefield>>,
     index: Option<Res<GuidIndex>>,

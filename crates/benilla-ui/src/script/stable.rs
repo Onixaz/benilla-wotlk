@@ -10,7 +10,7 @@
 //! `UnitExists("pet")` is false (`PetStable.lua:138`).
 //!
 //! `PickupStablePet` puts the pet on the global cursor as payload mode 10
-//! ([`super::cursor::CursorPayload::StablePet`]): the reference is written at one site, in the
+//! ([`super::cursor::CursorPayload::StablePet`]): the reference writes mode 10 at one site, in the
 //! stabled-pet grab.
 
 use mlua::{Lua, MultiValue, Value};

@@ -385,8 +385,7 @@ fn shipped_loot_frame_pages_five_items() {
         .unwrap();
     assert_eq!(pager2, (true, false), "page 2: Up shown, Down hidden");
 
-    // Loot out page 1: it pages down by itself, off `LOOT_SLOT_CLEARED` alone
-    //.
+    // Loot out page 1: it pages down by itself, off `LOOT_SLOT_CLEARED` alone.
     s.run("LootFrame_PageUp()").unwrap();
     let mut cleared = rows;
     cleared[0] = None;

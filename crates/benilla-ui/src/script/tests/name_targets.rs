@@ -120,9 +120,9 @@ fn setpoint_relative_to_ignores_a_non_widget_global() {
     assert_eq!(n, 0, "the raise leaves no anchor behind");
 }
 
-/// The expander is called only from `SetName` and the layout resolver, so anchors expand `$parent`
-/// against the first named ancestor (`"Top"` if none); `SetParent` and `SetScrollChild` call
-/// directly and do not.
+/// The expander is called only from the name setter and the layout resolver, so anchors expand
+/// `$parent` against the first named ancestor (`"Top"` if none); `SetParent` and `SetScrollChild`
+/// call directly and do not.
 #[test]
 fn setpoint_relative_to_expands_parent_against_the_first_named_ancestor() {
     let mut s = script();
@@ -176,7 +176,7 @@ fn setparent_does_not_expand_parent() {
     );
 }
 
-/// `SetParent`'s name path resolves through the reference too.
+/// `SetParent`'s name path resolves through the same global-name lookup too.
 #[test]
 fn setparent_resolves_an_alias_global() {
     let s = script();
@@ -221,7 +221,7 @@ fn setallpoints_resolves_an_alias_global() {
 }
 
 /// `CreateFrame`, `CreateTexture` and `CreateFontString` read their `name=` back through
-/// `CScriptRegion::SetName`, which calls the expander.
+/// the region's name setter, which calls the expander.
 #[test]
 fn a_constructor_name_expands_parent() {
     let s = script();

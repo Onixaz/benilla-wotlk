@@ -3,8 +3,8 @@
 //! An inbound `MSG_MOVE_*` gets a fire-time and waits in the unit's queue until then. A moving unit
 //! replays on the sender's cadence, `fire = prev fire + (wire stamp - prev wire stamp)`; only an
 //! idle mover with nothing queued re-bases, by the worst lateness of the last 32 packets. The
-//! offset from arrival stays in `[-500, +1000]` ms. The state is five cells on the unit's
-//! `CMovement`: `+0xa8`, `+0xac`, `+0xbc[32]`, `+0x13c`, `+0x140`.
+//! offset from arrival stays in `[-500, +1000]` ms. The state is five cells on the unit's movement
+//! object: `+0xa8`, `+0xac`, `+0xbc[32]`, `+0x13c`, `+0x140`.
 
 use benilla_protocol::{JumpInfo, RelayVerb, TransportPose};
 
@@ -46,7 +46,7 @@ pub(crate) struct PendingMove {
 const SKEW_MIN_MS: f64 = -500.0;
 const SKEW_MAX_MS: f64 = 1000.0;
 
-/// The reference's ring at `CMovement+0xbc`, cursor at `+0x13c` masked `& 0x1f`.
+/// The reference's ring at movement `+0xbc`, cursor at `+0x13c` masked `& 0x1f`.
 const LATENESS_WINDOW: usize = 32;
 
 /// The mid-motion mask that blocks a re-base (`test [esi+0x40],0x20ff`): direction, turn and pitch
@@ -57,7 +57,7 @@ const BUSY_MASK: u32 = 0x20ff;
 /// buffers.
 #[derive(Clone, Default)]
 pub(crate) struct RelayChain {
-    /// `CMovement+0x40` bit 31, set with the first seed.
+    /// The movement flags word's (`+0x40`) bit 31, set with the first seed.
     seeded: bool,
     /// `+0xa8`: the previous packet's fire-time.
     last_fire_ms: f64,
@@ -114,7 +114,7 @@ impl RelayChain {
         fire_ms
     }
 
-    /// `MSG_MOVE_TIME_SKIPPED`: `[CMovement+0xac] += lag` and nothing else; skipped, the next
+    /// `MSG_MOVE_TIME_SKIPPED`: `[mover+0xac] += lag` and nothing else; skipped, the next
     /// packet would fire `lag_ms` late.
     pub(crate) fn skip_time(&mut self, lag_ms: u32) {
         if self.seeded {
@@ -123,7 +123,7 @@ impl RelayChain {
     }
 
     /// Stores `base + lateness` and returns the max of all 32 slots, the new one included; an
-    /// unfilled slot is zero, as in a fresh `CMovement`.
+    /// unfilled slot is zero, as in a fresh movement object.
     fn record_lateness(&mut self, lateness_ms: f64) -> f64 {
         self.ring[self.ring_idx] = self.base_ms + lateness_ms;
         self.ring_idx = (self.ring_idx + 1) % LATENESS_WINDOW;

@@ -766,7 +766,7 @@ mod tests {
         assert_eq!(listed(&mut app, "raid5", true), [589]);
         assert!(
             listed(&mut app, "raid5", false).is_empty(),
-            "no factions, so `CanAssist` fails and the gate drops the buffs"
+            "no factions, so the assist check fails and the gate drops the buffs"
         );
         assert_eq!(seen(&mut app), ["raid5"]);
         for token in ["party1", "party2", "raid6"] {

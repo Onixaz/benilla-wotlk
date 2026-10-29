@@ -1,5 +1,5 @@
 //! The dungeon finder behind the stock `LFDFrame.lua`, `LFGFrame.lua` and `LFRFrame.lua`: the
-//! client's `CGLookingForGroup` (`0x552850`-`0x55d440`). The app pushes the dungeon tables once
+//! client's dungeon-finder code (`0x552850`-`0x55d440`). The app pushes the dungeon tables once
 //! ([`UiScript::set_lfg_catalog`]) and applies each server message through the `lfg_*` methods,
 //! which keep the reference's state and fire its events; the Lua verbs read that state and queue
 //! the sends ([`UiScript::take_lfg_requests`]). The state lives in the VM, so a `ReloadUI` drops
@@ -91,24 +91,24 @@ pub struct LfgCatalogView {
     pub encounters: Vec<EncounterView>,
 }
 
-/// The group facts the engine reads, `CGPartyInfo`'s and `CGRaidInfo`'s.
+/// The group facts the engine reads, the party's and the raid's.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LfgPartyView {
-    /// `CGPartyInfo::InParty`: party slot 1 holds a member.
+    /// In a party: party slot 1 holds a member.
     pub in_party: bool,
-    /// `CGRaidInfo::m_numMembers`.
+    /// The raid's member count.
     pub raid_members: u32,
     /// `GetNumPartyMembers`.
     pub party_members: u32,
-    /// `CGPartyInfo::m_realNumMembers`: the non-battleground party's other members.
+    /// The party's real member count: the non-battleground party's other members.
     pub real_members: u32,
-    /// `SMSG_GROUP_LIST`'s LFG slot (`m_lfgSlot`) and status byte (`m_playerLFGFlags`).
+    /// `SMSG_GROUP_LIST`'s LFG slot and status byte.
     pub lfg_slot: u32,
     pub lfg_flags: u8,
 }
 
 impl LfgPartyView {
-    /// `m_members[0] || CGRaidInfo::m_numMembers`, which picks the party's server info.
+    /// Party slot 1 filled or a raid member count, which picks the party's server info.
     pub fn grouped(&self) -> bool {
         self.in_party || self.raid_members != 0
     }
@@ -271,7 +271,7 @@ pub enum LfgRequest {
     SetComment(String),
 }
 
-/// What a server message shows besides its events: a `DisplayError` line or a UI sound kit.
+/// What a server message shows besides its events: an error-display line or a UI sound kit.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LfgLine {
     Key(&'static str),
@@ -279,9 +279,9 @@ pub enum LfgLine {
     Str(&'static str, String),
     /// A `%d` line.
     Int(&'static str, i64),
-    /// A `%s` line with `GetCurrencyText`'s coin string.
+    /// A `%s` line with the coin string.
     Money(&'static str, i64),
-    /// `SI2::PlayUISound`'s kit id.
+    /// A UI sound's kit id.
     Sound(u32),
 }
 
@@ -291,26 +291,26 @@ impl super::UiScript {
         self.model_mut().lfg.set_catalog(catalog);
     }
 
-    /// `InitializeGame` (`0x55d440`): every list and state reset, the choice lists rebuilt for
-    /// the account's expansion.
+    /// The game initialization (`0x55d440`): every list and state reset, the choice lists rebuilt
+    /// for the account's expansion.
     pub fn lfg_initialize_game(&mut self) {
         let mut model = self.model_mut();
         let expansion = model.account_expansion;
         model.lfg.initialize_game(expansion);
     }
 
-    /// `EnterWorld` (`0x557240`): the proposal latch reset. The app sends the status and lock
+    /// The world entry (`0x557240`): the proposal latch reset. The app sends the status and lock
     /// requests that follow it.
     pub fn lfg_enter_world(&mut self) {
         self.model_mut().lfg.last_proposal_id = 0;
     }
 
-    /// Push the logged-in character's class id, `ClientServices::GetCharacterClass`.
+    /// Push the logged-in character's class id, as the client services keep it.
     pub fn set_lfg_class(&mut self, class_id: u32) {
         set_field!(self, lfg.class_id, class_id);
     }
 
-    /// Push the group facts; a moved LFG slot fires `LFG_UPDATE` (`SetLfgSlot 0x52c0a0`).
+    /// Push the group facts; a moved LFG slot fires `LFG_UPDATE` (`0x52c0a0`).
     pub fn set_lfg_party(&mut self, party: LfgPartyView) {
         if self.model_ref().lfg.party == party {
             return;
@@ -342,7 +342,7 @@ impl super::UiScript {
     }
 
     /// Push the `Interface\Icons` paths of the reward displays [`Self::lfg_wanted_displays`]
-    /// listed (`GetInventoryArt`).
+    /// listed.
     pub fn set_lfg_display_icons(&mut self, icons: std::collections::HashMap<u32, String>) {
         set_field!(self, lfg.display_icons, icons);
     }
@@ -357,7 +357,7 @@ impl super::UiScript {
         drain_field!(self, lfg.requests)
     }
 
-    /// `JoiningParty` (`0x559310`), from `SMSG_GROUP_LIST`'s join edge: the server infos reset,
+    /// The party join (`0x559310`), from `SMSG_GROUP_LIST`'s join edge: the server infos reset,
     /// the status asked again, `LFG_UPDATE(true)`.
     pub fn lfg_joining_party(&mut self) {
         {
@@ -369,7 +369,7 @@ impl super::UiScript {
         self.fire_event("LFG_UPDATE", vec![ScriptValue::Bool(true)]);
     }
 
-    /// `ClearPartyInfo` (`0x55b120`), on leaving the group: the party locks dropped, a running
+    /// The party info clear (`0x55b120`), on leaving the group: the party locks dropped, a running
     /// role check hidden and a pending proposal failed.
     pub fn lfg_clear_party_info(&mut self) {
         let events = self.model_mut().lfg.clear_party_info();
@@ -516,8 +516,7 @@ impl super::UiScript {
         );
     }
 
-    /// A reward item's template landed: the random-dungeon panel repaints
-    /// (`RandomDungeonRewardItemStatsCallback 0x552950`).
+    /// A reward item's template landed: the random-dungeon panel repaints (`0x552950`).
     pub(crate) fn lfg_item_arrived(&mut self, item: u32) {
         let waited = self.model_mut().lfg.reward_item_waits.remove(&item);
         if waited {

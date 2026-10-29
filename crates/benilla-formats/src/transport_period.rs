@@ -106,8 +106,8 @@ fn arc_time_ms(p: f64, l: f32, speed: f32, accel: f32, first: bool) -> i32 {
     round_ftol(t)
 }
 
-/// The reference block 2, a leg's last span: pure cruise `d/v` when the leg had no stop, else one
-/// ramp out of the last stop.
+/// The reference's period walk, block 2, a leg's last span: pure cruise `d/v` when the leg had no
+/// stop, else one ramp out of the last stop.
 fn arc_time_ms_final(p: f32, l: f32, speed: f32, accel: f32, first: bool) -> i32 {
     let d = f64::from(p) - f64::from(l);
     let t: f64 = if first {
@@ -176,7 +176,7 @@ pub(crate) fn client_period_ms(nodes: &[TaxiPathNode], speed: f32, accel: f32) -
             leg_map = node.map_id;
         }
         // The stop check precedes the append, so a stop on a leg's first row is ignored (the
-        // reference's `local_1c != 0` gate); `Flags & 2` is a bitmask test.
+        // reference's non-empty gate); `Flags & 2` is a bitmask test.
         if node.flags & 2 != 0 && !points.is_empty() {
             stops.push((points.len(), node.delay as i32 * 1000));
         }

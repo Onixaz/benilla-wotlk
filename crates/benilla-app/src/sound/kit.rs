@@ -1,6 +1,6 @@
-//! The kit player: plays a `SoundEntries` kit by id or name (`PlaySoundById`, `PlaySoundByName`)
-//! through the client's audibility, duplicate and per-bus gates, the depleting weighted variation
-//! pick, per-shot volume and pitch variation, and the per-frame channel pump.
+//! The kit player: plays a `SoundEntries` kit by id or by name, as the reference's two kit plays
+//! do, through the client's audibility, duplicate and per-bus gates, the depleting weighted
+//! variation pick, per-shot volume and pitch variation, and the per-frame channel pump.
 //!
 //! The variation gates are separate kit flag bits (0x400 pitch, 0x800 volume) and the draw is
 //! [`math::variation_draw`]. A looping channel beyond its cutoff stops here and restarts on its
@@ -69,7 +69,7 @@ impl SoundKits {
     }
 
     /// The kit table, for [`super::vocal`]'s table build, which needs variation counts ahead of
-    /// play (the reference reads `(kit) + 0x94` there).
+    /// play (the reference reads the kit row's `+0x94` there).
     pub(super) fn catalog(&self) -> &SoundKitCatalog {
         &self.catalog
     }
@@ -143,7 +143,7 @@ pub(super) enum Latch {
     /// such gate. It ends with the sound or when the emitter leaves `DistanceCutoff`.
     ObjectSound,
     /// The unit's emote voice, `[unit+0xb28]`: it blocks nothing, a new emote voice stops the
-    /// sounding one (`Sound::Stop`). Shared by the text-emote voice and the `$CSD` anim event.
+    /// sounding one. Shared by the text-emote voice and the `$CSD` anim event.
     EmoteVoice,
 }
 
@@ -241,7 +241,7 @@ fn same_kit_cap_blocks(dedupe_exempt: bool, live_same_kit: usize) -> bool {
 /// the quietest live one-shot loses its slot to a louder newcomer, and a newcomer quieter than
 /// everything is dropped.
 ///
-/// Deviation: the reference opens 512 virtual channels over its software voices (`SE2::Init`,
+/// Deviation: the reference opens 512 virtual channels over its software voices (the engine init,
 /// `System::init(512, …)` at `0x87d9cb`), so a voice that loses its slot goes virtual and returns
 /// when it is audible again; here it stops.
 fn claim_voice(out: &mut SoundOutput, candidate_amp: f32) -> bool {
@@ -343,13 +343,14 @@ pub(super) struct PlayExtras {
     /// The reference's per-shot multiplier (1.0 at every site but one), applied inside
     /// [`math::variation_volume`] before the 0..1 clamp and distance attenuation.
     pub(super) volume_mult: Volume,
-    /// The DSP chain the sound plays through (`SE2SoundKitProperties::m_useDspChain`), from
+    /// The DSP chain the sound plays through (the kit properties' DSP-chain field), from
     /// [`voice_filter`]; ignored when the engine built none.
     pub(super) voice_filter: Option<super::dsp::VoiceFilter>,
 }
 
-/// A unit's voice chain for its vocals: a Death Knight's (`SI2::DK_GetPlayerFilterName`), when
-/// the engine built the chains (`Sound_EnableDSPEffects` at init, `SI2::Init` → `DSP_Init`).
+/// A unit's voice chain for its vocals: a Death Knight's (the reference's player filter name),
+/// when the engine built the chains (`Sound_EnableDSPEffects` at init, the sound init → the DSP
+/// init).
 pub(super) fn voice_filter(
     out: &SoundOutput,
     store: Option<&crate::net::ObjectStore>,
@@ -370,7 +371,7 @@ impl Default for Volume {
     }
 }
 
-/// A kit to play, by id or by `PlaySoundByName` name.
+/// A kit to play, by id or by kit name.
 pub(crate) enum KitRef<'a> {
     Id(u32),
     Name(&'a str),
@@ -456,8 +457,8 @@ pub(super) fn play_kit_ext(
         return Ok(false); // a kit with no files is playable-as-nothing, not an error
     }
 
-    // The per-bus cap, the pre-play gate the reference's always-on arm, before the duplicate walk.
-    // It counts allocated channels (`[ + 4*bus]`), and a distance cull releases one, as the pump's
+    // The per-bus cap, the always-on arm of the reference's pre-play gate, before the duplicate
+    // walk. It counts allocated channels per bus, and a distance cull releases one, as the pump's
     // reap does here.
     if bus_at_cap(out.channels.iter().map(|c| c.bus), bus) {
         return Ok(false);
@@ -663,8 +664,8 @@ pub(super) fn source_kit_playing(out: &SoundOutput, source: Entity, kit_id: u32)
         .any(|c| c.source == Some(source) && c.kit == kit_id)
 }
 
-/// The kit's name, or `None` with no `SoundEntries` row: the reference's `(id)` null test, which
-/// permanently fails a doodad emitter pool entry (`[+0xE00] = -id`).
+/// The kit's name, or `None` with no `SoundEntries` row: the reference's kit-lookup null test,
+/// which permanently fails a doodad emitter pool entry (`[+0xE00] = -id`).
 pub(super) fn kit_name(kits: &SoundKits, id: u32) -> Option<&str> {
     kits.catalog.get(id).map(|k| k.name.as_str())
 }
@@ -699,7 +700,7 @@ pub(super) fn stop_source_kit(out: &mut SoundOutput, source: Entity, kit_id: u32
     });
 }
 
-/// Stop every kit channel, the sound-system restart's `SE2::StopAllSounds` (`0x87ded0`).
+/// Stop every kit channel, the sound-system restart's stop-all (`0x87ded0`).
 pub(super) fn stop_all(out: &mut SoundOutput) {
     for mut c in out.channels.drain(..) {
         c.handle.stop(mixer::declick());

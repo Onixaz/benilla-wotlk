@@ -25,7 +25,7 @@ use super::{
 };
 
 /// An item action's icon when its template has not answered or its display id has no
-/// `ItemDisplayInfo` row: the reference's literal, from the resolver's.
+/// `ItemDisplayInfo` row: the literal the reference's icon resolver falls back to.
 pub(super) const MISSING_ITEM_ICON: &str = "Interface\\Icons\\INV_Misc_QuestionMark";
 
 /// The feed's memory of what it last pushed, for per-slot change events.
@@ -115,8 +115,8 @@ pub(super) fn feed_actions(
     // queued, as the reference's callback redisplays on the answer.
     let self_store = self_q.iter().next().map(|(s, _)| s);
     let mut await_template: Vec<crate::ui_action::CastFail> = Vec::new();
-    // The same failures for the combat log: `0x808200` calls both `DisplayError` and
-    // `UnitCombatLogSpellFail` (`0x751ad0`).
+    // The same failures for the combat log: `0x808200` calls both the error display and the combat
+    // log's spell-failure line (`0x751ad0`).
     let mut fail_lines: Vec<crate::combat_log::SpellCastFailedLog> = Vec::new();
     let fail_args = name_tables.args(spells.as_deref());
     let texts: Vec<cast_fail::CastFailLine> = cast_errors
@@ -321,7 +321,7 @@ pub(super) fn feed_actions(
         .collect();
     show_messages(&mut script, &mut sink, "ui_action", key_lines);
 
-    // Already-resolved lines ([`UiErrorTexts`]); the queued kind is the flag.
+    // Already-resolved lines ([`UiErrorTexts`]); the queued kind is the message sink's flag.
     let resolved: Vec<Shown> = ui_error_texts
         .0
         .drain(..)
@@ -454,7 +454,7 @@ pub(super) fn feed_actions(
                     false,
                 ),
                 // A set slot shows `Interface\Icons\` and the set's icon, nothing for a set the
-                // list lacks or an empty icon (`CGEquipmentManager::GetFullIconPath`, `0x5ae6b0`).
+                // list lacks or an empty icon (the equipment manager's icon path, `0x5ae6b0`).
                 ACTION_KIND_EQUIPMENT_SET => (
                     actions
                         .equipment_sets

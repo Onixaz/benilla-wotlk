@@ -34,7 +34,7 @@ fn now(time: &Time) -> f64 {
 }
 
 /// `MSG_AUCTION_HELLO`'s reply (`0x59ff40`): an open house sets the auctioneer and shows the
-/// window (`SetAuctioneer` `0x59f000`); a closed one fires `AUCTION_HOUSE_DISABLED`.
+/// window (`0x59f000`); a closed one fires `AUCTION_HOUSE_DISABLED`.
 fn on_hello(In(ev): In<SessionEvent>, mut auction: ResMut<AuctionOpen>) {
     if let SessionEvent::AuctionHello {
         auctioneer,

@@ -33,7 +33,7 @@ pub struct MatAnim {
     /// pinned like a doodad but ordered against the wearer's appear-fade. See [`Self::resting`].
     unit_lane: bool,
     /// The gseq attach anchor (secs, shared clock), stamped by the first [`sample_mat_anim`] pass:
-    /// the reference snapshots the scene clock once per instance at attach (`CM2Model+0x68`).
+    /// the reference snapshots the scene clock once per instance at attach (model `+0x68`).
     gseq_attach: Option<f64>,
     /// The last sampled combined factor (colour-alpha × weight), read by the visibility authority.
     pub current: f32,
@@ -175,7 +175,7 @@ pub enum UvLoop {
     /// for a rotate- or scale-only transform, whose translation row stays at zero.
     ///
     /// Deviation: every instance scrolls in one phase, where the reference phases a band loop per
-    /// arm and a gseq loop from each instance's attach (`CM2Model+0x68`), because one uniform
+    /// arm and a gseq loop from each instance's attach (model `+0x68`), because one uniform
     /// serves the material and a seamless scroll looks the same at any phase.
     Shared(Option<std::sync::Arc<benilla_formats::UvAnim>>),
     /// The slots disagree: this material belongs to one placement, on whichever slot `host` plays.

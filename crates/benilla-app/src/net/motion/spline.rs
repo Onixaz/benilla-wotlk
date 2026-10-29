@@ -28,7 +28,7 @@ pub(crate) struct Spline {
     /// The `FLYING` bit was clear: the 1.12 client zeroes the spline's Δz and takes Z from the
     /// terrain, so [`ground_clamp_creatures`] re-grounds this unit. Flying keeps its Z.
     pub(crate) grounded: bool,
-    /// `SPLINEFLAG_RUNMODE`: the 1.12 client's commit passes it to `CMovement::SetRunMode`, so a
+    /// `SPLINEFLAG_RUNMODE`: the 1.12 client's commit passes it to the run-mode setter, so a
     /// spline without it sets `MOVEFLAG_WALK_MODE`. Only the body we drive reads it
     /// ([`crate::player::server_ride`]); a creature's gait comes from [`Spline::speed`].
     pub(crate) run_mode: bool,
@@ -408,7 +408,7 @@ fn trace_ride(guid: u64, spline: &Spline, pos: [f32; 3], was: [f32; 3], now: Ins
 }
 
 /// Whether benilla derives this body's Z and swim state, for both [`mark_swimming_creatures`] and
-/// [`ground_clamp_creatures`]. The reference never asks the kind: the reference links any unit a
+/// [`ground_clamp_creatures`]. The reference never asks the kind: it links any unit a
 /// `SMSG_MONSTER_MOVE` names, and the per-frame vertical-zero gate reads only the mover's flags.
 /// So: every `Unit`; a `Player` a server spline has moved, until the relay takes it back
 /// (`derived_before` is [`GroundClamped`]'s presence); never the body we steer
@@ -536,7 +536,7 @@ impl ClampStats {
 /// owner last wrote), never from the clamp's last answer, so a late floor takes the unit back.
 /// Skipped: flying and deck paths, and a swimming unit, whose wire Z is its depth (vmangos paths it
 /// in 3D without the flying flag, `MoveSplineInit.cpp:191`; the reference keeps Δz under SWIMMING,
-/// `[CMovement+0x40] & 0x200000`).
+/// `[mover+0x40] & 0x200000`).
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(in crate::net) fn ground_clamp_creatures(
     world: benilla_world::collision::WorldCollision,
@@ -544,7 +544,7 @@ pub(in crate::net) fn ground_clamp_creatures(
     points: benilla_world::world_point::WorldPoint,
     epoch: Res<benilla_world::collision::ColliderEpoch>,
     // The body a walker's step sweeps: the shared player capsule. The reference sweeps each
-    // unit's own `CreatureModelData` radius and height (`[CMovement+0xb0]`/`+0xb4`); per-unit
+    // unit's own `CreatureModelData` radius and height (`[mover+0xb0]`/`+0xb4`); per-unit
     // extents are not built.
     capsule: Res<crate::player::PlayerCapsule>,
     mut commands: Commands,
@@ -896,15 +896,15 @@ pub(in crate::net) struct SwimEvaluated;
 const CREATURE_SWIM_EXIT_BAND: f32 = 1.0 / 36.0;
 
 /// A server-moved body ([`ground_derived`]) past the swim boundary, which no packet carries for
-/// one. The 1.12 client runs its depth decision on every linked CMovement and sets SWIMMING itself
-/// on a unit it does not steer.
+/// one. The 1.12 client runs its depth decision on every linked mover and sets SWIMMING itself on
+/// a unit it does not steer.
 ///
 /// The decision reads `UNIT_FIELD_FLAGS` on both legs ([`crate::player::may_swim`]): a unit with
 /// none of the three bits walks the lakebed, where vmangos paths it (`Object.cpp:2007`). Depth uses
 /// the unit's own collision height; the point the reference measures it from is untraced. The
 /// levitating bail (`0x400`) is not read: a spline-walked unit has no live flag word, and vmangos
 /// sets the bit on a creature only from a script (`boss_onyxia.cpp:679`). The splash
-/// (`sound::water`) sits outside the flag gate, as the reference does.
+/// (`sound::water`) sits outside the flag gate, as in the reference.
 #[derive(Component)]
 pub(crate) struct CreatureSwimming;
 
@@ -936,11 +936,11 @@ impl GroundClamped {
     }
 }
 
-/// The reference's decision for one creature:
+/// The reference's swim depth decision for one creature:
 ///
 /// ```text
-/// enter iff  flags ∧ depth >  0.75·h              (0x41 + jne: ZF, strict)
-/// stay  iff  flags ∧ depth >= 0.75·h − 1/36       (5 + jnp: parity, inclusive)
+/// enter iff  flags ∧ depth >  0.75·h              (mask 0x41 + jne: ZF, strict)
+/// stay  iff  flags ∧ depth >= 0.75·h − 1/36       (mask 5 + jnp: parity, inclusive)
 /// ```
 ///
 /// A false flag term forces a stop at any depth, not only a refused start.
@@ -1710,7 +1710,8 @@ mod server_moved_players {
     }
 
     /// Between paths a bot stays grounded: once `sample_splines` drops the finished spline, the
-    /// [`GroundClamped`] memo carries membership, as nothing is known to undo the reference's link.
+    /// [`GroundClamped`] memo carries membership, as nothing is known to undo the reference's
+    /// monster-move link.
     #[test]
     fn a_bot_stays_grounded_between_paths() {
         let (mut app, body) = hollow(EntityKind::Player);

@@ -24,15 +24,16 @@ const SPELL_EFFECT_SUMMON: u32 = 28;
 /// `SPELL_AURA_MOUNTED`.
 pub const SPELL_AURA_MOUNTED: u32 = 78;
 
-/// `SpellShapeshiftForm` flag `0x1`: a stance, which `IsShapeShifted` (`0x721ca0`) does not count.
+/// `SpellShapeshiftForm` flag `0x1`: a stance, which the shapeshift test (`0x721ca0`) does not
+/// count.
 const FORM_FLAG_STANCE: u32 = 0x1;
 /// `SpellShapeshiftForm` flag `0x400`: a true shapeshift that refuses every spell its mask does
 /// not name (`0x72bac0`); Tharon'ja's skeleton and the Zombie form carry it.
 const FORM_FLAG_NO_CASTS: u32 = 0x400;
 
-/// `Spell_IsAreaAuraEffect` (`0x76bed0`): a passive with one of these effects is still listed.
+/// The area-aura effect test (`0x76bed0`): a passive with one of these effects is still listed.
 const AREA_AURA_EFFECTS: [u32; 7] = [27, 35, 65, 119, 128, 129, 143];
-/// `AttributesEx5` bits 27 and 28, `CanShowAura`'s self-cast pair (`0x53d580`).
+/// `AttributesEx5` bits 27 and 28, the aura display check's self-cast pair (`0x53d580`).
 const ATTR_EX5_HIDE_IF_SELF_CAST: u32 = 0x0800_0000;
 const ATTR_EX5_HIDE_IF_NOT_SELF_CAST: u32 = 0x1000_0000;
 const ATTR_EX6_ONLY_VISIBLE_TO_CASTER: u32 = 0x0010_0000;
@@ -41,7 +42,7 @@ const ATTR_EX4_NOT_IN_SPELLBOOK: u32 = 0x8000;
 
 /// One spell's `Spell.dbc` row, as the display, tooltip and cast gates read it.
 pub struct SpellDisplay {
-    /// `ID` (column 0): the row's own id, which `GetEffectPoints` hands the level lookup.
+    /// `ID` (column 0): the row's own id, which the effect-points read hands the level lookup.
     pub id: u32,
     pub name: String,
     /// `SpellNameSubtext` enUS (column 153): "Rank N", even "Rank 1", or a word such as "Racial".
@@ -51,7 +52,7 @@ pub struct SpellDisplay {
     /// `SpellVisual.dbc` id (column 131, the first of two); 0 is a silent cast.
     pub visual: u32,
     /// The second `SpellVisual.dbc` id (column 132), taken below violence level 2 when nonzero
-    /// (`GetSpellVisual` `0x7fa290`).
+    /// (`0x7fa290`).
     pub visual_low_violence: u32,
     /// Projectile speed (column 47) in world units per second; 0 is an instant impact.
     pub speed: f32,
@@ -81,14 +82,14 @@ pub struct SpellDisplay {
     pub attributes_ex7: u32,
     /// `TotemCategory[2]` (columns 222-223): the tool rows the spell needs, a totem's element.
     pub totem_categories: [u32; 2],
-    /// `SpellFamilyName` (column 208): `GetSpellModifiers` (`0x7fd970`) applies nothing unless it
-    /// is nonzero and equals the local player's class family.
+    /// `SpellFamilyName` (column 208): the spell-modifier walk (`0x7fd970`) applies nothing unless
+    /// it is nonzero and equals the local player's class family.
     pub spell_family: u32,
     /// `SpellFamilyFlags` (columns 209-211, low dword first): the modifier rows that apply, one
     /// summed cell per set bit over all 96 (`0x7fd970`); bits 96 and up are always clear.
     pub spell_family_flags: u128,
     /// `PreventionType` (column 214): 1 silence, 2 pacify, 0 neither; the crowd control that
-    /// refuses the spell locally (from `TryCast`). A stun refuses all.
+    /// refuses the spell locally (from the cast attempt). A stun refuses all.
     pub prevention_type: u32,
     /// `modalNextSpell` (column 48): cast by the client itself, at no target, when
     /// `SMSG_CAST_RESULT` for this in-flight spell arrives, success or failure; if it is the
@@ -116,7 +117,7 @@ pub struct SpellDisplay {
     /// `Category` (column 1): the shared-cooldown category; 0 is none.
     pub category: u32,
     /// The category's `SpellCategory.dbc` flags carry `0x2`, matching every cooldown query
-    /// (`GetCooldownInfo`); true only for wand Shoot's 351, whose swing sweeps the bar.
+    /// (the cooldown info read); true only for wand Shoot's 351, whose swing sweeps the bar.
     pub category_wildcard: bool,
     /// `RecoveryTime` (column 29): the spell's own cooldown in ms.
     pub recovery_ms: u32,
@@ -142,7 +143,7 @@ pub struct SpellDisplay {
     pub rune_cost_id: u32,
     /// `ManaCostPercentage` (column 204): percent of base mana added to the flat cost.
     pub mana_cost_pct: u32,
-    /// `manaCostPerlevel` (column 43): the per-level cost term of `GetPowerCost`.
+    /// `manaCostPerlevel` (column 43): the per-level cost term of the power-cost read.
     pub mana_cost_per_level: u32,
     /// `manaPerSecond` (column 44): the tooltip's "plus N per sec".
     pub mana_per_second: u32,
@@ -411,9 +412,9 @@ impl SpellDisplay {
         Some((doubled.round_ties_even() as i32) >> 1)
     }
 
-    /// `SpellRec::IsHelpfulOrHarmful` (`0x7fe1b0`): the ally flag `0x100` is helpful, then the
-    /// enemy flag `0x80` harmful; then any enemy A or B implicit target is harmful, before any
-    /// friendly one is helpful (jump tables `0x7fe280`/`0x7fe2e4`, `0x7fe34c`/`0x7fe398`). A
+    /// The spell record's helpful-or-harmful test (`0x7fe1b0`): the ally flag `0x100` is helpful,
+    /// then the enemy flag `0x80` harmful; then any enemy A or B implicit target is harmful, before
+    /// any friendly one is helpful (jump tables `0x7fe280`/`0x7fe2e4`, `0x7fe34c`/`0x7fe398`). A
     /// caster target (1) is helpful unless its effect applies aura 4.
     fn helpful_or_harmful(&self) -> SpellIntent {
         const ENEMY_TARGETS: [u32; 9] = [2, 6, 15, 16, 24, 28, 53, 54, 93];
@@ -445,7 +446,7 @@ impl SpellDisplay {
         self.helpful_or_harmful() == SpellIntent::Harmful
     }
 
-    /// [`Self::helpful_or_harmful`] answering helpful: with no unit target, `GetMinMaxRange`'s
+    /// [`Self::helpful_or_harmful`] answering helpful: with no unit target, the range lookup's
     /// wrapper (`0x801692`) reads the friendly `SpellRange.dbc` pair for such a spell.
     pub fn is_helpful(&self) -> bool {
         self.helpful_or_harmful() == SpellIntent::Helpful
@@ -458,8 +459,8 @@ impl SpellDisplay {
     }
 
     /// `Attributes & 0x200`: the cast aims itself at the equipped main hand, so a weapon imbue
-    /// binds on the press with no item cursor (`CastSpell 0x80ccd0`, `BeginCast 0x80c790`, for a
-    /// player caster). Only the shaman weapon imbues carry it.
+    /// binds on the press with no item cursor (`CastSpell 0x80ccd0`, the cast begin `0x80c790`, for
+    /// a player caster). Only the shaman weapon imbues carry it.
     pub fn targets_main_hand_item(&self) -> bool {
         self.attributes & ATTR_TARGET_MAIN_HAND_ITEM != 0
     }
@@ -470,8 +471,8 @@ impl SpellDisplay {
         self.attributes_ex2 & ATTR_EX2_AUTO_REPEAT != 0
     }
 
-    /// `AttributesEx4 & 0x20` (`SendPetAction 0x5d4210`): a pet-bar spell press takes the generic
-    /// cast entry and returns, sending no pet action and starting no GCD of its own.
+    /// `AttributesEx4 & 0x20` (`0x5d4210`): a pet-bar spell press takes the generic cast entry and
+    /// returns, sending no pet action and starting no GCD of its own.
     pub fn allows_client_targeting(&self) -> bool {
         self.attributes_ex4 & ATTR_EX4_ALLOW_CLIENT_TARGETING != 0
     }
@@ -533,7 +534,7 @@ impl SpellDisplay {
             && self.attributes_ex2 & ATTR_EX2_DO_NOT_RESET_COMBAT_TIMERS == 0
     }
 
-    /// The spellbook's add gate, the exits `AddKnownSpell` (`0x542030`) takes before it files a
+    /// The spellbook's add gate, the exits the known-spell add (`0x542030`) takes before it files a
     /// tab: `Attributes` `0x80` or `0x20`, a companion or mount (`0x5426a5`), and
     /// `AttributesEx4 & 0x8000` (`0x542856`). Passive alone does not hide a spell.
     pub fn in_spellbook(&self, summons: &crate::SummonPropertiesCatalog) -> bool {
@@ -570,14 +571,14 @@ impl SpellDisplay {
             )
     }
 
-    /// No tooltip range cell: tested before `GetMinMaxRange`, an on-next-swing spell or
+    /// No tooltip range cell: tested before the range lookup, an on-next-swing spell or
     /// `AttributesEx3` bit 30; after it, a max of 0.
     pub fn tooltip_omits_range_line(&self) -> bool {
         self.on_next_swing() || self.attributes_ex3 & 0x4000_0000 != 0
     }
 
-    /// `GetCooldownInfo` reports no cooldown for `Effect[0]` 78 (attack) or 47 (trade skill): those
-    /// buttons never show one and are never refused by one.
+    /// The cooldown info read reports no cooldown for `Effect[0]` 78 (attack) or 47 (trade skill):
+    /// those buttons never show one and are never refused by one.
     pub fn cooldown_query_excluded(&self) -> bool {
         matches!(
             self.effects[0],
@@ -642,7 +643,7 @@ impl SpellDisplay {
         self.attributes_ex2 & ATTR_EX2_INITIATE_COMBAT_POST_CAST != 0
     }
 
-    /// The spell's own legs of `CanShowAura` (`0x53d580`), every aura list's filter: not
+    /// The spell's own legs of the aura display check (`0x53d580`), every aura list's filter: not
     /// `Attributes & 0x80` nor `AttributesEx & 0x10000000` (warrior stances), not a passive
     /// without an area-aura effect (`0x76bed0`), and not `AttributesEx5` bit 27 on a self-cast
     /// aura nor bit 28 on another's. The caster and aura-vision legs read the viewer
@@ -664,8 +665,8 @@ impl SpellDisplay {
         self.attributes_ex5 & hide == 0
     }
 
-    /// `AttributesEx6 & 0x100000`: `CanShowAura` lists the aura only when the active player or
-    /// its pet cast it (`0x53d580`).
+    /// `AttributesEx6 & 0x100000`: the aura display check lists the aura only when the active
+    /// player or its pet cast it (`0x53d580`).
     pub fn only_visible_to_caster(&self) -> bool {
         self.attributes_ex6 & ATTR_EX6_ONLY_VISIBLE_TO_CASTER != 0
     }
@@ -690,8 +691,8 @@ impl SpellDisplay {
         mask
     }
 
-    /// A tracking spell (`EffectApplyAuraName` 44, 45 or 151, `SpellIsTrackingAura 0x7fdf60`):
-    /// a known one is listed in the minimap's tracking menu.
+    /// A tracking spell (`EffectApplyAuraName` 44, 45 or 151, `0x7fdf60`): a known one is listed in
+    /// the minimap's tracking menu.
     pub fn tracking_aura(&self) -> bool {
         self.effect_apply_aura
             .iter()
@@ -710,12 +711,12 @@ impl SpellDisplay {
         self.form_refusal(form, form_flags).is_none()
     }
 
-    /// `CheckShapeshiftRules` (`0x72bac0`) for the caster's form and that form's
+    /// The shapeshift rules check (`0x72bac0`) for the caster's form and that form's
     /// `SpellShapeshiftForm` flags (0 for no row): `StancesNot`, then `Stances`; then, in a true
-    /// shapeshift (`IsShapeShifted 0x721ca0`: a form without flag `0x1`), `Attributes` bit 16 or
-    /// the form's flag `0x400` refuses, while unshifted or in a stance `AttributesEx2` bit 19
-    /// waives the rest; last, any `Stances` bit refuses. Not built: aura 275, which lifts every
-    /// refusal for the spells it names.
+    /// shapeshift (`0x721ca0`: a form without flag `0x1`), `Attributes` bit 16 or the form's flag
+    /// `0x400` refuses, while unshifted or in a stance `AttributesEx2` bit 19 waives the rest;
+    /// last, any `Stances` bit refuses. Not built: aura 275, which lifts every refusal for the
+    /// spells it names.
     pub fn form_refusal(&self, form: u8, form_flags: u32) -> Option<FormRefusal> {
         let stance_bit = if form == 0 { 0 } else { 1u32 << (form - 1) };
         if self.stances_not & stance_bit != 0 {
@@ -786,7 +787,7 @@ impl SpellDisplay {
     }
 
     /// The `SummonProperties.dbc` row of the first `SUMMON` effect, as
-    /// `CGUnit_C::GetSummonProperties` (`0x71d1f0`) finds a unit's through its creating spell.
+    /// the unit's summon-properties read (`0x71d1f0`) finds a unit's through its creating spell.
     pub fn summon_properties_row(&self) -> Option<u32> {
         let effect = self
             .effects
@@ -811,7 +812,7 @@ impl SpellDisplay {
     }
 
     /// Whether removing this spell prints "You have unlearned %s." (`0x14a`) with the bare name:
-    /// `RemoveSpell` is silent for `IS_TRADESKILL`, a nonzero `castUI` or `DO_NOT_DISPLAY`. The
+    /// the spell removal is silent for `IS_TRADESKILL`, a nonzero `castUI` or `DO_NOT_DISPLAY`. The
     /// learn line ignores `castUI`. The caller's suppress flag is clear for `SMSG_REMOVED_SPELL`,
     /// set on a rank-up.
     pub fn announces_unlearn(&self) -> bool {
@@ -839,7 +840,7 @@ impl SpellDisplay {
     }
 }
 
-/// `IsHelpfulOrHarmful`'s three answers (`0x7fe1b0`: 0, 1, 2).
+/// The helpful-or-harmful test's three answers (`0x7fe1b0`: 0, 1, 2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SpellIntent {
     Neither,
@@ -1004,7 +1005,7 @@ mod tests {
         d.cast_ui = 1;
         assert!(
             !d.announces_unlearn(),
-            "castUI > 0 never reaches — its single entry is jle"
+            "castUI > 0 never reaches the print — its single entry is a jle"
         );
         assert_eq!(
             d.learn_announcement(),

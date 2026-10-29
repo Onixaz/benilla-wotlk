@@ -1,7 +1,7 @@
-//! The `EditBox` runtime (`CSimpleEditBox`): keyboard focus, the text buffer, cursor and selection,
-//! editing, and key and char dispatch.
+//! The `EditBox` runtime: keyboard focus, the text buffer, cursor and selection, editing, and key
+//! and char dispatch.
 //!
-//! - Focus: one owner ([`Model::focused_editbox`], the client's `DAT_00cf4dc8`). A left click
+//! - Focus: one owner ([`Model::focused_editbox`], the client's focus global). A left click
 //!   focuses and collapses the selection to the clicked byte (before `SetFocus`), so it never
 //!   selects all. An `autoFocus` box takes the focus on show when none is held and on the first
 //!   key, and a hidden box drops it ([`visibility_focus`]).
@@ -386,7 +386,8 @@ fn set_text_insets(lua: &Lua, h: FrameHandle, l: f32, r: f32, t: f32, b: f32) {
     reseat_text_region(lua, h);
 }
 
-/// Run on the box's text region, creating the region's data if nothing has yet.
+/// Run the text-region re-seat on the box's text region, creating the region's data if nothing has
+/// yet.
 fn reseat_text_region(lua: &Lua, h: FrameHandle) {
     if ensure_text_region(lua, h).is_none() {
         return;
@@ -396,7 +397,7 @@ fn reseat_text_region(lua: &Lua, h: FrameHandle) {
 }
 
 /// The wrapper for an EditBox's embedded text FontString, built by its ctor. The loader uses it for
-/// `<FontString>`: the reference's EditBox LoadXML declares the ctor's font string rather than
+/// `<FontString>`: the reference's EditBox XML load declares the ctor's font string rather than
 /// adding a region (its `bytes` sets the box's `maxBytes`).
 pub(crate) fn editbox_text_region_wrapper(lua: &Lua, frame: &Table) -> Option<Table> {
     let h = frame_handle_of(lua, frame).ok()?;
@@ -408,7 +409,7 @@ pub(crate) fn editbox_text_region_wrapper(lua: &Lua, frame: &Table) -> Option<Ta
     super::region::region_wrapper(lua, id).ok()
 }
 
-/// Adopt `region` as `frame`'s text region, anchored by the current insets: LoadXML assigns an
+/// Adopt `region` as `frame`'s text region, anchored by the current insets: the XML load assigns an
 /// EditBox's font string, never searching the region list.
 pub(crate) fn adopt_text_region(lua: &Lua, frame: &Table, region: &Table) -> mlua::Result<()> {
     let h = frame_handle_of(lua, frame)?;
@@ -440,7 +441,7 @@ fn ensure_text_region_in(model: &mut Model, h: FrameHandle) -> Option<RegionHand
         Some(KindState::EditBox(eb)) => (eb.text_region, eb.multi_line),
         _ => return None,
     };
-    // The ctor built the region (the first of a CSimpleEditBox's five regions); its `RegionData` is
+    // The ctor built the region (the first of an EditBox's five regions); its `RegionData` is
     // seeded here, on the first call.
     let rh = match existing {
         Some(rh) => rh,
@@ -466,7 +467,7 @@ fn ensure_text_region_in(model: &mut Model, h: FrameHandle) -> Option<RegionHand
 }
 
 /// Re-apply the text region's justify and rect for the current `multiLine` flag, as `SetMultiLine`
-/// re-seats it: LoadXML adopts the `<FontString>` before it applies the box's flags.
+/// re-seats it: the XML load adopts the `<FontString>` before it applies the box's flags.
 pub(super) fn refresh_text_region(lua: &Lua, this: &Table) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let mut model = crate::script::model_mut_of(lua);

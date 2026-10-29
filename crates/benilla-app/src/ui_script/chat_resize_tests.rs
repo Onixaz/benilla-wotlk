@@ -270,7 +270,7 @@ fn the_tab_drag_moves_an_unlocked_window_and_a_locked_one_stays_put() {
 }
 
 /// A window a clamp holds off its anchors moves from where it is drawn: the drag start flattens it
-/// to its current rect (`FlattenFrame` `0x48a5f0`), so it does not jump back by the clamped amount.
+/// to its current rect (`0x48a5f0`), so it does not jump back by the clamped amount.
 #[test]
 fn a_clamped_window_drags_from_where_it_is_drawn() {
     let _data = benilla_formats::wow_data_or_skip!();

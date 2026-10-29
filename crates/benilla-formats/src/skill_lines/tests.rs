@@ -339,7 +339,7 @@ fn real_rank_chains_resolve_the_highest_known_rank() {
     assert_eq!(cat.highest_known_rank(6603, &attack), Some(6603));
 }
 
-/// `SpellTableLookupAbility` (`0x812410`): the last admitted row per race and class. The four
+/// The ability lookup (`0x812410`): the last admitted row per race and class. The four
 /// runes with an earlier Blood or Frost row resolve to Runeforging (776) for a Death Knight, and
 /// Summon Warhorse to the mount line (777) over Holy (594) for a Human Paladin.
 #[test]
@@ -363,7 +363,7 @@ fn real_multi_row_spells_resolve_their_last_admitted_row() {
     assert_eq!(cat.spell_to_line(13819, HUMAN, PALADIN), Some(777));
 }
 
-/// The masks and exclude flags of `SpellTableMatchRaceClass` (`0x810320`), last row first.
+/// The masks and exclude flags of the race and class match (`0x810320`), last row first.
 #[test]
 fn the_lookup_takes_the_last_row_its_masks_admit() {
     let info = |skill_id| SlaInfo {
@@ -401,7 +401,7 @@ fn the_lookup_takes_the_last_row_its_masks_admit() {
     assert_eq!(cat.spell_to_line(8, 1, 1), None);
 }
 
-/// `KnownHigherRank` walks forward only; the spell itself does not count.
+/// The higher-rank test walks forward only; the spell itself does not count.
 #[test]
 fn a_higher_rank_is_known_only_forward_along_the_chain() {
     use std::collections::BTreeSet;

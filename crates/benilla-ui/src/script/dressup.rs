@@ -59,7 +59,6 @@ pub(super) fn redress_if_dressup(lua: &Lua, this: &Table) -> mlua::Result<()> {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
-    // .
     m.set(
         "Undress",
         lua.create_function(|lua, this: Table| {

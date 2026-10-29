@@ -21,8 +21,8 @@ use crate::ui_session::{npc_switched, NpcSession};
 
 use super::{lines, GuildRegistrarState, PetitionState, PetitionVendorState};
 
-/// The carried arena charter `TurnInArenaCharter` (`0x6dd680`) finds: a charter-flagged item
-/// whose cached record is an arena one, of `team_size` when given.
+/// The carried arena charter the reference's turn-in lookup (`0x6dd680`) finds: a charter-flagged
+/// item whose cached record is an arena one, of `team_size` when given.
 fn arena_charter(
     store: &ObjectStore,
     objects: &Objects,
@@ -228,7 +228,8 @@ pub(super) fn feed_petition(
     });
     let now_vendor = vendor.npc();
     if std::mem::take(&mut vendor.update) {
-        // `ShowPetitionList` (`0x5a22a0`): the update, then the show, with no close between two.
+        // The petition list show (`0x5a22a0`): the update, then the show, with no close between
+        // two.
         script.fire_event("PETITION_VENDOR_UPDATE", vec![]);
         script.fire_event("PETITION_VENDOR_SHOW", vec![]);
     } else if fed.vendor.is_some() && now_vendor.is_none() {
@@ -278,7 +279,7 @@ pub(super) fn drain_petition(
     for request in requests {
         match request {
             PetitionRequest::Buy(name) => {
-                // The registrar's own latch, not the target or `CGGameUI`'s NPC.
+                // The registrar's own latch, not the target or the UI's interact NPC.
                 let Some(npc) = registrar.npc() else {
                     debug!("ui_petition: BuyGuildCharter with no registrar open — dropped");
                     continue;
@@ -439,8 +440,8 @@ pub(super) fn drain_petition(
     }
 }
 
-/// `CGPetitionVendorInfo::BuyPetition`'s refusals (`0x5a2350`): a guild charter for a guild
-/// member, an arena one for a size the player already holds a team of.
+/// The petition vendor's buy refusals (`0x5a2350`): a guild charter for a guild member, an arena
+/// one for a size the player already holds a team of.
 fn vendor_buy_refusal(
     row: &benilla_protocol::messages::PetitionShowListEntry,
     player: &benilla_protocol::ObjectFields,

@@ -22,8 +22,7 @@ pub struct WorldMapContinent {
     /// ADT tile row bounds.
     pub top_boundary: u32,
     pub bottom_boundary: u32,
-    /// World-sheet offsets, x on the u axis and y on v (:
-    /// `u = offset_x/62.625 + 0.5 - wy·k·scale`).
+    /// World-sheet offsets, x on the u axis and y on v (`u = offset_x/62.625 + 0.5 - wy·k·scale`).
     pub offset_x: f32,
     pub offset_y: f32,
     /// The world-sheet scale, 0.75 on both rows; there is no separate world zoom.

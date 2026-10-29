@@ -1,7 +1,7 @@
-//! TGA decoding, the other half of the reference's UI texture lookup: `TextureCreate` tries
+//! TGA decoding, the other half of the reference's UI texture lookup: the texture create tries
 //! `{".tga", ".blp"}`, and while 1.12 ships its UI art as BLP, addons ship TGAs. The reference's
-//! dispatches on `imageType`: 1 and 9 (colour-mapped, raw or RLE) to the reference through the
-//! palette, 2, 10.
+//! decoder dispatches on `imageType`: 1 and 9 (colour-mapped, raw or RLE) through the palette, 2
+//! and 10 (true-colour, raw or RLE) each to its own reader.
 //!
 //! Deviation: grayscale types 3 and 11 decode where the reference refuses them, because no shipped
 //! or addon file is one and removing working code would buy nothing.

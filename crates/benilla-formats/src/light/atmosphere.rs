@@ -14,7 +14,7 @@ pub(super) const IB_CLOUD_SUN: u32 = 10;
 pub(super) const IB_CLOUD_SLOPE: u32 = 11;
 pub(super) const IB_CLOUD_GBASE: u32 = 12;
 /// The water-surface tint rows, ocean 14/15 and river/lake 16/17 (shallow, deep): the reference's
-/// swatch builder lerps them raw (`gWorldLight+0xe0..+0xec`), not the sky gradient.
+/// swatch builder lerps them raw (the world light's `+0xe0..+0xec`), not the sky gradient.
 pub(super) const IB_OCEAN_SHALLOW: u32 = 14;
 pub(super) const IB_OCEAN_DEEP: u32 = 15;
 pub(super) const IB_RIVER_SHALLOW: u32 = 16;
@@ -34,8 +34,8 @@ pub(super) const LP_GLOW: usize = 4;
 pub(super) const LP_HIGHLIGHT: usize = 1;
 
 /// `LightParams.dbc` field of lightSkyboxID, record byte `+0x08`: the `LightSkybox.dbc` model that
-/// replaces the celestial pass. The reference fills only while the reference has set the ghost
-/// override, where 5875's 5 non-zero rows were all `DeathClouds.mdx`; 12340 sets it on 158 rows.
+/// replaces the celestial pass. The reference fills its skybox slot only while the ghost override
+/// is set, where 5875's 5 non-zero rows were all `DeathClouds.mdx`; 12340 sets it on 158 rows.
 pub(super) const LP_SKYBOX: usize = 2;
 
 /// `LightParams.dbc` fields 5 to 8, after the glow: the water-blend alphas, the depth-alpha

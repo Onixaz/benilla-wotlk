@@ -18,7 +18,7 @@ fn a_chunk_loses_its_last_byte_and_stops_at_a_nul() {
     let mut b = AlertBuffer::default();
     b.push(b"SERVERALERT:abX");
     assert_eq!(b.buf, b"SERVERALERT:ab");
-    // One byte leaves nothing (`SStrCopy` of size 1), and an empty read adds nothing.
+    // One byte leaves nothing (a bounded copy of size 1), and an empty read adds nothing.
     let mut b = AlertBuffer::default();
     b.push(b"X");
     b.push(b"");
@@ -28,8 +28,8 @@ fn a_chunk_loses_its_last_byte_and_stops_at_a_nul() {
     assert_eq!(b.buf, b"ab");
 }
 
-/// The callback appends (`SStrPack`), so a body read in pieces is the pieces joined, each short
-/// of its last byte.
+/// The callback appends (a bounded string append), so a body read in pieces is the pieces joined,
+/// each short of its last byte.
 #[test]
 fn chunks_add_up_to_the_buffer_and_stop_at_its_cap() {
     let mut b = AlertBuffer::default();

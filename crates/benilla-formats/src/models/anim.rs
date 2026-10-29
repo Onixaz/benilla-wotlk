@@ -961,7 +961,7 @@ mod doodad_sound_tests {
     }
 
     /// `bellows.m2` keys two `$DSL` at t = 0 and 1.1 on one 2 s loop. Each loops, but a doodad
-    /// holds one registration (`[CMapDoodadDef+0x168]`) and a marker with another id releases it
+    /// holds one registration (`[doodad+0x168]`) and a marker with another id releases it
     /// first, so the pair alternates (`sound::anim_events`).
     #[test]
     fn a_dsl_pair_on_one_cycle_alternates_through_one_slot() {

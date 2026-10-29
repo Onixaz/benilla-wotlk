@@ -535,13 +535,12 @@ fn white_lerp_byte(ch: u8, t: f64) -> u8 {
     ((s.to_bits() >> 14) & 0xff) as u8
 }
 
-/// The reference's bright-doorway fade, FixColorVertexAlpha, run once per group in place over its
-/// MOCV before any draw; transition corridors are authored near-black and rely on it. Per vertex,
-/// `dist` is the nearest [`portal_distance`] over portals to exterior neighbours
-/// (`MOGI.flags & 0x48 != 0`): at 0 the vertex goes white-opaque, under [`DOORWAY_FADE_REACH`] with
-/// alpha 0 it is white-lerped by `t = 1 − 0.15·dist` with alpha `t·255`, else it is untouched. The
-/// MOPY pre-pass is gated (`DAT_00ca8064`) and a reference capture shows it unrun, so it is not run
-/// here.
+/// The reference's bright-doorway fade, run once per group in place over its MOCV before any draw;
+/// transition corridors are authored near-black and rely on it. Per vertex, `dist` is the nearest
+/// [`portal_distance`] over portals to exterior neighbours (`MOGI.flags & 0x48 != 0`): at 0 the
+/// vertex goes white-opaque, under [`DOORWAY_FADE_REACH`] with alpha 0 it is white-lerped by
+/// `t = 1 − 0.15·dist` with alpha `t·255`, else it is untouched. The MOPY pre-pass is gated on a
+/// static flag and a reference capture shows it unrun, so it is not run here.
 fn fix_color_vertex_alpha(
     colors: &mut [Color],
     group: &WmoGroup,
@@ -780,7 +779,7 @@ pub fn wmo_group_submeshes(group_bytes: &[u8], root: &WmoRoot) -> Result<Vec<Ren
             let blend = match material.map(|m| m.blend_mode) {
                 Some(0) | None => ModelBlend::Opaque,
                 Some(1) => ModelBlend::AlphaTest,
-                // `MOMT.blendMode` indexes EGxBlend directly, no M2 remap: 4 is Mod
+                // `MOMT.blendMode` indexes the device blend directly, no M2 remap: 4 is Mod
                 // (DST_COLOR/ZERO), 5 Mod2x (DST_COLOR/SRC_COLOR).
                 Some(4) => ModelBlend::Mod,
                 Some(5) => ModelBlend::Mod2x,

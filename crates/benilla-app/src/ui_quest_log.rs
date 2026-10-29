@@ -163,8 +163,8 @@ impl Plugin for UiQuestLogPlugin {
     }
 }
 
-/// Deviation: an in-flight name reads `...`, where the reference's reads `" "`, because a blank
-/// looks like a nameless objective.
+/// Deviation: an in-flight name reads `...`, where the reference's placeholder is `" "`, because a
+/// blank looks like a nameless objective.
 const NAME_PLACEHOLDER: &str = "...";
 
 /// One leaderboard line from its `%s`/`%d`/`%d` key. The keys are the leaderboard's own, not the
@@ -345,9 +345,9 @@ fn build_objectives(
     objectives
 }
 
-/// `ComputeBlobQuestObjectives` (`0x5e2950`), the objectives a quest's POI regions may serve: bit
-/// `i` an unfinished kill or GameObject row, `4 + i` a required item short, `10 + i` a drop item
-/// not carried (the starting item excepted), `0x10000` an unmet event; all ones once complete,
+/// The reference's POI objective mask (`0x5e2950`), the objectives a quest's POI regions may serve:
+/// bit `i` an unfinished kill or GameObject row, `4 + i` a required item short, `10 + i` a drop
+/// item not carried (the starting item excepted), `0x10000` an unmet event; all ones once complete,
 /// 0 when failed.
 fn poi_objectives(
     template: &QuestTemplate,
@@ -665,7 +665,7 @@ pub(crate) fn feed_quest_log(
     let mut entries: Vec<QuestLogEntryView> = Vec::new();
     let mut header_keys: Vec<Option<String>> = Vec::new();
     // Quests under a collapsed header: out of the visible list, still in the log, and counted by
-    // the watch prune, as the reference's scans the whole row array.
+    // the watch prune, as the reference's prune scans the whole row array.
     let mut hidden_quest_ids: Vec<u32> = Vec::new();
     for (_, name, row_idxs) in &groups {
         let collapsed = quest_log.collapsed.contains(name);
@@ -825,8 +825,8 @@ pub(crate) fn feed_quest_log(
                 };
                 crate::ui_action::show_messages(&mut script, &mut sink, "ui_quest_log", line);
             }
-            // The quest's 1-based log row (`GetQuestIndex` `0x5deeb0`), for which the stock
-            // `QuestLog_OnEvent` adds a timed watch (`QuestLogFrame.lua:265-271`).
+            // The quest's 1-based log row (`0x5deeb0`), for which the stock `QuestLog_OnEvent` adds
+            // a timed watch (`QuestLogFrame.lua:265-271`).
             script.fire_event(
                 "QUEST_WATCH_UPDATE",
                 vec![ScriptValue::Int(i64::from(quest.index))],
@@ -834,8 +834,8 @@ pub(crate) fn feed_quest_log(
         }
     }
     // Last: `QUEST_WATCH_UPDATE` fires at once from the update handler, while `QUEST_LOG_UPDATE`
-    // is a unique signal flushed after the frame's packets (`Script_SendUniqueSignals`
-    // `0x614760`), so the tracker redraws with the progress watch already added.
+    // is a unique signal flushed after the frame's packets (`0x614760`), so the tracker redraws
+    // with the progress watch already added.
     script.fire_event("QUEST_LOG_UPDATE", vec![]);
     *last = fresh;
 }

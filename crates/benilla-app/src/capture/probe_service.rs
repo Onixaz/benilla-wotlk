@@ -291,7 +291,8 @@ fn service_probe(
     mut gossip: ResMut<GossipState>,
     mut giver: ResMut<QuestGiver>,
     mut trainer: ResMut<TrainerOpen>,
-    // The reference's mirror, what the re-click gate reads: armed by a window and only by one.
+    // A mirror of the reference's interact-NPC slot, what the re-click gate reads: armed by a
+    // window and only by one.
     interact: Res<InteractNpc>,
     // The vendor fork: the merchant window, the VM the held-cursor leg picks up in, and what
     // turns a (bag, slot) into the item guid.

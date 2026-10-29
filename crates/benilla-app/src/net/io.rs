@@ -126,17 +126,18 @@ const REALM_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Round trips [`PingClock`] keeps: 15. The reference's ring (`conn+0x1a6c`) has 16 slots, but
-/// `read == write` means empty and `HandlePong` advances the read index, so at most 15 are ever
-/// averaged.
+/// `read == write` means empty and the pong handler advances the read index, so at most 15 are
+/// ever averaged.
 const RTT_RING: usize = 15;
 
 /// The connection's ping stats, the reference's per-connection block (`conn+0x1a6c` ring,
 /// `+0x1aac/+0x1ab0` head and tail, `+0x1a64` send stamp, `+0x1a68` expected sequence) under one
-/// lock, as `conn+0x1ac0` guards it for `HandlePong` and `GetNetStats`.
+/// lock, as `conn+0x1ac0` guards it for the pong handler and `GetNetStats`.
 ///
 /// The write thread stamps each `CMSG_PING`; the read thread times the `SMSG_PONG` the instant it
-/// lands, as the reference's `OnData` hands it to `HandlePong` inline, since timing it in the frame
-/// drain would add a client frame to every reading; the app reads [`Self::avg_latency_ms`].
+/// lands, as the reference's receive path hands it to the pong handler inline, since timing it in
+/// the frame drain would add a client frame to every reading; the app reads
+/// [`Self::avg_latency_ms`].
 #[derive(Default)]
 pub(crate) struct PingClock {
     /// Sequence of the latest ping sent, counting from 1 per connection.
@@ -150,7 +151,7 @@ pub(crate) struct PingClock {
 }
 
 impl PingClock {
-    /// `HandlePong`: times and files one `SMSG_PONG`; a mismatched sequence is dropped, as in
+    /// The pong handler: times and files one `SMSG_PONG`; a mismatched sequence is dropped, as in
     /// the reference.
     pub(crate) fn record_pong(&mut self, sequence: u32) -> Option<u32> {
         let sent = self.sent_at.filter(|_| self.sequence == sequence)?;
@@ -346,10 +347,10 @@ enum LogonAnswer {
     /// `ChangeRealm` (`0x4defb0`): dial this realm with the logon's session key, under the abandon
     /// generation the ask carried.
     Enter(benilla_protocol::RealmInfo, u64),
-    /// A new login supersedes the logon, as `CGlueMgr::Login` starts the next logon whatever link
-    /// the last one left.
+    /// A new login supersedes the logon, as the glue screen's login starts the next logon whatever
+    /// link the last one left.
     Login(LoginRequest),
-    /// `CLoginMgr::Cancel`: the realmd link closes and the thread parks for credentials.
+    /// The login manager's cancel: the realmd link closes and the thread parks for credentials.
     Close,
     /// The app dropped a channel end.
     Exit,
@@ -361,7 +362,7 @@ enum WorldEnd {
     Cycle(Cycle),
     /// It failed before the roster, reported, or was cancelled, or Change Realm left the session at
     /// character select: the logon park resumes with the realmd link as it stands, as the
-    /// reference's state-2 failure arm and `ConnectToRealm`'s disconnect drop only the world
+    /// reference's state-2 failure arm and the realm connect's disconnect drop only the world
     /// socket. Closed since a world entry, it is dialled again by the next query ([`query`]).
     Failed,
     /// A new login superseded the session at character select.
@@ -390,12 +391,12 @@ fn publish(
 /// once the app is gone.
 ///
 /// Deviation: the reference re-dials only from `RequestRealmList`, and only when the link is down
-/// (`[CLoginMgr+5]` clear), with the reconnect challenge (`[Logon+0xc]`); the connect's query sends
-/// only on a link in state 6 and otherwise nothing, leaving the screen on its connecting dialog for
-/// good. Here both queries re-dial on any failure, with a full logon from the cycle's credentials,
-/// because benilla's logon has no reconnect exchange and a connect that can never complete is a
-/// dead end, not a behaviour; the new session key serves the next world dial as the reconnect's
-/// would.
+/// (the login manager's `+5` clear), with the reconnect challenge (the logon's `+0xc`); the
+/// connect's query sends only on a link in state 6 and otherwise nothing, leaving the screen on its
+/// connecting dialog for good. Here both queries re-dial on any failure, with a full logon from the
+/// cycle's credentials, because benilla's logon has no reconnect exchange and a connect that can
+/// never complete is a dead end, not a behaviour; the new session key serves the next world dial as
+/// the reconnect's would.
 fn query(
     logon: &mut benilla_protocol::Logon,
     req: &LoginRequest,
@@ -778,7 +779,7 @@ fn world(
                 // order they were made: `RealmList.xml` is a `frameStrata="DIALOG"` frame, so
                 // Change Realm raises it over character select and both must be served while it is
                 // open, and a roster ask made before a realm change goes out on this link before
-                // the change drops it (the reference sends at the verb, and `ConnectToRealm` only
+                // the change drops it (the reference sends at the verb, and the realm connect only
                 // then closes the link).
                 //
                 // No `break` or `continue` inside the `select!` arms: the macro expands into a loop of
@@ -802,7 +803,7 @@ fn world(
                         Ok(ParkRequest::Realm(RealmRequest::Enter { realm, generation })) => {
                             Parked::Realm(realm, generation)
                         }
-                        // `ConnectToRealm` with the world up drops it first.
+                        // The realm connect with the world up drops it first.
                         Ok(ParkRequest::Realm(RealmRequest::Leave)) => Parked::Leave,
                         Ok(ParkRequest::Char(CharRequest::Enter(guid))) => Parked::Play(guid),
                         // Select's Back: drop the parked session, return to the login park.
@@ -936,8 +937,8 @@ fn world(
                 .find(|c| c.guid == guid)
                 .map(|c| c.name.clone())
                 .unwrap_or_default();
-            // `EnterWorld` closes the realmd link (`CLoginMgr::Cancel`) and nothing in the world
-            // reopens it; back at the park, a realm list query dials it again ([`query`]).
+            // `EnterWorld` closes the realmd link (the login manager's cancel) and nothing in the
+            // world reopens it; back at the park, a realm list query dials it again ([`query`]).
             logon.close();
             // No `CMSG_SET_ACTIVE_MOVER` here: it waits for our own player's create, as the
             // reference's does (`super::enter_world_on_self_create`); a server may drop it before then.
@@ -1099,8 +1100,9 @@ fn stream(
                     );
                 }
                 for ev in events {
-                    // The pong bypass: the reference's `OnData` hands `SMSG_PONG` to `HandlePong`
-                    // inline, not onto the game thread's queue, so it is timed and consumed here.
+                    // The pong bypass: the reference's receive path hands `SMSG_PONG` to its pong
+                    // handler inline, not onto the game thread's queue, so it is timed and consumed
+                    // here.
                     if let SessionEvent::Pong { sequence } = ev {
                         if let Some(rtt) = ping_clock.lock_recover().record_pong(sequence) {
                             bevy::log::debug!("net: pong seq={sequence} rtt={rtt}ms");

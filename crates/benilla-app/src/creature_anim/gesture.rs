@@ -1,7 +1,8 @@
 //! The client-local gesture, which no packet announces: the chat display path picks a code from the
-//! message and calls `(unit, code)`, which resolves it through five `Emotes.dbc` flag slots and
-//! plays it, the player `SMSG_EMOTE` uses. Its other caller is the NPC-interact path, always with
-//! code 0 (talk), so [`crate::target::click`] pushes through here.
+//! message and calls the gesture player with `(unit, code)`, which resolves it through five
+//! `Emotes.dbc` flag slots and plays it through the one-shot emote player `SMSG_EMOTE` uses. Its
+//! other caller is the NPC-interact path, always with code 0 (talk), so [`crate::target::click`]
+//! pushes through here.
 
 use bevy::prelude::*;
 
@@ -40,7 +41,7 @@ impl Gesture {
 }
 
 /// Gestures asked for and not yet played, `(speaker guid, code)`, from the chat display path and
-/// the interact click, the two callers.
+/// the interact click, the gesture player's two callers.
 #[derive(Resource, Default)]
 pub(crate) struct GestureQueue(Vec<(u64, Gesture)>);
 
@@ -90,7 +91,7 @@ pub(crate) fn select_gesture(
     }
 }
 
-/// Drain [`GestureQueue`]: the client's and its tail call.
+/// Drain [`GestureQueue`]: the client's gesture player and its tail call into the emote player.
 pub(super) fn drive_gestures(
     mut queue: ResMut<GestureQueue>,
     mut out: MessageWriter<EmoteAnim>,

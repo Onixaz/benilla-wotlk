@@ -415,10 +415,10 @@ pub struct ObjectFields {
 }
 
 /// What the client keeps beside a unit's descriptor and reads in its place: the power
-/// `SMSG_POWER_UPDATE` sets (`CGUnit_C::SetPredictedPower` `0x722c50`, `[unit+0xfb4]`) and the
-/// mount `SMSG_DISMOUNT` drops ahead of the field (`0x741a40`). A move of the shadowed field drops
-/// the copy, as its field handler re-seeds it (`0x7234d0`, `0x7235c0`, `0x723620`). benilla
-/// predicts no spend, so the handler's keep-a-lower-prediction leg for our own unit never differs.
+/// `SMSG_POWER_UPDATE` sets (the predicted-power set `0x722c50`, `[unit+0xfb4]`) and the mount
+/// `SMSG_DISMOUNT` drops ahead of the field (`0x741a40`). A move of the shadowed field drops the
+/// copy, as its field handler re-seeds it (`0x7234d0`, `0x7235c0`, `0x723620`). benilla predicts no
+/// spend, so the handler's keep-a-lower-prediction leg for our own unit never differs.
 #[derive(Debug, Clone, Default)]
 struct Shadow {
     /// By power type, 0..7.
@@ -702,9 +702,9 @@ impl ObjectFields {
         }
     }
 
-    /// `SMSG_POWER_UPDATE` (`CGUnit_C::SetPredictedPower` `0x722c50`): power type `ty` reads
-    /// `value`, capped at its maximum, until its field next moves. Whether the read moved; a type
-    /// past the seven has no slot.
+    /// `SMSG_POWER_UPDATE` (the predicted-power set `0x722c50`): power type `ty` reads `value`,
+    /// capped at its maximum, until its field next moves. Whether the read moved; a type past the
+    /// seven has no slot.
     pub fn set_predicted_power(&mut self, ty: u8, value: u32) -> bool {
         if usize::from(ty) >= 7 {
             return false;

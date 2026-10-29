@@ -2,7 +2,7 @@
 //!
 //! Reason 59 (`EQUIP_ERR_NONE`) only clears a pending lock (`ItemHandler.cpp:865`, `:963`), and
 //! after a failed item use rides beside the real refusal (`SpellHandler.cpp:130`). The reference
-//! maps it like any reason (`DisplayError`) to a key with no 1.12 string, which the sink's
+//! maps it like any reason to an error key with no 1.12 string, which the error sink's
 //! empty-string guard drops. Reason 0, the one coded suppression, is dropped earlier, by
 //! `benilla_protocol::events`.
 
@@ -139,7 +139,8 @@ mod tests {
             let key = equip_error_key(reason);
             let text = g(key).unwrap_or_default();
             if reason == 59 {
-                // Empty, which the drain's `is_empty()` skip drops as the reference's guard does.
+                // Empty, which the drain's `is_empty()` skip drops as the reference's empty-string
+                // guard does.
                 assert!(
                     text.is_empty(),
                     "reason 59's {key} resolved to {text:?} — the duplicate line is back"

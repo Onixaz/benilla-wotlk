@@ -5,7 +5,7 @@
 //! the table's generation moves, and runs a pressed chord's command.
 //!
 //! Dispatch ([`latch_and_dispatch`], in [`crate::ui_script::UiInput`] after the UI key feed), as
-//! `CBindings::ExecuteBinding` and `RunCommand` do:
+//! the reference's binding dispatch and command runner do:
 //! - a press probes its exact chord, then once more with its leftmost modifier dropped
 //!   ([`Chord::fallback`]);
 //! - the resolved command's body runs with `keystate = "down"`, and the base key's release runs a
@@ -54,8 +54,8 @@ struct BindingDispatch {
 }
 
 impl BindingDispatch {
-    /// Resolve a press as the reference's `CBindings::ExecuteBinding` does: the exact chord, then
-    /// one retry with the leftmost modifier dropped ([`Chord::fallback`]).
+    /// Resolve a press as the reference's binding dispatch does: the exact chord, then one retry
+    /// with the leftmost modifier dropped ([`Chord::fallback`]).
     ///
     /// Deviation, dev builds only: `dev_plane` suppresses the keyboard retry, because
     /// `Ctrl`+`Shift` is the dev overlays' plane ([`benilla_world::modkeys::DEV_CHORD`]) and
@@ -117,7 +117,7 @@ impl BindingsState {
     pub(crate) fn keep_smoothing(&self) -> bool {
         self.keep_smoothing
     }
-    /// Is a held bit set right now (the reference's `[InputControl+4]`)?
+    /// Is a held bit set right now (the reference's input-control flag word)?
     pub(crate) fn pressed(&self, i: Input) -> bool {
         self.held.contains(&i)
     }
@@ -197,9 +197,9 @@ impl Plugin for BindingsPlugin {
 /// Seed the key sets at the VM's birth, before any interface file runs: the defaults off the
 /// player's chain (`WTF\DefaultBindings.wtf`), the account set from its `bindings-cache.wtf`
 /// (account-data slot 2), and the character's from slot 3, which makes it the active set when it
-/// holds anything (`FinishLoadBindings` `0x562d60`). The keys are their own table, so a command a
-/// later file declares finds its keys there, and stock `ActionButton_OnLoad` paints its hotkey
-/// corner from `GetBindingKey` at load.
+/// holds anything (`0x562d60`). The keys are their own table, so a command a later file declares
+/// finds its keys there, and stock `ActionButton_OnLoad` paints its hotkey corner from
+/// `GetBindingKey` at load.
 pub(crate) fn seed_bindings_for_vm(world: &mut World, script: &mut UiScript) {
     use crate::account_data::store::{BINDINGS_ACCOUNT, BINDINGS_CHARACTER};
     let defaults = crate::ui_script::default_bindings();
@@ -247,7 +247,7 @@ fn drain_binding_requests(script: Option<NonSendMut<UiScript>>, mut files: ResMu
     }
 }
 
-/// `CGUIBindings::SaveBindings` (`0x55f3d0`) at the UI shutdown: the account set saved writes both
+/// The reference's binding save (`0x55f3d0`) at the UI shutdown: the account set saved writes both
 /// files, the character's empty unless it keeps a set of its own; the character set alone writes
 /// its file.
 pub(crate) fn save_to_account_data(world: &mut World) {
@@ -383,10 +383,10 @@ fn latch_and_dispatch(
             state.held.clear();
         }
     }
-    // The reference's two bulk clears: the window deactivate (the reference's `and eax,0xfffff00f`,
-    // the direction bits only, so the mouse pair and autorun survive) and the world enter behind
-    // the loading cover, which clears every bit. A key's latch meets them in the stuck-latch sweep
-    // too, whose up-half runs the Stop.
+    // The reference's two bulk clears: the window deactivate (an `and eax,0xfffff00f`, the
+    // direction bits only, so the mouse pair and autorun survive) and the world enter behind the
+    // loading cover, which clears every bit. A key's latch meets them in the stuck-latch sweep too,
+    // whose up-half runs the Stop.
     if cover.is_some_and(|c| c.covering()) {
         state.held.clear();
     } else if focus_lost.read().count() > 0 {
@@ -413,7 +413,7 @@ fn latch_and_dispatch(
     // ── Who owns this frame's keys ── a focused EditBox eats every key while it holds focus; a
     // shown keyboard frame ate the keys in `capture.consumed`. Both suppress a press and nothing
     // else: in the reference a focused box makes the movement handlers no-ops, so the direction
-    // bits are frozen, not cleared. Which does clear them, is the OS window-deactivate handler (off
+    // bits are frozen, not cleared. What does clear them is the OS window-deactivate handler (off
     // the root's WM_ACTIVATE slot `[root+0x1134]`); here bevy's `KeyboardFocusLost` and
     // `ButtonInput::release_all` reach the stuck-latch sweep below.
     //
@@ -509,8 +509,8 @@ fn latch_and_dispatch(
     }
 
     // ── Wheel ── each notch is a press and its release, back to back: the reference hands one
-    // chord to `CBindings::ExecuteBinding` with `isDown=1` then `isDown=0` per wheel message. A
-    // `runOnUp` command runs both halves; a plain one's up leg is the `RunCommand` no-op. A
+    // chord to its binding dispatch with `isDown=1` then `isDown=0` per wheel message. A `runOnUp`
+    // command runs both halves; a plain one's up leg is a no-op in the command runner. A
     // trackpad's fractional lines carry to whole notches.
     let wheel = wheel_lines(scroll.unit, scroll.delta.y);
     // Over chrome only (`PointerOverUiPanel`): the wheel still zooms with the cursor on a
@@ -550,8 +550,8 @@ fn latch_and_dispatch(
         release(&mut state, &mut script, k);
     }
 
-    // The calls this pass's binding bodies made act this frame, as the reference's return from the
-    // reference has already moved the bit.
+    // The calls this pass's binding bodies made act this frame, as in the reference the bit has
+    // already moved when the body returns.
     if let Some(s) = script.as_mut() {
         let inputs = s.take_binding_input();
         state.apply_script_input(inputs);
@@ -836,7 +836,7 @@ mod tests {
         assert!(state(&app).pressed(Input::MoveForward));
         assert_eq!(lua_count(&app, "PROBE_DOWN"), 1, "W is nobody else's");
 
-        // `keystate` does not outlive the call: `RunCommand` sets it to nil.
+        // `keystate` does not outlive the call: the reference's command runner sets it to nil.
         assert_eq!(lua_str(&app, "tostring(keystate)"), "nil");
     }
 
@@ -879,7 +879,7 @@ mod tests {
     }
 
     /// A box taking focus releases nothing already held: the reference's focused box freezes the
-    /// direction bits rather than clearing them (the reference is the OS window-deactivate clear).
+    /// direction bits rather than clearing them (only the OS window deactivate clears them).
     #[test]
     fn a_held_latch_rides_out_a_box_taking_focus_and_still_releases() {
         let script = with_addon(PROBE_BINDINGS);
@@ -945,7 +945,8 @@ mod tests {
         assert!(app.world().resource::<BindingsState>().latched.is_empty());
     }
 
-    /// Auto-repeat is classified off our pressed-key set, as the reference's, not the OS bit:
+    /// Auto-repeat is classified off our pressed-key set, as the reference classifies it, not off
+    /// the OS bit:
     /// 1. a repeat of a key we have down does not re-run its binding (a held SPACE jumps once);
     /// 2. a flagged repeat of a key we do not have down is a fresh press;
     /// 3. so after a window deactivate, the first repeat of a key still held re-latches, and
@@ -1540,7 +1541,7 @@ mod tests {
             .write_message(bevy::input::keyboard::KeyboardFocusLost);
         app.update();
         assert!(!state(&app).pressed(Input::MoveForward));
-        assert!(state(&app).steering(), "the reference masks 0xfffff00f");
+        assert!(state(&app).steering(), "the deactivate masks 0xfffff00f");
     }
 
     /// B opens the backpack and SHIFT-B opens every bag, end to end: a real key event, the

@@ -26,7 +26,7 @@ pub fn coin_icon(copper: i64) -> &'static str {
     }
 }
 
-/// `GetCursorMoney`'s `m_cursorMoney`, shared by modes 2 and 12 (`0x5208f0`).
+/// The cursor money `GetCursorMoney` reads, shared by modes 2 and 12 (`0x5208f0`).
 pub(crate) fn cursor_money(model: &Model) -> u32 {
     match &model.cursor {
         Some(CursorPayload::Money(m) | CursorPayload::GuildBankMoney(m)) => m.copper,
@@ -113,7 +113,7 @@ pub(crate) fn pickup_trade_money(model: &mut Model, amount: i32) -> bool {
 }
 
 impl crate::script::UiScript {
-    /// The trade window's open (`SetTradePartner`) folds held coins into the offer.
+    /// The trade window's open folds held coins into the offer.
     pub fn fold_cursor_money_into_trade(&mut self) -> Option<u32> {
         let mut model = self.model_mut();
         add_trade_money(&mut model).then(|| model.trade.as_ref().map_or(0, |t| t.player.gold))
@@ -174,9 +174,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // GetCoinText(amount [, separator]) (`0x510c60` → `GetCurrencyText` `0x7e7d80`): each
-    // denomination present through `GOLD_AMOUNT`, `SILVER_AMOUNT` or `COPPER_AMOUNT`, gold first,
-    // joined by the separator, `", "` when absent.
+    // GetCoinText(amount [, separator]) (`0x510c60` → `0x7e7d80`): each denomination present
+    // through `GOLD_AMOUNT`, `SILVER_AMOUNT` or `COPPER_AMOUNT`, gold first, joined by the
+    // separator, `", "` when absent.
     g.set(
         "GetCoinText",
         lua.create_function(|lua, (amount, separator): (Value, Option<mlua::String>)| {

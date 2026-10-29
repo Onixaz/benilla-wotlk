@@ -200,8 +200,8 @@ fn in_raid_list(
             .any(|e| matches!(e, 27 | 35 | 65 | 119 | 128 | 129 | 143))
 }
 
-/// What `CanShowAura 0x53d580` reads off the active player: the casters its caster-only leg
-/// admits, the player and its pet, and the aura vision byte (`PLAYER_FIELD_BYTES2` byte 3).
+/// What the aura-show check (`0x53d580`) reads off the active player: the casters its caster-only
+/// leg admits, the player and its pet, and the aura vision byte (`PLAYER_FIELD_BYTES2` byte 3).
 #[derive(Clone, Copy, Debug, Default)]
 struct Viewer {
     player: u64,
@@ -328,7 +328,7 @@ const UNIT_FLAG_AURAS_VISIBLE: u32 = 0x0800_0000;
 /// `AttributesEx & 0x4` (vmangos `SpellDefines.h:834`), the cancel gate's DBC arm.
 const SPELL_ATTR_EX_IS_CHANNELED: u32 = 0x4;
 
-/// `GetPlayerBuff`'s second return, cache record `+0xc`, set by `BuildBuffRecord` when
+/// `GetPlayerBuff`'s second return, cache record `+0xc`, set by the buff record's build when
 /// `DurationIndex` names an infinite `SpellDuration.dbc` row, base < 0 and per level <= 0, or no
 /// row; or when the aura is not cancelable and an effect is an area aura, `0x23`, `0x77`, `0x80` or
 /// `0x81`. `BuffFrame.lua:124` then shows no countdown. Deviation: on a catalog miss the reference
@@ -357,10 +357,10 @@ fn until_cancelled(
 
 /// The filter of every aura display, the player's bar and other units' rows alike, as the display
 /// index rebuild admits a slot (`0x72c510`): an id with no `Spell.dbc` row is never indexed
-/// (`0x72c73d`-`0x72c75f`), so a server-only spell takes no `UnitAura` index; then
-/// `CanShowAura 0x53d580` on the aura's self-cast flag (`0x08`) and caster: the spell's own legs,
-/// a caster-only aura cast by the player or its pet, and the aura vision bit
-/// (`HasAuraVision 0x4f72e0`). With no catalog at all every aura stays listed.
+/// (`0x72c73d`-`0x72c75f`), so a server-only spell takes no `UnitAura` index; then the aura-show
+/// check (`0x53d580`) on the aura's self-cast flag (`0x08`) and caster: the spell's own legs, a
+/// caster-only aura cast by the player or its pet, and the aura vision bit (`0x4f72e0`). With no
+/// catalog at all every aura stays listed.
 fn shown_in_aura_ui(ctx: ListCtx, spell_id: u32, flags: u8, caster: u64) -> bool {
     let Some(catalog) = ctx.catalog else {
         return true;
@@ -500,9 +500,9 @@ fn feed_auras(
     let held = |guid: u64| index.0.get(&guid).and_then(|&e| stores.get(e).ok());
     let table_of = |guid: u64| index.0.get(&guid).and_then(|&e| tables.get(e).ok());
     // `UnitBuff`'s unit gate on a live unit. `unit` is never `store`, the player's, which is the
-    // gate's second argument. The pet is ungated; the reference gates a pet too, but `CanAssist`'s
-    // player-controlled arm (the controlling players' duel and FFA-PvP state) passes for your own
-    // pet, leaving only the charm, selectable and reaction clauses to hide its buffs.
+    // gate's second argument. The pet is ungated; the reference gates a pet too, but the assist
+    // check's player-controlled arm (the controlling players' duel and FFA-PvP state) passes for
+    // your own pet, leaving only the charm, selectable and reaction clauses to hide its buffs.
     let buffs_visible = |guid: u64, unit: &ObjectStore| {
         guid == pet_guid
             || buffs_visible_on(
@@ -771,9 +771,9 @@ mod tests {
         assert_eq!(table_inputs(&table, NO_SPELLS, true).count(), 2);
     }
 
-    /// `CanShowAura`'s viewer legs (`0x53d580`): a caster-only aura lists only when the player or
-    /// its pet cast it, and never from a roster record; an aura-vision aura only while the
-    /// player's vision byte carries its bit; the self-cast flag picks the `AttributesEx5` bit.
+    /// The aura-show check's viewer legs (`0x53d580`): a caster-only aura lists only when the
+    /// player or its pet cast it, and never from a roster record; an aura-vision aura only while
+    /// the player's vision byte carries its bit; the self-cast flag picks the `AttributesEx5` bit.
     #[test]
     fn the_aura_filter_reads_the_caster_the_vision_and_the_self_cast_flag() {
         use benilla_formats::SpellDisplay;
@@ -902,12 +902,12 @@ mod tests {
         );
     }
 
-    /// `NOT_SELECTABLE` is `CanAssist`'s; the charm clause is `UnitBuff`'s.
+    /// `NOT_SELECTABLE` is the assist check's; the charm clause is `UnitBuff`'s.
     #[test]
     fn not_selectable_and_being_charmed_each_close_the_gate_on_their_own() {
         let reputations = Reputations::default();
 
-        // AURAS_VISIBLE is tested before `CanAssist`, so it wins over NOT_SELECTABLE.
+        // AURAS_VISIBLE is tested before the assist check, so it wins over NOT_SELECTABLE.
         let both = ridge_stalker_slots(UNIT_FLAG_AURAS_VISIBLE | (1 << 25));
         assert!(
             buffs_visible_on(
@@ -918,10 +918,10 @@ mod tests {
                 &crate::target::NoGroup,
                 None
             ),
-            "AURAS_VISIBLE is tested FIRST and short-circuits CanAssist entirely"
+            "AURAS_VISIBLE is tested FIRST and short-circuits the assist check entirely"
         );
 
-        // Being charmed closes the gate before `CanAssist` runs.
+        // Being charmed closes the gate before the assist check runs.
         let friendly_pc = ridge_stalker_slots(0x8);
         let charmed_self = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
             (F_CHARMEDBY, 0x1234),

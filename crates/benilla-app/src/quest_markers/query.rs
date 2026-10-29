@@ -23,8 +23,8 @@ use crate::ui_quest::QuestGiver;
 
 /// `UNIT_NPC_FLAGS` questgiver service bit.
 const NPC_FLAG_QUESTGIVER: u32 = 0x2;
-/// `UNIT_NPC_FLAGS` flightmaster service bit, the other half of the reference's re-gate and the
-/// gate on the only `0x1aa` sender.
+/// `UNIT_NPC_FLAGS` flightmaster service bit, the other half of the per-unit refresh's re-gate and
+/// the gate on the only `0x1aa` sender.
 const NPC_FLAG_FLIGHTMASTER: u32 = crate::target::cursor_mode::npc_flags::FLIGHTMASTER;
 /// `GAMEOBJECT_FLAGS` bit 2, the sweep's whole GameObject gate (so mask `0x4`, not the unit leg's
 /// `0x2`). The name is vmangos's (`GameObjectDefines.h:76`).
@@ -44,9 +44,10 @@ const GO_FLAG_INTERACT_COND: u32 = 0x4;
 ///   sight, and with no status slot it is never torn down.
 ///
 /// The light sweep's callback sends `0x182` for a questgiver and tears down any Hated or Hostile
-/// creature, questgiver or not, never on the flag alone. A flag change reaches through the
-/// `UNIT_NPC_FLAGS` watch, which tears down first, then re-gates on reaction. The full sweep (your
-/// revive, your own reaction inputs) runs on every creature: `full` below.
+/// creature, questgiver or not, never on the flag alone. A flag change reaches the per-unit refresh
+/// through the `UNIT_NPC_FLAGS` watch, which tears down first, then re-gates on reaction. The full
+/// sweep (your revive, your own reaction inputs) runs the per-unit refresh on every creature:
+/// `full` below.
 ///
 /// Not covered: the reference's `ITEM` watch also sweeps when an item moves between containers;
 /// with no item objects, only our equipment and bag guids are folded. Per unit, its reaction
@@ -98,8 +99,8 @@ pub(super) fn query_statuses(
     let swept = state.generation != generation || full;
     state.generation = generation;
     // A guid that left the world drops its ask key and cached status. A sweep never clears the map:
-    // only a unit's own key moving is a. Pruned only when the index moved, as the `ResMut` retain
-    // marks `QuestGiver` changed.
+    // only a unit's own key moving is a per-unit refresh. Pruned only when the index moved, as the
+    // `ResMut` retain marks `QuestGiver` changed.
     if index.is_changed() {
         state.asked.retain(|guid, _| index.0.contains_key(guid));
         quest.retain_statuses(|npc| index.0.contains_key(&npc));
@@ -136,23 +137,23 @@ pub(super) fn query_statuses(
                 );
                 if reaction <= 1 {
                     // The sweep's one teardown, questgiver or not. Dropping the ask key brings the
-                    // marker back through a when the reaction recovers.
+                    // marker back through a per-unit refresh when the reaction recovers.
                     state.asked.remove(&guid.0);
                     tear_down(&mut quest, &mut ecs);
                     continue;
                 }
                 let key = unit_ask_key(&obj.0);
                 let key_moved = state.asked.insert(guid.0, key) != Some(key);
-                // From the unit's field watches, its create path and the full sweep: tear down
-                // first, then re-gate. An escort giver's flag drop, with the quest-log write, moves
-                // the ask key and lands here.
+                // The per-unit refresh, from the unit's field watches, its create path and the full
+                // sweep: tear down first, then re-gate. An escort giver's flag drop, with the
+                // quest-log write, moves the ask key and lands here.
                 let per_unit = key_moved || full;
                 if per_unit {
                     tear_down(&mut quest, &mut ecs);
                 }
-                // The re-gate, the reaction being above 1. `0x182` goes out from the reference and
-                // from the light sweep, so every sweep re-asks; `0x1aa` has one sender, so never on
-                // a light sweep.
+                // The re-gate, the reaction being above 1. `0x182` goes out from the per-unit
+                // refresh and from the light sweep, so every sweep re-asks; `0x1aa` has one sender,
+                // the per-unit refresh, so never on a light sweep.
                 let flags = obj.0.unit_npc_flags();
                 if (per_unit || swept) && flags & NPC_FLAG_QUESTGIVER != 0 {
                     let _ = commands
@@ -451,7 +452,7 @@ mod tests {
     }
 
     /// The light sweep (death among its triggers) sends without tearing down; the full sweep (your
-    /// own reaction inputs) tears down first.
+    /// revive, your own reaction inputs) tears down first, in the per-unit refresh.
     #[test]
     fn a_light_sweep_re_asks_but_only_a_revive_tears_the_marker_down_first() {
         use crate::net::{Guid, NetEntity};
@@ -662,8 +663,9 @@ mod tests {
         );
     }
 
-    /// `CMSG_TAXINODE_STATUS_QUERY`'s one sender: on sight, on the unit's own key moving and on a
-    /// full sweep, never a light one and never on mouseover. The reference clears both markers.
+    /// `CMSG_TAXINODE_STATUS_QUERY`'s one sender is the per-unit refresh: on sight, on the unit's
+    /// own key moving and on a full sweep, never a light one and never on mouseover (that callback
+    /// belongs to a seeder nothing calls). Its clear zeroes both markers.
     #[test]
     fn a_flight_master_is_asked_by_the_per_unit_path_only_and_loses_its_green_with_the_gold() {
         use crate::net::{Guid, NetEntity};
@@ -731,7 +733,7 @@ mod tests {
             (taxi, giver)
         };
 
-        // On sight: the create path is a, so each service is asked once.
+        // On sight: the create path is a per-unit refresh, so each service is asked once.
         app.update();
         let (taxi, giver) = drain(&rx);
         assert_eq!(taxi, vec![FM], "the flight master is asked on sight");
@@ -788,8 +790,8 @@ mod tests {
             "…after tearing its green marker down first"
         );
 
-        // And its own key moving is a too: the flightmaster bit going off takes the marker with it,
-        // and does not re-ask.
+        // And its own key moving is a per-unit refresh too: the flightmaster bit going off takes
+        // the marker with it, and does not re-ask.
         app.world_mut()
             .entity_mut(fm)
             .insert(FlightMasterStatus { known: false });

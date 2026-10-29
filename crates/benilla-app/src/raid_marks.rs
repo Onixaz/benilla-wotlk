@@ -1,6 +1,6 @@
 //! Raid-target marker overhead billboards, the name render's marker leg: each unit holding a mark
 //! on the 8-slot board (`GroupState::raid_targets`) and without a live V-nameplate
-//! (`[CGUnit+0xe60] == 0`; the plate shows its own raid icon) gets a world billboard, the unit quad
+//! (`[unit+0xe60] == 0`; the plate shows its own raid icon) gets a world billboard, the unit quad
 //! LUT `(-.5,1,0),(.5,1,0),(.5,0,0),(-.5,0,0)` over the 4-column `UI-RaidTargetingIcons` atlas
 //! (`col = idx&3`, `row = idx>>2`, cell 0.25), indices `{0,1,3,3,1,2}`.
 //!

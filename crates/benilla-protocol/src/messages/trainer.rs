@@ -5,7 +5,7 @@ use std::io;
 
 use crate::wire::{capacity_hint, read_cstring, read_u32_le, read_u64_le, read_u8};
 
-/// One 38-byte `SMSG_TRAINER_LIST` service, as `CGPlayer_C::OnTrainerList` (`0x6d12c0`) reads
+/// One 38-byte `SMSG_TRAINER_LIST` service, as the player's trainer-list handler (`0x6d12c0`) reads
 /// it; the server already filters the list to the player's class and race.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TrainerSpell {

@@ -110,8 +110,8 @@ fn the_self_create_sends_them_in_the_reference_order() {
     assert_eq!(sent(&rx), Vec::<String>::new());
 }
 
-/// A cross-map worldport purges the streamed world and the server creates us afresh (rebuilds the
-/// object manager; the create takes the login's route).
+/// A cross-map worldport purges the streamed world and the server creates us afresh (the reference
+/// rebuilds the object manager; the create takes the login's route).
 #[test]
 fn a_worldport_create_sends_them_again() {
     let (mut app, rx) = app();
@@ -129,7 +129,7 @@ fn a_worldport_create_sends_them_again() {
 }
 
 /// The production schedule: the self-create edge, then the time, mail, battlefield and dungeon
-/// finder sends (`CGGameUI::EnterWorld 0x528010` calls `CGLookingForGroup::EnterWorld` after the
+/// finder sends (the UI's world entry `0x528010` runs the dungeon finder's after the
 /// battlefield's); and a `/reload` frame's sweep drops the stone's text before its cascade resets
 /// it.
 #[test]

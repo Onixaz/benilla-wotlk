@@ -697,10 +697,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
     // GameTooltip:SetPlayerBuff(buffIndex): the aura variant plus the time-remaining line only this
-    // entry appends, its text the reference's (`tooltip::duration_text`). The argument is the
-    // 0-based cache position `GetPlayerBuff` returns (`BuffFrame.lua:105`), not a filtered ordinal.
-    // A miss, negative included, clears and hides the plate as `SetUnitBuff`'s does; a surplus
-    // argument is ignored, as in the reference.
+    // entry appends, its text the reference's time-text formatter's (`tooltip::duration_text`). The
+    // argument is the 0-based cache position `GetPlayerBuff` returns (`BuffFrame.lua:105`), not a
+    // filtered ordinal. A miss, negative included, clears and hides the plate as `SetUnitBuff`'s
+    // does; a surplus argument is ignored, as in the reference.
     m.set(
         "SetPlayerBuff",
         lua.create_function(|lua, (this, index): (Table, i64)| {
@@ -712,10 +712,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     .and_then(|pos| model.player_auras.get(pos));
                 match hit {
                     Some(a) => {
-                        // The gate is `untilCancelled`, not a known duration: the reference skips
-                        // the line when the record's `+0xc` is set, a DBC flag that holds before
-                        // any `SMSG_UPDATE_AURA_DURATION` lands; a lapsed aura shows "0 seconds
-                        // remaining".
+                        // The gate is `untilCancelled`, not a known duration: the buff binding
+                        // skips the line when the record's `+0xc` is set, a DBC flag that holds
+                        // before any `SMSG_UPDATE_AURA_DURATION` lands; a lapsed aura shows "0
+                        // seconds remaining".
                         let ms = (!a.until_cancelled).then(|| {
                             // The reference counts integer milliseconds off `GetTickCount`;
                             // this rounds the float clock to the nearest one.
@@ -730,7 +730,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     None => (0, None, None),
                 }
             };
-            // The reference's text from the player's own strings; without them the line is skipped.
+            // The reference formatter's text from the player's own strings; without them the line
+            // is skipped.
             let remaining = remaining_ms.and_then(|ms| {
                 let g = lua.globals();
                 super::tooltip::duration_text(ms, "SPELL_TIME_REMAINING", true, &|key| {

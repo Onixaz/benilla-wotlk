@@ -14,9 +14,9 @@
 //!   slot (`UnitNamePlayerPVPTitle`, bit `0x20`) and name, and `<Guild>`. The guild (a5) and
 //!   subname (a6) slots share the format `"\n<%s>"` and are never both reached; a5 alone is
 //!   CVar-gated.
-//! - The a4 slot is 12340's `GetUnitChosenTitle` (`0x72a290`): a player's `PLAYER_CHOSEN_TITLE`
-//!   row from `CharTitles.dbc` with the name in its `%s`, gendered, and the `PVP_MEDAL<n>` line
-//!   under it for a set `PLAYER_BYTES_3` byte 2; never a creature's.
+//! - The a4 slot is 12340's chosen-title lookup (`0x72a290`): a player's `PLAYER_CHOSEN_TITLE` row
+//!   from `CharTitles.dbc` with the name in its `%s`, gendered, and the `PVP_MEDAL<n>` line under
+//!   it for a set `PLAYER_BYTES_3` byte 2; never a creature's.
 //!
 //! Not built: a7 and a8 have no cross-realm wire here.
 
@@ -171,9 +171,9 @@ pub(crate) fn name_shown(cfg: NameConfig, s: &NameSubject) -> bool {
     cfg.has(NPC)
 }
 
-/// The a1-a3 prefix slots of the line stack, CGPlayer vtable `+0x7c/+0x80/+0x84`: each set
-/// `PLAYER_FLAGS` bit (vmangos `Player.h:316-318`) stacks in slot order with no space before the
-/// name; the base CGUnit slots are stubs, so NPCs never decorate. The tags are
+/// The a1-a3 prefix slots of the line stack, the player object's vtable `+0x7c/+0x80/+0x84`: each
+/// set `PLAYER_FLAGS` bit (vmangos `Player.h:316-318`) stacks in slot order with no space before
+/// the name; the base unit object's slots are stubs, so NPCs never decorate. The tags are
 /// `CHAT_FLAG_AFK/DND/GM` (`GlobalStrings.lua:534-536`). The own player's AFK slot also reads the
 /// client-side mirror ([`drive_nameplates`]).
 const FLAG_PREFIXES: [(u32, &str); 3] = [(0x2, "<AFK>"), (0x4, "<DND>"), (0x8, "<GM>")];
@@ -558,7 +558,7 @@ pub(crate) fn drive_nameplates(
     let facing = cam_tf.rotation;
     let mut seen = bevy::ecs::entity::EntityHashSet::default();
     for (entity, net, guid, tf, store, (is_self, moved), drawn) in &units {
-        // A name needs a drawn body; this precedes the ShouldShowName ladder.
+        // A name needs a drawn body; this precedes the name-show ladder.
         if !drawn.is_none_or(|v| v.get()) {
             continue;
         }

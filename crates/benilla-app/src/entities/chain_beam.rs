@@ -1,7 +1,7 @@
 //! Spell chain beams: Chain Lightning's arcs, the Drain Life and Mind Flay beams, Chain Heal. A kit
 //! whose `CharProc` decodes to a chain ([`benilla_formats::ChainProc`]) draws a polyline of hops,
-//! `caster → t1 → t2 → …`, one ribbon per hop, subdivided, jittered every frame and scrolled: the
-//! reference's `LightningObject` and `CLightning`.
+//! `caster → t1 → t2 → …`, one ribbon per hop, subdivided, jittered every frame and scrolled, as
+//! the reference's lightning effect draws it.
 //!
 //! Hop `i` burns in `[t0 + delay + i × stagger, + life)` (`0x7fa4d0`), and the beam expires with
 //! its last hop. Chain Lightning's row staggers by 0, so its hops light together 300 ms after the
@@ -29,15 +29,15 @@ use benilla_world::view::WorldCamera;
 use super::OverheadFallback;
 
 /// The caster end's height factor with no `$CSL` marker, `base + modelHeight × modelScale × 0.75`
-/// (the `0.75f`). The height is the authored bbox z-extent that [`OverheadFallback`] carries,
-/// standing in for the reference's `obj+0x90`.
+/// The height is the authored bbox z-extent that [`OverheadFallback`] carries, standing in for the
+/// reference's `obj+0x90`.
 const CASTER_HEIGHT_FACTOR: f32 = 0.75;
 
 /// The attachment a non-caster end falls back to when the spell's `SpellVisual` column 10 names
 /// none, the 1.12.1 reference's literal `0x22`; below it, the unit's position.
 const CHAIN_ATTACH_FALLBACK: u16 = 34;
 
-/// The subdivision floor, the `2.0f` added: even a one-yard hop bends.
+/// The subdivision floor, the `2.0f` added to the segment count: even a one-yard hop bends.
 const SUBDIVISION_FLOOR: f32 = 2.0;
 
 /// The cross-section normalisation guard (`fcom`, strictly `>`): a shorter perpendicular stays
@@ -58,7 +58,7 @@ const MAX_SUBDIVISIONS: usize = 256;
 /// the caster's own dropped as it fills. `crate::spell::net` fills it from the `SMSG_SPELL_GO` hit
 /// list and `SMSG_SPELL_UPDATE_CHAIN_TARGETS`, clearing before each fill, and [`spawn_chain_beams`]
 /// consumes it once, as the reference zeroes the count on every exit. The reference gates the
-/// `SMSG_SPELL_GO` fill, a predicate still untraced; here it always fills. Unstreamed targets are
+/// `SMSG_SPELL_GO` fill on a predicate still untraced; here it always fills. Unstreamed targets are
 /// left out, as the reference hides a hop it cannot place.
 #[derive(Component)]
 pub(crate) struct ChainHops(pub(crate) Vec<Entity>);
@@ -75,7 +75,7 @@ struct Bolt {
     strands: Vec<Vec<Vec3>>,
 }
 
-/// A live chain beam, the reference's 0x50-byte `LightningObject`.
+/// A live chain beam, the reference's 0x50-byte lightning object.
 #[derive(Component)]
 pub(crate) struct ChainBeam {
     /// The reap key (`node+0x44`).
@@ -123,7 +123,8 @@ fn jitter(rng: &mut u32) -> f32 {
 
 /// The caster's end: the `$CSL` marker at the live pose, else
 /// `base + 0.75 × modelHeight × modelScale`. Other ends anchor at the spell's field-9 attachment
-/// through the missile's resolver, as the reference read the same table the same way.
+/// through the missile's resolver, as the reference's beam and missile read the same table the
+/// same way.
 fn caster_world_pos(
     caster: Entity,
     units: &super::missile::AttachPosQuery,
@@ -210,7 +211,7 @@ pub(super) fn spawn_chain_beams(
         let hops = hops.filter(|_| !consumed.contains(&play.entity));
         consumed.insert(play.entity);
         commands.entity(play.entity).try_remove::<ChainHops>();
-        // The reference's guards: no spell, no strands or no targets is a silent return.
+        // As in the reference, no spell, no strands or no targets is a silent return.
         let targets = select_targets(play.spell_id, hops, store, &index);
         if play.spell_id == 0 || targets.is_empty() {
             continue;
@@ -316,11 +317,11 @@ fn subdivide(a: Vec3, b: Vec3, effect: &ChainEffect, rng: &mut u32, out: &mut Ve
 /// vertex at `p ± 0.5·(perp₍ᵢ₋₁₎ + perpᵢ)·halfWidth`, both ends collapsed to a point at `v = 0.5`
 /// (a spindle), `u` 0→1 caster→target plus the scroll, and the constant colour `0xFFFFFFFF`.
 ///
-/// The perpendicular is `(−d.y, d.x, 0)` in eye space: the reference runs the points through the
-/// reference against `= T(−cameraPos)·VIEW` (`VIEW` is the pure rotation builds), an isometry with
-/// no projection, and submits with identity WORLD and VIEW. Eye axes are X right, Y up, +Z into the
-/// screen, so the ribbon lies in the view plane and spans `2 × halfWidth` world yards at any
-/// distance; in world axes the perpendicular is `d × cam_forward`, one axis for the whole strand.
+/// The perpendicular is `(−d.y, d.x, 0)` in eye space: the reference transforms the points by
+/// `T(−cameraPos)·VIEW` (`VIEW` is the camera's pure rotation), an isometry with no projection,
+/// and submits with identity WORLD and VIEW. Eye axes are X right, Y up, +Z into the screen, so
+/// the ribbon lies in the view plane and spans `2 × halfWidth` world yards at any distance; in
+/// world axes the perpendicular is `d × cam_forward`, one axis for the whole strand.
 fn push_strand(
     verts: &mut Vec<EffectVertex>,
     pts: &[Vec3],
@@ -378,7 +379,7 @@ fn push_strand(
 }
 
 /// Per frame: age each beam, re-resolve its endpoints, re-jitter and advect its polylines and write
-/// the ribbons, the reference's `LightningObject::Update` and `CLightning::Render` in one pass.
+/// the ribbons, the reference's lightning update and render in one pass.
 pub(crate) fn simulate_chain_beams(
     time: Res<Time>,
     mut commands: Commands,
@@ -432,7 +433,7 @@ pub(crate) fn simulate_chain_beams(
                 bolt.strands.iter_mut().for_each(Vec::clear);
                 continue;
             }
-            // A missing endpoint hides only this hop (`SetVisible(handle, 0)`).
+            // A missing endpoint hides only this hop.
             let dest = [dest_tag, CHAIN_ATTACH_FALLBACK];
             let from = if i == 0 {
                 caster_world_pos(nodes[0], &units, &joints, &heights)

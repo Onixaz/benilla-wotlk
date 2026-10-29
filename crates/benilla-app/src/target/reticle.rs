@@ -1,6 +1,6 @@
 //! The ground-targeting AoE reticle: the terrain-projected decal under a location cast's cursor.
-//! Only a targeting word passing `TargetingWantsLocation`'s `& 0x60` draws one; a bag click or a
-//! world GameObject click arms the same cursor and draws none.
+//! Only a targeting word passing the reference's wants-location test (`& 0x60`) draws one; a bag
+//! click or a world GameObject click arms the same cursor and draws none.
 //!
 //! The reference projects a decal for an area spell: the picked ground point ± r horizontally and ±
 //! 2.0 vertically, axis-aligned, through the selection ring's ground-decal projector
@@ -9,10 +9,10 @@
 //! also rotates a GameObject preview model for an object-placement spell (effect `0x51`); that
 //! model is not built.
 //!
-//! The radius is `ground_cast_radius` (`GetCurrentCastRadius`), after spell-mod op 6. Out of range
-//! forces it to 0.0, and 0.0 draws at the 1.3888889 default. With no world hit nothing is drawn:
-//! the reference resets its draw state every hover pass. Over a unit the decal lands on the ground
-//! behind it, since a dest-only word's pick skips the object trace.
+//! The radius is `ground_cast_radius` (the current cast radius, clamped to 20.0), after spell-mod
+//! op 6. Out of range forces it to 0.0, and 0.0 draws at the 1.3888889 default. With no world hit
+//! nothing is drawn: the reference resets its draw state every hover pass. Over a unit the decal
+//! lands on the ground behind it, since a dest-only word's pick skips the object trace.
 //!
 //! The reference's second pass also projects onto liquid (flags `0x0f0000`); the decal surfaces
 //! have no liquid yet, so the reticle vanishes over water.
@@ -70,10 +70,10 @@ pub(super) fn setup_reticle(mut commands: Commands, asset_server: Res<AssetServe
 /// targeting cursor drive: `WorldCursor.unable` is the frame's range verdict, one read for the
 /// cursor and the decal, as in the reference.
 ///
-/// Both of the reference's guards, in order: `IsTargeting`, then `TargetingWantsLocation`. Either
-/// false returns before the draw state, which the hover handler reset to 3, do not draw, so a lock
-/// or enchant word (`0x4000`, `0x0010`) draws no decal. The reference's pick is word-gated and ours
-/// is not, so this consumer carries the guard, through [`SpellTargeting::spell_for`].
+/// Both of the reference's guards, in order: the is-targeting test, then the wants-location test.
+/// Either false returns before the draw state, which the hover handler reset to 3, do not draw, so
+/// a lock or enchant word (`0x4000`, `0x0010`) draws no decal. The reference's pick is word-gated
+/// and ours is not, so this consumer carries the guard, through [`SpellTargeting::spell_for`].
 pub(super) fn update_reticle(
     targeting: Res<SpellTargeting>,
     occlusion: Res<PickOcclusion>,
@@ -186,8 +186,8 @@ mod tests {
     use benilla_world::collision::GroundDecalSurface;
     use bevy::ecs::system::RunSystemOnce;
 
-    /// The reference's second guard. The ground is a real trimesh, so a DEST word draws and
-    /// "nothing drawn" is a verdict, not an empty scene.
+    /// The reference's second guard, the wants-location test. The ground is a real trimesh, so a
+    /// DEST word draws and "nothing drawn" is a verdict, not an empty scene.
     #[test]
     fn only_a_location_word_draws_a_decal() {
         let drawn_for = |word: u32| {

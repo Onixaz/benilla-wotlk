@@ -1,5 +1,5 @@
-//! The FrameScript object model, frame side: `CreateFrame`, the frame wrappers and metatables, and
-//! the shared frame methods; the region side is [`super::region`].
+//! The script object model, frame side: `CreateFrame`, the frame wrappers and metatables, and the
+//! shared frame methods; the region side is [`super::region`].
 //!
 //! A frame's Lua value is a table `T` with `T[0] = lightuserdata(id)`, cached by id and published
 //! to `_G` by name without overwriting; its metatable is its kind's ([`frame_meta_for`]). Every
@@ -142,9 +142,10 @@ impl NamedTarget {
 }
 
 /// Read `_G[name]` for a name argument, with no `Model` borrow alive. `parent_base` is what a
-/// leading `$parent` expands to, `None` where the binding does not expand: the reference is called
-/// only from `SetName` and the anchor resolver, so `SetPoint`/`SetAllPoints`' `relativeTo` expands,
-/// and `SetParent`, `SetScrollChild` and XML `parent=`, which call directly, do not.
+/// leading `$parent` expands to, `None` where the binding does not expand: the reference's
+/// expansion is called only from the name set and the anchor resolver, so
+/// `SetPoint`/`SetAllPoints`' `relativeTo` expands, and `SetParent`, `SetScrollChild` and XML
+/// `parent=`, which call directly, do not.
 pub(crate) fn prefetch_named_target(
     lua: &Lua,
     name: &str,
@@ -162,7 +163,7 @@ pub(crate) fn prefetch_named_target(
 }
 
 /// Decode a [`NamedTarget`] to a live frame's or region's id: `SetPoint` accepts any widget (the
-/// `CScriptRegion` type id), while `SetParent` and `SetScrollChild` check the Frame id and narrow
+/// script region's type id), while `SetParent` and `SetScrollChild` check the Frame id and narrow
 /// the result themselves.
 pub(crate) fn resolve_named_target(model: &Model, target: &NamedTarget) -> Option<u32> {
     let id = decode_id(target.wrapper.as_ref()?).ok()?;
@@ -299,20 +300,20 @@ pub(crate) fn registered_frame_kind(lua: &Lua, kind: &str) -> Option<FrameKind> 
     (registered && !one_shot_spent).then_some(t.kind)
 }
 
-/// `ModelFFX`, the glue's `CSimpleModelFFX`: a `CSimpleModel` answering as `Model`, with `Model`'s
-/// methods and its own four light methods (table `0xac465c`).
+/// `ModelFFX`, the glue's FFX model: a model widget answering as `Model`, with `Model`'s methods
+/// and its own four light methods (table `0xac465c`).
 pub(crate) fn is_model_ffx(kind: &str) -> bool {
     enum_token(kind) == "MODELFFX"
 }
 
-/// When a frame type's factory is registered (`FrameXML_RegisterFactory`) into the process-wide
-/// registry, which nothing clears before shutdown.
+/// When a frame type's factory is registered into the process-wide registry, which nothing clears
+/// before shutdown.
 #[derive(Clone, Copy)]
 enum Factory {
-    /// Before any FrameScript state is built: the 13 base types, and `ModelFFX`, which the glue
+    /// Before any script state is built: the 13 base types, and `ModelFFX`, which the glue
     /// manager's init registers before its first build, so the in-game state has it too.
     Startup,
-    /// `CGWorldFrame::RegisterFrames`'s eight. They stay registered after a logout, so only a glue
+    /// The world frame's registration's eight. They stay registered after a logout, so only a glue
     /// state that never entered the world lacks them, which is the one benilla builds.
     InGame,
 }
@@ -329,8 +330,8 @@ fn frame_type(s: &str) -> Option<FrameType> {
         "FRAME" => (FrameKind::Frame, Startup),
         // Registered, the one row passing `1` (unique) as its third argument.
         "WORLDFRAME" => (FrameKind::WorldFrame, InGame),
-        // A plain `CSimpleFrame`: factory allocates `0x314` like `<Frame>`'s, the ctor adds no
-        // field, and its paint does nothing, so `GetObjectType()` is "Frame" and
+        // A plain frame: factory allocates `0x314` like `<Frame>`'s, the ctor adds no field, and
+        // its paint does nothing, so `GetObjectType()` is "Frame" and
         // `IsObjectType("TaxiRouteFrame")` false. The flight lines are the FrameXML's own rotated
         // textures.
         "TAXIROUTEFRAME" => (FrameKind::Frame, InGame),
@@ -405,7 +406,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.set_named_registry_value(REG_KIND_METAS, lua.create_table()?)?;
     let frame_meta = frame_meta_for(lua, None)?;
     lua.set_named_registry_value(REG_FRAME_META, frame_meta.clone())?;
-    // FrameScript init publishes it as `_G["__framescript_meta"]`.
+    // The script layer's init publishes it as `_G["__framescript_meta"]`.
     lua.globals().set("__framescript_meta", frame_meta)?;
 
     let create_frame = lua.create_function(create_frame)?;
@@ -559,7 +560,7 @@ fn kind_method_registries(kind: Option<FrameKind>) -> &'static [&'static str] {
             super::button::REG_BUTTON_METHODS,
         ],
         Some(FrameKind::Model) => &[super::modelframe::REG_MODEL_METHODS],
-        // Its 3 methods, then `Model`'s 23: the reference misses.
+        // Its 3 methods, then `Model`'s 23: a miss in its own table falls through to `Model`'s.
         Some(FrameKind::PlayerModel) => &[
             super::modelframe::REG_PLAYERMODEL_METHODS,
             super::modelframe::REG_MODEL_METHODS,
@@ -670,7 +671,7 @@ pub(super) fn create_frame(
     }
 
     // A leading `$parent` in the name expands as in XML: `CreateFrame` sets `name=` on a synthetic
-    // node for the XML builder, so the name reaches `SetName`, whose the reference call expands it
+    // node for the XML builder, so the name reaches the name set, whose expansion resolves it
     // against the parent's first named ancestor.
     let name = name.map(|n| {
         let model = lua

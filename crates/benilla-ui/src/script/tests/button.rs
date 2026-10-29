@@ -82,9 +82,9 @@ fn button_state_textures_switch_with_interaction() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `SetState` moves the shown texture (`+0x4c4`) only onto a non-null slot, so a press or a disable
-/// with no art of its own keeps what was shown; art written into another state's slot is stored,
-/// not shown (the reference's `idx == [this+0x328]` gate).
+/// The button's state set moves the shown texture (`+0x4c4`) only onto a non-null slot, so a press
+/// or a disable with no art of its own keeps what was shown; art written into another state's slot
+/// is stored, not shown (the reference's `idx == [this+0x328]` gate).
 #[test]
 fn a_state_with_no_texture_leaves_the_shown_one_standing() {
     let mut s = script();
@@ -223,7 +223,7 @@ fn disabling_a_button_takes_its_whole_highlight_layer() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `MouseButtonStringToBitmask` (`0x96e9c0`): Down bits 0-30, Up bits 31-61, `AnyDown`/`AnyUp`
+/// The mouse-button name parse (`0x96e9c0`): Down bits 0-30, Up bits 31-61, `AnyDown`/`AnyUp`
 /// every bit of their half, case folded, an unknown name 0.
 #[test]
 fn click_names_map_to_the_12340_mask() {
@@ -291,7 +291,7 @@ fn any_up_and_any_down_reach_on_click() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `CSimpleButton::OnLayerMouseDown` pushes the art on any press of an enabled Button, after the
+/// The button's layer mouse-down pushes the art on any press of an enabled Button, after the
 /// click-mask test and outside it (`0x96fb34`), so a press no registration names lights too.
 #[test]
 fn any_mouse_button_press_shows_the_pushed_texture() {
@@ -669,8 +669,8 @@ fn button_label_repaints_by_state_font_object() {
     assert!((c[0] - 0.1).abs() < 1e-6 && (c[1] - 0.2).abs() < 1e-6);
 }
 
-/// The highlight font object is put in force by a hover or `LockHighlight` (`UpdateTextState
-/// 0x96f4a0` reads the highlight layer), so a colour on the normal state cannot reach it:
+/// The highlight font object is put in force by a hover or `LockHighlight` (the text-state update
+/// `0x96f4a0` reads the highlight layer), so a colour on the normal state cannot reach it:
 /// `ClassTrainerSkillButtonTemplate`'s rows (`<HighlightFont style="GameFontHighlightLeft"/>`)
 /// turn white, and the trainer and trade-skill lists lock the selected row.
 #[test]
@@ -931,10 +931,10 @@ fn set_font_string_anchors_only_an_unanchored_label() {
     );
 }
 
-/// A label made lazily (`SetText`, `0x96f860`) or adopted goes through
-/// `CSimpleButton::SetFontString 0x96f7b0`, which anchors it by the normal font object's justify
-/// (LEFT, RIGHT, else CENTER), not the string's own, then links it to that font (`0x96f4a0`).
-/// `text=` runs after the state fonts (`0x970150`), so its label is anchored the same way.
+/// A label made lazily (`SetText`, `0x96f860`) or adopted goes through the button's font-string set
+/// (`0x96f7b0`), which anchors it by the normal font object's justify (LEFT, RIGHT, else CENTER),
+/// not the string's own, then links it to that font (`0x96f4a0`). `text=` runs after the state
+/// fonts (`0x970150`), so its label is anchored the same way.
 #[test]
 fn a_lazily_made_label_is_anchored_by_the_normal_fonts_justify() {
     let mut s = script();
@@ -981,7 +981,7 @@ fn a_lazily_made_label_is_anchored_by_the_normal_fonts_justify() {
         "#,
     )
     .unwrap();
-    // `<NormalFont>` alone creates no label (the reference's LoadXML leaves `+0x338` null), so
+    // `<NormalFont>` alone creates no label (the reference's XML load leaves `+0x338` null), so
     // `GetFontString()` is nil until text is set.
     assert!(s
         .eval::<bool>("return left:GetFontString() == nil")
@@ -1336,7 +1336,7 @@ fn the_hover_is_not_an_input_to_the_press_state() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `CSimpleButton`'s hide override (`+0x34` =) un-presses the button, then runs the base notify so
+/// The button's hide override (`+0x34`) un-presses the button, then runs the base notify so
 /// `<OnHide>` still fires.
 #[test]
 fn hiding_a_held_button_un_presses_it() {
@@ -1469,7 +1469,7 @@ fn enable_and_disable_fire_their_scripts_on_a_change() {
     );
 }
 
-/// A frame still in its XML load (`+0x130`, set by `LoadXML` and cleared before its `OnLoad`)
+/// A frame still in its XML load (`+0x130`, set by the XML load and cleared before its `OnLoad`)
 /// runs no `OnEnable`/`OnDisable`: a child's `OnLoad` that disables its parent is silent, the
 /// parent's own `OnLoad` is not.
 #[test]

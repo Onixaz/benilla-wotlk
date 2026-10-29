@@ -266,8 +266,8 @@ fn quitting_from_the_character_screen_does_not_blank_the_session_it_wrote() {
 
 /// The latch that makes a `/logout` fire `PLAYER_LEAVING_WORLD`, armed by the entry load as the
 /// reference's world-enter cascade arms it, which a fresh login enters from the player's create and
-/// a `/reload`. A player-object check would read false there: the logout despawns our avatar in the
-/// drain before `OnExit(InWorld)` runs.
+/// a `/reload` from the UI init. A player-object check would read false there: the logout despawns
+/// our avatar in the drain before `OnExit(InWorld)` runs.
 #[test]
 fn the_login_arms_the_world_latch_and_the_logout_spends_it() {
     let _l = ENV_LOCK
@@ -299,9 +299,9 @@ fn the_login_arms_the_world_latch_and_the_logout_spends_it() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// `CGGameUI::InitializeGame` flags `realmList`, `realmName` and `scriptMemory` read-only for the
-/// world session and `ShutdownGame` clears them: an in-game `SetCVar` of one raises, through a
-/// reload too, and the character screen's does not.
+/// The game UI's init flags `realmList`, `realmName` and `scriptMemory` read-only for the world
+/// session and the game shutdown clears them: an in-game `SetCVar` of one raises, through a reload
+/// too, and the character screen's does not.
 #[test]
 fn the_realm_cvars_are_read_only_to_lua_only_in_the_world() {
     let _l = ENV_LOCK
@@ -343,8 +343,8 @@ fn the_realm_cvars_are_read_only_to_lua_only_in_the_world() {
     let _ = std::fs::remove_dir_all(&tmp);
 }
 
-/// The reference's one guard in the shutdown tail: the reference tests the active player's GUID
-/// pair and with none jumps past only the `PLAYER_LEAVING_WORLD` fire; in-world roots fire both.
+/// The reference's one guard in the shutdown tail: it tests the active player's GUID pair and with
+/// none jumps past only the `PLAYER_LEAVING_WORLD` fire; in-world roots fire both.
 #[test]
 fn a_quit_from_the_character_screen_fires_logout_without_leaving_world() {
     let _l = ENV_LOCK
@@ -538,7 +538,7 @@ fn a_disable_staged_in_the_session_applies_at_the_reload() {
 }
 
 /// The teardown writes saved variables after `PLAYER_LOGOUT`, and the rebuild restores them after
-/// file scope, so the saved value wins (the reference's `AddOn_Load` order).
+/// file scope, so the saved value wins (the reference's addon-load order).
 #[test]
 fn saved_variables_round_trip_through_a_reload() {
     let _l = ENV_LOCK
@@ -1576,9 +1576,9 @@ fn taken_kit_names(world: &mut World) -> Vec<String> {
         .collect()
 }
 
-/// The reference's, which login and `/reloadui` both call, wraps the TOC walk, the addons and the
-/// saved variables in the counted sound suppression; the login cascade, which a fresh login runs
-/// later from the player's create, brackets itself. Stock `TargetFrame_OnHide` plays at load.
+/// The reference's UI init, which login and `/reloadui` both call, wraps the TOC walk, the addons
+/// and the saved variables in the counted sound suppression; the login cascade, which a fresh login
+/// runs later from the player's create, brackets itself. Stock `TargetFrame_OnHide` plays at load.
 #[test]
 fn a_login_and_a_reload_load_without_the_lost_target_sound() {
     let _data = benilla_formats::wow_data_or_skip!();

@@ -32,8 +32,8 @@ pub(crate) struct MacroContext<'a> {
     /// `None` is the reference's no-subject case.
     pub subject: Option<&'a Subject>,
     pub states: &'a crate::world_state::WorldStates,
-    /// The link `$A` writes, an achievement chat line's (`GetAchievementHyperlink`, `0x61bff0`);
-    /// `None` writes nothing, as an id the table lacks does.
+    /// The link `$A` writes, an achievement chat line's (the hyperlink builder, `0x61bff0`); `None`
+    /// writes nothing, as an id the table lacks does.
     pub achievement: Option<&'a str>,
 }
 
@@ -79,7 +79,7 @@ pub(crate) fn substitute_checked(text: &str, ctx: &MacroContext) -> (String, boo
             // The world-state table (`SMSG_INIT_WORLD_STATES`, `SMSG_UPDATE_WORLD_STATE`); `E`
             // reads the negated key; both render `%d`, and a miss prints "0".
             Some(tok @ ('W' | 'w' | 'E' | 'e')) => {
-                // `SStrToInt` over the prefix. No digits reads an uninitialized buffer in the
+                // A string-to-int over the prefix. No digits reads an uninitialized buffer in the
                 // reference; we take key 0, as for an id too wide for a dword.
                 let n: u32 = chars[i + 1..j]
                     .iter()

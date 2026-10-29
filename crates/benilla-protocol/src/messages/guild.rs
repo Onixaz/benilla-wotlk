@@ -119,7 +119,7 @@ pub mod guild_event {
     /// `GE_TABARDCHANGE`; the reference handles it in its default arm.
     pub const TABARD_CHANGE: u8 = 0x09;
     /// `GE_UPDATE_RANK_NAME`, params: rank id, new rank name. The reference writes it into the
-    /// roster cache and fires no FrameScript event.
+    /// roster cache and fires no UI event.
     pub const UPDATE_RANK_NAME: u8 = 0x0A;
     /// `GE_UPDATE_ROSTER`: silent in the reference, and vmangos never sends it.
     pub const UPDATE_ROSTER: u8 = 0x0B;
@@ -364,7 +364,7 @@ pub(super) fn read_guild_permissions(r: &mut impl Read) -> io::Result<GuildPermi
     })
 }
 
-/// Body of the `MSG_GUILD_PERMISSIONS` ask: empty (`QueryPermissions` `0x5caa40`).
+/// Body of the `MSG_GUILD_PERMISSIONS` ask: empty (`0x5caa40`).
 pub fn guild_permissions() -> Vec<u8> {
     Vec::new()
 }

@@ -184,7 +184,8 @@ fn feed_pet_stats(
     let family = family_for(store, &names, &commands, family_tables.as_deref());
     let tree = tree_for(store, &names, family_tables.as_deref(), talents.as_deref());
     let mut fresh = stats_for(store, self_store.iter().next(), tables.as_deref(), family);
-    // `GetPetTalentTree`'s gate is `CanGainXP`, the hunter pet's: our pet is created by us.
+    // `GetPetTalentTree`'s gate is the pet's can-gain-XP test, the hunter pet's: our pet is created
+    // by us.
     if fresh.1.hunter_pet {
         fresh.1.talent_tree = tree;
     }
@@ -225,7 +226,7 @@ fn feed_pet_stats(
         // `arg1` is the unit token, as on every 1.12 `UNIT_*` event; its handlers gate on it.
         script.fire_event("UNIT_HAPPINESS", vec![ScriptValue::Str("pet".into())]);
     }
-    // Fields 141/142 and 149 fire through the same token fan-out (`SignalEvent2(id, "%s", token)`);
+    // Fields 141/142 and 149 fire through the same token fan-out (one `%s` argument, the token);
     // `UNIT_PET_TRAINING_POINTS` reaches the page only through its `arg1 == "pet"` arm
     // (`PetPaperDollFrame.lua:45`).
     if xp_moved {

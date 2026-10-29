@@ -1,7 +1,7 @@
-//! The scoreboard verbs of `WorldStateFrame.lua` (`CGBattlefieldInfo`, `0x549e80`-`0x54de00`),
-//! over a board the app pushes once every row's name resolves, as the reference waits for the last
-//! name (`BattlefieldNameCacheCallback`, `0x54aa30`). The faction filter sorts its team first
-//! rather than compacting, so an index past the filtered count answers a real row.
+//! The scoreboard verbs of `WorldStateFrame.lua` (`0x549e80`-`0x54de00`), over a board the app
+//! pushes once every row's name resolves, as the reference waits for the last name (its name-cache
+//! callback, `0x54aa30`). The faction filter sorts its team first rather than compacting, so an
+//! index past the filtered count answers a real row.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -10,7 +10,7 @@ use super::binding_abi::number_arg;
 /// One scoreboard row as the app resolved it, in wire order.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct BattlefieldScoreRow {
-    /// The bare name, or `Name-Realm` for a cross-realm player (`NameCache::FullName`).
+    /// The bare name, or `Name-Realm` for a cross-realm player (the name cache's full name).
     pub name: String,
     pub killing_blows: u32,
     pub honorable_kills: u32,
@@ -39,7 +39,7 @@ pub struct BattlefieldStatColumn {
     pub tooltip: String,
 }
 
-/// An arena team's scoreboard line (`m_teamNames`, `m_teamRatings`, `0xbea0b0`..).
+/// An arena team's scoreboard line (`0xbea0b0`..).
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct BattlefieldTeamView {
     pub name: String,
@@ -52,7 +52,7 @@ pub struct BattlefieldTeamView {
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct BattlefieldScores {
     pub rows: Vec<BattlefieldScoreRow>,
-    /// The match has ended (`m_mapDone`); gates the winner.
+    /// The match has ended; gates the winner.
     pub ended: bool,
     /// The winning side, read only when `ended`.
     pub winner: u8,
@@ -61,7 +61,7 @@ pub struct BattlefieldScores {
     pub teams: [BattlefieldTeamView; 2],
 }
 
-/// The sort's seventeen columns (`m_scoreSortCriteria`, `0xbea2c0`): kills, deaths, honor, name,
+/// The sort's seventeen columns (`0xbea2c0`): kills, deaths, honor, name,
 /// class, honorable kills, damage, healing, team, then the eight stats.
 const SORT_COLUMNS: usize = 17;
 
@@ -69,17 +69,18 @@ const SORT_COLUMNS: usize = 17;
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ScoreBoard {
     pub(crate) scores: BattlefieldScores,
-    /// `SetBattlefieldScoreFaction`'s store (`m_logFilterFaction`): `-1` every team.
+    /// `SetBattlefieldScoreFaction`'s store: `-1` every team.
     pub(crate) filter: i32,
     /// `(column, descending)`, most significant first; column `i` at `i` to start.
     criteria: [(u32, bool); SORT_COLUMNS],
     pub(crate) order: Vec<usize>,
-    /// The filtered count (`m_numScores`, `0xbea580`).
+    /// The filtered count (`0xbea580`).
     pub(crate) filtered: usize,
 }
 
 impl Default for ScoreBoard {
-    /// The filter starts at `-1` and each column at its own rank (`InitializeGame`, `0x54e720`).
+    /// The filter starts at `-1` and each column at its own rank (the game's initialization,
+    /// `0x54e720`).
     fn default() -> Self {
         Self {
             scores: BattlefieldScores::default(),
@@ -92,7 +93,7 @@ impl Default for ScoreBoard {
 }
 
 impl ScoreBoard {
-    /// `QSortScoreData` (`0x54a740`): the filtered team first, then each criterion in turn; the
+    /// The score sort (`0x54a740`): the filtered team first, then each criterion in turn; the
     /// numbers sort high first, the name A to Z, the team low first.
     ///
     /// Deviation: the reference's class and stat columns answer "after" for an equal pair, which
@@ -145,7 +146,7 @@ impl ScoreBoard {
         self.order = order;
     }
 
-    /// `SetScoreSortColumn` (`0x54cee0`): the column moves to the front, flipping its direction
+    /// The sort-column setter (`0x54cee0`): the column moves to the front, flipping its direction
     /// if it was already there.
     fn sort_by_column(&mut self, column: u32) {
         let Some(i) = self.criteria.iter().position(|&(c, _)| c == column) else {
@@ -162,7 +163,7 @@ impl ScoreBoard {
 
     fn row(&self, index_1based: i32) -> Option<&BattlefieldScoreRow> {
         let i = usize::try_from(index_1based).ok()?.checked_sub(1)?;
-        // Bounded by the wire count (`m_numScoreEntries`), not the filtered one.
+        // Bounded by the wire count, not the filtered one.
         self.order.get(i).map(|&r| &self.scores.rows[r])
     }
 }

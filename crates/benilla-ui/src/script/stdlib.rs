@@ -63,7 +63,8 @@ pub(super) fn sandbox(lua: &Lua) -> mlua::Result<()> {
             let bytes = crate::source::chunk(&raw).to_vec();
             // The chunk name is the caller's string verbatim, defaulting to the source itself
             // (`luaB_loadstring`), which `luaO_chunkid` renders as `[string "…"]`. It comes from
-            // the raw bytes: `luaL_loadbuffer` strips a BOM only after the reference took the name.
+            // the raw bytes: `luaL_loadbuffer` strips a BOM only after `luaB_loadstring` took the
+            // name.
             let name = match &chunkname {
                 Some(n) => String::from_utf8_lossy(&n.as_bytes()).into_owned(),
                 None => String::from_utf8_lossy(&raw).into_owned(),
@@ -188,8 +189,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `debugprofilestart`/`debugprofilestop` (`0x817350`/`0x817370`), the two real `debug*` verbs
-/// (`OsGetAsyncTimeClocks`): start latches, stop answers the milliseconds since. Ours read the
+/// `debugprofilestart`/`debugprofilestop` (`0x817350`/`0x817370`), the two real `debug*` verbs (on
+/// the OS cycle clock): start latches, stop answers the milliseconds since. Ours read the
 /// `GetTime()` clock ([`super::clock::now`]), the monotonic session seconds the tick advances, as
 /// benilla has no cycle counter; read in Rust, so an addon that replaces the `GetTime` global
 /// cannot bend it.
@@ -245,8 +246,8 @@ fn install_error_handler(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The registry flag `FrameScript_HandleError` (`0x819730`) holds around its call of the handler,
-/// `s_inErrorHandler` (`[0xd3f79c]`), here around [`super::UiScript::dispatch_script_errors_to_handler`].
+/// The registry flag the script error dispatch (`0x819730`) holds around its call of the handler
+/// (`[0xd3f79c]`), here around [`super::UiScript::dispatch_script_errors_to_handler`].
 pub(super) const REG_IN_ERROR_HANDLER: &str = "benilla.in_error_handler";
 
 /// `debuglocals([level])` (`0x819a60`): nothing outside the handler dispatch. Inside it, one string
@@ -337,7 +338,7 @@ fn frame_variables(lua: &Lua, level: i32) -> mlua::Result<Vec<Value>> {
 /// `debuglocals`' buffer size (`0x819a60`), the terminator included.
 const LOCALS_BUFFER: usize = 4096;
 
-/// `FrameScript_PackVariable` (`0x819300`): one `name = value` line per variable, appended to
+/// The variable pack (`0x819300`): one `name = value` line per variable, appended to
 /// `buffer` up to [`LOCALS_BUFFER`]. A table lists its entries one level deep, each indented one
 /// space; a frame or region table is named by its object.
 fn pack_variable(lua: &Lua, name: &[u8], value: &Value, depth: usize, buffer: &mut Vec<u8>) {
@@ -398,8 +399,8 @@ fn pack_variable(lua: &Lua, name: &[u8], value: &Value, depth: usize, buffer: &m
     push_line(buffer, line);
 }
 
-/// A table's display: its object's name, `<unnamed>` without one (`GetDisplayName` `0x482aa0`),
-/// or `<table>` when `[0]` holds no object.
+/// A table's display: its object's name, `<unnamed>` without one (`0x482aa0`), or `<table>` when
+/// `[0]` holds no object.
 fn object_display_name(t: &mlua::Table) -> String {
     if !matches!(t.raw_get::<Value>(0), Ok(Value::LightUserData(_))) {
         return "<table>".into();
@@ -416,8 +417,8 @@ fn c_str(bytes: &[u8]) -> &[u8] {
     bytes.split(|b| *b == 0).next().unwrap_or(&[])
 }
 
-/// The line and its `\n`, `SStrPrintf`'d into 1 KiB, then `SStrPack`'d into the buffer, each
-/// truncating short of its terminator.
+/// The line and its `\n`, formatted into 1 KiB, then appended to the buffer, each truncating short
+/// of its terminator.
 fn push_line(buffer: &mut Vec<u8>, mut line: Vec<u8>) {
     line.push(b'\n');
     line.truncate(1023);
@@ -602,9 +603,9 @@ do
 end
 "#;
 
-/// The rest of 12340's base-library extras table (`s_extraFuncs`, `0xa443a8`) that FrameXML and
-/// addons call: `strlenutf8` (`0x817c70`, stock `AutoComplete.lua` measures the typed text with
-/// it), `strreplace` (`0x816c40`), `scrub` (`0x817bf0`), `difftime` (`0x8178a0`) and the no-op
+/// The rest of 12340's base-library extras table (`0xa443a8`) that FrameXML and addons call:
+/// `strlenutf8` (`0x817c70`, stock `AutoComplete.lua` measures the typed text with it),
+/// `strreplace` (`0x816c40`), `scrub` (`0x817bf0`), `difftime` (`0x8178a0`) and the no-op
 /// `debughook`.
 fn install_extras(lua: &Lua) -> mlua::Result<()> {
     use mlua::{MultiValue, Value};

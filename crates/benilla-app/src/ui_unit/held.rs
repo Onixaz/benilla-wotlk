@@ -70,7 +70,7 @@ impl HeldUnits<'_> {
         s.raid_target = self.group.raid_target_index(guid);
         s.faction_group = faction_group(store, self.factions);
         s.faction_group_localized = faction_group_localized(store, self.factions);
-        // `CanAttack`; `UnitCanAttack` gates the target frame's level colour.
+        // The attack check; `UnitCanAttack` gates the target frame's level colour.
         s.can_attack = crate::target::can_attack(
             Some(store),
             self.factions,
@@ -78,7 +78,7 @@ impl HeldUnits<'_> {
             self.group,
             self.self_store,
         );
-        // `CanAssist` (`0x7293d0`), `UnitCanAssist`'s and the secure click's `help`.
+        // The assist check (`0x7293d0`), `UnitCanAssist`'s and the secure click's `help`.
         s.can_assist = crate::target::can_assist(
             Some(store),
             self.factions,

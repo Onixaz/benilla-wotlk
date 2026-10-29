@@ -84,7 +84,7 @@ pub const COMBAT_LOG_FIRST_GROUP: usize = 40;
 /// The `ADDEDVERSION` 12340 writes (`chat-cache.txt`); an older file is back-filled.
 pub const CHAT_CACHE_ADDED_VERSION: u8 = 13;
 
-/// `FRAMEPOINT` by value, the names `FramePointToString` (`0x814f20`) maps through `0xa43f78`.
+/// `FRAMEPOINT` by value, the names the point-to-name map (`0x814f20`) reads through `0xa43f78`.
 const FRAME_POINTS: [&str; 9] = [
     "TOPLEFT",
     "TOP",
@@ -97,7 +97,7 @@ const FRAME_POINTS: [&str; 9] = [
     "BOTTOMRIGHT",
 ];
 
-/// `StringToFramePoint` (`0x814ed0`): a case-folded whole-name match.
+/// The name-to-point map (`0x814ed0`): a case-folded whole-name match.
 pub fn frame_point_index(name: &str) -> Option<u8> {
     FRAME_POINTS
         .iter()
@@ -105,7 +105,7 @@ pub fn frame_point_index(name: &str) -> Option<u8> {
         .map(|i| i as u8)
 }
 
-/// `FramePointToString` (`0x814f20`).
+/// The point-to-name map (`0x814f20`).
 pub fn frame_point_name(point: u8) -> &'static str {
     FRAME_POINTS
         .get(usize::from(point))
@@ -113,7 +113,7 @@ pub fn frame_point_name(point: u8) -> &'static str {
         .unwrap_or("BOTTOMLEFT")
 }
 
-/// The flag index of a group name, case-folded as the loader's `SStrCmpI` matches it.
+/// The flag index of a group name, case-folded as the loader's case-insensitive compare matches it.
 pub fn message_group_index(name: &str) -> Option<usize> {
     MESSAGE_GROUPS
         .iter()
@@ -127,7 +127,7 @@ pub struct ChatWindowLook {
     pub r: u8,
     pub g: u8,
     pub b: u8,
-    /// Background alpha byte; stock 0x28 (`ChatWindowInfo::Init` `0x501800`).
+    /// Background alpha byte; stock 0x28 (`0x501800`).
     pub a: u8,
     /// `SIZE`: the font height, or 0 for the font's own; the setter never stores `<= 0`.
     pub font_size: i32,
@@ -167,8 +167,7 @@ impl Default for ChatWindowLook {
 }
 
 impl ChatWindowLook {
-    /// The boot record of windows 3 to 10 (`ChatWindowInfo::Init` `0x501800`), which
-    /// [`Self::stock`] builds 1 and 2 on.
+    /// The boot record of windows 3 to 10 (`0x501800`), which [`Self::stock`] builds 1 and 2 on.
     pub(super) const DEFAULT: Self = Self {
         r: 0,
         g: 0,
@@ -190,10 +189,10 @@ impl ChatWindowLook {
         dimensions: (430.0, 120.0),
     };
 
-    /// Window `index`'s (0-based) record at boot (`CGChat::InitializeGame` `0x50edd0`), what a
-    /// client with no `chat-cache.txt` runs from: window 1 shown and docked at 1, the dock's
-    /// primary, with groups 0-39 (`0x50f029`); window 2 shown and docked at 2 with the `defaultOn`
-    /// groups of 40-45 (`0x50f071`); the rest hidden with no groups.
+    /// Window `index`'s (0-based) record at boot (`0x50edd0`), what a client with no
+    /// `chat-cache.txt` runs from: window 1 shown and docked at 1, the dock's primary, with groups
+    /// 0-39 (`0x50f029`); window 2 shown and docked at 2 with the `defaultOn` groups of 40-45
+    /// (`0x50f071`); the rest hidden with no groups.
     pub fn stock(index: usize) -> Self {
         let groups = |range: std::ops::Range<usize>, all: bool| -> Vec<String> {
             MESSAGE_GROUPS[range]
@@ -238,7 +237,7 @@ impl ChatWindowLook {
 }
 
 /// The leading decimal integer after optional whitespace and a sign, 0 when there is none. The
-/// reference's `SStrToInt` takes neither the whitespace nor a `+`.
+/// reference's integer parse takes neither the whitespace nor a `+`.
 pub(super) fn leading_int(s: &str) -> i64 {
     let s = s.trim_start();
     let (neg, digits) = match s.strip_prefix('-') {
@@ -573,9 +572,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             .collect()
     }
 
-    // SetChatWindowName(id, name): `SStrCopy(record+0, name, 0x80)`, 127 bytes and the NUL. The
-    // reference stores "" for a name neither string nor number; here a missing or nil name stores
-    // "", and a boolean or table raises.
+    // SetChatWindowName(id, name): a bounded copy into `record+0` of `0x80`, 127 bytes and the NUL.
+    // The reference stores "" for a name neither string nor number; here a missing or nil name
+    // stores "", and a boolean or table raises.
     lua.globals().set(
         "SetChatWindowName",
         lua.create_function(|lua, (id, name): (i64, Option<String>)| {

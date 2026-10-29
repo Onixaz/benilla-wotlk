@@ -28,12 +28,12 @@ pub(crate) struct LiquidAssets {
     materials: HashMap<LiquidKey, LiquidEntry>,
 }
 
-/// Which of the reference's three liquid renderers draws a surface: the reference sends the type
+/// Which of the reference's three liquid renderers draws a surface: its dispatch sends the type
 /// nibble to a category, and category 0 (nibbles 0/4/8) splits on the group's `MOGP.flags & 0x48`.
-/// Magma and slime share (WMO) / (ADT) whatever the flags, so for them the path only picks the fog
-/// block. Fog is per pass: the WMO liquid pass re-submits the smoothed interior fog block under the
-/// same gate as the WMO geometry, so a pool fogs like its walls, while ADT liquid submits none and
-/// draws under the scene block.
+/// Magma and slime share one renderer per source, WMO or ADT, whatever the flags, so for them the
+/// path only picks the fog block. Fog is per pass: the WMO liquid pass re-submits the smoothed
+/// interior fog block under the same gate as the WMO geometry, so a pool fogs like its walls, while
+/// ADT liquid submits none and draws under the scene block.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum LiquidPath {
     /// An ADT chunk's MCLQ: two stages, the depth swatch at `tc0 = (0.5, LUT[depthByte])` and the
@@ -348,10 +348,11 @@ pub(super) fn setup_liquid(
             continue;
         };
         // Blend per kind, over the device defaults every reference setter pushes and pops against.
-        // Water and ocean: EGxBlend 2 (`SRC_ALPHA / INV_SRC_ALPHA`), depth write off (which is not
-        // modelled). Magma and slime: blend stays 0 (disabled) with depth test and write on (ids
-        // `0x10`/`0x12`), as the ADT lava pass sets and the WMO arm leaves it, so they are opaque.
-        // All four liquid passes turn culling off at entry; `glFrontFace` is never imported.
+        // Water and ocean: blend mode 2 (`SRC_ALPHA / INV_SRC_ALPHA`), depth write off (which is
+        // not modelled). Magma and slime: blend stays 0 (disabled) with depth test and write on
+        // (ids `0x10`/`0x12`), as the ADT lava pass sets and the WMO arm leaves it, so they are
+        // opaque. All four liquid passes turn culling off at entry; `glFrontFace` is never
+        // imported.
         let alpha_mode = if kind.is_fullbright() {
             AlphaMode::Opaque
         } else {

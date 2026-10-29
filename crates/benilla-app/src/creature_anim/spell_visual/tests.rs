@@ -584,7 +584,8 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
     }
 }
 
-/// `GetSpellVisual` (`0x7fa290`): below violence 2 the second visual, when the spell has one.
+/// The spell's visual pick (`0x7fa290`): below violence 2 the second visual, when the spell has
+/// one.
 #[test]
 fn low_violence_takes_the_second_visual_when_there_is_one() {
     let both = SpellDisplay {
@@ -1198,9 +1199,9 @@ fn ranged_visual_play_arms_the_any_caster_hold_and_a_non_ranged_play_clears_it()
     );
 }
 
-/// The mount poof, as the reference gives it: only the build leg allocates it, behind on the new
-/// value, so a dismount is silent; any changed value puffs; and a unit streaming in already mounted
-/// does not.
+/// The mount poof, as the reference gives it: only the build leg allocates it, behind a test on the
+/// new value, so a dismount is silent; any changed value puffs; and a unit streaming in already
+/// mounted does not.
 #[test]
 fn the_mount_poof_puffs_on_the_build_leg_only() {
     use benilla_protocol::ObjectFields;
@@ -1290,9 +1291,9 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
     );
 }
 
-/// A kit with a chain `CharProc` emits a `ChainProcPlay` from both dispatcher sites:
-/// `PlaySpellVisualKit`'s tail (the cast release) and the channel poll, the only way a channelled
-/// beam is reached.
+/// A kit with a chain `CharProc` emits a `ChainProcPlay` from both dispatcher sites: the kit
+/// player's tail (the cast release) and the channel poll, the only way a channelled beam is
+/// reached.
 #[test]
 fn a_kit_with_a_chain_char_proc_asks_for_a_beam_from_both_dispatcher_sites() {
     use benilla_formats::{char_proc_type, CharProc};
@@ -1679,11 +1680,11 @@ fn a_shooter_with_no_ranged_weapon_resolves_no_clip_at_all() {
     );
 }
 
-/// A state kit's anim id is a compare, never a play: the reference's one play site is skipped for
+/// A state kit's anim id is a compare, never a play: the kit player's one play site is skipped for
 /// stage 2, the stage both field-4 users play (the aura watcher and the impact hand-off), so the id
-/// only feeds the reference's compare and a base recompute. Charge (22911) plays Knockdown (121)
-/// from impact kit 348; state kit 349's Stun (14) is a recompute, which Knockdown's base-animation
-/// lock refuses.
+/// only feeds the reference's armed-id compare and a base recompute. Charge (22911) plays Knockdown
+/// (121) from impact kit 348; state kit 349's Stun (14) is a recompute, which Knockdown's
+/// base-animation lock refuses.
 #[test]
 fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
     const CHARGE: u32 = 22911;

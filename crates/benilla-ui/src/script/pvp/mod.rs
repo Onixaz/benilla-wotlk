@@ -90,7 +90,7 @@ impl super::UiScript {
         drain_field!(self, pvp_toggles)
     }
 
-    /// Push `GetPVPToggleTimer` (`0x6de7a0`): 300000 without the PvP timer flag, else the ms left
+    /// Push the PvP toggle timer (`0x6de7a0`): 300000 without the PvP timer flag, else the ms left
     /// on the flag watch's five-minute stamp, or -1 once it passed.
     pub fn set_pvp_toggle_timer(&mut self, ms: i32) {
         set_field!(self, pvp_toggle_timer, ms);
@@ -136,9 +136,9 @@ impl super::UiScript {
     }
 
     /// A rank's localized title for the app's `SMSG_PVP_CREDIT` chat line, `None` if missing or
-    /// empty. Gendered, unlike the pane's: the credit formatter resolves. No range check, so rank
-    /// 19 names "Leader"; `rank` is the internal rank the credit carries (`HonorMgr::SendPVPCredit`
-    /// sends `GetRank().rank`).
+    /// empty. Gendered, unlike the pane's: the credit formatter resolves through the gendered
+    /// lookup. No range check, so rank 19 names "Leader"; `rank` is the internal rank the credit
+    /// carries (`HonorMgr::SendPVPCredit` sends `GetRank().rank`).
     ///
     /// The caller owns two facts: the gender is the local player's while the team is the victim's,
     /// and a victim whose team is -1 gets no line at all, hence `team: u8`.
@@ -232,9 +232,9 @@ fn team_arg(lua: &Lua, v: Value) -> mlua::Result<i64> {
         .map_or(0, team_of))
 }
 
-/// `PVP_RANK_<internal>_<team>`, ungendered: `GetPVPRankInfo`'s lookup, `(key, -1, 0)`, so the
-/// panes show a female character the default title. Do not gender it: that would diverge from the
-/// reference.
+/// `PVP_RANK_<internal>_<team>`, ungendered: `GetPVPRankInfo`'s global-string lookup of
+/// `(key, -1, 0)`, so the panes show a female character the default title. Do not gender it: that
+/// would diverge from the reference.
 fn rank_title_ungendered(lua: &Lua, rank: i64, team: i64) -> Option<String> {
     global_string(lua, &format!("PVP_RANK_{rank}_{team}"))
 }
@@ -252,9 +252,9 @@ pub struct RankTitle {
     pub female: bool,
 }
 
-/// The same title gendered: it passes 2 (male) or 3 (female), which asks FrameXML's `GetText` to
-/// append `_FEMALE` for 3 (the engine never builds that key), and retries ungendered on a miss. The
-/// credit line's lookup.
+/// The same title gendered: it passes 2 (male) or 3 (female) to the global-string lookup, which
+/// asks FrameXML's `GetText` to append `_FEMALE` for 3 (the engine never builds that key), and
+/// retries ungendered on a miss. The credit line's lookup.
 fn rank_title_gendered(lua: &Lua, title: RankTitle) -> Option<String> {
     rank_title(&|key| global_string(lua, key), title)
 }
@@ -301,8 +301,8 @@ pub fn pvp_name_global_keys() -> Vec<String> {
     (1..=u8::MAX).map(|n| format!("PVP_MEDAL{n}")).collect()
 }
 
-/// `GetUnitChosenTitle` (`0x72a290`) with titles on, the name `UnitPVPName` and the unit tooltip's
-/// first line (`0x6219a0`) show: a player's chosen title filled with `name`, else `name`.
+/// The unit's chosen title (`0x72a290`) with titles on, the name `UnitPVPName` and the unit
+/// tooltip's first line (`0x6219a0`) show: a player's chosen title filled with `name`, else `name`.
 pub(super) fn pvp_name(lua: &Lua, u: &super::UnitState, name: &str) -> String {
     if !u.is_player {
         return name.to_owned();
@@ -475,9 +475,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitPVPName(unit) (`0x60e9a0`): `GetUnitChosenTitle` with titles on (`0x72a290`), a
-    // player's chosen title around the name and a medal line, else the plain name. No snapshot or
-    // an unresolved name answers nil.
+    // UnitPVPName(unit) (`0x60e9a0`): the chosen title with titles on (`0x72a290`), a player's
+    // chosen title around the name and a medal line, else the plain name. No snapshot or an
+    // unresolved name answers nil.
     g.set(
         "UnitPVPName",
         lua.create_function(|lua, token: Value| {

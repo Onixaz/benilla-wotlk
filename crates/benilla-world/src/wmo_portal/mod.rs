@@ -89,7 +89,7 @@ const CALLBACK_PASS: u32 = 0x10000;
 /// The client's deferred-window worklist holds a fixed 16 records with no bound check. Shipped data
 /// never nears it, so a flood past it is flagged as our bug.
 const WORKLIST_CAP: usize = 16;
-/// Recursion depth cap, the client's own: the reference seeded from10 at every depth-0 entry, so
+/// Recursion depth cap, the client's own: the counter is seeded from 10 at every depth-0 entry, so
 /// each Pass-2 root gets ten fresh hops. A cycle backstop, not a visibility term.
 const DEPTH_CAP: u32 = 10;
 /// Hard cap on flood iterations, a runaway-graph backstop; real WMOs settle far below it.
@@ -100,9 +100,9 @@ pub(crate) type Rect = [f32; 4];
 const FULL_SCREEN: Rect = [-1.0, -1.0, 1.0, 1.0];
 
 /// The deferred exterior-window worklist: the doorways the outdoor world may draw through this
-/// frame, as NDC rects. The client's list, which the scene driver copies to the reference and walks
-/// once per window, the frustum narrowed to it; the reference is the only exterior producer, so no
-/// window means no exterior content.
+/// frame, as NDC rects. The client's list, which the scene driver copies and walks once per window,
+/// the frustum narrowed to it; that walk is the only exterior producer, so no window means no
+/// exterior content.
 #[derive(Resource, Default, Clone, PartialEq, Debug)]
 pub enum ExteriorWindows {
     /// The driver's outside leg: no containing WMO, the whole frustum is the window.
@@ -198,9 +198,9 @@ impl WmoPortalInstance {
     }
 }
 
-/// One WMO room: a placement's instance entity and an absolute group index in it, the client's (the
-/// camera's containing placed map object) with the group its containing-group set carries. It is
-/// also the liquid query's scope key: a liquid footprint has no floor, so an unowned pool would
+/// One WMO room: a placement's instance entity and an absolute group index in it, the client's
+/// containing placed map object for the camera, with the group its containing-group set carries. It
+/// is also the liquid query's scope key: a liquid footprint has no floor, so an unowned pool would
 /// claim every position under it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct WmoRoom {
@@ -471,8 +471,8 @@ fn compute_wmo_pvs(
 #[derive(Default)]
 struct SeedTap {
     in_group: Option<usize>,
-    /// The across-portal seed; with [`Self::in_group`], the client's, the camera's containing
-    /// groups (not the flood's visible set).
+    /// The across-portal seed; with [`Self::in_group`], the client's containing-group set, the
+    /// camera's containing groups (not the flood's visible set).
     across: Option<usize>,
 }
 impl FloodTrace for SeedTap {
@@ -609,20 +609,20 @@ fn compute_pvs(
     .visible
 }
 
-/// What one flood publishes per group: this frame's PVS bit and the interior-fog bit, the client's,
-/// which gates both interior-fog pushes (the group drawer and the group liquid drawer). A group
-/// takes the fog when the walk reaches it from one of the camera's containing groups through true
-/// interiors only: the recursion's interior-chain anchor clears at any `flags & 0x48` hop. A `0x48`
-/// group is drawn by the exterior drawer, which pushes no fog, so the break decides the rooms
-/// beyond it.
+/// What one flood publishes per group: this frame's PVS bit and the interior-fog bit, the client's
+/// fog gate, which gates both interior-fog pushes (the group drawer and the group liquid drawer). A
+/// group takes the fog when the walk reaches it from one of the camera's containing groups through
+/// true interiors only: the recursion's interior-chain anchor clears at any `flags & 0x48` hop. A
+/// `0x48` group is drawn by the exterior drawer, which pushes no fog, so the break decides the
+/// rooms beyond it.
 pub(crate) struct GroupPvs {
     /// Per absolute group index: in this frame's portal PVS.
     pub(crate) visible: Vec<bool>,
     /// Per absolute group index: draws with the interior fog triple.
     pub(crate) interior_fog: Vec<bool>,
-    /// The deferred exterior-window worklist this flood left, the client's records: one clipped NDC
-    /// rect per doorway reached onto an `0x8` group. Pass 2 and [`ExteriorWindows`] both read it,
-    /// as the reference feeds both from one list.
+    /// The deferred exterior-window worklist this flood left, the client's window records: one
+    /// clipped NDC rect per doorway reached onto an `0x8` group. Pass 2 and [`ExteriorWindows`]
+    /// both read it, as the reference feeds both from one list.
     pub(crate) windows: Vec<Rect>,
     /// Stack steps across every run of the walk this frame, Pass 1 and each Pass-2 replay; the dump
     /// prints it.
@@ -645,11 +645,12 @@ struct Flood<'a> {
     world_from_local: &'a Affine3A,
     visible: Vec<bool>,
     interior_fog: Vec<bool>,
-    /// The deferred exterior-window worklist Pass 1 leaves: the client's records, reset and filled.
+    /// The deferred exterior-window worklist Pass 1 leaves: the client's window records, reset at
+    /// the flood's start and filled at each push.
     windows: Vec<Rect>,
-    /// The client's per-frame stamp on the portal record (`[esi+0x18]` vs): a portal adds at most
-    /// one window per frame, however many paths reach it. It guards the store only, never the
-    /// recursion; the first push wins.
+    /// The client's per-frame stamp on the portal record (`[esi+0x18]` against the frame counter):
+    /// a portal adds at most one window per frame, however many paths reach it. It guards the store
+    /// only, never the recursion; the first push wins.
     portal_pushed: Vec<bool>,
     /// Runaway backstop, counted across every run of the walk this frame ([`MAX_ITERS`]).
     iters: u32,
@@ -772,9 +773,9 @@ fn compute_pvs_traced<T: FloodTrace>(
     let mut stack: Vec<Step> = Vec::new();
     let seeds = down_ray_seeds(model, eye_local, terrain_z);
     trace.seed(seeds);
-    // The inside-leg flag: Pass 1 of the reference alone records windows, and the reference runs
-    // only with a containing map object, whose writer rejects an `0x8` group. An eye over a
-    // building's own `0x8` porch is the driver's outside leg: no worklist, no Pass 2.
+    // The inside-leg flag: Pass 1 of the flood alone records windows, and the flood runs only with
+    // a containing map object, whose writer rejects an `0x8` group. An eye over a building's own
+    // `0x8` porch is the driver's outside leg: no worklist, no Pass 2.
     let inside_leg = seeds
         .in_group
         .and_then(|gi| nav.get(gi))
@@ -900,11 +901,11 @@ fn point_in_poly_2d(pts: impl Iterator<Item = (f32, f32)> + Clone, p: (f32, f32)
     inside
 }
 
-/// A portal polygon's NDC bounding rect, the client's: to clip space, clipped against the four side
-/// planes only (no near plane), then the per-vertex NDC min and max, where `|w| < 0.001` becomes
-/// `+1e-5` and a vertex with `w <= -0.001` divides by its own negative `w`, its mirrored NDC
-/// entering the rect. So a doorway the eye straddles blows open instead of collapsing. Unclamped;
-/// `None` when fully clipped (the client's `rc.flags |= 0x1` skip).
+/// A portal polygon's NDC bounding rect, as the client builds it: to clip space, clipped against
+/// the four side planes only (no near plane), then the per-vertex NDC min and max, where
+/// `|w| < 0.001` becomes `+1e-5` and a vertex with `w <= -0.001` divides by its own negative `w`,
+/// its mirrored NDC entering the rect. So a doorway the eye straddles blows open instead of
+/// collapsing. Unclamped; `None` when fully clipped (the client's `rc.flags |= 0x1` skip).
 fn portal_screen_rect(
     model: &WmoModel,
     info: &WmoPortalInfo,
@@ -940,8 +941,9 @@ fn portal_screen_rect(
 }
 
 /// Sutherland–Hodgman clip of a clip-space polygon against the four side planes (`x ≥ −w`, `x ≤ w`,
-/// `y ≥ −w`, `y ≤ w`; the client's guard pyramid fed). No near plane: a polygon spanning the eye
-/// survives as points near `w = 0` for the caller's `w`-clamp. `None` under 3 vertices.
+/// `y ≥ −w`, `y ≤ w`; the client's guard pyramid fed to its clipper). No near plane: a polygon
+/// spanning the eye survives as points near `w = 0` for the caller's `w`-clamp. `None` under 3
+/// vertices.
 fn clip_side_planes(poly: &[Vec4]) -> Option<Vec<Vec4>> {
     const PLANES: [fn(&Vec4) -> f32; 4] =
         [|v| v.w + v.x, |v| v.w - v.x, |v| v.w + v.y, |v| v.w - v.y];

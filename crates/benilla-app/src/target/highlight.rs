@@ -1,10 +1,10 @@
 //! The mouseover and target model brighten, the reference's per-model highlight emissive.
 //!
-//! The reference sets it on a change, not per frame: `SetHighlight` and `ClearHighlight` keep a
-//! per-object reason mask (bit 0 target, bit 1 mouseover), and the glow drops when the last reason
-//! clears. `SetHighlight` samples the scene's committed ambient into the model, and every batch
-//! adds it before the final clamp (`c29`), lit or unlit, attachments included; `0xff404040` is only
-//! the fallback before a map's light loads.
+//! The reference sets it on a change, not per frame: the highlight set and clear keep a per-object
+//! reason mask (bit 0 target, bit 1 mouseover), and the glow drops when the last reason clears. The
+//! set samples the scene's committed ambient into the model, and every batch adds it before the
+//! final clamp (`c29`), lit or unlit, attachments included; `0xff404040` is only the fallback
+//! before a map's light loads.
 //!
 //! benilla carries the flag in bit 31 of the per-instance `MeshTag` (`benilla_world::mesh_tag`),
 //! and `wow_model.wgsl` adds the scene ambient when it is set.

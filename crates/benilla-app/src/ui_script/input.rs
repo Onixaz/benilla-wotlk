@@ -211,7 +211,7 @@ pub(super) fn feed_ui_input(
     // ── The alt-arrow exemption ────────────────────────────────────────────────────────────────
     // An EditBox in alt-arrow mode (`ignoreArrows`, set on the chat box at `ChatFrame.xml:21`)
     // passes the arrows on unless ALT is held: its handler returns 0 and the binding runs at
-    // `CGWorldFrame`; a focused box swallows any other key.
+    // the world frame; a focused box swallows any other key.
     capture.arrows_fall_through = !alt && script.editbox_alt_arrow_mode();
 
     // ── Keyboard → VM ── box-event keys go to `key_input` by name, editing keys through the

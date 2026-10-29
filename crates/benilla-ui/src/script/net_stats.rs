@@ -1,7 +1,7 @@
 //! `GetNetStats()`: `bandwidthIn, bandwidthOut, latency` for the main bar's latency meter. The
-//! latency is the average over the connection's 16-slot RTT ring (`HandlePong`), which the app
-//! keeps and pushes here. Both bandwidths read 0: benilla measures no throughput, and the one stock
-//! caller, `MainMenuBarPerformanceBarFrame`, drops them.
+//! latency is the average over the connection's 16-slot RTT ring (filled by the pong handler),
+//! which the app keeps and pushes here. Both bandwidths read 0: benilla measures no throughput, and
+//! the one stock caller, `MainMenuBarPerformanceBarFrame`, drops them.
 
 use mlua::Lua;
 

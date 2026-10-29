@@ -1,5 +1,5 @@
 //! The group packet handlers. [`GroupState`] names the messages each packet implies and these queue
-//! them by key, as the reference's `DisplayError` takes a message id: the catalog row gives the
+//! them by key, as the reference's error display takes a message id: the catalog row gives the
 //! text, the surface and the sound. [`member_deactivated`] and [`roster_deactivated`] are the
 //! object layer's hooks on a roster member's stream-out.
 
@@ -107,7 +107,7 @@ fn on_uninvited(
     }
 }
 
-/// The current difficulties before `CGPartyInfo::RemoveAll(1)` empties the party (`0x52d6e8`).
+/// The current difficulties before the party clear-all empties the party (`0x52d6e8`).
 fn removal_start(group: &GroupState) -> (u32, u32) {
     (
         group.current_dungeon_difficulty(),
@@ -392,10 +392,9 @@ fn seat_new_records(
     }
 }
 
-/// The despawn hook (object destroyed or out of range): for a roster member, fill their record
-/// from the live descriptor and aura table (`FillPartyMemberState 0x6e12e0`), then request their
-/// stats. Nothing happens off the roster or without an object, since the hook is a virtual on the
-/// object.
+/// The despawn hook (object destroyed or out of range): for a roster member, fill their record from
+/// the live descriptor and aura table (`0x6e12e0`), then request their stats. Nothing happens off
+/// the roster or without an object, since the hook is a virtual on the object.
 pub(crate) fn member_deactivated(
     guid: u64,
     group: &mut GroupState,

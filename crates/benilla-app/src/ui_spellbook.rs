@@ -42,7 +42,7 @@ const GENERAL_TAB_ICON: &str = "Interface\\Icons\\Ability_Kick";
 
 /// Spells learned mid-session, queued for `LEARNED_SPELL_IN_TAB` (event 510). Filled by the learn
 /// and rank-up arms (`crate::spell::net`), never the `SMSG_INITIAL_SPELLS` load, which the
-/// reference passes with the reference's live-mutation flag clear. A queue because the event
+/// reference passes with its tab builder's live-mutation flag clear. A queue because the event
 /// follows the tab re-sort and `SPELLS_CHANGED`.
 #[derive(Resource, Default)]
 pub(crate) struct LearnedInTab(pub(crate) Vec<u32>);
@@ -245,8 +245,8 @@ fn feed_spellbook(
                 .is_some_and(|d| d.shapeshift_form == Some(u32::from(form_byte)));
         }
     }
-    // Each slot's cooldown (`GetCooldownInfo`: id, category and GCD alike) on the `GetTime` clock,
-    // frame-stable per arm, so a running cooldown never churns the diff.
+    // Each slot's cooldown (the reference's cooldown lookup: id, category and GCD alike) on the
+    // `GetTime` clock, frame-stable per arm, so a running cooldown never churns the diff.
     let (anchor, ui_now) = (clock.anchor, clock.ui_now);
     let rune_check = runes
         .as_deref()
@@ -492,8 +492,8 @@ fn build_book(
     )
 }
 
-/// The reference's tail: name, then the parsed rank number, then the rank string. The rank is the
-/// first digit run of `NameSubtext`, so any localized prefix parses.
+/// The reference's book sort's tail: name, then the parsed rank number, then the rank string. The
+/// rank is the first digit run of `NameSubtext`, so any localized prefix parses.
 fn spell_sort_key(catalog: &SpellCatalog, spell_id: u32) -> (String, u32, String) {
     let d = catalog.get(spell_id);
     spell_sort_key_of(
@@ -503,7 +503,7 @@ fn spell_sort_key(catalog: &SpellCatalog, spell_id: u32) -> (String, u32, String
 }
 
 /// [`spell_sort_key`] over a resolved `(name, rank)`, shared with the pet book: the reference sorts
-/// both books with.
+/// both books with the same comparison.
 pub(crate) fn spell_sort_key_of(name: &str, rank: Option<&str>) -> (String, u32, String) {
     let rank_str = rank.unwrap_or_default().to_string();
     (name.to_string(), leading_number(&rank_str), rank_str)

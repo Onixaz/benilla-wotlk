@@ -1,7 +1,7 @@
-//! FixColorVertexAlpha, the portal fade: MOCV vertices at a portal whose far side is an exterior
-//! group turn `(255, 255, 255, 255)`, interior-to-interior portals whiten nothing, and there is no
-//! MOPY alpha pre-pass. A capture of the reference's uploaded MOCV for the Northshire abbey matches
-//! the file in all 678 vertices of group 1 and in 496 of 506 in group 3.
+//! The doorway fade: MOCV vertices at a portal whose far side is an exterior group turn
+//! `(255, 255, 255, 255)`, interior-to-interior portals whiten nothing, and there is no MOPY alpha
+//! pre-pass. A capture of the reference's uploaded MOCV for the Northshire abbey matches the file
+//! in all 678 vertices of group 1 and in 496 of 506 in group 3.
 
 use benilla_formats::{parse_wmo_root, wmo_group_fixed_colors, Chain};
 

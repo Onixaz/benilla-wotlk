@@ -288,8 +288,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     .unwrap_or_else(|| "<unnamed>".to_string())
             };
             let parent_arg = it.next();
-            // `_G[name]` is read with no guard alive and no `$parent` expansion: the reference
-            // directly, and only the layout path's expands the token.
+            // `_G[name]` is read with no guard alive and no `$parent` expansion: the reference's
+            // binding calls the name lookup directly, and only the layout path's lookup expands the
+            // token.
             let named = match &parent_arg {
                 Some(Value::String(s)) => Some(match s.to_str() {
                     Ok(n) => super::prefetch_named_target(lua, n.as_ref(), None),
@@ -420,7 +421,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let h = frame_handle_of(lua, &this)?;
             let lvl = level.clamp(0, i64::from(u16::MAX)) as u16;
             // A script level change carries the same-strata children along: `0x49e9d0` calls
-            // `CSimpleFrame::SetFrameLevel` with `propagate = 1` (`0x49ea50`).
+            // the frame-level set with `propagate = 1` (`0x49ea50`).
             crate::script::model_mut_of(lua)
                 .arena
                 .set_frame_level(h, lvl, true);

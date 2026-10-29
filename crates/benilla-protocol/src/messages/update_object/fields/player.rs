@@ -345,7 +345,7 @@ impl ObjectFields {
             .unwrap_or(0)
     }
     /// 3.3.5a `PLAYER_CHOSEN_TITLE` (public): the shown title's `CharTitles.dbc` mask id, 0 for
-    /// none; read signed, as `GetUnitChosenTitle` (`0x72a290`) shows none at or below 0.
+    /// none; read signed, as the reference's title lookup (`0x72a290`) shows none at or below 0.
     pub fn player_chosen_title(&self) -> i32 {
         self.get_i32(FIELD_PLAYER_CHOSEN_TITLE).unwrap_or(0)
     }
@@ -494,8 +494,9 @@ impl ObjectFields {
     pub fn player_is_ghost(&self) -> bool {
         self.player_flags() & 0x10 != 0
     }
-    /// Dead or a ghost, the reference's: health 0, or for a player the ghost flag. Not feign death,
-    /// which is `unit_reads_dead`; a creature has no `PLAYER_FLAGS`, so reads clear.
+    /// Dead or a ghost, as the reference's dead-or-ghost test reads it: health 0, or for a player
+    /// the ghost flag. Not feign death, which is `unit_reads_dead`; a creature has no
+    /// `PLAYER_FLAGS`, so reads clear.
     pub fn is_dead_or_ghost(&self) -> bool {
         self.unit_is_dead() || self.player_is_ghost()
     }
@@ -733,13 +734,13 @@ impl ObjectFields {
     }
 
     /// `OBJECT_FIELD_TYPE & TYPEMASK_CONTAINER`: a bag, whose mask carries the item bit too; the
-    /// reference's test (`GetInventoryItemCount`) and (`PutItemInBag`).
+    /// reference's test in `GetInventoryItemCount` and in `PutItemInBag`.
     pub fn is_container(&self) -> bool {
         self.get_u32(FIELD_OBJECT_TYPE).unwrap_or(0) & 0x4 != 0
     }
 
     /// The object's class from `OBJECT_FIELD_TYPE`, for updates with no `TypeId`; the player bit
-    /// `0x10` is the reference's own is-player test (`CanAttack`, `CanInteract`).
+    /// `0x10` is the reference's own is-player test (in its attack and interact checks).
     pub fn object_type(&self) -> Option<ObjectType> {
         self.get_u32(FIELD_OBJECT_TYPE).map(|bits| {
             if bits & 0x10 != 0 {

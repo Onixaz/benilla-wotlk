@@ -4,7 +4,7 @@
 //! ([`crate::creature_anim`]).
 //!
 //! The change handler tears the old seat down, then builds the new, and neither half touches the
-//! rider's model. Mounting sets the mount model (into `CGUnit+0xdc`) and re-parents the body onto
+//! rider's model. Mounting sets the mount model (into unit `+0xdc`) and re-parents the body onto
 //! its attachment 0, recomposed each frame from that live bone; dismounting detaches the body,
 //! destroys the mount model and stands the body, instantly. Here the rig's consumer anchors move
 //! between the unit's frame and the seat, re-pointing [`RigPose::joints_root`], so nothing that
@@ -247,9 +247,9 @@ fn ground_frame(
     node
 }
 
-/// Move a rig's consumer anchors onto `frame` and make it the model frame, as the reference
-/// attaches and the reference detaches; the anchors carry every held item, effect and overhead
-/// rider. `pose_dirty` re-seats them and the palette in the same frame's compose.
+/// Move a rig's consumer anchors onto `frame` and make it the model frame, as the reference's model
+/// attach and detach do; the anchors carry every held item, effect and overhead rider. `pose_dirty`
+/// re-seats them and the palette in the same frame's compose.
 fn reseat_rig(commands: &mut Commands, rig: &mut RigPose, frame: Entity, conform: bool) {
     if rig.joints_root == frame {
         return;
@@ -268,9 +268,9 @@ fn reseat_rig(commands: &mut Commands, rig: &mut RigPose, frame: Entity, conform
     }
 }
 
-/// Re-seat a unit's rig when its mount field changes, the client's: tear the old seat down, then
-/// build the new, with the rider's own visual untouched. The legs run in separate frames, so a
-/// remount stands the rider on its feet while the new mount model loads.
+/// Re-seat a unit's rig when its mount field changes, as the client's change handler does: tear the
+/// old seat down, then build the new, with the rider's own visual untouched. The legs run in
+/// separate frames, so a remount stands the rider on its feet while the new mount model loads.
 #[allow(clippy::type_complexity)]
 pub(super) fn reseat_mounts(
     mut commands: Commands,
@@ -320,9 +320,9 @@ pub(super) fn reseat_mounts(
             continue;
         };
         let child = child.map(|&MountChild(c)| c);
-        // ── Leg 1 ·: detach the body onto its own frame, destroy the mount model. Taken when
-        // seated on a mount the field left or when the field says none; a unit waiting on its first
-        // mount model must not take it, or it would tear down its own order.
+        // ── Leg 1 · dismount: detach the body onto its own frame, destroy the mount model. Taken
+        // when seated on a mount the field left or when the field says none; a unit waiting on its
+        // first mount model must not take it, or it would tear down its own order.
         if applied != 0 || live == 0 {
             // Only a body on a seat detaches: a rig on its own entity or its conform node stays,
             // or a second conform node would be orphaned beside the first.
@@ -343,7 +343,7 @@ pub(super) fn reseat_mounts(
                 .insert(AppliedMount(0));
             continue;
         }
-        // ── Leg 2 ·: build the mount model and attach the body to its seat.
+        // ── Leg 2 · mount: build the mount model and attach the body to its seat.
         match seat_or_spawn_mount(
             &mut commands,
             &children,

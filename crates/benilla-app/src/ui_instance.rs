@@ -46,7 +46,7 @@ pub(crate) struct InstanceState {
     lines: Vec<LockoutLine>,
 }
 
-/// One lockout line as the reference holds it between `GetText` and `SStrPrintf`.
+/// One lockout line as the reference holds it between the template lookup and its formatting.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct LockoutLine {
     /// The `GlobalStrings.lua` token.
@@ -438,7 +438,7 @@ fn drain_instance(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommand
 }
 
 /// Drop the witness at logout, as the next login may be another character. The three globals stay,
-/// as the reference keeps them (the reference runs only on `SMSG_INSTANCE_RESET`): its bind term is
+/// as the reference keeps them (its clear runs only on `SMSG_INSTANCE_RESET`): its bind term is
 /// re-sent at the next world entry, where ours has no server to correct it.
 fn clear_witness_on_logout(
     mut state: ResMut<InstanceState>,

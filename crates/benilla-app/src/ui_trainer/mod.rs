@@ -38,7 +38,7 @@ pub(crate) struct TrainerOpen {
     pub(crate) trainer_type: u32,
     pub(crate) greeting: String,
     /// A list landed and the engine's collapse set and line filter are not yet reset, as
-    /// `AddServices` (`0x596450`) resets them per list; an open window repaints through
+    /// the list build (`0x596450`) resets them per list; an open window repaints through
     /// [`reeval`], never a second list.
     pub(crate) fresh_list: bool,
     /// One of the re-evaluator's triggers fired with the window open; the feed re-derives and
@@ -303,7 +303,7 @@ type TokenReads = (
     Option<String>,
 );
 
-/// `GetTrainerServiceDescription`'s parser inputs (`SpellParserParseText` over the player with its
+/// `GetTrainerServiceDescription`'s parser inputs (the spell-text parser over the player with its
 /// modifiers, `0x5959d0`) and the per-spell texts, rebuilt when a token input moves.
 #[derive(SystemParam)]
 pub(crate) struct DescriptionInputs<'w, 's> {

@@ -72,7 +72,7 @@ fn load_xml(s: &crate::script::UiScript, xml: &str) {
     assert!(report.errors.is_empty(), "{:?}", report.errors);
 }
 
-/// `ShowThis` (`0x4918f0`) and `HideThis` (`0x491830`) step each child before notifying their own
+/// The frame's show (`0x4918f0`) and hide (`0x491830`) step each child before notifying their own
 /// frame, so a subtree hears of a show or hide bottom-up, siblings in link order.
 #[test]
 fn a_subtree_hears_its_show_and_hide_children_first() {
@@ -128,7 +128,7 @@ fn a_sibling_hidden_by_an_earlier_onshow_is_not_shown() {
     assert!(s.eval::<bool>("return GateA:IsVisible()").unwrap());
 }
 
-/// `PostLoadXML` (`0x490410`) fires `OnLoad`, then `OnShow` for a frame still visible, children
+/// The XML post-load (`0x490410`) fires `OnLoad`, then `OnShow` for a frame still visible, children
 /// before their parent; a frame hidden by its XML, or by its own `OnLoad`, hears no `OnShow`.
 #[test]
 fn a_frame_visible_at_the_end_of_its_load_hears_onshow_after_onload() {
@@ -172,9 +172,9 @@ fn a_frame_visible_at_the_end_of_its_load_hears_onshow_after_onload() {
     );
 }
 
-/// `OnLayerHide` (`0x490300`) is silent while the frame is in its XML load: a child's `OnLoad`
-/// hiding its still-loading parent fires no `OnHide` on the parent, which then ends its load
-/// hidden and hears no `OnShow` either.
+/// The layer hide (`0x490300`) is silent while the frame is in its XML load: a child's `OnLoad`
+/// hiding its still-loading parent fires no `OnHide` on the parent, which then ends its load hidden
+/// and hears no `OnShow` either.
 #[test]
 fn a_hide_during_the_frames_own_load_is_silent() {
     let s = script();

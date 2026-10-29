@@ -158,9 +158,9 @@ mod tests {
         );
     }
 
-    /// The reference copies the saved record back and then sets or clears bit 0 of its status byte
-    /// from the row's; the raid roster's twin does the same to its row's record. Both test the
-    /// row's byte as non-zero.
+    /// The party list handler copies the saved record back and then sets or clears bit 0 of its
+    /// status byte from the row's; the raid roster's twin does the same to its row's record. Both
+    /// test the row's byte as non-zero.
     #[test]
     fn a_list_rewrites_a_known_members_online_bit_and_keeps_the_rest_of_the_record() {
         use crate::ui_party::GROUPTYPE_RAID;
@@ -238,8 +238,8 @@ mod tests {
         assert_eq!(g.party_pet_guid(MEMBER, None), None);
     }
 
-    /// `raidpetN` reads the same fields as `partypetN`, but its record leg has no online test
-    /// (against `partypetN`'s).
+    /// `raidpetN` reads the same fields as `partypetN`, but its record leg has no online test where
+    /// `partypetN`'s has one.
     #[test]
     fn the_raid_pet_guid_reads_the_record_whatever_its_online_bit() {
         let g = group_with(record(member_status::ONLINE));

@@ -89,7 +89,7 @@ pub use factions::{
 };
 mod creature_types;
 pub use creature_types::{load_creature_type_flags, CreatureTypeFlags};
-/// The chat language scramble, the reference's.
+/// The chat language scramble, as the reference does it.
 mod garble;
 pub use garble::{garble, garble_chat, Garble, FLUENT_SKILL};
 mod languages;

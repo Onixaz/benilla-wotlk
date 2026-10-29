@@ -1,7 +1,7 @@
 //! Battleground and arena messages: the two queue slots, the instance list, the scoreboard, the
 //! teammate positions and the world-PvP (Wintergrasp) queue. The client keeps two queue slots
-//! (`CGBattlefieldInfo::m_status`, `0xbea4b8`, stride `0x40`) keyed by an opaque 64-bit queue word
-//! the server minted and every later send echoes back.
+//! (`0xbea4b8`, stride `0x40`) keyed by an opaque 64-bit queue word the server minted and every
+//! later send echoes back.
 
 use std::io::{self, Read};
 

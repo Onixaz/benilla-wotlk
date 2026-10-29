@@ -46,7 +46,7 @@ pub fn doodad_ground_shade(
     }
 }
 
-/// The MCNK `areaId` under a Bevy-space position: the outdoor leg of the reference's `GetAreaID`,
+/// The MCNK `areaId` under a Bevy-space position: the outdoor leg of the reference's area lookup,
 /// for any unit, with no interior claim. An `areaId` of 0 (unassigned) is a miss.
 pub fn area_id_under(
     streamer: &TerrainStreamer,
@@ -74,9 +74,9 @@ pub fn ground_effect_under(
 }
 
 /// The terrain height (WoW `z`) under a Bevy-space position: the terrain leg of the reference's
-/// down-ray arbitration (also in `GetAreaID`), which wins the column when the ground is strictly
-/// nearer than the WMO. `None` is no terrain in the column (off the ring, decoding, or an MCNK hole
-/// over a cave mouth), never ground at 0.
+/// down-ray arbitration (also in the area lookup), which wins the column when the ground is
+/// strictly nearer than the WMO. `None` is no terrain in the column (off the ring, decoding, or an
+/// MCNK hole over a cave mouth), never ground at 0.
 pub fn terrain_height_under(
     streamer: &TerrainStreamer,
     adt_tiles: &Assets<AdtTile>,
@@ -107,7 +107,7 @@ pub fn terrain_height_under_cached<'a>(
     benilla_formats::terrain_height_at(&adt.chunks, wow)
 }
 
-/// Tracks the `AreaTable` id under the player's feet as the reference's `GetAreaID` does: a WMO
+/// Tracks the `AreaTable` id under the player's feet as the reference's area lookup does: a WMO
 /// interior wins when the faces-only down-ray finds it nearer, by its `WMOAreaTable.AreaTableID`;
 /// outdoors it is the chunk's MCNK `areaId`. Holds the last value while a tile decodes.
 pub(super) fn update_current_area(

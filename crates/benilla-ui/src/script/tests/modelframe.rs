@@ -54,8 +54,8 @@ fn the_model_pane_holds_the_scene_it_was_given() {
 }
 
 /// Each model-pane type has its own method table and reaches its base's through the miss leg of
-/// `vtable+0x8`: `PlayerModel`'s three sit over `Model`'s 23, and `CSimpleModel`'s lookup has no
-/// leg.
+/// `vtable+0x8`: `PlayerModel`'s three sit over `Model`'s 23, and the model widget's own lookup has
+/// no leg.
 #[test]
 fn a_player_model_is_a_model_plus_three_and_the_chain_runs_one_way() {
     let mut s = script();
@@ -156,7 +156,7 @@ fn the_string_setters_gate_their_argument_and_a_number_is_a_string() {
         None
     );
 
-    // `ReplaceIconTexture` swaps the CM2Model's type-14 textures, and a pane with none
+    // `ReplaceIconTexture` swaps the M2 model's type-14 textures, and a pane with none
     // (`[widget+0x318] == 0`) drops the call, so only the gate is observable.
     for bad in ["nil", "{}", "true", ""] {
         assert!(
@@ -187,7 +187,7 @@ fn the_string_setters_gate_their_argument_and_a_number_is_a_string() {
 /// every name resolves, and a name a table lacks does not.
 #[test]
 fn the_two_model_tables_are_the_references_own() {
-    /// `Model`, `CSimpleModel`'s table, in table order.
+    /// `Model`, the model widget's table, in table order.
     const MODEL_23: [&str; 23] = [
         "SetModel",
         "GetModel",
@@ -213,7 +213,7 @@ fn the_two_model_tables_are_the_references_own() {
         "GetFogFar",
         "ClearFog",
     ];
-    /// `PlayerModel`, `CGCharacterModelBase`'s table, in table order.
+    /// `PlayerModel`, the character model widget's table, in table order.
     const PLAYERMODEL_3: [&str; 3] = ["SetUnit", "RefreshUnit", "SetRotation"];
     /// The names in [`MODEL_23`] this client leaves unbuilt, absent rather than stubbed: none.
     const UNBUILT: [&str; 0] = [];
@@ -251,10 +251,10 @@ fn the_two_model_tables_are_the_references_own() {
         );
         assert!(
             !is_fn(&s, "GuardM", name),
-            "GuardM.{name}: the reference is NOT reachable from CSimpleModel's lookup"
+            "GuardM.{name}: the PlayerModel table is NOT reachable from the model widget's lookup"
         );
     }
-    // `SetCreature` is `CharacterModelBase`'s (table `0xacf514`), never plain `Model`'s.
+    // `SetCreature` is the character model widget's (table `0xacf514`), never plain `Model`'s.
     assert!(is_fn(&s, "GuardPM", "SetCreature"));
     assert!(!is_fn(&s, "GuardM", "SetCreature"));
 }
@@ -305,8 +305,8 @@ fn the_two_sequence_verbs_arm_the_pane_on_its_own_clock() {
     assert_eq!(armed(&s).1, None);
 }
 
-/// `SetLight` writes the pane's `CGLight` by the reference's argument walk, folding intensities
-/// into colours and normalising the direction; `GetLight` answers 7, 10 or 13 values.
+/// `SetLight` writes the pane's light by the reference's argument walk, folding intensities into
+/// colours and normalising the direction; `GetLight` answers 7, 10 or 13 values.
 #[test]
 fn the_light_tuple_is_opaque_and_survives_the_round_trip() {
     let mut s = script();

@@ -535,7 +535,7 @@ fn name_and_creature_query_roundtrip() {
         _ => panic!("name query response"),
     }
 
-    // A hit, in `CreatureStats::Unpack 0x98d4c0`'s layout. Family, rank and display id get
+    // A hit, in the creature record unpack's layout (`0x98d4c0`). Family, rank and display id get
     // distinct non-zero values so a one-dword slip between adjacent fields cannot read as
     // plausible data.
     let body = hx(concat!(

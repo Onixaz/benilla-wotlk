@@ -1,18 +1,19 @@
 //! The one cast-send path: every spell and item use leaves through [`send_spell_cast`], which runs
-//! the reference's `TryCast` and its commit `SendCast` rung for rung.
+//! the reference's cast attempt and its commit, the cast send, rung for rung.
 //!
-//! The rungs: the auto-repeat toggle-off (the reference's action-button handler, ahead of TryCast;
-//! its order against the profession intercept is unobservable), the profession intercept, dead or a
-//! ghost, the targeting abort, in-flight, reagents and totems, the equipped item, combo points, the
-//! attack pick, target binding and range, then the validator (not-ready and GCD, power, crowd
-//! control, mounted, water, moving, form), the deferred cast-arm refusal and the targeting cursor.
-//! The commit tail follows: ranged stance, auto-repeat arm, the send, the auto-attack start, the
-//! GCD. A refusal is local and pre-commit: no packet, no GCD, no pending arm, only the red line.
+//! The rungs: the auto-repeat toggle-off (the reference's action-button handler, ahead of the cast
+//! attempt; its order against the profession intercept is unobservable), the profession intercept,
+//! dead or a ghost, the targeting abort, in-flight, reagents and totems, the equipped item, combo
+//! points, the attack pick, target binding and range, then the validator (not-ready and GCD, power,
+//! crowd control, mounted, water, moving, form), the deferred cast-arm refusal and the targeting
+//! cursor. The commit tail follows: ranged stance, auto-repeat arm, the send, the auto-attack
+//! start, the GCD. A refusal is local and pre-commit: no packet, no GCD, no pending arm, only the
+//! red line.
 //!
-//! An item use takes the same ladder: `CGItem::Use` calls, whose body is with the item as TryCast's
-//! third argument. Three rungs fork on it, hence [`CastCommit`]: the not-ready rung (item
-//! cooldown and 0x28, else and 0x3c), the power gate (items skip it), and the opcode (`0xab` vs
-//! `0x12e`).
+//! An item use takes the same ladder: the item use calls a wrapper that runs the cast attempt with
+//! the item as its third argument. Three rungs fork on it, hence [`CastCommit`]: the not-ready rung
+//! (the item cooldown and 0x28, else the spell cooldown and 0x3c), the power gate (items skip it),
+//! and the opcode (`0xab` vs `0x12e`).
 
 use std::time::Instant;
 
@@ -26,8 +27,9 @@ use crate::net::{ClientCommand, NetCommands, Objects, SelfPlayer};
 use super::{cast_target, validator, AutoRepeatActive};
 use crate::ui_action::{reagent_totem_refusal, CastErrors, Spells};
 
-/// What the commit sends: `SendCast` branches on whether the pending-cast guid (the item's when
-/// TryCast got one, else the caster's) is the caster's; the item arm sends `CMSG_USE_ITEM`.
+/// What the commit sends: the cast send branches on whether the pending-cast guid (the item's when
+/// the cast attempt got one, else the caster's) is the caster's; the item arm sends
+/// `CMSG_USE_ITEM`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CastCommit {
     /// `CMSG_CAST_SPELL` (0x12e).
@@ -40,8 +42,8 @@ pub(crate) enum CastCommit {
         entry: u32,
         /// The item's guid, which the body names after the spell (`0x80b2d1`).
         item_guid: u64,
-        /// `CGItem::Use`'s own target argument, set only for a key in a lock; it bypasses the
-        /// binder, as TryCast's target resolve takes the pair it was passed.
+        /// The item use's own target argument, set only for a key in a lock; it bypasses the
+        /// binder, as the cast attempt's target resolve takes the pair it was passed.
         on_object: Option<u64>,
     },
     /// `CMSG_PET_CAST_SPELL` (0x1f0): a caster that is not the active player (`0x80b315`).
@@ -54,7 +56,7 @@ impl CastCommit {
         matches!(self, CastCommit::Item { .. })
     }
 
-    /// The local not-ready reason for this commit (the reference's forked first rung).
+    /// The local not-ready reason for this commit (the validator's forked first rung).
     fn not_ready_reason(self) -> u8 {
         if self.is_item() {
             0x28
@@ -83,15 +85,15 @@ fn bound_target(bound: TargetedBind) -> UseItemTarget {
 /// The class byte the finisher rung tests (`0x80d57d`).
 const CLASS_WARRIOR: u8 = 1;
 
-/// A player's spell press held at TryCast's attack pick, which can move the selection the ladder
-/// only reads. [`crate::script_calls`] runs the pick and resumes it.
+/// A player's spell press held at the cast attempt's attack pick, which can move the selection the
+/// ladder only reads. [`crate::script_calls`] runs the pick and resumes it.
 #[derive(Resource, Default)]
 pub(crate) struct HeldForPick(Option<HeldCast>);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HeldCast {
     pub(crate) spell_id: u32,
-    /// TryCast's guid argument, the verb's explicit unit, which the pick tries before the
+    /// The cast attempt's guid argument, the verb's explicit unit, which the pick tries before the
     /// selection.
     pub(crate) passed: Option<u64>,
 }
@@ -128,14 +130,14 @@ pub(crate) struct CastLadder<'w, 's> {
     pub(crate) secure_toggle: Option<Res<'w, super::SecureAbilityToggle>>,
 }
 
-/// What a targeting-cursor click bound: what `BindLocation` or `BindTarget` fills into the standing
-/// flag word after the ladder has run.
+/// What a targeting-cursor click bound: what the location bind or the target bind fills into the
+/// standing flag word after the ladder has run.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum TargetedBind {
-    /// The terrain click's point in WoW coords: `BindLocation`'s bit-6 arm.
+    /// The terrain click's point in WoW coords: the location bind's bit-6 arm.
     Dest([f32; 3]),
-    /// The terrain click bound to the source slot: `BindLocation`'s bit-5 arm, tested first; writes
-    /// `SPELLCAST+0x30` and wire bit `0x0020`.
+    /// The terrain click bound to the source slot: the location bind's bit-5 arm, tested first;
+    /// writes `SPELLCAST+0x30` and wire bit `0x0020`.
     Source([f32; 3]),
     /// The bag or paper-doll click's item guid.
     Item(u64),
@@ -143,9 +145,9 @@ pub(crate) enum TargetedBind {
     Object(u64),
     /// The world click's unit guid.
     Unit(u64),
-    /// The world click's corpse guid and the corpse bit `BindTarget`'s corpse arm bound.
+    /// The world click's corpse guid and the corpse bit the target bind's corpse arm bound.
     Corpse(u64, benilla_protocol::messages::CorpseTarget),
-    /// The glyph frame's socket, 0-based: `Spell_C_HandleGlyphClick`'s glyph index (`0x80c57b`).
+    /// The glyph frame's socket, 0-based: the glyph click's glyph index (`0x80c57b`).
     Glyph(u32),
 }
 
@@ -159,7 +161,7 @@ impl CastLadder<'_, '_> {
     }
 
     /// The targeting cursor's commit: the ladder ran when the cursor went up, so the click owes
-    /// only `SendCast`'s tail (the packet, the pending arm, the GCD), then clears the word.
+    /// only the cast send's tail (the packet, the pending arm, the GCD), then clears the word.
     pub(crate) fn commit_targeted(
         &mut self,
         spell_id: u32,
@@ -181,7 +183,7 @@ impl CastLadder<'_, '_> {
                     spell_id,
                     item_guid,
                 },
-                // The right-click OPEN_LOCK packet: `BindTarget`'s GameObject arm fills both.
+                // The right-click OPEN_LOCK packet: the target bind's GameObject arm fills both.
                 TargetedBind::Object(go_guid) => {
                     ClientCommand::CastSpellGameObject { spell_id, go_guid }
                 }
@@ -238,11 +240,11 @@ impl CastLadder<'_, '_> {
         self.ground.clear();
     }
 
-    /// `Spell_C_CastSpell` (`0x80cce0`) with the pet as caster, for the pet's client-targeted and
+    /// The spell-cast entry (`0x80cce0`) with the pet as caster, for the pet's client-targeted and
     /// possessed presses (`0x5d445a`). The rungs that read the casting unit run on the pet's
     /// [`cast_target::CastContext`]: a passive never casts, the dead rung, the per-caster pending
-    /// bail (`0x80d34b`), the targeting abort, the target bind and its range, power, crowd
-    /// control, then the targeting cursor or the send. The player's own state (bags, combo points,
+    /// bail (`0x80d34b`), the targeting abort, the target bind and its range, power, crowd control,
+    /// then the targeting cursor or the send. The player's own state (bags, combo points,
     /// auto-repeat, the swing) is not the pet's and is not asked.
     pub(crate) fn send_pet(&mut self, spell_id: u32, ctx: &cast_target::CastContext, pet: u64) {
         let now = Instant::now();
@@ -362,9 +364,9 @@ impl CastLadder<'_, '_> {
         self.commit_pet(spell_id, pet, target);
     }
 
-    /// `Spell_C::SendPendingCast`'s pet arm (`0x80b315`): `CMSG_PET_CAST_SPELL`, no
-    /// `UNIT_SPELLCAST_SENT` (the player's only), the pet's pending cast and its cooldown start
-    /// (`Spell_C_StartSpellCooldown` with the pet as caster).
+    /// The pending send's pet arm (`0x80b315`): `CMSG_PET_CAST_SPELL`, no `UNIT_SPELLCAST_SENT`
+    /// (the player's only), the pet's pending cast and its cooldown start (the player's, with the
+    /// pet as caster).
     fn commit_pet(&mut self, spell_id: u32, pet: u64, target: UseItemTarget) {
         debug!("ui_pet: pet cast {spell_id} sent as {pet:#x} at {target:?}");
         let _ = self.commands.0.send(ClientCommand::PetCastSpell {
@@ -390,8 +392,8 @@ impl CastLadder<'_, '_> {
         });
     }
 
-    /// TryCast's dead rung alone, for the Attack button, whose short-circuit leaves the ladder
-    /// right after it.
+    /// The cast attempt's dead rung alone, for the Attack button, whose short-circuit leaves the
+    /// ladder right after it.
     pub(crate) fn dead_refusal(
         &mut self,
         spell_id: u32,
@@ -412,8 +414,8 @@ impl CastLadder<'_, '_> {
         self.send_bound(spell_id, ctx, commit, None, None);
     }
 
-    /// A player's spell press (`UseAction`, `CastSpell`, `CastSpellByName`): the ladder with
-    /// TryCast's attack pick, where the cast may stop in [`HeldForPick`].
+    /// A player's spell press (`UseAction`, `CastSpell`, `CastSpellByName`): the ladder with the
+    /// cast attempt's attack pick, where the cast may stop in [`HeldForPick`].
     pub(crate) fn send_spell(
         &mut self,
         spell_id: u32,
@@ -435,8 +437,8 @@ impl CastLadder<'_, '_> {
         self.send_bound(held.spell_id, ctx, CastCommit::Spell, None, None);
     }
 
-    /// The ladder for a cast the caller already bound to a GameObject (a lock opener): TryCast
-    /// takes the guid pair it is passed, and the GameObject use-sender passes one.
+    /// The ladder for a cast the caller already bound to a GameObject (a lock opener): the cast
+    /// attempt takes the guid pair it is passed, and the GameObject use-sender passes one.
     pub(crate) fn send_at_object(
         &mut self,
         spell_id: u32,
@@ -481,9 +483,9 @@ impl CastLadder<'_, '_> {
     }
 }
 
-/// TryCast's dead rung, after the profession intercept and ahead of the Attack short-circuit: a
-/// dead or ghost caster is refused with 0x13, "You are dead", unless the spell is castable while
-/// dead (`Attributes & 0x800000`).
+/// The cast attempt's dead rung, after the profession intercept and ahead of the Attack
+/// short-circuit: a dead or ghost caster is refused with 0x13, "You are dead", unless the spell is
+/// castable while dead (`Attributes & 0x800000`).
 fn caster_dead_refusal(
     spell_id: u32,
     def: Option<&benilla_formats::SpellDisplay>,
@@ -501,12 +503,13 @@ fn caster_dead_refusal(
 }
 
 /// Run the ladder for one cast and commit it. The commit tail: a ranged spell arms the ranged
-/// stance (`SetSheatheState(2,1,1)`; the echoed START re-requests it), an auto-repeat spell sets
-/// the sticky armed state (`|= 0x200`, the Load/Hold idle's gate), and the packet goes out.
+/// stance (the sheath state set to `(2,1,1)`; the echoed START re-requests it), an auto-repeat
+/// spell sets the sticky armed state (`|= 0x200`, the Load/Hold idle's gate), and the packet goes
+/// out.
 ///
-/// The `pending` guard is TryCast's IsCasting refusal ([`crate::spell::PendingCast`]): any press
-/// while a guarding cast is in flight is refused locally. Ranged and on-next-swing commits are
-/// recorded but never guard.
+/// The `pending` guard is the cast attempt's in-flight refusal ([`crate::spell::PendingCast`]): any
+/// press while a guarding cast is in flight is refused locally. Ranged and on-next-swing commits
+/// are recorded but never guard.
 fn send_spell_cast(
     spell_id: u32,
     ctx: &cast_target::CastContext,
@@ -535,15 +538,15 @@ fn send_spell_cast(
 ) {
     let now = Instant::now();
     let def = spells.and_then(|s| s.catalog.get(spell_id));
-    // TryCast's first branch (ahead of every gate): an `Effect[0] == TRADE_SKILL` cast never
-    // reaches the wire; the crafting window opens instead.
+    // The cast attempt's first branch (ahead of every gate): an `Effect[0] == TRADE_SKILL` cast
+    // never reaches the wire; the crafting window opens instead.
     if def.is_some_and(|d| d.effects[0] == benilla_formats::SPELL_EFFECT_TRADE_SKILL) {
         debug!("ui_action: cast {spell_id} is a profession opener — the crafting book opens, no packet");
         trade_skill_opens.0.push(spell_id);
         return;
     }
     // The re-press toggle: pressing the running auto-repeat spell cancels it. The reference does
-    // this in the action-button handler, before TryCast is called.
+    // this in the action-button handler, before the cast attempt is called.
     if def.is_some_and(|d| d.auto_repeat()) && auto_repeat.0 == Some(spell_id) {
         debug!("ui_action: cast {spell_id} re-pressed — auto-repeat toggles off");
         let self_e = self_player.single().ok().map(|(e, _)| e);
@@ -553,8 +556,8 @@ fn send_spell_cast(
     if caster_dead_refusal(spell_id, def, ctx.rel.self_store, cast_errors) {
         return;
     }
-    // TryCast's IsTargeting leg: a new press while the cursor is up clears the word, with no
-    // packet, and continues down the ladder.
+    // The cast attempt's targeting check leg: a new press while the cursor is up clears the word,
+    // with no packet, and continues down the ladder.
     if ground.active() {
         debug!("ui_action: cast {spell_id} supersedes the targeting cursor");
         ground.clear();
@@ -580,8 +583,8 @@ fn send_spell_cast(
         debug!("ui_action: cast {spell_id} suppressed — a cast is already in flight");
         return;
     }
-    // `HaveSpellTokens 0x8091d0`, before the validator: a missing totem, tool category or reagent
-    // refuses with 0x78, 0x9c or 0x5c.
+    // The reagent check (`0x8091d0`), before the validator: a missing totem, tool category or
+    // reagent refuses with 0x78, 0x9c or 0x5c.
     let tools = totem_categories.map(|categories| crate::ui_action::ToolCheck {
         categories,
         items,
@@ -627,9 +630,10 @@ fn send_spell_cast(
             return;
         }
     }
-    // TryCast's attack pick: a spell of predicate, pressed while not attacking, goes through the
-    // attack validator, which keeps a hostile selection or selects the nearest enemy. It sits above
-    // the bind and the range gate, so an acquired target out of reach reads "Out of range.".
+    // The cast attempt's attack pick: a spell of predicate, pressed while not attacking, goes
+    // through the attack validator, which keeps a hostile selection or selects the nearest enemy.
+    // It sits above the bind and the range gate, so an acquired target out of reach reads "Out of
+    // range.".
     if let Some(held) = hold {
         let engaged = self_player.single().is_ok_and(|(_, engaged)| engaged);
         if def.is_some_and(|d| d.initiates_combat()) && !engaged {
@@ -638,9 +642,9 @@ fn send_spell_cast(
             return;
         }
     }
-    // ArmCast resolves the wire target from the spell's targeting constraints, never the raw
-    // selection. A caller-bound GameObject skips the walk, as TryCast's resolve takes a passed guid
-    // pair.
+    // The target resolve picks the wire target from the spell's targeting constraints, never the
+    // raw selection. A caller-bound GameObject skips the walk, as the cast attempt's resolve takes
+    // a passed guid pair.
     let mut pending_word = None;
     let mut item_target = None;
     let mut deferred_refusal = None;
@@ -683,9 +687,9 @@ fn send_spell_cast(
                     cast_errors.push_local(spell_id, reason);
                     return;
                 }
-                // TryCast's tail after ArmCast returns false runs below the validator, so this
-                // parks and fires where the cursor would come up: a mounted press with an empty
-                // weapon hand reads "You are mounted" first.
+                // The cast attempt's tail after the target resolve returns false runs below the
+                // validator, so this parks and fires where the cursor would come up: a mounted
+                // press with an empty weapon hand reads "You are mounted" first.
                 cast_target::CastWireTarget::RefusedAtArm(reason) => {
                     deferred_refusal = Some(reason);
                     None
@@ -693,7 +697,7 @@ fn send_spell_cast(
             }
         }
     };
-    // The range gate (`CanTargetUnit` → `IsTargetInRange`, before the commit): a too-close shot
+    // The range gate (the unit-target check → the range check, before the commit): a too-close shot
     // never reaches the sheath snap. Only the selection is tested; a self-bind is distance 0.
     if let Some(d) = def {
         if target.is_some() && target == ctx.selection_guid && target != ctx.self_guid {
@@ -799,8 +803,8 @@ fn send_spell_cast(
         }
         return;
     }
-    // The mounted block (`0x739e8f`): unless `Attributes & 0x01000000`, a mounted caster
-    // `CanAutoDismount` refuses reads 0x39 "You are mounted"; any other dismounts at the send.
+    // The mounted block (`0x739e8f`): unless `Attributes & 0x01000000`, a mounted caster the
+    // auto-dismount check refuses reads 0x39 "You are mounted"; any other dismounts at the send.
     // The range gate runs first, so mounted and out of range reads "Out of range.".
     let dismount = validator::cast_mounted_refusal(
         ctx.rel
@@ -836,8 +840,7 @@ fn send_spell_cast(
             return;
         }
     }
-    // The form leg (`CheckShapeshiftRules 0x72bac0`): "Can't do that while shapeshifted" or
-    // needs-a-form.
+    // The form leg (`0x72bac0`): "Can't do that while shapeshifted" or needs-a-form.
     if let Some(d) = def {
         let form = ctx
             .rel
@@ -854,7 +857,7 @@ fn send_spell_cast(
             return;
         }
     }
-    // The deferred ArmCast-false refusal: every rung passed and nothing bound.
+    // The deferred no-bind refusal: every rung passed and nothing bound.
     if let Some(reason) = deferred_refusal {
         debug!("ui_action: cast {spell_id} refused locally — the cast-arm tail ({reason:#x})");
         cast_errors.push_local(spell_id, reason);
@@ -907,15 +910,15 @@ fn send_spell_cast(
     if matches!(commit, CastCommit::Spell) {
         crate::ui_cast::queue_sent(ecs, spell_id, target);
     }
-    // `SendPendingCast`'s dismount (`0x80af40`) goes out ahead of the cast.
+    // The pending send's dismount (`0x80af40`) goes out ahead of the cast.
     if dismount {
         debug!("ui_action: cast {spell_id} dismounts first (CMSG_CANCEL_MOUNT_AURA)");
         let _ = commands.0.send(ClientCommand::CancelMountAura);
     }
-    // `SendCast`: one targets block, two opcodes.
+    // The cast send: one targets block, two opcodes.
     let _ = commands.0.send(match commit {
         CastCommit::Spell => match (explicit_object, item_target) {
-            // A lock opener bound by its click; `BindTarget`'s GameObject arm fills the block.
+            // A lock opener bound by its click; the target bind's GameObject arm fills the block.
             (Some(go_guid), _) => ClientCommand::CastSpellGameObject { spell_id, go_guid },
             // The item leg, bound by the main-hand auto-pick.
             (None, Some(item_guid)) => ClientCommand::CastSpellItem {
@@ -961,9 +964,9 @@ fn send_spell_cast(
     if on_next_swing {
         queued_melee.arm(spell_id);
     }
-    // TryCast's post-send tail: a spell that initiates auto-attack (on-next-swing `0x404` or
-    // `AttributesEx & 0x200`, not the GO-deferred Ex2 bit 20) starts the swing at its unit target
-    // (sheath snap and `CMSG_ATTACKSWING`).
+    // The cast attempt's post-send tail: a spell that initiates auto-attack (on-next-swing `0x404`
+    // or `AttributesEx & 0x200`, not the GO-deferred Ex2 bit 20) starts the swing at its unit
+    // target (sheath snap and `CMSG_ATTACKSWING`).
     if let (Some(d), Some(guid)) = (def, target) {
         if d.initiates_auto_attack() {
             if let Ok((e, engaged)) = self_player.single() {
@@ -1078,9 +1081,9 @@ mod tests {
             .expect("the ladder runs as a one-shot system");
     }
 
-    /// TryCast's dead rung: a corpse and a ghost (health 1, the `PLAYER_FLAGS` bit) are refused
-    /// with 0x13 and no packet, after the profession intercept; `Attributes & 0x800000` waives it,
-    /// and the Attack button's own entry takes the same rung.
+    /// The cast attempt's dead rung: a corpse and a ghost (health 1, the `PLAYER_FLAGS` bit) are
+    /// refused with 0x13 and no packet, after the profession intercept; `Attributes & 0x800000`
+    /// waives it, and the Attack button's own entry takes the same rung.
     #[test]
     fn a_dead_or_ghost_caster_is_refused_as_dead_unless_the_spell_waives_it() {
         use crate::net::ObjectStore;
@@ -1184,8 +1187,8 @@ mod tests {
         assert!(world.resource::<CastErrors>().0.is_empty());
     }
 
-    /// The mounted block (`0x739e8f`): a mounted press `CanAutoDismount` allows sends
-    /// `CMSG_CANCEL_MOUNT_AURA` ahead of the cast (`SendPendingCast 0x80af40`); one it refuses
+    /// The mounted block (`0x739e8f`): a mounted press the auto-dismount check allows sends
+    /// `CMSG_CANCEL_MOUNT_AURA` ahead of the cast (the pending send, `0x80af40`); one it refuses
     /// reads 0x39 with no packet; the `Attributes & 0x01000000` spell casts in the saddle.
     #[test]
     fn a_mounted_cast_dismounts_first_unless_auto_dismount_refuses() {
@@ -1354,7 +1357,7 @@ mod tests {
 
     // ── Melee and auto-repeat exclusion ──
     //
-    // The auto-repeat commit calls StopAttack (`CancelQueuedCast`), and the attack-start's tail
+    // The auto-repeat commit calls StopAttack (the queued-cast cancel), and the attack-start's tail
     // cancels the running repeat.
 
     const AUTO_SHOT: u32 = 75;
@@ -1518,9 +1521,9 @@ mod tests {
             .expect("the ladder runs as a one-shot system");
     }
 
-    /// TryCast's attack pick: a press of a spell stops there, above the bind, for its owner to pick
-    /// a unit. Attacking skips the pick, and neither a spell without the bits nor a send that is
-    /// not a press stops.
+    /// The cast attempt's attack pick: a press of a spell stops there, above the bind, for its
+    /// owner to pick a unit. Attacking skips the pick, and neither a spell without the bits nor a
+    /// send that is not a press stops.
     #[test]
     fn a_combat_press_holds_at_the_attack_pick_unless_attacking() {
         let press = |world: &mut World, spell_id: u32| {
@@ -1605,8 +1608,8 @@ mod tests {
         }
     }
 
-    /// The commit's StopAttack: `CMSG_ATTACKSTOP`, then `CancelQueuedCast` hands the queued strike
-    /// to `CancelCast (dl=1)` and its `CMSG_CANCEL_CAST`.
+    /// The commit's StopAttack: `CMSG_ATTACKSTOP`, then the queued-cast cancel hands the queued
+    /// strike to the cast cancel (`dl=1`) and its `CMSG_CANCEL_CAST`.
     #[test]
     fn an_auto_repeat_press_stops_the_attack_and_takes_the_queued_strike_with_it() {
         let (mut world, rx) = combat_world(true);
@@ -1635,7 +1638,7 @@ mod tests {
         );
     }
 
-    /// The reference's early-out (`!IsAttacking && [+0xc50] == 0`): with no swing running nothing
+    /// The reference's early-out (not attacking and `[+0xc50] == 0`): with no swing running nothing
     /// is sent and the queued strike survives.
     #[test]
     fn an_auto_repeat_press_with_no_swing_running_stops_nothing() {
@@ -1657,8 +1660,8 @@ mod tests {
         );
     }
 
-    /// A strike pressed while engaged never reaches, so a running auto-repeat survives. Unreachable
-    /// in play, since starting Auto Shot stops the swing.
+    /// A strike pressed while engaged never reaches the attack start, so a running auto-repeat
+    /// survives. Unreachable in play, since starting Auto Shot stops the swing.
     #[test]
     fn a_strike_pressed_while_already_swinging_reaches_no_attack_start_at_all() {
         let (mut world, rx) = combat_world(true);
@@ -1685,7 +1688,7 @@ mod tests {
         );
     }
 
-    /// Not yet swinging: the tail fires, the reference runs, and its cancels the repeat.
+    /// Not yet swinging: the tail fires, the attack start runs, and it cancels the repeat.
     #[test]
     fn a_strike_pressed_before_the_swing_starts_kills_the_auto_repeat() {
         let (mut world, rx) = combat_world(false);
@@ -1776,7 +1779,7 @@ mod tests {
         assert!(world.resource::<CastErrors>().0.is_empty());
     }
 
-    /// `SendCast`: two opcodes, one targets block; a key's lock rides it as
+    /// The cast send: two opcodes, one targets block; a key's lock rides it as
     /// `TARGET_FLAG_GAMEOBJECT|LOCKED`.
     #[test]
     fn the_commit_picks_the_opcode_and_the_block() {
@@ -1895,7 +1898,7 @@ mod tests {
         assert!(world.resource::<CastErrors>().0.is_empty());
     }
 
-    /// TryCast's IsCasting refusal (`0x61`) precedes the not-ready rung.
+    /// The cast attempt's in-flight refusal (`0x61`) precedes the not-ready rung.
     #[test]
     fn in_flight_outranks_not_ready() {
         let (mut world, rx) = world();
@@ -1921,7 +1924,7 @@ mod tests {
         assert_eq!(
             world.resource::<CastErrors>().0,
             vec![CastFail::local(MOUNT, 0x61)],
-            "mid-cast outranks the cooldown rung (the reference's IsCasting precedes the validator)"
+            "mid-cast outranks the cooldown rung (the in-flight refusal precedes the validator)"
         );
     }
 

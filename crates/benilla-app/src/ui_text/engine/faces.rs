@@ -12,7 +12,7 @@ pub(super) const CLIENT_FONTS: &[&str] = &[
 ];
 
 /// The face's ascender as a fraction of the em, `hhea.asc / (hhea.asc + |hhea.desc|)`, off the raw
-/// sfnt bytes. The reference puts the baseline at `cellTop + round(em · ratio)` (`[CGxFont+0x17c]`,
+/// sfnt bytes. The reference puts the baseline at `cellTop + round(em · ratio)` (`[font+0x17c]`,
 /// reaching the placement kernel); FreeType's scaled ascender (`asc/upem`: 0.965 for Friz, where
 /// this ratio is 0.794) is not on that path.
 pub(super) fn hhea_ascent_ratio(bytes: &[u8]) -> Option<f32> {

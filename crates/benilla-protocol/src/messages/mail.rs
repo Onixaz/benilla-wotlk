@@ -1,4 +1,4 @@
-//! Mail wire messages, as 12340's `CGMailInfo` reads and writes them. A mailbox opens locally on a
+//! Mail wire messages, as 12340's mail info reads and writes them. A mailbox opens locally on a
 //! GameObject or NPC use, or from `SMSG_SHOW_MAILBOX`; each mailbox CMSG leads with its guid.
 
 use std::io;
@@ -80,7 +80,7 @@ pub mod mail_delete_reason {
     pub const ITEM_TAKEN: u32 = 3;
 }
 
-/// The most attachments one inbox row holds (`MailboxMessageInfo`'s 16 slots).
+/// The most attachments one inbox row holds (the reference's inbox record has 16 slots).
 pub const MAIL_ATTACHMENTS_MAX: usize = 16;
 /// The most `MSG_QUERY_NEXT_MAIL_TIME` sender records the client keeps (`0x56db26`).
 pub const MAIL_RECENT_SENDERS: usize = 3;

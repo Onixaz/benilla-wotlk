@@ -1,6 +1,6 @@
 //! The macro icon chooser's catalog, the list `GetNumMacroIcons`/`GetMacroIconInfo` serve. 12340's
-//! `CGUIMacros::LoadIcons` (`0x565840`) enumerates the files under `Interface\Icons\`; it does not
-//! read `SpellIcon.dbc`.
+//! macro icon load (`0x565840`) enumerates the files under `Interface\Icons\`; it does not read
+//! `SpellIcon.dbc`.
 
 use anyhow::Result;
 
@@ -10,15 +10,15 @@ use crate::Chain;
 /// reference strips its 16 characters from each stored entry.
 const ICON_DIR: &str = "Interface\\Icons\\";
 
-/// The chooser's list: `INV_Misc_QuestionMark`, which `LoadIcons` seeds and its comparator
+/// The chooser's list: `INV_Misc_QuestionMark`, which the icon load seeds and its comparator
 /// (`0x564a20`) pins first, then every `Interface\Icons\` file whose name begins `Spell_` or
-/// `Ability_` (`IconListArchiveCallback` `0x565630`), sorted and deduplicated without case, each as
-/// the full path `GetMacroIconInfo` returns.
+/// `Ability_` (`0x565630`), sorted and deduplicated without case, each as the full path
+/// `GetMacroIconInfo` returns.
 ///
 /// The reference unions the archives' listfiles with two loose-file scans of `Interface\Icons\`;
 /// only the archive half is built, as a stock install has no loose icons. Per entry it keeps the
-/// name after the prefix without a last-dot `.blp` or `.tga` (`AddMacroIcon` `0x565550`), skipping
-/// directories, then `qsort`s and drops adjacent duplicates.
+/// name after the prefix without a last-dot `.blp` or `.tga` (`0x565550`), skipping directories,
+/// then `qsort`s and drops adjacent duplicates.
 pub fn load_macro_icons(chain: &mut Chain) -> Result<Vec<String>> {
     const SEED: &str = "INV_Misc_QuestionMark";
     let mut names = icon_stems(chain, &["Spell_", "Ability_"])?;
@@ -29,10 +29,10 @@ pub fn load_macro_icons(chain: &mut Chain) -> Result<Vec<String>> {
         .collect())
 }
 
-/// The guild bank tab chooser's list (`GetNumMacroItemIcons` `0x5664e0`), which 12340's
-/// `MacroIcons_Build` (`0x565840`) fills beside the macro list: every `Interface\Icons\` file
-/// whose name begins `INV_`, seeded with `INV_Misc_QuestionMark`, which its comparator pins first,
-/// then sorted and deduplicated without case.
+/// The guild bank tab chooser's list (`GetNumMacroItemIcons` `0x5664e0`), which 12340's macro icon
+/// load (`0x565840`) fills beside the macro list: every `Interface\Icons\` file whose name begins
+/// `INV_`, seeded with `INV_Misc_QuestionMark`, which its comparator pins first, then sorted and
+/// deduplicated without case.
 pub fn load_macro_item_icons(chain: &mut Chain) -> Result<Vec<String>> {
     const SEED: &str = "INV_Misc_QuestionMark";
     let mut names = icon_stems(chain, &["INV_"])?;
@@ -50,7 +50,7 @@ fn icon_stems(chain: &mut Chain, prefixes: &[&str]) -> Result<Vec<String>> {
     let mut names: Vec<String> = Vec::new();
     for entry in chain.list()? {
         let path = entry.name.replace('/', "\\");
-        // Case-insensitive (`SStrCmpI`), as listfiles are not consistently cased.
+        // Case-insensitive, as listfiles are not consistently cased.
         if path.len() <= ICON_DIR.len()
             || !path.as_bytes()[..ICON_DIR.len()].eq_ignore_ascii_case(ICON_DIR.as_bytes())
         {

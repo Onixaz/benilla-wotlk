@@ -165,7 +165,7 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
             .join(" · ")
     );
     let now = Instant::now();
-    // `SetPet` re-arms the expiry on every packet, and a 0 duration clears it.
+    // The pet setter re-arms the expiry on every packet, and a 0 duration clears it.
     bar.expires = (spells.duration_ms != 0)
         .then(|| now + std::time::Duration::from_millis(u64::from(spells.duration_ms)));
     bar.cooldowns.clear_silent();
@@ -174,8 +174,8 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
         bar.cooldowns.seed_pet(cd, display, now);
     }
     bar.spells = spells;
-    // `SetPet` ends in `SignalEvent(0x161)` on every packet, whatever changed: the one repaint a
-    // packet that moves only the pet's cooldowns gets.
+    // The pet setter ends in a `PET_BAR_UPDATE` signal (event `0x161`) on every packet, whatever
+    // changed: the one repaint a packet that moves only the pet's cooldowns gets.
     bar.bar_signals = bar.bar_signals.wrapping_add(1);
 }
 
@@ -221,8 +221,8 @@ fn pet_tame_failure(reason: u8, failures: &mut PetTameFailures) {
     failures.0.push(reason);
 }
 
-/// `SMSG_PET_NAME_INVALID`: the server's name code through `DisplayNameError`, as the client's own
-/// check would show it. No local name was applied, so nothing rolls back.
+/// `SMSG_PET_NAME_INVALID`: the server's name code through the name-error display, as the client's
+/// own check would show it. No local name was applied, so nothing rolls back.
 fn pet_name_invalid(code: u32, errors: &mut UiErrorKeys) {
     let key = NameError(code).key();
     debug!("net: pet name refused, code {code} ({key})");
@@ -308,7 +308,7 @@ mod tests {
         assert!(!bar.has_bar());
     }
 
-    /// `SetPet`: each packet re-arms the expiry from its own duration, 0 clears it, and the
+    /// The pet setter: each packet re-arms the expiry from its own duration, 0 clears it, and the
     /// teardown clears it too.
     #[test]
     fn each_pet_packet_rearms_or_clears_the_expiry() {

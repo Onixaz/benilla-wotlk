@@ -33,7 +33,7 @@ fn shard_model_index(param0: f32) -> usize {
 }
 
 /// The shard emitter's rate factor from the `spellEffectLevel` record's integer, read once at the
-/// emitter's init (`BlizzardObject::Init`, `0x7fb5e9`-`0x7fb5fe`), so a change reaches only
+/// emitter's init (`0x7fb5e9`-`0x7fb5fe`), so a change reaches only
 /// emitters created after it: `level × [0xa1ea9c] (1/9) × [0xa02a34] (0.9) + [0x9e3004] (0.1)`,
 /// unclamped, and 1.0 with no record.
 fn shard_rate_scale(spell_effect_level: Option<i32>) -> f32 {
@@ -66,8 +66,8 @@ impl GroundFx {
     }
 }
 
-/// Visual B, a DynamicObject's shard emitter (`AUBlizzardObject`). It dies with the anchor; its
-/// shards are free entities that run out their own lifetimes.
+/// Visual B, a DynamicObject's shard emitter. It dies with the anchor; its shards are free entities
+/// that run out their own lifetimes.
 #[derive(Component)]
 pub(super) struct ShardEmitter {
     /// The [`SHARD_MODELS`] path.
@@ -142,7 +142,8 @@ pub(super) fn arm_ground_effects(
                     Visibility::default(),
                 ))
                 .id();
-            // `CGDynamicObject_C::ModelLoaded` forces its model's projected batches by attribute.
+            // The dynamic object's model-loaded hook forces its model's projected batches by
+            // attribute.
             if super::spell_fx::spell_forces_projection(Some(&*spells), spell_id) {
                 commands
                     .entity(child)
@@ -261,7 +262,7 @@ pub(super) fn attach_ground_fx_models(
                 true, // a dest-anchored model's flat quads are ground decals
                 // Chained to nothing: its trail stays world-frozen and its pool finishes in place.
                 super::spell_fx::EffectHost::default(),
-                // Not a `CEffect` on a unit: its own span clock, the plain single-clip arm.
+                // Not a kit effect on a unit: its own span clock, the plain single-clip arm.
                 None,
                 &mut FxMaterials {
                     store: &mut wow_materials,
@@ -319,8 +320,8 @@ mod tests {
         assert_eq!(shard_rate_scale(None), 1.0);
     }
 
-    /// The decode, `bits(f32(param0 + 512.0)) >> 14 & 0xff`; the real rows carry 0.0 (Blizzard) and
-    /// 1.0 (Rain of Fire).
+    /// The small-int decode, `bits(f32(param0 + 512.0)) >> 14 & 0xff`; the real rows carry 0.0
+    /// (Blizzard) and 1.0 (Rain of Fire).
     #[test]
     fn shard_model_index_decodes_and_clamps() {
         assert_eq!(shard_model_index(0.0), 0);

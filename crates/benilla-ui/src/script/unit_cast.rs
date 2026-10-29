@@ -28,7 +28,7 @@ pub struct UnitCast {
     pub trade_skill: bool,
     /// The cast's `castCount` (`+0xa5c`); a channel has none.
     pub cast_count: u8,
-    /// `CGUnit_C::IsCastNotInterruptible` (`0x71ab20`), as the app last evaluated it.
+    /// The unit's not-interruptible test (`0x71ab20`), as the app last evaluated it.
     pub not_interruptible: bool,
 }
 

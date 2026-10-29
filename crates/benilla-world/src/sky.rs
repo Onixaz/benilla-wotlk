@@ -67,7 +67,7 @@ impl MaterialExtension for SkyExt {
         "embedded://benilla_world/shaders/sky.wgsl".into()
     }
 
-    /// No depth write, as every sky element inherits from `CSky::Render`; the depth test stays on.
+    /// No depth write, as every sky element inherits from the sky render; the depth test stays on.
     /// The glare quads are then occluded by world geometry only, never the dome.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
@@ -168,7 +168,8 @@ fn setup_sky(
     mut materials: ResMut<Assets<SkyMaterial>>,
 ) {
     let mesh = meshes.add(dome_mesh());
-    // Seeded with the neutral-day fallback; `update_sky_colors` overwrites from Light.dbc each frame.
+    // Seeded with the neutral-day fallback; `update_sky_colors` overwrites from Light.dbc each
+    // frame.
     let material = materials.add(SkyMaterial {
         base: StandardMaterial {
             unlit: true,
@@ -218,7 +219,7 @@ fn follow_camera(
 }
 
 /// Hide the dome for the debug toggle, under a WMO skybox (its MOSB model replaces the gradient)
-/// and while submerged: the reference's submerged test skips `CSky::Render` whole. The skybox gate
+/// and while submerged: the reference's submerged test skips the sky render whole. The skybox gate
 /// is its weight: below 0.99 the dome still draws under the crossfading skybox
 /// ([`crate::skybox::SkyboxWeight`]).
 fn apply_sky_visibility(

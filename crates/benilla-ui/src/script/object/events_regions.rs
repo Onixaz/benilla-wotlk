@@ -140,7 +140,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
     // ── Title region: CreateTitleRegion / GetTitleRegion ──
     //
-    // `CreateTitleRegion` reads no argument and keeps one region per frame (`CSimpleFrame+0xA8`): a
+    // `CreateTitleRegion` reads no argument and keeps one region per frame (frame `+0xA8`): a
     // second call clears that region's anchors and returns it, and a new one has none. The
     // reference's region answers only the Region-map methods; ours shares the region metatable, so
     // it also accepts the texture methods, inertly.
@@ -365,7 +365,7 @@ fn create_region(
     let wrapper = region_wrapper(lua, id)?;
     if let Some(name) = name {
         // A leading `$parent` expands as in XML, its walk to a named frame starting at the owner:
-        // both bindings name the region through `CScriptRegion::SetName`.
+        // both bindings name the region through the script region's name set.
         let name = {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()

@@ -1,6 +1,6 @@
-//! A pet bar spell press and the pet's global cooldown: the spell arm of the reference starts it,
-//! whole client headless, with the press applied as the script call it is. The rig is shared with
-//! `flush_tests`, whose packets reach the same list.
+//! A pet bar spell press and the pet's global cooldown: the spell arm of the reference's pet-bar
+//! dispatcher starts it, whole client headless, with the press applied as the script call it is.
+//! The rig is shared with `flush_tests`, whose packets reach the same list.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -541,7 +541,7 @@ fn an_attack_press_with_no_pet_object_sends_nothing() {
     const FOE: u64 = 0x77;
     let mut rig = rig(vec![(CLAW, claw())], &[CLAW], None);
     let world = rig.app.world_mut();
-    // A player-controlled attacker, whose `CanAttack` arm needs no faction table.
+    // A player-controlled attacker, whose attack-check arm needs no faction table.
     let me = world.resource::<GuidIndex>().0[&ME];
     world
         .entity_mut(me)

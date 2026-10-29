@@ -2,8 +2,8 @@
 //! character wearing items they do not own. Nobody in the world wears the preview, so it is built
 //! from a spec by the shared assembly ([`crate::entities::attach`]), not mirrored from a live
 //! entity, and it dresses by the select-screen law (weapons in hand). `DressUpModel` shares the
-//! `CharacterModelBase` ctor with the character window's `<PlayerModel>`, so it lights through
-//! [`BoothLight::pane`] with no glow, as the paper doll does.
+//! character model base's constructor with the character window's `<PlayerModel>`, so it lights
+//! through [`BoothLight::pane`] with no glow, as the paper doll does.
 
 use benilla_protocol::CharEnumItem;
 use bevy::camera::visibility::RenderLayers;
@@ -142,7 +142,7 @@ pub(super) fn spawn_dressup_booth(
 }
 
 /// Bake the assembled look as [`super::sync_body_booth`] does, and spin it to the pane's yaw. The
-/// assembly holds the weapons, so the hands close on them (`CloseHand`).
+/// assembly holds the weapons, so the hands close on them.
 pub(super) fn sync_dressup_booth(
     mut commands: Commands,
     preview: Res<DressUpPreview>,

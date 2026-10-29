@@ -207,14 +207,14 @@ pub(crate) struct NetEntity {
 #[derive(Component, Clone, Copy)]
 pub(crate) struct UnitSpeeds(pub(crate) MoveSpeeds);
 
-/// A mover's speed from its move flags (`CMovement::GetCurrentSpeed`). The order is the fact: no
-/// direction bit is 0; swimming first; then walk mode as `min(walk, run)` even backward; then run,
-/// backward as `min(run_back, run)`. Each min is x87 `fcompp`, ties and NaN taking the forward
-/// field. 3.3.5a's `GetBaseSpeed` (`0x987570`) counts the vertical bits as moving and puts flight
-/// ahead of swim.
+/// A mover's speed from its move flags, as the movement object's current-speed getter picks it.
+/// The order is the fact: no direction bit is 0; swimming first; then walk mode as
+/// `min(walk, run)` even backward; then run, backward as `min(run_back, run)`. Each min is x87
+/// `fcompp`, ties and NaN taking the forward field. 3.3.5a's base-speed getter (`0x987570`) counts
+/// the vertical bits as moving and puts flight ahead of swim.
 ///
-/// No zero-`walk` fallback: the ctor's zeroed speeds are never observable, since the post-create
-/// apply applies our own speed block as it does a remote one.
+/// No zero-`walk` fallback: the constructor's zeroed speeds are never observable, since the
+/// post-create apply applies our own speed block as it does a remote one.
 pub(crate) fn current_speed(s: &MoveSpeeds, flags: u32) -> f32 {
     use crate::creature_anim::move_flags as f;
     if flags & (f::ANY_MOVE | f::ASCENDING | f::DESCENDING) == 0 {
@@ -260,8 +260,8 @@ impl ObjectStore {
     }
 }
 
-/// One descriptor dword moved on a streamed object, the reference's `CMirrorHandler` edge: the
-/// values notifier diffs live against a shadow copy and passes the old value. A first create fires
+/// One descriptor dword moved on a streamed object, the reference's field-mirror edge: the values
+/// notifier diffs live against a shadow copy and passes the old value. A first create fires
 /// nothing; a re-create of a live guid fires like a delta.
 ///
 /// `kind` is the store's class from its create block, since a raw index differs per class (`36`
@@ -358,8 +358,8 @@ pub(crate) fn apply_fields_for_test(world: &mut World, entity: Entity, delta: Ob
 pub(crate) struct SelfPlayer;
 
 /// The body this client is attached to: the reference's camera anchor (`camera+0x88`), written only
-/// by the constructor and `SetTarget`, never by a control update. Normally our own body; under
-/// possession, the possessed unit.
+/// by the constructor and the camera's target setter, never by a control update. Normally our own
+/// body; under possession, the possessed unit.
 ///
 /// At most one entity carries it, and a claimed mover not yet streamed is none: outbound
 /// `MSG_MOVE_*` carry no guid, so a fallback to our body would write our pose onto the creature.
@@ -368,8 +368,8 @@ pub(crate) struct SelfPlayer;
 pub(crate) struct Embodied;
 
 /// The unit this client authors motion for: the reference's active-mover global (written only by
-/// `SetActiveMover`). A control update that forbids the unit zeroes it, which stops input and every
-/// movement report.
+/// its active-mover setter). A control update that forbids the unit zeroes it, which stops input
+/// and every movement report.
 ///
 /// The server-replay lanes filter `Without<ActiveMover>`, not `Without<Embodied>`, so a body we
 /// are attached to but lost control of still follows the server.
@@ -511,9 +511,9 @@ pub(crate) struct RealmChoice(pub(crate) ParkSender<RealmRequest>);
 /// select; at the login park a query fails and the rest are dropped.
 #[derive(Debug)]
 pub(crate) enum RealmRequest {
-    /// Dial this realm (`ConnectToRealm`), the record as the list held it, as the reference dials
-    /// its copy whatever a later list says. `generation` is the abandon generation the app held
-    /// when it asked: a later Cancel ends the dial however early it lands.
+    /// Dial this realm, the record as the list held it, as the reference's realm connect dials its
+    /// copy whatever a later list says. `generation` is the abandon generation the app held when it
+    /// asked: a later Cancel ends the dial however early it lands.
     Enter {
         realm: benilla_protocol::RealmInfo,
         generation: u64,
@@ -521,11 +521,11 @@ pub(crate) enum RealmRequest {
     /// Query the realm list (`RequestRealmList`, every 5 s from `RealmList_OnUpdate`); the answer
     /// is a [`RealmListMessage`], failed when the link gave none.
     Refresh,
-    /// `CLoginMgr::Cancel` (from `RealmListDialogCancelled` on the login screen, the logon's Cancel
-    /// and `DisconnectFromServer`): the realmd link closes and the thread parks for credentials. At
-    /// character select, where `RealmListDialogCancelled` is a no-op, nothing.
+    /// The login manager's cancel (from `RealmListDialogCancelled` on the login screen, the logon's
+    /// Cancel and `DisconnectFromServer`): the realmd link closes and the thread parks for
+    /// credentials. At character select, where `RealmListDialogCancelled` is a no-op, nothing.
     Close,
-    /// `ConnectToRealm` with the world up: the session at character select drops and the thread
+    /// The realm connect with the world up: the session at character select drops and the thread
     /// returns to the logon park, the realmd link as it was (closed since a world entry).
     /// Elsewhere, nothing.
     Leave,
@@ -547,13 +547,13 @@ impl LoginAbandon {
     }
 }
 
-/// Guid to entity for every kind, items included, like the reference's one `ClntObjMgr` index.
+/// Guid to entity for every kind, items included, like the reference's one object-manager index.
 /// Written only by `net::objects`.
 #[derive(Resource, Default)]
 pub(crate) struct GuidIndex(pub(crate) HashMap<u64, Entity>);
 
 /// The streamed objects, whatever the kind, with their descriptor stores, our own player, and an
-/// item's countdown cells. Read-only. The by-guid lookups are `ClntObjMgrObjectPtr`.
+/// item's countdown cells. Read-only. The by-guid lookups are the object manager's.
 #[derive(SystemParam)]
 pub struct Objects<'w, 's> {
     index: Res<'w, GuidIndex>,
@@ -563,7 +563,7 @@ pub struct Objects<'w, 's> {
 }
 
 impl Objects<'_, '_> {
-    /// The entity behind a guid, if streamed (`ClntObjMgrObjectPtr`).
+    /// The entity behind a guid, if streamed, as the object manager's guid lookup finds it.
     pub fn entity(&self, guid: u64) -> Option<Entity> {
         self.index.0.get(&guid).copied()
     }
@@ -720,14 +720,13 @@ pub(crate) fn send_query_time(
 /// excludes the DBC race/class base, which consumers add before ranking. Filled by
 /// `SMSG_INITIALIZE_FACTIONS`, kept current by `SMSG_SET_FACTION_STANDING` (which also reveals)
 /// and `SMSG_SET_FACTION_VISIBLE`. Flag bit `0x08` marks a pane header. Then the `(faction,
-/// reaction)` list `SMSG_SET_FORCED_REACTIONS` replaces whole (`CGReputationInfo`'s forced
-/// reactions), emptied when the world is left (`CGReputationInfo::LeaveWorld` `0x5d24c0`).
+/// reaction)` list `SMSG_SET_FORCED_REACTIONS` replaces whole (the reputation store's forced
+/// reactions), emptied when the world is left (`0x5d24c0`).
 #[derive(Resource, Default)]
 pub(crate) struct Reputations(pub(crate) Vec<(u8, i32)>, pub(crate) Vec<(u32, u32)>);
 
 impl Reputations {
-    /// `CGReputationInfo::GetForcedReaction` (`0x5d06a0`): the first entry naming the
-    /// `Faction.dbc` faction.
+    /// The forced-reaction lookup (`0x5d06a0`): the first entry naming the `Faction.dbc` faction.
     pub(crate) fn forced_reaction(&self, faction: u32) -> Option<u32> {
         self.1.iter().find(|&&(f, _)| f == faction).map(|&(_, r)| r)
     }
@@ -758,7 +757,7 @@ pub(crate) struct GameTime {
     base_day: u32,
     timescale: f32,
     received: Instant,
-    /// The packed date and clock at `received`, `g_clientGameTime`'s seed (`0x7e28e0`).
+    /// The packed date and clock at `received`, the client game clock's seed (`0x7e28e0`).
     base: benilla_ui::script::WowTime,
 }
 
@@ -782,8 +781,8 @@ impl GameTime {
         self
     }
 
-    /// `g_clientGameTime`: the seed advanced a minute per elapsed game minute, its date carried
-    /// across midnight (`CGameTime::TickMinute` `0x76d740`).
+    /// The client game clock: the seed advanced a minute per elapsed game minute, its date carried
+    /// across midnight (`0x76d740`).
     pub(crate) fn calendar_now(&self) -> benilla_ui::script::WowTime {
         let elapsed = self.received.elapsed().as_secs_f64() * f64::from(self.timescale);
         let mut now = self.base;
@@ -1199,8 +1198,7 @@ pub(crate) enum ClientCommand {
         spell_id: u32,
         dest: [f32; 3],
     },
-    /// `CMSG_CAST_SPELL` with `TARGET_FLAG_SOURCE_LOCATION` (`BindLocation`, bit 5); `src` in WoW
-    /// coordinates.
+    /// `CMSG_CAST_SPELL` with `TARGET_FLAG_SOURCE_LOCATION` (bit 5); `src` in WoW coordinates.
     CastSpellAtSource {
         spell_id: u32,
         src: [f32; 3],
@@ -1287,7 +1285,7 @@ pub(crate) enum ClientCommand {
     /// `CMSG_CANCEL_AUTO_REPEAT_SPELL`, sent by every local cancel; harmless when the server
     /// cancelled first.
     CancelAutoRepeat,
-    /// `CMSG_CANCEL_CAST`: from the wand auto-repeat handoff and a local cancel (`AbortCast`).
+    /// `CMSG_CANCEL_CAST`: from the wand auto-repeat handoff and a local cancel.
     CancelCast {
         spell_id: u32,
     },
@@ -1987,7 +1985,7 @@ pub(crate) enum ClientCommand {
     PlayedTime,
     /// An account-data request or upload in the world ([`crate::account_data`]). With the world
     /// stream over and the link parked, as after the logout an Exit Game makes, it goes out on the
-    /// parked session, where 12340's UI shutdown sends it (`AccountDataFlush` `0x6b9b90`).
+    /// parked session, where 12340's UI shutdown sends it (`0x6b9b90`).
     AccountData(crate::account_data::Wire),
     /// A barrier: answered once every command before it is on the wire, the parked session's
     /// included.
@@ -2541,8 +2539,9 @@ pub(crate) struct SelfMoveMessage {
     pub(crate) transport: Option<benilla_protocol::TransportPose>,
 }
 
-/// Our own body's create-block mover state: `SetUpdateInfo` (`0x6f1520`) zeroes the active mover's
-/// flags and forces these in, so a login or worldport arriving mid-flight is flying at once.
+/// Our own body's create-block mover state: the create block's movement apply (`0x6f1520`) zeroes
+/// the active mover's flags and forces these in, so a login or worldport arriving mid-flight is
+/// flying at once.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct SelfCreateMover {
     pub(crate) flags: u32,
@@ -2809,7 +2808,7 @@ mod tests {
         assert_eq!(current_speed(&s, f::STRAFE_LEFT | f::WALK_MODE), 2.5);
     }
 
-    /// The reference precedes.
+    /// The swim arm precedes the walk arm.
     #[test]
     fn swimming_is_tested_first_so_there_is_no_swim_walk() {
         use crate::creature_anim::move_flags as f;

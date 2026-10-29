@@ -1,4 +1,4 @@
-//! The calendar's sends, `CGCalendar`'s and `CGCalendarEvent`'s (`0x5b7820`-`0x5f32b0`).
+//! The calendar's sends, the reference calendar's and its events' (`0x5b7820`-`0x5f32b0`).
 
 use anyhow::Result;
 

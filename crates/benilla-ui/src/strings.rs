@@ -1,9 +1,10 @@
 //! Fills the `%` holes of a `GlobalStrings.lua` or `GlueStrings.lua` template read at runtime, as
-//! the client's `SStrPrintf` does: `%s`, `%d`, `%c`, `%f` and `%g` take the next argument left to
+//! the client's formatter does: `%s`, `%d`, `%c`, `%f` and `%g` take the next argument left to
 //! right, `%N$s` takes argument N without moving that cursor (`DUEL_WINNER_RETREAT` reorders its
-//! two names), `%%` is `%`, and the width, `-`/`0` flags and precision are the template's. A hole with no argument, or one
-//! this does not know, is copied through literally so a mis-modelled template shows. Reals round
-//! as the MSVC CRT behind `SStrPrintf` does: half up on the decimal digits ([`crt_digits`]).
+//! two names), `%%` is `%`, and the width, `-`/`0` flags and precision are the template's. A hole
+//! with no argument, or one this does not know, is copied through literally so a mis-modelled
+//! template shows. Reals round as the MSVC CRT behind that formatter does: half up on the decimal
+//! digits ([`crt_digits`]).
 
 use std::fmt::Write as _;
 
@@ -260,8 +261,8 @@ fn parse_spec(chars: &[char], after_percent: usize) -> Option<Spec> {
 }
 
 /// A string from the VM's globals, where the install's `GlobalStrings.lua` is loaded at boot;
-/// `None`, and so no line, when absent or empty. `FrameScript_GetText` returns an empty string for
-/// a missing key, and callers test both (`GetPVPRankInfo`).
+/// `None`, and so no line, when absent or empty. The script layer's text read returns an empty
+/// string for a missing key, and callers test both (`GetPVPRankInfo`).
 pub fn global(lua: &mlua::Lua, key: &str) -> Option<String> {
     // Bound before the filter so `globals().get::<String>` stays one unbroken substring, which is
     // what `benilla-app/tests/reference_strings.rs` matches as a key lookup.
@@ -269,8 +270,8 @@ pub fn global(lua: &mlua::Lua, key: &str) -> Option<String> {
     value.filter(|s| !s.is_empty())
 }
 
-/// `GetText(token, nil, ordinal)`'s plural pick: the reference formats the key and the reference
-/// pcalls the Lua `GetText`, where `GetPluralIndex` (`LocaleProperties.lua:56`) is singular for
+/// `GetText(token, nil, ordinal)`'s plural pick: the reference formats the key and then pcalls the
+/// Lua `GetText`, where `GetPluralIndex` (`LocaleProperties.lua:56`) is singular for
 /// `not ordinal or ordinal == 1`. So one or no ordinal takes the bare token, anything else the
 /// `_P1` twin, falling back to the bare token. Zero is plural: the test is signed, only a negative
 /// becomes nil, and the number `0` is truthy in Lua.

@@ -39,10 +39,10 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetText",
         lua.create_function(|lua, this: Table| with_editbox(lua, &this, |eb| eb.text.clone()))?,
     )?;
-    // SetNumber is SetText: the reference are byte-identical but for the usage string. Its gate is
-    // `lua_isstring`, so a string is set verbatim, never parsed, and nil, a boolean, a table or no
-    // argument raises the usage string. On a numeric box `-5` or `0.8` leaves it empty: the sign or
-    // point fails the digit test after the clear has run.
+    // SetNumber is SetText: the two bindings are byte-identical but for the usage string. Its gate
+    // is `lua_isstring`, so a string is set verbatim, never parsed, and nil, a boolean, a table or
+    // no argument raises the usage string. On a numeric box `-5` or `0.8` leaves it empty: the sign
+    // or point fails the digit test after the clear has run.
     m.set(
         "SetNumber",
         lua.create_function(|lua, (this, v): (Table, Value)| {
@@ -159,7 +159,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetCursorPosition",
         lua.create_function(|lua, this: Table| with_editbox(lua, &this, |eb| eb.cursor as i64))?,
     )?;
-    // GetUTF8CursorPosition() (`0x976a70`): the characters before the caret (`SStrLenUTF8`).
+    // GetUTF8CursorPosition() (`0x976a70`): the characters before the caret, counted as UTF-8.
     m.set(
         "GetUTF8CursorPosition",
         lua.create_function(|lua, this: Table| {
@@ -319,7 +319,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // The XML's fifth flag, `ignoreArrows`, is `SetAltArrowKeyMode` in Lua; 1.12 has no
     // `SetIgnoreArrows`.
     //
-    // SetAltArrowKeyMode reads `GetBoolOrDefault` with default 1: no argument enables, nil
+    // SetAltArrowKeyMode reads its argument as a boolean with default 1: no argument enables, nil
     // disables, a number truncates (0 and 0.5 off, -1 on), `""` takes the default and `"0"`
     // disables. GetAltArrowKeyMode answers the number 1 or nil, never a boolean.
     m.set(

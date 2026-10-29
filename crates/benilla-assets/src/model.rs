@@ -341,7 +341,7 @@ pub(crate) fn arm_subtree_roots(
     Some((shoulder_of(1)?, shoulder_of(2)?))
 }
 
-/// The upper-body subtree root, the reference's `CGUnit+0xd5c` from the probe: key-bone 4
+/// The upper-body subtree root, the reference's unit `+0xd5c` from the probe: key-bone 4
 /// (SpineLow), else 6 (Head). SpineLow's subtree leaves out the legs, which hang off the pelvis.
 /// `None` means no split, and a one-shot plays full-body.
 pub(crate) fn upper_subtree_root(skel: &Skeleton) -> Option<usize> {
@@ -349,7 +349,7 @@ pub(crate) fn upper_subtree_root(skel: &Skeleton) -> Option<usize> {
     bone_with(4).or_else(|| bone_with(6))
 }
 
-/// The finger key-bones per hand `(right, left)`, 8-12 and 13-17: the reference's `CloseHand`
+/// The finger key-bones per hand `(right, left)`, 8-12 and 13-17: the reference's hand-close
 /// targets, posed with `HandsClosed` (AnimationData 15) while that hand holds a weapon. Empty for a
 /// model without them.
 pub(crate) fn finger_subtree_roots(skel: &Skeleton) -> [Vec<usize>; 2] {

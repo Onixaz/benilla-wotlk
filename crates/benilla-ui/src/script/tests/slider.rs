@@ -171,8 +171,8 @@ fn slider_methods_exist_only_on_sliders() {
 
 #[test]
 fn slider_default_orientation_is_vertical() {
-    // Every scrollbar omits `orientation` and is vertical, so the CSimpleSlider default is
-    // `VERTICAL`, where StatusBar's is `HORIZONTAL`.
+    // Every scrollbar omits `orientation` and is vertical, so the slider's default is `VERTICAL`,
+    // where StatusBar's is `HORIZONTAL`.
     let s = script();
     s.run(
         r#"
@@ -198,7 +198,7 @@ fn slider_value_clamps_and_does_not_swap_minmax() {
         assert(sl:GetValue() == 100, "clamped to max")
         sl:SetValue(-5)
         assert(sl:GetValue() == 0, "clamped to min")
-        -- Unlike StatusBar, a reversed pair is NOT swapped (LoadXML stores min + range).
+        -- Unlike StatusBar, a reversed pair is NOT swapped (the XML load stores min + range).
         sl:SetMinMaxValues(80, 20)
         local mn, mx = sl:GetMinMaxValues()
         assert(mn == 80 and mx == 20, "reversed pair kept as given, not swapped")

@@ -104,13 +104,13 @@ pub(super) fn go_display_sounds(
             .and_then(|d| go_sounds.0.slots(d))
             .map(|s| s[slot])
             .unwrap_or(0);
-        // An unfilled column is silence: the reference fails a null id and the reference returns.
+        // An unfilled column is silence: the kit lookup fails a null id and the handler returns.
         if kit == 0 {
             continue;
         }
-        // Where the key fired, not the object's origin: both lanes take the reference's event world
-        // position (`[ebp+0x10]`) verbatim, `(id, pos, -1, 1.0f)` and `(id, pos, 0)`. Many shipped
-        // events sit off their origin, up to 63.4 yd.
+        // Where the key fired, not the object's origin: both lanes take the event's world position
+        // (`[ebp+0x10]`) verbatim, the one-shot play as `(id, pos, -1, 1.0f)` and the emitter
+        // registrar as `(id, pos, 0)`. Many shipped events sit off their origin, up to 63.4 yd.
         let pos = ev.pos.unwrap_or_else(|| transform.translation());
         // A looping kit registers in the shared emitter pool, not a channel of its own, so a row
         // of braziers is one hum and a re-fired marker is a no-op, not a restart.

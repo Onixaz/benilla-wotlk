@@ -1,8 +1,9 @@
-//! The spell, the reference's `Spell_C`: the cast ladder and commit ([`cast_send`], `TryCast` and
-//! `SendCast`), the target bind ([`cast_target`], `ArmCast` and `BindTarget`), the party and raid
-//! relations its arms ask ([`group_relation`]), the requirement validator ([`validator`]), the
-//! usable walk ([`usable`], `IsSpellUsableNow`), the targeting cursor ([`targeting`]), the
-//! in-flight slot, the cooldowns, the talent modifiers and their packet handlers ([`net`]).
+//! The spell, as the reference's spell system: the cast ladder and commit ([`cast_send`], the cast
+//! attempt and the cast send), the target bind ([`cast_target`], the target resolve and the target
+//! bind), the party and raid relations its arms ask ([`group_relation`]), the requirement validator
+//! ([`validator`]), the usable walk ([`usable`], the usability check), the targeting cursor
+//! ([`targeting`]), the in-flight slot, the cooldowns, the talent modifiers and their packet
+//! handlers ([`net`]).
 
 use bevy::prelude::*;
 
@@ -166,8 +167,8 @@ impl Plugin for SpellPlugin {
 }
 
 /// The player's skill in `spell_id`'s own line, the input of every per-level term: the reference
-/// hops spell to SkillLineAbility line, then the reference reads that line's `PLAYER_SKILL_INFO`
-/// slot. Every missing input reads 0, like the reference's null paths.
+/// hops spell to SkillLineAbility line, then reads that line's `PLAYER_SKILL_INFO` slot. Every
+/// missing input reads 0, like the reference's null paths.
 pub(crate) fn spell_skill_value(
     me: Option<&crate::net::ObjectStore>,
     skill_lines: Option<&benilla_formats::SkillLineCatalog>,
@@ -180,8 +181,8 @@ pub(crate) fn spell_skill_value(
     skill_line_value(me, line)
 }
 
-/// The player's race and class bytes, which `SpellTableLookupAbility` (`0x812410`) keys on; 0/0
-/// before the descriptor.
+/// The player's race and class bytes, which the ability lookup (`0x812410`) keys on; 0/0 before the
+/// descriptor.
 pub(crate) fn race_class(me: Option<&crate::net::ObjectStore>) -> (u8, u8) {
     me.map_or((0, 0), |s| {
         (s.0.unit_race().unwrap_or(0), s.0.unit_class().unwrap_or(0))

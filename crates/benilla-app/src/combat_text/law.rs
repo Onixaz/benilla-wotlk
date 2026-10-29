@@ -124,7 +124,7 @@ const CRIT_KEYFRAMES: [(f32, f32, f32, f32); 3] = [
     (0.2, 1.0, 1.0, 1.0),
 ];
 
-/// The outcome words by code 1-11 (keys for `FrameScript_GetText`), vmangos `SpellMissInfo`
+/// The outcome words by code 1-11 (looked up as global strings), vmangos `SpellMissInfo`
 /// (`SpellDefines.h:160`); the enUS `GlobalStrings.lua` values.
 const WORDS: [&str; 11] = [
     "Miss", "Resist", "Dodge", "Parry", "Block", "Evade", "Immune", "Immune", "Deflect", "Absorb",
@@ -191,14 +191,14 @@ pub(crate) enum DamageSource {
 
 /// The colour law's `B` bit: `recordPtr == 0 || sign(byte[SpellRec+0x25])`, no record or
 /// `AttributesEx3` bit 15. `None` is both a pushed NULL (a melee swing, a damage shield) and a
-/// missing catalog. The reference compute it alike; only the melee word site pushes NULL, so a
-/// spell's miss word is gold like its number.
+/// missing catalog. The number and word emitters compute it alike; only the melee word site pushes
+/// NULL, so a spell's miss word is gold like its number.
 pub(crate) fn melee_styled(display: Option<&benilla_formats::SpellDisplay>) -> bool {
     display.is_none_or(benilla_formats::SpellDisplay::melee_white_damage)
 }
 
-/// The colour branch (-`612964`) by `B` and `K`: `None` gates the emit off, `Some(None)` draws in
-/// the row's default, `Some(Some(argb))` in the override. Crit never enters.
+/// The colour branch by `B` and `K`: `None` gates the emit off, `Some(None)` draws in the row's
+/// default, `Some(Some(argb))` in the override. Crit never enters.
 pub(crate) fn damage_color(
     gates: DamageTextGates,
     source: DamageSource,
@@ -261,7 +261,7 @@ pub(super) fn text_px(v: f32, viewport: Vec2) -> f32 {
     round_px(f64::from(v) * f64::from(viewport.x).hypot(f64::from(viewport.y)))
 }
 
-/// The shadow offset, (`{0.002, 0.002}`): a viewport fraction per axis, rounded at draw.
+/// The shadow offset (`{0.002, 0.002}`): a viewport fraction per axis, rounded at draw.
 const SHADOW_OFFSET_FRAC: f32 = 0.002;
 
 /// The rendered shadow offset, `{round(0.002·W), round(0.002·H)}` px down-right.
@@ -274,9 +274,9 @@ pub(super) fn shadow_offset_px(viewport: Vec2) -> Vec2 {
 
 /// The anti-overlap claim box in px. The reference stores the halves as screen fractions (height
 /// the size value ÷ G48, width the advance sum ÷ screen width plus a `round(0.002·diag)` pen seed)
-/// and the reference spends them as DDC lengths, inflating them by diag/dim (1.667x tall, 1.25x
-/// wide at 4:3). `ink_w` stands in for the advance sum; the reference's side bearings and raster
-/// pad (at most ~3 px) are untraced.
+/// and the seat spends them as DDC lengths, inflating them by diag/dim (1.667x tall, 1.25x wide at
+/// 4:3). `ink_w` stands in for the advance sum; the reference's side bearings and raster pad (at
+/// most ~3 px) are untraced.
 pub(super) fn claimed_box_px(ink_w: f32, size_value: f32, viewport: Vec2) -> Vec2 {
     let diag = viewport.length();
     Vec2::new(
@@ -285,10 +285,10 @@ pub(super) fn claimed_box_px(ink_w: f32, size_value: f32, viewport: Vec2) -> Vec
     )
 }
 
-/// The text and rendered shadow alpha at `elapsed_ms`: the reference's two lanes, fade-in tested
-/// first, then fade-out, else the `(0xFF, 0x7F)` plateau. The ramps divide by the duration, so
-/// fade-in ends in a step. The reference stores the shadow as `min(shadow, text)`, so the raw
-/// `[128, 255]` fade-out lane renders as the text alpha.
+/// The text and rendered shadow alpha at `elapsed_ms`: the fade's two lanes (255.0 and 127.0),
+/// fade-in tested first, then fade-out, else the `(0xFF, 0x7F)` plateau. The ramps divide by the
+/// duration, so fade-in ends in a step. The colour setter stores the shadow as
+/// `min(shadow, text)`, so the raw `[128, 255]` fade-out lane renders as the text alpha.
 pub(super) fn fade_alpha(cat: &Category, elapsed_ms: f32) -> (u8, u8) {
     // MSVC __ftol truncates; `as i32` matches.
     let (text, shadow) = if elapsed_ms < cat.fade_in_ms {
@@ -306,7 +306,7 @@ pub(super) fn fade_alpha(cat: &Category, elapsed_ms: f32) -> (u8, u8) {
     } else {
         (0xff, 0x7f)
     };
-    // The reference writes the shadow alpha as min(shadowA, mainA) every tick, after SetColor.
+    // The colour setter writes the shadow alpha as min(shadowA, mainA) every tick, after SetColor.
     (text, shadow.min(text))
 }
 
@@ -488,7 +488,6 @@ mod tests {
             damage_color(on, DamageSource::Pet, false),
             Some(Some(COLOR_SPELL_GOLD))
         );
-        // .
         assert_eq!(COLOR_SPELL_GOLD, 0xFFFF_DE00);
         assert_eq!(COLOR_PET_MELEE_ORANGE, 0xFFFF_8400);
     }

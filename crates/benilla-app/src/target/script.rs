@@ -39,7 +39,7 @@ impl ScriptSelect<'_, '_> {
                     self.commit.commit(entity, guid);
                 }
             }
-            // `call (token)`, then the shared tail. An unresolvable token is silent here; the
+            // The token resolve, then the shared tail. An unresolvable token is silent here; the
             // reference shows message `0xb8` `ERR_GENERIC_NO_TARGET`.
             SelectionRequest::Assist(token) => {
                 match self.tokens.resolve(&token, &self.commit.selection) {
@@ -51,7 +51,8 @@ impl ScriptSelect<'_, '_> {
             SelectionRequest::AssistByName(name) => {
                 by_name::assist_named(&self.by_name, &mut self.commit, Some(&name), "AssistByName");
             }
-            // . Empty memory is a no-op, unlike `TargetLastTarget`, which reaches and deselects.
+            // Through the shared helper. Empty memory is a no-op, unlike `TargetLastTarget`, which
+            // deselects.
             SelectionRequest::LastEnemy => {
                 let Some(guid) = self.last_enemy.0 else {
                     info!("TargetLastEnemy: nothing hostile has been targeted yet; no-op");
@@ -73,7 +74,8 @@ impl ScriptSelect<'_, '_> {
         by_name::target_named(&self.by_name, &mut self.commit, name, exact);
     }
 
-    /// `TargetNearest*([reverse])` (`(reverse, mode)`), one cycle of the cycler the TAB key runs.
+    /// `TargetNearest*([reverse])`, one cycle of the cycler the TAB key runs, called with
+    /// `(reverse, mode)`.
     pub(crate) fn target_nearest(&mut self, mode: benilla_ui::script::NearestMode, reverse: bool) {
         let engaged = self.commit.engaged();
         scan::cycle(
@@ -88,8 +90,8 @@ impl ScriptSelect<'_, '_> {
         );
     }
 
-    /// `TargetLastTarget()`: a held last-target pair goes to the reference as a stack copy, so a
-    /// streamed unit is committed (which stamps the outgoing target, swapping the two) and an
+    /// `TargetLastTarget()`: a held last-target pair goes to the shared helper as a stack copy, so
+    /// a streamed unit is committed (which stamps the outgoing target, swapping the two) and an
     /// unstreamed one is a no-op (the roster fallback is not built, as for `TargetLastEnemy`); an
     /// empty pair deselects.
     pub(crate) fn target_last_target(&mut self) {

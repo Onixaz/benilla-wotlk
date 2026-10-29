@@ -1,6 +1,6 @@
-//! The `${…}` expression engine of the spell-text parser: `MathState`'s recursive-descent
-//! compiler (`CompileSum` `0x5778b0` down to `CompilePrimary` `0x577530`) into a postfix program,
-//! and its stack machine (`Evaluate` `0x578d10`), every value a 32-bit float.
+//! The `${…}` expression engine of the spell-text parser: the reference's recursive-descent
+//! compiler (`0x5778b0` for a sum down to `0x577530` for a primary) into a postfix program, and its
+//! stack machine (`0x578d10`), every value a 32-bit float.
 
 /// The tokenizer's one-character tokens (`0xaceb2c`); anything else runs to the next of them.
 const DELIMITERS: &[u8] = b"()[]^*/%+-#,> ";
@@ -37,11 +37,11 @@ enum Func {
     Clamp,
 }
 
-/// A value the active player supplies (`GetVariableValue` `0x5782d0`). Hands and schools are
-/// numbered as the reference numbers them: hand 0 main, 1 off, 2 ranged; school 1 holy to 6 arcane.
+/// A value the active player supplies (`0x5782d0`). Hands and schools are numbered as the reference
+/// numbers them: hand 0 main, 1 off, 2 ranged; school 1 holy to 6 arcane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum PlayerValue {
-    /// `STR`..`SPI`: `UNIT_FIELD_STAT0 + i`, floored at 0 (`GetEffectiveStat` `0x5774b0`).
+    /// `STR`..`SPI`: `UNIT_FIELD_STAT0 + i`, floored at 0 (`0x5774b0`).
     Stat(u8),
     /// `str`..`spi`: the stat less its positive and negative buffs.
     BaseStat(u8),
@@ -60,7 +60,7 @@ pub enum PlayerValue {
     /// maximum ceiled, each at least 1.
     DamageMin(u8),
     DamageMax(u8),
-    /// `ar`: the base armor; `AR`: the effective armor (`GetResistanceAndBuffs`, school 0).
+    /// `ar`: the base armor; `AR`: the effective armor (the resistance read, school 0).
     BaseArmor,
     Armor,
     /// `mws`, `ows`, `rws`: the attack time in seconds.
@@ -280,10 +280,9 @@ fn lookup_var(name: &str) -> Option<MathVar> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Op {
     Const(f32),
-    /// A `$<name>`, its value read at compile time (`GetSpellVariableValue` `0x5774d0`).
+    /// A `$<name>`, its value read at compile time (`0x5774d0`).
     Var(f32),
-    /// A named operand, of another spell when `$1234m1` names one (the op `MATHOP_SPELL` before
-    /// it).
+    /// A named operand, of another spell when `$1234m1` names one (a spell op before it).
     Value(Option<u32>, MathVar),
     Pow,
     Neg,
@@ -322,7 +321,7 @@ impl Compiler<'_> {
         self.text.get(pos).copied().unwrap_or(0)
     }
 
-    /// `NextToken` `0x576bb0`: spaces skipped, then one delimiter or a run up to the next one.
+    /// The tokenizer (`0x576bb0`): spaces skipped, then one delimiter or a run up to the next one.
     fn next_token(&self, pos: &mut usize) -> Option<&[u8]> {
         while self.at(*pos) == b' ' {
             *pos += 1;
@@ -342,7 +341,7 @@ impl Compiler<'_> {
         Some(&self.text[start..*pos])
     }
 
-    /// `Expect` `0x576c80`: the next token, case-insensitively.
+    /// The token expectation (`0x576c80`): the next token, case-insensitively.
     fn expect(&mut self, want: &[u8], pos: &mut usize) {
         match self.next_token(pos) {
             Some(t) if t.eq_ignore_ascii_case(want) => {}
@@ -350,8 +349,8 @@ impl Compiler<'_> {
         }
     }
 
-    /// `CompileSum` `0x5778b0`. The operator must sit right after its left operand: a space before
-    /// it ends the expression (`m_text[pos]` is read unskipped).
+    /// A sum (`0x5778b0`). The operator must sit right after its left operand: a space before it
+    /// ends the expression (the text at `pos` is read unskipped).
     fn sum(&mut self, pos: usize) -> usize {
         let mut pos = self.product(pos);
         loop {
@@ -365,7 +364,7 @@ impl Compiler<'_> {
         }
     }
 
-    /// `CompileProduct` `0x5777f0`.
+    /// A product (`0x5777f0`).
     fn product(&mut self, pos: usize) -> usize {
         let mut pos = self.power(pos);
         loop {
@@ -380,7 +379,7 @@ impl Compiler<'_> {
         }
     }
 
-    /// `CompilePower` `0x5777a0`, left-associative.
+    /// A power (`0x5777a0`), left-associative.
     fn power(&mut self, pos: usize) -> usize {
         let mut pos = self.primary(pos);
         while self.at(pos) == b'^' {
@@ -390,7 +389,7 @@ impl Compiler<'_> {
         pos
     }
 
-    /// `CompilePrimary` `0x577530`: a bracket, a negation, a `$` operand or function, or a number.
+    /// A primary (`0x577530`): a bracket, a negation, a `$` operand or function, or a number.
     /// The end of the text compiles to nothing.
     fn primary(&mut self, pos: usize) -> usize {
         let mut pos = pos;
@@ -467,8 +466,8 @@ pub fn compile(text: &str, env: &dyn ExprEnv) -> Option<Program> {
     (!c.failed).then_some(Program { ops: c.ops })
 }
 
-/// `Evaluate` `0x578d10` over `env`; `None` where a run fails. An empty program reads 0; a stack
-/// that runs dry, which only a truncated expression such as `1+` builds, fails.
+/// The stack machine (`0x578d10`) over `env`; `None` where a run fails. An empty program reads 0; a
+/// stack that runs dry, which only a truncated expression such as `1+` builds, fails.
 pub fn evaluate(program: &Program, env: &dyn ExprEnv) -> Option<f32> {
     let mut stack: Vec<f32> = Vec::with_capacity(8);
     for op in &program.ops {
@@ -493,7 +492,7 @@ pub fn evaluate(program: &Program, env: &dyn ExprEnv) -> Option<f32> {
     Some(stack.last().copied().unwrap_or(0.0))
 }
 
-/// `ExecuteOperator` `0x577ad0`.
+/// An operator's execution (`0x577ad0`).
 fn operator(op: Op, left: f32, right: f32) -> f32 {
     match op {
         Op::Pow => f64::from(left).powf(f64::from(right)) as f32,
@@ -511,7 +510,7 @@ fn operator(op: Op, left: f32, right: f32) -> f32 {
     }
 }
 
-/// `ExecuteFunction` `0x577900`, arguments in source order.
+/// A function's execution (`0x577900`), arguments in source order.
 fn function(f: Func, a: &[f32]) -> f32 {
     let truth = |b: bool| if b { 1.0 } else { 0.0 };
     match f {

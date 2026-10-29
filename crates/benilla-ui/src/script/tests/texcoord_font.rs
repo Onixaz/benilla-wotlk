@@ -227,7 +227,7 @@ fn justify_v_defaults_middle_and_overrides() {
     assert_eq!(fresh, JustifyV::Top);
 }
 
-/// `Texture:SetRotation(angle[, cx, cy])` (`0x48c860` → `CSimpleTexture::SetRotation 0x483120`):
+/// `Texture:SetRotation(angle[, cx, cy])` (`0x48c860` → the texture's rotation set `0x483120`):
 /// the corners on a unit radius about the centre from `angle - π/4`, read back by `GetTexCoord` in
 /// UL, LL, UR, LR order; the host's compass setter writes the same corners.
 #[test]

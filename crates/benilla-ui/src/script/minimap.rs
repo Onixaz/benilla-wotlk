@@ -30,9 +30,9 @@ fn with_minimap<T>(
     }
 }
 
-/// The model half of `CMinimap::LoadXML`: `minimapArrowModel` to engine children 1 to 8,
+/// The model half of the minimap's XML load: `minimapArrowModel` to engine children 1 to 8,
 /// `minimapPlayerModel` to child 9 alone. Runs before the `<Frames>` descent, as the reference
-/// chains to `CSimpleFrame::LoadXML` after.
+/// chains to the base frame's XML load after.
 pub(crate) fn apply_model_attrs(
     lua: &Lua,
     this: &Table,

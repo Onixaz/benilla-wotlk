@@ -1,4 +1,4 @@
-//! The units `GetMinMaxRange` reads, built from the world: the caster, a target unit, and the
+//! The units the range lookup reads, built from the world: the caster, a target unit, and the
 //! caster's auto-attack target, each as its combat reach, player bit, motion and whether the caster
 //! can assist it ([`benilla_formats::RangeUnit`]).
 
@@ -70,12 +70,12 @@ pub(crate) struct RangeUnits<'w, 's> {
     index: Option<Res<'w, GuidIndex>>,
     /// The flags word of the body we drive, [`Player::move_flags`].
     player: Option<Res<'w, Player>>,
-    /// `CanAssist`'s reaction inputs; a harness without them assists only the caster.
+    /// The assist check's reaction inputs; a harness without them assists only the caster.
     factions: Option<Res<'w, Factions>>,
     reputations: Option<Res<'w, Reputations>>,
     /// The group, for the reaction's party rung; a harness without it has no group.
     group: Option<Res<'w, crate::ui_party::GroupState>>,
-    /// The creature templates `CanAssist`'s last leg reads.
+    /// The creature templates the assist check's last leg reads.
     names: Option<Res<'w, crate::names::NameCache>>,
 }
 
@@ -99,8 +99,8 @@ impl RangeUnits<'_, '_> {
         })
     }
 
-    /// `CanAssist 0x7293d0` from our caster toward `entity`, which the caster always passes for
-    /// himself.
+    /// The assist check (`0x7293d0`) from our caster toward `entity`, which the caster always
+    /// passes for himself.
     fn caster_assists(&self, entity: Entity, store: &ObjectStore) -> bool {
         let caster = self.caster.iter().next();
         if caster == Some(entity) {
@@ -131,7 +131,7 @@ impl RangeUnits<'_, '_> {
             .unwrap_or(RangeUnit::still(DEFAULT_REACH))
     }
 
-    /// The auto-attack target of `entity`, the unit `GetMinMaxRange` looks up itself for its melee
+    /// The auto-attack target of `entity`, the unit the range lookup finds itself for its melee
     /// arm. `None` with no target engaged or before it streams, where the arm reads the caster's
     /// own reach.
     pub(crate) fn attack_target(&self, entity: Entity) -> Option<RangeUnit> {
@@ -301,8 +301,8 @@ mod tests {
             .expect("the units read");
     }
 
-    /// `assist` is `CanAssist` from our caster (`0x801685`): a friendly player passes, a hostile
-    /// monster does not, and the caster always does for himself.
+    /// `assist` is the assist check from our caster (`0x801685`): a friendly player passes, a
+    /// hostile monster does not, and the caster always does for himself.
     #[test]
     fn assist_follows_the_casters_relation_to_the_unit() {
         use benilla_formats::{FactionCatalog, FactionTemplate};

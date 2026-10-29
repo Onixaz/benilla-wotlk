@@ -1,11 +1,12 @@
 //! The melee combat flash: the target's selection ring and overhead name pulse red to orange while
 //! the local player auto-attacks it.
 //!
-//! The reference recomputes the flag, `[unit+0xc58]` bit `0x10`, every frame in CGUnit's OnUpdate,
-//! and no packet touches it: set iff the unit is the current target, the local player is
-//! auto-attacking (`[player+0xc48]`, here the server-echoed [`Engaged`]) and `CanAttack` passes.
-//! The pulse is one global phase that advances only while a unit qualifies. Only the ring and the
-//! overhead name read it, through `GetSelectionCircleColor`; the V-key nameplate never does.
+//! The reference recomputes the flag, `[unit+0xc58]` bit `0x10`, every frame in the unit's
+//! per-frame update, and no packet touches it: set iff the unit is the current target, the local
+//! player is auto-attacking (`[player+0xc48]`, here the server-echoed [`Engaged`]) and the attack
+//! check passes. The pulse is one global phase that advances only while a unit qualifies. Only the
+//! ring and the overhead name read it, through the selection circle's colour lookup; the V-key
+//! nameplate never does.
 
 use bevy::prelude::*;
 
@@ -75,7 +76,7 @@ pub(super) fn drive_flash(
         if engaged.is_empty() {
             return None;
         }
-        // `CanAttack`: a neutral target flashes too.
+        // The attack check: a neutral target flashes too.
         let store = units.get(target).ok()?;
         can_attack(
             store,

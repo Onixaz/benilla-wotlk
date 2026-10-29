@@ -1,7 +1,7 @@
 //! `SpellCastTimes.dbc`: the cast time a spell's `CastingTimeIndex`
-//! ([`crate::spells::SpellDisplay::casting_time_index`]) resolves to in `Spell_C::GetCastTime`,
-//! before spell-mod op `0xa` (`SPELLMOD_CASTING_TIME`). Row 1, `{0, 0, 0}`, is the instant sentinel
-//! every spell without a cast time points at.
+//! ([`crate::spells::SpellDisplay::casting_time_index`]) resolves to in the reference's cast-time
+//! read, before spell-mod op `0xa` (`SPELLMOD_CASTING_TIME`). Row 1, `{0, 0, 0}`, is the instant
+//! sentinel every spell without a cast time points at.
 
 use std::collections::HashMap;
 

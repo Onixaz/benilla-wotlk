@@ -125,7 +125,7 @@ fn feed_quest_lines(
     );
     show_messages(&mut script, &mut sink, "ui_quest", shown);
     // `QUEST_ACCEPTED` with the quest's log row follows the accept line, both raised once the
-    // template is cached (`QuestAcceptCallback` `0x6df2b0`, `OnUpdateQuest` `0x6df370`).
+    // template is cached (the accept callback `0x6df2b0`, then the log update `0x6df370`).
     for id in accepted {
         let index = script.quest_log_index(id) as i64;
         script.fire_event(

@@ -1,19 +1,19 @@
-//! The Region method map: the names of the reference's Region table, each one callable
-//! that works on a Frame, a Texture or a FontString.
+//! The Region method map: the names of the reference's Region table, each one callable that works
+//! on a Frame, a Texture or a FontString.
 //!
 //! Each widget class owns a flat method table whose lookup, on a miss, tail-calls its base's:
 //!
 //! ```text
-//! Region (21)  lookup, the root
-//! Frame (68)  lookup
-//! Texture (22)  lookup
-//! FontString (32)  lookup
+//! Region      (21)  lookup, the root
+//! Frame       (68)  lookup → Region
+//! Texture     (22)  lookup → Region
+//! FontString  (32)  lookup → Region
 //! ```
 //!
 //! Frame re-registers none of them, so `WorldFrame.GetHeight` is the function
 //! `someTexture:GetHeight()` resolves to, and addons pull a method off one widget to apply to
 //! another. Each name is one function that resolves the receiver and hands the call to that kind's
-//! arm, as the reference calls a vtable slot `CSimpleFontString` overrides; it goes into every
+//! arm, as the reference calls a vtable slot the font string class overrides; it goes into every
 //! table the chain reaches, so `WorldFrame.GetHeight == someTexture.GetHeight` holds.
 //!
 //! Exactly these: `Show`, `Hide`, `SetAlpha` and the like are per class (`SetAlpha` is on Frame),

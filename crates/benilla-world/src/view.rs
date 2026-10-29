@@ -79,10 +79,10 @@ pub struct ViewDistance {
 /// `0x514e30`); shared by `$WOW_FARCLIP`.
 pub const FARCLIP_RANGE: std::ops::RangeInclusive<f32> = 177.0..=1277.0;
 
-/// `World::ValidateFarClip` (`0x780770`): the far clip a map admits, floored at 550/3 yd and capped
+/// The far-clip validation (`0x780770`): the far clip a map admits, floored at 550/3 yd and capped
 /// at 4750/3, or 2375/3 on the old continents and instances (map ids below 530, and 543 and 575,
-/// while `farClipOverride` is off, which benilla does not register). The memory test beside it
-/// (at most 1 GiB of RAM) passes on every machine benilla runs on.
+/// while `farClipOverride` is off, which benilla does not register). The memory test beside it (at
+/// most 1 GiB of RAM) passes on every machine benilla runs on.
 pub fn validate_farclip(setting: f32, map_id: u32) -> f32 {
     let cap = if map_id < 530 || map_id == 575 || map_id == 543 {
         2375.0 / 3.0
@@ -97,7 +97,7 @@ pub fn validate_farclip(setting: f32, map_id: u32) -> f32 {
 }
 
 /// The settable range of [`ViewDistance::nearclip`]: the bounds in the reference's `nearclip`
-/// change callback0.01 and0.33.
+/// change callback, 0.01 and 0.33.
 ///
 /// Deviation: the reference refuses a value outside them, echoing "NearClip must be in range 0.01 -
 /// 0.33"; ours clamps, as every CVar consumer here clamps at its own edge.
@@ -105,8 +105,8 @@ pub const NEARCLIP_RANGE: std::ops::RangeInclusive<f32> = 0.01..=0.33;
 
 /// The world camera's multisampling, the `gxMultisample` CVar: a sample count in [`MSAA_RANGE`], 1
 /// meaning none, as both reference backends read it. Its default, 1, is the reference's:
-/// `CVar::Register` takes it from the `VideoHardware.dbc` row `DetectHardware` matched, and every
-/// fallback row holds 1.
+/// the registration takes it from the `VideoHardware.dbc` row the hardware detection matched, and
+/// every fallback row holds 1.
 ///
 /// Latched, as the reference registers it ("set pending gxRestart"): a write moves this at the
 /// `RestartGx` commit, and `benilla-app`'s `video` hands it to the world camera then.
@@ -262,7 +262,8 @@ impl Plugin for MsaaSupportPlugin {
 pub const CAM_FAR: f32 = 3000.0;
 
 impl ViewDistance {
-    /// Take a `farclip` write and re-derive the wall for `map_id` (`World::SetFarClip 0x780800`).
+    /// Take a `farclip` write and re-derive the wall for `map_id` (the far-clip setter,
+    /// `0x780800`).
     pub fn set_farclip(&mut self, setting: f32, map_id: u32) {
         self.setting = setting;
         self.farclip = validate_farclip(setting, map_id);
@@ -392,12 +393,12 @@ impl Plugin for ViewPlugin {
 
 /// `projectedTextures`: an M2's projected batches (batch flag `0x4`) draw, else only a model the
 /// reference forces them on for (a GameObject, or a spell effect whose spell sets attribute ExE
-/// `0x40000000`, `CM2Model` flag `0x4`) does (`World::ProjectTextureCallback 0x77f500`).
+/// `0x40000000`, model flag `0x4`) does (`0x77f500`).
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ProjectedTextures(pub bool);
 
 impl Default for ProjectedTextures {
-    /// A fresh install's "1" (`CWorldParam::SetDefaultProjectedTextures 0x78ddf0`).
+    /// A fresh install's "1" (`0x78ddf0`).
     fn default() -> Self {
         Self(true)
     }
@@ -406,7 +407,7 @@ impl Default for ProjectedTextures {
 /// `benilla-app`'s `farclip` default: the first-run pass's value on a modern GPU's hardware row.
 pub const FARCLIP_DEFAULT: f32 = 777.0;
 
-/// Re-derive the far wall when the map changes, as `CWorld::LoadMap` (`0x781430`) validates the
+/// Re-derive the far wall when the map changes, as the map load (`0x781430`) validates the
 /// `farclip` record against the new map id.
 pub fn revalidate_farclip(
     map: Option<Res<crate::world_map::CurrentMap>>,

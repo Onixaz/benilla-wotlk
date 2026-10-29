@@ -6,7 +6,8 @@ use bevy::prelude::*;
 use super::super::{HandGrip, HAND_GRIP_WEIGHT};
 
 /// Curls a hand's fingers (`HandsClosed`, on the finger-mask nodes over the gait) while a weapon
-/// occupies its attach point, as `CloseHand` does. Runs after [`super::drive_animations`].
+/// occupies its attach point, as the reference's hand close does. Runs after
+/// [`super::drive_animations`].
 pub(in super::super) fn drive_hand_grip(
     mut units: Query<(&HandGrip, &ModelAnimations, &mut AnimationPlayer)>,
 ) {

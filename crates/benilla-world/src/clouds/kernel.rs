@@ -127,7 +127,7 @@ impl CloudKernel {
         self.color_band(0, COLS, frame);
     }
 
-    /// One fire: noise, quantize and color `rows` rows from `scroll`, then advance.
+    /// One band regen: noise, quantize and color `rows` rows from `scroll`, then advance.
     fn regen(&mut self, density: f32, rows: usize, frame: &CloudFrame) {
         // Threshold: the reference does not clamp; authored densities stay in [0, 1].
         let threshold = ((1.0 - density.clamp(0.0, 1.0)) * 255.0) as i32;

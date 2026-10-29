@@ -1,8 +1,8 @@
 //! The trainer bindings the stock `Blizzard_TrainerUI` window calls, over the snapshot the app
-//! pushes ([`UiScript::set_trainer`]). `CGClassTrainer` keeps one array of service and header
-//! records, re-sorted by `FilterAndSortServices` (`0x594ba0`) with the visible rows first; every
-//! Lua index is 1-based into that whole array, and `GetNumTrainerServices` (`0x593d10`) counts
-//! only the visible rows.
+//! pushes ([`UiScript::set_trainer`]). The reference's trainer keeps one array of service and
+//! header records, re-sorted by its filter-and-sort (`0x594ba0`) with the visible rows first; every
+//! Lua index is 1-based into that whole array, and `GetNumTrainerServices` (`0x593d10`) counts only
+//! the visible rows.
 
 use std::collections::HashSet;
 
@@ -11,7 +11,7 @@ use mlua::{Lua, MultiValue, Value};
 use super::binding_abi;
 use super::Model;
 
-/// A service's state byte (`m_state`, `0x594260`): green learnable, red gated, gray known.
+/// A service's state byte (`0x594260`): green learnable, red gated, gray known.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TrainerServiceCategory {
     #[default]
@@ -40,7 +40,7 @@ impl TrainerServiceCategory {
     }
 }
 
-/// `GetServiceTypeFromString` (`0x593db0`): the filter bit a type string names.
+/// The service type parse (`0x593db0`): the filter bit a type string names.
 fn type_from_str(s: &str) -> Option<u32> {
     match s.to_ascii_lowercase().as_str() {
         "available" => Some(0),
@@ -153,7 +153,7 @@ pub struct TrainerState {
     pub services: Vec<TrainerService>,
     /// `SMSG_TRAINER_LIST`'s trailing string.
     pub greeting: String,
-    /// `SMSG_TRAINER_LIST`'s trainer type (`m_trainerType`): 2 is a tradeskill trainer.
+    /// `SMSG_TRAINER_LIST`'s trainer type: 2 is a tradeskill trainer.
     pub trainer_type: u32,
     /// Built by [`UiScript::set_trainer`], not pushed by the app.
     pub groups: Vec<TrainerGroup>,
@@ -161,7 +161,7 @@ pub struct TrainerState {
 
 impl super::UiScript {
     /// Push the open trainer, or clear it with `None`. A push builds the tree ([`build_groups`]);
-    /// one whose services or states moved re-runs `FilterAndSortServices`' selection pick, as the
+    /// one whose services or states moved re-runs the filter-and-sort's selection pick, as the
     /// list builder and the re-evaluator (`0x596b00`) both do.
     pub fn set_trainer(&mut self, state: Option<TrainerState>) {
         let mut model = self.model_mut();
@@ -189,7 +189,7 @@ impl super::UiScript {
         }
     }
 
-    /// Reset what each `SMSG_TRAINER_LIST` resets (`AddServices` `0x596450`): every skill line
+    /// Reset what each `SMSG_TRAINER_LIST` resets (`0x596450`): every skill line
     /// expanded and passing the line filter. The state filter is the `serviceTypeFilter` CVar,
     /// which no list touches. Call it per packet, never per snapshot.
     pub fn reset_trainer_list_state(&mut self) {
@@ -217,7 +217,7 @@ enum Row {
     Service(usize),
 }
 
-/// Folds case, raw bytes breaking ties, for `SStrSortUTF8I`.
+/// Folds case, raw bytes breaking ties, as the reference's case-insensitive UTF-8 sort.
 fn collate(a: &str, b: &str) -> std::cmp::Ordering {
     a.to_lowercase()
         .cmp(&b.to_lowercase())
@@ -226,12 +226,12 @@ fn collate(a: &str, b: &str) -> std::cmp::Ordering {
 
 const TRAINER_TYPE_TRADESKILL: u32 = 2;
 
-/// The record's required-skill value `m_skillRankReq`, 0 with no skill gate.
+/// The record's required-skill value, 0 with no skill gate.
 fn skill_value(s: &TrainerService) -> u32 {
     s.skill_req.as_ref().map_or(0, |r| r.rank)
 }
 
-/// `QSortServices_General` (`0x5947d0`): required level, skill value, name, then rank.
+/// The class trainer's service order (`0x5947d0`): required level, skill value, name, then rank.
 fn class_order(a: &TrainerService, b: &TrainerService) -> std::cmp::Ordering {
     let name = |s: &TrainerService| s.name.clone().unwrap_or_default();
     let rank = |s: &TrainerService| s.subtext.clone().unwrap_or_default();
@@ -242,7 +242,7 @@ fn class_order(a: &TrainerService, b: &TrainerService) -> std::cmp::Ordering {
         .then_with(|| collate(&rank(a), &rank(b)))
 }
 
-/// `QSortServices_Tradeskill` (`0x5949a0`): required skill value, then name.
+/// The tradeskill trainer's service order (`0x5949a0`): required skill value, then name.
 fn tradeskill_order(a: &TrainerService, b: &TrainerService) -> std::cmp::Ordering {
     let name = |s: &TrainerService| s.name.clone().unwrap_or_default();
     skill_value(a)
@@ -252,7 +252,7 @@ fn tradeskill_order(a: &TrainerService, b: &TrainerService) -> std::cmp::Orderin
 
 /// Group the services by [`TrainerService::group_key`], dropping key 0, and sort each group's rows
 /// by the type's comparator. Lines sort by raw key at a tradeskill trainer (`0x593ce0`); elsewhere
-/// a line whose every service costs points goes last, then by name (`QSortSkillLines` `0x5941b0`).
+/// a line whose every service costs points goes last, then by name (`0x5941b0`).
 fn build_groups(services: &[TrainerService], trainer_type: u32) -> Vec<TrainerGroup> {
     let mut map: std::collections::HashMap<u32, (TrainerGroup, bool)> =
         std::collections::HashMap::new();
@@ -303,7 +303,7 @@ fn type_filter(model: &Model) -> u32 {
         .map_or(3, |c| super::cvars::sstr_to_int(&c.value) as u32)
 }
 
-/// The whole record array and its visible count, as `FilterAndSortServices` (`0x594ba0`) leaves
+/// The whole record array and its visible count, as the filter-and-sort (`0x594ba0`) leaves
 /// it: a line shows when the line filter passes it and it holds a service in a filtered state; a
 /// service shows when its state passes and its line shows and is expanded; visible records sort
 /// first, by line, header first. The hidden tail's order is tree order, which `qsort` leaves
@@ -338,7 +338,7 @@ fn rows(model: &Model) -> (Vec<Row>, usize) {
     (shown, visible)
 }
 
-/// `FilterAndSortServices`' selection (`0x594ba0`): the first visible available service, else
+/// The filter-and-sort's selection (`0x594ba0`): the first visible available service, else
 /// the record at array index 1, none when that is a header.
 fn pick_selection(model: &mut Model) {
     let (all, visible) = rows(model);
@@ -421,7 +421,7 @@ fn header_key(model: &Model, index: i64) -> Option<u32> {
     }
 }
 
-/// A skill line's key by its 1-based line index, in `m_skillLines` order.
+/// A skill line's key by its 1-based line index, in skill-line order.
 fn line_key(model: &Model, index: i64) -> Option<u32> {
     let n = usize::try_from(index.checked_sub(1)?).ok()?;
     model.trainer.as_ref()?.groups.get(n).map(|g| g.key)

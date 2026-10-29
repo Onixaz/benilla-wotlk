@@ -2,7 +2,7 @@
 //!
 //! The reference arms a doodad at load (bone 0, animation id 0, `linkFlag=1`) and re-arms it every
 //! play-window with a fresh weighted variation: the watchdog fires on `now ≥ windowHi` and runs the
-//! callback that the reference installed at `[model+0x70]`, which re-arms with `variationIdx = -1`.
+//! callback the doodad arm installed at `[model+0x70]`, which re-arms with `variationIdx = -1`.
 //! Global sequences loop with no arming. The walk advances only the models the doodad drain links
 //! each frame from the drawn and faded set, and sampling is clock-indexed
 //! (`cursor = clock − startOffset`), so pausing drifts nothing.
@@ -132,7 +132,7 @@ pub fn wants_rig(m: &M2Model) -> bool {
 
 /// Spawn the animation host for one placed M2 that animates: a root at the placement transform with
 /// the collapsed [`RigPose`] and, per tier, an `AnimationPlayer` looping the loader-idle seed (the
-/// reference's load arm → `(bone 0, animation id 0, linkFlag=1)`) and/or a [`GlobalSeqDrive`].
+/// reference's load arm, `(bone 0, animation id 0, linkFlag=1)`) and/or a [`GlobalSeqDrive`].
 /// `None` keeps the static path.
 pub fn spawn_anim_host(
     commands: &mut Commands,
@@ -230,7 +230,7 @@ pub struct DoodadAnimHost {
 impl DoodadAnimHost {
     /// The armed clip's `(node, seek)` on the shared clock, `(now − armed_at) mod duration`. It
     /// answers while parked, but the reference fires no events for a doodad culled out of its
-    /// scene list (`[CM2Scene+0x20]`), so a consumer reads [`DoodadAnimHost::active`] beside it.
+    /// scene list (scene `[+0x20]`), so a consumer reads [`DoodadAnimHost::active`] beside it.
     pub fn arm_clock(&self, now: f32) -> Option<(AnimationNodeIndex, f32)> {
         let (node, duration) = self.clip?;
         // A zero-length clip has no phase to compute; it sits at its own t = 0.
@@ -249,7 +249,7 @@ impl DoodadAnimHost {
 /// for [`gate_doodad_anim`]'s resume to arm.
 ///
 /// Deviation: this runs for every resident host, where the reference stops a doodad culled out of
-/// its scene list (`[CM2Scene+0x20]`) and re-arms it at once on re-link, because gating it so would
+/// its scene list (scene `[+0x20]`) and re-arms it at once on re-link, because gating it so would
 /// re-roll the whole field on the frame the camera turns back.
 fn reroll_doodad_variation(
     time: Res<Time>,

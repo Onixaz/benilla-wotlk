@@ -1,5 +1,5 @@
 //! The `"pet"` unit token and the pet frame's events, keyed on [`PetBar`]'s pet guid: the client's
-//! `CGPetInfo::GetPet(0)`, whose writer `SetPet` fires `UNIT_PET` (`0x5d6aca`).
+//! cached pet guid, whose writer, the pet setter, fires `UNIT_PET` (`0x5d6aca`).
 
 use bevy::prelude::*;
 
@@ -34,8 +34,8 @@ pub(super) struct PetUnitMemory {
 pub(super) const UNIT_FLAG_PET_IN_COMBAT: u32 = 0x0000_0800;
 
 /// Feed the `"pet"` token and the pet frame's events. The token follows the bar's guid, as
-/// `UNIT_PET` does (`SetPet`, `0x5d6900`), not our `UNIT_FIELD_SUMMON`, so a charmed unit has a
-/// frame. The reaction is 0: the pet frame reads none.
+/// `UNIT_PET` does (the pet setter, `0x5d6900`), not our `UNIT_FIELD_SUMMON`, so a charmed unit has
+/// a frame. The reaction is 0: the pet frame reads none.
 pub(super) fn feed_pet_unit(
     script: Option<NonSendMut<UiScript>>,
     bar: Res<PetBar>,
@@ -120,9 +120,9 @@ pub(super) fn feed_pet_unit(
 
     // UNIT_PET("player") on a pet guid change (`0x5d6aca`), not on a same-pet re-send, and on any
     // move of our `UNIT_FIELD_CHARM` or `UNIT_FIELD_SUMMON`, the unit watches behind event slots 0
-    // and 2 (`ScriptEventsRegisterUnit` `0x614190`): a pet that leaves with no `SMSG_PET_SPELLS`
-    // still repaints the frame. Deviation: only the `"player"` token hears the watch, not another
-    // token naming us.
+    // and 2 (registered through `0x614190`): a pet that leaves with no `SMSG_PET_SPELLS` still
+    // repaints the frame. Deviation: only the `"player"` token hears the watch, not another token
+    // naming us.
     let summon_moved = pet.self_guid.0.is_some_and(|me| {
         use benilla_protocol::field::{FIELD_UNIT_CHARM, FIELD_UNIT_SUMMON};
         [FIELD_UNIT_CHARM, FIELD_UNIT_SUMMON]
@@ -156,15 +156,16 @@ pub(super) fn feed_pet_unit(
             );
         }
     } else {
-        // No pet, or not ours: forget the edge; the reference is not called when a unit leaves.
+        // No pet, or not ours: forget the edge; the reference's field callback is not called when a
+        // unit leaves.
         memory.in_combat = None;
     }
 }
 
-/// Drop our pet's cached name when its name timestamp moves, as the reference does from the field
-/// callback on offset `0x218`, and fire `LOCALPLAYER_PET_RENAMED`, which stock 1.12 registers
-/// (`UIParent.lua:95`) but never handles. The reference watches every unit; this watches only our
-/// pet, so another player's renamed pet keeps its old name.
+/// Drop our pet's cached name when its name timestamp moves, as the reference's name watcher does
+/// from the field callback on offset `0x218`, and fire `LOCALPLAYER_PET_RENAMED`, which stock 1.12
+/// registers (`UIParent.lua:95`) but never handles. The reference watches every unit; this watches
+/// only our pet, so another player's renamed pet keeps its old name.
 fn watch_name_timestamp(
     pet_guid: u64,
     script: &mut UiScript,
@@ -185,7 +186,8 @@ fn watch_name_timestamp(
         debug!("ui_pet: pet {pet_guid:#x} was renamed (stamp → {now:?}) — re-asking its name");
         names.forget_pet(pet_number);
     }
-    // The reference evicts for any owner but fires the event only for our charm or summon.
+    // The reference's name watcher evicts for any owner but fires the event only for our charm or
+    // summon.
     if store
         .0
         .unit_owner(benilla_protocol::OwnerFallback::SummonedBy)
@@ -200,8 +202,8 @@ pub(super) fn was_renamed(previous: Option<(u64, Option<u32>)>, now: (u64, Optio
     previous.is_some_and(|(guid, stamp)| guid == now.0 && stamp != now.1)
 }
 
-/// The in-combat flag as the reference sees it: `None` unless the unit is ours by CHARMEDBY, else
-/// SUMMONEDBY (not the reference's CREATEDBY fallback); then the flag.
+/// The in-combat flag as the reference's field callback sees it: `None` unless the unit is ours by
+/// CHARMEDBY, else SUMMONEDBY (not the possessed-unit lookup's CREATEDBY fallback); then the flag.
 pub(super) fn pet_combat_flag(store: &ObjectStore, self_guid: Option<u64>) -> Option<bool> {
     (store
         .0

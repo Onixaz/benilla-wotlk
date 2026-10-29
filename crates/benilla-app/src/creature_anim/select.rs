@@ -1,4 +1,5 @@
-//! The pure animation selection: the reference's gait picks, the one-shot tables, the rate math.
+//! The pure animation selection: the reference selector's gait picks, the one-shot tables, the rate
+//! math.
 
 use benilla_assets::AnimClip;
 use bevy::prelude::*;
@@ -53,7 +54,7 @@ pub(super) const UNIT_FLAG_LOOT_SUPPRESS: u32 = 0x1000_0000;
 pub(crate) const MOUNT_SPECIAL: u16 = 94;
 
 /// Knockdown (121), with [`LIFT_OFF`] and [`LAND`] the ids whose arm takes the base-animation lock:
-/// `PlayAnimation` refuses every base request while one holds.
+/// the unit's animation play refuses every base request while one holds.
 pub(crate) const KNOCKDOWN: u16 = 121;
 /// See [`KNOCKDOWN`]: the taxi pair takes the same lock under the reference's other bit.
 pub(crate) const LIFT_OFF: u16 = 192;
@@ -77,7 +78,7 @@ pub(crate) mod move_flags {
     /// JUMPING/FALLING: set for the whole airborne arc.
     pub const FALLING: u32 = 0x2000;
     /// `MOVEFLAG_FALLINGFAR`: a jump latches it 1/9 yd below its launch height, a step-off fall
-    /// after 500 ms airborne; only StopFalling clears it.
+    /// after 500 ms airborne; only the fall stop clears it.
     pub const FALLING_FAR: u32 = 0x4000;
     /// `MOVEFLAG_ROOT`: vmangos kicks a root-apply ack without it unless the ack still falls
     /// (`MovementHandler.cpp:715-722`); a moving bit beside it freezes the 1.12 client.
@@ -171,9 +172,9 @@ pub(crate) fn strafe_body_offset(flags: u32) -> f32 {
     }
 }
 
-/// The swim body pitch for every mover with a reported pitch: the reference's
-/// `Rz(facing)·Ry(2π − pitch)` is `Ry(yaw)·Rx(pitch)` here, nose up positive, and only SWIMMING or
-/// FLYING with forward or back pitches (`Animate` `0x71fd80`).
+/// The swim body pitch for every mover with a reported pitch: the reference's `Rz(facing)·Ry(2π −
+/// pitch)` is `Ry(yaw)·Rx(pitch)` here, nose up positive, and only SWIMMING or FLYING with forward
+/// or back pitches (the model animate, `0x71fd80`).
 pub(crate) fn swim_body_rotation(yaw: f32, flags: u32, pitch: f32) -> Quat {
     if flags & (move_flags::SWIMMING | move_flags::FLYING) != 0
         && flags & (move_flags::FORWARD | move_flags::BACKWARD) != 0
@@ -255,9 +256,9 @@ impl Special {
 }
 
 /// The landing one-shot from the flags at touchdown: JumpEnd 39 stopped, none swimming,
-/// backpedaling or walking, else JumpLandRun 187. A rooted arc end is no landing: `SetRoot` stops
-/// the fall in mid-air and the reference sends no land packet (gating opcode `0xc9`), the packet
-/// this dispatcher runs on.
+/// backpedaling or walking, else JumpLandRun 187. A rooted arc end is no landing: a root stops the
+/// fall in mid-air and the reference sends no land packet (gating opcode `0xc9`), the packet this
+/// dispatcher runs on.
 pub(super) fn jump_land_pick(flags: u32) -> Option<u16> {
     use move_flags::*;
     if flags & (SWIMMING | ROOT) != 0 {
@@ -341,8 +342,7 @@ pub(super) fn base_candidates(
 }
 
 /// The idle fallback, the chain's last resolver: the swim idle on `SWIMMING` or `FLYING`
-/// (`ChooseDefaultAnim` `0x71e340`), else the prowl idle, else Stand. The hover idle (193) is not
-/// modelled.
+/// (`0x71e340`), else the prowl idle, else Stand. The hover idle (193) is not modelled.
 fn idle_fallback(state: &MovementState) -> &'static [u16] {
     if state.flags & (move_flags::SWIMMING | move_flags::FLYING) != 0 {
         &[41, 0]
@@ -364,8 +364,8 @@ fn claimed_candidates(
 ) -> Option<&'static [u16]> {
     use move_flags::*;
     let f = state.flags;
-    // A flyer is a swimmer to every arm here (`ChooseMovementAnim` `0x717050`); a flying mount's
-    // flight cycles sit in the swim slots.
+    // A flyer is a swimmer to every arm here (`0x717050`); a flying mount's flight cycles sit in
+    // the swim slots.
     let swimming = f & (SWIMMING | FLYING) != 0;
     // Swimming locomotion: turn, then strafe, then backward, then forward.
     if swimming && f & ANY_MOVE != 0 {
@@ -474,9 +474,10 @@ pub(super) fn ranged_hold_anim(load: u16) -> u16 {
     }
 }
 
-/// Whether the drawn ranged idle owns the standing pose: the reference claims on sheath CUR == 2
-/// and the auto-repeat bit `[+0xd58] & 0x200` alone, a bit only the local cast-send sets. `0x400`
-/// ([`super::RangedHold`]) is not tested here, only by the reference's Hold sustain.
+/// Whether the drawn ranged idle owns the standing pose: the reference's ranged-idle resolver
+/// claims on sheath CUR == 2 and the auto-repeat bit `[+0xd58] & 0x200` alone, a bit only the local
+/// cast-send sets. `0x400` ([`super::RangedHold`]) is not tested here, only by the completion
+/// dispatcher's Hold sustain.
 pub(super) fn ranged_idle_gate(auto_repeat: bool, sheath_cur: Option<u8>) -> bool {
     sheath_cur == Some(2) && auto_repeat
 }
@@ -501,7 +502,7 @@ pub(super) fn defense_anim(victim_state: u32, main: Option<(u8, u8)>) -> Option<
     }
 }
 
-/// `PlayAnimation`'s substitution: Special1H/2H (57/58) becomes SpecialUnarmed (118) when both
+/// The animation play's substitution: Special1H/2H (57/58) becomes SpecialUnarmed (118) when both
 /// hands are empty; a non-weapon in hand keeps the clip.
 pub(super) fn unarmed_special(id: u16, main: Option<(u8, u8)>, off: Option<(u8, u8)>) -> u16 {
     if matches!(id, 57 | 58) && main.is_none() && off.is_none() {
@@ -789,7 +790,7 @@ pub(super) fn gait_is_locomotion(state: &MovementState, walk_speed: f32) -> bool
 }
 
 /// A clip's rate, the reference's `speed / (moveSpeed · ‖row0‖)`, 1× unless the divisor is positive
-/// and the id rate-scaled. `‖row0‖` is the rendered scale of the model playing it (`CGUnit+0x90`,
+/// and the id rate-scaled. `‖row0‖` is the rendered scale of the model playing it (`unit+0x90`,
 /// `OBJECT_FIELD_SCALE_X`, times a mount's display scale `+0x9c`), the mount's model when mounted;
 /// the spell-visual factor `+0x94` (`[0.75, 2.0]`) has no producer yet and must join here.
 pub(super) fn playback_rate(clip: &AnimClip, speed: f32, model_scale: f32) -> f32 {

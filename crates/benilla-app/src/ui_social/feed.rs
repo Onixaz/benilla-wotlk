@@ -18,9 +18,9 @@ use crate::ui_action::{MessageSink, Shown, UiError};
 
 use super::{name_pushes, result_key, row_guid, status_flag_key, Friend, SocialState};
 
-/// The chat-routed `/who` templates (`PrintWho` `0x6b5030`, the count at `0x6b8912`). FrameXML
-/// never names them: the engine prints these lines itself. None is a message-catalog row, so they
-/// go out through `Shown::unkeyed`, since `Shown::keyed` turns an unknown key's line red.
+/// The chat-routed `/who` templates (`0x6b5030`, the count at `0x6b8912`). FrameXML never names
+/// them: the engine prints these lines itself. None is a message-catalog row, so they go out
+/// through `Shown::unkeyed`, since `Shown::keyed` turns an unknown key's line red.
 const WHO_KEYS: [&str; 3] = [
     "WHO_LIST_FORMAT",
     "WHO_LIST_GUILD_FORMAT",
@@ -127,7 +127,7 @@ pub(crate) fn feed_social(
         who_sort: social.who_sort.clone(),
     });
 
-    // A changed list announces itself once every name on it has resolved, as `ReadPacket`
+    // A changed list announces itself once every name on it has resolved, as the packet read
     // (`0x6b7dd0`) holds each event until its pending-name count drains (`0x6b3d90`).
     let first = !fed.seeded;
     fed.seeded = true;
@@ -233,8 +233,8 @@ fn who_lines(rows: &[WhoInfo], sent: u32, text: &dyn Fn(&str) -> String) -> Vec<
     lines
 }
 
-/// The friend rows in `QSortFriends` order (`0x6b3960`): online first, then by name with unnamed
-/// rows last; their guids in the same order for the drain; and whether every name resolved.
+/// The friend rows in the reference's sort order (`0x6b3960`): online first, then by name with
+/// unnamed rows last; their guids in the same order for the drain; and whether every name resolved.
 fn friend_rows(
     social: &SocialState,
     names: &NameCache,
@@ -301,9 +301,9 @@ fn friend_area(areas: &AreaTableCatalog, area: u32) -> Option<String> {
     Some(shown.name.clone())
 }
 
-/// An ignore or mute list's names in `QSortIgnore` order (`0x6b3a60`): resolved names first, then
-/// by byte order (`SStrCmp`, case-sensitive); unresolved names are empty. Also the guids in that
-/// order and whether every name resolved.
+/// An ignore or mute list's names in the reference's sort order (`0x6b3a60`): resolved names first,
+/// then by byte order (a case-sensitive compare); unresolved names are empty. Also the guids in
+/// that order and whether every name resolved.
 fn list_rows(
     guids: &[u64],
     names: &NameCache,
@@ -333,9 +333,8 @@ fn who_rows(social: &SocialState, names: &WhoNames) -> Vec<WhoInfo> {
     rows
 }
 
-/// `GetDisplayRaceNameFromRecord`/`GetDisplayClassNameFromRecord` (`0x715970`, `0x7159e0`): the
-/// gender's own column, else the other gender's, else `Name_lang`; a gender past 1 takes
-/// `Name_lang`.
+/// The race and class display names (`0x715970`, `0x7159e0`): the gender's own column, else the
+/// other gender's, else `Name_lang`; a gender past 1 takes `Name_lang`.
 fn gendered<'a>(name: &'a str, female: &'a str, male: &'a str, gender: u8) -> &'a str {
     let order = match gender {
         0 => [male, female],

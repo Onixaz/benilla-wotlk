@@ -77,7 +77,7 @@ fn an_autofocus_box_takes_the_keyboard_when_it_is_shown() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// Focus on show takes both halves of `= 0 && (flags & 1)`: no focus held, and autoFocus.
+/// Focus on show takes both halves of `focus == 0 && (flags & 1)`: no focus held, and autoFocus.
 #[test]
 fn the_show_focus_is_refused_without_autofocus_or_with_the_keyboard_taken() {
     let s = script();
@@ -590,7 +590,7 @@ fn alt_arrow_key_mode_is_the_flag_and_the_engine_core_no_longer_swallows_moves()
         "the set arm pushes the double 1.0, not a boolean"
     );
 
-    // `GetBoolOrDefault` (default 1), arm by arm; three are backwards under Lua truthiness.
+    // The boolean read with default 1, arm by arm; three are backwards under Lua truthiness.
     for (arg, want) in [
         ("", Some(1)),      // absent -> the default 1 -> enabled
         ("nil", None),      // nil -> 0
@@ -1225,7 +1225,7 @@ fn caret_blinks_on_tick_and_resets_on_edit() {
     assert!(s.focused_editbox_text_ui().unwrap().caret_on);
 }
 
-// ── a hyperlink is one keypress (`AdvanceTokens`) ─────────────────────
+// ── a hyperlink is one keypress (the token advance) ─────────────────────
 //
 // Driven through the keyboard API: a Backspace that took only the link's trailing `|r` would
 // colour everything typed after it.

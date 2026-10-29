@@ -40,8 +40,8 @@ pub(super) struct EntityPart {
     /// room: the plain day/night matte, sun ×1.0. A WMO part's interior is baked into `material`.
     pub(super) material_interior: Option<Handle<WowModelMaterial>>,
     /// The interior-prop variant, whose `MeshTag` the shader reads as an SH-probe slot. Units and
-    /// GameObjects alike take it: the reference registers every entity M2 with one entity-node fill
-    /// (`Node::SetModel`), so one law lights them all indoors.
+    /// GameObjects alike take it: the reference registers every entity M2 with one entity-node
+    /// fill, so one law lights them all indoors.
     pub(super) material_interior_bake: Option<Handle<WowModelMaterial>>,
     /// The bake variant's blend form, so a fading bake-lit part keeps its probe light.
     pub(super) material_interior_bake_blend: Option<Handle<WowModelMaterial>>,

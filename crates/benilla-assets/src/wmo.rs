@@ -86,7 +86,7 @@ pub struct WmoModel {
     /// Per-group MOGI interior flag and box, in WMO model space.
     pub group_bounds: Vec<WmoGroupInfo>,
     /// Per-MODD lighting base, parallel to [`Self::doodads`]. A MODD doodad never takes the
-    /// footprint down-ray: its create never calls `SetMatrix`.
+    /// footprint down-ray: its create never sets the doodad's matrix.
     pub doodad_base: Vec<DoodadBase>,
     /// Per-MODD first referencing group, whose MOLR set the interior lane folds; the
     /// interior/exterior class reads [`Self::doodad_groups`].

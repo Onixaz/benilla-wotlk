@@ -307,8 +307,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The reference never resolves `this`: the number 1 or nil, from a player, a cached record and
-    // no save pending, not a would-it-succeed test.
+    // The reference's `CanSaveTabardNow` never resolves `this`: the number 1 or nil, from a player,
+    // a cached record and no save pending, not a would-it-succeed test.
     m.set(
         "CanSaveTabardNow",
         lua.create_function(|lua, _: mlua::MultiValue| {

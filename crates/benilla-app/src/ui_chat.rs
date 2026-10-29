@@ -112,9 +112,9 @@ impl Plugin for UiChatPlugin {
             )
             // Only against the in-game VM: the drain takes the whole queue and fires every line, so
             // a VM with no ChatFrame destroys them. After the unit and guild feeds, as in the
-            // reference: login-burst chat is queued behind the latch and drains, after
-            // `PLAYER_LOGIN` and `PLAYER_ENTERING_WORLD`, while `GUILD_MOTD` fires on arrival, so
-            // the guild line precedes the welcome.
+            // reference: login-burst chat is queued behind a latch and drains after `PLAYER_LOGIN`
+            // and `PLAYER_ENTERING_WORLD`, while `GUILD_MOTD` fires on arrival, so the guild line
+            // precedes the welcome.
             .add_systems(
                 Update,
                 feed::feed_chat
@@ -162,7 +162,8 @@ impl Plugin for UiChatPlugin {
             // The zone-channel auto-join, which vmangos leaves to the client. The disconnect clear
             // runs first, so a same-frame drop cannot leave the walk diffing stale membership.
             // After `AreaAuthoritySet`, since a stale area joins and leaves the wrong channels. The
-            // guild-recruitment cascade follows the walk: it is the tail of `ZoneChannelRefresh`.
+            // guild-recruitment cascade follows the walk: it is the tail of the zone-channel
+            // refresh.
             .add_systems(
                 Update,
                 (

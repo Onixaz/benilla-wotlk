@@ -69,10 +69,10 @@ const STUCK: f32 = 1.0 / 360.0;
 /// The approach in flight, and the verb an arrival owes.
 #[derive(Resource, Default)]
 pub(crate) struct Approach {
-    /// `AutoInteract`, `CanAutoInteract`'s last term.
+    /// `AutoInteract`, the auto-interact check's last term.
     pub(crate) enabled: bool,
     goal: Option<Goal>,
-    /// The pending cells fills.
+    /// The pending cells the arrival fills for the dispatcher.
     pub(crate) arrived: Option<(ApproachVerb, u64)>,
 }
 
@@ -122,7 +122,7 @@ impl Toward {
 
 struct Goal {
     toward: Toward,
-    /// .
+    /// The stop distance.
     stop: f32,
     /// Latched by the first turn.
     turn_rate: Option<f32>,
@@ -136,7 +136,7 @@ struct Goal {
 }
 
 impl Approach {
-    /// The reference's for this mode family: an approach is in flight.
+    /// The reference's auto-move test for this mode family: an approach is in flight.
     pub(crate) fn active(&self) -> bool {
         self.goal.is_some()
     }
@@ -158,7 +158,7 @@ impl Approach {
     }
 }
 
-/// `CanAutoInteract`: alive, driving our own body, and the option on.
+/// The auto-interact check: alive, driving our own body, and the option on.
 pub(crate) fn can_auto_interact(enabled: bool, me: Option<&ObjectStore>, player: &Player) -> bool {
     enabled
         && me.is_some_and(|s| s.0.unit_health().unwrap_or(0) > 0)
@@ -166,7 +166,7 @@ pub(crate) fn can_auto_interact(enabled: bool, me: Option<&ObjectStore>, player:
         && !player.control_lost
 }
 
-/// The start: the gates (`CanAutoInteract` for the rest) and the arm.
+/// The start: the gates (the auto-interact check for the rest) and the arm.
 #[derive(SystemParam)]
 pub(crate) struct AutoMove<'w, 's> {
     pub(crate) approach: ResMut<'w, Approach>,
@@ -242,12 +242,12 @@ impl AutoMove<'_, '_> {
         true
     }
 
-    /// The reference's walk, for an attack on an enemy out of melee: to where it stands, stopping
-    /// `stop` short. Deviation: the reference re-projects the point's height onto the first
-    /// walkable facet a zero-size box gather finds at the enemy; here it keeps the enemy's height.
-    /// The snap radius is the stop, so the two differ only while swimming or on a steep facet.
-    /// Deviation: the reference stores the world point unconverted and reads it back as deck-local,
-    /// so on a transport it walks astray; here it rides the deck.
+    /// The reference's melee walk, for an attack on an enemy out of melee: to where it stands,
+    /// stopping `stop` short. Deviation: the reference re-projects the point's height onto the
+    /// first walkable facet a zero-size box gather finds at the enemy; here it keeps the enemy's
+    /// height. The snap radius is the stop, so the two differ only while swimming or on a steep
+    /// facet. Deviation: the reference stores the world point unconverted and reads it back as
+    /// deck-local, so on a transport it walks astray; here it rides the deck.
     pub(crate) fn walk_into_melee(&mut self, at: Vec3, stop: f32) -> Result<(), Refused> {
         if !self.can_auto_interact() {
             return Err(Refused::Silent);
@@ -377,7 +377,7 @@ pub(super) fn steer_approach(
     let Some(goal) = approach.goal.as_mut() else {
         return;
     };
-    // `GetCurrentSpeed` on last frame's word, as the reference reads the mover's own.
+    // The current speed off last frame's word, as the reference reads the mover's own.
     let speed = mover
         .single()
         .map_or(0.0, |s| crate::net::current_speed(&s.0, player.move_flags));
@@ -571,7 +571,7 @@ mod tests {
         assert!((goal_distance_sq(melee, 1.9, beyond, 14.0, false) - 20.0).abs() < 1e-4);
     }
 
-    /// .
+    /// The sky walk's swim pitch off its ray: straight up or down when steep, level when shallow.
     #[test]
     fn the_sky_swim_pitch_clamps_steep_and_levels_shallow() {
         assert_eq!(sky_pitch(0.9), FRAC_PI_2);
@@ -840,7 +840,7 @@ mod tests {
         assert!(app.world().resource::<Approach>().arrived.is_none());
     }
 
-    /// The ground row has no leash (0): a point past 80 yd still walks.
+    /// The ground row has no leash (its entry is 0): a point past 80 yd still walks.
     #[test]
     fn a_ground_walk_has_no_leash() {
         let mut app = world(Vec3::new(14.0, 0.0, 0.0), 0);
@@ -964,7 +964,7 @@ mod tests {
         assert!(follow::wrap_pi(player.face_yaw - follow::bearing_to(enemy)).abs() < 1e-3);
     }
 
-    /// The reference on a turning deck: the point turns with it.
+    /// The deck-to-world carry on a turning deck: the point turns with it.
     #[test]
     fn a_ground_point_on_a_turning_transport_turns_with_it() {
         let mut app = world(Vec3::new(40.0, 0.0, 0.0), 0);

@@ -1,5 +1,5 @@
 //! `SoundEntries.dbc`, the sound-kit table every audio trigger resolves through: up to 10 weighted
-//! variation files with volume, flags and distances. Kits play by id or by name: `PlaySoundByName`,
+//! variation files with volume, flags and distances. Kits play by id or by name: the by-name play,
 //! behind Lua's `PlaySound`, hashes the name into this table.
 //!
 //! 30 fields and 120-byte records in 12340: 5875's 29, then `SoundEntriesAdvancedID`, set on
@@ -31,7 +31,7 @@ pub struct SoundKit {
     /// The kit's category (1 spells, 2 UI, 3 footsteps, 28 zone music, 50 zone ambience), which
     /// picks the volume category.
     pub sound_type: u32,
-    /// The `PlaySoundByName` key (`"igMainMenuOpen"`, `"LevelUp"`).
+    /// The by-name key (`"igMainMenuOpen"`, `"LevelUp"`).
     pub name: String,
     /// Non-empty variations as `(MPQ path, Freq[i] weight)`, `DirectoryBase` and `File[i]` joined
     /// as the reference joins them.
@@ -68,7 +68,7 @@ impl SoundKitCatalog {
         self.kits.get(&id)
     }
 
-    /// A kit by its `Name`, ignoring case, as `PlaySoundByName` finds it.
+    /// A kit by its `Name`, ignoring case, as the by-name play finds it.
     pub fn by_name(&self, name: &str) -> Option<&SoundKit> {
         self.by_name
             .get(&name.to_ascii_lowercase())
@@ -139,10 +139,10 @@ impl SoundKitCatalog {
 }
 
 /// The ghost and underwater ambience rows, `(ghost, underwater)`. It walks the table from the last
-/// row down, comparing each name with the reference at length `0x7fffffff`, which is `strncmp`:
-/// exact, case-sensitive, the whole string with its terminator, so neither a case variant nor a
-/// prefix matches (the ignore-case is not used here). A match stores the row's id, later rows down
-/// overwriting, and the walk ends when both are set.
+/// row down, comparing each name at length `0x7fffffff`, which is `strncmp`: exact, case-sensitive,
+/// the whole string with its terminator, so neither a case variant nor a prefix matches (the
+/// ignore-case compare is not used here). A match stores the row's id, later rows down overwriting,
+/// and the walk ends when both are set.
 fn resolve_forced_beds(rows: &[SoundKit]) -> (Option<u32>, Option<u32>) {
     let (mut ghost, mut underwater) = (None, None);
     for kit in rows.iter().rev() {
@@ -182,8 +182,8 @@ pub(crate) fn sound_entries_schema() -> Schema {
     s
 }
 
-/// `DirectoryBase` and `File[i]` joined as the reference does (called only from the reference in
-/// the `SOUNDDEFINITION` loader): `"%s%s%s"` over dir, separator and file, with no separator when
+/// `DirectoryBase` and `File[i]` joined as the reference does (its one caller is in the
+/// `SOUNDDEFINITION` loader): `"%s%s%s"` over dir, separator and file, with no separator when
 /// the dir is empty or already ends in `\`. Nothing below normalizes further: the archive hash
 /// folds case and maps `/` to `\` but keeps leading and doubled separators, and there is no
 /// loose-file fallback for a single leading `\`.
@@ -302,9 +302,9 @@ mod tests {
         assert!(cat.by_name("Ghost").is_none());
     }
 
-    /// The reference at length `0x7fffffff` is `strncmp` over the whole string: a case variant, a
-    /// prefix or an extension of the name is another row, and the ignore-case name registry does
-    /// not decide it.
+    /// The reference's compare at length `0x7fffffff` is `strncmp` over the whole string: a case
+    /// variant, a prefix or an extension of the name is another row, and the ignore-case name
+    /// registry does not decide it.
     #[test]
     fn the_forced_beds_match_the_exact_name_only() {
         let cat = SoundKitCatalog::named_for_tests(&[
@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(
             cat.by_name("GHOST").map(|k| k.id),
             Some(3),
-            "PlaySoundByName folds case"
+            "the by-name lookup folds case"
         );
 
         let cat = SoundKitCatalog::named_for_tests(&[

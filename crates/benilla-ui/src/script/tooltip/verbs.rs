@@ -389,7 +389,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     // Show and Hide are the shared pair: the visibility cascade runs the tooltip's overrides
-    // (`ShowThis` `0x61cff0`, `HideThis` `0x61eb20`).
+    // (show `0x61cff0`, hide `0x61eb20`).
 
     // The content methods: items, spells and auras, talents, units.
     crate::script::tooltip_item::install_methods(lua, &m)?;
@@ -405,8 +405,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The twelve-name compare chain SetOwner and SetAnchorType share (`SStrCmpI`, `0x61ec8f`): any
-/// case, and a value that is not a string or number, or matches no name, is mode 0. The warning
+/// The twelve-name compare chain SetOwner and SetAnchorType share (case-insensitive, `0x61ec8f`):
+/// any case, and a value that is not a string or number, or matches no name, is mode 0. The warning
 /// on an unknown name is ours; Lua sees no difference.
 fn parse_anchor(lua: &Lua, verb: &str, anchor: &Value) -> TooltipAnchor {
     let Some(name) = optional_string(lua, anchor) else {

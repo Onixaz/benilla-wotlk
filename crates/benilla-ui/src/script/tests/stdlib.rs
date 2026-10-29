@@ -336,7 +336,7 @@ fn time_is_epoch_seconds_and_date_formats_them() {
 
 // ── RunScript ──
 
-/// `RunScript` hands its string to `FrameScript_Execute` as both code and chunk name, so
+/// `RunScript` hands its string to the script layer's execute as both code and chunk name, so
 /// `luaO_chunkid` reports it as `[string "…"]`.
 #[test]
 fn a_runscript_chunk_is_named_by_its_own_source() {

@@ -535,8 +535,8 @@ const COOLDOWN_COUNT_HOOK: &str = r#"
 
 /// `BonusActionButtonTemplate`'s OnLoad raises the button by 2, then its cooldown by 2
 /// (BonusActionBarFrame.xml:13-15). A script level change carries the frame's same-strata
-/// children by the same step (`Method_SetFrameLevel` `0x49e9d0` passes 1 to
-/// `CSimpleFrame::SetFrameLevel` `0x4910a0`), so the cooldown ends three levels over its button.
+/// children by the same step (the `SetFrameLevel` method `0x49e9d0` passes 1 to the frame's level
+/// setter `0x4910a0`), so the cooldown ends three levels over its button.
 #[test]
 fn the_bonus_buttons_cooldown_sits_three_levels_over_it() {
     benilla_formats::wow_data_or_skip!();
@@ -605,8 +605,8 @@ fn every_mouse_button_uses_the_action() {
 }
 
 /// The click path never picks up: a shift-click uses the action like any click, and with a payload
-/// held the same `UseAction` places it (`CGActionBar::UseAction`, `0x5abbc0`, which reads the
-/// cursor and no modifier). Picking up is the drag's (ActionBarFrame.xml:18-24).
+/// held the same `UseAction` places it (`0x5abbc0`, which reads the cursor and no modifier).
+/// Picking up is the drag's (ActionBarFrame.xml:18-24).
 #[test]
 fn a_shift_click_uses_and_a_held_payload_places() {
     benilla_formats::wow_data_or_skip!();
@@ -1206,7 +1206,7 @@ fn state_events_leave_empty_wells_untinted() {
 }
 
 /// A slot going empty draws no plate: the empty arm hides the icon (ActionButton.lua:168), and a
-/// texture-less region never draws, whatever its tint (the reference gates on `+0xcc`).
+/// texture-less region never draws, whatever its tint (the texture draw gates on `+0xcc`).
 #[test]
 fn an_occupied_slot_going_empty_leaves_no_white_plate() {
     benilla_formats::wow_data_or_skip!();

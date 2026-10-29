@@ -6,11 +6,11 @@
 //! `TargetNearestEnemy()` then `/cast` casts at the new target.
 //!
 //! Every movement function but the mouselook three opens on the hardware-event gate with tag 0.
-//! Untainted, it passes only inside a real input event, which for a binding body is
-//! `CBindings::ExecuteBinding` on the stack; tainted code (a macro, `RunScript`, an addon's own) is
-//! refused. So a key's body moves and a `/script MoveForwardStart()` does not. benilla has no taint
-//! model, so here the gate is "a binding body is running" ([`UiScript::execute_binding`]), which
-//! refuses the same callers, silently where the reference fires `MACRO_ACTION_FORBIDDEN` (431) or
+//! Untainted, it passes only inside a real input event, which for a binding body is the binding
+//! executor on the stack; tainted code (a macro, `RunScript`, an addon's own) is refused. So a
+//! key's body moves and a `/script MoveForwardStart()` does not. benilla has no taint model, so
+//! here the gate is "a binding body is running" ([`UiScript::execute_binding`]), which refuses the
+//! same callers, silently where the reference fires `MACRO_ACTION_FORBIDDEN` (431) or
 //! `ADDON_ACTION_FORBIDDEN` (432). The camera table and the main-table verbs have no gate.
 
 use mlua::{Lua, MultiValue, Value};
@@ -72,7 +72,7 @@ pub enum FiredInput {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum BindingInput {
     Start(HeldInput),
-    /// A Stop and `UnsetControlBit`'s keep-smoothing argument (`0x5fa450`), set only by
+    /// A Stop and the control-bit clear's keep-smoothing argument (`0x5fa450`), set only by
     /// `CameraOrSelectOrMoveStop`'s sticky flag: the camera then skips its return behind the
     /// character until a look ends without it (`0x604850` sets the camera's `0x20`).
     Stop(HeldInput, bool),
@@ -99,8 +99,8 @@ impl UiScript {
         drain_field!(self, input.queue)
     }
 
-    /// Run a binding body as `CBindings::RunCommand` does from inside `ExecuteBinding`: the
-    /// movement functions' hardware-event gate passes while it runs.
+    /// Run a binding body as the binding executor's command run does: the movement functions'
+    /// hardware-event gate passes while it runs.
     pub fn run_binding(&self, chunk: &str) -> mlua::Result<()> {
         self.model_mut().input.binding_depth += 1;
         let result = self.run(chunk);
@@ -108,8 +108,8 @@ impl UiScript {
         result
     }
 
-    /// `CBindings::ExecuteBinding` once the chord has resolved to `command`: its `RunCommand` with
-    /// the hardware-event gate raised, a press when `down`, else the release, which runs only a
+    /// The binding executor once the chord has resolved to `command`: its command run with the
+    /// hardware-event gate raised, a press when `down`, else the release, which runs only a
     /// `runOnUp` body. `Ok(false)` when nothing ran: no such command, or a release of one that is
     /// not `runOnUp`.
     pub fn execute_binding(&self, command: &str, down: bool) -> mlua::Result<bool> {
@@ -150,9 +150,9 @@ fn push_call(lua: &Lua, call: ScriptCall) {
     model.script_calls.push(call);
 }
 
-/// A zoom's optional amount: (is-number, a numeric string passes) then, else the stored `1.0f`. A
-/// NaN or infinite amount is dropped: what the reference's tick conversion makes of it is not
-/// established.
+/// A zoom's optional amount: `is-number` (a numeric string passes) then `tonumber`, else the stored
+/// `1.0f`. A NaN or infinite amount is dropped: what the reference's tick conversion makes of it is
+/// not established.
 fn zoom_amount(lua: &Lua, v: Option<Value>) -> Option<f32> {
     let n = match v {
         Some(v) => lua.coerce_number(v).ok().flatten().unwrap_or(1.0),
@@ -178,8 +178,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ── The movement table ────────────────────────────────────────────────────── Each Start/Stop,
     // then `(bit, set, time, 0)`; nothing is returned, and no argument is read but
-    // `CameraOrSelectOrMoveStop`'s sticky flag (`0x5fc730` reads it with
-    // `GetBoolOrDefault(L, 1, 0)` at `0x5fc757`), which rides its Stop.
+    // `CameraOrSelectOrMoveStop`'s sticky flag (`0x5fc730` reads argument 1 as a boolean with
+    // default 0, at `0x5fc757`), which rides its Stop.
     let held: [(&str, &str, HeldInput); 8] = [
         (
             "MoveForwardStart",
@@ -253,7 +253,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
     // 3.3.5a's vertical pair, which replaced 1.12's one-shot `Jump`, each a zero-result call
-    // behind the hardware-event gate (`CanPerformAction(0)`). `JumpOrAscendStart` (`0x5fbf80`)
+    // behind the hardware-event gate (tag 0). `JumpOrAscendStart` (`0x5fbf80`)
     // sets the ascend bit, then jumps off a mover neither swimming nor flying; `AscendStop`
     // (`0x5fc0a0`) and `DescendStop` (`0x5fc140`) clear their bit. Each bit change resyncs the
     // vertical channel (`0x5fbbc0` → `0x5face0`), which only a swimming or flying mover reads.
@@ -361,9 +361,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         ],
     )?;
 
-    // ── The main table ────────────────────────────────────────────────────────── The four
-    // `TargetNearest*` shims are byte-identical but for the mode: argument 1 through the reference
-    // with default 0 is the reverse flag, then `(reverse, mode)`.
+    // ── The main table ──────────────────────────────────────────────────────────────────────
+    // The four `TargetNearest*` shims are byte-identical but for the mode: argument 1, read as a
+    // boolean with default 0, is the reverse flag, then the nearest-target call takes
+    // `(reverse, mode)`.
     let nearest: [(&str, NearestMode); 4] = [
         ("TargetNearestEnemy", NearestMode::Enemy),
         ("TargetNearestFriend", NearestMode::Friend),
@@ -492,8 +493,8 @@ mod tests {
         }
     }
 
-    /// `CameraOrSelectOrMoveStop(sticky)` hands its flag through `GetBoolOrDefault(L, 1, 0)`
-    /// (`0x5fc757`); every other Stop passes 0, whatever it is given.
+    /// `CameraOrSelectOrMoveStop(sticky)` hands its flag through the boolean coercion with default
+    /// 0 (`0x5fc757`); every other Stop passes 0, whatever it is given.
     #[test]
     fn the_camera_stop_carries_its_sticky_flag() {
         let mut s = UiScript::new().unwrap();

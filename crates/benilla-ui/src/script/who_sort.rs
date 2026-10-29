@@ -2,8 +2,8 @@
 //! slots (`0xc79f9c`/`0xc79fa0`), seeded zone, level, class, group, name, race, guild, all
 //! ascending (`0x6b8a64`-`0x6b8a8e`). A click promotes its key to the front and the comparator
 //! walks the chain as tie-breakers, so earlier clicks still order ties. The direction flips only
-//! when the key was already in front (`0x6b4fb3`-`0x6b4fc5`); promoted from behind, it keeps its old
-//! direction. Sorting is local, never a server request, and `FriendList::Initialize` reseeds the
+//! when the key was already in front (`0x6b4fb3`-`0x6b4fc5`); promoted from behind, it keeps its
+//! old direction. Sorting is local, never a server request, and the friend list's setup reseeds the
 //! chain at every world entry (`0x405653`).
 
 use std::cmp::Ordering;
@@ -46,8 +46,8 @@ impl WhoSortKey {
         Self::Guild,
     ];
 
-    /// `SortWho`'s argument to its key: seven ASCII case-insensitive compares (`SStrCmpI`
-    /// `0x76e780`), [`Self::Name`] when none match.
+    /// `SortWho`'s argument to its key: seven ASCII case-insensitive compares (`0x76e780`),
+    /// [`Self::Name`] when none match.
     pub fn from_sort_type(sort_type: &str) -> Self {
         match () {
             _ if sort_type.eq_ignore_ascii_case("name") => Self::Name,
@@ -154,8 +154,8 @@ fn code(c: char) -> u32 {
     }
 }
 
-/// `SStrCmpUTF8I`'s fold (`0x76e8d0`): ASCII and Latin-1 lower case up, `œ` to `Œ`, and the
-/// Cyrillic letters folded so `Ё` and `ё` compare as `Е`.
+/// The UTF-8 case-insensitive compare's fold (`0x76e8d0`): ASCII and Latin-1 lower case up, `œ` to
+/// `Œ`, and the Cyrillic letters folded so `Ё` and `ё` compare as `Е`.
 fn cmp_upper(c: u32) -> u32 {
     match c {
         0x61..=0x7A | 0xE0..=0xFE => c - 32,
@@ -167,13 +167,15 @@ fn cmp_upper(c: u32) -> u32 {
     }
 }
 
-/// `SStrCmpUTF8I`, the name arm: folded code points in order, a shorter string first.
+/// The UTF-8 case-insensitive compare, the name arm: folded code points in order, a shorter string
+/// first.
 pub(crate) fn cmp_utf8i(a: &str, b: &str) -> Ordering {
     let fold = |s: &str| s.chars().map(|c| cmp_upper(code(c))).collect::<Vec<_>>();
     fold(a).cmp(&fold(b))
 }
 
-/// `SStrSortUTF8I`'s fold (`0x76e7a0`): ASCII, Latin-1 and Cyrillic lower case up, `œ` to `Œ`.
+/// The UTF-8 sort compare's fold (`0x76e7a0`): ASCII, Latin-1 and Cyrillic lower case up, `œ` to
+/// `Œ`.
 fn sort_upper(c: u32) -> u32 {
     match c {
         0x61..=0x7A | 0xE0..=0xFE | 0x430..=0x44F => c - 32,
@@ -183,7 +185,7 @@ fn sort_upper(c: u32) -> u32 {
     }
 }
 
-/// `GetSortChar` (`0x76eab0`): accented Latin capitals to their base letter, `Ё` to `Е`.
+/// The sort letter (`0x76eab0`): accented Latin capitals to their base letter, `Ё` to `Е`.
 fn sort_char(upper: u32) -> u32 {
     match upper {
         0xC0..=0xC6 => 'A' as u32,
@@ -199,7 +201,7 @@ fn sort_char(upper: u32) -> u32 {
     }
 }
 
-/// `CompareSortChars` (`0x76eb80`): two letters match on their base letter, and a ligature
+/// The sort-letter compare (`0x76eb80`): two letters match on their base letter, and a ligature
 /// (`Æ`, `ß`, `Œ`) also takes the other string's next `E`, `S` or `E`.
 fn sort_chars_match(
     upper1: u32,
@@ -228,8 +230,8 @@ fn sort_chars_match(
     }
 }
 
-/// `SStrSortUTF8I` (`0x76ec80`), the guild, class, race and zone arms: by base letter, and two
-/// strings equal so far by the first differing raw code point.
+/// The UTF-8 sort compare (`0x76ec80`), the guild, class, race and zone arms: by base letter, and
+/// two strings equal so far by the first differing raw code point.
 pub(crate) fn sort_utf8i(a: &str, b: &str) -> Ordering {
     let (mut s1, mut s2) = (a.chars().peekable(), b.chars().peekable());
     let mut tie = Ordering::Equal;
@@ -403,7 +405,8 @@ mod tests {
         assert_eq!(names(&rows), ["Bbb", "Aaa"], "Mage before Warrior");
     }
 
-    /// The name arm is `SStrCmpUTF8I`: case folded over ASCII and Latin-1, then by code point.
+    /// The name arm is the UTF-8 case-insensitive compare: case folded over ASCII and Latin-1, then
+    /// by code point.
     #[test]
     fn the_name_arm_folds_latin_1_case() {
         assert_eq!(cmp_utf8i("Apple", "apple"), Ordering::Equal);
@@ -414,8 +417,8 @@ mod tests {
         assert_eq!(cmp_utf8i("Éa", "Zb"), Ordering::Greater);
     }
 
-    /// The record and guild arms are `SStrSortUTF8I`: by base letter, ligatures spelled out, the
-    /// raw code point only breaking a tie.
+    /// The record and guild arms are the UTF-8 sort compare: by base letter, ligatures spelled out,
+    /// the raw code point only breaking a tie.
     #[test]
     fn the_sort_arm_orders_accents_by_their_base_letter() {
         assert_eq!(sort_utf8i("Éa", "Zb"), Ordering::Less, "É sorts as E");

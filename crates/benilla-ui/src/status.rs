@@ -1,7 +1,6 @@
-//! The reference's load status (`CStatus`, `Status.cpp`, entries `{text, severity}`): each level of
-//! a UI load (the add-on, its `.toc`, each XML document) reports into a record of its own, which is
-//! merged into its caller's when it closes and drained, line by line, to `Logs\FrameXML.log` at the
-//! load's end.
+//! The reference's load status (entries `{text, severity}`): each level of a UI load (the add-on,
+//! its `.toc`, each XML document) reports into a record of its own, which is merged into its
+//! caller's when it closes and drained, line by line, to `Logs\FrameXML.log` at the load's end.
 
 /// A trace, printed only under `FrameXML_Debug` (`"-- Creating %s named %s"`).
 pub const TRACE: u8 = 0;
@@ -105,7 +104,7 @@ pub fn addon_toc_path(name: &str) -> String {
 /// One drain of a load's record into `Logs\FrameXML.log`, in the order the loads ended.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LogWrite {
-    /// A UI load's drain (`UI_Init`): the log opens in mode 0, created anew (`CREATE_ALWAYS`) at
+    /// A UI load's drain (the UI init): the log opens in mode 0, created anew (`CREATE_ALWAYS`) at
     /// its first line, so a load that reported nothing leaves the file as it was.
     Rewrite(Vec<String>),
     /// A runtime `LoadAddOn`'s drain: mode 4, opened (`OPEN_ALWAYS`) and appended to at its first

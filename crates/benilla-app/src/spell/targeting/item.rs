@@ -1,6 +1,6 @@
 //! The item seam, and its two confirm popups. The bag click (`PickupContainerItem`) and the
-//! paper-doll click both call it when `IsTargeting` and `TargetingWantsItem` hold, and pick nothing
-//! up; the VM half of that reroute is in `benilla_ui`'s cursor seam.
+//! paper-doll click both call it when the targeting check and the item-wanted test hold, and pick
+//! nothing up; the VM half of that reroute is in `benilla_ui`'s cursor seam.
 
 use bevy::prelude::*;
 
@@ -9,8 +9,8 @@ use crate::net::SelfPlayer;
 use super::TargetingWants;
 
 /// The item guid a confirm popup stands over, written by both confirm exits. The reference never
-/// clears it, since `BindTarget` re-tests the word before binding; here every reader goes through
-/// [`SpellTargeting::pending_for`], so a stale guid is inert.
+/// clears it, since the target bind re-tests the word before binding; here every reader goes
+/// through [`SpellTargeting::pending_for`], so a stale guid is inert.
 #[derive(Resource, Default)]
 pub(crate) struct EnchantConfirmItem(Option<u64>);
 
@@ -37,11 +37,11 @@ pub(crate) struct NewEnchant {
     pub(crate) binds: bool,
 }
 
-/// The reference's verdict. Every exit but `Bind` returns before `BindTarget`, so the word and the
-/// cursor survive a refusal and both popups.
+/// The reference's verdict. Every exit but `Bind` returns before the target bind, so the word and
+/// the cursor survive a refusal and both popups.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum ItemBind {
-    /// `BindTarget`: bind the item and send.
+    /// The target bind: bind the item and send.
     Bind,
     /// `(spell, 0x0a)`, no packet.
     Refuse(u8),
@@ -106,7 +106,7 @@ pub(crate) fn item_bind_verdict(
 }
 
 /// The bag and paper-doll click commit: resolve the clicked slot's item, run [`item_bind_verdict`]
-/// and on a pass bind it for `SendCast` (`CMSG_CAST_SPELL` for an enchant, `CMSG_USE_ITEM` for a
+/// and on a pass bind it for the cast send (`CMSG_CAST_SPELL` for an enchant, `CMSG_USE_ITEM` for a
 /// poison bottle). It also takes both popups' answers: `BindEnchant` re-runs confirmed,
 /// `ReplaceEnchant` calls directly. An empty slot (the reference's null-item guard), a refusal or a
 /// confirm keeps the mode.

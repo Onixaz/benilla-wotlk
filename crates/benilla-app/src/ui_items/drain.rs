@@ -168,7 +168,7 @@ pub(crate) struct ScriptItemUse<'w, 's> {
 
 impl ScriptItemUse<'_, '_> {
     /// `UseInventoryItem(id)`, a doll right-click, sent through [`super::send_item_use`], as the
-    /// reference's doll click reaches the same `CGItem::Use` a bag click does: a worn quest-starter
+    /// reference's doll click reaches the same item use a bag click does: a worn quest-starter
     /// offers its quest. Ids outside 1..=19 are refused.
     pub(crate) fn use_inventory_item(&mut self, script: &mut UiScript, id: u32) {
         let Self {
@@ -227,7 +227,7 @@ impl ScriptItemUse<'_, '_> {
         self.use_at(script, bag, slot, false);
     }
 
-    /// `CGItem_C::UseItem` (`0x708c20`) on a bag item, `UseQuestLogSpecialItem`'s path: the use
+    /// The direct item use (`0x708c20`) on a bag item, `UseQuestLogSpecialItem`'s path: the use
     /// dispatcher alone, with no sale, bank move or equip.
     pub(crate) fn use_item(&mut self, script: &mut UiScript, bag: i64, slot: u32) {
         self.use_at(script, bag, slot, true);
@@ -349,7 +349,7 @@ impl ScriptItemUse<'_, '_> {
             return;
         }
         // A Glyph-class template (16) fires `USE_GLYPH` ahead of the use (`0x5d8ad3`), which opens
-        // the glyph frame (`UIParent.lua:1053`); `UseItem`'s direct path has no such arm.
+        // the glyph frame (`UIParent.lua:1053`); the direct item use has no such arm.
         if !direct && clicked.is_some_and(|c| c.class == ITEM_CLASS_GLYPH) {
             script.fire_event("USE_GLYPH", Vec::new());
         }
@@ -440,7 +440,7 @@ impl ScriptItemUse<'_, '_> {
                 "ui_items: open item {:#x} (lua bag {bag} → wire {bag_index}/{wire_slot})",
                 c.guid
             );
-            // `OpenLootItem 0x6dcd70`: the open loot closes and the auto-loot flag is set first.
+            // The item open (`0x6dcd70`): the open loot closes and the auto-loot flag is set first.
             let closed =
                 crate::ui_loot::close_interaction(loot, loot_latch, &ladder.commands, true);
             if let Some(g) =
@@ -455,7 +455,7 @@ impl ScriptItemUse<'_, '_> {
             loot.set_auto_loot(auto, loot_latch, &ladder.commands);
             // The latch on the item, before the send (`0x6dcdd4`), so its type-1 response passes.
             loot_latch.0 = Some(c.guid);
-            // The grey lock, before the send (`LockItem` at `0x6dcded`), until the loot closes.
+            // The grey lock, before the send (`0x6dcded`), until the loot closes.
             let (guid, count) = self_q
                 .iter()
                 .next()
@@ -739,8 +739,7 @@ pub(crate) fn send_container_move(
             (mv.src_bag, mv.src_slot, src_guid, src_count),
             (mv.dst_bag, mv.dst_slot, dst_guid, dst_count),
         ]);
-        // One event per end that holds an item: the reference locks items, not slots
-        // (`CGItem_C::Lock` `0x706fe0`).
+        // One event per end that holds an item: the reference locks items, not slots (`0x706fe0`).
         for (bag, slot, guid) in [
             (mv.src_bag, mv.src_slot, src_guid),
             (mv.dst_bag, mv.dst_slot, dst_guid),
@@ -1193,9 +1192,9 @@ mod tests {
 /// `suppress` set, as the reference's does: 1.12 has no confirm opcode, and a slot that changed
 /// under the dialog is judged afresh. Cancel sends nothing and frees the record.
 ///
-/// Deviation: the reference's cancel also unlocks both occupants (`UnlockItem`), which its deferral
-/// locked; ours locks nothing while the question is up, because a [`PendingItemOps`] lock clears
-/// only against a wire op and a deferred action has none.
+/// Deviation: the reference's cancel also unlocks both occupants, which its deferral locked; ours
+/// locks nothing while the question is up, because a [`PendingItemOps`] lock clears only against a
+/// wire op and a deferred action has none.
 pub(super) fn drain_bind_confirm_answers(
     script: Option<NonSendMut<UiScript>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -1779,8 +1778,8 @@ mod bind_confirm_tests {
     }
 
     /// Right-clicks a bind-on-use item in a bag (the use arm, event 290); `no_use_spell` drops its
-    /// on-use spell, since four of the reference's five predecessors are failed spell lookups and
-    /// the reference still asks.
+    /// on-use spell, since four of the five paths into the reference's question are failed spell
+    /// lookups and it still asks.
     fn right_click_a_bind_on_use_item(
         no_use_spell: bool,
     ) -> (App, crossbeam_channel::Receiver<ClientCommand>) {

@@ -75,8 +75,8 @@ pub(crate) struct Lifecycle<'w> {
     channel: ResMut<'w, ActiveChannel>,
     spell_mods: ResMut<'w, crate::spell::SpellModifiers>,
     pet_bar: ResMut<'w, crate::ui_pet::PetBar>,
-    /// The PlayAnimation call-order counter: every animation-bearing message stamps `next()`,
-    /// in packet order.
+    /// The animation call-order counter: every animation-bearing message stamps `next()`, in packet
+    /// order.
     play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
 }
 
@@ -134,8 +134,7 @@ fn on_spell_learned(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
 ) {
     if let SessionEvent::SpellLearned { spell_id } = ev {
-        // `0x4d4db0(ClntObjMgrGetActivePlayer(), 0x10)`: our own player, once its object has
-        // streamed.
+        // `0x4d4db0` on the active player (`0x10`): our own player, once its object has streamed.
         let learner = self_q.iter().next().map(|store| Learner {
             level: store.0.unit_level().unwrap_or(0),
             class: store.0.unit_class().unwrap_or(0),
@@ -173,7 +172,7 @@ fn on_spell_learned(
 
 fn on_spell_removed(In(ev): In<SessionEvent>, mut l: Lifecycle, mut errors: ResMut<UiErrorKeys>) {
     if let SessionEvent::SpellRemoved { spell_id } = ev {
-        // `DelKnownSpell` drops a companion from its list (`0x53fad0`).
+        // The known-spell removal drops a companion from its list (`0x53fad0`).
         let companion = l
             .spells
             .as_deref()
@@ -226,7 +225,7 @@ fn on_spell_superceded(
     }
 }
 
-/// What `HandleCastResult` reaches beyond the ladder.
+/// What the cast-result handler reaches beyond the ladder.
 #[derive(SystemParam)]
 pub(crate) struct Reply<'w, 's> {
     self_guid: Res<'w, SelfGuid>,
@@ -237,12 +236,12 @@ pub(crate) struct Reply<'w, 's> {
     play_seq: ResMut<'w, crate::creature_anim::PlaySeq>,
 }
 
-/// `HandleCastResult`, the one handler that casts: a reply whose spell names a `modalNextSpell`
-/// (column 38) chains it through the ladder in the same call (`TryCast`), so it arms the in-flight
-/// slot before the next packet.
+/// The cast-result handler, the one handler that casts: a reply whose spell names a
+/// `modalNextSpell` (column 38) chains it through the ladder in the same call (the cast attempt),
+/// so it arms the in-flight slot before the next packet.
 ///
-/// The chained cast goes out at the null target guid (`ebx = 0`), so it binds through `ArmCast`'s
-/// ordinary walk ([`CastTargeting::context`]) and takes every rung a press takes.
+/// The chained cast goes out at the null target guid (`ebx = 0`), so it binds through the target
+/// resolve's ordinary walk ([`CastTargeting::context`]) and takes every rung a press takes.
 fn on_cast_result(
     In(ev): In<SessionEvent>,
     mut ladder: CastLadder,
@@ -764,8 +763,8 @@ fn announce_learn(spell_id: u32, spells: Option<&Spells>, errors: &mut UiErrorKe
 /// a bar button naming the spell is left as is.
 ///
 /// It announces "You have unlearned %s." under
-/// [`benilla_formats::SpellDisplay::announces_unlearn`]'s gates: `RemoveSpell`'s block, a branch
-/// target past its `ret 0x8`, is reached from this packet's arm with the flag set.
+/// [`benilla_formats::SpellDisplay::announces_unlearn`]'s gates: the client's spell-removal block,
+/// a branch target past its `ret 0x8`, is reached from this packet's arm with the flag set.
 fn removed_spell(
     spell_id: u32,
     actions: &mut PlayerActions,
@@ -842,7 +841,7 @@ fn cast_result(
     // clears are the reference's one.
     let in_flight = pending.committed(Instant::now()) == Some(spell_id);
     if !success {
-        // `HandleCastFailed` clears the GCD armed at send, and the bit-25 revert below drops a
+        // The cast-failed handler clears the GCD armed at send, and the bit-25 revert below drops a
         // parked record; the spell's own recovery starts at SPELL_GO, which a failed cast never
         // reaches. A failing cached auto-repeat spell with reason ≠ 0x17 runs the full local cancel
         // (the `SMSG_CANCEL_AUTO_REPEAT` routine). A deselect arrives as this failure (vmangos
@@ -850,8 +849,8 @@ fn cast_result(
         // death arrives as [`cancel_auto_repeat`].
         let now = Instant::now();
         // Reason 0x17 DONT_REPORT exits before the GCD clear and the display. The in-flight clear
-        // below still runs, as the reference's does once `HandleCastFailed` returns: vmangos sends
-        // 0x17 for real aborts.
+        // below still runs, as the reference's does once the cast-failed handler returns: vmangos
+        // sends 0x17 for real aborts.
         let dont_report = reason == Some(0x17);
         if !dont_report {
             cooldowns.clear_gcd(spell_id, now);
@@ -909,12 +908,12 @@ fn cast_result(
             });
         }
     }
-    // The `modalNextSpell` chain (`HandleCastResult`): the reply to our in-flight cast finishes its
-    // slot, then reads column 38 of its spell; non-zero and not the running repeat, the client
-    // casts it at the null target guid. Every hunter shot names 75, Auto Shot.
+    // The `modalNextSpell` chain (the cast-result handler): the reply to our in-flight cast
+    // finishes its slot, then reads column 38 of its spell; non-zero and not the running repeat,
+    // the client casts it at the null target guid. Every hunter shot names 75, Auto Shot.
     // - It fires on success as well as failure: the reference sends a non-failure straight to the
     //   block the failure path reaches.
-    // - The slot clears first, or the IsCasting rung (our `0x61`) would refuse the chain. vmangos
+    // - The slot clears first, or the in-flight rung (our `0x61`) would refuse the chain. vmangos
     //   sends `SMSG_CAST_RESULT` before `SMSG_SPELL_GO` (`Spell.cpp:3681`, `Spell.cpp:3715`), so
     //   the guard is still armed here.
     // - Equal to the running repeat means re-arm, not re-cast, so a second sting never resets the
@@ -1114,7 +1113,7 @@ fn spell_go(
     let (auto_repeat, sheath, engaged) = attack_ctx;
     let now = Instant::now();
     let display = spells.and_then(|s| s.catalog.get(spell_id));
-    // Our own OPEN_LOCK cast on a chest latches it here (`OnLootGameObject` call `0x80f6a0`).
+    // Our own OPEN_LOCK cast on a chest latches it here (the loot open's call, `0x80f6a0`).
     if self_guid.0 == Some(caster) {
         if let Some(go_guid) = go_target {
             let is_open_lock = display.is_some_and(|d| d.open_lock.is_some());
@@ -1381,7 +1380,7 @@ fn cancel_auto_repeat(
 }
 
 /// Whether this `SMSG_SPELL_GO` arms the pet's cooldown bank. The GO handler inserts into two banks
-/// (the reference's `bankHead = + 24*bank`): the self leg bank 0, this leg bank 1, which
+/// (the bank head is the base plus 24 per bank): the self leg bank 0, this leg bank 1, which
 /// `SMSG_PET_SPELLS` seeds and `GetPetActionCooldown` reads.
 ///
 /// The gate is the caster's owner off its own descriptor: `charmedBy` when set, else `summonedBy`,
@@ -1504,9 +1503,9 @@ fn channel_update(
     });
 }
 
-/// `SMSG_SET_FLAT_SPELL_MODIFIER` / `SMSG_SET_PCT_SPELL_MODIFIER` (`HandleSetSpellModifier`): one
-/// store of the absolute value for a `(family bit, op)` pair, never a delta. The out-of-range
-/// refusal is [`crate::spell::SpellModifiers::set`]'s.
+/// `SMSG_SET_FLAT_SPELL_MODIFIER` / `SMSG_SET_PCT_SPELL_MODIFIER`: one store of the absolute value
+/// for a `(family bit, op)` pair, never a delta. The out-of-range refusal is
+/// [`crate::spell::SpellModifiers::set`]'s.
 fn set_spell_modifier(
     flat: bool,
     mask_bit: u8,
@@ -1519,7 +1518,7 @@ fn set_spell_modifier(
 
 /// The caster's chain-hop array from a wire target list, as the reference: clear, then fill,
 /// skipping the unit's own guid; unstreamed targets drop out. Its two callers are the
-/// `SMSG_SPELL_UPDATE_CHAIN_TARGETS` handler and `HandleSpellGo`.
+/// `SMSG_SPELL_UPDATE_CHAIN_TARGETS` handler and the `SMSG_SPELL_GO` handler.
 fn fill_chain_hops(
     caster: u64,
     caster_entity: Entity,
@@ -1539,7 +1538,7 @@ fn fill_chain_hops(
 
 /// `SMSG_SPELL_UPDATE_CHAIN_TARGETS`: the hop list a beam runs through, parked on the caster
 /// (`unit+0xd44`: capacity `+0xd44`, count `+0xd48`, data `+0xd4c`, quantum `+0xd50`) and consumed
-/// once by the next chain `CharProc`. vmangos sends it only for channelled spells
+/// once by the next chain proc. vmangos sends it only for channelled spells
 /// (`Spell::SendChannelStart`); other chain spells fill from the GO.
 fn spell_chain_targets(
     caster: u64,
@@ -2534,8 +2533,8 @@ mod tests {
                 .map(|h| h.0.clone())
         };
 
-        // `HandleSpellGo`'s fill: the caster itself (vmangos includes self-hits) and an unstreamed
-        // target both drop.
+        // The `SMSG_SPELL_GO` handler's fill: the caster itself (vmangos includes self-hits) and an
+        // unstreamed target both drop.
         let (tx, _rx) = crossbeam_channel::unbounded();
         app.world_mut()
             .run_system_once(
@@ -3013,10 +3012,10 @@ mod tests {
             "somebody else's Backstab is not our attack-start"
         );
     }
-    /// The `modalNextSpell` chain (`HandleCastResult`):
+    /// The `modalNextSpell` chain (the cast-result handler):
     /// - a successful sting chains Auto Shot;
     /// - a failed one does too;
-    /// - the in-flight guard clears first, or the IsCasting rung would refuse the chain;
+    /// - the in-flight guard clears first, or the in-flight rung would refuse the chain;
     /// - Auto Shot already running sends nothing;
     /// - a reply for a spell not in flight chains nothing.
     #[test]

@@ -1,7 +1,7 @@
-//! The `Cooldown` widget (factory `0x51a380`, ctor `0x5ecae0`), a `CSimpleFrame` that draws its
-//! own sweep: a dark wedge over the part of the duration still to run, an optional edge line at
-//! the sweep angle, and a one-second star flash when a forward sweep completes. Its state and its
-//! paint geometry, both pure; `script::cooldown_widget` binds them to Lua and the tick.
+//! The `Cooldown` widget (factory `0x51a380`, ctor `0x5ecae0`), a `Frame` that draws its own sweep:
+//! a dark wedge over the part of the duration still to run, an optional edge line at the sweep
+//! angle, and a one-second star flash when a forward sweep completes. Its state and its paint
+//! geometry, both pure; `script::cooldown_widget` binds them to Lua and the tick.
 
 /// The finish flash's length, ms: `OnUpdate` re-arms the clock for it (`0x5ec946`).
 pub const COOLDOWN_FLASH_MS: u32 = 1000;

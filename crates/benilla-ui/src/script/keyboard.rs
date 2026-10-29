@@ -45,9 +45,9 @@ fn has_script(lua: &Lua, id: u32, name: &str) -> bool {
     event::has_widget_handler(lua, id, name)
 }
 
-/// Whether `h` is a `CSimpleEditBox`, which the walk asks about focus, never a script slot: its
-/// ctor puts it in both buckets, and its vtable replaces the input slots (`+0x5c` with, `+0x60`
-/// with) without chaining to the base, consuming when focused and otherwise declining unless it
+/// Whether `h` is an `EditBox`, which the walk asks about focus, never a script slot: its
+/// constructor puts it in both buckets, and its vtable replaces the input slots (`+0x5c` and
+/// `+0x60`) without chaining to the base, consuming when focused and otherwise declining unless it
 /// takes a free focus as `autoFocus`. So an unfocused box's `OnChar` (`+0x180`) never runs and
 /// never eats a neighbour's keys.
 fn is_editbox(lua: &Lua, h: FrameHandle) -> bool {

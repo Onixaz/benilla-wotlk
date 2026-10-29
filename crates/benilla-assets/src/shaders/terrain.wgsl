@@ -76,9 +76,8 @@ struct TerrainVsOut {
 const TERRAIN_REACH: f32 = 33.570166;
 
 // Terrain Texture Low: a chunk's 64² alpha or shadow map as the reference's half-size copy, which
-// keeps every second texel of every second row, the last column from texel 63
-// (`CMapRenderChunk::UnpackAlphaBitsFixed8888Mip1 0x7b8c70` and its siblings), sampled bilinearly
-// at the full map's coordinates. Level 0 is the arrays' only mip.
+// keeps every second texel of every second row, the last column from texel 63 (`0x7b8c70` and its
+// siblings), sampled bilinearly at the full map's coordinates. Level 0 is the arrays' only mip.
 fn half_map(tex: texture_2d_array<f32>, uv: vec2<f32>, layer: i32) -> vec4<f32> {
     let p = uv * 32.0 - 0.5;
     let base = floor(p);
@@ -146,7 +145,7 @@ fn point_light_sum(P: vec3<f32>, N: vec3<f32>, anchor: vec3<f32>) -> vec3<f32> {
 }
 
 // The MCNK chunk cell centre under a world point: the reference's light anchor, the chunk's world
-// AABB centre `CMapChunk+0x5c..0x64`. The grid is fixed world-wide (chunk
+// AABB centre at chunk `+0x5c..0x64`. The grid is fixed world-wide (chunk
 // 533.33333/16 yd, half-extent 32 tiles) and symmetric, and WoW x/y are Bevy −z/−x, so snapping
 // Bevy x/z lands on the same cells; wow_model.wgsl mirrors it for clutter.
 // The anchor height is the vertex's own y, not the chunk's mid-height `(minH + maxH)/2`, so on
@@ -293,7 +292,7 @@ fn fragment(in: TerrainVsOut) -> @location(0) vec4<f32> {
     //   diffuse  = tex · primary · (0.3·shadow + 0.7)   (a flat −30% in shadow, no tint)
     //   specular = sheen · mask · shadow                 (none in shadow)
     let diffuse_term = color * primary * (0.3 * shadow_lit + 0.7);
-    // Terrain Highlights off draws no sheen (`CMap::enableSpecular`, `0x7bd8a0`).
+    // Terrain Highlights off draws no sheen (the map's specular flag, `0x7bd8a0`).
     let spec_term = in.specular * specmask * shadow_lit * wow_light.terrain_opts.z;
     var tuned = clamp(diffuse_term + spec_term, vec3<f32>(0.0), vec3<f32>(1.0));
 

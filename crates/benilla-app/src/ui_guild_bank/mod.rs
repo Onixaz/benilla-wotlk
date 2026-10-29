@@ -1,6 +1,6 @@
-//! The guild bank's app side, 12340's `CGGuildBankInfo` (`GuildBankFrame.cpp`): the banker, the
-//! six tabs' names, slots, logs and texts, the wire, and the item gates and stack arithmetic of
-//! the swap senders. The engine keeps the cursor, the locks and the current tab
+//! The guild bank's app side, after 12340's guild bank info: the banker, the six tabs' names,
+//! slots, logs and texts, the wire, and the item gates and stack arithmetic of the swap senders.
+//! The engine keeps the cursor, the locks and the current tab
 //! ([`benilla_ui::script::GuildBankView`]); its sends arrive as
 //! [`benilla_ui::script::GuildBankRequest`]s.
 
@@ -29,16 +29,16 @@ mod net;
 /// the reference fires on the last cache callback, a failed answer included.
 const RESOLVE_MAX_FRAMES: u16 = 120;
 
-/// One tab as the reference keeps it (`GuildBankTabInfo`, `0xc11458`).
+/// One tab as the reference keeps it (`0xc11458`).
 #[derive(Clone, Debug)]
 struct Tab {
     name: String,
     icon: String,
     text: String,
     /// The slots are stale: the next query asks for the full update (`+0x2140`, set by world
-    /// entry and `ClearAllTabs`, cleared by a list of this tab).
+    /// entry and the all-tabs clear, cleared by a list of this tab).
     stale: bool,
-    /// The text is stale (`m_tabContentsDirty`, `0xc0f8e8`): `QueryGuildBankText` sends only then.
+    /// The text is stale (`0xc0f8e8`): `QueryGuildBankText` sends only then.
     text_stale: bool,
     /// The slots, [`GUILD_BANK_TAB_SLOTS`] once the tab's first list arrived.
     slots: Vec<GuildBankSlot>,
@@ -67,9 +67,9 @@ struct LogRow {
 /// The guild bank session: filled by the handlers, read by the feed, reset at world entry.
 #[derive(Resource, Debug)]
 pub(crate) struct GuildBankState {
-    /// The open banker (`m_banker`, `0xc1dc10`).
+    /// The open banker (`0xc1dc10`).
     banker: Option<u64>,
-    /// Asked, not yet answered (`m_pendingBanker`, `0xc1dc18`): the first list opens the window.
+    /// Asked, not yet answered (`0xc1dc18`): the first list opens the window.
     pending: Option<u64>,
     num_tabs: u8,
     tabs: [Tab; GUILD_BANK_TABS],
@@ -122,8 +122,8 @@ impl Default for GuildBankState {
 }
 
 impl GuildBankState {
-    /// `TalkToGuildBanker` (`0x6d23c0`): nothing for the open banker, else the hello, asking for
-    /// the tab list while tab 0 is stale; the first list then opens the window.
+    /// The banker talk (`0x6d23c0`): nothing for the open banker, else the hello, asking for the
+    /// tab list while tab 0 is stale; the first list then opens the window.
     pub(crate) fn talk(&mut self, banker: u64, net: &NetCommands) {
         if self.banker == Some(banker) {
             return;
@@ -143,7 +143,7 @@ impl GuildBankState {
         self.banker.is_some()
     }
 
-    /// `SetGuildBanker(0)` (`0x5a4270`): `GUILDBANKFRAME_CLOSED`, and both bankers clear.
+    /// The banker set to 0 (`0x5a4270`): `GUILDBANKFRAME_CLOSED`, and both bankers clear.
     fn close(&mut self) {
         if self.banker.is_some() {
             self.owe_closed = true;
@@ -153,7 +153,7 @@ impl GuildBankState {
         self.dirty = true;
     }
 
-    /// `ClearAllTabs` (`0x5a7760`): a guild change forgets every tab.
+    /// The all-tabs clear (`0x5a7760`): a guild change forgets every tab.
     fn clear_all_tabs(&mut self) {
         for tab in &mut self.tabs {
             tab.slots.clear();
@@ -164,7 +164,7 @@ impl GuildBankState {
         self.dirty = true;
     }
 
-    /// `SendGuildBankQueryTabOpcode` (`0x5a5800`): only with a banker open.
+    /// The tab query send (`0x5a5800`): only with a banker open.
     fn query_tab(&self, tab: u8, net: &NetCommands) {
         let (Some(banker), Some(t)) = (self.banker, self.tabs.get(usize::from(tab))) else {
             return;
@@ -617,8 +617,8 @@ fn room(max: u32, held: u32) -> u32 {
     max.saturating_sub(held)
 }
 
-/// `SwapItems` (`0x5a50c0`): a bag item onto bank slot `(tab, slot)`, slot `0xFF` for the first
-/// that fits. Its refusals keep the cursor; a send clears it.
+/// The bag-to-bank swap (`0x5a50c0`): a bag item onto bank slot `(tab, slot)`, slot `0xFF` for the
+/// first that fits. Its refusals keep the cursor; a send clears it.
 #[allow(clippy::too_many_arguments)]
 fn deposit_item(
     script: &mut UiScript,
@@ -712,7 +712,7 @@ fn deposit_item(
     script.guild_bank_swap_sent();
 }
 
-/// `SwapBankItems` (`0x5a5410`): a held bank item onto another bank slot.
+/// The bank-to-bank swap (`0x5a5410`): a held bank item onto another bank slot.
 #[allow(clippy::too_many_arguments)]
 fn move_item(
     script: &mut UiScript,
@@ -779,8 +779,8 @@ fn move_item(
     script.guild_bank_swap_sent();
 }
 
-/// `PickupContainerItem`'s mode-11 arm and `SwapGuildBankItem` (`0x6db880`): a held bank item
-/// onto a bag slot. The engine already cleared the cursor.
+/// `PickupContainerItem`'s mode-11 arm and the bank-to-bag swap (`0x6db880`): a held bank item onto
+/// a bag slot. The engine already cleared the cursor.
 #[allow(clippy::too_many_arguments)]
 fn withdraw_item(
     script: &mut UiScript,

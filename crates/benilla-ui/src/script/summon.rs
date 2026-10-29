@@ -6,7 +6,7 @@
 use mlua::Lua;
 
 /// The dialog's three reads, never nil: with nothing pending or resolved they are `""`, `""` and 0,
-/// as the reference's getters answer (the reference is its shared `""`).
+/// as the reference's getters answer, the empty ones with its shared `""`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SummonConfirmUiState {
     /// The summoner's name from the name cache, `""` while the query is out.
@@ -14,7 +14,7 @@ pub struct SummonConfirmUiState {
     /// The summoner's zone name out of `AreaTable.dbc`, or `""` if the id names no row.
     pub area: String,
     /// Milliseconds left, 0 when nothing is pending or it ran out; the binding truncates to
-    /// seconds, as the reference does.
+    /// seconds, as the reference's getter does.
     pub time_left_ms: u32,
 }
 

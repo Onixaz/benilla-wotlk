@@ -1,4 +1,4 @@
-//! Lua globals whose whole body pushes one catalog id at `CGGameUI::DisplayError`'s dispatcher.
+//! Lua globals whose whole body pushes one catalog id at the error display's dispatcher.
 //! Engine-side refusals share the [`Model::ui_errors`] queue, which the app resolves against
 //! GlobalStrings and fires as `UI_ERROR_MESSAGE` (event `0xe0`), the reference's route.
 //!

@@ -43,7 +43,7 @@ fn is_container(item: &CursorItem) -> bool {
 
 /// Whether the held item may go in doll slot `id`: its `equip_slots`, or a bank bag slot for a
 /// container, which `FindEquipSlot` never names. The reference's fit check behind
-/// `CursorCanGoInSlot` passes any item at a bank bag slot, as `IsValidForSlot` answers 1 for every
+/// `CursorCanGoInSlot` passes any item at a bank bag slot, as its slot test answers 1 for every
 /// 0-based slot from 23; the server's `CanBankItem` referees either way.
 pub(super) fn fits_slot(item: &CursorItem, id: u32) -> bool {
     if BANK_BAG_INV_SLOTS.contains(&id) {

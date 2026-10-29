@@ -12,7 +12,7 @@
 //! master and the tracking masks each give a cell of `ObjectIcons.blp`, culled at 0.8 of the view
 //! radius and drawn last.
 //!
-//! Blip sizes are frozen once by the CGMinimapFrame ctor against a 140.8-px basis.
+//! Blip sizes are frozen once by the minimap frame's constructor against a 140.8-px basis.
 //!
 //! Not built: the landmark `WorldStateID` gate; the per-source rim-arrow z-order (bottom to top
 //! landmark, party, quest, gossip, corpse, from `+0x48` as a frame-level offset), which conflicts
@@ -24,7 +24,7 @@
 //!
 //! The cross-interior grey (`0xffb0b0b0`) comes from an indoor-containment mismatch; the
 //! reference's compare is untraced. The tooltip sits at the cursor; its exact seat is untraced,
-//! since the reference gives only its content.
+//! since the reference's tooltip builder gives only its content.
 
 mod dots;
 
@@ -53,7 +53,7 @@ const FLAG_CANDIDATE: u32 = 0x1;
 /// AreaPOI `Flags` bit 1, draw the in-range icon.
 const FLAG_IN_RANGE_ICON: u32 = 0x2;
 /// The basis every blip size is frozen against: the stock 140-unit widget at 140.8 px on the
-/// 1024×768 screen, computed once by the CGMinimapFrame ctor.
+/// 1024×768 screen, computed once by the minimap frame's constructor.
 pub(super) const BLIP_BASIS_PX: f32 = 140.8;
 /// The player arrow's art, on the minimap and the world map, whose stock `WorldMapFrame.lua`
 /// `SetModel`s a pane to the same M2.
@@ -127,7 +127,7 @@ impl RimArrowArt {
         self.0.iter().any(Option::is_some)
     }
 }
-/// An in-range POI icon's quad, 16 px (frozen by the ctor).
+/// An in-range POI icon's quad, 16 px (frozen by the constructor).
 const POI_ICON_PX: f32 = 16.0;
 
 /// The blip under the cursor this frame, for [`drive_blip_tooltip`].
@@ -220,7 +220,7 @@ pub(super) struct BlipCtx {
 
 impl BlipCtx {
     /// A WoW world point's screen offset from the widget centre: north up (+X up, +Y left), then
-    /// turned with the map (`point *= rotation`, `RenderObjectBlips` `0x5803de`).
+    /// turned with the map (`point *= rotation`, `0x5803de`).
     pub(super) fn offset(&self, w: [f32; 3]) -> Vec2 {
         super::turn_offset(
             Vec2::new(
@@ -242,7 +242,7 @@ pub(super) struct LandmarkSelection<'a> {
 
 /// The landmark selection (module doc). `marker`, the guard-directions POI, is appended after the
 /// DBC scan as the reference appends its static blip slot: it skips the candidacy gate but not the
-/// 694.444-yd cut, which the reference spares only the corpse slot.
+/// 694.444-yd cut, which the reference spares only for the corpse slot.
 pub(super) fn select_landmarks<'a>(
     pois: impl Iterator<Item = &'a AreaPoi>,
     marker: Option<&'a AreaPoi>,

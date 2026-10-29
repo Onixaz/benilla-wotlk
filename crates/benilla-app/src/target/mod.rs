@@ -80,7 +80,7 @@ pub(crate) use relations::{
 pub(crate) use scan::{AttackNearestRequest, AttackPick};
 // The chat layer's by-name asks (`/target`, `/assist`).
 pub(crate) use by_name::{AssistRequest, Match as NameMatch, PlayerLookup, TargetByNameRequest};
-// The one SetSelection path, for the loot response's select.
+// The one selection-set path, for the loot response's select.
 pub(crate) use by_name::SelectCommit;
 // The reaction decode and its faction catalog, which also tint the target frame
 // (`TargetFrame_CheckFaction`); `duel_rung` is the same walk, for `/reaction`.
@@ -100,15 +100,15 @@ pub use click::Interact;
 pub(crate) struct Selection {
     pub(crate) target: Option<Entity>,
     pub(crate) guid: Option<u64>,
-    /// The last-target pair that `TargetLastTarget` reads: `SetSelection` stamps the outgoing
+    /// The last-target pair that `TargetLastTarget` reads: the selection set stamps the outgoing
     /// selection, none included, on every change it makes, a select or a deselect; a teardown clear
     /// leaves it.
     pub(crate) last: Option<u64>,
 }
 
 /// This frame's character-model pick, by [`hover::update_hover`]. At most one slot is set: the
-/// reference makes one pick over all CGObjects and switches on type at the end, and a corpse
-/// (`CGCorpse_C`) is not a unit, so it never answers as `target`.
+/// reference makes one pick over all objects and switches on type at the end, and a corpse is not a
+/// unit, so it never answers as `target`.
 #[derive(Resource, Default, Clone, Copy)]
 pub(crate) struct Hovered {
     /// The hovered unit or player, the selectable slot.
@@ -116,14 +116,14 @@ pub(crate) struct Hovered {
     pub(crate) guid: Option<u64>,
     /// Ray distance to the pick, refused or not; a plate hover is `0.0`, so UI wins any tie.
     pub(crate) distance: f32,
-    /// The hovered corpse: the reference's `CGCorpse_C` fills the interact slot `+0x60`, never
-    /// `SetTarget`.
+    /// The hovered corpse: the reference's corpse object fills the interact slot `+0x60`, never the
+    /// target.
     pub(crate) corpse: Option<Entity>,
     /// The hovered corpse's guid, which `CMSG_LOOT` and `CMSG_RECLAIM_CORPSE` carry.
     pub(crate) corpse_guid: Option<u64>,
-    /// The `IsSelectable` grader refused the winning pick: both slots are empty but
-    /// [`Self::distance`] holds the hit, so a chest behind the unit does not inherit the mouseover.
-    /// To [`click::select_on_click`] it is an object hit, which clears no selection.
+    /// The selectable grader refused the winning pick: both slots are empty but [`Self::distance`]
+    /// holds the hit, so a chest behind the unit does not inherit the mouseover. To
+    /// [`click::select_on_click`] it is an object hit, which clears no selection.
     pub(crate) refused: bool,
 }
 
@@ -177,7 +177,7 @@ impl Default for PickOcclusion {
 /// The pick latched on the button's down edge, which a world click of either button acts on: the
 /// reference picks once per press into the WorldFrame (state `+0x350`, guid `+0x358`, point
 /// `+0x360`, distance `+0x36c`), so a drag can orbit the camera and still select. The hover is
-/// another matter: the reference blanks it during freelook (the reference sets `[wf+0x38c]&2`).
+/// another matter: the reference blanks it during freelook (it sets `[wf+0x38c]&2`).
 #[derive(Resource, Default, Clone, Copy)]
 pub(crate) struct PressPick {
     pub(crate) hovered: Hovered,
@@ -227,7 +227,7 @@ pub(crate) fn latch_press_pick(
 }
 
 /// Whether the hovered GameObject, not the character pick, is what a click acts on. The reference
-/// makes one pick over all CGObjects; benilla makes two and keeps the GameObject only when strictly
+/// makes one pick over all objects; benilla makes two and keeps the GameObject only when strictly
 /// nearer. A corpse or a refused pick holds the ground as a unit does.
 pub(crate) fn go_is_nearest(character: &Hovered, go: &HoveredObject) -> bool {
     match (character.any().is_some() || character.refused, go.target) {
@@ -250,7 +250,7 @@ pub(crate) struct TargetUpdate;
 
 /// `deselectOnClick`, behind the Controls panel's Sticky Targeting checkbox, which shows it
 /// inverted (`self.invert`). On by default, as in the reference: an empty-world click clears the
-/// target (`HandleWorldClick 0x5278c0`, `OnTerrainClick 0x527360`).
+/// target (`0x5278c0`, `0x527360`).
 #[derive(Resource)]
 pub(crate) struct ClickConfig {
     pub(crate) deselect_on_click: bool,
@@ -269,7 +269,7 @@ impl Default for ClickConfig {
 #[derive(Resource, Default)]
 pub(crate) struct AssistAttack(pub(crate) bool);
 
-/// `stopAutoAttackOnTargetChange` (`[0xbd0924]`, default "0"), read at `CGGameUI::Target`'s tail
+/// `stopAutoAttackOnTargetChange` (`[0xbd0924]`, default "0"), read at the UI target change's tail
 /// (`0x524f59`): on, a new target cancels auto-repeat; off, a player in melee swings on at it.
 #[derive(Resource, Default)]
 pub(crate) struct StopAttackOnTargetChange(pub(crate) bool);
@@ -344,7 +344,7 @@ impl Plugin for TargetPlugin {
                     // reference's dispatcher runs this branch before the object classifier.
                     crate::spell::targeting::drive_targeting_cursor,
                     // Reads that verdict: `WorldCursor.unable` is the frame's range state, as the
-                    // reference's one `CheckGroundPointInRange` caller feeds both.
+                    // reference's one caller of its ground-point range check feeds both.
                     reticle::update_reticle,
                     click::world_right_click_payload,
                     // A plate click replayed as a click, then the select that reads it.
@@ -440,7 +440,7 @@ mod tests {
         assert!(!go_is_nearest(&corpse(true, 4.0), &obj(true, 10.0)));
         assert!(!go_is_nearest(&corpse(true, 5.0), &obj(true, 5.0)));
         assert!(go_is_nearest(&corpse(true, 10.0), &obj(true, 4.0)));
-        // So does a pick the `IsSelectable` grader refused, and then nothing is hovered at all.
+        // So does a pick the selectable grader refused, and then nothing is hovered at all.
         let refused = |d: f32| Hovered {
             refused: true,
             distance: d,

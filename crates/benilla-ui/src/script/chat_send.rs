@@ -63,8 +63,8 @@ impl super::UiScript {
     }
 }
 
-/// The first row, in file order, whose name equals `name` ignoring case (`SStrCmpI`, unbounded
-/// length), checked against every row, not only the known languages.
+/// The first row, in file order, whose name equals `name` ignoring case (a case-insensitive compare
+/// of unbounded length), checked against every row, not only the known languages.
 fn language_id(table: &[(u32, String)], name: &str) -> Option<u32> {
     table
         .iter()
@@ -170,7 +170,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     _ => None,
                 };
                 // `lua_isstring` then `lua_tostring`: a number is its text, so `2.7` reaches the
-                // channel's `SStrToInt` as "2.7", which reads 2.
+                // channel's string-to-int as "2.7", which reads 2.
                 let target = super::binding_abi::optional_string(lua, &target);
                 crate::script::model_mut_of(lua).chat_sends.push(ChatSend {
                     text,
@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(
             sent[3].target.as_deref(),
             Some("2.7"),
-            "not rounded: the app's `SStrToInt` reads 2"
+            "not rounded: the app's string-to-int reads 2"
         );
         assert_eq!(sent[4].target, None, "a table is no string");
         assert_eq!(sent[1].chat_type, "CHANNEL");
@@ -269,7 +269,7 @@ mod tests {
             .unwrap();
         let sent = s.take_chat_sends();
         assert_eq!(sent[0].language, Some(2), "Darnassian's row ID");
-        assert_eq!(sent[1].language, Some(2), "SStrCmpI ignores case");
+        assert_eq!(sent[1].language, Some(2), "the compare ignores case");
         assert_eq!(
             sent[2].language,
             Some(1),

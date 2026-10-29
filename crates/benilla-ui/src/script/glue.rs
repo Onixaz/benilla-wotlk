@@ -1,10 +1,10 @@
 //! The glue screens' FrameScript state, which [`UiScript::new_glue`] builds: what the glue
 //! manager gives Lua where the in-game UI's init gives it the world's surface.
 //!
-//! The glue manager's `Resume` (`0x4da5f0`) flushes the Lua state (`FrameScript_Flush`), registers
-//! the system, frame-script, glue, character select, character create, realm list, sound, account
-//! message and video options tables, and hands the FrameScript event registry the 41-event table
-//! below in place of the in-game one. The frame types are a process-wide registry instead
+//! The glue manager's resume (`0x4da5f0`) flushes the Lua state, registers the system,
+//! frame-script, glue, character select, character create, realm list, sound, account message and
+//! video options tables, and hands the FrameScript event registry the 41-event table below in place
+//! of the in-game one. The frame types are a process-wide registry instead
 //! ([`super::object::registered_frame_kind`]).
 //!
 //! [`UiScript::new_glue`]: super::UiScript::new_glue
@@ -14,7 +14,7 @@ use mlua::Lua;
 /// Which of the reference's two FrameScript states a VM is.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum VmKind {
-    /// `UI_Init`'s: the in-game surface over FrameXML.
+    /// The UI init's: the in-game surface over FrameXML.
     InGame,
     /// The glue builder's: the base set, the three shared registrars and the glue verbs, over
     /// GlueXML.

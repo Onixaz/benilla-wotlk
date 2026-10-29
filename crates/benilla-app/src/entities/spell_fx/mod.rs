@@ -1,11 +1,11 @@
 //! Spell-visual effect models: the attach-point `.mdx` a kit hangs on a unit, and the
-//! lootable-corpse sparkle, which the client hangs on the same `Effect_C` node type.
+//! lootable-corpse sparkle, which the client hangs on the same effect node type.
 //!
 //! Each instance root is parented once under the unit's attach joint and rides the bone through the
-//! transform tree, as the reference's parents the effect model to the host once and its transform
-//! refresh carries it. Every instance takes `CMissile`'s attach cascade (`ATTACH_FALLBACKS`); the
-//! reference's kit effect has none, since `AddEffect` tests no attachment, so on a model lacking
-//! the tag draws nothing and never retries.
+//! transform tree, as the reference parents the effect model to the host once and its transform
+//! refresh carries it. Every instance takes the missile's attach cascade (`ATTACH_FALLBACKS`); the
+//! reference's kit effect has none, since its effect add tests no attachment, so on a model lacking
+//! the tag it draws nothing and never retries.
 //!
 //! A persistent instance lives until its spell's [`SpellKitFx::Reap`]; a self-terminating one
 //! despawns after one pass of its model's sequence 0, a span clock standing in for the client's
@@ -32,7 +32,7 @@ use super::{BoneAttach, DisplayModel, EntityPart, ModelHandle};
 pub(super) use lifecycle::advance_fx_anim;
 use lifecycle::{decay_span, FxAnimLife, FxDecay};
 
-/// `CMissile`'s attach cascade for a model lacking the requested point: `0xf`, then `0x13`, then
+/// The missile's attach cascade for a model lacking the requested point: `0xf`, then `0x13`, then
 /// the unit root.
 const ATTACH_FALLBACKS: [u16; 2] = [0xf, 0x13];
 
@@ -214,7 +214,7 @@ pub(crate) fn attach_effect_visuals(
         .as_ref()
         .and_then(|a| a.preferred_clip(preferred_anim));
     let played_seq = played.map(|c| c.seq_index);
-    // A `CEffect`'s riders follow its player's live sequence; other lanes keep the opening one.
+    // A kit effect's riders follow its player's live sequence; other lanes keep the opening one.
     let seq_host = (armed && stage.is_some()).then_some(root);
     commands.entity(root).with_children(|children| {
         for (part, material) in parts.iter().zip(&part_materials) {
@@ -435,12 +435,12 @@ pub(super) fn arm_effect_rig(
         // The caller's sequence (a thrown weapon's InFlight), else the bootstrap's `Stand`.
         if let Some(clip) = anims.preferred_clip(preferred_anim) {
             let mut player = AnimationPlayer::default();
-            // The stage owns the repeat policy (repeats a clamping precast).
+            // The stage owns the repeat policy (the re-arm stages repeat a clamping precast).
             let life = FxAnimLife::arm(&mut player, clip, stage.unwrap_or(FxStage::OneShot));
             commands
                 .entity(root)
                 .insert((player, AnimationGraphHandle(anims.graph.clone())));
-            // The lifecycle watcher, on a `CEffect` only.
+            // The lifecycle watcher, on a kit effect only.
             if stage.is_some() {
                 commands.entity(root).insert((life, anims.clone()));
             }
@@ -463,7 +463,7 @@ pub(super) fn arm_effect_rig(
 
 /// One live (or pending) effect-model instance on a unit.
 struct FxInstance {
-    /// The reap key (the client's `CEffect+0x18`); the lootable-corpse sparkle uses `u32::MAX`.
+    /// The reap key (the effect node's `+0x18`); the lootable-corpse sparkle uses `u32::MAX`.
     spell_id: u32,
     /// Reaped by spell id (precast, channel) rather than self-terminating (cast release).
     persistent: bool,
@@ -608,7 +608,7 @@ pub(super) fn resolve_spell_fx(
                         );
                     }
                     for FxSlot { tag, effect, path } in effects {
-                        // Per slot, as `AddEffect` opens with `(owner, rec, tag)`.
+                        // Per slot, as the reference's effect add opens with the same-slot replace.
                         replace_same_slot(
                             &mut instances,
                             *effect,
@@ -720,7 +720,8 @@ fn reap_matching(
             .and_then(|dm| decay_span(dm.animations.as_ref()));
         let (Some(root), Some(span)) = (i.root, span) else {
             if let Some(root) = i.root {
-                // Destroyed at once, through the reference like any other, so its particles drain.
+                // Destroyed at once, through the shared teardown like any other, so its particles
+                // drain.
                 drain_instance_emitters(emitters, root);
                 commands.entity(root).despawn();
             }
@@ -848,7 +849,7 @@ pub(super) fn attach_spell_fx(
                     .id();
                 (root, true)
             } else {
-                // `CMissile`'s cascade: the slot's tag, `0xf`, `0x13`, else the unit root.
+                // The missile's cascade: the slot's tag, `0xf`, `0x13`, else the unit root.
                 let point = bones.and_then(|b| {
                     std::iter::once(inst.tag)
                         .chain(ATTACH_FALLBACKS)
@@ -883,7 +884,7 @@ pub(super) fn attach_spell_fx(
                 ground_anchor,
                 // Chained to the unit: it fades and is freed with the body.
                 EffectHost { parent: Some(unit) },
-                // A kit effect is a `CEffect`: it runs the stage's lifecycle.
+                // A kit effect runs the stage's lifecycle.
                 Some(inst.stage),
                 &mut FxMaterials {
                     store: &mut wow_materials,

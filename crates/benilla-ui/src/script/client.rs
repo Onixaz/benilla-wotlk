@@ -56,7 +56,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // Three setters whose state has no reader here, so each takes its argument as the reference
     // does, never raising, and stores nothing; all return zero values.
-    // - `SetEuropeanNumbers(flag)`: `GetBoolOrDefault(1, true)`, which turns on
+    // - `SetEuropeanNumbers(flag)`: argument 1 read as a boolean defaulting to true, which turns on
     //   `FontString:SetText`'s digit-group pass. benilla's `SetText` has no such pass.
     // - `SetLayoutMode(mode)`: a number truncates into the UI root's `+0xcf8`, anything else stores
     //   1; read by the root's mouse handler for a frame-dragging mode benilla does not build.
@@ -105,8 +105,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // `RunScript(text)` runs a chunk in the shared global state with full API access, no `setfenv`.
     // Its contract:
     // 1. The chunk name is the source itself: the one `lua_tostring` result is passed as both code
-    //    and name to `FrameScript_Execute`, so an error renders `[string "…"]`, as `loadstring`'s
-    //    default does.
+    //    and name to the script layer's execute, so an error renders `[string "…"]`, as
+    //    `loadstring`'s default does.
     // 2. An argument that is neither a string nor a number, or is empty, is a silent no-op, never a
     //    raise; `lua_isstring` passes a number.
     // 3. An error never reaches the caller: the reference runs the chunk under `lua_pcall` with the

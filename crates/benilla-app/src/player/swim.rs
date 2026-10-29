@@ -108,8 +108,8 @@ pub(super) fn update_swimming(player: &mut Player, surface_y: Option<f32>, now: 
     player.swimming
 }
 
-/// A depth-driven stop zeroes the mover pitch, which water walking reads on land: StopSwim is the
-/// pitch's only zeroing writer. A breach keeps its aim, as `CMovement::Jump` clears SWIMMING.
+/// A depth-driven stop zeroes the mover pitch, which water walking reads on land: the swim stop is
+/// the pitch's only zeroing writer. A breach keeps its aim, as the mover's jump clears SWIMMING.
 fn stop_pitch(player: &mut Player, was: bool) {
     if was && !player.swimming {
         player.mover_pitch = 0.0;
@@ -236,8 +236,8 @@ pub(super) fn swim_step(
     // falling to meet them, and a river falling a tenth of a yard per yard sheds the 1/36-yd band
     // within a few frames, flapping the latch between swim and fall. The drop is swept, so a bank
     // still holds the feet up. Only under a stroke, as the resolver's outer gate skips an idle
-    // mover (the reference test [esi+0x40],0x200f), and only under the rest line the cap reads, or
-    // GM flight over a lake would drop onto the waterline.
+    // mover (the reference's `test [esi+0x40],0x200f`), and only under the rest line the cap reads,
+    // or GM flight over a lake would drop onto the waterline.
     if surface_y.is_some() && input_vel != Vec3::ZERO {
         if let Some(surface_now) = surface_at(c - half_h) {
             let excess = settle_to_rest(c.y - half_h.y, surface_now, player.collision_height.0);
@@ -327,8 +327,8 @@ pub(super) fn drive_step(
     } else {
         swim_speed
     };
-    // The stroke rate's numerator is the flag speed whatever the pitch: the reference divides
-    // `GetCurrentSpeed` by the clip's speed, for local and observed units alike.
+    // The stroke rate's numerator is the flag speed whatever the pitch: the reference divides the
+    // current speed by the clip's speed, for local and observed units alike.
     player.swim_stroke_speed = if dir3 == Vec3::ZERO { 0.0 } else { dir_speed };
     let out = swim_step(
         player,
@@ -348,7 +348,7 @@ pub(super) fn drive_step(
         held: false,
         grounded: out.grounded,
         jumped: false,
-        // A knockback clears SWIMMING at take-off (`StartFalling`), so the land mover flies it.
+        // A knockback clears SWIMMING at take-off (the fall start), so the land mover flies it.
         knocked: false,
         air_nudged: false,
         ground: None, // swimming detaches from any platform frame below
@@ -422,7 +422,7 @@ mod tests {
         assert!(!update_swimming(&mut player, Some(0.5), 0.2));
         assert_eq!(
             player.mover_pitch, 0.0,
-            "the reference zeroes +0x20 on StopSwim"
+            "the reference zeroes +0x20 on the swim stop"
         );
         // No liquid at all is the same stop.
         player.mover_pitch = -0.9;

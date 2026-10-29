@@ -243,7 +243,7 @@ pub(crate) struct Creatures {
 
 impl Creatures {
     /// Whether a display id has a model row behind it (`CreatureDisplayInfo` →
-    /// `CreatureModelData`), the chain walks after the race row's id.
+    /// `CreatureModelData`), the chain the reference walks after the race row's id.
     pub(crate) fn resolves_model(&self, display_id: u32) -> bool {
         self.catalog.model(display_id).is_some()
     }
@@ -617,7 +617,8 @@ impl Plugin for EntitiesPlugin {
         .add_message::<MissileSound>()
         .add_message::<MissileMiss>()
         .add_message::<dest_fx::GroundBurst>()
-        // A display swap's rebuild edge, for the impact-kit replay the reference runs at the end.
+        // A display swap's rebuild edge, for the impact-kit replay the reference runs at the end of
+        // the rebuild.
         .add_message::<live_display::DisplaySwapped>()
         .add_systems(Startup, setup_entities.after(AssetSet::Open))
         .add_systems(
@@ -1454,7 +1455,8 @@ mod overhead_slot_tests {
         }
     }
 
-    /// The reference's pick. A character body (HumanMale) authors both slots, a Kobold only 18.
+    /// The marker attach's slot pick. A character body (HumanMale) authors both slots, a Kobold
+    /// only 18.
     #[test]
     fn twenty_nine_needs_both_a_mount_model_and_the_authored_point() {
         let both = body(&[ATTACH_OVERHEAD, ATTACH_OVERHEAD_MOUNTED]);

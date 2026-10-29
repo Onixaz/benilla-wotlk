@@ -22,7 +22,7 @@ use super::kit::{
 use super::{math, AudioListener, SoundConfig, SoundOutput};
 
 /// 32 entries, one per distinct SoundEntries id (`0x1c200` over stride `0xe10`); a 33rd id gets
-/// handle 0 from the reference and stays untracked until an entry frees.
+/// handle 0 from the registrar and stays untracked until an entry frees.
 const POOL_ENTRIES: usize = 32;
 
 /// 256 emitter records per entry (`[entry+0xC00..+0xCFF]`).
@@ -31,7 +31,7 @@ const RECORDS_PER_ENTRY: usize = 256;
 /// At most four entries hold a channel at once.
 const PLAYING_CAP: usize = 4;
 
-/// The fade a released or cap-evicted channel gets, in seconds (`(3.0f)`).
+/// The fade a released or cap-evicted channel gets, in seconds (`3.0f` in the reference).
 const FADE_SECS: f32 = 3.0;
 
 /// The entity an entry's channel rides; moving its `Transform` is the reference's reposition
@@ -61,8 +61,8 @@ struct Entry {
 }
 
 impl Entry {
-    /// The reference steps 1-3: occupied, resolvable, with an emitter. This decides whether the cap
-    /// walk services the entry, not whether it counts ([`cap_step`]).
+    /// The reference's entry test, steps 1-3: occupied, resolvable, with an emitter. This decides
+    /// whether the cap walk services the entry, not whether it counts ([`cap_step`]).
     fn entitled(&self) -> bool {
         self.id != 0 && !self.failed && !self.records.is_empty()
     }
@@ -89,7 +89,7 @@ struct Fading {
 #[derive(Resource)]
 pub(super) struct AmbientEmitterPool {
     entries: [Entry; POOL_ENTRIES],
-    /// Each owner's entry, the reference's per-owner handle (`[CMapDoodadDef+0x168]`,
+    /// Each owner's entry, the reference's per-owner handle (doodad def `+0x168`,
     /// `[handler+0x18]`); one per owner, so a GameObject's `$DSL` and its looping display slot
     /// contend for it.
     handles: EntityHashMap<usize>,
@@ -231,10 +231,10 @@ enum CapStep {
 }
 
 /// One step of the cap walk. `sounding_so_far` counts entries whose channel is live and in range,
-/// in claim order: the reference is the `DistanceCutoff` bit that the reference sets as it stops an
-/// out-of-range channel. So a far ambience holds none of the four, but among audible ones a nearer
-/// fifth never takes over. A kit with `DistanceCutoff` 0 is never culled and holds a slot at any
-/// distance.
+/// in claim order: the reference counts an entry with a live channel that lacks the
+/// `DistanceCutoff` bit, which its cull sets as it stops an out-of-range channel. So a far ambience
+/// holds none of the four, but among audible ones a nearer fifth never takes over. A kit with
+/// `DistanceCutoff` 0 is never culled and holds a slot at any distance.
 const fn cap_step(entitled: bool, sounding_so_far: usize) -> CapStep {
     if !entitled {
         CapStep::Skip
@@ -286,8 +286,8 @@ fn pump_emitters(
         true
     });
 
-    // `(id)` finds no row: failed for good ([`Entry::failed`]). Before the cap walk, so a dead id
-    // never costs a live one its slot.
+    // The kit lookup finds no row: failed for good ([`Entry::failed`]). Before the cap walk, so a
+    // dead id never costs a live one its slot.
     for entry in pool.entries.iter_mut() {
         if entry.id != 0 && !entry.failed && kit_name(&kits, entry.id).is_none() {
             entry.failed = true;
@@ -551,8 +551,8 @@ mod tests {
         assert_eq!(pool.entries[0].records[0].pos, Vec3::new(1.0, 2.0, 3.0));
     }
 
-    /// The reference never swaps: Onyxia's lava trap's `$DSL(8682)` on Custom0 never displaces its
-    /// Stand `$DSL(8681)`.
+    /// The GameObject arm never swaps: Onyxia's lava trap's `$DSL(8682)` on Custom0 never displaces
+    /// its Stand `$DSL(8681)`.
     #[test]
     fn the_gameobject_arm_keeps_the_id_it_first_registered() {
         let mut pool = AmbientEmitterPool::default();

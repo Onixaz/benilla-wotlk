@@ -383,7 +383,7 @@ fn only_a_possessed_units_attack_press_raises_the_latch() {
     assert!(!bar.attacking, "only ATTACK raises it");
 }
 
-/// The reference asks for the unit we possess, not the one we own.
+/// The reference's possessed-unit lookup asks for the unit we possess, not the one we own.
 #[test]
 fn the_latch_gate_is_possession_not_ownership() {
     const FLAGS: u16 = 46;
@@ -550,7 +550,7 @@ fn touching_your_target_calls_the_pet_off() {
     assert!(rx.try_recv().is_err());
 }
 
-/// The owner test falls back to SUMMONEDBY, not the reference's CREATEDBY.
+/// The owner test falls back to SUMMONEDBY, not the possessed-unit lookup's CREATEDBY.
 #[test]
 fn the_attack_events_read_the_pets_combat_flag_not_the_click_latch() {
     const FLAGS: u16 = 46;
@@ -617,7 +617,8 @@ fn only_the_attack_order_is_gated() {
     )));
 }
 
-/// A pet with one aura in slot 0, `cancelable` or not: the reference tests the cancelable bit.
+/// A pet with one aura in slot 0, `cancelable` or not: the active-slot test reads the cancelable
+/// bit.
 fn pet_running(spell_id: u32, cancelable: bool) -> crate::unit_auras::UnitAuras {
     let flags = if cancelable {
         benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE | 1
@@ -817,7 +818,7 @@ fn a_cooldown_alone_is_pushed_with_no_event_from_the_bar_feed() {
     assert_eq!(enable, 1);
 }
 
-/// Which copies the toggled word into the pet spellbook.
+/// The autocast toggle then syncs the spellbook, copying the toggled word into the pet spellbook.
 #[test]
 fn a_bar_autocast_toggle_reaches_the_pet_spellbook() {
     const CLAW: u32 = 16827;

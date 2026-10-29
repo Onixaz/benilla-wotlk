@@ -68,7 +68,7 @@ pub struct TerrainOptions {
     /// `specular`, Terrain Highlights: the `_s` layers' sun sheen.
     pub specular: bool,
     /// `shadowLevel` at 1, Terrain Texture Low: every chunk's alpha and shadow maps at half size
-    /// (`CMapChunk::RenderPrep 0x7d3fe0` sets flag `0x10` from `CWorld::shadowMipLevel`).
+    /// (the chunk render prep at `0x7d3fe0` sets flag `0x10` from the world's shadow mip level).
     pub low_mip: bool,
 }
 
@@ -1109,8 +1109,7 @@ fn despawn_tile_owned(commands: &mut Commands, t: &TileState) {
 }
 
 /// Re-scatter the loaded tiles when `groundEffectDensity` changes, as the reference's setter
-/// dirties the detail-doodad pools (`World::SetDetailDoodadDensity 0x780710`). It watches the
-/// density value, since
+/// dirties the detail-doodad pools (`0x780710`). It watches the density value, since
 /// `ClutterConfig` also holds the detail-doodad cutout; the first sight only arms.
 fn rescatter_clutter(
     mut commands: Commands,
@@ -1301,9 +1300,9 @@ fn release_placement(
 }
 
 /// The terrain base material, backface-culled so the ground is see-through from below, as in the
-/// reference: its terrain pass never sets `EGxRs 0x14` and keeps the device baseline cull on; only
-/// the liquid passes and the WDL mesh clear it. Front faces point up only while the winding tests
-/// `terrain_fans_wind_ccw_seen_from_above` and `transform_is_a_proper_rotation` hold.
+/// reference: its terrain pass never sets render state `0x14` and keeps the device baseline cull
+/// on; only the liquid passes and the WDL mesh clear it. Front faces point up only while the
+/// winding tests `terrain_fans_wind_ccw_seen_from_above` and `transform_is_a_proper_rotation` hold.
 fn terrain_base_material() -> StandardMaterial {
     StandardMaterial {
         base_color: Color::WHITE,

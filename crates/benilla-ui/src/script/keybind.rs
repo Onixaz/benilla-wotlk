@@ -22,10 +22,10 @@ pub enum KeybindRequest {
 /// One key of a set: the chord and the command name it runs, as `SetBinding` stored it.
 pub type KeyBinding = (String, String);
 
-/// `SetBinding`'s only refusal: the alias step of `CBindings::SetBinding`, then
-/// `IsValidBindingKeyString`; no command is consulted. `Some` is the key to store, upper-cased
-/// because the table's hash and compare fold case. The alias step ignores case but the validator
-/// does not, so `"mousewheelup"` is refused.
+/// `SetBinding`'s only refusal: the alias step of the binding table's setter, then the key-string
+/// validator; no command is consulted. `Some` is the key to store, upper-cased because the table's
+/// hash and compare fold case. The alias step ignores case but the validator does not, so
+/// `"mousewheelup"` is refused.
 pub fn normalize_binding_key(key: &str) -> Option<String> {
     // Eleven punctuation names become their character on a whole-string match only, so
     // `SHIFT-LEFTBRACKET` is refused where `SHIFT-[` passes.
@@ -49,7 +49,7 @@ pub fn normalize_binding_key(key: &str) -> Option<String> {
     is_valid_binding_key(key).then(|| key.to_ascii_uppercase())
 }
 
-/// `IsValidBindingKeyString`, arm for arm.
+/// The reference's key-string validator, arm for arm.
 fn is_valid_binding_key(key: &str) -> bool {
     // 1. Modifier prefixes, in any order and any number of times.
     let mut rest = key;
@@ -427,8 +427,8 @@ pub(crate) fn register_addon_bindings(lua: &Lua, addon: &str, bindings: &[Bindin
         .register(Some(addon), bindings);
 }
 
-/// `CBindings::RunCommand`: look the command up by name; on a release run nothing unless it is
-/// `runOnUp`; else set the global `keystate` to `"down"` or `"up"`, run the body, and set
+/// The binding table's command run: look the command up by name; on a release run nothing unless it
+/// is `runOnUp`; else set the global `keystate` to `"down"` or `"up"`, run the body, and set
 /// `keystate` to nil, since the client's in-world `_G` has none (`reference/3.3.5a-globals.tsv`).
 /// `Ok(false)` when nothing ran.
 pub(crate) fn run_command(lua: &Lua, command: &str, down: bool) -> mlua::Result<bool> {
@@ -457,8 +457,8 @@ pub(crate) fn run_command(lua: &Lua, command: &str, down: bool) -> mlua::Result<
     ran.map(|()| true)
 }
 
-/// A chord and its modifier reductions in `GetReducedKeyBinding`'s order (`0x5622e0`): up to three
-/// `MOD-` prefixes, every subset tried from all of them down to the bare key.
+/// A chord and its modifier reductions in the reference's reduced-binding order (`0x5622e0`): up to
+/// three `MOD-` prefixes, every subset tried from all of them down to the bare key.
 fn reduced_keys(key: &str) -> Vec<String> {
     let mut mods = Vec::new();
     let mut rest = key;
@@ -485,9 +485,9 @@ fn reduced_keys(key: &str) -> Vec<String> {
         .collect()
 }
 
-/// The binding globals. `GetBinding(i)` answers the row's name and then every key bound to it (:
-/// `1 + matches` values), so a `HEADER_*` row answers its name alone, which the stock window reads
-/// as three names (`Blizzard_BindingUI.lua:84`, `:87`). Only `GetNumBindings` and `GetBinding` skip
+/// The binding globals. `GetBinding(i)` answers the row's name and then every key bound to it (`1 +
+/// matches` values), so a `HEADER_*` row answers its name alone, which the stock window reads as
+/// three names (`Blizzard_BindingUI.lua:84`, `:87`). Only `GetNumBindings` and `GetBinding` skip
 /// hidden rows.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
@@ -527,7 +527,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(if ok { Some(1) } else { None })
         })?,
     )?;
-    // `RunBinding(command[, "up"])`: the command's body through `RunCommand`, a release when the
+    // `RunBinding(command[, "up"])`: the command's body through the command run, a release when the
     // second argument is `"up"` in any case, else a press. Not a hardware event, so the movement
     // functions' gate refuses unless a key's own body is already running.
     lua.globals().set(
@@ -763,7 +763,7 @@ mod tests {
         assert!(s
             .eval::<bool>(r#"return SetBinding("MOUSEWHEELDOWN", "CAMERAZOOMIN") == 1"#)
             .unwrap());
-        // Refused by `IsValidBindingKeyString`, on the pure unbind too.
+        // Refused by the key-string validator, on the pure unbind too.
         for bad in ["SHIFT", "ALT", "UNKNOWN", "SCROLLLOCK", "SHIFT-LEFTBRACKET"] {
             assert!(
                 s.eval::<bool>(&format!(r#"return SetBinding("{bad}", "JUMP") == nil"#))
@@ -1000,9 +1000,9 @@ mod tests {
         );
     }
 
-    /// `RunBinding(command[, "up"])` runs the body through `RunCommand` in the call: `keystate` set
-    /// for the run and nil after, a release only for a `runOnUp` command, an unknown name a no-op,
-    /// no name an error.
+    /// `RunBinding(command[, "up"])` runs the body through the command run in the call: `keystate`
+    /// set for the run and nil after, a release only for a `runOnUp` command, an unknown name a
+    /// no-op, no name an error.
     #[test]
     fn run_binding_runs_the_body_in_the_call() {
         let s = script();
@@ -1029,8 +1029,8 @@ mod tests {
         assert_eq!(s.eval::<String>("return OUTER_AFTER").unwrap(), "nil");
     }
 
-    /// `execute_binding` is `ExecuteBinding`'s `RunCommand`: the press runs, the release runs only
-    /// a `runOnUp` body, and nothing ran answers false.
+    /// `execute_binding` is the binding execute's command run: the press runs, the release runs
+    /// only a `runOnUp` body, and nothing ran answers false.
     #[test]
     fn execute_binding_answers_whether_a_body_ran() {
         let s = script();

@@ -121,8 +121,8 @@ fn drain_talent_wipe(
             "ui_talent_wipe: respec costs {} copper, purse holds {money} — refused client-side",
             wipe.cost
         );
-        // `DisplayError(0x25)`, `ERR_NOT_ENOUGH_MONEY`: the red line and, as that row's `+0x0c` is
-        // `0x28`, the spoken one.
+        // Error display id `0x25`, `ERR_NOT_ENOUGH_MONEY`: the red line and, as that row's `+0x0c`
+        // is `0x28`, the spoken one.
         let text = script
             .lua()
             .globals()

@@ -199,7 +199,7 @@ fn stationary_cast_hold_stows_an_engaged_casters_weapon() {
     assert_eq!(sheath(&app), Some(1), "drawn again once the cast resolves");
 }
 
-/// The reconcile runs only inside `PlayAnimation`, so a playless frame keeps the stow.
+/// The reconcile runs only inside the animation play call, so a playless frame keeps the stow.
 #[test]
 fn moving_cast_hold_keeps_its_stow_between_plays() {
     let mut app = app();
@@ -318,7 +318,7 @@ fn spawn_fidgeter(app: &mut App) -> (Entity, Vec<AnimationNodeIndex>) {
 }
 
 /// A relaxed arm rolls its variation (`variationIdx = −1`), and the shuffle, released at its own
-/// window's end since the reference's tail cannot stop it, re-rolls Stand.
+/// window's end since the reference's per-frame turn tail cannot stop it, re-rolls Stand.
 #[test]
 fn relaxed_base_arms_roll_variations_and_the_shuffle_drives_them() {
     let mut app = app();
@@ -364,7 +364,7 @@ fn relaxed_base_arms_roll_variations_and_the_shuffle_drives_them() {
     );
 }
 
-/// An engaged unit's base arms keep the head: the reference re-zeroes the variation.
+/// An engaged unit's base arms keep the head: the reference's arm helper re-zeroes the variation.
 #[test]
 fn engaged_base_arms_keep_the_head_variation() {
     let mut app = app();
@@ -449,7 +449,7 @@ fn cast_hold_stows_even_when_the_model_lacks_the_spell_anims() {
     assert_eq!(sheath(&app), Some(1), "re-drawn once the cast resolves");
 }
 
-/// A spell flinch is `(severity = 0)`: a decaying overlay, the base left untouched.
+/// A spell flinch is the wound play at severity 0: a decaying overlay, the base left untouched.
 #[test]
 fn spell_impact_wound_rides_the_secondary_slot() {
     let mut app = app();
@@ -496,7 +496,7 @@ fn spell_impact_wound_rides_the_secondary_slot() {
     );
 }
 
-/// A spell flinch is severity 0, so the reference picks CombatWound(9) engaged, StandWound(8) not.
+/// A spell flinch is severity 0, so the wound pick takes CombatWound(9) engaged, StandWound(8) not.
 #[test]
 fn spell_flinch_picks_the_wound_by_engagement() {
     fn model() -> ModelAnimations {
@@ -2049,7 +2049,7 @@ fn a_landed_swing_snaps_its_attacker_out_of_the_ranged_stance() {
         app.update();
     };
 
-    // The shot's draw: `SetSheatheState(2, SNAP)`.
+    // The shot's draw: the sheath state set to 2, snapped.
     app.world_mut().write_message(SheathRequest {
         entity: unit,
         state: 2,
@@ -2586,7 +2586,7 @@ fn the_mount_transition_takes_bone_0_back_from_a_full_body_one_shot() {
     app.update();
     assert_eq!(playing(&app), Some(MOUNT));
 
-    // Dismount, the watcher's other leg: the reference arms Stand on the same bone.
+    // Dismount, the watcher's other leg: the teardown arms Stand on the same bone.
     mount_field(&mut app, 0);
     app.update();
     assert_eq!(playing(&app), Some(0), "back on its own feet, standing");
@@ -2902,7 +2902,7 @@ fn a_mid_volley_fire_clip_re_pulls_and_the_pull_promotes_to_the_hold() {
     assert_eq!(
         mode(&app),
         super::super::select::Mode::Gait,
-        "the fire clip's completion recomputes the base (slot 22's bare RecomputeBaseAnim(-1))"
+        "the fire clip's completion recomputes the base (slot 22's bare base recompute)"
     );
     // The recompute clears the gait and re-picks it the next frame.
     app.update();
@@ -2920,7 +2920,7 @@ fn a_mid_volley_fire_clip_re_pulls_and_the_pull_promotes_to_the_hold() {
         "fire → re-pull → hold, once per shot"
     );
 
-    // The volley ends: the cancel's `RecomputeBaseAnim(-1)`.
+    // The volley ends: the cancel's base recompute.
     app.world_mut()
         .entity_mut(unit)
         .remove::<crate::creature_anim::AutoRepeatArmed>();
@@ -3074,7 +3074,7 @@ fn every_shot_of_a_volley_re_arms_the_fire_clip_through_the_emote_lane() {
         );
     }
 
-    // The volley ends: the cancel's `RecomputeBaseAnim(-1)`.
+    // The volley ends: the cancel's base recompute.
     app.world_mut()
         .entity_mut(unit)
         .remove::<crate::creature_anim::AutoRepeatArmed>();
@@ -3157,8 +3157,8 @@ fn spawn_vendor(app: &mut App) -> (Entity, Vec<AnimationNodeIndex>) {
 }
 
 /// The facing producer and this driver together: the latch holds while the yaw the pump applies
-/// exceeds 1e-5, and the shuffle ends at its own window, since the reference's tail cannot stop
-/// one.
+/// exceeds 1e-5, and the shuffle ends at its own window, since the reference's per-frame turn tail
+/// cannot stop one.
 #[test]
 fn the_interaction_face_me_shuffles_its_feet_for_the_whole_turn() {
     let mut app = app();
@@ -3220,7 +3220,7 @@ fn the_interaction_face_me_shuffles_its_feet_for_the_whole_turn() {
         gait(&app)
     );
 
-    // Released at the window: the reference's completion row recomputes, and the chain answers
+    // Released at the window: the completion dispatcher's row recomputes, and the chain answers
     // Stand.
     run(&mut app, 160, 0);
     assert_eq!(
@@ -3241,8 +3241,8 @@ fn the_interaction_face_me_shuffles_its_feet_for_the_whole_turn() {
     assert!(peak > 0.95, "and blends the whole way in: {peak}");
 }
 
-/// Disarm has no selector case: `GetWeapon(slot, 0)` hands the swing and the Ready idle a null
-/// hand, and their unarmed legs do the rest.
+/// Disarm has no selector case: the weapon getter's held read hands the swing and the Ready idle a
+/// null hand, and their unarmed legs do the rest.
 #[test]
 fn a_disarmed_attacker_swings_and_stands_unarmed() {
     fn model() -> ModelAnimations {
@@ -3580,7 +3580,7 @@ fn a_no_wound_creature_takes_no_flinch() {
     );
     assert!(
         wound(unqueried),
-        "a template we have not received reads as unflagged — the reference's null leg"
+        "a template we have not received reads as unflagged — the reference's null-record leg"
     );
 }
 
@@ -3709,7 +3709,7 @@ fn a_gait_change_raises_the_anim_edge_and_a_steady_frame_does_not() {
         ..Default::default()
     });
     app.update();
-    assert!(edge(&app), "starting to run IS a PlayAnimation");
+    assert!(edge(&app), "starting to run IS an animation play");
     app.update();
     assert!(
         !edge(&app),
@@ -3725,7 +3725,7 @@ fn a_gait_change_raises_the_anim_edge_and_a_steady_frame_does_not() {
     assert!(edge(&app), "and so does a one-shot");
 }
 
-/// The combat fast path returns, before the trail latch's only read, so a pending trail arm (one
+/// The combat fast path returns before the trail latch's only read, so a pending trail arm (one
 /// slot) survives it: no anim edge rises.
 #[test]
 fn a_combat_over_combat_fast_path_does_not_raise_the_anim_edge() {
@@ -3773,12 +3773,12 @@ fn a_combat_over_combat_fast_path_does_not_raise_the_anim_edge() {
     );
     assert!(
         !edge(&app),
-        "…and it re-times rather than plays, so the reference returns before the latch read and a \
+        "…and it re-times rather than plays, so the play call returns before the latch read and a \
          pending trail arm survives"
     );
 }
 
-/// The base-animation lock: a stun root's recompute asks for `Stand(0)` and the reference's guard
+/// The base-animation lock: a stun root's recompute asks for `Stand(0)` and the play call's guard
 /// on `[unit+0xd58] & 0xc0000` refuses it, so a `Knockdown` (Lash, spell 6607) runs its 2000 ms.
 mod base_anim_lock {
     use super::*;
@@ -4003,8 +4003,8 @@ mod base_anim_lock {
     }
 }
 
-/// The one-shot routing seams runs ahead of the clip: the mounted three-way split, and a key-bone
-/// play on a model with no split bone.
+/// The play call's one-shot routing seams run ahead of the clip: the mounted three-way split, and a
+/// key-bone play on a model with no split bone.
 mod routing {
     use super::*;
 
@@ -4163,8 +4163,8 @@ mod routing {
         );
     }
 
-    /// The armed id is the requested one (the reference returns `+0xf8`, op4's raw argument), not
-    /// the clip a fallback plays: Stand runs on bone 0 while 68 is the requested id.
+    /// The armed id is the requested one (the reference's getter returns `+0xf8`, op4's raw
+    /// argument), not the clip a fallback plays: Stand runs on bone 0 while 68 is the requested id.
     #[test]
     fn the_armed_id_is_the_requested_one_not_the_fallback_clip() {
         use super::super::super::select::Mode;
@@ -4295,7 +4295,8 @@ mod routing {
 }
 
 /// The `UNIT_NPC_EMOTESTATE` resolver: the current interact NPC passes over a state whose
-/// `Emotes.dbc` flags carry `0x2000`, and `SetInteractNPC` re-picks its base on open and on clear.
+/// `Emotes.dbc` flags carry `0x2000`, and the interact-NPC setter re-picks its base on open and on
+/// clear.
 mod emote_state {
     use super::*;
     use crate::creature_anim::Mode;
@@ -4403,7 +4404,7 @@ mod emote_state {
         app.world().entity(unit).get::<AnimDriver>().unwrap().gait
     }
 
-    /// A creature's guid, which `SetInteractNPC` re-picks for; a player's does not.
+    /// A creature's guid, which the interact-NPC setter re-picks for; a player's does not.
     const CREATURE: u64 = 0xF130_0000_0000_0042;
     const PLAYER: u64 = 0x42;
 
@@ -4466,7 +4467,7 @@ mod emote_state {
         assert_eq!(gait(&app, npc), Some(0));
     }
 
-    /// The reference skip the re-pick for a player (a trade partner).
+    /// The reference's open and clear skip the re-pick for a player (a trade partner).
     #[test]
     fn a_player_target_is_not_re_picked() {
         let mut app = app_with_rows();

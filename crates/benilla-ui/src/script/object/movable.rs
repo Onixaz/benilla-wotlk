@@ -3,13 +3,12 @@
 //! [`crate::script::cursor`]'s.
 //!
 //! The flags are bits of `[frame+0xb4]`, set: movable `0x100`, resizable `0x200`, userPlaced
-//! `0x1000`. A drag (`CSimpleTop::StartMoveOrResizeFrame` `0x494060`) flattens the frame to one
-//! TOPLEFT against the screen at its current rect with an explicit size
-//! (`CLayoutFrame::FlattenFrame` `0x48a5f0`), so a frame a clamp holds off its anchors moves from
-//! where it is drawn; it then raises it, sets userPlaced and takes the one drag slot. The pump
-//! (`MoveOrResizeFrame` `0x493ce0` → `DragBy` `0x48abd0`) adds each cursor delta, over the frame's
-//! scale, into that anchor's offsets; stopping (`StopMoveOrResizeFrame` `0x493a10`) unflattens it
-//! to the nearest of the screen's nine points (`UnflattenFrame` `0x48a840`).
+//! `0x1000`. A drag (the drag start, `0x494060`) flattens the frame to one TOPLEFT against the
+//! screen at its current rect with an explicit size (the flatten, `0x48a5f0`), so a frame a clamp
+//! holds off its anchors moves from where it is drawn; it then raises it, sets userPlaced and takes
+//! the one drag slot. The pump (`0x493ce0` → `0x48abd0`) adds each cursor delta, over the frame's
+//! scale, into that anchor's offsets; stopping (`0x493a10`) unflattens it to the nearest of the
+//! screen's nine points (the unflatten, `0x48a840`).
 
 use mlua::{Lua, MultiValue, Table, Value};
 
@@ -277,8 +276,8 @@ fn get_flag(lua: &Lua, this: &Table, which: Flag) -> mlua::Result<Value> {
     ))
 }
 
-/// The family's refusal, naming the frame as the reference does. The wording is ours: the strings
-/// are unread, known only by their symbol names.
+/// The family's refusal, naming the frame as the reference does. The wording is ours: the
+/// reference's own strings are unread, known only by their symbol names.
 fn not_flagged(model: &Model, h: FrameHandle, want: &str) -> mlua::Error {
     let who = model
         .arena
@@ -336,7 +335,7 @@ pub(crate) fn stop_auto_move(model: &mut Model) {
     }
 }
 
-/// `FlattenFrame` (`0x48a5f0`) against the screen: one TOPLEFT at the frame's current rect, clamp
+/// The flatten (`0x48a5f0`) against the screen: one TOPLEFT at the frame's current rect, clamp
 /// included, and that rect's size made explicit, in the frame's own units.
 fn flatten(model: &mut Model, h: FrameHandle) {
     crate::script::UiScript::resolve_layout(model);
@@ -359,7 +358,7 @@ fn flatten(model: &mut Model, h: FrameHandle) {
     set_single_anchor(model, h, anchor, Some(size));
 }
 
-/// `UnflattenFrame` (`0x48a840`): re-anchor to whichever of the screen's nine points lies nearest
+/// The unflatten (`0x48a840`): re-anchor to whichever of the screen's nine points lies nearest
 /// its counterpart on the frame, keeping the size, so a later screen change carries it along.
 fn unflatten(model: &mut Model, h: FrameHandle) {
     crate::script::UiScript::resolve_layout(model);
@@ -367,7 +366,8 @@ fn unflatten(model: &mut Model, h: FrameHandle) {
         return;
     };
     let screen = model.screen;
-    // `Point`'s order, row by row from the top-left, as `GetRectFramePoints` lays them out.
+    // `Point`'s order, row by row from the top-left, as the reference's rect-points helper lays
+    // them out.
     let at = |r: &crate::layout::Rect, i: usize| {
         let x = [r.left, (r.left + r.right) * 0.5, r.right][i % 3];
         let y = [r.top, (r.top + r.bottom) * 0.5, r.bottom][i / 3];
@@ -471,7 +471,7 @@ pub(crate) fn advance_size(model: &mut Model, pos: (f32, f32)) {
     else {
         return;
     };
-    // The resize bounds are read only here, as only reads them in the reference.
+    // The resize bounds are read only here, as only the resize pump reads them in the reference.
     let (new_w, new_h) = clamp_resize(model, sz.frame, w0 + dw, h0 + dh);
     // The rebate: the residual a clamp swallowed comes back out of the drag delta, so the moving
     // edge stops at the bound instead of the window walking. The delta is already in local units,
@@ -496,7 +496,8 @@ pub(crate) fn advance_size(model: &mut Model, pos: (f32, f32)) {
     input.height = new_h;
     let mut moved = input.width.to_bits() != w0.to_bits() || input.height.to_bits() != h0.to_bits();
     // The flattened frame hangs from its TOPLEFT, so a LEFT or TOP grip moves that point with its
-    // edge and the opposite edges stay (`DragBy` `0x48abd0`); RIGHT and BOTTOM change the size alone.
+    // edge and the opposite edges stay (the drag step, `0x48abd0`); RIGHT and BOTTOM change the
+    // size alone.
     if !input.anchors.is_empty() && (sz.left || sz.top) {
         for a in &mut input.anchors {
             if sz.left {

@@ -781,8 +781,8 @@ pub(super) fn seed_ui_fixture(
                 return;
             };
             // A ranked player under the cursor, pushed as the mouseover feed does, then the call
-            // `drive_mouseover_tooltip` makes: the title is the reference's rank leg over the name,
-            // "Sergeant Bob".
+            // `drive_mouseover_tooltip` makes: the title is the reference name decorator's rank leg
+            // over the name, "Sergeant Bob".
             script.set_unit(
                 "mouseover",
                 Some(benilla_ui::script::UnitState {
@@ -917,8 +917,8 @@ pub(super) fn seed_ui_fixture(
                     (34, 2),      // UNIT_FIELD_LEVEL
                     (35, 1),      // UNIT_FIELD_FACTIONTEMPLATE: human
                     (36, 0x0101), // UNIT_FIELD_BYTES_0: race human, class warrior
-                    // UNIT_FIELD_FLAGS bit 3 (`PLAYER_CONTROLLED`), which every player carries;
-                    // `CanAttack` picks its arm on it, and without it no plate draws on the wolf.
+                    // UNIT_FIELD_FLAGS bit 3 (`PLAYER_CONTROLLED`), which every player carries; the
+                    // attack check picks its arm on it, and without it no plate draws on the wolf.
                     (46, 0x8),
                 ])),
                 crate::net::SelfPlayer,

@@ -87,9 +87,9 @@ enum Pending {
         rank: u8,
         tries: u16,
     },
-    /// A text emote waiting on its performer's name: the reference's `PENDINGTEXTEMOTE` node,
-    /// queued when the reference finds no cached name and drained. `target` is the wire's name,
-    /// empty when untargeted, used as sent.
+    /// A text emote waiting on its performer's name: the reference's pending-text-emote node,
+    /// queued when the emote handler finds no cached name and drained when the name arrives.
+    /// `target` is the wire's name, empty when untargeted, used as sent.
     TextEmote {
         performer: u64,
         text_id: u32,
@@ -123,7 +123,7 @@ pub(super) fn fire_addon_message(
 
 /// A text emote's chat event, or `None` when the sentence is blank, as SIT, STAND and TRAIN are in
 /// every locale. `sender` is the performer, seen only by addons as arg2: `TEXT_EMOTE` prints
-/// verbatim (`ChatFrame.lua:1395`), and the fire pushes the name record resolved.
+/// verbatim (`ChatFrame.lua:1395`), and the fire pushes the name record the handler resolved.
 pub(super) fn text_emote_event(
     cat: &EmoteTextCatalog,
     text_id: u32,
@@ -405,9 +405,9 @@ pub(super) fn xp_gain_line(
 /// own table is untraced; rested is the only bonus state vmangos sets (`Player.cpp:17990-17993`).
 const RESTED_STATE: &str = "Rested";
 
-/// The honor line (`CGChat::LogHonorGain`, `0x50b6d0`): `COMBATLOG_HONORAWARD` with no victim; a
-/// kill under 1 honor prints nothing (`0x50b71f`); else `COMBATLOG_HONORGAIN` with the rank title,
-/// or `COMBATLOG_HONORGAIN_NO_RANK` without one.
+/// The honor line (`0x50b6d0`): `COMBATLOG_HONORAWARD` with no victim; a kill under 1 honor prints
+/// nothing (`0x50b71f`); else `COMBATLOG_HONORGAIN` with the rank title, or
+/// `COMBATLOG_HONORGAIN_NO_RANK` without one.
 pub(super) fn honor_gain_line(
     victim: Option<&str>,
     rank_title: Option<&str>,
@@ -431,7 +431,7 @@ pub(super) fn honor_gain_line(
     }
 }
 
-/// The `ERR_ZONE_EXPLORED` toast (error route 1, `AddErrorMessage`), every packet.
+/// The `ERR_ZONE_EXPLORED` toast (error route 1, the red error message), every packet.
 pub(super) fn exploration_toast(
     area_name: &str,
     get: &dyn Fn(&str) -> Option<String>,
@@ -443,7 +443,7 @@ pub(super) fn exploration_toast(
     )
 }
 
-/// The `ERR_ZONE_EXPLORED_XP` system line, only when the packet carries XP (`jle`).
+/// The `ERR_ZONE_EXPLORED_XP` system line, only when the packet carries XP.
 pub(super) fn exploration_line(
     area_name: &str,
     xp: u32,
@@ -770,7 +770,7 @@ pub(super) fn feed_chat(
                 let language = langs.effective_language(msg.chat_type, msg.language);
                 let mut text = langs.garble(language, &plain);
 
-                // The text filters, on the garbled buffer as the reference: spam first, then the
+                // The text filters, on the garbled buffer as in the reference: spam first, then the
                 // mask, so a dropped line consumes no mask indices (the phase is global).
                 if text_filter.should_drop(msg.chat_type, msg.chat_tag, langs.is_gm(), &text) {
                     // Nothing shows in its place: the not-a-whisper leg jumps to the epilogue. A
@@ -812,8 +812,9 @@ pub(super) fn feed_chat(
                         .push(&speaker.bubble_cfg, msg.sender_guid, kind, &text);
                 }
                 // The gesture reads the raw type and `plain`, not the garbled text: the selector is
-                // in the parser on the buffer hands, so a Horde `lol` laughs for every observer.
-                // The immediate path alone refuses a speaker that cannot animate.
+                // in the parser, on the buffer the handler hands the composer, so a Horde `lol`
+                // laughs for every observer. The immediate path alone refuses a speaker that cannot
+                // animate.
                 let speaker_flags = guids
                     .0
                     .get(&msg.sender_guid)
@@ -989,9 +990,9 @@ pub(super) fn feed_chat(
                     }
                     resolved
                 };
-                // The title's side is the victim's and its gender ours (genders against the local
-                // player). No name record means side 0: a creature, where only a racial leader is
-                // ranked (19, "Leader" either side, `HonorMgr.cpp:1075-1076`).
+                // The title's side is the victim's and its gender ours (the title lookup genders
+                // against the local player). No name record means side 0: a creature, where only a
+                // racial leader is ranked (19, "Leader" either side, `HonorMgr.cpp:1075-1076`).
                 let team = names
                     .player_traits(victim)
                     .and_then(|(race, _, _)| crate::ui_unit::race_faction_group(race))
@@ -1145,7 +1146,8 @@ pub(super) fn feed_chat(
     log.pending = still;
 }
 
-/// The game date an award line's link carries, `g_clientGameTime`'s; zero before the clock lands.
+/// The game date an award line's link carries, off the client's game clock; zero before the clock
+/// lands.
 fn award_date(time: &crate::net::ServerTime) -> (u32, u32, u32) {
     time.0.as_ref().map_or((0, 0, 0), |t| t.date())
 }

@@ -1,13 +1,13 @@
 //! The social family: the contact list (friends, ignores and voice mutes in one packet) and `/who`
-//! (0x62-0x6d). The 3.3.5a client holds 100 friends, 50 ignores and 50 mutes (`FriendList`;
+//! (0x62-0x6d). The 3.3.5a client holds 100 friends, 50 ignores and 50 mutes (its friend list;
 //! `GetNumFriends` `0x6b34a0`, `GetNumIgnores` `0x6b3630`, `GetNumMutes` `0x6b3680`).
 
 use std::io::{self, Read};
 
 use crate::wire::{capacity_hint, read_cstring, read_u32_le, read_u64_le, read_u8};
 
-/// `SMSG_FRIEND_STATUS`'s result byte, as `HandleStatus` (`0x6b73a0`) switches on it. Every result
-/// prints through `DisplayError` to the chat frame, not the red error line.
+/// `SMSG_FRIEND_STATUS`'s result byte, as the friend list's status handler (`0x6b73a0`) switches on
+/// it. Every result prints through the error display to the chat frame, not the red error line.
 pub mod friend_result {
     /// `ERR_FRIEND_NOT_FOUND`, as [`NOT_FOUND`] (the emulators' `FRIEND_DB_ERROR`).
     pub const DB_ERROR: u8 = 0x00;
@@ -59,7 +59,7 @@ pub mod friend_result {
     pub const MUTE_REMOVED: u8 = 0x17;
     /// `ERR_VOICE_IGNORE_AMBIGUOUS`.
     pub const MUTE_AMBIGUOUS: u8 = 0x18;
-    /// Shows nothing (`DisplayError` of the no-message id).
+    /// Shows nothing (the error display of the no-message id).
     pub const SILENT: u8 = 0x19;
     /// A friend's away flags changed: a `u8` presence follows; `FRIENDLIST_UPDATE`, no line.
     pub const FLAGS_CHANGED: u8 = 0x1A;
@@ -67,7 +67,7 @@ pub mod friend_result {
     pub const AREA_CHANGED: u8 = 0x1B;
 }
 
-/// A contact entry's list bits (`ReadPacket` `0x6b7dd0`), also the list mask `SMSG_CONTACT_LIST`
+/// A contact entry's list bits (the list read, `0x6b7dd0`), also the list mask `SMSG_CONTACT_LIST`
 /// opens with and `CMSG_CONTACT_LIST` asks for.
 pub mod contact_flag {
     /// On the friend list: the entry carries the presence tail.
@@ -77,7 +77,7 @@ pub mod contact_flag {
     pub const MUTED: u32 = 0x4;
 }
 
-/// A friend's presence byte, a flag set: any bit is online (`m_connected = status != 0`).
+/// A friend's presence byte, a flag set: any bit is online (the connected flag is `status != 0`).
 pub mod friend_status {
     pub const OFFLINE: u8 = 0;
     pub const ONLINE: u8 = 0x1;
@@ -114,7 +114,7 @@ pub struct ContactList {
     pub contacts: Vec<ContactEntry>,
 }
 
-/// Read `SMSG_CONTACT_LIST` (`ReadPacket` `0x6b7dd0`): `u32` list mask, `u32` count, then per
+/// Read `SMSG_CONTACT_LIST` (the list read, `0x6b7dd0`): `u32` list mask, `u32` count, then per
 /// entry `u64` guid, `u32` flags, the note cstring and, for a friend, a `u8` status with `u32`
 /// area/level/class when it is non-zero. A trailing 16-byte module key is left unread.
 pub fn read_contact_list(r: &mut impl Read) -> io::Result<ContactList> {
@@ -184,7 +184,7 @@ pub struct FriendOnline {
     pub class: u32,
 }
 
-/// Read `SMSG_FRIEND_STATUS` (`0x6b86b0`, tails per code in `HandleStatus` `0x6b73a0`): `u8`
+/// Read `SMSG_FRIEND_STATUS` (`0x6b86b0`, tails per code in the status handler `0x6b73a0`): `u8`
 /// result, `u64` guid, then the note for the two `ADDED` codes, the presence tail for `ONLINE` and
 /// `ADDED_ONLINE`, a `u8` for `FLAGS_CHANGED` and a `u32` for `AREA_CHANGED`.
 pub fn read_friend_status(r: &mut impl Read) -> io::Result<FriendStatusUpdate> {
@@ -375,7 +375,8 @@ pub fn del_mute(guid: u64) -> Vec<u8> {
     guid.to_le_bytes().to_vec()
 }
 
-/// `SStrCopy` into a buffer of `max + 1`: at most `max` bytes, cut on a character boundary.
+/// The reference's string copy into a buffer of `max + 1`: at most `max` bytes, cut on a character
+/// boundary.
 fn truncate_bytes(s: &str, max: usize) -> &str {
     if s.len() <= max {
         return s;

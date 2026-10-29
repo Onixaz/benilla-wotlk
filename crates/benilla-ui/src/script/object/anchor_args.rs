@@ -180,8 +180,8 @@ pub(crate) fn resolve_rel_target(
     Ok(id)
 }
 
-/// The XML `<Anchor relativeTo>` lookup (`CLayoutFrame::LoadXML`), `$parent` already expanded: the
-/// Lua string arm's resolver, but a miss reports "Couldn't find relative frame" and skips the
+/// The XML `<Anchor relativeTo>` lookup (the layout frame's XML load), `$parent` already expanded:
+/// the Lua string arm's resolver, but a miss reports "Couldn't find relative frame" and skips the
 /// anchor without raising or falling back.
 pub(crate) fn resolve_xml_relative_to(lua: &Lua, name: &str) -> Option<Table> {
     // One `_G` read, its wrapper returned: an `__index` may answer a second read differently.

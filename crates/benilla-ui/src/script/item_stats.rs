@@ -111,8 +111,8 @@ pub struct PlayerReqState {
     pub proficiency: HashMap<u32, u32>,
     /// Faction id → reputation rank, 0 hated … 7 exalted.
     pub rep_ranks: HashMap<u32, u8>,
-    /// Whether the spellbook holds a `SPELL_EFFECT_DUAL_WIELD` (40) spell, the client's; without it
-    /// an off-hand weapon reds its slot cell.
+    /// Whether the spellbook holds a `SPELL_EFFECT_DUAL_WIELD` (40) spell, the client's dual-wield
+    /// test; without it an off-hand weapon reds its slot cell.
     pub can_dual_wield: bool,
     /// The highest lifetime honor rank (`PLAYER_FIELD_BYTES` byte 3).
     pub honor_rank: u8,
@@ -323,9 +323,9 @@ fn equip_loc_token(inventory_type: u32) -> &'static str {
     TOKENS.get(inventory_type as usize).copied().unwrap_or("")
 }
 
-/// The reference's `SStrToInt` over an `item:` field: an optional `-`, then digits up to the first
-/// non-digit, with no whitespace skip and no `+`. Deviation: an overflow saturates at `u32::MAX`
-/// where the reference wraps, because only a script can overflow it.
+/// The reference's integer parse over an `item:` field: an optional `-`, then digits up to the
+/// first non-digit, with no whitespace skip and no `+`. Deviation: an overflow saturates at
+/// `u32::MAX` where the reference wraps, because only a script can overflow it.
 fn reference_atoi(s: &str) -> i64 {
     let b = s.as_bytes();
     let (neg, mut i) = match b.first() {
@@ -400,7 +400,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Value::Number(n) => *n as i64 as u32,
                 Value::String(s) => {
                     let s = s.to_string_lossy();
-                    // `GetItemIDByName` (`0x709de0`): a link's id, else the cache's name index.
+                    // The item-id-by-name lookup (`0x709de0`): a link's id, else the cache's name
+                    // index.
                     if let Some(at) = s.find("item:") {
                         let digits: String = s[at + 5..]
                             .chars()

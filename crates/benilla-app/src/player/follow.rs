@@ -1,13 +1,13 @@
 //! `/follow`, the auto-follow movement mode. It synthesizes input through the setter the
-//! MoveForward binding drives (the reference sets move-forward `0x100000`), so the controller moves
-//! the body and nothing goes on the wire (vmangos has no follow opcode). It beelines with no path,
-//! ignores the followee's speed, and does not end on arrival.
+//! MoveForward binding drives (the reference's sets and clears move-forward `0x100000`), so the
+//! controller moves the body and nothing goes on the wire (vmangos has no follow opcode). It
+//! beelines with no path, ignores the followee's speed, and does not end on arrival.
 //!
-//! A player's movement start cancels it on the key-down edge: the start emitters call, which
-//! cancels unless bit 0 of `ds:` is set, and only follow's own emitters set it; ours is a flag,
-//! [`Player::auto_forward`], so it never reaches the cancel. Jump survives, as do key releases,
-//! sitting, the walk toggle, damage, combat, mounting, casting and the followee leaving range (the
-//! reference skips follow's mode).
+//! A player's movement start cancels it on the key-down edge: the start emitters call the
+//! movement-start guard, which cancels unless bit 0 of a global auto-move word is set, and only
+//! follow's own emitters set it; ours is a flag, [`Player::auto_forward`], so it never reaches the
+//! cancel. Jump survives, as do key releases, sitting, the walk toggle, damage, combat, mounting,
+//! casting and the followee leaving range (the reference skips follow's mode).
 //!
 //! The reference's turn-away cancel (160°-220°) runs only while drunk, gated on the drunk fraction,
 //! armed as the turn converges and disarmed at random; it is not built. The start gate (who may be
@@ -40,7 +40,7 @@ const RESUME_FACTOR: f32 = 1.5;
 /// `cos 1°`, the vertical guard's threshold.
 const VERTICAL_ALIGN_COS: f32 = 0.999_847_7;
 
-/// Who we follow; the reference's guid is set, cleared.
+/// Who we follow; the reference's followee guid, set when follow starts and cleared when it ends.
 #[derive(Resource, Default)]
 pub(crate) struct FollowState {
     pub(crate) guid: Option<u64>,
@@ -100,7 +100,7 @@ fn should_move(was_moving: bool, distance: f32, speed: f32) -> bool {
     }
 }
 
-/// `move_start` and `autorun_engaged` are key-down edges (the stop emitters and autorun's off edge,
+/// `move_start` and `autorun_engaged` are key-down edges (the stop emitters and autorun's off edge
 /// have no guard call); `mouse_look` is a level, re-entering the guard every frame.
 fn follow_cancelled(
     move_start: bool,

@@ -1,8 +1,8 @@
 //! Which unit the client simulates, animates from input and streams. The reference keeps apart the
-//! active player (`ds:`, fixed under far sight and possession), the camera anchor (`camera+0x88`)
-//! and the active mover (`ds:`, set only by `SetActiveMover`; unresolved, the input applier skips
-//! its tick): [`SelfPlayer`] is the character, [`Embodied`] the attached body and camera anchor,
-//! [`ActiveMover`] the body we may move.
+//! active player (a global, fixed under far sight and possession), the camera anchor
+//! (`camera+0x88`) and the active mover (a global set only by the active-mover setter; unresolved,
+//! the input applier skips its tick): [`SelfPlayer`] is the character, [`Embodied`] the attached
+//! body and camera anchor, [`ActiveMover`] the body we may move.
 //!
 //! - Losing control removes only [`ActiveMover`]: the reference zeroes the mover globals and keeps
 //!   the anchor, so the camera follows the feared body, smoothed. The spline ride hangs off
@@ -48,7 +48,7 @@ pub(super) fn maintain_embodiment(
         if want_guid.is_some() {
             // `Player` holds the old body's pose; the controller adopts the new one's first.
             player.reseat = true;
-            // `SetActiveMover` cancels click-to-move and follow on the outgoing mover.
+            // The active-mover setter cancels click-to-move and follow on the outgoing mover.
             follow.stop();
             approach.stop();
         }

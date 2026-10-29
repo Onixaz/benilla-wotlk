@@ -110,8 +110,8 @@ impl RawBoneTrack {
         })
     }
 
-    /// The reference's sample at absolute `t_ms` for file slot `slot`: the reference's key search,
-    /// then the lerp or step.
+    /// The reference's sample at absolute `t_ms` for file slot `slot`: its key search, then the
+    /// lerp or step.
     fn reference(&self, slot: usize, t_ms: u32) -> Option<[f32; 4]> {
         let last = self.ts.len().checked_sub(1)?;
         // The window is `ranges[slot]` when present, else the whole key list.

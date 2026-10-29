@@ -40,8 +40,7 @@ pub struct PlayerRecord {
     /// `+0x101` as `UnitClass`'s (localized, uppercase token) pair; `None` answers `nil, nil`.
     pub class: Option<(String, String)>,
     /// `+0x102` on `UnitSex`'s scale (2 male, 3 female), not the wire's 0/1. The unset 0 answers 2,
-    /// as the reference's all-zero record does: the reference indexes `{2,3,1,6}` with no bounds
-    /// check.
+    /// as the reference's all-zero record does: `UnitSex` indexes `{2,3,1,6}` with no bounds check.
     pub sex: u8,
 }
 
@@ -220,11 +219,11 @@ pub struct UnitState {
     /// `GetRaidTargetIndex`: 0 none, else the mark 1..=8, from the group's raid-target board.
     pub raid_target: u8,
     /// Whether the player can attack the unit, `UnitCanAttack("player", unit)`, which the binding
-    /// (delegating to `CanAttack`) answers for both argument orders. Fed for `target`,
+    /// (delegating to the attack check) answers for both argument orders. Fed for `target`,
     /// `targettarget`, `npc` and the units a chain ends on; other tokens read false.
     pub can_attack: bool,
-    /// Whether the player can assist the unit, `UnitCanAssist("player", unit)` (12340 `0x7293d0`,
-    /// `CanAssist`); fed where [`Self::can_attack`] is, and true for the player.
+    /// Whether the player can assist the unit, `UnitCanAssist("player", unit)` (12340's assist
+    /// check, `0x7293d0`); fed where [`Self::can_attack`] is, and true for the player.
     pub can_assist: bool,
     /// `UnitIsCorpse`: the token names a `TYPEID_CORPSE` object, which a dead unit is not. No feed
     /// sets it.
@@ -269,7 +268,7 @@ pub fn unit_is_grey(player_level: u32, unit_level: u32) -> bool {
 
 /// The civilian gate, a dishonorable kill: PvP-flagged, a civilian creature, hostile
 /// (`UnitReaction` <= 2) and grey. The tooltip's CIVILIAN line and `UnitPVPName`'s civilian prefix
-/// both read it. The terms are the tooltip line's; the reference's body is not traced.
+/// both read it. The terms are the tooltip line's; the reference gate's body is not traced.
 pub fn is_civilian_kill(u: &UnitState, player_level: u32) -> bool {
     u.civilian && u.pvp && u.reaction != 0 && u.reaction <= 2 && unit_is_grey(player_level, u.level)
 }
@@ -452,15 +451,15 @@ impl super::UiScript {
         model.exhaustion = rows.into_iter().map(|(id, n, f)| (id, (n, f))).collect();
     }
 
-    /// Push our combo points and the unit they sit on, as `CGGameUI::UpdateComboPoints` banks them.
-    /// Raw: `GetComboPoints`' class gate is the binding's.
+    /// Push our combo points and the unit they sit on, as the game UI's combo-point update banks
+    /// them. Raw: `GetComboPoints`' class gate is the binding's.
     pub fn set_combo_points(&mut self, points: u8, target: u64) {
         let mut model = self.model_mut();
         model.combo_points = points;
         model.combo_target = target;
     }
 
-    /// Push the pet's combo points and their unit (`CGPetInfo::SetComboPoints` `0x5d34b0`).
+    /// Push the pet's combo points and their unit (the pet state's combo-point set, `0x5d34b0`).
     pub fn set_pet_combo_points(&mut self, points: u8, target: u64) {
         let mut model = self.model_mut();
         model.pet_combo_points = points;

@@ -308,8 +308,8 @@ fn the_damage_text_font_is_read_from_the_lua_global() {
     let _ = data;
     let s = UiScript::new().unwrap();
 
-    // Unassigned, the reference's failure block leaves the reference's pre-seeded `""`, which the
-    // font factory rejects.
+    // Unassigned, the reference's failure block leaves the global read's pre-seeded `""`, which
+    // the font factory rejects.
     assert_eq!(crate::combat_text::read_damage_text_font(&s).0, None);
 
     load_xml(&s, "Interface\\FrameXML\\Fonts.xml");

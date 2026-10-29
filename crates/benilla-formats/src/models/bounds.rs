@@ -25,19 +25,19 @@ pub struct M2Bounds {
     /// `OBJECT_FIELD_SCALE_X`. A model with no sequences uses the header box, and a box with zero X
     /// and Y extents takes [`DEGENERATE_RING_FOOTPRINT`].
     pub ring_footprint: f32,
-    /// Model-space Z of attachment 17, the reference's follow-camera pivot height (:
-    /// `feet + (attach17.z + 0.0972)·scale`); without one the camera uses a fraction of the box.
+    /// Model-space Z of attachment 17, the reference's follow-camera pivot height
+    /// (`feet + (attach17.z + 0.0972)·scale`); without one the camera uses a fraction of the box.
     pub pivot_z: Option<f32>,
     /// The Stand box's Z extent, the chat bubble's anchor above the feet (times the scale, plus 0.7
-    /// yd), which reads the MD20 file image with no bone matrix and returns `out+0x20 − out+0x14`.
-    /// The overhead name instead uses, the live posed attachment, which bobs. The header box's Z
-    /// for a model with no sequences.
+    /// yd), read by a box query of the MD20 file image with no bone matrix that returns
+    /// `out+0x20 − out+0x14`. The overhead name instead uses the live posed attachment, which bobs.
+    /// The header box's Z for a model with no sequences.
     pub stand_box_z: f32,
     /// How far the camera pivot drops while swimming: Stand's box `max.z` less Swim's, floored at
     /// zero, and `0.0` without a Swim sequence. The reference adds the neck height
     /// (`attach17.z + 0.0972222`) to three presets, `cam+0x11c`/`+0x120`/`+0x124`, then lowers only
-    /// the swim one by `S · (box0.max.z − box42.max.z)`, and only when the reference finds ids 0
-    /// and 42; the reference picks a preset per frame, then the `[5/6, 15.0]` clamp. `HumanMale.m2`
+    /// the swim one by `S · (box0.max.z − box42.max.z)`, and only when the model has sequences 0
+    /// and 42; the camera picks a preset per frame, then the `[5/6, 15.0]` clamp. `HumanMale.m2`
     /// drops `0.3882572` at scale 1. The reference also picks zoomed-in `+0x11c` or zoomed-out
     /// `+0x120` on `cam+0x198 < 1.8315`; benilla has one standing preset, and what sets those two
     /// apart is untraced.

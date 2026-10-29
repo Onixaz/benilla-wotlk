@@ -1,9 +1,9 @@
 //! GameObject state animation: `GAMEOBJECT_STATE` drives a skeletal M2 sequence, so a door
 //! swings, a button depresses and a chest lid opens and closes.
 //!
-//! The 1.12 client keeps one stored state per object (`go+0x27c`), set only through `SetGoState`;
-//! [`GoAnim::state`] is that state. The server never flips a chest's wire state, so an open-lock
-//! cast and the loot release move its lid.
+//! The 1.12 client keeps one stored state per object (`go+0x27c`), set only through its state
+//! setter; [`GoAnim::state`] is that state. The server never flips a chest's wire state, so an
+//! open-lock cast and the loot release move its lid.
 //!
 //! A state maps, with no inversion, to a held rest pose ([`rest_anim`]), and a change plays a
 //! one-shot motion onto it ([`motion_anim`]). Keyed by `AnimationData.dbc` id: the machine's
@@ -32,8 +32,8 @@ const GO_STATE_ACTIVE: u32 = 0;
 /// `GO_STATE_READY` (vmangos `GOState`): closed, the one state in which a door or button blocks.
 const GO_STATE_READY: u32 = 1;
 
-/// `AnimationData.dbc` 157 Despawn, the one-shot channel's code 6 (157): the object plays it once,
-/// then goes.
+/// `AnimationData.dbc` 157 Despawn, the one-shot channel's code 6: the object plays it once, then
+/// goes.
 const ANIM_DESPAWN: u16 = 157;
 
 /// An animated GameObject's client-side state, tagged by [`crate::entities::attach`] in place of a
@@ -46,9 +46,9 @@ pub(crate) struct GoAnim {
     /// The state last animated to, which picks the next motion; first sight settles silently, so a
     /// door that streams in open does not swing.
     shown: Option<u32>,
-    /// A pending one-shot (an `AnimationData.dbc` id) on the reference's one slot, fed by
-    /// `(GO, code)` (slot 15): code 1 Spawn on an update type 3 create (not built), 2..5 Custom0..3
-    /// from opcode `0xb3`, 6 Despawn from opcode `0x215`.
+    /// A pending one-shot (an `AnimationData.dbc` id) on the reference's one slot (slot 15), fed by
+    /// a code: 1 Spawn on an update type 3 create (not built), 2..5 Custom0..3 from opcode `0xb3`,
+    /// 6 Despawn from opcode `0x215`.
     one_shot: Option<u16>,
     /// The armed transient substate (a motion, or Custom0..3), the reference's one
     /// `[handler+0x10]` slot; [`retire_transient_anim`] advances it at its window end.
@@ -56,11 +56,11 @@ pub(crate) struct GoAnim {
     /// The rest pose's armed clip while it is on the re-arm cycle; `None` while a transient owns
     /// the model, on a frozen leg, and once the already-playing skip has refused a re-arm.
     rest_window: Option<AnimationNodeIndex>,
-    /// The state last dispatched (`(old, new)`, [`GoStateDispatch`]); the retire's re-resolve is
-    /// not a dispatch.
+    /// The state last dispatched (the dispatch takes `(old, new)`, [`GoStateDispatch`]); the
+    /// retire's re-resolve is not a dispatch.
     dispatched: Option<u32>,
-    /// The requested id currently armed (`[block0+0xf8]`, read by `(model, -1)`), which the
-    /// already-playing skip compares.
+    /// The requested id currently armed (`[block0+0xf8]`, read back with a `-1` argument), which
+    /// the already-playing skip compares.
     armed_id: Option<u16>,
 }
 
@@ -113,8 +113,8 @@ pub(crate) fn armed_anim(
     ))
 }
 
-/// Which types run the state machine: `CGGameObject::LoadBaseObject` switches on the type through
-/// the 31-entry table (`cmp ecx,0x1e`, unsigned `ja`) into a handler at `[GO+0x210]`; a `0x1c`-byte
+/// Which types run the state machine: the object's base load switches on the type through the
+/// 31-entry table (`cmp ecx,0x1e`, unsigned `ja`) into a handler at `[GO+0x210]`; a `0x1c`-byte
 /// handler gets the real arm, every other size the base's empty bodies. Type 30 is past vmangos's
 /// enum but has a real arm; 21 GUARDPOST has no case and takes the default, which logs
 /// `"BADBASEGAMEOBJECT|%d"`.
@@ -319,10 +319,10 @@ fn custom_anim_id(anim_id: u32) -> Option<u16> {
 #[derive(Component)]
 pub(crate) struct DespawnAnimAnnounced;
 
-/// The reference's pending-destroy mark (`[GO+0xe4]` bit `0x10`), set by the destroy on a pinned
-/// object. Arming a non-resting substate pins (refcount `[obj+0xe8]`), slot 14 unpins at the window
-/// end, and the deferred destroy then runs. benilla pins only [`ANIM_DESPAWN`]; an object destroyed
-/// mid-transition still goes at once (not built).
+/// The reference's pending-destroy mark (`[GO+0xe4]` bit `0x10`), set when a destroy reaches a
+/// pinned object. Arming a non-resting substate pins (refcount `[obj+0xe8]`), slot 14 unpins at the
+/// window end, and the deferred destroy then runs. benilla pins only [`ANIM_DESPAWN`]; an object
+/// destroyed mid-transition still goes at once (not built).
 ///
 /// The reference keeps a pinned object addressable by guid while it plays; benilla drops the guid
 /// at destroy time, so a respawn reusing it cannot refresh a condemned object. Nothing observable
@@ -330,7 +330,8 @@ pub(crate) struct DespawnAnimAnnounced;
 #[derive(Component)]
 pub(crate) struct PendingDestroy;
 
-/// Caller 5, the despawn-anim opcode: one arm per announcement, as `(GO, 6)` is one per packet.
+/// Caller 5, the despawn-anim opcode: one arm per announcement, as the reference queues code 6 once
+/// per packet.
 /// `Changed`, not `Added`: a re-inserted component is not added, and a boss script can announce the
 /// same living object twice.
 fn arm_despawn_anim(mut gos: Query<&mut GoAnim, Changed<DespawnAnimAnnounced>>) {
@@ -340,9 +341,9 @@ fn arm_despawn_anim(mut gos: Query<&mut GoAnim, Changed<DespawnAnimAnnounced>>) 
 }
 
 /// Releases a [`PendingDestroy`] object once it is not playing its despawn animation, after
-/// [`drive_go_anim`] so the arming frame holds. Release is a fade, not a pop: the reference reaches
-/// OnDeactivate, which hands the model to the `SWModelFadeout` scheduler; here that is
-/// [`crate::net::tear_down`].
+/// [`drive_go_anim`] so the arming frame holds. Release is a fade, not a pop: the reference's
+/// destroy deactivates the object, which hands the model to the model fade-out scheduler; here that
+/// is [`crate::net::tear_down`].
 fn release_despawn_pin(
     mut commands: Commands,
     pinned: Query<(Entity, Option<&GoAnim>), With<PendingDestroy>>,
@@ -384,7 +385,7 @@ fn close_go_lid(
 /// once at the arm's window end, span × replay count, whatever the loop bit, and slot 14 dispatches
 /// on the substate: a motion advances to its rest pose (2 Open → 3 Opened, 4 Close → 1 Closed, 5
 /// Destroy → 6 Destroyed, 7 Rebuild → 1 Closed); Spawn (0) and Custom0..3 (8..11) re-run the
-/// machine at the current state; a rest pose (1/3/6) re-arms itself with a fresh roll (calling past
+/// machine at the current state; a rest pose (1/3/6) re-arms itself with a fresh roll (arming past
 /// slot 34's change guard), every window for ever.
 ///
 /// Clearing `shown` makes [`drive_go_anim`], next in the chain, re-resolve the state that frame.
@@ -514,9 +515,9 @@ fn drive_go_anim(
                             // Explicit: `AnimationTransitions::play` keeps a node's speed, so one
                             // a frozen leg parked at rate 0 would stay stuck.
                             active.set_speed(1.0);
-                            // One window, rest poses included: the period is the reference's, with
-                            // `R = 1` from a `(0,0)` replay pair. Which per-frame advance list a
-                            // GameObject's model rides is untraced.
+                            // One window, rest poses included: the period is the reference's arm
+                            // period, with `R = 1` from a `(0,0)` replay pair. Which per-frame
+                            // advance list a GameObject's model rides is untraced.
                             active.set_repeat(RepeatAnimation::Never);
                             match play {
                                 Play::Motion(_) => {
@@ -591,7 +592,7 @@ fn drive_go_collision(
 }
 
 /// A ghost walks through doors: the mover's mask gains bit `0x8000` for a player body with
-/// `PLAYER_FLAGS` ghost bit `0x10`, and `CGGameObject_C`'s candidacy virtual (vtable `+0x50`) tests
+/// `PLAYER_FLAGS` ghost bit `0x10`, and the game object's candidacy virtual (vtable `+0x50`) tests
 /// it to refuse type DOOR. Nothing else about a ghost's collision differs; the flag is the mover's,
 /// so a possessed creature never sets it.
 fn publish_ghost_door_exclusions(
@@ -1092,7 +1093,7 @@ mod tests {
     }
 
     /// A rest pose's re-arm is no dispatch (a brazier's `$GO2` `TorchLoop` hums on); a real
-    /// `SetGoState` and a Custom completion (`old == new`) are.
+    /// state set and a Custom completion (`old == new`) are.
     #[test]
     fn only_a_state_change_and_a_custom_completion_re_enter_the_dispatch() {
         let (mut app, go) = crate_app(&[(153, 0.667, 0)]); // Custom0, which the crate authors

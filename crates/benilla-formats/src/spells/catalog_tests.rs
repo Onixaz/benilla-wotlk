@@ -85,9 +85,9 @@ fn real_spell_catalog_reads_ranged_attributes() {
     );
 }
 
-/// `CanShowAura` (`0x53d580`), the spell's own legs: `Attributes & 0x80` and `AttributesEx &
-/// 0x10000000` hide an aura whoever cast it; a passive shows only with an area-aura effect; the
-/// `AttributesEx5` pair hides a self-cast or another's aura.
+/// The aura display check (`0x53d580`), the spell's own legs: `Attributes & 0x80` and
+/// `AttributesEx & 0x10000000` hide an aura whoever cast it; a passive shows only with an area-aura
+/// effect; the `AttributesEx5` pair hides a self-cast or another's aura.
 #[test]
 fn real_spell_catalog_hides_stances_from_the_aura_bar() {
     let data = crate::wow_data_or_skip!();
@@ -793,7 +793,7 @@ fn real_spell_catalog_classifies_combat_initiation() {
     );
 }
 
-/// TryCast's attack pick is built for a spell press alone, so no form, recipe
+/// The cast attempt's attack pick is built for a spell press alone, so no form, recipe
 /// (`SPELL_EFFECT_CREATE_ITEM` 24, `SPELL_EFFECT_ENCHANT_ITEM` 53) or `modalNextSpell` chain may
 /// carry predicate. No item's use spell does either (vmangos `item_template`).
 #[test]
@@ -951,10 +951,10 @@ fn the_tooltip_gates_read_effect_and_mask() {
 }
 
 /// The weapon auto-pick family (`Attributes & 0x200`): for a player caster the cast binds an
-/// equipped weapon instead of arming the item cursor (`BeginCast 0x80c790`). On 12340 it is the
-/// weapon imbues and the fishing lures, each with `Targets == 0x10` and a temporary enchant (54),
-/// most gated on a weapon or a fishing pole, but for Windfury Weapon 32911, a 54-less creature
-/// row. Rockbiter's four ranks carry their enchant in effect slot 1.
+/// equipped weapon instead of arming the item cursor (`0x80c790`). On 12340 it is the weapon imbues
+/// and the fishing lures, each with `Targets == 0x10` and a temporary enchant (54), most gated on a
+/// weapon or a fishing pole, but for Windfury Weapon 32911, a 54-less creature row. Rockbiter's
+/// four ranks carry their enchant in effect slot 1.
 #[test]
 fn real_main_hand_autopick_family() {
     let data = crate::wow_data_or_skip!();
@@ -1340,8 +1340,8 @@ fn the_language_declaring_spells_cover_twelve_of_seventeen_languages() {
     assert_eq!(spells.declared_language(133), None); // Fireball
 }
 
-/// [`SpellDisplay::is_harmful`], the client's: an enemy implicit target in slot A (6), or only in
-/// slot B as Frost Nova's (A 22, the caster's spot; B 15, a source-area enemy).
+/// [`SpellDisplay::is_harmful`], the client's harmful test: an enemy implicit target in slot A (6),
+/// or only in slot B as Frost Nova's (A 22, the caster's spot; B 15, a source-area enemy).
 #[test]
 fn real_is_harmful_pins() {
     let data = crate::wow_data_or_skip!();
@@ -1495,7 +1495,7 @@ fn real_spell_family_columns_carry_the_modifier_gate() {
 
 /// The pet bar's GCD starts from the pressed spell's `StartRecoveryCategory`/`StartRecoveryTime`
 /// pair, which every learnable pet ability carries as category 133, and its press route branches
-/// on `AttributesEx4 & 0x20` (`SendPetAction 0x5d4210`), column 8.
+/// on `AttributesEx4 & 0x20` (`0x5d4210`), column 8.
 #[test]
 fn real_pet_spells_carry_the_gcd_pair_and_the_client_targeting_bit() {
     let data = crate::wow_data_or_skip!();

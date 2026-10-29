@@ -6,7 +6,8 @@
 // - BLEND_ADD:      (rgb·α, 0) under (One, 1−srcα), the reference's `src·α` byte add.
 // - BLEND_ALPHA:    straight (rgb, α) under standard alpha blending.
 // - BLEND_OPAQUE:   (rgb, 1) with blending off.
-// - BLEND_ALPHAKEY: BLEND_OPAQUE behind the alpha test (EGxRs id 0x08), a discard below 224/255.
+// - BLEND_ALPHAKEY: BLEND_OPAQUE behind the alpha test (render state 0x08), a discard below
+//   224/255.
 // - BLEND_MULTIPLY: (rgb·α, α) under (Dst, 1−srcα) = `dst·lerp(1, rgb, α)`, the blob shadow's
 //   modulate-with-fade and ModelBlend::Mod at α = 1.
 // - BLEND_MOD2X:    (rgb, 1) under (Dst, Src) = `2·src·dst`, rain's state; reads no alpha.
@@ -116,8 +117,8 @@ const ROTATES: u32 = 4u;
 const RANDOM_SPIN_SIGN: u32 = 8u;
 const TAIL_CLAMPS: u32 = 16u;
 
-// `LifeTrack::locate` (`0x9793b0`): two keys span the life whatever their times say, three split
-// at the middle key, four take the binary search over the inner times. (lo, hi, fraction).
+// The life-track key lookup (`0x9793b0`): two keys span the life whatever their times say, three
+// split at the middle key, four take the binary search over the inner times. (lo, hi, fraction).
 fn locate(t: vec4<f32>, n: u32, u: f32) -> vec3<f32> {
     if (n <= 2u) {
         return vec3<f32>(0.0, 1.0, u);
@@ -383,8 +384,8 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // LOD compensation, 0.0 at native and above.
     let c = textureSampleBias(effect_texture, effect_sampler, in.uv, view.mip_bias) * in.color;
 #ifdef BLEND_ALPHAKEY
-    // The fixed-function alpha test (EGxRs id 0x08, `glAlphaFunc(GL_GEQUAL, ref/255)`):
-    // sets ref = round(instanceAlpha × 224), 224 at full alpha, and `c.a` is the reference's
+    // The fixed-function alpha test (render state 0x08, `glAlphaFunc(GL_GEQUAL, ref/255)`): the
+    // draw sets ref = round(instanceAlpha × 224), 224 at full alpha, and `c.a` is the reference's
     // fragment alpha (texture α × track α, GL_MODULATE). GEQUAL passes at the ref.
     if (c.a < 224.0 / 255.0) {
         discard;
@@ -392,10 +393,10 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #endif
     var rgb = c.rgb;
 #ifdef EFFECT_LIT
-    // Scene lighting (EGxRs id 0x0e) when the emitter clears the unlit flag 0x1 and
-    // its blend is not Mod or Mod2x: the fixed-function matte with N = world up for
-    // the whole draw, as the reference takes the normal from view row 2 and the reference moves the
-    // light into that frame, so N·L holds as the camera orbits. Bevy +Y is WoW +Z.
+    // Scene lighting (render state 0x0e) when the emitter clears the unlit flag 0x1 and its blend
+    // is not Mod or Mod2x: the fixed-function matte with N = world up for the whole draw, as the
+    // reference takes the normal from view row 2 and moves the light into that frame, so N·L holds
+    // as the camera orbits. Bevy +Y is WoW +Z.
     let L = -normalize(wow_light.light_sun.xyz);
     let N = vec3<f32>(0.0, 1.0, 0.0);
     let lit = clamp(
@@ -431,7 +432,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     return vec4<f32>(rgb, 1.0);
 #else
 #ifdef BLEND_ALPHAKEY
-    // Blending is off (EGxBlend 1 → `glDisable(GL_BLEND)`); the surviving fragments are solid.
+    // Blending is off (blend mode 1 → `glDisable(GL_BLEND)`); the surviving fragments are solid.
     return vec4<f32>(rgb, 1.0);
 #else
 #ifdef BLEND_MULTIPLY

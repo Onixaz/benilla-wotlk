@@ -1,4 +1,4 @@
-//! The nameplate widgets: the reference's `CGNamePlateFrame`, an anonymous `Button` parented to the
+//! The nameplate widgets: the reference's nameplate frame, an anonymous `Button` parented to the
 //! `WorldFrame` at strata WORLD, level 1. Plate addons (`_Nameplates`, `CustomNameplates`, pfUI,
 //! ShaguTweaks) find it in `WorldFrame:GetChildren()` and read it positionally: six regions in
 //! creation order, then one child, the health bar (1.12 has no cast bar). Addons take plates over,
@@ -202,9 +202,9 @@ impl UiScript {
     }
 
     /// The plate hit-test veto: while a ground-targeted spell is armed, clicks fall through plates
-    /// to the `WorldFrame`. The caller supplies the first two terms of the reference's
-    /// `IsTargeting && (flag & 0x60) && !`; the third, a test of the same word against `0x878e`
-    /// whose meaning is unsettled, is not applied.
+    /// to the `WorldFrame`. The caller supplies the first two terms of the reference's three-term
+    /// test, spell targeting on and `flag & 0x60`; the third, a negated test of the same word
+    /// against `0x878e` whose meaning is unsettled, is not applied.
     pub fn set_nameplate_hit_test_veto(&mut self, vetoed: bool) {
         if self.model_ref().nameplates.hit_test_vetoed == vetoed {
             return;
@@ -214,8 +214,8 @@ impl UiScript {
         model.nameplates.hit_test_vetoed = vetoed;
     }
 
-    /// Retire every live plate (over the active list, as when the master toggle clears); the app's
-    /// every early return owes this, since a widget stays up until hidden.
+    /// Retire every live plate (a walk over the active list, as when the master toggle clears); the
+    /// app's every early return owes this, since a widget stays up until hidden.
     pub fn retire_nameplates(&mut self) {
         let lua = self.lua();
         let effects = {
@@ -338,7 +338,7 @@ impl Plate {
             .unwrap_or_default();
         model.arena.set_frame_strata(frame, strata);
         model.arena.set_frame_level(frame, PLATE_LEVEL, true);
-        // Mouse-enabled from birth by `CSimpleButton`'s ctor, and registered for both buttons on
+        // Mouse-enabled from birth by the button constructor, and registered for both buttons on
         // the up edge (`RegisterForClicks(0x500)`); the arena's Button default is the left alone.
         if let Some(KindState::Button(bs)) = model.arena.frame_mut(frame).map(|f| &mut f.kind_state)
         {
@@ -391,7 +391,7 @@ impl Plate {
             .expect("live bar");
         let fill_data = model.region_data.entry(fill).or_default();
         fill_data.texture = Some(BAR_FILL_TEXTURE.to_string());
-        // The fill keeps `CSimpleTexture`'s default BLEND, written out as a fact.
+        // The fill keeps a texture's default BLEND, written out as a fact.
         fill_data.blend = BlendMode::Blend;
         if let Some(KindState::StatusBar(sb)) =
             model.arena.frame_mut(bar).map(|f| &mut f.kind_state)

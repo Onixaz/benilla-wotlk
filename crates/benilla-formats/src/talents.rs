@@ -61,10 +61,10 @@ pub struct Talent {
     pub prereqs: Vec<(u32, u32)>,
     /// A spell that must be known regardless of talents (0 = none).
     pub required_spell: u32,
-    /// Flags bit 0 (`TalentRec+0x4c`), the Lua API's `isExceptional`: an activatable ability.
+    /// Flags bit 0 (record `+0x4c`), the Lua API's `isExceptional`: an activatable ability.
     pub exceptional: bool,
     /// The pet-family categories that may take the talent, bit `n` naming `CreatureFamily.dbc`
-    /// category `n`; all zero is every pet (`IsTalentAvailableForPet`, `0x5c5a20`).
+    /// category `n`; all zero is every pet (`0x5c5a20`).
     pub category_mask: [u32; 2],
 }
 

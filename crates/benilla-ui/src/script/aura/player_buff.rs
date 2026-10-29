@@ -156,9 +156,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPlayerBuffTimeLeft(buffIndex): seconds, the reader's ms times the 0.001, as
-    // `max(0, expiry - now)`, and 0 for an absent, cleared or permanent aura, never nil, as addons
-    // do arithmetic on it unguarded. It is computed per call against `GetTime()`, as stock
+    // GetPlayerBuffTimeLeft(buffIndex): seconds, the reader's ms times a 0.001 constant, as `max(0,
+    // expiry - now)`, and 0 for an absent, cleared or permanent aura, never nil, as addons do
+    // arithmetic on it unguarded. It is computed per call against `GetTime()`, as stock
     // `BuffFrame.lua:130` re-reads it every frame.
     g.set(
         "GetPlayerBuffTimeLeft",
@@ -171,8 +171,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // CancelPlayerBuff(buffIndex): no return values on any path. It queues the spell id, the one
-    // `u32` of `CMSG_CANCEL_AURA` (0x136, `Spell_C::CancelAura`), on the queue `SetTracking` uses;
-    // a refused or absent aura is a silent no-op.
+    // `u32` of `CMSG_CANCEL_AURA` (0x136, the reference's aura cancel), on the queue `SetTracking`
+    // uses; a refused or absent aura is a silent no-op.
     g.set(
         "CancelPlayerBuff",
         lua.create_function(|lua, index: Value| {

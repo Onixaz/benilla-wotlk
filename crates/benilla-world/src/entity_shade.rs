@@ -1,12 +1,12 @@
 //! Entity ground shade: a unit, player or GameObject re-samples the terrain MCSH under it as it
 //! moves, rather than baking it at spawn, and ramps its light node's intensity between the
-//! reference's 2.5 lit and 0.5 shadowed (step3.3333/s).
+//! reference's 2.5 lit and 0.5 shadowed (step 3.3333/s).
 //!
-//! The reference lights a unit through the node only once registered (`[model+0x3c0]`; scales the
-//! diffuse by `[+0xa4]`), which a model-set does (display id, shapeshift); a unit born unregistered
-//! commits the raw day/night pair at ×1.0. Every drawn unit has had its display model set, so only
-//! the registered state is modelled; which units stay unregistered is untraced (reference frames
-//! show a standing player at ×2.5 and a running one at ×1.0).
+//! The reference lights a unit through the node only once registered (`[model+0x3c0]`; the lit draw
+//! scales the diffuse by `[+0xa4]`), which a model-set does (equip, display id, shapeshift); a unit
+//! born unregistered commits the raw day/night pair at ×1.0. Every drawn unit has had its display
+//! model set, so only the registered state is modelled; which units stay unregistered is untraced
+//! (reference frames show a standing player at ×2.5 and a running one at ×1.0).
 //!
 //! [`GroundShade`] sits on the net entity root (the `[obj+0xe0]` node) and its byte goes to every
 //! M2 part below it, so a held weapon dims with its wielder: the reference lights attachments from
@@ -20,14 +20,14 @@ use crate::interior::{classify_entity_interior, InteriorLit};
 use crate::mesh_tag::{exterior_payload, shade_of, with_shade, InteriorProbePayload};
 use crate::terrain_stream::{doodad_ground_shade, ShadeResolve, TerrainStreamer};
 
-/// The rate of `t` (0 = intensity 2.5, 1 = 0.5): the reference's linear step3.3333 intensity
+/// The rate of `t` (0 = intensity 2.5, 1 = 0.5): the reference's linear step, 3.3333 intensity
 /// units/s over the mix's 2.0-wide span.
 const SHADE_RAMP_PER_SEC: f32 = 3.3333 / 2.0;
 
 /// Squared distance (yd²) a root moves before the MCSH bit is re-sampled, about one MCSH texel.
 const RESAMPLE_DIST_SQ: f32 = 0.25;
 
-/// The ambient word's rate,2.0 colour units/s (`[+0x9c]` → `[+0xf4]`).
+/// The ambient word's rate, 2.0 colour units/s (`[+0x9c]` → `[+0xf4]`).
 const AMBIENT_RAMP_PER_SEC: f32 = 2.0;
 
 /// `t` at the day/night intensity 1.0, an indoor node's target (`[+0xf8]` = 1.0, behind the
@@ -42,8 +42,8 @@ const LIT_T: f32 = 0.75;
 /// The settled-ramp epsilon on `t` and each ambient channel, under half a byte.
 const RAMP_EPS: f32 = 1.0 / 640.0;
 
-/// An entity root's light node, the chase pair steps each frame: intensity (`[+0xa4]` → `[+0xf8]`,
-/// held as `t`) and the ambient word (`[+0x9c]` → `[+0xf4]`).
+/// An entity root's light node, the chase pair the reference steps each frame: intensity (`[+0xa4]`
+/// → `[+0xf8]`, held as `t`) and the ambient word (`[+0x9c]` → `[+0xf4]`).
 #[derive(Component)]
 pub struct GroundShade {
     /// The mix, 1 being intensity 0.5: the parts' tag byte and the bake fold's diffuse scale.
@@ -119,10 +119,10 @@ impl GroundShade {
     }
 }
 
-/// A WMO doodad prop on a streamed GameObject (a transport's cargo), lit by its own
-/// `CMapDoodadDef`, never the host's light node, so the walk passes it by. In the reference a
-/// transport's WMO is in the global map-object list, and a def's `[def+0xa4]` has four writers,
-/// none the node: (0.0), (1.0), and (0.5), an MCSH sample taken once at residency.
+/// A WMO doodad prop on a streamed GameObject (a transport's cargo), lit by its own doodad
+/// placement, never the host's light node, so the walk passes it by. In the reference a transport's
+/// WMO is in the global map-object list, and a def's `[def+0xa4]` has four writers, none the node:
+/// one writes 0.0, two write 1.0, and the fourth 0.5, an MCSH sample taken once at residency.
 #[derive(Component)]
 pub struct DoodadDefLit;
 

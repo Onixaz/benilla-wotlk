@@ -1,5 +1,5 @@
-//! `SpellRange.dbc`, by `rangeIndex` ([`crate::spells::SpellDisplay::range_index`]), and
-//! `GetMinMaxRange`: a spell's cast range in yards.
+//! `SpellRange.dbc`, by `rangeIndex` ([`crate::spells::SpellDisplay::range_index`]), and the
+//! reference's range lookup: a spell's cast range in yards.
 
 use std::collections::HashMap;
 
@@ -23,7 +23,7 @@ pub struct SpellRange {
 }
 
 impl SpellRange {
-    /// The `(min, max)` pair `GetMinMaxRange` (`0x7ff480`) indexes by its friendly argument.
+    /// The `(min, max)` pair the range lookup (`0x7ff480`) indexes by its friendly argument.
     pub fn pair(&self, friendly: bool) -> (f32, f32) {
         if friendly {
             (self.friendly_min, self.friendly_max)
@@ -32,13 +32,13 @@ impl SpellRange {
         }
     }
 
-    /// Flags bit 0: `GetMinMaxRange` takes the reach sum instead of the row's pair.
+    /// Flags bit 0: the range lookup takes the reach sum instead of the row's pair.
     pub fn is_melee(&self) -> bool {
         self.flags & 1 != 0
     }
 }
 
-/// The pad the melee arm adds to the two reaches; `CanLootNow` pads the loot reach by the same
+/// The pad the melee arm adds to the two reaches; the loot check pads the loot reach by the same
 /// value.
 pub const COMBAT_REACH_ADD: f32 = f32::from_bits(0x3faa_aaab);
 /// The melee arm's floor, not a cap: a lower reach sum is raised to it.
@@ -65,7 +65,7 @@ pub struct UnitMotion {
 }
 
 impl UnitMotion {
-    /// The reference answering 0: the current speed is above twice the walk speed. The reference
+    /// The walk test answering 0: the current speed is above twice the walk speed. The reference
     /// doubles the walk speed (`fadd st, st`), compares it with the speed (`fcompp`) and tests C0
     /// (`test ah, 1`), which is set by a doubled walk speed below the speed and by an unordered
     /// pair, so a NaN reads as running and an equal pair as walking.
@@ -81,7 +81,7 @@ impl UnitMotion {
     }
 }
 
-/// A unit as `GetMinMaxRange` reads it: its combat reach, whether it is a player, and its motion.
+/// A unit as the range lookup reads it: its combat reach, whether it is a player, and its motion.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RangeUnit {
     /// `UNIT_FIELD_COMBATREACH`, `[[unit+0x110]+0x1f0]`.
@@ -91,8 +91,8 @@ pub struct RangeUnit {
     /// `Attributes & 2` scale, which is not applied.
     pub player: bool,
     pub motion: UnitMotion,
-    /// `CanAssist(caster, unit)` (`0x801685`): for a unit target, which `SpellRange.dbc` pair
-    /// applies. Only a target's read counts.
+    /// The assist check of `(caster, unit)` (`0x801685`): for a unit target, which `SpellRange.dbc`
+    /// pair applies. Only a target's read counts.
     pub assist: bool,
 }
 
@@ -108,7 +108,7 @@ impl RangeUnit {
     }
 }
 
-/// The units `GetMinMaxRange` reads besides the caster, `None` where that unit is absent. The two
+/// The units the range lookup reads besides the caster, `None` where that unit is absent. The two
 /// are different inputs: only the first is an argument of the call.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RangeTargets {
@@ -122,7 +122,7 @@ pub struct RangeTargets {
     pub attack_target: Option<RangeUnit>,
 }
 
-/// `GetMinMaxRange`: a spell's `{min, max}` cast range, summed in `f64` because the client keeps
+/// The range lookup: a spell's `{min, max}` cast range, summed in `f64` because the client keeps
 /// the reach sums on the x87 stack and stores `f32` only at the end. On-next-swing spells
 /// (`Attributes & 0x404`) short-circuit to `(0, 100)`. The melee arm sums the reach of the unit
 /// target, else the auto-attack target, else the caster's own, with the caster's. The ranged arm
@@ -161,8 +161,8 @@ pub fn min_max_range(
         };
         (0.0, max, unit)
     } else {
-        // The pair 12340's wrapper picks (`0x801650`): `CanAssist` toward a unit target, else the
-        // spell's own `IsHelpfulOrHarmful` answering helpful.
+        // The pair 12340's wrapper picks (`0x801650`): the assist check toward a unit target, else
+        // the spell's own helpful-or-harmful test answering helpful.
         let friendly = targets
             .target
             .map_or_else(|| spell.is_helpful(), |t| t.assist);
@@ -428,8 +428,8 @@ mod tests {
 
     /// The ranged arm pads only for the target passed, never for the caster's auto-attack target,
     /// which the ranged arm does not read. A row whose friendly pair is wider, as row 161's is: a
-    /// unit target picks the pair by `CanAssist`, no target by the spell's own `IsHelpfulOrHarmful`
-    /// (`0x801650`).
+    /// unit target picks the pair by the assist check, no target by the spell's own
+    /// helpful-or-harmful test (`0x801650`).
     #[test]
     fn the_target_relation_picks_the_hostile_or_friendly_pair() {
         const SPLIT: SpellRange = SpellRange {
@@ -620,7 +620,7 @@ mod tests {
         }
     }
 
-    /// The reference answers 0 for a current speed above twice the walk speed (`fcompp`, then C0),
+    /// The walk test answers 0 for a current speed above twice the walk speed (`fcompp`, then C0),
     /// and 1 for an equal pair; an unordered pair sets C0 too.
     #[test]
     fn running_is_a_speed_above_twice_the_walk_speed() {

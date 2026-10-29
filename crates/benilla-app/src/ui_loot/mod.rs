@@ -38,11 +38,12 @@ const SILVER_WORD: &str = "Silver";
 const COPPER_WORD: &str = "Copper";
 /// Frames a push waits for its item template before it is dropped, about 2 s at 60 fps.
 const RECEIVE_MAX_TRIES: u16 = 120;
-/// The slots `OnItemPushResult` treats as the keyring: `slot - 0x56 <= 0x1f` (`0x523a36`).
+/// The slots the item-push result handler treats as the keyring: `slot - 0x56 <= 0x1f`
+/// (`0x523a36`).
 const PUSH_KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 86..=117;
 
-/// A push waiting on its item template. `OnItemPush` defers both of its outputs the same way: on a
-/// cache miss it re-enters from the cache callback.
+/// A push waiting on its item template. The item-push handler defers both of its outputs the same
+/// way: on a cache miss it re-enters from the cache callback.
 struct PendingReceive {
     /// Crafted or conjured: "You create: …".
     created: bool,
@@ -103,7 +104,7 @@ pub(crate) struct LootState {
     /// The list staged for the next open: vmangos sends it from inside `Player::SendLoot`
     /// (`Player.cpp:8080`), just ahead of its response. Staging keeps it out of later windows.
     pending_master_candidates: Vec<u64>,
-    /// The wire `loot_type` (`GetLootAcquireType 0x588530`), which the close's sweep reads.
+    /// The wire `loot_type` (`0x588530`), which the close's sweep reads.
     loot_type: u8,
     /// The player's auto-loot flag (`[player+0x18e8]`), armed at the interact, spent by the sweep.
     auto_loot: bool,
@@ -117,7 +118,7 @@ pub(crate) struct LootState {
     pickups: Vec<u32>,
     /// Item sources a close unlocked (`0x5236fc`), for the next system holding the locks.
     unlocks: Vec<u64>,
-    /// Steps at every open, so the feed sees one window replace another (`SetObject 0x5896b0`).
+    /// Steps at every open, so the feed sees one window replace another (`0x5896b0`).
     generation: u64,
 }
 
@@ -141,7 +142,7 @@ enum LootAction {
 impl LootState {
     /// Opens or replaces the window; quest items ride the same rows at `slot = items.len() + i`.
     pub(crate) fn open(&mut self, source: u64, loot_type: u8, gold: u32, items: Vec<LootItem>) {
-        // `SetObject` over an open window unlocks the outgoing item (`0x589736`).
+        // Setting a new object over an open window unlocks the outgoing item (`0x589736`).
         if let Some(old) = self.source.filter(|&o| o != source) {
             if benilla_protocol::guid::is_item(old) {
                 self.unlocks.push(old);
@@ -237,7 +238,8 @@ impl LootState {
         self.unlocks.clear();
     }
 
-    /// `SetAutoLoot 0x6cde50`: arming it over a shown window sweeps that window at once.
+    /// The auto-loot flag's setter (`0x6cde50`): arming it over a shown window sweeps that window
+    /// at once.
     pub(crate) fn set_auto_loot(&mut self, on: bool, latch: &LootLatch, commands: &NetCommands) {
         self.auto_loot = on;
         if on && self.shown && latch.0.is_some() {
@@ -251,7 +253,8 @@ impl LootState {
         }
     }
 
-    /// `DoAutoLoot 0x588f90`'s takes; returns the bind-on-pickup row it held back for a confirm.
+    /// The auto-loot sweep's takes (`0x588f90`); returns the bind-on-pickup row it held back for a
+    /// confirm.
     fn sweep(&mut self, latch: &LootLatch, commands: &NetCommands) -> Option<u32> {
         if self.has_coin() && latch.0.is_some() {
             let _ = commands.0.send(ClientCommand::LootMoney);
@@ -410,14 +413,15 @@ pub(crate) struct LootConfig {
     pub(crate) show_loot_spam: bool,
 }
 
-/// `IsAutoLooting 0x513700`: `autoLootDefault`, inverted while `AUTOLOOTTOGGLE` is held.
+/// The auto-loot test (`0x513700`): `autoLootDefault`, inverted while `AUTOLOOTTOGGLE` is held.
 pub(crate) fn is_auto_looting(cfg: &LootConfig, script: Option<&UiScript>) -> bool {
     cfg.auto_loot != script.is_some_and(|s| s.is_modified_click("AUTOLOOTTOGGLE"))
 }
 
 /// Pickpocket, skinning and skin-corpse effects arm the flag from `autoLootDefault` (`0x80f787`).
 const ARMS_FROM_DEFAULT: [u32; 3] = [71, 95, 116];
-/// Disenchant, prospecting and milling arm it only while `IsAutoLooting` (`0x80f796`-`0x80f7ae`).
+/// Disenchant, prospecting and milling arm it only while the auto-loot test passes
+/// (`0x80f796`-`0x80f7ae`).
 const ARMS_WHILE_AUTO_LOOTING: [u32; 3] = [99, 127, 158];
 
 /// Our own `SMSG_SPELL_GO`'s auto-loot arm (`0x80f780`-`0x80f7da`), unless already armed.
@@ -703,9 +707,9 @@ impl Candidates<'_> {
     }
 }
 
-/// `OnItemPush`'s self line: its `%s` is an item link, so a count after it takes the line's own
-/// colour. The strings are `GlobalStrings.lua:2599-2605`, with no space before `x%d`; created wins
-/// over received.
+/// The item-push handler's self line: its `%s` is an item link, so a count after it takes the
+/// line's own colour. The strings are `GlobalStrings.lua:2599-2605`, with no space before `x%d`;
+/// created wins over received.
 fn receive_line(r: &PendingReceive, name: &str, quality: u32) -> String {
     let verb = if r.created {
         "You create"
@@ -847,14 +851,15 @@ fn feed_loot(
         snap.source_unit = loot.source().is_some_and(|g| objects.is_unit(g));
         snap
     });
-    // A sweep on the shown window (`SetAutoLoot` at an interact) fires its confirm and reopens.
+    // A sweep on the shown window (the flag armed at an interact) fires its confirm and reopens.
     if let Some(confirm) = loot.reswept.take() {
         fire_sweep_events(&mut script, confirm, true);
     }
     for display_id in loot.take_pickups() {
         pickup.write(crate::sound::LootPickupSound { display_id });
     }
-    // A window that replaced the shown one: `SetObject` closes the old before it opens the new.
+    // A window that replaced the shown one: the new object's set closes the old before it opens the
+    // new.
     if std::mem::replace(seen_generation, loot.generation) != loot.generation && last.is_some() {
         script.set_loot(None);
         script.fire_event("LOOT_CLOSED", vec![]);
@@ -872,7 +877,7 @@ fn feed_loot(
             }
             loot.shown = true;
             loot.judge_binds(&items, &commands);
-            // Armed, `DoAutoLoot(0)` sweeps and an empty window closes (`0x5890e6`).
+            // Armed, the auto-loot sweep runs and an empty window closes (`0x5890e6`).
             if loot.auto_loot {
                 let empty = loot.is_empty();
                 let confirm = loot.sweep(&moving.latch, &commands);
@@ -967,7 +972,7 @@ pub(crate) fn close_interaction(
     close_window(loot, latch, commands, release)
 }
 
-/// The close past `CloseLoot`'s sweep: unlock, latch, release, `SetObject(0)`.
+/// The close past `CloseLoot`'s sweep: unlock, latch, release, the object cleared.
 fn close_window(
     loot: &mut LootState,
     latch: &mut LootLatch,
@@ -995,7 +1000,7 @@ pub(crate) fn dead_unit_source(objects: &crate::net::Objects, guid: u64) -> bool
     })
 }
 
-/// `CloseInteraction`'s last step: a closed source that is a unit, a player included, with
+/// The interaction close's last step: a closed source that is a unit, a player included, with
 /// `UNIT_FIELD_HEALTH` at or below 0 is deselected if it is still the selection (`(guid, 1)`). It
 /// reads the health, never the loot type, so a skinned corpse loses the selection and a live
 /// pickpocket target keeps it; an unstreamed source is left alone.
@@ -1237,7 +1242,7 @@ fn drain_loot_script(
         }
         dead.after_close(closed);
     }
-    // The last-row auto-close (`ClearSlot 0x589920` → `CloseLoot(1, 0, 0)`).
+    // The last-row auto-close (the slot clear, `0x589920` → `CloseLoot(1, 0, 0)`).
     if loot.take_auto_release() {
         let closed = close_interaction(loot, latch, commands, true);
         if let Some(guid) = closed {
@@ -2795,8 +2800,8 @@ mod tests {
         }
     }
 
-    /// `SetAutoLoot 0x6cde50` over a shown window sweeps it at once and spends the flag; the feed
-    /// then owes `LOOT_OPENED 1`.
+    /// Arming the auto-loot flag (`0x6cde50`) over a shown window sweeps it at once and spends the
+    /// flag; the feed then owes `LOOT_OPENED 1`.
     #[test]
     fn arming_auto_loot_over_a_shown_window_sweeps_it() {
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -2822,8 +2827,8 @@ mod tests {
     }
 
     /// Our own cast's effect loop (`0x80f780`-`0x80f7da`): pickpocket, skinning and skinning a
-    /// corpse arm the flag from `autoLootDefault`; disenchant, prospect and mill only while
-    /// `IsAutoLooting`; an armed flag stays.
+    /// corpse arm the flag from `autoLootDefault`; disenchant, prospect and mill only while the
+    /// auto-loot test passes; an armed flag stays.
     #[test]
     fn our_own_cast_arms_auto_loot_by_its_effects() {
         let (tx, _rx) = crossbeam_channel::unbounded();
@@ -2951,7 +2956,7 @@ mod tests {
         assert_eq!(app.world().resource::<LootState>().source(), None);
     }
 
-    /// `SetObject` over a shown window fires `LOOT_CLOSED` for it before the new open.
+    /// A new object over a shown window fires `LOOT_CLOSED` for it before the new open.
     #[test]
     fn a_window_replacing_the_shown_one_closes_it_first() {
         let (mut app, _rx) = event_app();

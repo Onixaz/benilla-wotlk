@@ -3,7 +3,7 @@
 //! ([`build_dressup_preview`]), whose try-ons nobody in the world wears. Each reduces its look to
 //! a [`PreviewSpec`], and [`assemble`] builds it the world's way: the display cache, the geoset
 //! filter, the composited body, the cloak, and the helm, shoulders and held weapons as riders
-//! (the select build `0x4e3cd0` holds weapons in the hands, `AddHandItem` `0x4eacd0`).
+//! (the select build `0x4e3cd0` holds weapons in the hands, through its hand attach `0x4eacd0`).
 
 use benilla_formats::CharSkinSlot;
 use benilla_protocol::{
@@ -35,7 +35,7 @@ const ENUM_CLOAK: usize = 14;
 /// Main hand, off hand, ranged: [`placement`]'s held slots 0, 1, 2.
 const ENUM_HELD: [usize; 3] = [15, 16, 17];
 
-/// The class `CCharacterCreation::Dress` branches on (`0x4e1267`).
+/// The class the create dresser branches on (`0x4e1267`).
 const CLASS_HUNTER: u8 = 3;
 /// The `InventoryType`s the create dresser skips or reroutes.
 const INVTYPE_HEAD: u8 = 1;
@@ -65,8 +65,8 @@ pub(crate) fn equip_slot(inv_type: u8) -> Option<usize> {
     })
 }
 
-/// A create look's equipment and quiver bags, dressed as `CCharacterCreation::Dress`
-/// (`0x4e0fd0`) walks its CharStartOutfit row.
+/// A create look's equipment and quiver bags, dressed as the create dresser (`0x4e0fd0`) walks its
+/// CharStartOutfit row.
 fn create_outfit(
     outfit: &[benilla_formats::StartOutfitItem],
     class: u8,
@@ -122,7 +122,7 @@ pub(in crate::entities) enum RangedHold {
     /// Ranged-drawn, [`placement`]'s ranged arm: a bow left, the rest right. The dressing room and
     /// a Hunter's create look (`0x4e128e`, a gun's main-hand flag) both land here.
     Drawn,
-    /// In the left hand whatever the weapon: the select build passes `AddHandItem` a false
+    /// In the left hand whatever the weapon: the select build passes its hand attach a false
     /// main-hand flag (`0x4e41f7`), which puts the ranged slot on `HandLeft`.
     LeftHand,
 }
@@ -249,7 +249,7 @@ pub(in crate::entities) fn build_glue_preview(
     };
 
     // A select look carries its roster record; a create look wears its (race, class, sex)
-    // CharStartOutfit as `CCharacterCreation::Dress` (`0x4e0fd0`) does, with no hide flags.
+    // CharStartOutfit as the create dresser (`0x4e0fd0`) does, with no hide flags.
     let (equipment, flags, ranged_in_hand, bags) = match look {
         GlueLook::Create(l) => {
             let outfit = char_create.0.start_outfit(l.race, l.class, l.sex);
@@ -461,9 +461,9 @@ pub(in crate::entities) fn build_dressup_preview(
     state.built = true;
 }
 
-/// The character-select ghost's `SpellVisualKit` row, hard-coded as in the reference: the reference
-/// loads `idmap[989]` behind the bound check. It is `SpellVisual` 886's state kit, spell 8326
-/// Ghost's, which a released ghost in the world rides too.
+/// The character-select ghost's `SpellVisualKit` row, hard-coded as in the reference, which loads
+/// `idmap[989]` behind a bound check. It is `SpellVisual` 886's state kit, spell 8326 Ghost's,
+/// which a released ghost in the world rides too.
 const GLUE_GHOST_KIT: u32 = 989;
 
 /// The ghost kit's share of a select bake: the body's tint and alpha, and its effect models as
@@ -477,8 +477,7 @@ struct GhostArm {
 
 /// Resolve [`GLUE_GHOST_KIT`] against the kit catalog and the body's attachments; `pending` is set
 /// while an effect model loads. The tint and alpha decode through [`crate::aura_visual::node_for`],
-/// the reference's table, as the world aura does, but land instantly, with no 1000 ms
-/// `StartAlphaFade`.
+/// the reference's table, as the world aura does, but land instantly, with no 1000 ms alpha fade.
 fn glue_ghost_arm(
     body: &super::super::DisplayModel,
     visuals: &benilla_formats::SpellVisualCatalog,
@@ -743,7 +742,7 @@ fn assemble(spec: &PreviewSpec, ctx: &mut PreviewCtx<'_, '_>) -> Option<Assemble
 
     // Each want seats at the body's attach point: its meshes, billboard batches and emitters, and
     // for a held weapon the same off each glow model its `ItemVisuals` id names, reached as in the
-    // world (hands `ItemDisplayInfo+0x58`). The enum has no enchant ids (vmangos
+    // world (through `ItemDisplayInfo+0x58`). The enum has no enchant ids (vmangos
     // `Player.cpp:1724`), so no enchant glow shows here.
     let attach_point = |id: u16| dm.attachments.iter().find(|a| a.id == id);
     let mut riders = Vec::new();
@@ -874,7 +873,7 @@ struct HeldWant {
 /// A preview's helm, shoulder pair and held weapons. The glue builds pass SheatheType 0
 /// (`0x4e4202`), so weapons go to the hands (main hand right, off hand left, a shield to its
 /// point): [`placement`]'s melee-drawn arm. A held off-hand frill takes the same hand law; the
-/// reference is traced for weapons and shields only. `ranged` places the ranged slot.
+/// reference's hand attach is traced for weapons and shields only. `ranged` places the ranged slot.
 fn held_wants(
     equipment: &[CharEnumItem; 19],
     helm: u32,
@@ -1145,7 +1144,7 @@ mod tests {
             .collect();
         assert!(
             nodes.contains(&crate::aura_visual::AuraNode::Tint([140, 185, 253])),
-            "kit 989's CharProc 1 is 9222653.0 → → RGB (140,185,253); got {nodes:?}"
+            "kit 989's CharProc 1 is 9222653.0 → 0x8CB9FD → RGB (140,185,253); got {nodes:?}"
         );
         assert!(
             nodes

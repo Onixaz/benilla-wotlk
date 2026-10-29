@@ -26,8 +26,8 @@ pub(super) fn load_env_damage_table(mut commands: Commands, assets: Option<Res<W
     }
 }
 
-/// The hard-landing floor,13.0 yd of fall height; below it only the land sound plays. Below70.0 yd
-/// a dead or ghost mover lands soft, which is not built. The server damages only from 14.57 yd
+/// The hard-landing floor, 13.0 yd of fall height; below it only the land sound plays. Below 70.0
+/// yd a dead or ghost mover lands soft, which is not built. The server damages only from 14.57 yd
 /// (vmangos `Player.cpp:20968`), so a shorter hard landing grunts and puffs with no damage packet.
 pub(crate) const HARD_LANDING_DESCENT: f32 = 13.0;
 
@@ -35,12 +35,13 @@ pub(crate) const HARD_LANDING_DESCENT: f32 = 13.0;
 #[derive(Message, Clone, Copy)]
 pub(crate) struct HardLanding {
     pub(crate) entity: Entity,
-    /// Fall height in yd, launch height minus landing height. The reference's measures from the
-    /// apex, which a jump off a ledge puts up to about 1.6 yd above the launch.
+    /// Fall height in yd, launch height minus landing height. The reference's fall height measures
+    /// from the apex, which a jump off a ledge puts up to about 1.6 yd above the launch.
     pub(crate) descent: f32,
 }
 
-/// The predictor's dust leg: the reference re-fires `(type 2, damage 0)` at the landing frame.
+/// The predictor's dust leg: it re-fires the damage-type-2 kit, with damage 0, at the landing
+/// frame.
 pub(super) fn hard_landing_dust(
     mut landings: MessageReader<HardLanding>,
     table: Option<Res<EnvDamageTable>>,

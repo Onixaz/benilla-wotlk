@@ -228,7 +228,7 @@ pub enum MoveMode {
     FeatherFall,
     Hover,
     /// 3.3.5a's `CAN_FLY`: the mover may take flight, and `SMSG_MOVE_UNSET_CAN_FLY` ends a flight
-    /// in progress (`0x6ef860` event 48 calls StopFlying `0x98c240`).
+    /// in progress (`0x6ef860` event 48 calls the flight stop `0x98c240`).
     CanFly,
     /// 3.3.5a's `DISABLE_GRAVITY`, 1.12.1's levitating bit once mapped: `apply` turns gravity off
     /// (`SMSG_MOVE_GRAVITY_DISABLE`), and the two directions ack on their own opcodes.
@@ -265,7 +265,7 @@ impl MoveMode {
     }
 
     /// Whether the ack ends in the `f32` apply value, 1.0 or 0.0: not root's or gravity's
-    /// (`AckMessageHasValue` `0x7151f0`, written after the info by `0x71ef80`).
+    /// (`0x7151f0`, written after the info by `0x71ef80`).
     pub fn ack_carries_apply(self) -> bool {
         !matches!(self, MoveMode::Root | MoveMode::DisableGravity)
     }
@@ -325,7 +325,7 @@ pub enum RelayVerb {
     /// past 30 yd re-anchors the world.
     Teleport,
     /// `MSG_MOVE_ROOT` (`true`) / `MSG_MOVE_UNROOT` (`false`): the opcode, not the flags word,
-    /// decides. The client then runs `SetRoot` (also wiping motion) or `ClearRoot` unconditionally;
+    /// decides. The client then roots (also wiping motion) or unroots the mover unconditionally;
     /// vmangos's flags already agree (`MovementHandler.cpp:1064`).
     Root(bool),
 }

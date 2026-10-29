@@ -51,7 +51,7 @@ fn pet_cannot_cast(unit_flags: u32, spell: &benilla_formats::SpellDisplay) -> bo
 }
 
 /// Where a press went: [`PetCast::CastAsPet`] leaves the spell to the cast ladder with the pet as
-/// caster (`Spell_C_CastSpell` `0x80cce0`), which [`crate::script_calls`] runs.
+/// caster (the cast ladder's entry, `0x80cce0`), which [`crate::script_calls`] runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PetCast {
     Done,
@@ -72,7 +72,7 @@ impl PetPress<'_, '_> {
     }
 
     /// The guid the pet book's `CastSpell(id, "pet", onSelf)` passes: the active player with
-    /// `onSelf`, else none, which `SendPetAction` reads as the selection.
+    /// `onSelf`, else none, which the pet-action send reads as the selection.
     pub(crate) fn spell_target(&self, on_self: bool) -> Option<u64> {
         if on_self {
             self.pet.self_guid.0
@@ -82,23 +82,23 @@ impl PetPress<'_, '_> {
     }
 
     /// `PetAttack` and the other one-shot orders, as their slot's packed word. A slot press, an
-    /// order and a pet book cast are one press: each reaches `CGPetInfo::SendPetAction`
-    /// (`0x5d4210`). The slot number only labels logs.
+    /// order and a pet book cast are one press: each reaches the pet-action send (`0x5d4210`). The
+    /// slot number only labels logs.
     pub(crate) fn order(&mut self, packed: u32) -> PetCast {
         self.press(0, PetActionEntry::from(packed), None)
     }
 
-    /// The pet book's `CastSpell(id, "pet")` (`CGSpellBook::CastSpell` `0x53bc40`): the spell
-    /// word `id | 0x1000000` through the bar's dispatcher, at `target` if one is passed.
+    /// The pet book's `CastSpell(id, "pet")` (`0x53bc40`): the spell word `id | 0x1000000` through
+    /// the bar's dispatcher, at `target` if one is passed.
     pub(crate) fn cast_book_spell(&mut self, spell_id: u32, target: Option<u64>) -> PetCast {
         let entry = PetActionEntry::from(0x0100_0000 | (spell_id & 0x00FF_FFFF));
         self.press(0, entry, target)
     }
 
-    /// `CGPetInfo::SendPetAction` (`0x5d4210`), under [`PetBar`]'s pet guid, never one from the VM,
-    /// so a press queued as the pet leaves dies here. `CMSG_PET_ACTION` echoes the slot's word,
-    /// which the server dispatches on its type, with `passed` or else the selection as the target.
-    /// The usability predicate comes first (`0x5d4285`), and a refusal sends nothing.
+    /// The pet-action send (`0x5d4210`), under [`PetBar`]'s pet guid, never one from the VM, so a
+    /// press queued as the pet leaves dies here. `CMSG_PET_ACTION` echoes the slot's word, which
+    /// the server dispatches on its type, with `passed` or else the selection as the target. The
+    /// usability predicate comes first (`0x5d4285`), and a refusal sends nothing.
     fn press(&mut self, slot: u32, entry: PetActionEntry, passed: Option<u64>) -> PetCast {
         let Self {
             bar,
@@ -217,11 +217,11 @@ impl PetPress<'_, '_> {
     }
 }
 
-/// The spell arm's tail for a press that sends `CMSG_PET_ACTION`: `Spell_C_StartSpellCooldown`
+/// The spell arm's tail for a press that sends `CMSG_PET_ACTION`: the spell cooldown start
 /// (`0x5d4427`) before the send, the spell's own `StartRecovery*` pair into the pet's list. The
-/// insert moves the list's generation, which carries its flush to
-/// `bar::fire_pet_cooldown_events`. The client-targeted and possessed presses start it at their
-/// cast's send instead (`Spell_C::SendPendingCast`, `0x80ac90`).
+/// insert moves the list's generation, which carries its flush to `bar::fire_pet_cooldown_events`.
+/// The client-targeted and possessed presses start it at their cast's send instead (the pending
+/// cast's send, `0x80ac90`).
 pub(super) fn arm_pet_gcd(
     bar: &mut PetBar,
     spell_id: u32,
@@ -304,8 +304,8 @@ pub(super) fn drain_pet_actions(
 }
 
 /// `TogglePetAutocast`'s local half: flip bit 30 in place and return the whole word to send, or
-/// `None` for a slot out of range or without bit 31. The reference then calls, which copies a spell
-/// slot's word over the last spellbook entry equal to it under `& 0x3FFFFFFF`.
+/// `None` for a slot out of range or without bit 31. The reference then runs a spellbook sync,
+/// which copies a spell slot's word over the last spellbook entry equal to it under `& 0x3FFFFFFF`.
 pub(super) fn toggle_slot_autocast(bar: &mut PetBar, slot: u32) -> Option<PetActionEntry> {
     let entry = slot_entry(bar, slot).filter(|e| e.autocast_allowed())?;
     let flipped = entry.with_autocast(!entry.autocast_on());
@@ -337,14 +337,14 @@ pub(super) fn stop_pet_attack(bar: &mut PetBar, commands: &NetCommands) -> bool 
     true
 }
 
-/// The reference's entry gate: the old-target clear runs only when a selection existed and is being
-/// replaced or dropped.
+/// The reference's selection-teardown entry gate: the old-target clear runs only when a selection
+/// existed and is being replaced or dropped.
 pub(super) fn old_target_cleared(previous: Option<u64>, now: Option<u64>) -> bool {
     previous.is_some() && previous != now
 }
 
-/// The old-target clear's `PetStopAttack` (at the reference when the reference finds a possessed
-/// unit). It sits before the notify branch, so every selection writer runs it; a re-select runs no
+/// The old-target clear's `PetStopAttack` (run when the reference's possessed-unit lookup finds
+/// one). It sits before the notify branch, so every selection writer runs it; a re-select runs no
 /// clear.
 pub(crate) fn pet_stop_on_old_target_clear(
     selection: Res<Selection>,
@@ -405,14 +405,14 @@ pub(super) fn latch_press(bar: &mut PetBar, entry: PetActionEntry, possessing: b
         benilla_protocol::messages::PET_ACT_COMMAND
             if action == PET_COMMAND_STAY || action == PET_COMMAND_FOLLOW =>
         {
-            // The reference signals `PET_BAR_UPDATE` even when the command is unchanged.
+            // The reference's latch signals `PET_BAR_UPDATE` even when the command is unchanged.
             bar.spells.state = (bar.spells.state & 0x0800_00FF) | (action << 8);
             bar.bar_signals = bar.bar_signals.wrapping_add(1);
         }
         benilla_protocol::messages::PET_ACT_COMMAND
             if action == PET_COMMAND_ATTACK && possessing =>
         {
-            // The reference signals too; an ordinary pet never gets here.
+            // The reference's attack latch signals too; an ordinary pet never gets here.
             bar.attacking = true;
             bar.bar_signals = bar.bar_signals.wrapping_add(1);
         }

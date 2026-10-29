@@ -158,7 +158,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The gate's bypass: the reference re-enters with a third argument of 1.
+    // The gate's bypass: the reference's `ConfirmLootRoll` re-enters the roll with a third argument
+    // of 1.
     g.set(
         "ConfirmLootRoll",
         lua.create_function(|lua, (roll_id, roll_type): (u32, u8)| {

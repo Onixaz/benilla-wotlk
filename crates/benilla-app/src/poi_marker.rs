@@ -5,19 +5,18 @@
 //! 5875-era row ships `icon = 6` (`ICON_POI_REDFLAG`) and `flags = 99`.
 //!
 //! The reference draws it as a landmark: the handler builds a synthetic `AreaPOI` record in static
-//! slot 1 (`set_blip`), which the minimap's candidate list appends unconditionally, past the DBC
-//! scan's `ContinentID`/`Flags & 1` gate. Every landmark rule then applies, including the 694.444
-//! yd rank cut (only the corpse slot is exempt). This module holds the record and its lifetime; the
-//! drawing is [`crate::minimap::blips`] and the world map's POI pool.
+//! slot 1, which the minimap's candidate list appends unconditionally, past the DBC scan's
+//! `ContinentID`/`Flags & 1` gate. Every landmark rule then applies, including the 694.444 yd rank
+//! cut (only the corpse slot is exempt). This module holds the record and its lifetime; the drawing
+//! is [`crate::minimap::blips`] and the world map's POI pool.
 //!
 //! The marker clears on whichever comes first:
-//! - 480 seconds after `set_blip` (the reference is a cached `time()`, in seconds);
-//! - arriving strictly inside 10 yd (`minimap_update`, `(player - marker)^2 < 100`);
+//! - 480 seconds after the marker is set (the clock is a cached `time()`, in seconds);
+//! - arriving strictly inside 10 yd (the minimap's update, `(player - marker)^2 < 100`);
 //! - the next set of directions, which overwrites the one slot;
-//! - world entry (`zone_rebuild`), here a worldport or a logout.
+//! - world entry, here a worldport or a logout.
 //!
-//! The wire has no map; the record takes the current map, as the reference does at `set_blip`
-//! (`0x1c ContinentID <-`).
+//! The wire has no map; the record takes the current map, as the reference's set does.
 
 use benilla_formats::AreaPoi;
 use bevy::prelude::*;
@@ -28,9 +27,9 @@ use benilla_assets::coords::bevy_to_wow;
 use crate::net::{LoggedOutMessage, WorldportMessage};
 use crate::player::Player;
 
-/// The arrival radius squared,100 yd^2, compared strictly.
+/// The arrival radius squared, 100 yd^2, compared strictly.
 const ARRIVE_CLEAR_YD_SQ: f32 = 100.0;
-/// The marker's lifetime, `time() + 480` seconds (`set_blip`).
+/// The marker's lifetime, `time() + 480` seconds from the set.
 const MARKER_TTL_SECS: f64 = 480.0;
 
 /// The live directions as the reference's synthetic `AreaPOI` record, read by
@@ -95,7 +94,7 @@ fn expire_marker(mut marker: ResMut<PoiMarker>, player: Res<Player>, time: Res<T
     }
 }
 
-/// World entry clears the slot (`zone_rebuild`): a worldport or a logout.
+/// World entry clears the slot: a worldport or a logout.
 fn clear_on_world_entry(
     mut marker: ResMut<PoiMarker>,
     mut worldports: MessageReader<WorldportMessage>,

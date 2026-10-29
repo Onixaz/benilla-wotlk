@@ -27,8 +27,8 @@ pub(super) fn update(
         .single()
         .ok()
         .and_then(|(.., store, _, _, _, _, _)| {
-            // `SetStandState`'s first guards, health ≤ 0 or `UNIT_DYNAMIC_FLAGS & 0x20` (feigning),
-            // without `unit_reads_dead`'s stand state 7.
+            // The stand-state setter's first guards, health ≤ 0 or `UNIT_DYNAMIC_FLAGS & 0x20`
+            // (feigning), without `unit_reads_dead`'s stand state 7.
             store.map(|s| {
                 (
                     s.0.unit_stand_state(),
@@ -58,8 +58,8 @@ pub(super) fn update(
     // and jump reach the stand wrapper from any nonzero state; a left-drag orbit does not, nor a
     // right-drag turn (the reference skips its stand arm while the button is held), though a
     // release within 200 ms is a right-click, whose action stands you. A knockback's move event
-    // stands us too (`GetStandState`), read off the latch [`super::wire_in::apply_server_moves`]
-    // armed this frame, as the mover runs later.
+    // stands us too (through the stand wrapper's state read), read off the latch
+    // [`super::wire_in::apply_server_moves`] armed this frame, as the mover runs later.
     let knocked_out_of_it = player.knockback.is_some();
     if (moving || turned || knocked_out_of_it || binds.fired(crate::bindings::Input::Jump))
         && stand_state != 0
@@ -67,9 +67,9 @@ pub(super) fn update(
     {
         request_stand = Some(0);
     }
-    // `SetStandState` the reference's gate ([`state::stand_state_refused`]), silent and before the
-    // packet: no sitting while translating or swimming, no change at all while dead. It covers the
-    // posture emotes too, whose `Emotes.dbc` gate has no swim bit. The flags word is the live
+    // The reference stand-state setter's gate ([`state::stand_state_refused`]), silent and before
+    // the packet: no sitting while translating or swimming, no change at all while dead. It covers
+    // the posture emotes too, whose `Emotes.dbc` gate has no swim bit. The flags word is the live
     // outbound one, a frame old, the `[[this+0x118]+0x40]` the cast gates read.
     if let Some(s) =
         request_stand.filter(|&s| state::stand_state_refused(reads_dead, player.move_flags(), s))
@@ -112,7 +112,7 @@ pub(super) fn update(
             } else {
                 // Melee, ranged, stowed, skipping what is not worn; `None` makes no call at all.
                 let w = wielded.copied().unwrap_or_default();
-                // `GetWeapon(slot, 0)`: a disarmed hand is not worn.
+                // The weapon getter's held read: a disarmed hand is not worn.
                 let worn = (
                     w.armed_main().is_some() || w.armed_off().is_some(),
                     w.ranged.is_some(),
@@ -133,8 +133,8 @@ pub(super) fn update(
     stand_now
 }
 
-/// The stand state's local apply, the reference's, reached from `SetStandState` after its send and
-/// from `SMSG_STANDSTATE_UPDATE`; it sends nothing. A change writes the prediction
+/// The stand state's local apply, as the reference's, reached from the stand-state setter after its
+/// send and from `SMSG_STANDSTATE_UPDATE`; it sends nothing. A change writes the prediction
 /// (`[player+0x1d68]`); any call stows a drawn weapon for a state but 0 or 2. Not built: its loot
 /// release and attack stop on a sit, movement re-run on a stand, and follow-camera re-acquire each
 /// call.
@@ -159,8 +159,8 @@ fn apply_locally(
     }
 }
 
-/// The reference's early-out: the predicted stand state is written only on a change. Returns
-/// whether it was.
+/// The reference's local-apply early-out: the predicted stand state is written only on a change.
+/// Returns whether it was.
 fn predict(pending: &mut Option<u8>, s: u8, stand_now: u8) -> bool {
     if s == stand_now {
         return false;

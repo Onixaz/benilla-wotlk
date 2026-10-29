@@ -78,10 +78,10 @@ pub fn pack_model_core_rows(
 }
 
 /// The reference commits a point light's diffuse raw, `colour × intensity × modelFade`, over-gamut
-/// included: the reference stores a peak-normalized byte colour and the peak `max(1, r, g, b)`, and
-/// the reference decodes them back before the GL light is set. Saturation comes from the per-vertex
-/// clamp of the summed lighting, never from the commit. Deviation: the round trip's 8-bit
-/// quantization is skipped, because it moves a channel by under 0.5 %.
+/// included: its packer stores a peak-normalized byte colour and the peak `max(1, r, g, b)`, and
+/// the light setup decodes them back before the GL light is set. Saturation comes from the
+/// per-vertex clamp of the summed lighting, never from the commit. Deviation: the round trip's
+/// 8-bit quantization is skipped, because it moves a channel by under 0.5 %.
 pub fn commit_raw(rgb: [f32; 3]) -> [f32; 3] {
     rgb.map(|c| c.max(0.0))
 }

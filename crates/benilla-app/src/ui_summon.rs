@@ -3,7 +3,7 @@
 //! nothing: 1.12 has no `CancelSummon`, and the server's two-minute expiry refuses.
 //!
 //! - The latch writes four globals, the guid's two halves, the zone and an absolute deadline, then
-//!   a bare `SignalEvent(516)`.
+//!   a bare event signal (516).
 //! - A dead or ghost player is refused before the latch, so a live question is untouched. The test:
 //!   health <= 0, or a player with the `PLAYER_FLAGS` ghost bit (a ghost's health is 1). With no
 //!   player object, it latches.
@@ -174,7 +174,8 @@ pub(crate) mod net {
         app.net_handler(SessionEventKind::SummonRequest, on_request);
     }
 
-    /// The reference over the self object, not `unit_reads_dead`. An unstreamed self latches.
+    /// The reference's dead test over the self object, not `unit_reads_dead`. An unstreamed self
+    /// latches.
     fn on_request(
         In(ev): In<SessionEvent>,
         mut summon: ResMut<SummonState>,
@@ -270,7 +271,7 @@ mod tests {
         assert!(summon.ask, "the same summoner asking again owes a dialog");
     }
 
-    /// The reference's three cases: never armed, running, expired.
+    /// The reference's countdown read, in its three cases: never armed, running, expired.
     #[test]
     fn the_countdown_runs_from_the_packets_delay_and_never_goes_negative() {
         let mut summon = SummonState::default();

@@ -43,13 +43,13 @@ pub struct CreatureVoice {
     pub jump_start: u32,
     pub jump_end: u32,
     /// Column 28, the bark on an attack order: `SMSG_PET_ACTION_SOUND`'s `PET_TALK_ATTACK`, bark
-    /// state 2 of 5875's (the reference reads `[row+0x6c]`, its column 27).
+    /// state 2 of 5875's bark handler (which reads `[row+0x6c]`, its column 27).
     pub pet_attack: u32,
     /// Column 29, the bark acknowledging an ordered spell: `PET_TALK_SPECIAL_SPELL`, bark state 1
-    /// (5875's reads `[row+0x70]`).
+    /// (5875's bark handler reads `[row+0x70]`).
     pub pet_order: u32,
-    /// Column 30, `SMSG_PET_DISMISS_SOUND`'s parting line: 5875's reads `[row+0x74]` and plays it
-    /// at a bare world position, since the pet is gone.
+    /// Column 30, `SMSG_PET_DISMISS_SOUND`'s parting line: 5875's handler reads `[row+0x74]` and
+    /// plays it at a bare world position, since the pet is gone.
     pub pet_dismiss: u32,
 }
 
@@ -69,7 +69,7 @@ impl CreatureVoiceCatalog {
 
     /// The voice set for a `CreatureModelData` id through its own `SoundID` (col 13), with no
     /// display step and no fallback: `SMSG_PET_DISMISS_SOUND` names a model, and the reference
-    /// resolves it so (`[ + id*4] + 0x34`, then `[ + sound*4]`).
+    /// resolves it so (the model row's `+0x34`, then that sound row).
     pub fn for_model(&self, model_id: u32) -> Option<&CreatureVoice> {
         self.rows.get(self.model_to_sound.get(&model_id)?)
     }

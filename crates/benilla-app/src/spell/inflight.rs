@@ -1,6 +1,6 @@
 //! The player's own cast state: the pending cast (`SPELLCAST` and the inflight id), the queued
 //! on-next-swing strike, the running channel, the auto-repeat key, and the local abort on a move,
-//! jump or Esc (`AbortCast`).
+//! jump or Esc (the cast abort).
 
 use std::time::{Duration, Instant};
 
@@ -24,8 +24,8 @@ const ITEM_SEND_PROVISIONAL: Duration = Duration::from_millis(1_500);
 /// delays (`SMSG_SPELL_DELAYED`) still guards past its stretched end.
 const CAST_SLACK: Duration = Duration::from_secs(2);
 
-/// Our outstanding cast, armed at send. `TryCast` refuses a second cast while the inflight id is
-/// set: the same spell bails silently, another errors 0x61 unless the inflight spell is
+/// Our outstanding cast, armed at send. The cast attempt refuses a second cast while the inflight
+/// id is set: the same spell bails silently, another errors 0x61 unless the inflight spell is
 /// on-next-swing (`Attributes & 0x404`). On-next-swing spells arm [`QueuedMeleeSpell`] instead, so
 /// this guard needs no attribute test.
 ///
@@ -53,8 +53,8 @@ impl PendingCast {
             .is_some_and(|p| p.guards && now < p.deadline)
     }
 
-    /// The reference's: the last committed, unresolved cast of any class, which `HandleCastResult`
-    /// tests before reading `modalNextSpell`.
+    /// The reference's inflight id: the last committed, unresolved cast of any class, which the
+    /// cast-result handler tests before reading `modalNextSpell`.
     pub(crate) fn committed(&self, now: Instant) -> Option<u32> {
         self.0
             .as_ref()
@@ -79,8 +79,8 @@ impl PendingCast {
         });
     }
 
-    /// Arm on an item use: the client's item use goes through `TryCast`, so it writes the same
-    /// inflight id and meets the same gate. Only the deadline differs.
+    /// Arm on an item use: the client's item use goes through the cast attempt, so it writes the
+    /// same inflight id and meets the same gate. Only the deadline differs.
     pub(crate) fn arm_item(&mut self, spell_id: u32, now: Instant) {
         self.0 = Some(PendingCastState {
             spell_id,
@@ -113,16 +113,17 @@ impl PendingCast {
 }
 
 /// Our queued on-next-swing spell (Heroic Strike, Cleave: `Attributes & 0x404`). The reference
-/// keeps it in the inflight id, and a new cast nests around it (`PushPopNestedCast`); this second
-/// slot beside [`PendingCast`] gives the same observable.
+/// keeps it in the inflight id, and a new cast nests around it (the nested-cast push and pop); this
+/// second slot beside [`PendingCast`] gives the same observable.
 ///
 /// No deadline: cleared, keyed on the id, by `SMSG_SPELL_GO` when the swing fires or by the failing
 /// `SMSG_CAST_RESULT` and `SMSG_SPELL_FAILED_OTHER` vmangos sends when the melee slot dies. The
-/// reference clears it on a matching `SMSG_CAST_RESULT` alone (its GO handler never touches);
+/// reference clears it on a matching `SMSG_CAST_RESULT` alone (its GO handler never touches it);
 /// vmangos sends the OK result just before the GO (`Spell.cpp:3681`, `Spell.cpp:3715`). A re-arm
 /// replaces it (the server's one `CURRENT_MELEE_SPELL`). Re-pressing the queued spell bails
-/// silently; it un-queues through the StopAttack chain (`CancelQueuedCast`), which an auto-repeat
-/// press also runs, or through Esc, which cancels it as the inflight spell (`SpellStopCasting`).
+/// silently; it un-queues through the StopAttack chain (the queued-cast cancel), which an
+/// auto-repeat press also runs, or through Esc, which cancels it as the inflight spell
+/// (`SpellStopCasting`).
 #[derive(Resource, Default)]
 pub(crate) struct QueuedMeleeSpell(Option<u32>);
 
@@ -142,8 +143,8 @@ impl QueuedMeleeSpell {
     }
 }
 
-/// What the reference's one inflight id holds, joined from our two slots: `IsCasting` and
-/// `AbortCast` treat a cast and a queued strike alike.
+/// What the reference's one inflight id holds, joined from our two slots: the in-flight check and
+/// the cast abort treat a cast and a queued strike alike.
 ///
 /// A cast started over a queued strike pushes it into the save, so the cast comes first and the
 /// first Esc takes it, the second the strike. Deviation: the reference's second Esc re-asserts the
@@ -186,8 +187,8 @@ pub(crate) fn inflight(
 /// Slack past the named channel end, so a lost `MSG_CHANNEL_UPDATE(0)` cannot pin the ring on.
 const CHANNEL_SLACK: Duration = Duration::from_secs(2);
 
-/// Our running channel, the client's: `IsCurrentAction` keeps a channeled spell's button checked
-/// while it runs. `MSG_CHANNEL_UPDATE(0)` ends it, finished or interrupted.
+/// Our running channel, as the client keeps it: `IsCurrentAction` keeps a channeled spell's button
+/// checked while it runs. `MSG_CHANNEL_UPDATE(0)` ends it, finished or interrupted.
 #[derive(Resource, Default)]
 pub(crate) struct ActiveChannel(Option<(u32, Instant)>);
 
@@ -216,15 +217,15 @@ impl ActiveChannel {
     }
 }
 
-/// The live auto-repeat spell, the client's: set at cast send for `AttributesEx2 & 0x20`, cleared
-/// by `SMSG_CANCEL_AUTO_REPEAT` and a matching cast failure. `IsAutoRepeatAction` and the button
-/// flash read it; the sticky `creature_anim::AutoRepeatArmed` is the idle gate.
+/// The live auto-repeat spell, as the client keeps it: set at cast send for `AttributesEx2 & 0x20`,
+/// cleared by `SMSG_CANCEL_AUTO_REPEAT` and a matching cast failure. `IsAutoRepeatAction` and the
+/// button flash read it; the sticky `creature_anim::AutoRepeatArmed` is the idle gate.
 #[derive(Resource, Default)]
 pub(crate) struct AutoRepeatActive(pub Option<u32>);
 
 /// The per-spell movement gates of the local self-cancel, tested. The move keybinds' dispatcher
-/// cancels on mask `0x10f0` (forward, back, strafe, autorun; not turn or pitch) and `Script::Jump`
-/// likewise, both calling `AbortCast` for `CMSG_CANCEL_CAST` and the cast's end events.
+/// cancels on mask `0x10f0` (forward, back, strafe, autorun; not turn or pitch) and the jump verb
+/// likewise, both calling the cast abort for `CMSG_CANCEL_CAST` and the cast's end events.
 pub(crate) const SPELL_INTERRUPT_MOVEMENT: u32 = 0x1; // SpellRec+0x54 InterruptFlags (SPELL_INTERRUPT_FLAG_MOVEMENT)
 const CHANNEL_INTERRUPT_MOVING: u32 = 0x8; // SpellRec+0x5c ChannelInterruptFlags (AURA_INTERRUPT_MOVING_CANCELS)
 
@@ -233,7 +234,7 @@ const CHANNEL_INTERRUPT_MOVING: u32 = 0x8; // SpellRec+0x5c ChannelInterruptFlag
 #[derive(Resource, Default)]
 pub(crate) struct LocalMoveStart(pub(crate) bool);
 
-/// The client's local cancel on a move, jump or Esc mid-cast (`AbortCast`):
+/// The client's local cancel on a move, jump or Esc mid-cast (the cast abort):
 ///
 /// - Esc first stops a running auto-repeat (`SpellStopCasting`), and that spends the press; the
 ///   cast survives to the next one.
@@ -241,8 +242,8 @@ pub(crate) struct LocalMoveStart(pub(crate) bool);
 ///   running cast ended interrupted ([`CastBarEdge::Cancelled`]). Movement tests the spell's
 ///   `InterruptFlags`; Esc does not.
 /// - The channel, on movement only: `CMSG_CANCEL_CHANNELLING` and nothing local; the bar and
-///   [`ActiveChannel`] close on `MSG_CHANNEL_UPDATE(0)`. Esc cannot stop a channel: the reference
-///   never calls, and the inflight id is 0 mid-channel.
+///   [`ActiveChannel`] close on `MSG_CHANNEL_UPDATE(0)`. Esc cannot stop a channel: the Esc cancel
+///   never calls the channel's, and the inflight id is 0 mid-channel.
 ///
 /// 12340's cancel (`0x806200`) ends the cast through `0x7fecc0` itself, so `INTERRUPTED` and
 /// `STOP` fire before the server's `SMSG_SPELL_FAILURE` echo, which the bar then ignores.
@@ -315,7 +316,7 @@ impl SelfCancel<'_, '_> {
                 .and_then(|s| s.catalog.get(spell_id))
                 .is_none_or(pick)
         };
-        // `AbortCast` treats a cast and a queued strike alike; only the local teardown differs.
+        // The cast abort treats a cast and a queued strike alike; only the local teardown differs.
         let started = self_e.and_then(|e| casting.get(e).ok()).map(|c| c.spell_id);
         if let Some(slot) = inflight(pending, queued_melee, started, now) {
             let spell_id = slot.spell_id();
@@ -797,8 +798,8 @@ mod tests {
             );
         }
 
-        /// Esc with a strike queued cancels it and returns 1 (`IsCasting` is true), so the Esc
-        /// ladder stops before `ClearTarget()`.
+        /// Esc with a strike queued cancels it and returns 1 (the in-flight check is true), so the
+        /// Esc ladder stops before `ClearTarget()`.
         #[test]
         fn esc_unqueues_a_strike_and_eats_the_press() {
             let (mut app, rx) = harness(HashMap::from([(
@@ -821,7 +822,7 @@ mod tests {
                     .eval::<Option<i64>>("return SpellStopCasting()")
                     .unwrap(),
                 Some(1),
-                "the queued strike makes IsCasting true, so the binding EATS the press — which \
+                "the queued strike sets the in-flight check, so the binding EATS the press — which \
                  is what spares the target three rungs further down the ladder"
             );
             apply_stops(&mut app);
@@ -832,7 +833,7 @@ mod tests {
                         spell_id: HEROIC_STRIKE
                     })
                 ),
-                "AbortCast names the queued strike on the wire, exactly as it would a cast"
+                "the cast abort names the queued strike on the wire, exactly as it would a cast"
             );
             assert_eq!(
                 app.world().resource::<QueuedMeleeSpell>().current(),
@@ -868,8 +869,8 @@ mod tests {
             );
         }
 
-        /// A cast nested over a queued strike (`PushPopNestedCast`) dies on the first Esc, the
-        /// strike on the second; this pins the local order only.
+        /// A cast nested over a queued strike (the nested-cast push and pop) dies on the first Esc,
+        /// the strike on the second; this pins the local order only.
         #[test]
         fn esc_takes_the_cast_first_and_the_strike_on_the_next_press() {
             let (mut app, rx) = harness(HashMap::new());

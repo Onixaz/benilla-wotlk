@@ -31,7 +31,7 @@ const FAMILY_MAX_SCALE_LEVEL_FIELD: usize = 4;
 const FAMILY_FOOD_MASK_FIELD: usize = 0x1c / 4;
 /// `petTalentType`, `-1` for none (record `+0x20`, `0x5c64d0`).
 const FAMILY_PET_TALENT_TYPE_FIELD: usize = 8;
-/// `categoryEnumID` (record `+0x24`, `IsTalentAvailableForPet` `0x5c5a20`).
+/// `categoryEnumID` (record `+0x24`, the pet talent check `0x5c5a20`).
 const FAMILY_CATEGORY_FIELD: usize = 9;
 /// The enUS name, the localized block's first slot.
 const FAMILY_NAME_FIELD: usize = 10;

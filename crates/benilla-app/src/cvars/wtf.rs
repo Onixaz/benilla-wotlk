@@ -1,12 +1,12 @@
 //! The `.wtf` CVar file, 12340's grammar both ways: `Config.wtf`, the account and character
 //! `config-cache.wtf`, `RunOnce*.wtf` and `realmlist.wtf` all hold `SET name "value"` lines.
 //!
-//! - Write (`CVar::SaveCvar` `0x766640`): `SET %s "%s"` and a bare LF per row, the value raw, no
-//!   escaping and no BOM.
-//! - Read (`CVar::Load` `0x766400`): a UTF-8 BOM skipped, lines split at CR or LF, blank ones
-//!   skipped, and only a line opening `SET ` (any case) runs; `SetCommandHandler` (`0x7681f0`)
-//!   tokenizes name and value on ` ,;\t"\r\n`, a value that opens with `"` running to the next `"`
-//!   (`SStrTokenize`), so no value can hold a quote.
+//! - Write (`0x766640`): `SET %s "%s"` and a bare LF per row, the value raw, no escaping and no
+//!   BOM.
+//! - Read (`0x766400`): a UTF-8 BOM skipped, lines split at CR or LF, blank ones skipped, and only
+//!   a line opening `SET ` (any case) runs; the `SET` handler (`0x7681f0`) tokenizes name and value
+//!   on ` ,;\t"\r\n`, a value that opens with `"` running to the next `"`, so no value can hold a
+//!   quote.
 
 /// Longest name and value the tokenizer keeps (`0x7681f0`'s 64- and 2048-byte buffers).
 const NAME_MAX: usize = 63;
@@ -70,7 +70,7 @@ pub(crate) fn parse(text: &str) -> Vec<(String, String)> {
     out
 }
 
-/// One row as `SaveCvar` writes it.
+/// One row as the reference's CVar save writes it.
 pub(crate) fn line(name: &str, value: &str) -> String {
     format!("SET {name} \"{value}\"\n")
 }

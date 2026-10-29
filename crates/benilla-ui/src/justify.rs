@@ -5,7 +5,7 @@
 use crate::script::{JustifyH, JustifyV};
 
 /// `.rdata`, six `{u32 bits, const char* name}` entries in image order. The order matters: the
-/// reference scans linearly and the reference answers the first entry with its bit set.
+/// reference's parse scans linearly and its getter answers the first entry with its bit set.
 const TOKENS: [(u32, &str); 6] = [
     (0x01, "LEFT"),
     (0x02, "CENTER"),
@@ -23,7 +23,7 @@ pub const H_MASK: u32 = 0x07;
 /// The vertical axis, bits 3–5: the mask of `SetJustifyV`.
 pub const V_MASK: u32 = 0x38;
 
-/// A justify argument after the reference and the setter's mask.
+/// A justify argument after the reference's token parse and the setter's mask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Set<J> {
     /// A token with a bit on this axis.
@@ -35,13 +35,13 @@ pub enum Set<J> {
     NoMatch,
 }
 
-/// `CENTER | MIDDLE | 0x200`, as `CSimpleFontString`'s ctor writes it; bit 9 is in neither axis and
-/// no reader looks at it.
+/// `CENTER | MIDDLE | 0x200`, as the font string's constructor writes it; bit 9 is in neither axis
+/// and no reader looks at it.
 const CTOR_DEFAULT: u32 = 0x212;
 
-/// The justify dword (`CSimpleFont+0x54`, `CSimpleFontString+0x120`, `CSimpleEditBox`'s own),
-/// bits 0–2 horizontal and 3–5 vertical. Kept raw because an axis with no bit set is reachable,
-/// and there the getter answers `"UNKNOWN"` while the draw path centres.
+/// The justify dword (font `+0x54`, font string `+0x120`, the edit box's own), bits 0–2 horizontal
+/// and 3–5 vertical. Kept raw because an axis with no bit set is reachable, and there the getter
+/// answers `"UNKNOWN"` while the draw path centres.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Justify(pub u32);
 
@@ -117,7 +117,8 @@ fn bits_v(j: JustifyV) -> u32 {
     }
 }
 
-/// `SStrCmpI` over the six entries, whole-string and untrimmed, so `"left "` misses.
+/// A case-insensitive compare over the six entries, whole-string and untrimmed, so `"left "`
+/// misses.
 pub fn parse_bits(s: &str) -> Option<u32> {
     TOKENS
         .iter()
@@ -190,7 +191,7 @@ mod tests {
         assert_eq!(parse_h("LEFT"), Set::To(JustifyH::Left));
         assert_eq!(parse_h("left"), Set::To(JustifyH::Left));
         assert_eq!(parse_h("LeFt"), Set::To(JustifyH::Left));
-        // `SStrCmpI` compares the whole string, untrimmed.
+        // The case-insensitive compare takes the whole string, untrimmed.
         assert_eq!(parse_h("left "), Set::NoMatch);
         assert_eq!(parse_h(" left"), Set::NoMatch);
         assert_eq!(parse_h("leftmost"), Set::NoMatch);

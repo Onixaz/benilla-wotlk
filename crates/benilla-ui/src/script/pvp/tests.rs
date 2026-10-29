@@ -260,8 +260,8 @@ fn the_pane_title_is_keyed_by_team_and_is_never_gendered() {
     );
 }
 
-/// The credit line's lookup resolves through the reference with the local player's gender, where
-/// the binding passes 0, and has no range check, so rank 19 names "Leader" here.
+/// The credit line's lookup resolves through the gendered title lookup with the local player's
+/// gender, where the binding passes 0, and has no range check, so rank 19 names "Leader" here.
 #[test]
 fn the_rust_side_title_lookup_is_gendered_where_the_binding_is_not() {
     let s = seated();
@@ -371,8 +371,8 @@ fn a_sideless_player_still_has_a_team_digit_because_his_race_has_one() {
     );
 }
 
-/// The reference subtracts 5 rather than negating, so rank 1 is -4 and rank 4 is -1, the opposite
-/// of vmangos's `visualRank` (`HonorMgr.cpp:991`).
+/// The reference's visual rank subtracts 5 rather than negating, so rank 1 is -4 and rank 4 is -1,
+/// the opposite of vmangos's `visualRank` (`HonorMgr.cpp:991`).
 #[test]
 fn the_visual_rank_arithmetic_runs_backwards_through_the_dishonorable_ranks() {
     for (internal, visual) in [
@@ -530,7 +530,7 @@ fn get_pvp_rank_info_takes_a_second_argument_three_different_ways() {
         .unwrap());
 }
 
-/// The reference tests `lua_isnumber` and raises: not a `(nil, 0)` edge.
+/// `GetPVPRankInfo` tests `lua_isnumber` and raises: not a `(nil, 0)` edge.
 #[test]
 fn get_pvp_rank_info_raises_without_a_numeric_first_argument() {
     let s = seated();
@@ -615,9 +615,9 @@ fn seat_titles(s: &mut UiScript) {
     ]);
 }
 
-/// `UnitPVPName` (`0x60e9a0` → `GetUnitChosenTitle` `0x72a290`): a player's chosen title,
-/// gendered by this unit, with the medal line under it; no title, a creature or a mask no row has
-/// is the plain name; the rank byte decorates nothing.
+/// `UnitPVPName` (`0x60e9a0` → `0x72a290`): a player's chosen title, gendered by this unit, with
+/// the medal line under it; no title, a creature or a mask no row has is the plain name; the rank
+/// byte decorates nothing.
 #[test]
 fn unit_pvp_name_shows_the_chosen_title() {
     let mut s = seated();
@@ -800,8 +800,8 @@ fn get_inspect_arena_team_data_answers_eighteen_or_nothing() {
     assert_eq!(s.arity("GetInspectArenaTeamData(2)").unwrap(), 0);
 }
 
-/// The reference refuses a query while one is in flight and once data is held; `TogglePVP` has no
-/// latch.
+/// The inspect honor request refuses while one is in flight and once data is held; `TogglePVP` has
+/// no latch.
 #[test]
 fn the_intent_queues_drain_and_the_honor_query_refuses_to_double_up() {
     let mut s = seated();

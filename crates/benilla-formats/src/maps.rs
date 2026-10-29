@@ -104,7 +104,7 @@ impl MapCatalog {
         self.entrances.iter().map(|(&k, &v)| (k, v))
     }
 
-    /// `MaxPlayers` (`+0x44`), the fallback `GetMaxPlayersForMap` (`0x634ab0`) takes when the
+    /// `MaxPlayers` (`+0x44`), the fallback the max-players lookup (`0x634ab0`) takes when the
     /// difficulty's `MapDifficulty` row sets none; 0 when unset.
     pub fn max_players(&self, map_id: u32) -> u32 {
         self.max_players.get(&map_id).copied().unwrap_or(0)

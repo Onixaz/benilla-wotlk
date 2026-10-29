@@ -1,9 +1,8 @@
-//! The `ColorSelect` methods: the `CSimpleColorSelect` widget, one colour held as HSV floats.
+//! The `ColorSelect` methods: the colour-select widget, one colour held as HSV floats.
 //! `SetColorRGB` fires `OnColorSelect` (slot `+0x338`) on every call, whose only test is for a
-//! bound handler, while `CSimpleSlider::SetValue` skips an equal value. The RGB round trip loses a
-//! step on 9.75 % of colours, as in the reference: in and out use different quantizers
-//! (round-half-up, then floor), so reading back and setting ratchets a channel down; see
-//! [`ColorSelectState`].
+//! bound handler, while a slider's `SetValue` skips an equal value. The RGB round trip loses a step
+//! on 9.75 % of colours, as in the reference: in and out use different quantizers (round-half-up,
+//! then floor), so reading back and setting ratchets a channel down; see [`ColorSelectState`].
 
 use mlua::{Lua, Table, Value};
 
@@ -272,7 +271,7 @@ fn fire_color_select(lua: &Lua, this: &Table, r: f64, g: f64, b: f64) -> mlua::R
 }
 
 /// The wheel's normalised coordinates for `(x, y)`: the offset from its centre over its
-/// half-extents, so a non-square wheel normalises to a disc; y is up, as the client's.
+/// half-extents, so a non-square wheel normalises to a disc; y is up, as in the client.
 fn wheel_norm(r: Rect, x: f32, y: f32) -> (f32, f32) {
     let hw = (r.right - r.left) * 0.5;
     let hh = (r.top - r.bottom) * 0.5;

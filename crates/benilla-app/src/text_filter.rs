@@ -2,10 +2,10 @@
 //! `spamFilter` predicate over `SpamMessages.dbc`, both PCRE lists compiled once at startup and
 //! never reloaded.
 //!
-//! The masker self-gates on, so no call site tests the CVar. Each matched byte becomes the next of
-//! `!@#$%^&*` (`.rdata`) through a process-global index that is never reset, so the phase carries
-//! across matches and messages. Patterns apply in list order, not text order, every occurrence, and
-//! the length never changes.
+//! The masker self-gates on its switch, so no call site tests the CVar. Each matched byte becomes
+//! the next of `!@#$%^&*` (`.rdata`) through a process-global index that is never reset, so the
+//! phase carries across matches and messages. Patterns apply in list order, not text order, every
+//! occurrence, and the length never changes.
 //!
 //! Only the chat chokepoint is wired. The reference masks twelve more sites, not built here: the
 //! mail subject, `GetInboxText`, `GetGuildInfo`, the two guild-record accessors, the roster MOTD
@@ -105,8 +105,8 @@ fn ascii_lower(text: &str) -> String {
     s
 }
 
-/// The two switches mirrored off their CVars: the reference's (`profanityFilter`) and
-/// (`spamFilter`), both registered `"1"`.
+/// The two switches mirrored off their CVars: the reference's `profanityFilter` and `spamFilter`
+/// globals, both registered `"1"`.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(crate) struct TextFilterSwitches {
     /// `profanityFilter`, the masker's self-gate.
@@ -190,7 +190,7 @@ impl TextFilter {
         self.spam.set.is_match(&ascii_lower(text))
     }
 
-    /// The reference with `dl = 0`: mask in place, return whether anything matched. `enabled` is
+    /// The masker with `dl = 0`: mask in place, return whether anything matched. `enabled` is
     /// `profanityFilter`, tested here as the reference does.
     pub(crate) fn mask(&mut self, enabled: bool, text: &mut String) -> bool {
         if !enabled || text.is_empty() || self.profanity.len() == 0 {
@@ -482,8 +482,8 @@ fn load_text_filter_lists(
 
 pub(crate) struct TextFilterPlugin;
 
-/// The two switches' change callback, as the reference's mirror `SStrToInt(newValue)` into a
-/// global.
+/// The two switches' change callback, as the reference's callbacks mirror the new value, read as an
+/// integer, into a global.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut switches: ResMut<TextFilterSwitches>) {
     match ev.key().as_str() {
         "profanityfilter" => switches.profanity = ev.flag(),

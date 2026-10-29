@@ -151,8 +151,8 @@ impl Loader<'_> {
         }
     }
 
-    /// `PostLoadXML` (`0x490410`) runs `OnShow` after `OnLoad` for a frame visible at the end of
-    /// its load, whose shows during the load were silent (`0x4902d0`).
+    /// The post-load pass (`0x490410`) runs `OnShow` after `OnLoad` for a frame visible at the end
+    /// of its load, whose shows during the load were silent (`0x4902d0`).
     pub(super) fn fire_onshow_after_load(&mut self, h: crate::widget::FrameHandle, dbg: &str) {
         let id = {
             let mut model = self.model();

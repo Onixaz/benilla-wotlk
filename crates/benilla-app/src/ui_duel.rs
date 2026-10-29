@@ -49,7 +49,7 @@ pub(crate) struct DuelState {
     countdown: Option<Countdown>,
 }
 
-/// The `ProcessCountdown` timer (`0x5cf870`).
+/// The duel countdown timer (`0x5cf870`).
 struct Countdown {
     remaining: u32,
     tick: Timer,
@@ -316,7 +316,7 @@ struct FedDuel {
     out_of_bounds: bool,
 }
 
-/// `ProcessCountdown` (`0x5cf870`, armed by `0x5cfa50`): a `DUEL_COUNTDOWN` system chat line on
+/// The duel countdown (`0x5cf870`, armed by `0x5cfa50`): a `DUEL_COUNTDOWN` system chat line on
 /// arrival, since the reference runs the tick body before arming its timer, then one a second.
 fn tick_countdown(time: Res<Time>, mut duel: ResMut<DuelState>, mut started: Local<bool>) {
     let Some(countdown) = duel.countdown.as_mut() else {

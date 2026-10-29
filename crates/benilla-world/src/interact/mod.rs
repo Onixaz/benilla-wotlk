@@ -54,9 +54,9 @@ pub struct WorldClick;
 pub struct WorldRightClick;
 
 /// The right button's press in the world (off the UI, or any press while a look holds the hidden
-/// cursor), sent before the click test starts, as the reference's `CGWorldFrame::OnMouseDown`,
-/// where ground targeting's right-click cancel and the repair-mode reset hang. It consumes nothing,
-/// so the turn and the release's context click still run.
+/// cursor), sent before the click test starts, as the reference's world-frame mouse-down, where
+/// ground targeting's right-click cancel and the repair-mode reset hang. It consumes nothing, so
+/// the turn and the release's context click still run.
 #[derive(Message, Clone, Copy)]
 pub struct WorldRightPress;
 
@@ -115,11 +115,10 @@ impl WorldPick<'_, '_> {
     }
 }
 
-/// The drawn doodads as the mouse trace's occluders: `CMap::VectorIntersectDoodadDefs` (`0x7a2760`)
-/// under `CGWorldFrame::HitTest`'s flags `0x1000124` skips culled defs and tests the rest in mode
-/// 1, their drawn batches ([`benilla_formats::RenderSubmesh::hit_test`]), never their collision
-/// hulls. The entity parts, the static merge's blobs and the static pass each answer for what they
-/// drew.
+/// The drawn doodads as the mouse trace's occluders: the doodad trace (`0x7a2760`) under the world
+/// hit test's flags `0x1000124` skips culled defs and tests the rest in mode 1, their drawn batches
+/// ([`benilla_formats::RenderSubmesh::hit_test`]), never their collision hulls. The entity parts,
+/// the static merge's blobs and the static pass each answer for what they drew.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct DoodadOccluders<'w, 's> {
     #[allow(clippy::type_complexity)] // the part query, filtered to the static world

@@ -216,7 +216,7 @@ fn chat(
             &format!("[{:#04x}] {}", m.chat_type, m.text.replace('\n', " ⏎ ")),
         );
     }
-    // An ignored speaker is dropped silently (`FriendList::IsIgnored`); a dropped whisper also
+    // An ignored speaker is dropped silently (the ignore list); a dropped whisper also
     // sends `CMSG_CHAT_IGNORED`, so the sender hears "is ignoring you".
     if social.is_ignored(m.sender_guid) {
         if m.chat_type == CHAT_MSG_WHISPER {

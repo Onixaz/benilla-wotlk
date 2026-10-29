@@ -1,17 +1,17 @@
-//! The character select's glue verbs (`SelectCharacter.cpp`, table `0xac4378`) and the roster they
-//! read: the record array (stride `0x120`) and its count, the selection, the model frame, the
-//! facing and the build counter.
+//! The character select's glue verbs (table `0xac4378`) and the roster they read: the record array
+//! (stride `0x120`) and its count, the selection, the model frame, the facing and the build
+//! counter.
 //!
-//! The host seeds the roster where the reference's list reply is walked and tears it down where the
+//! The host seeds the roster where the reference walks its list reply and tears it down where the
 //! reference does; the verbs that only read it answer here, and `SelectCharacter` fires
 //! `UPDATE_SELECTED_CHARACTER` as it returns, as the reference does. Indices are 1-based in Lua and
-//! 0-based inside, the boundary.
+//! 0-based inside, converted at the `SelectCharacter` binding.
 //!
-//! The 3-D side of the reference (the reference's model build into the scene) is the host's scene
-//! drive; what it reads is kept here: the shown `ModelFFX` pane's scene ([`GlueScenePane`]), the
-//! character standing on the scene's attachment 0 ([`super::UiScript::glue_standing_guid`]), and
-//! the facing. What a build leaves behind for Lua to see is kept here too: the facing reset and the
-//! build counter that gates `SetCharacterSelectFacing`.
+//! The 3-D side of the reference (its model build into the scene) is the host's scene drive; what
+//! it reads is kept here: the shown `ModelFFX` pane's scene ([`GlueScenePane`]), the character
+//! standing on the scene's attachment 0 ([`super::UiScript::glue_standing_guid`]), and the facing.
+//! What a build leaves behind for Lua to see is kept here too: the facing reset and the build
+//! counter that gates `SetCharacterSelectFacing`.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -48,8 +48,8 @@ pub struct GlueCharacter {
     /// The stage `GetSelectBackgroundModel` names for the record: the class's file name for a
     /// Death Knight, else the race row's file string, Gnome read as Dwarf and Troll as Orc.
     pub background: String,
-    /// Whether the race and gender have a character model (finds a row with a model path): the
-    /// build makes for a record only goes ahead with one.
+    /// Whether the race and gender have a character model (a row with a model path): the build for
+    /// a record only goes ahead with one.
     pub model: bool,
     /// The race and class bytes (`+0x100`, `+0x101`), the create screen's paid-change reads.
     pub race_id: u8,
@@ -62,11 +62,11 @@ pub struct GlueCharacter {
 /// rebuild finds them as they were. The host carries them from one glue VM to the next.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GlueSelectCells {
-    /// 0-based; -1 at load (the image's `.data`), written only.
+    /// 0-based; -1 at load (the image's `.data`), written only by the select.
     pub selected: i32,
     /// Radians.
     pub facing: f32,
-    /// The reference is nonzero: a select model has been built this process, which opens
+    /// The build counter is nonzero: a select model has been built this process, which opens
     /// `SetCharacterSelectFacing`'s gate and nothing closes.
     pub built: bool,
 }
@@ -99,12 +99,12 @@ pub struct GlueScenePane {
     pub fog: Option<crate::widget::ModelFog>,
     /// The pane is the select screen's model frame, whose scene the selected character stands in.
     pub select: bool,
-    /// The pane is the create screen's frame (`m_charCustomizeFrame`), whose scene the character
-    /// being built stands in.
+    /// The pane is the create screen's customize frame, whose scene the character being built
+    /// stands in.
     pub create: bool,
     /// The pane's custom light sets ([`crate::widget::ModelState::ffx_lights`]): the background's,
     /// the character's and the pet's, each live then ghost. A set with any light replaces the
-    /// scene's directional lights for its model (`GenericLightingCallback` `0x4e3a20`).
+    /// scene's directional lights for its model (the generic lighting callback, `0x4e3a20`).
     pub lights: [[Vec<crate::widget::ModelLight>; 2]; 3],
 }
 
@@ -137,13 +137,13 @@ impl GlueRoster {
         self.records.iter().map(|r| r.character.clone()).collect()
     }
 
-    /// The reference on every record and the count to 0.
+    /// Every record freed and the count set to 0.
     fn clear(&mut self) {
         self.records.clear();
     }
 
-    /// A negative index reads 0, so does one past the end, then the cell is stored and the
-    /// reference runs. Returns the event's argument, the stored index plus one, re-read from the
+    /// The select: a negative index reads 0, so does one past the end, then the cell is stored and
+    /// the build runs. Returns the event's argument, the stored index plus one, re-read from the
     /// cell, not the caller's.
     ///
     /// The build, for what Lua sees: an index off the roster exits before touching anything;
@@ -200,8 +200,8 @@ impl super::UiScript {
     /// The character standing on the select scene's attachment 0: the selected record once the
     /// reference has built its composite (`+0x110`) and attached it. The list ask and the teardown
     /// free the records and then detach; the load frees them and detaches later in the same call,
-    /// through the select's build or, for an empty roster. World entry's free detaches nothing, and
-    /// the glue screens go with it.
+    /// through the select's build or, for an empty roster, directly. World entry's free detaches
+    /// nothing, and the glue screens go with it.
     pub fn glue_standing_guid(&self) -> Option<u64> {
         let model = self.model_ref();
         let roster = &model.glue.roster;
@@ -334,7 +334,7 @@ impl super::UiScript {
         false
     }
 
-    /// The reference from the host: the selection stored and `UPDATE_SELECTED_CHARACTER` fired.
+    /// The select from the host: the selection stored and `UPDATE_SELECTED_CHARACTER` fired.
     fn select_glue_character(&mut self, index: i32) {
         let arg = self.model_mut().glue.roster.select(index);
         self.fire_event(
@@ -344,7 +344,8 @@ impl super::UiScript {
     }
 }
 
-/// The reference's frame, while the name `SetCharSelectModelFrame` took still names a model pane.
+/// The select screen's model frame, while the name `SetCharSelectModelFrame` took still names a
+/// model pane.
 fn model_frame_handle(model: &Model) -> Option<crate::widget::FrameHandle> {
     let h = model
         .arena
@@ -413,10 +414,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x4e44e0`: a string or its usage error, which needs the frame set and a non-empty name,
-    // skips the file the scene already holds (any case), hands any other to the frame's own
-    // `SetModel` (vtable `+0xe8`) and puts the select screen's lighting callback on the new scene;
-    // the pane's fog is left as it is.
+    // `0x4e44e0`: a string or its usage error, into the background set, which needs the frame set
+    // and a non-empty name, skips the file the scene already holds (any case), hands any other to
+    // the frame's own `SetModel` (vtable `+0xe8`) and puts the select screen's lighting callback on
+    // the new scene; the pane's fog is left as it is.
     g.set(
         "SetCharSelectBackground",
         lua.create_function(|lua, args: MultiValue| {
@@ -450,7 +451,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // `0x4e4530`: every record freed and the count 0 in the call, so a `GetNumCharacters` straight
-    // after reads 0; then, the host's: state 3, the dialog and the list request.
+    // after reads 0; then the list ask, the host's: state 3, the dialog and the list request.
     g.set(
         "GetCharacterListUpdate",
         lua.create_function(|lua, _: MultiValue| {
@@ -502,7 +503,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Some(zone) => text(zone)?,
                     None => Value::Nil,
                 },
-                // `g_scriptSexIndex`: male 2, female 3, none 1.
+                // The script layer's sex index: male 2, female 3, none 1.
                 Value::Number(match c.gender {
                     0 => 2.0,
                     1 => 3.0,
@@ -517,9 +518,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // One number or `Usage: SelectCharacter(index)`, decremented and clamped to -1 outside
-    // `[0, count)`, which stores and fires `UPDATE_SELECTED_CHARACTER` whatever was selected
-    // before: the gate against a repeat is the Lua caller's. The binding's clamp and the
-    // reference's own land on the same 0, so only the latter is kept.
+    // `[0, count)`, into the select, which stores and fires `UPDATE_SELECTED_CHARACTER` whatever
+    // was selected before: the gate against a repeat is the Lua caller's. The binding's clamp and
+    // the select's own land on the same 0, so only the latter is kept.
     g.set(
         "SelectCharacter",
         lua.create_function(|lua, args: MultiValue| {
@@ -1037,7 +1038,7 @@ mod tests {
         assert_eq!(s.glue_standing_guid(), None);
     }
 
-    /// The reference ends with the model frame's `SetCamera(0)`.
+    /// The roster teardown ends with the model frame's `SetCamera(0)`.
     #[test]
     fn the_teardown_puts_the_model_frame_back_on_camera_zero() {
         let mut s = vm(three());
@@ -1067,8 +1068,8 @@ mod tests {
         assert_eq!(camera(&s), Some(0));
     }
 
-    /// The reference clears at the call: the count reads 0 straight after, and the host is asked
-    /// for the list.
+    /// The list ask clears at the call: the count reads 0 straight after, and the host is asked for
+    /// the list.
     #[test]
     fn get_character_list_update_clears_and_asks_the_host() {
         let mut s = vm(three());
@@ -1098,8 +1099,9 @@ mod tests {
         assert_eq!(s.glue_select_cells().selected, 0);
     }
 
-    /// The reference with characters: the realm marked chosen, `lastCharacterIndex` selected
-    /// (0-based into the roster, one more in the event), then the list update; out of range reads 0.
+    /// The roster load with characters: the realm marked chosen, `lastCharacterIndex` selected
+    /// (0-based into the roster, one more in the event), then the list update; out of range reads
+    /// 0.
     #[test]
     fn the_load_selects_the_last_character_then_updates_the_list() {
         let mut s = UiScript::new_glue().unwrap();
@@ -1129,8 +1131,8 @@ mod tests {
         assert_eq!(fired(&s)[0], "UPDATE_SELECTED_CHARACTER 1");
     }
 
-    /// The reference with none: -1 is selected (the event carries 1), then with no realm chosen the
-    /// load asks for the realm list and fires no list update; with one it fires the update.
+    /// The roster load with none: -1 is selected (the event carries 1), then with no realm chosen
+    /// the load asks for the realm list and fires no list update; with one it fires the update.
     #[test]
     fn an_empty_load_asks_for_the_realm_list_unless_one_is_chosen() {
         let mut s = vm(Vec::new());

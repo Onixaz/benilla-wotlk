@@ -9,9 +9,9 @@
 //!   for none. The vertex stage reads the skin palette with it ([`crate::rig_palette`]) only under
 //!   `WOW_RIG_SKIN`, which comes from the mesh's own joints; the fragment stage reads the body tint
 //!   ([`crate::instance_tint`]) for every part. Every part carries its unit's slot, so a tinted
-//!   unit tints whole (an attached model inherits its parent CM2's colours); worn gear owns a rider
-//!   slot and takes the tint and the straddle waterline through its `ParentModel` chain. Written at
-//!   spawn ([`rig_bits`]) and carried by every writer but [`with_rig`].
+//!   unit tints whole (an attached model inherits its parent model's colours); worn gear owns a
+//!   rider slot and takes the tint and the straddle waterline through its `ParentModel` chain.
+//!   Written at spawn ([`rig_bits`]) and carried by every writer but [`with_rig`].
 //! - Alpha (bits 0..=5): the fade alpha, multiplying the cutout alpha. A whole payload of `0` is
 //!   the untagged, opaque sentinel.
 //! - Exterior payload (the default): bits 6..=13 are the ground-shade byte (`0` lit, `255` fully
@@ -49,12 +49,12 @@
 /// Marks an instance whose bits 6..=18 are an interior probe slot ([`probe_bits`]): every batch of
 /// a lit interior MODD prop. The shade writer skips it even under a WMO-display GameObject, whose
 /// props ride the entity for transform only: their light is their own baked MODD colour (the
-/// reference's `CMapDoodadDef` provider).
+/// reference's doodad-placement light provider).
 #[derive(bevy::prelude::Component)]
 pub struct InteriorProbePayload;
 
 /// Bit 31: the hover/target model-brighten flag, the reference's per-model highlight emissive
-/// (`SetHighlight` writes the config RGB into the CM2), added to the lighting sum.
+/// (the highlight setter writes the config RGB into the model), added to the lighting sum.
 pub const HIGHLIGHT_BIT: u32 = 0x8000_0000;
 
 /// Bit 30: fog with the interior triple (shared-light rows 18-19, the camera-crossfaded MFOG)

@@ -120,7 +120,7 @@ impl Roster {
     }
 
     /// The pending pick's level: the reference suppresses the loading tip when it arrived as 0 in
-    /// `SMSG_CHAR_ENUM` (the reference sets `[selChar+0x10a]`); vmangos always sends a real level.
+    /// `SMSG_CHAR_ENUM` (it sets `[selChar+0x10a]`); vmangos always sends a real level.
     pub(crate) fn pending_level(&self) -> Option<u8> {
         self.pending_row().map(|c| c.level)
     }
@@ -149,20 +149,20 @@ impl Roster {
 
 // ── The remembered character (`lastCharacterIndex`) ───────────────────────────────
 
-/// The 1.12 CVar the select screen remembers by: registered (default `"0"`), written engine-side,
-/// named by no GlueXML.
+/// The 1.12 CVar the select screen remembers by: registered with default `"0"`, written
+/// engine-side, named by no GlueXML.
 pub(crate) const CVAR_LAST_CHARACTER: &str = "lastCharacterIndex";
 
 /// The stored index is 0-based, `"0"` the first character: the engine's selection cell printed with
-/// `"%d"` (decrements the Lua's 1-based row). `CVar::SaveConfig` skips a value equal to the
-/// default, so row 0 writes no line.
+/// `"%d"` (the Lua's 1-based row less one). The config save skips a value equal to the default, so
+/// row 0 writes no line.
 fn last_character_value(row: usize) -> String {
     row.to_string()
 }
 
 /// Mirror the character entering the world into [`CVAR_LAST_CHARACTER`], at Enter World, not on a
-/// click: `CGlueMgr::EnterWorld` writes the CVar. The reference flushes `Config.wtf` in the same
-/// call; this reaches disk on exit with every CVar.
+/// click: the glue screen's Enter World writes the CVar. The reference flushes `Config.wtf` in the
+/// same call; this reaches disk on exit with every CVar.
 fn persist_last_character(
     roster: Res<Roster>,
     mut cvars: ResMut<crate::cvars::Cvars>,

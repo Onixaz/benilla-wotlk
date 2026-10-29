@@ -1,7 +1,7 @@
-//! The `ScrollingMessageFrame` methods over [`ScrollingMessageState`]: `CSimpleMessageScrollFrame`,
-//! the chat window's class. A ring of `maxLines` that drops the oldest, colours quantized
-//! `trunc(x*255+0.5)` with alpha forced opaque, a fade that ticks only at the bottom, and every
-//! scroll call re-arming the displayed lines' fade, which is what brings a faded chat back.
+//! The `ScrollingMessageFrame` methods over [`ScrollingMessageState`], the chat window's class. A
+//! ring of `maxLines` that drops the oldest, colours quantized `trunc(x*255+0.5)` with alpha forced
+//! opaque, a fade that ticks only at the bottom, and every scroll call re-arming the displayed
+//! lines' fade, which is what brings a faded chat back.
 
 use mlua::{Lua, Table, Value};
 
@@ -287,8 +287,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| with_smf(lua, &this, |smf| smf.fade_duration))?,
     )?;
 
-    // ── the shared font block ─────────────────────────────────────────────────────────────── The
-    // ten font verbs are on this class's own table (`GetShadowColor`), as on FontString, Font,
+    // ── the shared font block ───────────────────────────────────────────────────────────────
+    // The ten font verbs are on this class's own table (`GetShadowColor`), as on FontString, Font,
     // EditBox, MessageFrame and SimpleHTML; Button's has none.
     let resolve: crate::script::font_block::ResolveRegion = |lua, this| {
         let h = frame_handle_of(lua, this)?;
@@ -478,7 +478,7 @@ mod tests {
         }
     }
 
-    /// The reference walks the lines on display, not the ring.
+    /// The fade re-arm walks the lines on display, not the ring.
     #[test]
     fn the_re_arm_reaches_only_the_displayed_lines() {
         let mut s = ScrollingMessageState {

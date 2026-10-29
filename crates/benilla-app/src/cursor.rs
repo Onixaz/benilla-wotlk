@@ -11,7 +11,7 @@ use benilla_assets::AssetSet;
 use bevy::prelude::*;
 
 /// The held cursor payload's extensionless icon path. `covered` drops it: the reference's world
-/// transition calls before the loading screen goes up, the plain arrow with no overlay.
+/// transition resets the cursor before the loading screen goes up, the plain arrow with no overlay.
 fn payload_icon(script: &benilla_ui::script::UiScript, covered: bool) -> Option<String> {
     use benilla_ui::script::CursorPayload;
     if covered {
@@ -30,7 +30,8 @@ fn payload_icon(script: &benilla_ui::script::UiScript, covered: bool) -> Option<
         CursorPayload::Money(m) | CursorPayload::GuildBankMoney(m) => {
             Some(benilla_ui::script::coin_icon(i64::from(m.copper)).to_string())
         }
-        // Mode 11: the bank item's icon, from its display id as `CursorGrabVirtualItem` does.
+        // Mode 11: the bank item's icon, from its display id as the reference's virtual-item grab
+        // does.
         CursorPayload::GuildBankItem(g) => g.texture,
         // Mode 5: the vendor row's icon, which the reference resolves from its `ItemDisplayInfo`
         // id.
@@ -190,8 +191,8 @@ fn drive_displayed_cursor(
             .as_ref()
             .is_some_and(|s| s.gift_wrap_armed().is_some())
     {
-        // An armed gift wrap sets both cells to Cast(2) (`SetCursorBaseMode(2)`,
-        // `CursorSetMode(2)`), so its cursor survives the pointer crossing the world.
+        // An armed gift wrap sets both cells to Cast(2), the base mode and the mode alike, so its
+        // cursor survives the pointer crossing the world.
         WorldCursor {
             kind: CursorKind::Cast,
             unable: false,
@@ -283,10 +284,10 @@ impl Plugin for CursorPlugin {
     }
 }
 
-/// Non-macOS: winit's custom cursor, swapped on change; hide-on-look is in `player::control`.
-/// With `gxCursor` off the OS cursor is a transparent image and the cursor draws in the frame
-/// instead, at the pointer, as the reference's device draws its cursor texture over each frame it
-/// presents (`CGxDevice::ICursorDraw 0x687a90`), so it moves at the frame rate.
+/// Non-macOS: winit's custom cursor, swapped on change; hide-on-look is in `player::control`. With
+/// `gxCursor` off the OS cursor is a transparent image and the cursor draws in the frame instead,
+/// at the pointer, as the reference's device draws its cursor texture over each frame it presents
+/// (`0x687a90`), so it moves at the frame rate.
 #[cfg(not(target_os = "macos"))]
 mod other {
     use super::{cursor_path, payload_icon, CURSOR_STEMS};
@@ -804,7 +805,8 @@ mod tests {
         );
     }
 
-    /// `ShowContainerSellCursor` bails on `IsTargeting` first, so an armed spell keeps its cursor.
+    /// `ShowContainerSellCursor` bails on the spell-targeting test first, so an armed spell keeps
+    /// its cursor.
     #[test]
     fn the_sell_cursor_does_not_paint_over_an_armed_spell() {
         // The gate reads the app-fed targeting flag.

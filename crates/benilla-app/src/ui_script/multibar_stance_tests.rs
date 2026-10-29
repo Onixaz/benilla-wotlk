@@ -372,7 +372,7 @@ fn shipped_stance_bar_drives_end_to_end() {
 
     // `ShapeshiftButtonTemplate` registers no clicks (BonusActionBarFrame.xml:19-38), so the mask
     // stays left-up only. The press pushes the button whatever its mouse button: the mask gates
-    // the click, not the pushed state (`CSimpleButton::OnLayerMouseDown`, `0x96fa80`).
+    // the click, not the pushed state (the button's mouse-down, `0x96fa80`).
     let depressed = |s: &UiScript| {
         s.extract().iter().any(|q| {
             matches!(&q.content, QuadContent::Texture { path: Some(p), .. } if p.contains("Quickslot-Depress"))

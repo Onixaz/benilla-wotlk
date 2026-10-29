@@ -16,8 +16,9 @@ pub(crate) struct AnimSoundEvent {
     pub(crate) ident: [u8; 4],
     /// The tag payload (a SoundEntries id for `$SND`/`$DSL`/`$DSO`; 0 otherwise).
     pub(crate) data: u32,
-    /// The `AnimationData.dbc` id of the clip that fired the key: the reference's answer when a
-    /// handler runs, which the `$BWR` bow/rifle fork reads (105,109},106,110}).
+    /// The `AnimationData.dbc` id of the clip that fired the key: the reference's armed-id answer
+    /// when a handler runs, which the `$BWR` bow/rifle fork reads (bow {46,105,109}, rifle
+    /// {49,106,110}).
     pub(crate) anim_id: u16,
     /// Where the key fired, `placementMatrix · (boneMatrix[bone] · position)`, snapshotted at the
     /// fire as the event kernel does for every dispatcher. Not the object's origin: 149 of 244
@@ -44,8 +45,8 @@ impl EventFrame<'_> {
     }
 }
 
-/// The footstep sound channel: `$FSD` alone, which the dispatcher routes; the per-foot side tags go
-/// to the visual handler and never sound.
+/// The footstep sound channel: `$FSD` alone, which the dispatcher routes to the sound handler; the
+/// per-foot side tags go to the visual handler and never sound.
 pub(crate) fn is_footstep_sound(ident: &[u8; 4]) -> bool {
     ident == b"$FSD"
 }

@@ -53,7 +53,7 @@ pub(in crate::entities) fn placement(
     }
 }
 
-/// One held slot's enchant ids folded for [`DressKey`], over the seven `CGItem` slots.
+/// One held slot's enchant ids folded for [`DressKey`], over the item's seven enchant slots.
 fn enchant_fold(
     s: &benilla_protocol::messages::ObjectFields,
     kind: EntityKind,
@@ -218,8 +218,7 @@ pub(in crate::entities) fn resolve_equipment(
             commands.entity(entity).insert(key);
         }
         // `PLAYER_FLAGS`' `HIDE_HELM 0x400` and `HIDE_CLOAK 0x800` are public, so another player's
-        // choice shows here; a hidden piece is display id 0, so its model and the reference masks
-        // go.
+        // choice shows here; a hidden piece is display id 0, so its model and its hide masks go.
         let (hide_helm, hide_cloak) = (s.player_hides_helm(), s.player_hides_cloak());
         if net_entity.kind == EntityKind::Player {
             let mut eq = Equipment {
@@ -310,13 +309,14 @@ pub(in crate::entities) fn resolve_equipment(
                 .is_none_or(|dm| dm.is_character_body);
         let mut slots: [Option<HeldSlot>; ATTACH_SLOTS] = [None; ATTACH_SLOTS];
         let mut wielded = Wielded {
-            // Read where the reference's `GetWeapon` reads it.
+            // Read where the reference's weapon getter reads it.
             disarmed: s.unit_flags() & UNIT_FLAG_DISARMED != 0,
             ..Wielded::default()
         };
         let mut ranged_inv_type = None;
         let mut worn: [Option<(u32, ItemModelKind, i32)>; HELD_SLOTS] = [None; HELD_SLOTS];
-        // Pass 1, what each hand holds (`GetWeapon(slot, 1)`), all before the disarm ladder.
+        // Pass 1, what each hand holds (the weapon getter with argument 1), all before the disarm
+        // ladder.
         let mut resolved: [Option<(u32, u32, u8, u8, u8, u8)>; HELD_SLOTS] = [None; HELD_SLOTS];
         for slot in 0..HELD_SLOTS {
             // (display id, inventory type, item sheath type, class, subclass, material) per slot.
@@ -418,7 +418,7 @@ pub(in crate::entities) fn resolve_equipment(
             };
             ensure_item_model_mut(&mut held, display, kind, &asset_server);
             let enchants = (net_entity.kind == EntityKind::Player).then(|| {
-                // All seven `CGItem` slots; 1.12 sends two, PERM and TEMP.
+                // All seven of the item's enchant slots; 1.12 sends two, PERM and TEMP.
                 (0..7u8).filter_map(|j| s.player_visible_item_enchant(PLAYER_HELD_SLOTS[slot], j))
             });
             let visual = resolve_glow(

@@ -2,8 +2,8 @@
 //! parent and child, each with its own method table, so a method only one carries is nil on the
 //! other:
 //!
-//! - [`scrolling`]: `CSimpleMessageScrollFrame`, the chat window's class.
-//! - [`plain`]: `CSimpleMessageFrame`, `UIErrorsFrame`'s class.
+//! - [`scrolling`]: `ScrollingMessageFrame`, the chat window's class.
+//! - [`plain`]: `MessageFrame`, `UIErrorsFrame`'s class.
 //!
 //! Both display a stack of [`MessageLine`] records, so the row measure, the band emit and the font
 //! read are shared here.
@@ -144,7 +144,7 @@ pub(super) struct MessageFont {
     /// The child's `justifyH`, which centres `UIErrorsFrame`'s lines and keeps chat flush left;
     /// LEFT without a declared FontString, not the FontString default of CENTER.
     pub(super) justify_h: JustifyH,
-    /// The font's line gap (`SetSpacing`): lines step `height + spacing` (`UpdateRect 0x968790`).
+    /// The font's line gap (`SetSpacing`): lines step `height + spacing` (`0x968790`).
     pub(super) spacing: f32,
 }
 
@@ -353,13 +353,13 @@ impl UiScript {
 
     /// Push one [`QuadContent::Text`] per visible message of either class, its `rows` lines a block
     /// of `rows × height + (rows − 1) × spacing`, one spacing from the next: a MessageFrame steps
-    /// `height + spacing` (`UpdateRect 0x968790`), a scrolling frame anchors each message's string
-    /// one spacing past the last and the string inherits the gap (`ScrollMessages 0x969fa0`). A
-    /// scrolling frame stacks up from the bottom, `scroll_offset` choosing the bottom message. A
-    /// MessageFrame does too for `insertMode` BOTTOM, and for TOP hangs the newest off
-    /// the top edge (`UIErrorsFrame.xml:4`); the reference's anchor per mode is untraced, and this
-    /// reading reproduces both stock uses. A message that partly fits draws clipped; a faded
-    /// scrolling line keeps its rows, as the reference never re-packs chat.
+    /// `height + spacing` (`0x968790`), a scrolling frame anchors each message's string one spacing
+    /// past the last and the string inherits the gap (`0x969fa0`). A scrolling frame stacks up from
+    /// the bottom, `scroll_offset` choosing the bottom message. A MessageFrame does too for
+    /// `insertMode` BOTTOM, and for TOP hangs the newest off the top edge (`UIErrorsFrame.xml:4`);
+    /// the reference's anchor per mode is untraced, and this reading reproduces both stock uses. A
+    /// message that partly fits draws clipped; a faded scrolling line keeps its rows, as the
+    /// reference never re-packs chat.
     pub(super) fn emit_message_lines(
         model: &Model,
         fh: FrameHandle,

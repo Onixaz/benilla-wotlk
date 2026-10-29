@@ -32,7 +32,7 @@ pub(super) fn menu_predicates(pet_flags: u8) -> (bool, bool) {
     )
 }
 
-/// Whether the unit's summon row bars a dismiss: `CGUnit_C::GetSummonProperties` (`0x71d1f0`)
+/// Whether the unit's summon row bars a dismiss: the unit's summon-properties lookup (`0x71d1f0`)
 /// through its `UNIT_CREATED_BY_SPELL`, flag `0x20`.
 pub(super) fn summon_bars_dismiss(
     store: &ObjectStore,

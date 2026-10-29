@@ -1,7 +1,7 @@
-//! The frame update walk, `CSimpleTop::OnLayerUpdate` (`0x495320`): each stratum low to high, each
-//! level low to high, each level's shown frames oldest link first (`CFrameStrataNode::OnLayerUpdate`
-//! `0x494a10`), every frame's layer update in its slot (`CSimpleFrame::OnLayerUpdate` `0x490770`):
-//! its `OnUpdate`, its animations, then its kind's own update.
+//! The frame update walk, the UI root's layer update (`0x495320`): each stratum low to high, each
+//! level low to high, each level's shown frames oldest link first (the stratum node's walk,
+//! `0x494a10`), every frame's layer update in its slot (`0x490770`): its `OnUpdate`, its
+//! animations, then its kind's own update.
 //!
 //! The level list walk saves the next link before each frame runs, so a frame an earlier handler
 //! hid is skipped, and a frame linked into the level being walked waits in its pending list for

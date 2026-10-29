@@ -1,9 +1,9 @@
-//! The `ScrollFrame` methods (`CSimpleScrollFrame`): the scroll child, the two offsets, the two
-//! ranges and `UpdateScrollChildRect`, over [`ScrollFrameState`]; the layout's `resolve`, `extract`
-//! and `hit_test` place and clip the child. The axes are one mechanism: (horizontal) is a
-//! byte-clone of (vertical) on `[+0x324]`/`[+0x32c]` for `[+0x328]`/`[+0x334]`, and the reference
-//! measures both ranges in one pass. The methods sit in their own table, so on every other frame
-//! kind `SetScrollChild` is nil, as in the client.
+//! The `ScrollFrame` methods: the scroll child, the two offsets, the two ranges and
+//! `UpdateScrollChildRect`, over [`ScrollFrameState`]; the layout's `resolve`, `extract` and
+//! `hit_test` place and clip the child. The axes are one mechanism: the horizontal setter is a
+//! byte-clone of the vertical one on `[+0x324]`/`[+0x32c]` for `[+0x328]`/`[+0x334]`, and one
+//! routine measures both ranges in one pass. The methods sit in their own table, so on every other
+//! frame kind `SetScrollChild` is nil, as in the client.
 
 use mlua::{Lua, Table, Value};
 
@@ -120,7 +120,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "SetScrollChild",
         lua.create_function(|lua, (this, target): (Table, Value)| {
-            // A name is `_G[name]` with no `$parent`: the reference calls `SetParent`'s resolver.
+            // A name is `_G[name]` with no `$parent`: the setter calls `SetParent`'s resolver.
             let named = match &target {
                 Value::String(s) => s
                     .to_str()
@@ -210,10 +210,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ── The horizontal axis ── SetHorizontalScroll(px) is the vertical setter's byte-clone on
-    // `[+0x324]`, firing `OnHorizontalScroll`. The sign is the reference's: the reference anchors
-    // the child at `(+hScroll, +vScroll)`, so a positive x moves it right, where a positive y lifts
-    // it.
+    // ── The horizontal axis ──
+    // SetHorizontalScroll(px) is the vertical setter's byte-clone on `[+0x324]`, firing
+    // `OnHorizontalScroll`. The sign is the reference's: the re-anchor puts the child at
+    // `(+hScroll, +vScroll)`, so a positive x moves it right, where a positive y lifts it.
     m.set(
         "SetHorizontalScroll",
         lua.create_function(|lua, (this, px): (Table, f32)| {

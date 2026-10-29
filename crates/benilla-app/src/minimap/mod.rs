@@ -8,10 +8,9 @@
 //!   `minimapInsideZoom`); outdoors a chunk-count half-extent, indoors [`INTERIOR_ZOOM_RADIUS`]
 //!   yards.
 //! - North up: screen up is world +X, screen left world +Y. With `rotateMinimap` the whole map,
-//!   its blips and the ping turn clockwise by the player's facing so it points up
-//!   (`CGMinimapFrame::Render` `0x581e80`), the player arrow stays still (`UpdateRotation`
-//!   `0x57bcc0`) and `MinimapCompassTexture` turns the other way (`SetCompassRotation`
-//!   `0x57d5b0`).
+//!   its blips and the ping turn clockwise by the player's facing so it points up (`0x581e80`),
+//!   the player arrow stays still (`0x57bcc0`) and `MinimapCompassTexture` turns the other way
+//!   (`0x57d5b0`).
 
 pub(crate) mod blips;
 /// Where a party member is, shared with the world map so the two surfaces never disagree.
@@ -53,9 +52,9 @@ const CHUNK_YARDS: f32 = TILE_YARDS / 16.0;
 /// `chunks · 0.5 · 33.333` yd.
 const ZOOM_CHUNKS: [f32; 6] = [14.0, 12.0, 10.0, 8.0, 6.0, 4.0];
 
-/// The indoor view radius in yards per indoor zoom index: table, indexed by (`minimapInsideZoom`).
-/// The on-screen radius is exactly this (the composite at `1.5·c`, blits its middle two-thirds),
-/// and the same `c` sizes the selection box.
+/// The indoor view radius in yards per indoor zoom index, indexed by `minimapInsideZoom`. The
+/// on-screen radius is exactly this (the composite is drawn at `1.5·c` and its middle two-thirds
+/// blitted), and the same `c` sizes the selection box.
 ///
 /// Not a constant: the `10.0f` is only the field's static initializer, and the reference writes
 /// `radiusTable[indoorZoom]` into it whenever the zoom or indoor state changes.
@@ -72,7 +71,7 @@ fn view_radius_yd(zoom: u8, inside_zoom: u8, inside: bool) -> f32 {
 }
 
 /// The outer-edge bleed: a tile on its group grid's boundary grows 1 yd on that side, so groups
-/// whose bboxes touch overlap by 2 yd (… = `0.5 + 0.5`).
+/// whose bboxes touch overlap by 2 yd (`0.5 + 0.5` per side).
 const EDGE_BLEED_YD: f32 = 1.0;
 
 /// The reference's half-texel UV inset as a quad scale: a tile of `extent` yd baked at
@@ -87,8 +86,8 @@ fn texel_stretch(extent_yd: f32) -> f32 {
     }
 }
 
-/// The interior tile draw's alpha-test reference, the reference's `GL_GEQUAL` 224/255. EGxBlend 1
-/// (blending off) leaves it to `SetRenderState`'s cascade, `.data [1] = 224` times the f32
+/// The interior tile draw's alpha-test reference, the reference's `GL_GEQUAL` 224/255. Device blend
+/// 1 (blending off) leaves it to `SetRenderState`'s cascade, a static table's 224 times the f32
 /// reciprocal of 255: one ULP above 224/255, and fragments are compared against those exact bits.
 pub(crate) const INTERIOR_TILE_ALPHA_REF: f32 = f32::from_bits(0x3F60_E0E2);
 
@@ -96,7 +95,7 @@ pub(crate) const INTERIOR_TILE_ALPHA_REF: f32 = f32::from_bits(0x3F60_E0E2);
 /// minimap); an estimate, the reference's in-range corpse blip size being untraced.
 const CORPSE_BLIP_FRACTION: f32 = 0.11;
 
-/// The day-night tint the reference modulates outdoor tiles, from `color_a`, the Direct band
+/// The day-night tint the reference modulates outdoor tiles by, from `color_a`, the Direct band
 /// (`LightIntBand` 0), and `color_b`, the Ambient band (1):
 ///
 /// ```text
@@ -167,7 +166,7 @@ pub(crate) struct MinimapWidget(pub(crate) Option<MinimapSlot>);
 pub(crate) struct MinimapInside(pub(crate) bool);
 
 /// The persisted zoom, CVars `minimapZoom` and `minimapInsideZoom` (default `"3"`): read once to
-/// seed a fresh widget, written on every `Minimap:SetZoom`, as the reference's `set_zoom` writes
+/// seed a fresh widget, written on every `Minimap:SetZoom`, as the reference's zoom setter writes
 /// both the live index and the CVar.
 #[derive(Resource)]
 pub(crate) struct MinimapZoom {
@@ -193,7 +192,7 @@ impl MinimapRotate {
 }
 
 /// The zoom CVars' change callback: each lands on its own field, clamped at 5 like the reference's
-/// `set_zoom`; `rotateMinimap` is a flag.
+/// zoom setter; `rotateMinimap` is a flag.
 pub(crate) fn on_cvar(
     ev: On<crate::cvars::CvarChanged>,
     mut zoom: ResMut<MinimapZoom>,
@@ -332,7 +331,7 @@ fn setup_minimap(
 /// the player is in, or `None` for terrain. Indoors the reference draws the building's own tiles
 /// and no terrain, and the same flag picks the zoom index.
 ///
-/// The gate is the reference's indoor byte, the CGLight node's down-ray bit `[node+0x90] & 1`: the
+/// The gate is the reference's indoor byte, the light node's down-ray bit `[node+0x90] & 1`: the
 /// nearest face within 1000 yd straight down, terrain racing and the WMO winning ties, belongs to a
 /// group without MOGP `0x8`. That is the zone-text claim `CurrentAreaInterior`, read through
 /// `world.area_interior()`; [`down_ray_seeds`] only supplies the flood seed once the gate says
@@ -527,7 +526,7 @@ fn emit_minimap(
                 for row in 0..ny {
                     // The grid cell plus the outer-edge bleed: a boundary cell grows 1 yd on its
                     // outer side (each an `fsub` or `fadd`). The bleed matters: `GEQUAL 224/255` on
-                    // a linear- filtered edge reaches only 0.122 texel past the last opaque texel
+                    // a linear-filtered edge reaches only 0.122 texel past the last opaque texel
                     // centre, so merely abutting groups would show the black clear along the wall.
                     let x0 = gn.bbox_min[0] + col as f32 * tw_x
                         - if col == 0 { EDGE_BLEED_YD } else { 0.0 };
@@ -581,8 +580,8 @@ fn emit_minimap(
             );
         }
 
-        // The blit: the target's middle two-thirds (EGxBlend 2), masked to the circle here and not
-        // on the tiles, as the reference does. The opaque target is also the backing.
+        // The blit: the target's middle two-thirds (device blend 2), masked to the circle here and
+        // not on the tiles, as the reference does. The opaque target is also the backing.
         let lo = 0.5 - composite::RT_BLIT_FRACTION * 0.5;
         let hi = 0.5 + composite::RT_BLIT_FRACTION * 0.5;
         quads.overlays.push(UiQuad {
@@ -592,7 +591,7 @@ fn emit_minimap(
             uv: UvRect::from_tex_coords([lo, hi, lo, hi]),
             color: [1.0, 1.0, 1.0, slot.alpha],
             mask: mask.clone(),
-            // A turned map turns the north-up target as one (`RenderInside`, `0x581740`): the
+            // A turned map turns the north-up target as one (`0x581740`): the
             // square still covers the disc the mask keeps.
             rotation: turn,
             ..default()
@@ -758,7 +757,7 @@ fn emit_minimap(
         .as_ref()
         .filter(|_| slot.player_texture.min_element() > 0.0)
     {
-        // Still while the map turns (`UpdateRotation` `0x57bcdc`, facing 0).
+        // Still while the map turns (`0x57bcdc`, facing 0).
         let rotation = if rotate.0 { 0.0 } else { -player.facing() };
         let rect = Rect::from_center_size(center, slot.player_texture);
         quads.overlays.push(UiQuad {
@@ -983,7 +982,7 @@ fn feed_minimap_mask(
 }
 
 /// Push the player's facing onto the Minimap's player-arrow `Model` every frame, as the reference's
-/// per-frame `CMinimap::SetPlayerFacing` writes `[+0x39c]`, what `Model:GetFacing()` reads.
+/// per-frame player-facing write sets `[+0x39c]`, what `Model:GetFacing()` reads.
 /// `player.facing()` is an unbounded accumulator, so it is normalized to `[0, 2π)`, the wire value
 /// vmangos's `VerifyMovementInfo` requires.
 fn feed_minimap_player_facing(
@@ -994,8 +993,8 @@ fn feed_minimap_player_facing(
     script.set_minimap_player_facing(player.facing().rem_euclid(std::f32::consts::TAU));
 }
 
-/// Turn the compass texture against the map while it rotates (`SetCompassRotation(-facing)`,
-/// `0x57d5b0`, from `Render`); north-up leaves it alone, as the stock file hides it then.
+/// Turn the compass texture against the map while it rotates (by `-facing`, `0x57d5b0`, from the
+/// minimap draw); north-up leaves it alone, as the stock file hides it then.
 fn feed_minimap_compass(
     script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
     player: Res<Player>,

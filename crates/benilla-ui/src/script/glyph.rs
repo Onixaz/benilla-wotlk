@@ -5,9 +5,9 @@
 //! the unlocked mask ([`GlyphSockets`]), which the placement gate reads.
 //!
 //! A socket index is the Lua argument less one, compared unsigned against 6, so 0 and below wrap
-//! past every socket. `PlaceGlyphInSocket` judges the targeting cast here, as
-//! `Spell_C_HandleGlyphClick` (`0x80c3e0`) does, and queues [`super::ScriptCall::PlaceGlyph`]
-//! with the verdict for the app's cursor to bind or fail.
+//! past every socket. `PlaceGlyphInSocket` judges the targeting cast here, as the glyph click
+//! (`0x80c3e0`) does, and queues [`super::ScriptCall::PlaceGlyph`] with the verdict for the app's
+//! cursor to bind or fail.
 
 use std::collections::HashMap;
 
@@ -63,21 +63,21 @@ pub struct GlyphSockets {
     pub enabled: u32,
 }
 
-/// The targeting cast as the glyph verbs read it (`Spell_C_GetTargetingSpellCast` `0x7fd640` and
-/// its `Spell.dbc` row): each effect slot's `EffectMiscValue` where the effect is 74
-/// (`APPLY_GLYPH`), and whether the standing word still wants a socket (`& 0x20000`).
+/// The targeting cast as the glyph verbs read it (`0x7fd640` and its `Spell.dbc` row): each effect
+/// slot's `EffectMiscValue` where the effect is 74 (`APPLY_GLYPH`), and whether the standing word
+/// still wants a socket (`& 0x20000`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct GlyphTargeting {
     pub glyphs: [Option<u32>; 3],
     pub wants_socket: bool,
 }
 
-/// `Spell_C_HandleGlyphClick`'s verdict on a socket.
+/// The glyph click's verdict on a socket.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlyphPlacement {
     /// The socket binds: the cast takes it as its glyph index and the socket bit clears.
     Bind,
-    /// `Spell_C_SpellFailed` with this 12340 reason, which ends the cast.
+    /// The spell failure with this 12340 reason, which ends the cast.
     Fail(u8),
 }
 
@@ -90,8 +90,7 @@ impl GlyphCatalogView {
         self.slots.get(&id)
     }
 
-    /// `CGTooltip::GetGlyphLink` (`0x61e650`): "" unless the slot, the glyph and its spell have
-    /// rows.
+    /// The glyph link (`0x61e650`): "" unless the slot, the glyph and its spell have rows.
     fn link(&self, slot_id: u32, glyph_id: u32) -> String {
         let name = self
             .slot(slot_id)
@@ -174,9 +173,8 @@ fn socket_of(index: i32) -> usize {
     (index as u32).wrapping_sub(1) as usize
 }
 
-/// The group a verb's `talentGroup` names (`TalentInfoGetScriptGroupIndex` `0x5c57d0`), its glyph
-/// at `socket` (`CGTalentGroup_C::GetGlyph` `0x5c5770`), `None` for a group not there
-/// (`TalentInfoGetTalentGroup` `0x5c6080`).
+/// The group a verb's `talentGroup` names (`0x5c57d0`), its glyph at `socket` (`0x5c5770`), `None`
+/// for a group not there (`0x5c6080`).
 fn group_glyph(model: &Model, group: &Value, socket: usize) -> Option<u32> {
     let group = super::talent::group_arg(model, group);
     let g = model.talents.groups.get(group)?;
@@ -401,7 +399,7 @@ const GLYPH_BLUE: [f32; 4] = [102.0 / 255.0, 187.0 / 255.0, 1.0, 1.0];
 /// The description gold, `0xffffd200` (`0xad2d2c`).
 const GOLD: [f32; 4] = [1.0, 210.0 / 255.0, 0.0, 1.0];
 
-/// `CGTooltip::SetGlyph` (`0x622ba0`): the glyph's spell name white, else "Empty" gray for an
+/// The tooltip's glyph fill (`0x622ba0`): the glyph's spell name white, else "Empty" gray for an
 /// unlocked socket or "Locked" red; the type line blue; then, with no glyph spell, the empty
 /// socket's hint or a locked one's unlock level, else the spell's description gold and, unless
 /// `hide_remove`, the gray remove hint.
@@ -479,15 +477,15 @@ fn set_glyph(
     Ok(())
 }
 
-/// A `glyph:<slot>:<glyph>` hyperlink, `CGTooltip::SetHyperlink`'s glyph arm: the slot and glyph
-/// ids, `None` without the second field.
+/// A `glyph:<slot>:<glyph>` hyperlink, the tooltip hyperlink's glyph arm: the slot and glyph ids,
+/// `None` without the second field.
 fn parse_glyph_link(link: &str) -> Option<(u32, u32)> {
     let rest = &link[link.find("glyph:")? + "glyph:".len()..];
     let (slot, glyph) = rest.split_once(':')?;
     Some((leading_int(slot), leading_int(glyph)))
 }
 
-/// `SStrToInt`: the leading decimal digits, 0 for none.
+/// The reference's integer parse: the leading decimal digits, 0 for none.
 fn leading_int(s: &str) -> u32 {
     s.bytes().take_while(u8::is_ascii_digit).fold(0u32, |n, d| {
         n.wrapping_mul(10).wrapping_add(u32::from(d - b'0'))

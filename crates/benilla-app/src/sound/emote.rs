@@ -108,7 +108,7 @@ fn voice_audible(
 /// Play `kit` at the unit's attachment `0x11`, then stop the unit's previous emote voice
 /// (`[unit+0xb28]`); a play that opens no channel stops nothing. Shared by the text-emote voice and
 /// the `$CSD` anim event. A Death Knight's takes its voice chain, except kit 6576
-/// (`CGUnit_C::PlayEmoteSound 0x746d60`).
+/// (the unit's emote-sound play, `0x746d60`).
 pub(super) fn play_emote_voice(
     kits: &mut SoundKits,
     assets: &WorldAssets,
@@ -187,8 +187,8 @@ fn emote_sounds(
         else {
             continue;
         };
-        // `Sound_EnablePetSounds` off silences a pet's emote voice too (`CGUnit_C::PlayEmoteSound
-        // 0x746d60`, behind the emote check).
+        // `Sound_EnablePetSounds` off silences a pet's emote voice too (the unit's emote-sound
+        // play, `0x746d60`, behind the emote check).
         if !config.pet_sounds && store.0.unit_pet_number() != 0 {
             continue;
         }

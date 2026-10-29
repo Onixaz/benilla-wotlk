@@ -12,8 +12,8 @@ use super::buffer::{
 };
 use super::{rand01, Particle};
 
-/// The 128-entry twinkle noise table, uniform in [0, 1) like the reference's; a fixed seed, so the
-/// distribution matches but not the stream.
+/// The 128-entry twinkle noise table, uniform in [0, 1) like the reference's table; a fixed seed,
+/// so the distribution matches but not the stream.
 static TWINKLE_LUT: std::sync::LazyLock<[f32; 128]> = std::sync::LazyLock::new(|| {
     let mut s = 0xC0FF_EE11u32;
     let mut t = [0.0f32; 128];
@@ -51,8 +51,8 @@ pub(super) struct CamBasis {
 /// How a cloud's stored coordinates reach the world (the two modes on [`super::Particle`]).
 pub(super) struct DrawFrame {
     pub(crate) anchored: bool,
-    /// World mode's ride frame `A`, the reference's `[ebp+8]`, folded on the leg; the identity off
-    /// a transport. Model mode never reads it.
+    /// World mode's ride frame `A`, the reference's `[ebp+8]`, folded on the world-mode leg; the
+    /// identity off a transport. Model mode never reads it.
     pub(crate) ride: crate::ride_frame::StoredFrame,
     /// The owning model's render alpha, folded into every particle's alpha (`emitter+0x1a8`).
     pub(crate) alpha: f32,
@@ -522,7 +522,7 @@ mod tests {
         );
     }
 
-    /// The reference folds `emitter+0x1a8`, the model's `CM2Model+0x19c`, into the alpha byte
+    /// The reference folds `emitter+0x1a8`, the model's `+0x19c`, into the alpha byte
     /// alone.
     #[test]
     fn the_models_render_alpha_scales_particle_alpha_and_nothing_else() {

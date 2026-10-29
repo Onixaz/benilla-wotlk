@@ -10,8 +10,8 @@ use benilla_ui::script::{CursorPayload, UiScript};
 
 use crate::spell::{CastCommit, TargetedBind};
 
-/// The reference's three gates, in order: is this a pet I can feed? The food is not checked here;
-/// the server judges the diet (`Spell.cpp:5912`, `SPELL_FAILED_WRONG_PET_FOOD`).
+/// The feed validator's three gates, in order: is this a pet I can feed? The food is not checked
+/// here; the server judges the diet (`Spell.cpp:5912`, `SPELL_FAILED_WRONG_PET_FOOD`).
 fn feedable_pet(
     pet: &benilla_protocol::ObjectFields,
     self_guid: u64,
@@ -25,9 +25,9 @@ fn feedable_pet(
         && feed_pet_known
 }
 
-/// Runs the pet leg for both of the reference's entries: `PetFrame_OnClick`'s
-/// `DropItemOnUnit("pet")`, and a left click on the pet's model with an item held (in the world
-/// click's object leg, where the click still selects).
+/// Runs the pet leg for both of the reference's entries into the feed validator:
+/// `PetFrame_OnClick`'s `DropItemOnUnit("pet")`, and a left click on the pet's model with an item
+/// held (in the world click's object leg, where the click still selects).
 pub(crate) fn drop_item_on_unit(
     script: Option<NonSendMut<UiScript>>,
     self_q: Query<(&crate::net::Guid, &crate::net::ObjectStore), With<crate::net::SelfPlayer>>,
@@ -100,7 +100,7 @@ pub(crate) fn drop_item_on_unit(
 mod tests {
     use super::*;
 
-    /// The reference's three gates, each failed alone.
+    /// The feed validator's three gates, each failed alone.
     #[test]
     fn the_feed_gates_are_ownership_and_provenance() {
         use benilla_protocol::messages::ObjectFields;

@@ -1,8 +1,7 @@
 //! `SoundFilter.dbc` and `SoundFilterElem.dbc`: the named DSP chains the client builds at sound
-//! init when `Sound_EnableDSPEffects` is on (`SI2::DSP_Init 0x4ce7c0`). A chain is its elements in
-//! record order, each a filter type and nine parameters: `params[0]` is the enable switch (`0.0`
-//! bypasses the element) and `params[1..]` the type's own, handed to FMOD in order
-//! (`SI2::DSP_CreateDsp 0x4cdf70`).
+//! init when `Sound_EnableDSPEffects` is on (`0x4ce7c0`). A chain is its elements in record order,
+//! each a filter type and nine parameters: `params[0]` is the enable switch (`0.0` bypasses the
+//! element) and `params[1..]` the type's own, handed to FMOD in order (`0x4cdf70`).
 
 use std::collections::HashMap;
 
@@ -12,7 +11,7 @@ use benilla_dbc::{FieldType, Schema, SchemaField};
 use crate::dbc::{f32_at, parse, str_at, u32_at};
 use crate::Chain;
 
-/// `SoundFilterElem.FilterType` (`SI2_DSP_TYPE`, `0x4cd9d0` maps it to FMOD's).
+/// `SoundFilterElem.FilterType` (`0x4cd9d0` maps it to FMOD's).
 pub mod filter_type {
     pub const PITCH_SHIFT: u32 = 1;
     pub const HIGH_PASS: u32 = 2;

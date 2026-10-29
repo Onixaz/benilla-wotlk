@@ -39,9 +39,9 @@ function securecall(...)
     end))
 end
 
--- hooksecurefunc([table,] "name", hook) (`0x817170`): the named function becomes a wrapper
--- (`FrameScript_HookWrapper`) that calls the original, its errors propagating, then the hook with
--- the same arguments under the error handler, and answers the original's results.
+-- hooksecurefunc([table,] "name", hook) (`0x817170`): the named function becomes a wrapper that
+-- calls the original, its errors propagating, then the hook with the same arguments under the
+-- error handler, and answers the original's results.
 local error, rawset, tostring = error, rawset, tostring
 function hooksecurefunc(t, name, hook)
     if type(t) ~= "table" then

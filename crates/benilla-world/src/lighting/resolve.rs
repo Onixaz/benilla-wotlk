@@ -22,15 +22,15 @@ fn scene_fog(fog_end_raw: f32, fog_start_frac: f32, farclip: f32) -> (f32, f32) 
     (fog_start_frac * end, end)
 }
 
-/// The camera-in-WMO fog crossfade rate,/s: 4 s in and 4 s out.
+/// The camera-in-WMO fog crossfade rate, 0.25/s: 4 s in and 4 s out.
 const WMO_FOG_RAMP_PER_SEC: f32 = 0.25;
 
-/// The camera-in-WMO interior crossfade, the reference's, its fog target staged: in a WMO interior
-/// the scene fog, storm veil included, fades toward the building's MFOG fog over 4 s, and the same
-/// `t` is the WMO skybox's slot alpha (`crate::skybox` reads [`Self::t`]). The staged fog latches
-/// while the camera leaves, so the fade-out starts from the room's fog. A fog-record switch inside
-/// a building snaps the staged target; the reference re-arms a lerp there whose semantics are
-/// untraced.
+/// The camera-in-WMO interior crossfade, the reference's interior fog blend, with its fog target
+/// staged: in a WMO interior the scene fog, storm veil included, fades toward the building's MFOG
+/// fog over 4 s, and the same `t` is the WMO skybox's slot alpha (`crate::skybox` reads
+/// [`Self::t`]). The staged fog latches while the camera leaves, so the fade-out starts from the
+/// room's fog. A fog-record switch inside a building snaps the staged target; the reference re-arms
+/// a lerp there whose semantics are untraced.
 #[derive(Resource, Default)]
 pub struct WmoCrossfade {
     t: f32,
@@ -209,7 +209,7 @@ pub(super) fn update_time_lighting(
     clock.source = source;
 
     // The area-light blend samples the camera eye, not the character, every frame, as the reference
-    // does (the reference reads `DNState+0x18`, stamped from the camera eye). No temporal
+    // does (the blend reads `DNState+0x18`, stamped from the camera eye). No temporal
     // smoothing, only the blend's spatial falloff; the spawn point stands in until the camera
     // exists.
     let wow_pos = match cam.single() {
@@ -410,7 +410,7 @@ mod ocean_ramp_tests {
         } else {
             60.0 * ((r - g) / (max - min) + 4.0)
         };
-        // V *= f, H and S untouched, as the reference does.
+        // V *= f, H and S untouched, as the reference's scale does.
         let v = v * f;
         // HSV -> RGB
         let cc = v * sat;

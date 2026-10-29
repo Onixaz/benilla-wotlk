@@ -212,7 +212,7 @@ fn one_char(key: &winit::keyboard::Key) -> Option<char> {
 /// `None` for a key the reference's fixed table names.
 ///
 /// Deviation: a character above U+00FF names the key by itself. The reference's `MapVirtualKeyA`
-/// returns an ANSI code-page byte, which the reference drops past `0xff` and the namer's UTF-8
+/// returns an ANSI code-page byte, which the key handler drops past `0xff` and the namer's UTF-8
 /// encoder otherwise reads as Latin-1, so such a key is mislabelled or dropped; named by what it
 /// types, it stays bindable and readable.
 #[cfg(any(target_os = "windows", test))]

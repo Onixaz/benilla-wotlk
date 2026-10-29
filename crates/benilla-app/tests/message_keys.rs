@@ -188,9 +188,9 @@ fn every_voiced_key_the_source_raises_has_audio_for_every_playable_race() {
     );
 }
 
-/// `CGGameUI::DisplayError` sounds before it guards on the key and the text; benilla drops an empty
-/// line before it sounds, which matches only while every sounding row has text. If this fails,
-/// `sound::message` must sound independently of the display.
+/// The reference's error display sounds before it guards on the key and the text; benilla drops an
+/// empty line before it sounds, which matches only while every sounding row has text. If this
+/// fails, `sound::message` must sound independently of the display.
 #[test]
 fn every_sounding_catalog_row_also_has_text_to_show() {
     let data = benilla_formats::wow_data_or_skip!();

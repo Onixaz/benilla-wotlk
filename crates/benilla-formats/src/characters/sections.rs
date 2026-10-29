@@ -475,7 +475,7 @@ pub fn equip_blits<'a>(
     emblem: Option<GuildEmblem>,
     tabard_preview: bool,
 ) -> Vec<EquipBlit<'a>> {
-    // In the designer preview installs with no ItemDisplayInfo test, over an empty slot.
+    // In the designer preview the emblem installs with no ItemDisplayInfo test, over an empty slot.
     let emblem = emblem.filter(|_| {
         tabard_preview
             || equipment[SLOT_TABARD].is_some_and(|d: &ItemDisplay| d.takes_guild_emblem())

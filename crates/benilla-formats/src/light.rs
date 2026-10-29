@@ -88,12 +88,11 @@ impl Submersion {
         matches!(self, Submersion::Water | Submersion::Ocean)
     }
 
-    /// The ocean depth ramp: `(fac1, fac2)` multiply the light record's colour triples
-    /// `DNState+0x178` and `DNState+0x174`, running 1.0 → 0.5 and 1.0 → 0.75 over the first 30 yd
-    /// of depth. Keep the multiply by the stored reciprocal: `t / 30.0` rounds differently inside
-    /// the range (at −29 yd, by 6e−8). The fog colour it also writes (`DNState+0x70`) is
-    /// overwritten from the bands: the reference after the tint, whose the reference rewrites that
-    /// slot.
+    /// The ocean depth ramp: `(fac1, fac2)` multiply the light record's colour triples at `+0x178`
+    /// and `+0x174`, running 1.0 → 0.5 and 1.0 → 0.75 over the first 30 yd of depth. Keep the
+    /// multiply by the stored reciprocal: `t / 30.0` rounds differently inside the range (at −29
+    /// yd, by 6e−8). The fog colour it also writes (`+0x70`) is overwritten from the bands: the
+    /// light update runs the band fill after the tint, and the fill rewrites that slot.
     pub fn ocean_depth_factors(self, eye_z: f32) -> Option<(f32, f32)> {
         if self != Submersion::Ocean {
             return None;
@@ -148,7 +147,7 @@ struct Light {
 }
 
 /// A `Light.dbc` position to world yards: the DBC stores inches in a mirrored, axis-swapped frame
-/// (`LightRec::ConvertDBToGameCoords`), and 17066.666 is half the 34133⅓-yard map.
+/// (the light record's coordinate conversion), and 17066.666 is half the 34133⅓-yard map.
 fn dbc_to_world(x: f32, y: f32, z: f32) -> [f32; 3] {
     const MAP_HALF: f32 = 17066.666;
     [
@@ -494,7 +493,7 @@ impl LightCatalog {
             .unwrap_or(Atmosphere::DEFAULT);
 
         // Farthest first, so the nearest lands last: the reference drains a max-heap keyed on
-        // distance, not weight, calling `(dst, row, w)` for every entry, a lone one too.
+        // distance, not weight, blending `(dst, row, w)` for every entry, a lone one too.
         let mut locals: Vec<(f32, &Light)> = self
             .lights
             .iter()

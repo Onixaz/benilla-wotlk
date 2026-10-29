@@ -90,9 +90,9 @@ pub(crate) enum SpellKitShake {
     PlayAt { pos: Vec3, group: u32 },
 }
 
-/// Which owner's reap can kill a persistent effect. The reference's reap `(spellId, force)` spares
-/// stage-2 nodes (flag `0x1000`) unless `force` is set, which only the aura-remove path does, so a
-/// cast's GO never takes the same spell's aura models.
+/// Which owner's reap can kill a persistent effect. The reference's reap, by spell id and a force
+/// flag, spares stage-2 nodes (flag `0x1000`) unless `force` is set, which only the aura-remove
+/// path does, so a cast's GO never takes the same spell's aura models.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FxClass {
     /// Precast and channel holds, reaped by the cast router's edges.
@@ -115,7 +115,7 @@ pub(crate) enum FxStage {
 }
 
 /// One effect model a play hangs on a unit. Record id and tag are the reference's same-slot replace
-/// key: `AddEffect` first destroys the owner's nodes with the same record at the same tag, while
+/// key: the effect add first destroys the owner's nodes with the same record at the same tag, while
 /// two rows naming one `.mdx` coexist.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct FxSlot {
@@ -189,7 +189,7 @@ pub(crate) struct MissileSpawn {
     pub(crate) ground_aim: Option<Vec3>,
     /// The caster's ranged fallback visual, carried to arrival when the caster may be gone.
     pub(crate) weapon_visual: Option<u32>,
-    /// `SpellVisual` field 10: the sound the projectile loops in flight (`CMissile+0x40`).
+    /// `SpellVisual` field 10: the sound the projectile loops in flight (the missile's `+0x40`).
     pub(crate) missile_sound: Option<u32>,
     /// Launch at the cast animation's release event, not at GO; the reference launches at GO only
     /// when the cast kit plays no body animation.
@@ -254,10 +254,11 @@ impl WeaponVisualSrc<'_, '_> {
     }
 }
 
-/// `ViolenceGetLevel() < 2`, as [`track_violence_level`] keeps it from `violenceLevel`.
+/// The violence level below 2, as [`track_violence_level`] keeps it from `violenceLevel`.
 static LOW_VIOLENCE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// `GetSpellVisual` (`0x7fa290`): below violence level 2 a spell's second visual, when it has one.
+/// The spell's visual pick (`0x7fa290`): below violence level 2 a spell's second visual, when it
+/// has one.
 pub(crate) fn spell_visual_id(d: &benilla_formats::SpellDisplay) -> u32 {
     pick_visual(d, LOW_VIOLENCE.load(std::sync::atomic::Ordering::Relaxed))
 }
@@ -414,7 +415,7 @@ struct KitOut<'a, 'w1, 'w2, 'w3, 'w4, 'w5, 'w6, 'w7, 'w8> {
     recomputes: &'a mut MessageWriter<'w8, BaseAnimRecompute>,
 }
 
-/// One kit play's policy on the reference's `PlaySpellVisualKit`:
+/// One kit play's policy on the reference's kit player:
 /// - `persistent`: the effect models outlive the play (a precast or channel hold).
 /// - `effects`: whether the models spawn; `false` for the impact hand-off's state stage, whose
 ///   models [`arm_aura_state_fx`] owns.
@@ -426,8 +427,8 @@ struct KitPlay {
     sound: bool,
     /// The models' animation lifecycle ([`FxStage`]).
     stage: FxStage,
-    /// The stage-2 (state kit) play: the reference branches around the only anim play, so the id is
-    /// only compared with what the unit plays, a mismatch spent on a [`BaseAnimRecompute`].
+    /// The stage-2 (state kit) play: the kit player branches around the only anim play, so the id
+    /// is only compared with what the unit plays, a mismatch spent on a [`BaseAnimRecompute`].
     stage_2: bool,
 }
 
@@ -740,7 +741,7 @@ pub(super) fn route_cast_visuals(
                 }
             }
             CastEventKind::Go => {
-                // Spell-id-keyed (`(spellId, 0)`): a proc's GO keeps another spell's hold.
+                // Spell-id-keyed (the reap with no force): a proc's GO keeps another spell's hold.
                 if held_spell(&pending, ev.entity) == Some(ev.spell_id) {
                     commands.entity(ev.entity).try_remove::<CastHold>();
                     pending.insert(ev.entity, None);
@@ -1189,7 +1190,7 @@ pub(super) fn arm_loot_fx(
         due.into_iter().filter_map(|e| units.get(e).ok()).collect()
     };
     for (entity, store, net) in scan {
-        // A corpse object's sparkle: bit 0 rising calls, the same row at the same tag.
+        // A corpse object's sparkle: bit 0 rising spawns the same row at the same tag.
         let lootable = if net.kind == benilla_protocol::EntityKind::Corpse {
             store.0.corpse_lootable()
         } else {
@@ -1327,7 +1328,7 @@ pub(super) fn earn_effect_plays(
 }
 
 /// The earn effect on `entity` (`0x5b30d5`-`0x5b311e`): a one-shot at `0x13` (`[0xa32b20]`),
-/// replacing an earlier one through the same-slot replace (`DestroyMatchingEffects` `0x6f8a60`).
+/// replacing an earlier one through the same-slot replace (`0x6f8a60`).
 pub(crate) fn achievement_earn_fx(visuals: &SpellVisuals, entity: Entity) -> Option<SpellKitFx> {
     let (effect, path) = visuals.0.hardcoded_effect(ACHIEVEMENT_EFFECT)?;
     Some(SpellKitFx::Begin {
@@ -1344,9 +1345,9 @@ pub(crate) fn achievement_earn_fx(visuals: &SpellVisuals, entity: Entity) -> Opt
     })
 }
 
-/// The pending-morph latch, the reference's `[unit+0xd54]`: armed by the reference on every aura
-/// add and remove of an [`is_morph_spell`] spell; the display rebuild replays its impact kit, the
-/// shapeshift cloud both ways. Shift-out works because the aura fields apply before `DISPLAYID`.
+/// The pending-morph latch, the reference's `[unit+0xd54]`: armed on every aura add and remove of
+/// an [`is_morph_spell`] spell; the display rebuild replays its impact kit, the shapeshift cloud
+/// both ways. Shift-out works because the aura fields apply before `DISPLAYID`.
 #[derive(Resource, Default)]
 pub(crate) struct MorphLatch(EntityHashMap<u32>);
 
@@ -1364,7 +1365,7 @@ fn is_morph_spell(spells: &crate::ui_action::Spells, spell_id: u32) -> bool {
     })
 }
 
-/// Arm [`MorphLatch`] from aura-slot edges, as the add watcher and the remove tail both call: old
+/// Arm [`MorphLatch`] from aura-slot edges, as the add watcher and the remove tail both arm it: old
 /// spell first, new second, so a form swap latches the form entered. A slot edge is a [`UnitAuras`]
 /// change diffed against the slots last seen; first sight emits no edge, as the reference's
 /// watchers fire on deltas only.

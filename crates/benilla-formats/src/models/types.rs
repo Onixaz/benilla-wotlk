@@ -11,11 +11,11 @@ pub enum ModelBlend {
     AlphaTest,
     /// Alpha-blended or additive.
     Blend,
-    /// `out = src·dst` (GL `DST_COLOR/ZERO`: M2 mode 5 → EGxBlend 4; WMO MOMT mode 4). The equation
-    /// reads no alpha, so these batches cannot alpha-fade.
+    /// `out = src·dst` (GL `DST_COLOR/ZERO`: M2 mode 5 → device blend 4; WMO MOMT mode 4). The
+    /// equation reads no alpha, so these batches cannot alpha-fade.
     Mod,
-    /// `out = 2·src·dst` (GL `DST_COLOR/SRC_COLOR`; M2 mode 6 → EGxBlend 5; WMO mode 5), neutral at
-    /// mid-grey: the ARMORREFLECT sheen. No alpha either.
+    /// `out = 2·src·dst` (GL `DST_COLOR/SRC_COLOR`; M2 mode 6 → device blend 5; WMO mode 5),
+    /// neutral at mid-grey: the ARMORREFLECT sheen. No alpha either.
     Mod2x,
 }
 
@@ -65,7 +65,7 @@ impl BillboardKind {
 
 /// Bone flags `0x1/0x2/0x4`, ignore parent translate/scale/rotate: for a non-root bone with
 /// `flags & 7` the reference rebuilds the parent matrix from the model root, pivot kept, then
-/// billboards as usual. Legs: `0x1`, `0x2`, `0x4` alone and the reference with `0x2`.
+/// billboards as usual. Legs: `0x1`, `0x2`, `0x4` alone and `0x4` with `0x2`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParentArm {
     /// `0x1`: the frame sits at the model root's origin, not the animated parent's pivot.
@@ -248,7 +248,7 @@ pub enum WmoBatchClass {
     Ext,
 }
 
-/// The fog colour of the batch state setter (table `DAT_811fc4`): the scene's, black for Add, white
+/// The fog colour of the batch state setter (table `0x811fc4`): the scene's, black for Add, white
 /// for Mod, grey for Mod2x, off under render flag 0x02. Discriminants are the shader encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum FogPolicy {
@@ -358,16 +358,15 @@ pub struct RenderSubmesh {
     pub uvs2: Vec<[f32; 2]>,
     /// The M2 batch's transparent sort key ([`BatchSort`]); `None` on WMO.
     pub sort: Option<BatchSort>,
-    /// The mouse trace's doodad test takes this batch (`CM2Scene::HitTestGeometry` `0x81daf0`,
-    /// mode 1): material layer 0, batch flag `0x08` clear, and an opaque material or one flagged
-    /// `0x20`. M2 only.
+    /// The mouse trace's doodad test takes this batch (`0x81daf0`, mode 1): material layer 0, batch
+    /// flag `0x08` clear, and an opaque material or one flagged `0x20`. M2 only.
     pub hit_test: bool,
 }
 
-/// An M2 batch's place in the transparent order. `CM2Scene::Animate` (`0x821a20`) fills each
-/// element's depths and `CM2Scene::SortTransparent` (`0x81ef30`) orders by them: sort depth
-/// farther first, then the priority plane, then the element depth farther first, then the
-/// material layer and the batch index.
+/// An M2 batch's place in the transparent order. The scene animate (`0x821a20`) fills each
+/// element's depths and the transparent sort (`0x81ef30`) orders by them: sort depth farther first,
+/// then the priority plane, then the element depth farther first, then the material layer and the
+/// batch index.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BatchSort {
     /// Global flag `0x10`: every batch's sort depth is the model's, so the plane decides within
@@ -386,12 +385,13 @@ pub struct BatchSort {
     /// The skin batch index, the last key.
     pub index: u16,
     /// Batch flag `0x4`, a projected batch: drawn through the scene's projection callback, which
-    /// `projectedTextures` gates (element type 1 in `CM2Scene::Animate 0x821a20`).
+    /// `projectedTextures` gates (element type 1 in the scene animate, `0x821a20`).
     pub projected: bool,
 }
 
-/// A 3.3.5a M2 batch's pixel shader, `CM2Shared::GetEffect` (`0x836600`, `0x836c90`): each texture
-/// stage's op, named as `Combiners_<op0>[_<op1>]`, or one of the specialized layered shaders.
+/// A 3.3.5a M2 batch's pixel shader, as the effect lookup names it (`0x836600`, `0x836c90`): each
+/// texture stage's op, named as `Combiners_<op0>[_<op1>]`, or one of the specialized layered
+/// shaders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CombinerShader {
     /// One stage: `Opaque`, `Mod`, `Add` or `Mod2x` (`Decal` and `Fade` are not built).
@@ -406,7 +406,7 @@ pub enum CombinerShader {
     OpaqueAddAlphaAlpha,
 }
 
-/// A texture stage's op, the shader word's 3-bit field (`s_colorOps` `0xaf5a08`).
+/// A texture stage's op, the shader word's 3-bit field (`0xaf5a08`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum CombinerOp {
     Opaque,
@@ -437,10 +437,10 @@ pub struct Combiner {
     pub uv1: Option<StageUv>,
 }
 
-/// A combiner's stage-1 texture transform, `textureTransformCombos[combo + 1]` as
-/// `CM2SceneRender::SetupTextures` (`0x81f450`) reads it per stage, baked in stage 0's channels:
-/// the translation as one loop or per sequence slot, the rotation and scaling per slot. A stage
-/// on the sphere map takes `SetTexMtx_SphereMap` instead, which the vertex program replaces.
+/// A combiner's stage-1 texture transform, `textureTransformCombos[combo + 1]` as the render's
+/// texture setup (`0x81f450`) reads it per stage, baked in stage 0's channels: the translation as
+/// one loop or per sequence slot, the rotation and scaling per slot. A stage on the sphere map
+/// takes the sphere-map texture matrix instead, which the vertex program replaces.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StageUv {
     pub anim: Option<std::sync::Arc<UvAnim>>,

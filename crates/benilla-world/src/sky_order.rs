@@ -1,13 +1,13 @@
 //! The celestial draw-order ladder: the reference's fixed sky pass order as `Transparent3d` sort
 //! biases.
 //!
-//! The 1.12 client draws `sky → opaque world → weather → glare`. Its sky pass (`CSky::Render`)
-//! paints stars, sun disc, white moon, moon02, the additive gradient strip and the cloud dome, in
-//! that order, depth-write off in the slice `[0.975, 0.98]`; the glare quads take `[0.995, 1.0]`
-//! and draw last. Our sky is camera-anchored and Bevy sorts transparents back to front by
-//! `view-z + depth_bias`, so its rungs sit far below any world view-z. Rain has no bias: its view-z
-//! lands it after the sky and before the glare, the reference's weather slot; its order against
-//! world transparents is untraced.
+//! The 1.12 client draws `sky → opaque world → weather → glare`. Its sky pass paints stars, sun
+//! disc, white moon, moon02, the additive gradient strip and the cloud dome, in that order,
+//! depth-write off in the slice `[0.975, 0.98]`; the glare quads take `[0.995, 1.0]` and draw last.
+//! Our sky is camera-anchored and Bevy sorts transparents back to front by `view-z + depth_bias`,
+//! so its rungs sit far below any world view-z. Rain has no bias: its view-z lands it after the sky
+//! and before the glare, the reference's weather slot; its order against world transparents is
+//! untraced.
 //!
 //! The sign: `Transparent3d` sorts ascending on view-space z (negative in front of the eye) plus
 //! the bias, so a positive bias draws later, on top. On a `StandardMaterial` the same field is the
@@ -49,15 +49,15 @@ pub(crate) const MOON02_BIAS: f32 = -8.0e5;
 /// The cloud dome, the sky pass's last draw: clouds blend over a setting sun.
 pub(crate) const CLOUDS_BIAS: f32 = -6.0e5;
 /// Far-side model transparents, the water-plane interleave's early half: the reference splits M2
-/// transparents per model (per emitter for particles) and the reference draws the eye's far side of
-/// the water plane before the water pass, the near side after, flipping on submersion. Sort-only:
+/// transparents per model (per emitter for particles) and draws the eye's far side of the water
+/// plane before the water pass, the near side after, flipping on submersion. Sort-only:
 /// the mesh lane's far twin zeroes its raster constant.
 pub(crate) const FAR_SIDE_BIAS: f32 = -4.0e4;
 /// The water surface: the reference draws ocean, river, WMO liquid, then foam in a fixed slot
 /// between the two transparent halves, never view-z sorted against model transparents. It rides a
 /// `StandardMaterial`, so it is also a depth-test bias (~0.24% pull).
 pub(crate) const WATER_BIAS: f32 = -2.0e4;
-/// The water pass's own foam (`CWater0Ripple`'s wade wake), drawn inside the water group after
+/// The water pass's own foam (the water ripple's wade wake), drawn inside the water group after
 /// every liquid queue: over every water surface, under the near-side transparents. A rung, not a
 /// tie-break over [`WATER_BIAS`], since a chunk's key carries its own view-z.
 pub(crate) const FOAM_BIAS: f32 = -1.0e4;

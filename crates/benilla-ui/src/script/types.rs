@@ -95,7 +95,7 @@ pub enum QuadContent {
         /// The camera, a raw index into the file's camera table: `None` renders orthographic, the
         /// model laid flat over the rect, and `Some(n)` in perspective through camera `n`.
         camera: Option<u32>,
-        /// The embedded `CGLight`, off on every shipped pane; a lit batch under it draws black, as
+        /// The embedded light, off on every shipped pane; a lit batch under it draws black, as
         /// in the reference.
         light: crate::widget::ModelLight,
         /// The fog the scene draws with ([`crate::widget::ModelState::armed_fog`]); a material
@@ -400,7 +400,7 @@ pub(crate) struct RegionData {
     /// `SetNonSpaceWrap`/`CanNonSpaceWrap`, `None` on. Stored, not applied: the reference's flag
     /// `0x40` drives a mid-word wrap and the ellipsis fit count.
     pub(crate) non_space_wrap: Option<bool>,
-    /// The client's dword at `CSimpleFontString+0x120`: bits 0-2 horizontal, 3-5 vertical, `0x212`
+    /// The client's dword at the font string's `+0x120`: bits 0-2 horizontal, 3-5 vertical, `0x212`
     /// from the constructor. A cleared axis answers `"UNKNOWN"` to the getter and draws centred.
     pub(crate) justify: crate::justify::Justify,
     /// The `<TexCoords>`/`SetTexCoord` mapping; `None` is the full texture.
@@ -508,8 +508,7 @@ impl RegionData {
         self.text_height.map(f32::to_bits).hash(&mut hasher);
         let wrap_width = self.size.map(|s| s.0).filter(|w| *w > 0.0);
         wrap_width.map(f32::to_bits).hash(&mut hasher);
-        // The outline changes the measure: a THICK one steps each glyph 1 px further
-        // (`GlyphStepBase`).
+        // The outline changes the measure: a THICK one steps each glyph 1 px further.
         (self.outline as u8).hash(&mut hasher);
         self.font_spacing.to_bits().hash(&mut hasher);
         scale.to_bits().hash(&mut hasher);
@@ -527,9 +526,9 @@ pub struct EditBoxAdvanceRequest {
     pub id: u32,
     pub font: Option<String>,
     pub height: Option<f32>,
-    /// A THICK outline adds 1 px to every glyph step (`GlyphStepBase`).
+    /// A THICK outline adds 1 px to every glyph step.
     pub outline: Outline,
-    /// The font's line gap: a row steps `height + spacing` (`UpdateVisibleCursor 0x964a90`).
+    /// The font's line gap: a row steps `height + spacing` (`0x964a90`).
     pub spacing: f32,
     /// The box's `effective_scale`. The host measures at `height × scale × seam` but divides by
     /// the seam alone, so advances come back in screen UI units, like the mouse feed and the
@@ -582,7 +581,7 @@ pub struct MeasureRequest {
     pub text_height: Option<f32>,
     /// Set when the region's width is pinned (explicit `<Size x>`), else single-line.
     pub wrap_width: Option<f32>,
-    /// A THICK outline adds 1 px to every glyph step (`GlyphStepBase`).
+    /// A THICK outline adds 1 px to every glyph step.
     pub outline: Outline,
     /// The line gap in logical px (`SetSpacing`), added between wrapped lines.
     pub spacing: f32,

@@ -1,7 +1,7 @@
 //! The engine's screen fade to black and back, the reference's general facility:
-//! - `(ecx = completion fn, edx = its arg, [ebp+8] = seconds)` fades out, and the completion runs
+//! - the fade-out `(ecx = completion fn, edx = its arg, [ebp+8] = seconds)`, whose completion runs
 //!   when the screen reaches full black, not after a delay;
-//! - `(ecx, edx, seconds)` fades in, a no-op unless a fade is up.
+//! - the fade-in `(ecx, edx, seconds)`, a no-op unless a fade is up.
 //!
 //! Completion-driven matters under a hitch: a cinematic shot boundary does a blocking terrain
 //! load, and a delay-driven cut would show. The callback stays with the caller: this owns the
@@ -10,7 +10,7 @@
 
 use bevy::prelude::*;
 
-/// The fade duration at every cinematic boundary, in `.rdata`.
+/// The fade duration at every cinematic boundary, a constant in `.rdata`.
 pub(crate) const CINEMATIC: f32 = 0.25;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
@@ -130,7 +130,7 @@ fn spawn_cover(mut commands: Commands) {
             ..default()
         },
         BackgroundColor(Color::NONE),
-        // Above the loading cover's z-index, 1000: the reference dismisses the loading screen at
+        // Above the loading cover's z-index, 1000: the world enter dismisses the loading screen at
         // full black. Below the glue screens' 1100, so leaving the world is never trapped.
         GlobalZIndex(1050),
         Visibility::Hidden,
@@ -206,7 +206,7 @@ mod tests {
 
     #[test]
     fn fade_in_on_a_clear_screen_does_nothing() {
-        // The guard.
+        // The fade-in's guard: no fade up, nothing to do.
         let mut fade = ScreenFade::default();
         fade.fade_in(CINEMATIC);
         assert!(fade.is_clear());

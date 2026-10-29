@@ -1,9 +1,8 @@
-//! The charter globals: the guild registrar (`CGGuildRegistrar`, `0x599f00`..), the arena
-//! registrar's petition vendor (`CGPetitionVendorInfo`, `0x5a1f70`..) and the petition window
-//! (`CGPetitionInfo`, `0x5ceac0`..). The snapshot keeps the signer list and the cached `CGPetition`
-//! record apart, as the reference does, since the bindings read them independently. Predicates
-//! are `1` or nil and an unresolved name is nil. `PETITION_SHOW` waits for every signer name and
-//! the record, a deferral `crate::ui_petition` owns.
+//! The charter globals: the guild registrar (`0x599f00`..), the arena registrar's petition vendor
+//! (`0x5a1f70`..) and the petition window (`0x5ceac0`..). The snapshot keeps the signer list and
+//! the cached petition record apart, as the reference does, since the bindings read them
+//! independently. Predicates are `1` or nil and an unresolved name is nil. `PETITION_SHOW` waits
+//! for every signer name and the record, a deferral `crate::ui_petition` owns.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -19,7 +18,7 @@ pub fn petition_type_name(static_type: u32) -> &'static str {
     }
 }
 
-/// The cached `CGPetition` record, as `GetPetitionInfo` reads it; `None` in
+/// The cached petition record, as `GetPetitionInfo` reads it; `None` in
 /// [`PetitionState::record`] is the no-record leg.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PetitionRecordView {
@@ -69,7 +68,7 @@ pub struct PetitionVendorItem {
 /// The petition vendor's session as the app pushes it.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PetitionVendorState {
-    /// A vendor is open (`m_vendor`, `0xc0f7c8`).
+    /// A vendor is open (`0xc0f7c8`).
     pub open: bool,
     pub items: Vec<PetitionVendorItem>,
     /// `HasFilledPetition()` (`0x5a2820`): the bags hold an arena charter whose record is cached.
@@ -94,7 +93,7 @@ pub struct ArenaBannerChoice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PetitionRequest {
     /// `BuyGuildCharter(name)`, after [`validate_guild_name`]; the app adds the registrar NPC
-    /// latched, not `CGGameUI`'s interaction pair.
+    /// latched, not the game UI's interaction pair.
     Buy(String),
     /// `TurnInGuildCharter()`: the app scans the bags on every call, as the reference does.
     TurnIn,
@@ -107,8 +106,8 @@ pub enum PetitionRequest {
     TabardInfo,
     /// `SignPetition([n])`: a wire byte defaulting to 1, not 0; vmangos skips it.
     Sign(i8),
-    /// `OfferPetition()`: the app resolves the current target (`CGGameUI`'s selection pair, not its
-    /// interaction pair) and runs the eight guards.
+    /// `OfferPetition()`: the app resolves the current target (the game UI's selection pair, not
+    /// its interaction pair) and runs the eight guards.
     Offer,
     /// `RenamePetition(name)`, after [`validate_guild_name`].
     Rename(String),
@@ -169,7 +168,8 @@ impl super::UiScript {
 }
 
 /// The guild-name check `BuyGuildCharter` (`0x59a130`) and `RenamePetition` (`0x5cf450`) share:
-/// [`crate::names::check_guild_name`], whose refusal shows through `DisplayNameError 0x5218c0`.
+/// [`crate::names::check_guild_name`], whose refusal shows through the name-error display
+/// (`0x5218c0`).
 /// `Err` carries that message's key, and no packet is built.
 pub fn validate_guild_name(name: &str) -> Result<(), &'static str> {
     crate::names::check_guild_name(name).map_err(crate::names::NameError::key)
@@ -509,7 +509,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `FrameScript_GetColorNoAlpha` into `CImVector::Set` (`0x5a2793`): each channel clamped to
+/// The script colour read into the packed colour (`0x5a2793`): each channel clamped to
 /// `[0, 1]` and rounded as `(int)(f * 255 + 0.5)` in single precision, alpha opaque.
 fn pack_color(r: f64, g: f64, b: f64) -> u32 {
     let byte = |c: f64| {

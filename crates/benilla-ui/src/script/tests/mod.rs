@@ -338,7 +338,8 @@ fn a_raising_handler_still_receives_the_next_error() {
 }
 
 /// `debuglocals` (`0x819a60`) answers nothing outside the handler dispatch, and inside it packs
-/// the frame's locals, then its upvalues, as `FrameScript_PackVariable` (`0x819300`) words them.
+/// the frame's locals, then its upvalues, as the script layer's variable packer (`0x819300`) words
+/// them.
 #[test]
 fn debuglocals_answers_inside_the_handler_dispatch_alone() {
     let mut s = crate::script::UiScript::new().unwrap();

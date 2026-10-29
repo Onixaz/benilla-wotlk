@@ -39,7 +39,8 @@ fn enable_mouse_gates_hit_testing() {
 }
 
 /// At a strata and level tie the earlier-linked frame takes the hit, though the later one draws on
-/// top: the reference appends equal keys after (strict `ja`) and the reference sweeps from index 0.
+/// top: the reference's insert appends equal keys after (strict `ja`) and its hit sweep runs from
+/// index 0.
 #[test]
 fn hit_order_is_strata_then_level_then_the_earlier_linked_frame() {
     let mut s = script();
@@ -785,7 +786,7 @@ fn the_capture_is_per_button() {
     );
 }
 
-/// A disabled Button fires neither `OnEnter` nor `OnLeave`: `CSimpleButton::OnEnter` and `OnLeave`
+/// A disabled Button fires neither `OnEnter` nor `OnLeave`: the button's enter and leave notifies
 /// test `[esi+0x328]` and skip the base notify. It still takes the hover: the walk sets
 /// `[root+0x7c]` before the notify.
 #[test]

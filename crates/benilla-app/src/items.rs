@@ -48,10 +48,10 @@ pub(crate) fn spawn_item(
 /// `obj + 0x324 + slot*4` end where the next member begins, at `+0x340`.
 pub(crate) const ENCHANT_SLOTS: usize = 7;
 
-/// An item's countdowns, the reference's deadline cells on `CGItem_C`: its lifetime at `+0x320`
-/// (fed only by `SMSG_ITEM_TIME_UPDATE`) and one temporary-enchant deadline per slot at `+0x324`
-/// (fed only by `SMSG_ITEM_ENCHANT_TIME_UPDATE`; the enchantment field's duration is never read).
-/// Absolute deadlines, recomputed on every read and never ticked.
+/// An item's countdowns, the reference's deadline cells on the item object: its lifetime at
+/// `+0x320` (fed only by `SMSG_ITEM_TIME_UPDATE`) and one temporary-enchant deadline per slot at
+/// `+0x324` (fed only by `SMSG_ITEM_ENCHANT_TIME_UPDATE`; the enchantment field's duration is never
+/// read). Absolute deadlines, recomputed on every read and never ticked.
 #[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Countdowns {
     lifetime: Option<Instant>,
@@ -287,7 +287,7 @@ fn enchant_lines_quiet(
 #[derive(Resource)]
 pub(crate) struct RandomProperties(pub(crate) benilla_formats::RandomPropertyCatalog);
 
-/// The item's display name, the reference's one formatter `(entry, randomPropertyId)`:
+/// The item's display name, the reference's one formatter over `(entry, randomPropertyId)`:
 /// `ITEM_SUFFIX_TEMPLATE` (`"%s %s"`) with the roll's suffix, or the plain name when the id names
 /// no suffixed row. Every surface that shows an item name goes through here.
 pub(crate) fn item_display_name(
@@ -376,10 +376,10 @@ pub(crate) struct Items {
     templates: QueryCache<u32, ItemInfo>,
     /// Landed since the last [`Self::take_fresh`]; pushed to the UI unprompted.
     fresh: Vec<u32>,
-    /// The reference's `PlayerPendingItemExpiration` list (at `CGPlayer_C + 0x1cc8`):
-    /// `(guid, slot, seconds)` enchant updates for an item not yet held. The reference applies them
-    /// when the item is set up, counting seconds from then; they live as long as the player, here
-    /// the session. `SMSG_ITEM_TIME_UPDATE` has no such list.
+    /// The reference's pending item-expiration list (at player object `+0x1cc8`): `(guid, slot,
+    /// seconds)` enchant updates for an item not yet held. The reference applies them when the item
+    /// is set up, counting seconds from then; they live as long as the player, here the session.
+    /// `SMSG_ITEM_TIME_UPDATE` has no such list.
     pending_enchant_times: Vec<(u64, u32, u32)>,
 }
 
@@ -452,7 +452,7 @@ impl Items {
     }
 
     /// Bumped by every landed answer, for consumers besides the drain; the stand-in for the
-    /// reference's `DBCACHECALLBACK` redisplay.
+    /// reference's cache-callback redisplay.
     pub(crate) fn template_epoch(&self) -> u64 {
         self.templates.generation()
     }
@@ -595,7 +595,7 @@ pub(crate) fn is_disarmed(store: &ObjectStore) -> bool {
 
 /// The equipment slot this character's disarm hides ([`crate::creature_anim::disarmed_hand`] over
 /// the raw inventory), for the action bar's equipped-item requirement and the item-use refusal
-/// (`CGItem::Use` rung 15). `None` while the flag is down or neither hand holds a weapon.
+/// (the item use's rung 15). `None` while the flag is down or neither hand holds a weapon.
 pub(crate) fn disarmed_equipment_slot(
     store: &ObjectStore,
     objects: &Objects,

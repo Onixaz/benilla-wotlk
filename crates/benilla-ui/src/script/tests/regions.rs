@@ -556,7 +556,7 @@ fn desaturated(s: &UiScript, name: &str) -> bool {
     model.region_data.get(&h).is_some_and(|d| d.desaturated)
 }
 
-/// The desaturation is the shader slot `+0x128`, which `CSimpleTexture::SetTexture` rewrites with
+/// The desaturation is the shader slot `+0x128`, which the texture's `SetTexture` rewrites with
 /// the binding's always-NULL slot 0, except that the same path returns early.
 #[test]
 fn set_texture_clears_desaturation_unless_the_path_is_unchanged() {
@@ -883,8 +883,9 @@ fn the_size_getters_take_the_author_first_then_the_natural_width_and_wrapped_hei
     assert!(s.take_errors().is_empty());
 }
 
-/// The reference clamp to one unit, so an empty string reads 1. A host measure still in flight, a
-/// state the reference does not have, reads 0, so an `if h <= 0` guard keeps waiting.
+/// The reference's two height reads clamp to one unit, so an empty string reads 1. A host measure
+/// still in flight, a state the reference does not have, reads 0, so an `if h <= 0` guard keeps
+/// waiting.
 #[test]
 fn an_empty_string_reads_back_one_unit_and_a_pending_measure_reads_back_zero() {
     let mut s = script();
@@ -1011,8 +1012,8 @@ fn the_constructors_string_arguments_are_four_shapes_not_one() {
         layer_of(&s, "LayJunk"),
         crate::order::DrawLayer::Artwork,
         "an unrecognised layer leaves the PRE-STAGED default standing — ARTWORK (2), not an error \
-         and not BACKGROUND: the reference returns 0 with its out-param unwritten and neither \
-         constructor reads the result"
+         and not BACKGROUND: the reference's layer parse returns 0 with its out-param unwritten \
+         and neither constructor reads the result"
     );
 }
 

@@ -164,9 +164,9 @@ fn extract_one(
                 Some(crate::widget::KindState::Cooldown(c)) => c
                     .paint(frame.map_or(1.0, |f| f.effective_scale))
                     .map_or(QuadContent::Frame, QuadContent::Cooldown),
-                // A `<Model>`/`<PlayerModel>` pane's content hole, named so the app can
-                // join it to that window's bake. Both kinds share `KindState::Model`, as
-                // the client's `CGCharacterModelBase` extends `CSimpleModel`.
+                // A `<Model>`/`<PlayerModel>` pane's content hole, named so the app can join it to
+                // that window's bake. Both kinds share `KindState::Model`, as the client's
+                // character model widget extends its model widget.
                 Some(crate::widget::KindState::Model(m)) => QuadContent::ModelPane {
                     handle: fh,
                     name: frame.and_then(|f| f.name.clone()),
@@ -218,8 +218,8 @@ fn extract_one(
             let mut thumb_fill = false;
             if let Some(crate::widget::KindState::Slider(sl)) = owner_frame.map(|f| &f.kind_state) {
                 if sl.thumb == Some(rh) {
-                    // The thumb's own `CSimpleTexture::GetWidth`/`GetHeight`, as the drag
-                    // reads them (`slider::thumb_extent`), not its authored `<Size>`.
+                    // The thumb's own `GetWidth`/`GetHeight`, as the drag reads them
+                    // (`slider::thumb_extent`), not its authored `<Size>`.
                     let tsize = super::region::virtual_span(model, rh);
                     rect = rect.map(|r| slider::thumb_rect(r, tsize, sl.vertical, sl.fraction()));
                     thumb_fill = true;
@@ -272,10 +272,10 @@ fn extract_one(
                     return;
                 }
                 if bs.text == Some(rh) {
-                    // The label is linked to one shared font object (`UpdateTextState
-                    // 0x96f4a0`): the disabled slot, else the highlight one while the
-                    // highlight layer is on, which a locked highlight also turns on, else
-                    // the normal one. An empty slot unlinks and keeps the last paint
+                    // The label is linked to one shared font object (the button's text-state
+                    // update, `0x96f4a0`): the disabled slot, else the highlight one while the
+                    // highlight layer is on, which a locked highlight also turns on, else the
+                    // normal one. An empty slot unlinks and keeps the last paint
                     // (`SetFontObject 0x485160`), modelled as staying on normal.
                     let highlighted = hovered || bs.locked_highlight;
                     let (name, color) = if !bs.enabled() && bs.disabled_font.is_some() {
@@ -346,7 +346,7 @@ fn extract_one(
                 }
             }
             // `Button:SetFont` sits between: a local set on the embedded font outranks its
-            // object (clearing the `inheritMask` bit, `CSimpleFontString+0xD4`, for good)
+            // object (clearing the `inheritMask` bit, the font string's `+0xD4`, for good)
             // but loses to the label's own, so `font_explicit` gates it too.
             if let Some(bf) = button_font {
                 if !data.font_explicit.face {
@@ -437,10 +437,10 @@ fn extract_one(
             (rect, alpha, content, clip, scale)
         }
     };
-    // A `Model` frame's scene draws in its bucket's ARTWORK batch, last: the reference drains
-    // quads, text, then render callbacks, and the reference registers the model's callback for
-    // layer 2 only. So the world map's player arrow draws over the zone overlays at the same level,
-    // below its own OVERLAY and HIGHLIGHT regions.
+    // A `Model` frame's scene draws in its bucket's ARTWORK batch, last: the reference's layer draw
+    // drains quads, text, then render callbacks, and the model registers its callback for layer 2
+    // only. So the world map's player arrow draws over the zone overlays at the same level, below
+    // its own OVERLAY and HIGHLIGHT regions.
     let z = match &content {
         QuadContent::ModelPane { .. } => zkey.callback(order::DrawLayer::Artwork).raw(),
         _ => zkey.raw(),
@@ -474,10 +474,10 @@ fn extract_one(
 }
 
 /// The colour a Texture region draws with: texel × vertex colour per channel, alpha included (the
-/// stage-0 combine preset at submit, `.data` index 1: `MODULATE(TEXTURE, DIFFUSE)`). A desaturated
-/// region's pixel shader (`+0x128`) reads only the vertex alpha. `fill`, the region's solid colour,
-/// is a real 8×8 texel block in the client, so where set the product is the drawn colour; otherwise
-/// this is the tint the renderer modulates the art by, `None` for untinted.
+/// stage-0 combine preset at submit, index 1: `MODULATE(TEXTURE, DIFFUSE)`). A desaturated region's
+/// pixel shader (`+0x128`) reads only the vertex alpha. `fill`, the region's solid colour, is a
+/// real 8×8 texel block in the client, so where set the product is the drawn colour; otherwise this
+/// is the tint the renderer modulates the art by, `None` for untinted.
 fn texture_color(fill: Option<[f32; 4]>, vertex: Option<[f32; 4]>) -> Option<[f32; 4]> {
     match (fill, vertex) {
         (Some(f), Some(v)) => Some([f[0] * v[0], f[1] * v[1], f[2] * v[2], f[3] * v[3]]),

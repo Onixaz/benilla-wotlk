@@ -183,7 +183,7 @@ fn set_talent_on_a_passive_talent_is_the_talent_builder() {
             if t == "[LEARN]" && c[0] < 1e-6 && (c[1] - 1.0).abs() < 1e-6)
     });
     assert!(green, "the learn hint is green");
-    // The spacer is the reference's gold, not the reference's caller colour.
+    // The spacer is the tooltip line's own gold, not the caller's colour.
     let gold_spacer = quads.iter().any(|q| {
         matches!(&q.content, QuadContent::Text { text: Some(t), color: Some(c), .. }
             if t == " " && (c[0] - 1.0).abs() < 1e-6 && (c[1] - 210.0 / 255.0).abs() < 1e-3 && c[2] < 1e-6)

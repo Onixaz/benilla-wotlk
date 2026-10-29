@@ -1,7 +1,8 @@
 //! The outline blit recipe, byte for byte. The reference composites an outlined font's ring and
 //! fill (`outline="NORMAL"`/`"THICK"`, the Number* fonts) into one atlas cell and blits it once
-//! (dispatched by the reference off the font flags at `[CGxFont+0x180]`), so ring and fill fade
-//! together at one alpha; a ring stamped behind a fill would blacken mid-fade on the `α(1−α)` term.
+//! (the reference's AA-outline blit, dispatched off the font flags at `[font+0x180]`), so ring and
+//! fill fade together at one alpha; a ring stamped behind a fill would blacken mid-fade on the
+//! `α(1−α)` term.
 
 /// An outline flag's ring reach in logical px (NORMAL 1, THICK 2), also the cache key's radius.
 pub(super) fn radius_of(outline: benilla_ui::script::Outline) -> u8 {

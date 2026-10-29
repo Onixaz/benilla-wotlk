@@ -205,7 +205,7 @@ pub(super) fn wrapped_rows_capped_for_test(
     wrapped_rows_capped(e, r, text, wrap_width, cap)
 }
 
-/// The display string under the reference's height-gated ellipsis truncate (`CSimpleFontString`):
+/// The display string under the reference's height-gated ellipsis truncate of the FontString:
 /// wrapped past the box, the text backs off a char at a time behind `"..."` until it fits; `None`
 /// draws it raw. The gate is `boxW > 0 && boxH > 0` (`maxLines` is not modelled), so an auto-height
 /// rect never truncates. Region FontStrings only: edit boxes, message lines and world text never
@@ -221,8 +221,8 @@ pub(crate) fn ellipsize_to_fit(
         return None;
     }
     let (box_w, box_h) = (rect.width(), rect.height());
-    // The remembered answer ([`super::super::EllipsisMemo`], the reference's `CGxString+0xf8`):
-    // the paint runs every frame, and this is by far its costliest step.
+    // The remembered answer ([`super::super::EllipsisMemo`], the reference's `[string+0xf8]`): the
+    // paint runs every frame, and this is by far its costliest step.
     if let Some(hit) = atlas.ellipsis.get(region, text, box_w, box_h, &font) {
         return hit.clone();
     }
@@ -249,7 +249,7 @@ pub(crate) fn ellipsize_to_fit(
 
 /// The EditBox overlays' line origin (x0 under `justifyH`, where caret offsets start), one-line
 /// cell top and height, by [`super::layout_text_quads`]'s own step law and snap, and the row pitch,
-/// height plus spacing (`UpdateHighlightArea 0x964db0`).
+/// height plus spacing (`0x964db0`).
 pub(crate) fn line_origin(
     e: &mut TextEngine,
     drawn: &str,

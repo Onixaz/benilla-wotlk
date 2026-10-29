@@ -79,9 +79,9 @@ pub(super) fn wound_evict(
 
 /// Lays wound clip `id` (8–10) into the secondary slot as a decaying 0.75-amplitude blend over
 /// whatever plays (op4 `linkFlag=0`), with no mid-swing gate: the base track and the one-shot slot
-/// run on underneath. It calls op4, not `PlayAnimation`, so the sheath reconcile and event scan
-/// never see it; it is the frame's last write, as in the packet order. The caller holds the entry
-/// gates; the reference's attached-spell-effect gate is not built.
+/// run on underneath. It calls op4, not the animation play call, so the sheath reconcile and event
+/// scan never see it; it is the frame's last write, as in the packet order. The caller holds the
+/// entry gates; the reference's attached-spell-effect gate is not built.
 pub(super) fn wound_trigger(
     entity: Entity,
     drv: &mut AnimDriver,
@@ -93,7 +93,7 @@ pub(super) fn wound_trigger(
     mv: &MovementState,
     mounted: bool,
 ) {
-    // The reference's third IsDead clause, stand state 7; the dead branch took the other two.
+    // The reference's third dead-test clause, stand state 7; the dead branch took the other two.
     if mv.stand_state != 7 {
         let base = drv.resolved_anim(anims, catalog).unwrap_or(STAND);
         let full = select::wound_full_body(id, base, mv.flags, mounted);

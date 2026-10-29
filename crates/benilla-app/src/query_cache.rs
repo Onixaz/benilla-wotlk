@@ -1,4 +1,4 @@
-//! `QueryCache<K, V>`, the ask-once cache: the reference's `DBCache<T>`. A miss sends the query
+//! `QueryCache<K, V>`, the ask-once cache, as the reference's WDB caches. A miss sends the query
 //! once, a second lookup of a pending key does not re-send, the response lands the record, and
 //! eviction is explicit only.
 //!

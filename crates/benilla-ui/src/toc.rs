@@ -11,7 +11,8 @@ pub struct Toc {
     pub files: Vec<String>,
 }
 
-/// Case-insensitive ASCII prefix test, the reference's `SStrCmpI(line, key, SStrLen(key))`.
+/// Case-insensitive ASCII prefix test, as the reference compares a line against a key over the
+/// key's length.
 fn starts_with_ci(s: &str, prefix: &str) -> bool {
     let (s, p) = (s.as_bytes(), prefix.as_bytes());
     s.len() >= p.len() && s[..p.len()].eq_ignore_ascii_case(p)
@@ -60,8 +61,8 @@ impl Toc {
             .unwrap_or_default()
     }
 
-    /// `## Interface:` as the version gate reads it: `Toc_Parse` stores `SStrToInt` of the value at
-    /// `[rec+0x1c]` (else the ctor's `0`), so `11507, 11508` reads `11507`.
+    /// `## Interface:` as the version gate reads it: the TOC parse stores the value's leading
+    /// integer at `[rec+0x1c]` (else the ctor's `0`), so `11507, 11508` reads `11507`.
     pub fn interface_version(&self) -> u32 {
         self.directive("Interface")
             .map(|v| {
@@ -73,7 +74,7 @@ impl Toc {
 
     /// A list directive (`SavedVariables`, `OptionalDeps`, …) as the reference tokenizes it: a
     /// repeated line appends (into the array at `[rec+0x80]`, count at `[rec+0x7c]`), and a space
-    /// separates like a comma (`SStrTokenize`, delimiters `" ,"`).
+    /// separates like a comma (its tokenizer's delimiters are `" ,"`).
     pub fn list(&self, key: &str) -> Vec<&str> {
         self.list_where(|k| k.eq_ignore_ascii_case(key))
     }
@@ -95,7 +96,7 @@ impl Toc {
     }
 
     /// Soft dependencies: every directive whose key starts with `OptionalDep`, the long form
-    /// included. `AddOn_Load` loads them first and ignores their failures.
+    /// included. The addon load loads them first and ignores their failures.
     pub fn optional_dependencies(&self) -> Vec<&str> {
         self.list_where(|k| starts_with_ci(k, "OptionalDep"))
     }
@@ -106,7 +107,7 @@ impl Toc {
     }
 
     /// `## DefaultState:`, the byte at `[rec+0x2b]` the enable query falls back to when characters
-    /// disagree or none has chosen. `Toc_Parse` stores `"enabled"` as 1 and `"disabled"` as 0 and
+    /// disagree or none has chosen. The TOC parse stores `"enabled"` as 1 and `"disabled"` as 0 and
     /// any other value not at all; the ctor seeds 1, so only `disabled` disables.
     pub fn default_state(&self) -> bool {
         !self

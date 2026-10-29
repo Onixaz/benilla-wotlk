@@ -54,7 +54,7 @@ pub struct RibbonTrail {
     local_offset: Vec3,
     /// The node source; `None` once the owner is gone and the trail drains. The reference frees a
     /// model's emitters at its dtor and keeps an ending effect's model while its particles drain
-    /// (`HasLiveParticles`); whether its ribbons drain too is untraced.
+    /// (its live-particles latch); whether its ribbons drain too is untraced.
     owner: Option<Entity>,
     /// The clock the `+0xc0` enable gate is sampled against every frame.
     seq: RibbonSeq,
@@ -247,7 +247,7 @@ pub(crate) fn simulate_ribbons(
         let head = owner.and_then(|o| transforms.get(o).ok()).map(|owner_gt| {
             let node = owner_gt.transform_point(*local_offset);
             // The cross-section axis is the live bone's local +Y: the reference captures the basis
-            // each frame, and the reference spans `±heightAbove/Below` along that row alone.
+            // each frame, and the strip spans `±heightAbove/Below` along that row alone.
             let axis = (owner_gt.rotation() * wow_to_bevy([0.0, 1.0, 0.0])).normalize_or(Vec3::Y);
             (node, axis)
         });

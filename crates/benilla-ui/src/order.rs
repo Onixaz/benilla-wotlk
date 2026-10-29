@@ -23,7 +23,7 @@ use crate::widget::{FrameHandle, RegionHandle, RegionKind, WidgetArena};
 // ── Strata: the top-level draw buckets ───────────────────────────────────────────────────────
 
 /// The frame strata in draw order; `World` through `Tooltip` are the client's nine buckets (the
-/// `CSimpleTop` constructor's loop).
+/// UI root's constructor loop).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Strata {
@@ -128,8 +128,8 @@ const DECL_SHIFT: u32 = 0;
 pub(crate) const INSERTION_BITS: u32 = 18;
 const DECL_BITS: u32 = 12;
 
-/// Which of a layer batch's arrays an entry drains from,'s order: quads at `+0x10`, a
-/// `CGxStringBatch` at `+0x18` and a render-callback list at `+0x1c`. So in one
+/// Which of a layer batch's arrays an entry drains from, in the batch drain's order: quads at
+/// `+0x10`, a string batch at `+0x18` and a render-callback list at `+0x1c`. So in one
 /// `(strata, level, layer)` every texture precedes every font string, and every font string every
 /// model scene.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -214,7 +214,7 @@ impl ZKey {
 
     /// The key for a `Model` frame's scene: its frame slot moved into its region band at `layer`
     /// with the callback rank, after every texture and font string of the layer, as the reference
-    /// registers the scene into the layer batch whose callbacks drains last.
+    /// registers the scene into the layer batch whose callbacks drain last.
     #[inline]
     #[must_use]
     pub const fn callback(self, layer: DrawLayer) -> ZKey {

@@ -1,8 +1,8 @@
-//! The realm list's glue verbs (`RealmList.cpp`, table `0xac4190`) and the list they read: the
-//! realm holder the `CMD_REALM_LIST` parser fills, the client Region's categories, the sort and the
-//! two selection cells. The host's glue manager seeds the holder and runs the rebuild where
-//! `CGlueMgr::Update` does; the verbs that only read or re-sort the list answer here, firing their
-//! events as they return, and the ones that reach the network queue a [`GlueRequest`].
+//! The realm list's glue verbs (table `0xac4190`) and the list they read: the realm holder the
+//! `CMD_REALM_LIST` parser fills, the client Region's categories, the sort and the two selection
+//! cells. The host's glue manager seeds the holder and runs the rebuild where the reference's glue
+//! update does; the verbs that only read or re-sort the list answer here, firing their events as
+//! they return, and the ones that reach the network queue a [`GlueRequest`].
 //!
 //! Every category argument that crosses the Lua boundary is a 1-based ordinal over the categories
 //! holding a realm, mapped to the stored index, which has no sentinel: an ordinal past the last
@@ -182,7 +182,7 @@ pub fn realm_load_classify(flags: u8, population: f32, mean: f32, stddev: f32) -
     0.0
 }
 
-/// `SStrCmpI` (the CRT's `_strnicmp`): bytes folded to lower case.
+/// The reference's case-insensitive compare (the CRT's `_strnicmp`): bytes folded to lower case.
 fn cmp_folded(a: &str, b: &str) -> std::cmp::Ordering {
     a.bytes()
         .map(|c| c.to_ascii_lowercase())
@@ -215,7 +215,7 @@ impl GlueRealmList {
             .collect()
     }
 
-    /// `GetRealm`: a holder index, or NULL past its end.
+    /// The realm lookup: a holder index, or NULL past its end.
     fn realm(&self, index: usize) -> Option<&GlueRealm> {
         self.holder.get(index)
     }
@@ -369,7 +369,7 @@ impl GlueRealmList {
         for bucket in &self.buckets {
             let count = bucket.len() as u32;
             if count > residual {
-                // Stored unconditionally, a NULL from `GetRealm` included.
+                // Stored unconditionally, a NULL from the realm lookup included.
                 found = bucket.get(residual as usize).and_then(|&h| self.realm(h));
             } else {
                 residual = residual.wrapping_sub(count);
@@ -468,7 +468,7 @@ fn model(lua: &Lua) -> crate::script::ModelGuard<'_> {
     crate::script::model_mut_of(lua)
 }
 
-/// `is-number` on an argument, then `tonumber` and.
+/// `is-number` on an argument, then `tonumber` and the `_ftol` truncation.
 fn number_at(lua: &Lua, args: &MultiValue, i: usize) -> Option<i32> {
     let v = args.get(i)?.clone();
     lua.coerce_number(v).ok().flatten().map(ftol)
@@ -531,8 +531,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // The current glue screen (`SetCurrentScreen`'s buffer) against "login" (`SStrCmpI`); anywhere
-    // else a no-op, on login `CLoginMgr::Cancel`.
+    // The current glue screen (`SetCurrentScreen`'s buffer) against "login", case-insensitively;
+    // anywhere else a no-op, on login the login cancel.
     g.set(
         "RealmListDialogCancelled",
         lua.create_function(|lua, _: MultiValue| {
@@ -581,7 +581,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // `0x4defb0`: the pair leg stores the category before its range check; a realm found marks the
-    // session's choice and reaches `ConnectToRealm`, whose first act sets `realmName`.
+    // session's choice and reaches the realm connect, whose first act sets `realmName`.
     g.set(
         "ChangeRealm",
         lua.create_function(|lua, args: MultiValue| {
@@ -643,9 +643,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x4df3a0`: the category, the two flags through the reference with default 0, then
-    // `realm_select`, which fires `SUGGEST_REALM` with `"%d%d"` or, with no realm to suggest,
-    // `OPEN_REALM_LIST`.
+    // `0x4df3a0`: the category, the two flags read as booleans with default 0, then `realm_select`,
+    // which fires `SUGGEST_REALM` with `"%d%d"` or, with no realm to suggest, `OPEN_REALM_LIST`.
     g.set(
         "SetPreferredInfo",
         lua.create_function(|lua, args: MultiValue| {
@@ -1170,8 +1169,8 @@ mod tests {
     }
 
     /// The flat leg keeps walking after a hit and stores each later hit unconditionally, a NULL
-    /// from `GetRealm` included: a holder that lost the realm since the rebuild answers nil, not
-    /// the earlier hit.
+    /// from the realm lookup included: a holder that lost the realm since the rebuild answers nil,
+    /// not the earlier hit.
     #[test]
     fn the_flat_leg_keeps_the_last_hit_even_when_it_is_gone() {
         let mut s = vm(vec![

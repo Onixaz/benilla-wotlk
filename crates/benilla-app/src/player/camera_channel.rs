@@ -1,5 +1,5 @@
 //! The camera's smoothed-scalar channel: one template the reference instantiates for pitch, pitch
-//! bias, ground tilt and pivot height, stepped in one block.
+//! bias, ground tilt and pivot height, all four stepped in one block each frame.
 //!
 //! The armer rewraps the live value into `[target − π, target + π]`, refuses a request when the
 //! channel is already arming the same `{target, delay, factor}` or is within 0.001 of the target,
@@ -8,8 +8,8 @@
 //! at `s ≥ 1`. The duration is seconds, not a rate, and the rate is in the live value's units: the
 //! angular channels convert their deg/s CVar with `π/180`, the height's is yd/s.
 //!
-//! Deviation: a delay holds the channel at `from`, because the reference's backs the start time up
-//! by the delay, so `s` runs negative and the even cosine jumps the value away and back, an
+//! Deviation: a delay holds the channel at `from`, because the reference's armer backs the start
+//! time up by the delay, so `s` runs negative and the even cosine jumps the value away and back, an
 //! unclamped divide rather than a behaviour. No default reaches it: every `cameraTerrainTilt*`
 //! row's `Delay` is 0, and the pitch and bias arms pass 0.
 
@@ -86,7 +86,8 @@ pub(super) struct SmoothChannel {
     wrap: bool,
 }
 
-/// What [`SmoothChannel::arm`] did: the reference's three-way return (0 for already there).
+/// What [`SmoothChannel::arm`] did: the reference's three-way return (1 for already arming, 0 for
+/// already there).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Armed {
     Started,

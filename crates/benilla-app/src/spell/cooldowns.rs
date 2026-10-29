@@ -1,4 +1,4 @@
-//! The player's cooldowns, the client's `SpellHistory` list (handlers `0x806dd0`).
+//! The player's cooldowns, the client's spell history list (handlers `0x806dd0`).
 //!
 //! - A record holds three timers: the spell's recovery, its category's recovery and the GCD
 //!   (`startRecoveryCategory`, `startRecoveryTime`); `on_hold` parks the first two until
@@ -46,7 +46,7 @@ impl Timer {
     }
 }
 
-/// One `SpellHistory` node.
+/// One spell history node.
 #[derive(Clone, Debug)]
 struct Record {
     spell_id: u32,
@@ -64,13 +64,13 @@ struct Record {
     gcd: Timer,
     /// Every timer has run out: the record reads cold and stays until [`Cooldowns::collect`].
     spent: bool,
-    /// When the record was inserted, the stamp `RecentlyCast` reads.
+    /// When the record was inserted, the stamp the recent-cast test reads.
     time: Instant,
 }
 
 /// One action's cooldown read (`GetActionCooldown`): the winning timer's start, duration and
 /// remainder, and `enabled == false` for an on-hold record, which `CooldownFrame_SetTimer` hides.
-/// The start is what `GetCooldownInfo` returns, so two arms never alias.
+/// The start is what the cooldown query returns, so two arms never alias.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CooldownInfo {
     /// For an on-hold record, when it was inserted.
@@ -101,7 +101,7 @@ impl CooldownInfo {
     }
 }
 
-/// One cooldown list, the client's `SpellHistory`: the player's is this resource, the pet's is
+/// One cooldown list, the client's spell history: the player's is this resource, the pet's is
 /// [`crate::ui_pet::PetBar::cooldowns`], which the pet bar, the pet book and the pet's
 /// `SMSG_SPELL_GO` leg read and write. Each list's edge feeds its own events: the player's
 /// `feed_action_state`, the pet's `ui_pet::bar::fire_pet_cooldown_events`.
@@ -164,9 +164,9 @@ impl Cooldowns {
         })
     }
 
-    /// `AddCooldown`: always appends, never matching by id, so one spell holds separate nodes for
-    /// its cast-send GCD and its SPELL_GO recovery. Replacing by id would let the GO insert wipe
-    /// the running GCD. Spent records stay until [`Self::collect`]; whether the insert stored
+    /// The cooldown add: always appends, never matching by id, so one spell holds separate nodes
+    /// for its cast-send GCD and its SPELL_GO recovery. Replacing by id would let the GO insert
+    /// wipe the running GCD. Spent records stay until [`Self::collect`]; whether the insert stored
     /// anything is returned.
     fn add(
         &mut self,
@@ -207,8 +207,8 @@ impl Cooldowns {
         true
     }
 
-    /// `SpellHistory::RecentlyCast` (`0x807d40`): a record of the spell and item inserted under
-    /// 1500 ms ago.
+    /// The recent-cast test (`0x807d40`): a record of the spell and item inserted under 1500 ms
+    /// ago.
     pub(crate) fn recently_cast(&self, spell_id: u32, item_id: u32, now: Instant) -> bool {
         self.records.iter().any(|r| {
             r.spell_id == spell_id
@@ -237,9 +237,9 @@ impl Cooldowns {
         }
     }
 
-    /// `SpellHistory::GarbageCollect` (`0x802b00`): drop every record not on hold whose own and
-    /// category recoveries have run out. The GCD is not read, so a record holding only a running
-    /// GCD goes too.
+    /// The history sweep (`0x802b00`): drop every record not on hold whose own and category
+    /// recoveries have run out. The GCD is not read, so a record holding only a running GCD goes
+    /// too.
     pub(crate) fn collect(&mut self, now: Instant) {
         let before = self.records.len();
         self.records.retain(|r| {
@@ -262,7 +262,7 @@ impl Cooldowns {
         true
     }
 
-    /// A spell's own cooldown from `Spell.dbc` (`StartCooldown`), without a GCD.
+    /// A spell's own cooldown from `Spell.dbc` (the cooldown start), without a GCD.
     ///
     /// `ranged_attack_time_ms` is `UNIT_FIELD_RANGEDATTACKTIME` when
     /// [`SpellDisplay::ranged_speed_cooldown`], else 0, added to the category timer: the Throw and
@@ -311,8 +311,8 @@ impl Cooldowns {
         }
     }
 
-    /// An item use's cooldown (`StartCooldown`): the item's values, a negative one falling back to
-    /// the spell's `Spell.dbc` value.
+    /// An item use's cooldown (the cooldown start): the item's values, a negative one falling back
+    /// to the spell's `Spell.dbc` value.
     pub(crate) fn start_item(
         &mut self,
         item_entry: u32,
@@ -355,11 +355,11 @@ impl Cooldowns {
         }
     }
 
-    /// Arm the GCD at cast send (`StartGlobalCooldown`) for any cast or item use, and at a pet-bar
-    /// spell press (into the pet's list), unless `startRecoveryCategory` and `startRecoveryTime`
-    /// are both 0, then with op 21 applied and nothing armed for a zero result. A negative one arms
-    /// nothing either, where the reference inserts a record no reader shows. `on_hold` is
-    /// Attributes bit 25.
+    /// Arm the GCD at cast send (the GCD start) for any cast or item use, and at a pet-bar spell
+    /// press (into the pet's list), unless `startRecoveryCategory` and `startRecoveryTime` are both
+    /// 0, then with op 21 applied and nothing armed for a zero result. A negative one arms nothing
+    /// either, where the reference inserts a record no reader shows. `on_hold` is Attributes
+    /// bit 25.
     pub(crate) fn start_gcd(
         &mut self,
         spell_id: u32,
@@ -370,7 +370,7 @@ impl Cooldowns {
         if spell.start_recovery_category == 0 && spell.start_recovery_ms == 0 {
             return;
         }
-        // `StartGlobalCooldown`: op 21 before the zero-duration exit.
+        // The GCD start: op 21 before the zero-duration exit.
         let duration_ms = mods.apply(spell, OP_GCD, spell.start_recovery_ms as i32);
         if duration_ms <= 0 {
             return;
@@ -401,8 +401,8 @@ impl Cooldowns {
         );
     }
 
-    /// Clear the GCD of a spell's records on a failed cast, then collect the history
-    /// (`SpellHistory::RemoveStartCooldown` `0x804720`, `0x804768`).
+    /// Clear the GCD of a spell's records on a failed cast, then collect the history (`0x804720`,
+    /// `0x804768`).
     pub(crate) fn clear_gcd(&mut self, spell_id: u32, now: Instant) {
         let mut touched = false;
         for r in &mut self.records {
@@ -450,9 +450,9 @@ impl Cooldowns {
         }
     }
 
-    /// `SMSG_MODIFY_COOLDOWN` (`SpellHistory::DelayCooldown` `0x802a10`): every record of the
-    /// spell has its recovery and category starts moved by `delay_ms`, negative sooner; the GCD
-    /// stays. `Spell_C_DelayCooldown` (`0x802bf0`) flushes whether or not a record matched.
+    /// `SMSG_MODIFY_COOLDOWN` (`0x802a10`): every record of the spell has its recovery and category
+    /// starts moved by `delay_ms`, negative sooner; the GCD stays. Its wrapper (`0x802bf0`) flushes
+    /// whether or not a record matched.
     pub(crate) fn delay(&mut self, spell_id: u32, delay_ms: i32, now: Instant) {
         let by = Duration::from_millis(u64::from(delay_ms.unsigned_abs()));
         let shift = |t: &mut Timer| {
@@ -607,7 +607,7 @@ impl Cooldowns {
     /// One `SMSG_PET_SPELLS` cooldown: remainders, starting now. The category duration's
     /// [`PET_COOLDOWN_PERMANENT`] flag is stripped, or it would read as a 24-day sweep.
     ///
-    /// The handler seeds through `StartCooldown`, which calls no flush, so the insert leaves
+    /// The handler seeds through the cooldown start, which calls no flush, so the insert leaves
     /// [`Self::generation`] where it was.
     pub(crate) fn seed_pet(
         &mut self,
@@ -640,10 +640,10 @@ impl Cooldowns {
         self.generation = generation;
     }
 
-    /// `SpellHistory::GetSpellCooldown`'s rune leg (`0x807c37`-`0x807cfe`) on the timers' triple
-    /// at `now_ms`: a rune spell that lacks runes, with a record of itself or of a spell sharing
-    /// a rune kind in the history, reads the ten seconds before its runes' ready time
-    /// (`0x807cf3`) once that is the latest end. The enable flag is the timers'.
+    /// The cooldown read's rune leg (`0x807c37`-`0x807cfe`) on the timers' triple at `now_ms`: a
+    /// rune spell that lacks runes, with a record of itself or of a spell sharing a rune kind in
+    /// the history, reads the ten seconds before its runes' ready time (`0x807cf3`) once that is
+    /// the latest end. The enable flag is the timers'.
     pub(crate) fn with_rune_leg(
         &self,
         spell_id: u32,
@@ -683,8 +683,8 @@ impl Cooldowns {
         Some((ready - 10_000, 10_000, triple.is_none_or(|t| t.2)))
     }
 
-    /// The client's `IsSpellOnCooldown`, which despite its name is true only for an on-hold record;
-    /// it feeds the usable check's grey-while-parked leg.
+    /// The client's on-cooldown test, which despite its name is true only for an on-hold record; it
+    /// feeds the usable check's grey-while-parked leg.
     ///
     /// Keyed on spell and item: the action bar's item gate passes the item entry, every other
     /// caller 0. `category` is the item's for an item (the reference takes it from the item's spell
@@ -713,7 +713,7 @@ impl Cooldowns {
         self.info(spell_id, item_entry, spell, now).remaining_ms > 0
     }
 
-    /// `GetCooldownInfo`: the longest remainder over every record's three legs.
+    /// The cooldown query: the longest remainder over every record's three legs.
     ///
     /// - `Effect[0]` of ATTACK or TRADE_SKILL always reads cold.
     /// - Spell leg: id and item match; a parked record reads its full duration, disabled.
@@ -883,7 +883,7 @@ mod tests {
         assert!(!cds.has_on_hold_record(133, 0, fireball().category));
     }
 
-    /// The SPELL_GO insert (`StartCooldown`, no GCD) is its own node beside the cast-send GCD.
+    /// The SPELL_GO insert (the cooldown start, no GCD) is its own node beside the cast-send GCD.
     #[test]
     fn a_go_self_insert_never_wipes_the_running_gcd() {
         let t0 = Instant::now();
@@ -1138,7 +1138,7 @@ mod tests {
         );
     }
 
-    /// `GarbageCollect` (`0x802b00`) keeps a running recovery and a parked record, and drops the
+    /// The history sweep (`0x802b00`) keeps a running recovery and a parked record, and drops the
     /// rest, a record holding only a running GCD among them.
     #[test]
     fn a_collection_drops_all_but_running_recoveries_and_parked_records() {

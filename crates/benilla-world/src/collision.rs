@@ -30,7 +30,7 @@ pub(crate) enum CollisionLayer {
     Camera,
     /// Liquid surfaces, every MCLQ layer's and WMO pool's wet cells, hit only by a query that asks.
     /// `cameraWaterCollision` ORs `0xf0000` into the trace mask the camera solver hands its three
-    /// collision queries, and the reference reads that nibble to gate the chunk's four MCLQ slots
+    /// collision queries, and the chunk query reads that nibble to gate the chunk's four MCLQ slots
     /// (`0x10000` river/lake, `0x20000` ocean, `0x40000` magma, `0x80000` slime).
     Liquid,
 }
@@ -94,13 +94,13 @@ pub(crate) fn track_collider_removals(
 #[derive(Component)]
 pub struct GroundDecalSurface;
 
-/// Marks a static collider that occludes the mouse pick: `CGWorldFrame::HitTest` traces the world
-/// with flags `0x1000124` and drops the object hit when the world hit is strictly nearer, so a unit
-/// behind a wall is not hoverable. Occluders are terrain and WMO group faces. Doodads occlude by
-/// their drawn batches ([`crate::interact::DoodadOccluders`]), never by a hull. Deviation: the WMO
-/// term is the walk collider (every face but DETAIL `0x04`), where the trace's ignore mask
-/// (`CMapObj::CreateWmoIgnoreFlags` `0x7ae140` → `0x188`) drops MOPY `0x88` faces and blended
-/// materials (`0x7c6c30`); a third face set per WMO costs its build and memory.
+/// Marks a static collider that occludes the mouse pick: the world frame's hit test traces the
+/// world with flags `0x1000124` and drops the object hit when the world hit is strictly nearer, so
+/// a unit behind a wall is not hoverable. Occluders are terrain and WMO group faces. Doodads
+/// occlude by their drawn batches ([`crate::interact::DoodadOccluders`]), never by a hull.
+/// Deviation: the WMO term is the walk collider (every face but DETAIL `0x04`), where the trace's
+/// ignore mask (`0x7ae140` → `0x188`) drops MOPY `0x88` faces and blended materials (`0x7c6c30`); a
+/// third face set per WMO costs its build and memory.
 #[derive(Component)]
 pub struct PickOccluder;
 

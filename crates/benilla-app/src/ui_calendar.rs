@@ -1,7 +1,8 @@
 //! The calendar feed: the holiday and map tables pushed once per VM, every calendar message handed
-//! to the VM's `CGCalendar` port in wire order, the player, social and name facts it reads, and the
-//! sends its verbs queue; the clock rides [`crate::minimap`]'s minute feed. A message waits in [`CalendarFeed`] until a VM is up, so one
-//! landing between the login and the UI's first frame is applied in order.
+//! to the VM's calendar port in wire order, the player, social and name facts it reads, and the
+//! sends its verbs queue; the clock rides [`crate::minimap`]'s minute feed. A message waits in
+//! [`CalendarFeed`] until a VM is up, so one landing between the login and the UI's first frame is
+//! applied in order.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -146,7 +147,7 @@ fn on_invalidate_player(In(ev): In<SessionEvent>, mut feed: ResMut<CalendarFeed>
     }
 }
 
-/// The world-enter cascade's calendar leg (`CGCalendar::EnterWorld` `0x5be2a0`).
+/// The world-enter cascade's calendar leg (`0x5be2a0`).
 fn calendar_enter_world(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
     mut feed: ResMut<CalendarFeed>,
@@ -249,7 +250,7 @@ fn feed_calendar(
         };
     script.set_calendar_raid_members(raid);
 
-    // `CGPlayer_C::OnGuildChanged` (`0x6df7a0`): the player's own guild field moved.
+    // The player's guild-change hook (`0x6df7a0`): the player's own guild field moved.
     if let Some(id) = guild_id {
         if memory.guild_id.is_some_and(|was| was != id) {
             script.calendar_guild_changed(id != 0);

@@ -35,7 +35,7 @@ const FLARE_RAY_RANGE: f32 = 2800.0;
 
 /// The envelope's linear slew rates per second (`[glare+0x28]`/`[+0x2c]`): the sun rises at 4.0,
 /// the moon at 100/33, and both fall at 50/33.
-const SUN_FLARE_RISE: f32 = 4.0; //
+const SUN_FLARE_RISE: f32 = 4.0;
 const MOON_FLARE_RISE: f32 = f32::from_bits(0x4041_f07c); // ≈ 3.0303
 const FLARE_FALL: f32 = f32::from_bits(0x3fc1_f07c); // ≈ 1.5152
 

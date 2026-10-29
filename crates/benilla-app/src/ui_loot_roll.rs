@@ -2,12 +2,12 @@
 //! `SMSG_LOOT_ALL_PASSED` become the stock `GroupLootFrame`'s events and the roll chat lines, and
 //! its `RollOnLoot` votes go back out as `CMSG_LOOT_ROLL`.
 //!
-//! A fresh roll's `START_LOOT_ROLL` waits for its item template, as in the reference: the reference
-//! ends in the cache lookup, whose hit fires the event at once and whose miss fires it from the
-//! arrival callback. `GroupLootFrame` paints once, from `OnShow`, so an event ahead of the template
-//! paints a blank frame. Deviation: a negative answer, or none within [`TEMPLATE_HOLD_MAX_MS`],
-//! opens the frame unresolved, because a frame that never opens cannot even be passed on; the
-//! reference's callback fires on success only.
+//! A fresh roll's `START_LOOT_ROLL` waits for its item template, as in the reference: its roll
+//! start ends in the item cache lookup, whose hit fires the event at once and whose miss fires it
+//! from the arrival callback. `GroupLootFrame` paints once, from `OnShow`, so an event ahead of the
+//! template paints a blank frame. Deviation: a negative answer, or none within
+//! [`TEMPLATE_HOLD_MAX_MS`], opens the frame unresolved, because a frame that never opens cannot
+//! even be passed on; the reference's callback fires on success only.
 //!
 //! A held roll's `arg2` is still the wire's countdown (the reference pushes `node+0x3c`); only the
 //! bar is short, as `GetLootRollTimeLeft` counts from the packet's arrival.
@@ -142,7 +142,7 @@ impl LootRolls {
     }
 
     /// Drop the roll if we still hold it and queue its `CANCEL_LOOT_ROLL`, announced or not: the
-    /// reference's check only the node's closed byte `+0x3a`.
+    /// reference's won and all-passed handlers check only the node's closed byte `+0x3a`.
     fn close(&mut self, looted_target: u64, item_slot: u32) {
         if let Some(i) = self
             .active
@@ -1011,9 +1011,9 @@ mod tests {
         rx.try_iter().collect()
     }
 
-    /// The reference ends in `(node+0x1c, node+0x10, callback , node, 0)`: a hit fires at once, a
-    /// miss asks and fires on arrival. The negative answer releases the roll too, the module doc's
-    /// deviation.
+    /// The roll start ends in the item cache lookup with an arrival callback: a hit fires at once,
+    /// a miss asks and fires on arrival. The negative answer releases the roll too, the module
+    /// doc's deviation.
     #[test]
     fn the_roll_waits_for_its_item_template() {
         for (answer, painted) in [
@@ -1052,7 +1052,7 @@ mod tests {
         }
     }
 
-    /// The reference's hit path: the roll announces on the pass the packet lands.
+    /// The cache lookup's hit path: the roll announces on the pass the packet lands.
     #[test]
     fn a_cached_template_announces_the_same_pass() {
         let (mut app, _rx) = hold_app();
@@ -1094,8 +1094,8 @@ mod tests {
         assert_eq!(starts(&mut app).len(), 1, "and only once");
     }
 
-    /// A held roll's `CANCEL_LOOT_ROLL` still goes out, as the reference checks only the node's
-    /// closed byte; the stock Lua matches no frame to it.
+    /// A held roll's `CANCEL_LOOT_ROLL` still goes out, as the reference's won handler checks only
+    /// the node's closed byte; the stock Lua matches no frame to it.
     #[test]
     fn a_roll_resolved_while_held_never_announces() {
         let (mut app, _rx) = hold_app();

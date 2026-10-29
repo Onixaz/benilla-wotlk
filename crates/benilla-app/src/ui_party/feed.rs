@@ -322,7 +322,7 @@ pub(super) fn feed_party(
         loot_threshold,
         real_party_members: group.real_party_members,
         real_raid_members: group.real_raid_members,
-        // `m_lootMaster` under master loot (method 2), which `GetRaidRosterInfo`'s isML compares.
+        // The loot master under master loot (method 2), which `GetRaidRosterInfo`'s isML compares.
         loot_master_guid: group.loot.filter(|l| l.method == 2).map_or(0, |l| l.master),
         member_assignments: std::array::from_fn(|i| {
             slots.get(i).map_or(0, |m| member_assignments(m.flags))
@@ -572,7 +572,7 @@ pub(super) fn feed_party(
             let row = difficulties.as_ref().and_then(|d| {
                 benilla_formats::find_map_difficulty(&d.0, e.map as i32, e.difficulty as i32)
             });
-            // `GetMaxPlayersForMap` (`0x634ab0`): the difficulty row's count, else the map's.
+            // The map's player cap (`0x634ab0`): the difficulty row's count, else the map's.
             let max_players = row
                 .map(|r| r.max_players)
                 .filter(|&n| n > 0)
@@ -806,7 +806,7 @@ fn raid_roster(
 }
 
 /// The folded member flags' main tank and main assist marks as the roster's assignment bits
-/// (`CGRaidMember::m_assignments`: main tank 0x2, main assist 0x4).
+/// (the raid member's assignment bits: main tank 0x2, main assist 0x4).
 fn member_assignments(flags: u8) -> u8 {
     let mut bits = 0;
     if flags & GROUP_MEMBER_MAIN_TANK != 0 {
@@ -891,7 +891,8 @@ fn member_for_token<'a>(group: &'a GroupState, token: &str) -> Option<&'a GroupM
         .then(|| group.party_slots().nth(n - 1))?
 }
 
-/// `Script_GetGUIDFromToken(unit, guid, true)` (`0x60abf0`): "" is the target, then a token, then a name.
+/// The script layer's unit-token resolve, `(unit, guid, true)` (`0x60abf0`): "" is the target,
+/// then a token, then a name.
 fn unit_guid(
     group: &GroupState,
     self_guid: Option<u64>,

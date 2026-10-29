@@ -424,8 +424,8 @@ mod tests {
         );
         assert_eq!(form_texture(&devotion, false), shield);
 
-        // The reference sets `isActive` before the reference tests the column: a warrior stance is
-        // active yet keeps `SpellIconID`.
+        // The reference sets `isActive` before it tests the column: a warrior stance is active yet
+        // keeps `SpellIconID`.
         let stance = SpellDisplay {
             shapeshift_form: Some(17),
             active_icon_id: 0,

@@ -530,7 +530,7 @@ fn a_hover_sweep_across_owners_costs_no_graph_derivation() {
 
 /// An action-bar hover sweep costs zero derivations. With `UberTooltips` at its 1.12 default "1",
 /// an action button anchors through `GameTooltip_SetDefaultAnchor` (`ActionButton.lua:365-367`):
-/// `SetOwner(owner, "ANCHOR_NONE")`, which drops the tooltip's anchors (`ResetPosition`
+/// `SetOwner(owner, "ANCHOR_NONE")`, which drops the tooltip's anchors (the position reset
 /// `0x61b040` clears at `0x61b070` for every mode but PRESERVE), then an explicit `SetPoint`.
 #[test]
 fn an_action_bar_hover_sweep_costs_no_graph_derivation() {

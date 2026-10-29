@@ -490,8 +490,9 @@ fn the_selection_queue_carries_all_three_verbs_in_call_order() {
     assert!(s.take_selection_requests().is_empty());
 }
 
-/// The reverse flag as the reference reads it (default 0): absent, nil, 0 and `"0"` are forward, 1,
-/// `true` and `"1"` reverse (`Bindings.xml:458`). The four shims differ only in the mode.
+/// The reverse flag as the boolean coercion reads it (default 0): absent, nil, 0 and `"0"` are
+/// forward, 1, `true` and `"1"` reverse (`Bindings.xml:458`). The four shims differ only in the
+/// mode.
 #[test]
 fn target_nearest_queues_its_mode_and_reverse_flag() {
     use crate::script::NearestMode::{Enemy, Friend, PartyMember, RaidMember};
@@ -660,7 +661,7 @@ fn unitname_reads_unknownobject_for_a_resolved_unit_whose_name_is_in_flight() {
 fn power_bindings_read_the_active_type() {
     let mut s = UiScript::new().unwrap();
     s.set_unit("player", Some(player())); // rage 35/100
-                                          // The type and its `GetPowerString` token (`0x60f100`).
+                                          // The type and its power-type token (`0x60f100`).
     assert_eq!(
         s.eval::<(i64, String)>(r#"return UnitPowerType("player")"#)
             .unwrap(),
@@ -1001,7 +1002,7 @@ fn unit_classification_reads_the_five_word_table() {
 
 // ── `UnitAffectingCombat` and `TargetByName` ────────────────────────────────────────────────────
 
-/// Not in combat and no such unit share one nil arm: the reference both jump.
+/// Not in combat and no such unit share one nil arm: both jump to it in the reference.
 #[test]
 fn unit_affecting_combat_is_one_or_nil_and_hides_the_missing_unit() {
     let mut s = UiScript::new().unwrap();
@@ -1420,8 +1421,8 @@ fn unit_is_visible_is_object_presence_not_existence() {
     );
 }
 
-/// The reference test `UNIT_DYNAMIC_FLAGS` bits `0x4` and `0x8` behind object presence, and unlike
-/// `UnitIsVisible` both raise `Usage:` on a bad argument.
+/// The two reference bindings test `UNIT_DYNAMIC_FLAGS` bits `0x4` and `0x8` behind object
+/// presence, and unlike `UnitIsVisible` both raise `Usage:` on a bad argument.
 #[test]
 fn the_tapped_pair_is_two_masks_of_one_field_and_raises_on_a_bad_argument() {
     let mut s = UiScript::new().unwrap();

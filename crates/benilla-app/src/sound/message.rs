@@ -1,9 +1,9 @@
-//! The message catalog's sound half: the sound branch of `CGGameUI::DisplayError`.
+//! The message catalog's sound half: the sound branch of the reference's error display.
 //!
 //! Each displayed message is a row of the registry ([`benilla_ui::messages`]), and one comparison
 //! on its type tag `+0x0c` picks the sound (`cmp [row+0xc],0x44`):
 //!
-//! - `== 0x44`: play `+0x08` as a `SoundEntries` name through `PlaySoundByName`, unless it is
+//! - `== 0x44`: play `+0x08` as a `SoundEntries` name through the by-name kit play, unless it is
 //!   `"NONE"`.
 //! - `!= 0x44`: speak the tag as an error-speech line in the player's race and gender voice
 //!   ([`super::vocal`]).
@@ -27,10 +27,10 @@ use super::{AudioListener, SoundConfig, SoundOutput};
 #[derive(Resource, Default)]
 pub(crate) struct MessageSounds {
     records: Vec<&'static MessageRecord>,
-    /// `PlaySoundByName` cues with no catalog row, such as the tutorial popup's `"TutorialPopup"`,
-    /// played on the same 2D SFX path.
+    /// By-name kit cues with no catalog row, such as the tutorial popup's `"TutorialPopup"`, played
+    /// on the same 2D SFX path.
     cues: Vec<&'static str>,
-    /// `SI2::PlayUISound` kits by `SoundEntries` id (`0x4c8fc0`), on the same path.
+    /// UI kits by `SoundEntries` id (`0x4c8fc0`), on the same path.
     kits: Vec<u32>,
 }
 
@@ -91,7 +91,7 @@ fn play_message_sounds(
     // The reference reads the player's sex per play; none yet means no voice.
     let me = self_q.iter().next();
     let sex = me.and_then(|s| s.0.unit_gender());
-    // A Death Knight's error speech takes its voice chain (`SI2::PlayVocalErrorSound 0x986d00`).
+    // A Death Knight's error speech takes its voice chain (the vocal error play, `0x986d00`).
     let filter = kit::voice_filter(&out, me);
     for id in kit_ids {
         if let Err(e) = kit::play_kit(
@@ -133,7 +133,7 @@ fn play_message_sounds(
                 &config,
                 listener.pos,
                 KitRef::Name(name),
-                None, // 2D: the reference plays non-positional UI kits
+                None, // 2D: the reference plays UI kits non-positional
                 SoundCategory::Sfx,
             ) {
                 warn!("sound(message): cue {name:?} for {}: {e:#}", record.key);

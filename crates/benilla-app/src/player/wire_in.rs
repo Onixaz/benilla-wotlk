@@ -65,7 +65,7 @@ fn yield_own_body(net_cmds: &NetCommands, player: &mut Player, self_guid: Option
     });
 }
 
-/// The world-entry grant of `OnActivePlayerInit` (`0x6e7f50`): our body is in control again
+/// The world-entry grant of the active player's init (`0x6e7f50`): our body is in control again
 /// (`0x6e80b6`) and the UI's flag is re-seeded with no event (`0x513880`). A possession in hand
 /// keeps its own state.
 fn hand_back_control(player: &mut Player) {
@@ -257,7 +257,7 @@ pub(super) fn apply_server_moves(
     // reference does. vmangos kicks a root apply-ack without `MOVEFLAG_ROOT`, or defers the root to
     // landing when the ack carries `JUMPING` or `FALLINGFAR` (`MovementHandler.cpp:715-729`).
     //
-    // Root also parks the walk stream and ends the arc, as the reference's `SetRoot` clears the
+    // Root also parks the walk stream and ends the arc, as the reference's root clears the
     // direction bits and stops the fall; moving bits beside ROOT freeze the reference and raise
     // vmangos's `CHEAT_TYPE_ROOT_MOVE`. Turn bits are not moving bits.
     for m in mode_msgs.read() {
@@ -268,19 +268,19 @@ pub(super) fn apply_server_moves(
             player.vel_y = 0.0;
             player.fall_far = false;
         }
-        // A hover grant jumps you (`Player::hover_launch`): the reference's handler runs
-        // `CMovement::Jump` on enable and `StartFalling` on disable before it sets the flag, so
-        // Levitate cast while swimming leaves the water. Disable needs nothing: with `hover_offset`
-        // at zero the body falls from rest by itself.
+        // A hover grant jumps you (`Player::hover_launch`): the reference's handler runs the
+        // mover's jump on enable and the fall start on disable before it sets the flag, so Levitate
+        // cast while swimming leaves the water. Disable needs nothing: with `hover_offset` at zero
+        // the body falls from rest by itself.
         else if m.mode == MoveMode::Hover && m.apply {
             player.hover_launch = true;
         }
-        // A revoke ends a flight in progress before its ack (`0x6ef860` event 48, StopFlying
+        // A revoke ends a flight in progress before its ack (`0x6ef860` event 48, the flight stop
         // `0x98c240`), with no `CMSG_MOVE_SET_FLY` of its own.
         else if m.mode == MoveMode::CanFly && !m.apply && player.flying {
             super::flight::land(player);
         }
-        // Gravity off stops a fall where it is (`0x6eba60`: StopFalling, then the landing); on
+        // Gravity off stops a fall where it is (`0x6eba60`: the fall stop, then the landing); on
         // again, an unsupported body falls by itself.
         else if m.mode == MoveMode::DisableGravity && m.apply {
             player.vel_y = 0.0;
@@ -308,8 +308,8 @@ pub(super) fn apply_server_moves(
     // `MovementInfo`.
     //
     // Two in one frame collapse to the last, where the reference queues both: the motion is the
-    // same, as the reference replaces the velocity, but the first ack is lost
-    // (`OnFailedToAckChange`).
+    // same, as the reference replaces the velocity, but the first ack is lost (the reference's
+    // failed-ack path).
     for k in knock_msgs.read() {
         player.knockback = Some(super::state::PendingKnockback {
             guid: k.guid,
@@ -416,9 +416,9 @@ fn snap_near_teleport(player: &mut Player, cam_yaw: &mut f32, t: &TeleportMessag
     player.ride_abort = true;
 }
 
-/// Our body's create-block mover state, forced over a zeroed word (`SetUpdateInfo` `0x6f1520`,
-/// `0x77fffdff` with force set): the modes, root included, swimming, flight, the gait and the
-/// pitch, so a login mid-flight is flying from its first frame.
+/// Our body's create-block mover state, forced over a zeroed word (the create block's movement
+/// apply, `0x6f1520`, `0x77fffdff` with force set): the modes, root included, swimming, flight, the
+/// gait and the pitch, so a login mid-flight is flying from its first frame.
 fn apply_self_create(player: &mut Player, c: &SelfCreateMover) {
     player.modes.merge_from_wire(c.flags);
     player.modes.rooted = c.flags & move_flags::ROOT != 0;
@@ -428,9 +428,8 @@ fn apply_self_create(player: &mut Player, c: &SelfCreateMover) {
     player.mover_pitch = c.pitch;
 }
 
-/// The reference's masked merge of a server-authored `MOVEMENTFLAGS` (:
-/// `old ^ ((old ^ wire) & 0x75a07dff)`). `ON_TRANSPORT` is outside the mask, so a server pose never
-/// boards or deboards us.
+/// The reference's masked merge of a server-authored `MOVEMENTFLAGS` (`old ^ ((old ^ wire) &
+/// 0x75a07dff)`). `ON_TRANSPORT` is outside the mask, so a server pose never boards or deboards us.
 pub(super) fn merge_server_flags(local: u32, wire: u32) -> u32 {
     move_flags::merge_server_authored(local, wire)
 }

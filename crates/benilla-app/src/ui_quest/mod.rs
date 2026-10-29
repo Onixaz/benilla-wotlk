@@ -36,18 +36,18 @@ pub(crate) struct QuestGiver {
     /// The panel's source: an NPC, a GameObject, a quest-starter item or a sharing player.
     pub(crate) npc: Option<u64>,
     pub(crate) view: Option<QuestView>,
-    /// The reference's latch, written by DETAILS and OFFER_REWARD and by REQUEST_ITEMS'
-    /// `closeOnCancel`, and zeroed only on world enter. Non-zero turns a plain unit's decline into
-    /// the silent teardown ([`decline_leg`]). vmangos sends 1 on every DETAILS and OFFER_REWARD;
-    /// REQUEST_ITEMS carries 1 on a single-quest auto-open and 0 on `COMPLETE_QUEST`
-    /// (`QuestHandler.cpp:390-395`).
+    /// The reference's close-on-cancel latch, written by DETAILS and OFFER_REWARD and by
+    /// REQUEST_ITEMS' `closeOnCancel`, and zeroed only on world enter. Non-zero turns a plain
+    /// unit's decline into the silent teardown ([`decline_leg`]). vmangos sends 1 on every DETAILS
+    /// and OFFER_REWARD; REQUEST_ITEMS carries 1 on a single-quest auto-open and 0 on
+    /// `COMPLETE_QUEST` (`QuestHandler.cpp:390-395`).
     pub(crate) close_on_cancel: u32,
     /// The reference's already-acted latch, set by `AcceptQuest` and by a re-opening
     /// `DeclineQuest`, which keeps the panel up; both refuse while it is set until a panel publish
     /// clears it ([`Self::open`]).
     pub(crate) acted: bool,
-    /// The reference's: the chosen reward's item id, latched by `GetQuestReward` for the turn-in's
-    /// item line, and zeroed by a panel publish, world enter and the turn-in.
+    /// The reference's chosen-reward cell: the chosen reward's item id, latched by `GetQuestReward`
+    /// for the turn-in's item line, and zeroed by a panel publish, world enter and the turn-in.
     pub(crate) chosen_reward: u32,
     /// Per-guid dialog status from `SMSG_QUESTGIVER_STATUS`, the `!`/`?` marker's value.
     statuses: HashMap<u64, u32>,
@@ -239,8 +239,8 @@ impl Plugin for UiQuestPlugin {
     }
 }
 
-/// Whether the minimap tracks low-level quests (`IsTrackingTrivialQuests 0x57bf30`), which shows
-/// the low-level quest markers over their givers.
+/// Whether the minimap tracks low-level quests (`0x57bf30`), which shows the low-level quest
+/// markers over their givers.
 #[derive(Resource, Default, PartialEq)]
 pub(crate) struct TrivialQuestTracking(pub(crate) bool);
 
@@ -591,8 +591,9 @@ enum DeclineLeg {
 /// guid shape. In order:
 ///
 /// 1. the already-acted latch set, or the source unresolvable: nothing;
-/// 2. a unit with the gossip NPC flag: `CMSG_GOSSIP_HELLO`, whatever says;
-/// 3. an item, a player, or a non-zero: the teardown;
+/// 2. a unit with the gossip NPC flag: `CMSG_GOSSIP_HELLO`, whatever the close-on-cancel latch
+///    says;
+/// 3. an item, a player, or a non-zero close-on-cancel latch: the teardown;
 /// 4. a GameObject: its interact virtual `[vtbl+0x60]`, whose override is untraced, so it takes the
 ///    teardown here;
 /// 5. any other unit: `CMSG_QUESTGIVER_HELLO`.
@@ -730,7 +731,7 @@ fn drain_quest(
                         ));
                     }
                     // The reference closes on the click, not on an answer: it sends `0x189`, then
-                    // clears with, firing `QUEST_FINISHED`.
+                    // clears with the teardown, firing `QUEST_FINISHED`.
                     giver.clear();
                 }
             }
@@ -948,7 +949,7 @@ mod tests {
         assert_eq!(giver.status(0x99), Some(dialog_status::AVAILABLE));
     }
 
-    /// Reasons 2 to 5 sit's jump table and still take its default.
+    /// Reasons 2 to 5 sit inside the handler's jump table and still take its default.
     #[test]
     fn questgiver_invalid_keys_match_the_reference_table() {
         assert_eq!(questgiver_invalid_key(13), "ERR_QUEST_ALREADY_ON");
@@ -1046,8 +1047,9 @@ mod tests {
 
     // ── DeclineQuest and CloseQuest ──────────────────────────────────────────────
 
-    /// Run `lua` on a window open on `giver` with the reference at `close_on_cancel` and return the
-    /// sends; `npc_flags` streams the giver with those flags, `None` leaves it unstreamed.
+    /// Run `lua` on a window open on `giver` with the close-on-cancel latch at `close_on_cancel`
+    /// and return the sends; `npc_flags` streams the giver with those flags, `None` leaves it
+    /// unstreamed.
     fn drain_after(
         giver: u64,
         npc_flags: Option<u32>,
@@ -1145,7 +1147,7 @@ mod tests {
         );
     }
 
-    /// The reference's one reader.
+    /// The close-on-cancel latch's one reader.
     #[test]
     fn a_non_zero_latch_suppresses_a_plain_units_reopen() {
         let sent = drain_after(NPC, Some(0), 1, "DeclineQuest()");

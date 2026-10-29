@@ -213,7 +213,7 @@ pub(super) fn reward_spell_returns(
     ]))
 }
 
-/// A reward spell's link (`CGTooltip::GetSpellLink` `0x61e4b0`), nil for none or for an id with no
+/// A reward spell's link (the tooltip's spell link, `0x61e4b0`), nil for none or for an id with no
 /// `Spell.dbc` row.
 pub(super) fn reward_spell_link(
     lua: &Lua,
@@ -396,8 +396,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     fn trivial(row: Option<&GossipQuestRow>, model: &crate::script::Model) -> bool {
         quest_is_trivial(level(row), model.player_req.level)
     }
-    // `GetActiveTitle` (`0x58bed0`): the title, then `isComplete` as a boolean
-    // (`IsQuestCompleteAt` `0x58bcb0`).
+    // `GetActiveTitle` (`0x58bed0`): the title, then `isComplete` as a boolean (the completion
+    // test, `0x58bcb0`).
     install_row(
         lua,
         "GetActiveTitle",

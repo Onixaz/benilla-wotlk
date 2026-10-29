@@ -247,7 +247,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // GetEffectiveScale(): parent scale times own scale, from a root of 1: `uiScale` is applied at
     // the raster seam (a screen `768/uiScale` units tall), so every coordinate Lua sees,
     // `GetCursorPosition()` included, is already in UI units. The reference instead makes `uiScale`
-    // `UIParent`'s own scale (the reference calls `SetScale`), so there
+    // `UIParent`'s own scale (its UI setup calls `SetScale`), so there
     // `UIParent:GetEffectiveScale()` answers it.
     m.set(
         "GetEffectiveScale",
@@ -288,7 +288,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 
 /// Resolve the layout now if anything moved, as the reference answers a geometry query against
 /// current layout; a settled tree costs one epoch compare. Deviation: `OnSizeChanged` fires at the
-/// next `UiScript::resolve`, a tick after the reference's (`ApplyRect`), because running Lua
+/// next `UiScript::resolve`, a tick after the reference's (in its rect apply), because running Lua
 /// handlers inside a binding risks a borrow panic or unbounded recursion.
 pub(in crate::script) fn settle(lua: &Lua) {
     let mut model = crate::script::model_mut_of(lua);

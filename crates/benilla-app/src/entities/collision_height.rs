@@ -1,4 +1,4 @@
-//! The per-unit collision height ([`CollisionHeight`]), the reference's `CMovement+0xb4`, derived
+//! The per-unit collision height ([`CollisionHeight`]), the movement object's `+0xb4`, derived
 //! from the unit's display id and stamped on every streamed entity.
 
 use bevy::prelude::*;
@@ -7,11 +7,11 @@ use crate::net::{NetEntity, ObjectStore};
 
 use super::Creatures;
 
-/// A unit's collision height in yards, the reference's `CMovement+0xb4`: the `h` whose fractions
+/// A unit's collision height in yards, the movement object's `+0xb4`: the `h` whose fractions
 /// are the depth lines (swim `0.75·h`, splash `0.4·h`, foam gate `max(2·h, 1.0)`). It is
 /// `CreatureModelData.collisionHeight`, the MD20 collision box's Z extent in model units, times
-/// `k = max(SCALE_X, CreatureDisplayInfo.creatureModelScale)`: the reference passes the larger,
-/// which stores the product, and the unit model build runs it for every unit.
+/// `k = max(SCALE_X, CreatureDisplayInfo.creatureModelScale)`: the reference passes the larger to
+/// the setter that stores the product, and the unit model build runs it for every unit.
 ///
 /// The `max` is a floor, not a second multiplier: `SCALE_X` already folds the DBC scales in
 /// (vmangos `Unit.cpp:9579`) and is the whole render scale; it bites only where a shrink aura or a
@@ -22,8 +22,8 @@ use super::Creatures;
 pub(crate) struct CollisionHeight(pub(crate) f32);
 
 impl Default for CollisionHeight {
-    /// The `CMovement` ctor's default, never `0.0`, at which every depth line collapses and the
-    /// unit swims on dry land.
+    /// The movement object's constructor default, never `0.0`, at which every depth line collapses
+    /// and the unit swims on dry land.
     fn default() -> Self {
         Self(crate::player::DEFAULT_COLLISION_HEIGHT)
     }

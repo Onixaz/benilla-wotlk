@@ -16,7 +16,8 @@ use crate::ui_chat::commands::{Command, SlashCommands, SlashIndex};
 /// Arm B's literal, searched case-sensitively anywhere in the line.
 const CAST_BY_NAME_CALL: &str = "CastSpellByName(";
 
-/// Which of the reference's arms matched: an unresolved name stores -1 from arm A and 0 from arm B.
+/// Which of the bound-spell scan's arms matched: an unresolved name stores -1 from arm A and 0 from
+/// arm B.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CastArm {
     /// A `/cast`-alias line (`SLASH_CAST%d`).

@@ -1,4 +1,4 @@
-//! StatusBar behaviour (`LoadXML`).
+//! StatusBar behaviour, as its XML load sets it up.
 
 use super::common::script;
 use crate::script::*;
@@ -32,7 +32,7 @@ fn statusbar_value_clamps_and_minmax_swaps() {
         assert(b:GetValue() == 100, "clamped to max")
         b:SetValue(-5)
         assert(b:GetValue() == 0, "clamped to min")
-        -- A reversed pair is swapped (LoadXML the reference's behavior, one rule for both paths).
+        -- A reversed pair is swapped (the XML load's behavior, one rule for both paths).
         b:SetMinMaxValues(80, 20)
         local mn, mx = b:GetMinMaxValues()
         assert(mn == 20 and mx == 80, "reversed pair swapped")

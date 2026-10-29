@@ -50,8 +50,8 @@ impl Default for UiGammaLane {
 
 /// The ramp exponent the display shows, from [`GammaRows`] and the window's mode. The reference's
 /// `Gamma` callback (`0x401a30`) hands the device `pow(i / 255, gamma)` only while `DesktopGamma`
-/// reads 0, and the device uploads it only when fullscreen (`CGxDeviceD3d::DeviceSetGamma`, its
-/// `IDevIsWindowed` test); `DesktopGamma` 1 puts the desktop's own ramp back (`0x401a80`). There
+/// reads 0, and the device uploads it only when fullscreen (the D3D device's gamma set, its
+/// windowed test); `DesktopGamma` 1 puts the desktop's own ramp back (`0x401a80`). There
 /// is no other whole-frame grade and no `Brightness` or `Contrast` CVar.
 ///
 /// The curve applies in the compositor rather than through the OS ramp: [`UiGammaNode`] raises the

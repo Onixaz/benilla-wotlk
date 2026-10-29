@@ -1,13 +1,12 @@
 //! Vocal UI error speech: the lines your character says when the client refuses something ("Not
-//! enough mana."). The reference's `SndInterfacePlayVocalUISound`, whose sole caller is
-//! `CGGameUI::DisplayError`, reads a table that the reference builds once at the local player's
-//! world entry.
+//! enough mana."). The reference's vocal UI-sound play, whose sole caller is the error display,
+//! reads a table built once at the local player's world entry.
 //!
 //! ## The table
 //!
 //! `2 × 0x44` slots indexed `sex * 0x44 + line`, filled for the player's race from
 //! `VocalUISounds.dbc` ([`benilla_formats::VocalUiSound`]): the ordinary kit, the annoyed kit and
-//! the annoyed kit's variation count (`(kit) + 0x94`, the kit's
+//! the annoyed kit's variation count (the kit row's `+0x94`, the kit's
 //! [`benilla_formats::SoundKit::files`]`.len()`). Both kits resolve at build time here; the
 //! reference resolves the ordinary one at play time and treats a miss as not played, so the 281
 //! empty ids of 1 066 stay silent without a warning per refusal.
@@ -64,8 +63,8 @@ struct Slot {
 #[derive(Resource)]
 pub(crate) struct VocalUiSounds(pub(crate) VocalUiSoundCatalog);
 
-/// The table and the escalation globals, `s_lastPlayedVocalUISound`, armed and the reference the
-/// counter, together because the reference resets all three.
+/// The table and the escalation globals, the last line played, the armed flag and the counter,
+/// together because the reference's table build resets all three.
 #[derive(Resource)]
 pub(crate) struct VocalSpeech {
     /// The race the table was built for.

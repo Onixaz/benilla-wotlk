@@ -32,8 +32,9 @@ impl Element {
             .is_some_and(|v| v.eq_ignore_ascii_case("true"))
     }
 
-    /// A flag read by `StringToBOOL` (`0x815400`), `None` when absent or empty, as the reference
-    /// skips the setter then (`<EditBox autoFocus="false">`, `password="1"`).
+    /// A flag read by the reference's string-to-boolean parse (`0x815400`), `None` when absent or
+    /// empty, as the reference skips the setter then (`<EditBox autoFocus="false">`,
+    /// `password="1"`).
     pub fn attr_bool_opt(&self, name: &str) -> Option<bool> {
         self.attr(name)
             .filter(|v| !v.is_empty())
@@ -49,8 +50,9 @@ impl Element {
     }
 }
 
-/// `StringToBOOL` (`0x815400`): the first character decides (`0`, `F`, `N` false; a digit, `T`, `Y`
-/// true), else `off`/`disabled` and `on`/`enabled`, case-folded; anything else is false.
+/// The reference's string-to-boolean parse (`0x815400`): the first character decides (`0`, `F`,
+/// `N` false; a digit, `T`, `Y` true), else `off`/`disabled` and `on`/`enabled`, case-folded;
+/// anything else is false.
 pub fn string_to_bool(v: &str) -> bool {
     match v.as_bytes().first() {
         Some(b'0' | b'F' | b'N' | b'f' | b'n') => false,
@@ -322,9 +324,9 @@ fn element_from_node(node: roxmltree::Node) -> Element {
 /// Resolve `inherits` into a materialized [`Element`]: the named template, itself expanded first,
 /// then the element on top. Children are the template's then the element's; the element's
 /// attributes override or extend the template's (case-insensitively), all but `name`, `id` and
-/// `virtual`, which are the instance's own: `FrameXML_CreateFrame` (`0x812fa0`) runs `PreLoadXML`
-/// (`0x490360`, `0x4814f0` for a region), which reads `name` and `id`, on the instance node alone,
-/// then `LoadXML` walks the templates. A cycle is skipped with a warning.
+/// `virtual`, which are the instance's own: the XML frame create (`0x812fa0`) runs the pre-load
+/// pass (`0x490360`, `0x4814f0` for a region), which reads `name` and `id`, on the instance node
+/// alone, then the XML load walks the templates. A cycle is skipped with a warning.
 pub fn expand(
     element: &Element,
     templates: &HashMap<&str, &Element>,
@@ -457,7 +459,7 @@ pub const DEFAULT_PARENT_NAME: &str = "Top";
 /// `$parent` substitution: a leading `$parent`, case-insensitive and the only such token, becomes
 /// `parent_name`, the rest appended verbatim. `parent_name` is the already-resolved name of the
 /// nearest named ancestor (the `+0x9c` walk), else [`DEFAULT_PARENT_NAME`], so nested `$parent`
-/// names compose. The reference calls it from two sites only, in `SetName` and in the layout
+/// names compose. The reference calls it from two sites only, in the name setter and in the layout
 /// resolver: a name and an anchor's `relativeTo` (XML, `SetPoint` or `SetAllPoints`) expand, and
 /// `parent=` never does.
 pub fn resolve_name(raw: &str, parent_name: &str) -> String {
@@ -686,8 +688,8 @@ print(x)</Script>
         );
     }
 
-    /// `PreLoadXML` (`0x490360`) reads `name` and `id` off the instance node alone, so an unnamed
-    /// child built from a named template stays unnamed and its `$parent` children take the
+    /// The pre-load pass (`0x490360`) reads `name` and `id` off the instance node alone, so an
+    /// unnamed child built from a named template stays unnamed and its `$parent` children take the
     /// nearest named ancestor, not the template's name.
     #[test]
     fn an_instance_takes_neither_name_id_nor_virtual_from_its_template() {

@@ -92,8 +92,8 @@ type Edge = (u32, u32);
 /// The route from `from` to `to` through known nodes, minimizing summed distance with the fare
 /// carried along, as the reference's relaxation does; ties go to fewer hops. `dist` is the per-edge
 /// metric: `build_nodes` passes the straight 3-D distance between the two nodes, where the
-/// reference's sums the length of the path's own points. `from` counts as known: the server opens
-/// the map only on a visited node. The chain runs `from` to `to`.
+/// reference sums the length of the path's own points. `from` counts as known: the server opens the
+/// map only on a visited node. The chain runs `from` to `to`.
 fn shortest_route(
     known: &TaxiMask,
     edges: impl Fn(u32) -> Vec<Edge>,
@@ -168,7 +168,7 @@ pub(super) struct ResolvedTaxiNode {
 pub(super) struct TaxiRouteCache(pub(super) Vec<ResolvedTaxiNode>);
 
 /// The listed nodes: every known node on the current node's continent, which the reference caches
-/// off the packet (`DAT_00bb4a80+4`), by id. The current node is `Current`, a routable one
+/// off the packet (the node table's `+4`), by id. The current node is `Current`, a routable one
 /// `Reachable` with its fare and route segments, and an unroutable one is left out, where the
 /// reference keeps it typed `NONE`, which stock `TaxiFrame.lua` hides; its `DISTANT` type is
 /// never produced. Returns the continent's map id, the Lua nodes and their routes, in one order.
@@ -255,9 +255,9 @@ pub(super) fn build_nodes(
 }
 
 /// The message an `SMSG_ACTIVATETAXIREPLY` code shows: the reference's handler closes the map on 0,
-/// shows `[ + 4*code]` through `DisplayError` for 1-12, and does nothing from 13 up. The message
-/// row picks the surface, the yellow info line for seven of the twelve, and the sound:
-/// `ERR_TAXINOTENOUGHMONEY` speaks line `0x36`.
+/// shows the code's row of its message table through the error display for 1-12, and does nothing
+/// from 13 up. The message row picks the surface, the yellow info line for seven of the twelve, and
+/// the sound: `ERR_TAXINOTENOUGHMONEY` speaks line `0x36`.
 pub(super) fn taxi_error_key(code: u32) -> Option<&'static str> {
     Some(match code {
         taxi_reply::OK => return None,

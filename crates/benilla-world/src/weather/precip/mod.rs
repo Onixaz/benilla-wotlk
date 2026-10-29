@@ -70,9 +70,9 @@ const fn pool_bound(kind: WeatherKind) -> usize {
 const POOL: usize = pool_bound(WeatherKind::Snow);
 // The density gain `K` in `rate = K·P·grade` is `WeatherState::density_gain()`, the
 // `weatherDensity` table (0.33, 0.66, 1.0 for settings 0 to 3).
-/// Rain population `P`: fixed-function6500, shader35000.
+/// Rain population `P`: fixed-function 6500, shader 35000.
 const RAIN_P: f32 = if SHADER_LEG { 35000.0 } else { 6500.0 };
-/// Snow population `P`: fixed-function1300, shader14000.
+/// Snow population `P`: fixed-function 1300, shader 14000.
 const SNOW_P: f32 = if SHADER_LEG { 14000.0 } else { 1300.0 };
 /// Deviation: the drop rate is scaled to a 30 fps client, the frame rate the reference's look was
 /// matched at, because the reference budgets `min(dt, 1/60)·rate` and drops the remainder, so it

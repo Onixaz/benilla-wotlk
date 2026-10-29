@@ -72,9 +72,9 @@ impl SheathSwap {
 /// arming gives it the arm outright.
 const SHEATH_OVERLAY_WEIGHT: f32 = 8.0;
 
-/// A sheath state change, the client's one setter
-/// `SetSheatheState(newState, bInstant, bFireEvent)`, which `drive_animations` executes. Of its 24
-/// call sites only the manual `ToggleSheath` passes `bInstant = 0`: every other change snaps.
+/// A sheath state change, the client's one sheath-state setter (`newState, bInstant, bFireEvent`),
+/// which `drive_animations` executes. Of its 24 call sites only the manual `ToggleSheath` passes
+/// `bInstant = 0`: every other change snaps.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct SheathRequest {
     pub(crate) entity: Entity,
@@ -86,8 +86,8 @@ pub(crate) struct SheathRequest {
 
 /// The state a Z press asks for next, or `None` where the reference makes no call (`ToggleSheath`,
 /// over the committed state `[unit+0xd40]`): melee, then ranged, then stowed, each gated on what is
-/// worn (`GetWeapon(0/1/2)`). Deviation: the class lookup that can also clear the ranged candidate
-/// (meaning inferred) is skipped, because a class failing it cannot equip one.
+/// worn in each slot. Deviation: the class lookup that can also clear the ranged candidate (meaning
+/// inferred) is skipped, because a class failing it cannot equip one.
 pub(crate) fn toggle_sheath_next(cur: u8, (melee, ranged): (bool, bool)) -> Option<u8> {
     match cur {
         0 if melee => Some(1),
@@ -127,7 +127,7 @@ fn ranged_arm(w: &Wielded) -> Option<usize> {
 /// it; `None` releases the arm to its idle.
 fn draw_leg(arm: usize, cur: u8, w: &Wielded) -> Option<ArmLeg> {
     let (item, sheath) = match (cur, arm) {
-        // The drawers read `GetWeapon(slot, 0)`: a disarmed hand has nothing to draw.
+        // The drawers take the weapon getter's held read: a disarmed hand has nothing to draw.
         (1, ARM_RIGHT) => (w.armed_main(), w.main_sheath),
         (1, ARM_LEFT) => (w.armed_off(), w.off_sheath),
         // The ranged weapon draws on exactly one arm; the other has no leg at all.
@@ -326,7 +326,7 @@ pub(super) fn advance_sheath_ceremony(
         let (node, drawing) = (leg.node, leg.drawing);
         player.stop(node);
         // Phase 2: a finished stow hands the arm to its drawer; a finished draw releases it to its
-        // idle (`(subSeq, -1, …)`).
+        // idle (op4 on the sub-sequence, with no id).
         swap.arms[arm] = (!drawing)
             .then(|| sheath_phase2(arm, prev, cur, &w))
             .flatten()

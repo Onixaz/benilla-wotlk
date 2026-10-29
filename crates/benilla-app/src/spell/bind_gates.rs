@@ -1,6 +1,6 @@
-//! `BindTarget`'s gates: the five silent exits a unit meets before any relation arm. A refused unit
-//! binds nothing, so `ArmCast` falls to its next candidate, the player behind `autoSelfCast`, and
-//! then to the enemy-word refusal or the targeting cursor. The read-only mirror
+//! The target bind's gates: the five silent exits a unit meets before any relation arm. A refused
+//! unit binds nothing, so the press falls to its next candidate, the player behind `autoSelfCast`,
+//! and then to the enemy-word refusal or the targeting cursor. The read-only mirror
 //! `SpellCanTargetUnit` runs the same five, so the press, the cursor's click, `SpellTargetUnit` and
 //! the hover verdict share this one gate through [`super::cast_target::unit_binds`].
 
@@ -320,7 +320,7 @@ mod tests {
         }
 
         /// A player-controlled unit of faction template 1 (`0x8`), so [`fx::factions`]' Human pair
-        /// is friendly to itself and `CanAssist` passes on its player-controlled arm. `extra`
+        /// is friendly to itself and the assist check passes on its player-controlled arm. `extra`
         /// overrides a default; health is 100 unless it says otherwise.
         fn player(extra: &[(u16, u32)]) -> ObjectStore {
             let mut fields =

@@ -951,7 +951,7 @@ fn the_chat_menu_builds_its_rows_on_the_references_kit() {
 }
 
 /// The plate rests at the window's own alpha, the reference's default `0x28` of 255
-/// (`ChatWindowInfo::Init`, `0x501800`), and `FCF_OnUpdate` fades it to `DEFAULT_CHATFRAME_ALPHA`
+/// (`0x501800`), and `FCF_OnUpdate` fades it to `DEFAULT_CHATFRAME_ALPHA`
 /// and back on every hover (`FloatingChatFrame.lua:994-1051`), the quad the renderer gets included.
 #[test]
 fn a_windows_plate_fades_in_on_every_hover() {

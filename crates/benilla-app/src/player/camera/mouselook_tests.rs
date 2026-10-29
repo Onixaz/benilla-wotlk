@@ -198,7 +198,7 @@ fn mouselook_stop_ends_the_session() {
 }
 
 /// CustomNameplates' steer: a right press a plate took calls `MouselookStart`, and the button's
-/// release ends it (routes it to `TurnOrActionStop`) without a world click.
+/// release ends it (the release routes to `TurnOrActionStop`) without a world click.
 #[test]
 fn the_right_release_ends_a_mouselook_its_press_started_on_the_ui() {
     let mut w = world(true);

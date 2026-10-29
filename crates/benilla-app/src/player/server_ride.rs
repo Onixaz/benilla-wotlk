@@ -24,11 +24,11 @@ fn ride_ground(world: &benilla_world::collision::WorldCollision, pos: Vec3) -> O
 }
 
 /// The Z the ride stands at: the ground under the spline's XZ, not its vertical. The reference
-/// treats every mover alike: the reference hands the spline's displacement, which zeroes the
-/// vertical for the reference's swept resolve. It keeps the vertical for a flying spline
-/// (`MI.flags & 0x200`) and a swimmer (`[CMovement+0x40] & 0x200000`); the other bit it tests,
-/// `0x800`, has no counterpart, as a knockback is not a spline here. Hover and water walking come
-/// from our [`super::state::MoveModes`], not the wire's mode word.
+/// treats every mover alike: its spline step hands the displacement to a filter that zeroes the
+/// vertical for the swept resolve. The filter keeps the vertical for a flying spline (`MI.flags &
+/// 0x200`) and a swimmer (`[movement+0x40] & 0x200000`); the other bit it tests, `0x800`, has no
+/// counterpart, as a knockback is not a spline here. Hover and water walking come from our
+/// [`super::state::MoveModes`], not the wire's mode word.
 fn ride_z(
     player: &Player,
     points: &benilla_world::world_point::WorldPoint,
@@ -120,8 +120,8 @@ pub(super) fn drive_self_ride(
                     spline.duration.as_millis(),
                 );
                 // Each spline sets the walk gait from its `SPLINEFLAG_RUNMODE`, inverted: the
-                // reference passes the bit to `SetRunMode`, whose argument is run. Once per spline,
-                // into the keybind's latch.
+                // reference passes the bit to its run-mode setter, whose argument is run. Once per
+                // spline, into the keybind's latch.
                 player.walking = !spline.run_mode;
                 super::move_trace::gait("spline", player.walking, false, player.modes.rooted, true);
             }
@@ -133,8 +133,9 @@ pub(super) fn drive_self_ride(
                 &player,
                 &points,
                 // A deck path grounds like any other (the transport guid is in neither the
-                // reference's predicate nor the reference's dispatch); `transport::compose_riders`
-                // has already composed the world pose, and the probe admits GameObject meshes.
+                // reference's vertical filter nor its swept-resolve dispatch);
+                // `transport::compose_riders` has already composed the world pose, and the probe
+                // admits GameObject meshes.
                 spline.grounded,
                 transform.translation,
                 floor,

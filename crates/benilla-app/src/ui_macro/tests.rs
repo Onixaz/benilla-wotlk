@@ -234,7 +234,7 @@ fn either_line_ending_splits_a_body() {
 #[test]
 fn every_macro_chooser_icon_resolves_in_the_client_archives() {
     /// A stock 12340 install: `INV_Misc_QuestionMark`, then 1103 distinct `Spell_`/`Ability_` names
-    /// under `Interface\Icons\` (`CGUIMacros::LoadIcons`, `0x565840`).
+    /// under `Interface\Icons\` (the macro icon build, `0x565840`).
     const CHOOSER_ICONS_12340: usize = 1104;
 
     let data = benilla_formats::wow_data_or_skip!();

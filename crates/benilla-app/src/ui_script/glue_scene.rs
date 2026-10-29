@@ -42,7 +42,7 @@ fn stock_preview(
         );
     }
     // The character and the facing are the select frame's scene's and the create frame's
-    // (`m_charCustomizeFrame`, the character attached at `0x4e0040`) alone.
+    // (its customize frame, the character attached at `0x4e0040`) alone.
     let (look, yaw) = if pane.select {
         (
             standing.map(|c| GlueLook::Select(SelectLook::from(c))),

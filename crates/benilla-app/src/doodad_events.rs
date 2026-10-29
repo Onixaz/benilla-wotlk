@@ -2,13 +2,12 @@
 //! [`crate::creature_anim`] and [`crate::go_anim`]: a lamp's hum or a campfire's crackle is a
 //! `$DSL`/`$DSO`/`$SND` key on the doodad's own idle sequence.
 //!
-//! The reference arms every placed doodad but scans an event track only from the per-frame M2
-//! worklist `[CM2Scene+0x20]`, refilled each frame through the reference by the terrain doodad
-//! drain with what the scene-walk cull passed: frustum, horizon occlusion, and a distance fade
-//! above zero. A doodad outside that set fires nothing and holds none of the emitter pool's 32
-//! entries; scanning every resident doodad would let far, inaudible ones take the pool's channels
-//! by claim order. A bind-posed model with a sound marker gets a clock-only host
-//! (`doodad_anim::spawn_anim_host`).
+//! The reference arms every placed doodad but scans an event track only from the M2 scene's
+//! per-frame worklist (`+0x20`), which the terrain doodad drain refills each frame with what the
+//! scene-walk cull passed: frustum, horizon occlusion, and a distance fade above zero. A doodad
+//! outside that set fires nothing and holds none of the emitter pool's 32 entries; scanning every
+//! resident doodad would let far, inaudible ones take the pool's channels by claim order. A
+//! bind-posed model with a sound marker gets a clock-only host (`doodad_anim::spawn_anim_host`).
 //!
 //! A registration is released only by `$DSE`, a `$DSL` naming another id, or the doodad's teardown,
 //! so a campfire behind the camera keeps sounding.

@@ -637,8 +637,8 @@ mod tests {
         assert!(!found[0].1, "…without arming an appear fade");
     }
 
-    /// The reference has one instance alpha per `CM2Model`, billboard batches included. Asserted
-    /// on the card, not the anchor, which has no geometry.
+    /// The reference has one instance alpha per model instance, billboard batches included.
+    /// Asserted on the card, not the anchor, which has no geometry.
     #[test]
     fn a_billboard_card_joins_the_units_appear_fade() {
         const SINCE: f32 = 5.0;

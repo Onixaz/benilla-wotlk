@@ -474,7 +474,7 @@ impl StaticGx {
             return false;
         }
         // WMO group batches light on the FFP N·L and skip this. ADT doodads and MODD props are one
-        // class (`CMapDoodadDef`), `Matte` at 1.0: the 2.5 is the entity light node's, which
+        // class (the doodad placement), `Matte` at 1.0: the 2.5 is the entity light node's, which
         // neither has. `Shaded` reads 0.5; `Lit` has no producer here and is a backstop.
         let (shade_lit, matte) = match (&b.wmo, &b.prop, b.shade) {
             (Some(_), _, _) => (false, false),

@@ -2,7 +2,7 @@
 //! Every sentence is a key the builder itself names (the string pointers reachable), never a match
 //! on English: `ITEM_REQ_SKILL` and the three `LOCKED_WITH_*` keys all read "Requires %s" in enUS
 //! and differ elsewhere. A key the player's `GlobalStrings.lua` lacks emits no line, as in the
-//! reference, whose `FrameScript_GetText` returns the empty string and whose `AddLine` drops an
+//! reference, whose global-string lookup returns the empty string and whose `AddLine` drops an
 //! empty row uncounted.
 
 use mlua::{Lua, Table};
@@ -93,7 +93,7 @@ pub(in crate::script) enum Sell {
 }
 
 impl Sell {
-    /// A template with no link info, the `stackCount` 1 `ItemLinkInfo::Clear` leaves.
+    /// A template with no link info, the `stackCount` 1 the link info's clear leaves.
     pub(in crate::script) const ONE: Self = Self::Block {
         stack: 1,
         max: None,
@@ -130,7 +130,7 @@ pub(super) fn render_view(
             .cvars
             .get("showitemlevel")
             .is_some_and(|c| c.value.trim().parse::<f64>().is_ok_and(|n| n != 0.0));
-        // The known bits (`CGUnit_C::IsSpellKnown` `0x7260e0`): a mount or companion counts.
+        // The known bits (the unit's spell-known test, `0x7260e0`): a mount or companion counts.
         let knows = |id: u32| model.spellbook.named().any(|s| s.spell_id == id);
         let known = v.required_spell != 0 && knows(v.required_spell);
         // A taught spell (trigger 6, learn) the player knows: the always-red ITEM_SPELL_KNOWN.
@@ -176,7 +176,7 @@ pub(super) fn render_view(
         }
     };
 
-    // The gray header (`[arg+0x18]`) is all a compare adds: the only two of the reference's 31 call
+    // The gray header (`[arg+0x18]`) is all a compare adds: the only two of the builder's 31 call
     // sites passing p5 pass p4 = 0, so none is cut.
     if flags.currently_equipped {
         keyed("CURRENTLY_EQUIPPED", &[], GRAY, false)?;
@@ -420,8 +420,8 @@ pub(super) fn render_view(
                 false,
             )?;
         } else {
-            // The builder's order, not field order: the reference walks 1..5 reading school 6 for
-            // 1, so Arcane comes first and Holy is displaced rather than tested.
+            // The builder's order, not field order: the builder walks 1..5 reading school 6 for 1,
+            // so Arcane comes first and Holy is displaced rather than tested.
             const RESIST_EMIT_ORDER: [u32; 5] = [6, 2, 3, 4, 5];
             for school in RESIST_EMIT_ORDER {
                 let r = v.resistances[school as usize - 1];
@@ -660,8 +660,8 @@ pub(super) fn render_view(
             }
         }
     }
-    // p4's early return: compact falls through, lays out and returns, so nothing from the reference
-    // on runs: flavor text, creator, open or read line, money.
+    // p4's early return: compact falls through, lays out and returns, so nothing from the rest of
+    // the builder runs: flavor text, creator, open or read line, money.
     if flags.name_only {
         return Ok(());
     }
@@ -779,8 +779,8 @@ fn enchant_time_left(name: &str, ms: u64, get: &dyn Fn(&str) -> Option<String>) 
     Some(fill(&template, &[Arg::S(name), Arg::D(i64::from(n))]))
 }
 
-/// The reference's unit and count: the largest unit that fits, the count ceiled for days, hours and
-/// minutes (all seven callers pass `roundUp` 1) and truncated for seconds.
+/// The reference's time-text unit and count: the largest unit that fits, the count ceiled for days,
+/// hours and minutes (all seven callers pass `roundUp` 1) and truncated for seconds.
 fn time_bucket(ms: u64) -> (&'static str, u32) {
     const SEC: u64 = 1_000;
     const MIN: u64 = 60 * SEC;
@@ -796,8 +796,8 @@ fn time_bucket(ms: u64) -> (&'static str, u32) {
     (suffix, u32::try_from(n).unwrap_or(u32::MAX))
 }
 
-/// `ITEM_SPELL_CHARGES` or its `_P1` twin, pushed for the enchant suffix and the reference for the
-/// charges line; zero charges have no phrase.
+/// `ITEM_SPELL_CHARGES` or its `_P1` twin, pushed for the enchant suffix and for the charges line;
+/// zero charges have no phrase.
 fn charges_phrase(n: u32, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     if n == 0 {
         return None;
@@ -845,8 +845,8 @@ mod tests {
         // Days ceil.
         assert_eq!(t(86_400_000).as_deref(), Some("<Rockbiter :: 1 D>"));
         assert_eq!(t(86_400_001).as_deref(), Some("<Rockbiter :: 2 DD>"));
-        // The app drops an expired timer, but zero must not panic; it takes the plural arm,
-        // `GetPluralIndex`'s rule.
+        // The app drops an expired timer, but zero must not panic; it takes the plural arm, the
+        // reference's plural-index rule.
         assert_eq!(t(0).as_deref(), Some("<Rockbiter :: 0 S>"));
     }
 

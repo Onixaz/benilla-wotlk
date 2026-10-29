@@ -91,9 +91,9 @@ fn tick_clouds(
     underwater: Res<crate::liquid::Underwater>,
     mut was_submerged: Local<bool>,
 ) {
-    // Surfacing forces a full rebuild: the reference's wet→dry edge calls, which selects; a band
-    // scroll would bring the clouds back over 0.4 s. Going under needs nothing, since the sky pass
-    // is skipped while submerged.
+    // Surfacing forces a full rebuild: the reference's wet→dry edge calls the cloud regen with 1,
+    // which selects the full rebuild; a band scroll would bring the clouds back over 0.4 s. Going
+    // under needs nothing, since the sky pass is skipped while submerged.
     let submerged = underwater.0.any();
     let surfaced = *was_submerged && !submerged;
     *was_submerged = submerged;

@@ -216,7 +216,7 @@ fn the_dewdrop_sequence_commits_on_okay() {
         "the closed-over arg prefix is preserved"
     );
     assert_eq!((r, g, b), after_round_trip(0.1, 0.5, 0.9));
-    // A Slider holds `f32`, as the client's `CSimpleSlider` does, so this is not exactly 0.6.
+    // A Slider holds `f32`, as the client's slider widget does, so this is not exactly 0.6.
     assert!(
         (a - 0.6).abs() < 1e-6,
         "alpha is 1 - the slider's 0.4, got {a}"

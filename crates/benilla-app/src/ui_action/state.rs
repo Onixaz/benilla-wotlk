@@ -1,8 +1,9 @@
 //! Each action slot's per-frame state behind `IsUsableAction`, `IsActionInRange`, `IsCurrentAction`
 //! and `GetActionCooldown`, diff-pushed into the VM with the reference's events on each change: the
 //! cooldown trio, the usable pair (on a cache change only), the state pair, combat enter and leave,
-//! and autorepeat start and stop. Usability is `IsSpellUsableNow` ([`crate::spell::usable`]),
-//! auto-repeat the key, and range the squared distance against `GetMinMaxRange`.
+//! and autorepeat start and stop. Usability is the reference's usable walk
+//! ([`crate::spell::usable`]), auto-repeat the reference's auto-repeat spell cell, and range the
+//! squared distance against the spell range lookup.
 
 use crate::ui_items::carried_counts;
 use std::collections::HashMap;
@@ -83,9 +84,9 @@ enum SlotResolve {
     Dead,
 }
 
-/// Resolves a slot through its macro: every `Is*Action`/`GetActionCooldown` binding goes, so a
-/// macro that casts Fireball is the Fireball slot, its own icon aside. Spells only: 1.12 has no
-/// `/use`, so no macro names an item.
+/// Resolves a slot through its macro: every `Is*Action`/`GetActionCooldown` binding goes through
+/// it, so a macro that casts Fireball is the Fireball slot, its own icon aside. Spells only: 1.12
+/// has no `/use`, so no macro names an item.
 fn resolve_through_macro(
     kind: u8,
     action: u32,
@@ -227,8 +228,8 @@ pub(super) fn feed_action_state(
         let (kind, id) = match resolve_through_macro(button.kind, button.action, bound) {
             SlotResolve::Action(kind, id) => (kind, id),
             SlotResolve::BareMacro => {
-                // The reference's spell-less leg: usable. It also greys every spell-less macro and
-                // item while the player-control flag is clear (taxi, fear, charm, set at boot);
+                // The usable compute's spell-less leg: usable. It also greys every spell-less macro
+                // and item while the player-control flag is clear (taxi, fear, charm; set at boot);
                 // that gate is not built.
                 st.usable = true;
                 fresh.insert(action, st);
@@ -296,14 +297,14 @@ pub(super) fn feed_action_state(
                     st.usable = true;
                 }
                 let row = spells.as_ref().and_then(|s| s.ranges.get(d.range_index));
-                // `ActionHasRange` asks `GetMinMaxRange` with a null target and tests `|min|` and
-                // `|max|` against `FLT_EPSILON`. The auto-attack target the melee arm falls back to
-                // cannot move that: its max is at least the 5.0 floor.
+                // `ActionHasRange` asks the spell range lookup with a null target and tests `|min|`
+                // and `|max|` against `FLT_EPSILON`. The auto-attack target the melee arm falls
+                // back to cannot move that: its max is at least the 5.0 floor.
                 st.has_range = spell_mods
                     .min_max_range(d, row, caster, RangeTargets::default())
                     .is_some_and(|(min, max)| min.abs() > f32::EPSILON || max.abs() > f32::EPSILON);
-                // `IsActionInRange` runs `CanTargetUnit`, which binds the selected target, then
-                // `IsTargetInRange`, which hands `GetMinMaxRange` that target: its reach pads a
+                // `IsActionInRange` runs the target check, which binds the selected target, then
+                // the range test, which hands the spell range lookup that target: its reach pads a
                 // ranged row, and its motion with the caster's earns the moving bonus. Nil without
                 // a target.
                 st.in_range = match dist_sq {
@@ -357,9 +358,9 @@ pub(super) fn feed_action_state(
                             == Some(button.action)
                     })
                 });
-                // The reference's item arm runs the count, `IsItemOnCooldown` and the on-use spell
-                // through the same walk. With no player the reference answers (0, 0), the default
-                // state.
+                // The usable compute's item arm runs the count, the item cooldown test and the
+                // on-use spell through the same walk. With no player the reference answers (0, 0),
+                // the default state.
                 if let Some((store, _, _, _)) = me {
                     let ctx = usable::UsableCtx {
                         store,
@@ -644,10 +645,10 @@ mod tests {
         );
     }
 
-    /// `IsActionInRange` hands `GetMinMaxRange` the selected unit, so a ranged row pads by that
-    /// unit's reach and the player's alone: a Fireball (0-35) button reads in range out to 38 yards
-    /// from a 1.5-reach target, whoever the player swings at, and `ActionHasRange` (a null target)
-    /// says the button has a range.
+    /// `IsActionInRange` hands the spell range lookup the selected unit, so a ranged row pads by
+    /// that unit's reach and the player's alone: a Fireball (0-35) button reads in range out to 38
+    /// yards from a 1.5-reach target, whoever the player swings at, and `ActionHasRange` (a null
+    /// target) says the button has a range.
     #[test]
     fn a_ranged_button_pads_its_range_by_the_selected_target_alone() {
         use benilla_protocol::messages::ActionButton;
@@ -763,9 +764,9 @@ mod tests {
         );
     }
 
-    /// `IsActionInRange` hands `GetMinMaxRange` the selected unit, so a melee button reads in range
-    /// out to 7.667 yards while the player and the selected mob both run, and to the 5.0 floor
-    /// otherwise.
+    /// `IsActionInRange` hands the spell range lookup the selected unit, so a melee button reads in
+    /// range out to 7.667 yards while the player and the selected mob both run, and to the 5.0
+    /// floor otherwise.
     #[test]
     fn a_melee_button_reaches_the_moving_bonus_while_both_units_run() {
         use benilla_protocol::messages::ActionButton;
@@ -895,7 +896,7 @@ mod tests {
         assert_eq!(verdict(false, false, 4.9), 1, "the floor");
     }
 
-    /// An item slot's on-use spell takes the walk, and every shipped Food/Drink spell has
+    /// An item slot's on-use spell takes the usable walk, and every shipped Food/Drink spell has
     /// `Attributes` bit 28, `ATTR_NOT_IN_COMBAT` (the walk's leg 8).
     #[test]
     fn food_on_the_bar_greys_while_the_player_is_in_combat() {

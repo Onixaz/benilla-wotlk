@@ -574,9 +574,9 @@ fn an_addon_frame_under_the_worldframe_is_not_a_plate() {
     );
 }
 
-/// A plate is a mouse-enabled `Button` (`CSimpleButton`'s constructor writes `[+0xcc] = 0x4`), so
+/// A plate is a mouse-enabled `Button` (the button's constructor writes `[+0xcc] = 0x4`), so
 /// hovering it takes the mouse focus from the world; the widget layer then names the plate's unit,
-/// as the reference's OnEnter publishes.
+/// as the reference plate's `OnEnter` publishes it.
 #[test]
 fn hovering_a_plate_names_its_unit() {
     let mut s = vm();
@@ -593,7 +593,7 @@ fn hovering_a_plate_names_its_unit() {
     assert_eq!(s.hovered_nameplate(), None);
 }
 
-/// The reference's click slot ends in the same `SetSelection` as a click on the body, and fires on
+/// The reference's click slot ends in the same selection set as a click on the body, and fires on
 /// the up edge only: `RegisterForClicks(0x500)`.
 #[test]
 fn a_completed_click_on_a_plate_reaches_the_app() {

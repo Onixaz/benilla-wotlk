@@ -93,7 +93,7 @@ pub(super) fn resolve_char_look(
         });
     }
     // A corpse's look is its own `CORPSE_FIELD_BYTES_1/_2` snapshot from death, never the owner's
-    // `PLAYER_BYTES`; a bone pile has none, the reference's early skip.
+    // `PLAYER_BYTES`; a bone pile has none, and the reference skips it early.
     if net.kind == EntityKind::Corpse && d.is_character_body {
         let look = super::super::corpse::corpse_char_look(stores.get(entity).ok())?;
         // The corpse's fields carry no class, and its component keeps 0 (`0x4dfda0`).
@@ -215,9 +215,9 @@ pub(super) fn resolve_worn_equip(
     }
 }
 
-/// The worn geoset selectors for a set of display ids, the inputs of the reference's branches B1 to
-/// B8: each row's geoset columns, the cloak group and the helm's hide-mask rows. `tabard_preview`
-/// (B6) is set only while the tabard designer is open, as in the reference.
+/// The worn geoset selectors for a set of display ids, the inputs of the reference's geoset
+/// branches B1 to B8: each row's geoset columns, the cloak group and the helm's hide-mask rows.
+/// `tabard_preview` (B6) is set only while the tabard designer is open, as in the reference.
 pub(in crate::entities) fn equip_geosets(
     displays: Option<&super::super::ItemDisplays>,
     bodyslots: &[u32; 8],

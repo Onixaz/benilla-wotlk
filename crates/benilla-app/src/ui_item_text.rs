@@ -1,9 +1,9 @@
 //! The item-text reader (`ItemTextFrame.xml`) a bag letter, a book or a readable world object opens
-//! in, locally with no packet as in the reference: every route ends at `(guid, flag)`, which looks
-//! the guid up as any object and asks it for its text (`vtbl+0x74`), a page chain from an item
-//! template's `PageText` or a `GAMEOBJECT_TYPE_TEXT` object's `data[0]`, or else a copied mail
-//! letter's own text (`ITEM_FIELD_FLAGS & 0x200`), asked by the item's guid (`CGItemText::SetItem`,
-//! `0x58a1a0`).
+//! in, locally with no packet as in the reference: every route ends at one read call,
+//! `(guid, flag)`, which looks the guid up as any object and asks it for its text (`vtbl+0x74`), a
+//! page chain from an item template's `PageText` or a `GAMEOBJECT_TYPE_TEXT` object's `data[0]`, or
+//! else a copied mail letter's own text (`ITEM_FIELD_FLAGS & 0x200`), asked by the item's guid
+//! (`0x58a1a0`).
 //!
 //! The events follow `ItemTextFrame.lua:10-96`; `ITEM_TEXT_TRANSLATION`, the foreign-language
 //! bar, never fires, as neither source carries the language column.
@@ -26,8 +26,8 @@ pub(crate) struct PageText {
     pub(crate) next: u32,
 }
 
-/// The ask-once page cache, the client's `PageText` dbcache, keyed by page id. vmangos answers one
-/// query with the whole chain; a missing page is still asked for alone.
+/// The ask-once page cache, the client's `PageText` WDB cache, keyed by page id. vmangos answers
+/// one query with the whole chain; a missing page is still asked for alone.
 #[derive(Resource, Default)]
 pub(crate) struct PageTexts {
     pages: QueryCache<u32, PageText>,
@@ -142,8 +142,8 @@ impl ItemTextOpen {
         );
     }
 
-    /// The reference's toggle, with flag 0 from both click routes: reading the open object again
-    /// closes it. Returns whether it closed.
+    /// The reference's toggle, the read call with flag 0 from both click routes: reading the open
+    /// object again closes it. Returns whether it closed.
     pub(crate) fn toggle_closed(&mut self, object_guid: u64) -> bool {
         let open = self
             .pending
@@ -391,7 +391,7 @@ fn feed_item_text(
         }
     };
 
-    // Server-authored text runs the `$`-macro expander, as in the reference's `ItemTextFrame.cpp`.
+    // Server-authored text runs the `$`-macro expander, as in the reference's item-text frame.
     let subject = crate::npc_text::player_identity(&self_q, &names, &commands);
     let text = crate::npc_text::substitute(
         &text,

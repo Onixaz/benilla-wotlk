@@ -121,9 +121,9 @@ impl Pool {
 }
 
 /// A lazy cache of the weather ground oracle, the max of terrain and the chunk's WMO and doodad
-/// hits (`CMapObj::IntersectSegment`), so drops land on roofs. Here one downward ray per cell from
-/// the spawn plane; cleared when that plane moves a story (the ray start decides which roofs it
-/// sees) or the cache outgrows its bound.
+/// hits (the map object's segment test), so drops land on roofs. Here one downward ray per cell
+/// from the spawn plane; cleared when that plane moves a story (the ray start decides which roofs
+/// it sees) or the cache outgrows its bound.
 #[derive(Resource, Default)]
 pub(super) struct HeightCache {
     cells: HashMap<(i32, i32), f32>,
@@ -338,8 +338,9 @@ pub(super) fn run_kind(
     // ===== retire =====
     pool.retire_far(cam_pos, kind);
 
-    // ===== record ===== The emit gate (1.0): a frame records only when its quota is over 1, so
-    // below ~60 drops/s nothing spawns. `REF_FPS_GAIN` is this path's one deviation.
+    // ===== record =====
+    // The emit gate (a constant 1.0): a frame records only when its quota is over 1, so below ~60
+    // drops/s nothing spawns. `REF_FPS_GAIN` is this path's one deviation.
     let rate = weather.density_gain() * p * density * REF_FPS_GAIN;
     let quota = rate * dt.min(DT_CAP);
     if quota > 1.0 {

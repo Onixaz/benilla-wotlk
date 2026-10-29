@@ -8,8 +8,8 @@ use crate::script::{BlendMode, TexCoords};
 
 use super::region_handle_of;
 
-/// `CSimpleTexture::SetRotation` (`0x483120`): the corners on a unit radius
-/// about `(cx, cy)` from `angle - π/4`, UL, LL, UR then LR, stored in screen order.
+/// The Texture's rotation (`0x483120`): the corners on a unit radius about `(cx, cy)` from `angle -
+/// π/4`, UL, LL, UR then LR, stored in screen order.
 pub(crate) fn rotation_corners(angle: f32, cx: f32, cy: f32) -> TexCoords {
     let (s, c) = (angle - std::f32::consts::FRAC_PI_4).sin_cos();
     let ul = [s + cx, cy - c];
@@ -258,9 +258,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 
     // SetDesaturated(flag), Texture only, answers shaderSupported, which stock
     // `ItemButtonTemplate.lua:69` reads to fall back to a grey tint; the renderer greys the texel,
-    // so this answers 1. The flag is `GetBoolOrDefault` (default 1): no argument is on, hence the
-    // `MultiValue`, nil is off, a number truncating to 0 is off, and a table, function or userdata
-    // is on. Every string is on here; the reference's string arm is not.
+    // so this answers 1. The flag is the bool-or-default read (default 1): no argument is on, hence
+    // the `MultiValue`, nil is off, a number truncating to 0 is off, and a table, function or
+    // userdata is on. Every string is on here; the reference's string arm is not.
     m.set(
         "SetDesaturated",
         lua.create_function(|lua, args: MultiValue| {
@@ -357,8 +357,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetTexCoordModifiesRect",
         lua.create_function(|lua, (this, arg): (Table, Value)| {
             let rh = region_handle_of(lua, &this)?;
-            // `GetBoolOrDefault` with default 1, but a missing argument arrives here as nil and
-            // reads false, where the reference sets the flag.
+            // The bool-or-default read with default 1, but a missing argument arrives here as nil
+            // and reads false, where the reference sets the flag.
             let on = crate::script::binding_abi::bool_or_default(Some(&arg), false);
             let mut model = crate::script::model_mut_of(lua);
             model
@@ -560,7 +560,7 @@ impl crate::script::UiScript {
     }
 
     /// Install the host's texel-size check, which lets an axis sized 0 take its span from the art
-    /// as `CSimpleTexture::GetWidth` falls back to the texels; without one such a region stays
+    /// as the Texture's width getter falls back to the texels; without one such a region stays
     /// where it was.
     pub fn set_texture_size_probe(&mut self, probe: crate::script::TextureSizeProbe) {
         self.model_mut().texture_size_probe = Some(probe);

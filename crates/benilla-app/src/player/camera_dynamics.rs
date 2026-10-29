@@ -31,9 +31,9 @@ pub(crate) const BOB_SMOOTH_SPEED_DEFAULT: f32 = 0.8;
 const BOB_AMPLITUDE_SCALE: f32 = 1.0 / 36.0;
 /// The speed the bob's rate factor divides by, yd/s.
 const BOB_SPEED_DIVISOR: f32 = 7.2;
-/// The rate factor's clamp: the lower bound is the higher address.
+/// The rate factor's clamp; the reference stores the lower bound at the higher address.
 const BOB_SPEED_CLAMP: (f32, f32) = (0.5, 1.5);
-/// Head bob's inclusive first-person test, on the zoom distance (`[cam+0xec] <=`).
+/// Head bob's inclusive first-person test, on the zoom distance (`[cam+0xec]` at or under this).
 pub(crate) const BOB_FIRST_PERSON_DISTANCE: f32 = 1.0 / 6.0;
 
 /// The camera option CVars; each default is the reference's registered value.
@@ -60,7 +60,7 @@ pub(crate) struct CameraOptions {
 }
 
 /// Applies a camera option CVar change. The numeric rows take any value, where the reference's
-/// refuses an out-of-range smooth speed, tilt time or bob frequency.
+/// validator refuses an out-of-range smooth speed, tilt time or bob frequency.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut opts: ResMut<CameraOptions>) {
     let v = ev.num();
     match ev.key().as_str() {
@@ -119,7 +119,7 @@ pub(super) struct DynamicsInput {
 }
 
 /// The followed unit's side of the gates. The movement word is last frame's, as the reference's
-/// input handler reads it (the reference's caller runs before the mover lookup).
+/// input handler reads it (the handler's caller runs before the mover lookup).
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct SubjectState {
     /// `MOVEMENTFLAGS`, whole: the mechanisms read different masks of it.
@@ -134,7 +134,7 @@ pub(super) struct SubjectState {
     pub(super) facing: f32,
     /// `UNIT_FIELD_MOUNTDISPLAYID > 0`.
     pub(super) mounted: bool,
-    /// Current speed, yd/s (`GetCurrentSpeed`).
+    /// Current speed, yd/s, as the mover's speed getter reads it.
     pub(super) speed: f32,
     /// The input-command word ([`super::camera::follow_cmd`]); its edges arm head bob.
     pub(super) command: u32,
@@ -156,7 +156,7 @@ use crate::creature_anim::move_flags as mf;
 /// (`[cam+0x90] & 0x30000`), so only a camera clipped this frame pivots. The eye is seated from the
 /// unbiased pitch; the body's aim is the sum.
 ///
-/// The release's holds the bias while the Track latch is up and tracking is Never, or a move-type-0
+/// The release holds the bias while the Track latch is up and tracking is Never, or a move-type-0
 /// click-to-move order is in flight; benilla has no click-to-move, so only the first is built.
 pub(super) struct SmartPivot {
     /// The bias channel `[cam+0x104]`; its armed bit is the reference's `[cam+0x90] & 0x8000000`.
@@ -177,7 +177,8 @@ impl SmartPivot {
         self.bias.live()
     }
 
-    /// The reference's pitch routing: the integrator's delta, or `None` on a pure-pivot frame.
+    /// The reference's mouse-motion pitch routing: the integrator's delta, or `None` on a
+    /// pure-pivot frame.
     ///
     /// | reference | here (sign flipped) |
     /// |---|---|
@@ -193,7 +194,7 @@ impl SmartPivot {
         clipped: bool,
         cfg: &CameraOptions,
     ) -> Option<f32> {
-        // The reference's conjuncts 3-6; 1 and 2, a UNIT or PLAYER subject, always hold here.
+        // The reference gate's conjuncts 3-6; 1 and 2, a UNIT or PLAYER subject, always hold here.
         let verdict = cfg.pivot && !subject.translating() && pitch >= 0.0 && clipped;
         // A displaced bias with no ease armed keeps routing; a gated vertical drag starts it.
         let displaced = !self.bias.in_flight() && self.bias().abs() >= CHANNEL_EPS;
@@ -228,7 +229,8 @@ impl SmartPivot {
         dt: f32,
     ) {
         let verdict = cfg.pivot && !subject.translating() && pitch >= 0.0 && clipped;
-        // The reference's first disjunct: tracking at Never holds the bias as the gate does.
+        // The reference release's first disjunct: tracking at Never holds the bias as the gate
+        // does.
         let tracking_hold = subject.track && tracking_style == super::camera::FollowStyle::Never;
         let holding = verdict || tracking_hold;
         if !holding && self.bias().abs() >= CHANNEL_EPS {
@@ -241,7 +243,7 @@ impl SmartPivot {
         self.bias.advance(dt);
     }
 
-    /// Arms the bias home at `cameraTargetSmoothSpeed` (`(cam, 0, 0, 1.0f, now)`).
+    /// Arms the bias home at `cameraTargetSmoothSpeed` (no delay, factor 1.0).
     fn release(&mut self, cfg: &CameraOptions) {
         self.bias
             .arm(&Arm::at(0.0, cfg.target_smooth_speed.to_radians()));
@@ -280,8 +282,8 @@ impl Default for TerrainTilt {
 /// `cameraTerrainTilt<Style><State>` CVars, because the matrix is a law, not a setting.
 type TiltRow = (f32, f32, f32);
 
-/// The movement states classifies into, less the reference's `Jump`, which is dead: the reference
-/// test the same bit, so state 3 is never set.
+/// The movement states the tilt arm classifies into, less the reference's `Jump`, which is dead:
+/// two of its branches test the same bit, so state 3 is never set.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum TiltState {
     Fall,
@@ -296,7 +298,7 @@ pub(super) enum TiltState {
 }
 
 impl TiltState {
-    /// The reference's classifier, a priority ladder in its branch order.
+    /// The reference arm's classifier, a priority ladder in its branch order.
     fn of(subject: &SubjectState) -> Self {
         if subject.taxi {
             Self::Taxi
@@ -349,8 +351,8 @@ impl TerrainTilt {
     }
 
     /// The mouse-look hand-off: the delta the pitch owes. The lean moves into the pitch at press
-    /// and the then-current lean comes out at release, both, which writes the live pitch at once; a
-    /// slope crossed mid-drag leaves the difference in the pitch.
+    /// and the then-current lean comes out at release, both through the pitch setter, which writes
+    /// the live pitch at once; a slope crossed mid-drag leaves the difference in the pitch.
     pub(super) fn hand_off(&mut self, freelook: bool) -> f32 {
         if freelook == self.handed_off {
             return 0.0;
@@ -365,8 +367,8 @@ impl TerrainTilt {
         }
     }
 
-    /// The staircase: the reference walks down to the first key `|slope|` reaches, with no
-    /// interpolation, then clamps to ±20°. Uphill looks up: positive here, negative there.
+    /// The staircase: the reference walks its slope table down to the first key `|slope|` reaches,
+    /// with no interpolation, then clamps to ±20°. Uphill looks up: positive here, negative there.
     pub(super) fn slope_to_pitch(slope: f32) -> f32 {
         // Keys `round(tan(5k°), 2)`; each literal is bit-identical to the table's f32.
         const STEPS: [(f32, f32); 5] = [
@@ -515,7 +517,7 @@ impl HeadBob {
         if self.eligible(zoom, subject, cfg) {
             self.offset = self.kernel(subject, cfg);
         } else if (self.offset.x + self.offset.y + self.offset.z).abs() >= CHANNEL_EPS {
-            // The reference tests the signed sum's magnitude, not the length.
+            // The reference's displacement test takes the signed sum's magnitude, not the length.
             let s = self.since_transition / self.ramp_duration.max(f32::EPSILON);
             self.offset = if s >= 1.0 {
                 Vec3::ZERO
@@ -718,7 +720,8 @@ mod tests {
         );
     }
 
-    /// The reference walked down with no interpolation; the ±20° clamp hides records 5-9.
+    /// The reference's slope table walked down with no interpolation; the ±20° clamp hides records
+    /// 5-9.
     #[test]
     fn the_terrain_staircase_is_five_signed_steps_and_nothing_between_them() {
         let deg = |slope: f32| TerrainTilt::slope_to_pitch(slope).to_degrees();
@@ -1292,7 +1295,8 @@ mod tests {
         );
     }
 
-    /// The reference's first disjunct: the Track latch with `cameraSmoothTrackingStyle` at Never.
+    /// The reference release's first disjunct: the Track latch with `cameraSmoothTrackingStyle` at
+    /// Never.
     #[test]
     fn a_never_tracking_swing_holds_the_bias_the_gate_would_have_released() {
         use super::super::camera::FollowStyle;

@@ -341,7 +341,7 @@ fn stone_probe(
                     if text.is_some() { "yes" } else { "no" }
                 ),
             );
-            // Leg 4: the reference over the live queue refuses the stone we are queued at.
+            // Leg 4: the queued-stone check over the live queue refuses the stone we are queued at.
             probe.darkened = meeting_stone_queued(Some(area), queue.area);
             probe.fails += check("DARKENED", "true", &probe.darkened.to_string());
             info!("PROBE_STONE: leaving through the live VM's own CancelMeetingStoneRequest()");

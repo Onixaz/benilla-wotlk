@@ -1,11 +1,11 @@
-//! The effect-model animation lifecycle, `Stand` → `Hold` → `Decay`, of a spell-visual `CEffect`.
+//! The effect-model animation lifecycle, `Stand` → `Hold` → `Decay`, of a spell-visual effect.
 //!
 //! The model-load bootstrap arms `AnimationData.dbc` id 0 `Stand`, not the file-order-first
 //! sequence. At each span's end the scene tick runs the model's completion callback with the
-//! completed id, picked per [`FxStage`] by `PlaySpellVisualKit`: stages 0/1 destroy, which the span
-//! clock in [`super::attach_spell_fx`] models; stage 2 hands over to `Hold` if the model authors
-//! it, else stays on the birth; stages 3/4 re-arm the completed id forever. The reap plays `Decay`
-//! out; the destructor plays nothing.
+//! completed id, picked per [`FxStage`] by the kit player: stages 0/1 destroy, which the span clock
+//! in [`super::attach_spell_fx`] models; stage 2 hands over to `Hold` if the model authors it, else
+//! stays on the birth; stages 3/4 re-arm the completed id forever. The reap plays `Decay` out; the
+//! destructor plays nothing.
 //!
 //! Deviation: `Hold` is one repeating play where the reference re-arms it each pass with variation
 //! -1, a weighted random pick, because at most one `Spells\` model authors several variations.
@@ -21,12 +21,12 @@ pub(crate) const ANIM_HOLD: u16 = 158;
 /// `AnimationData.dbc` 159 `Decay`, the fade-out leg (`0x9f`).
 pub(crate) const ANIM_DECAY: u16 = 159;
 
-/// The completion callback an effect instance carries (the `model+0x70` registration writes). On
-/// every kit-effect root that armed a rig, since the reap needs its player; a missile, an item glow
-/// or the `fxview` fixture is not a `CEffect` and carries none.
+/// The completion callback an effect instance carries, registered at `model+0x70`. On every
+/// kit-effect root that armed a rig, since the reap needs its player; a missile, an item glow or
+/// the `fxview` fixture is not a kit effect and carries none.
 #[derive(Component)]
 pub(crate) enum FxAnimLife {
-    /// Stage 2's birth, waiting for the reference's handover to `Hold`.
+    /// Stage 2's birth, waiting for the handover to `Hold`.
     Birth(AnimationNodeIndex),
     /// Nothing left to advance; the node is kept so a reap can stop it before arming `Decay`.
     Settled(AnimationNodeIndex),
@@ -175,7 +175,7 @@ mod tests {
             .repeat_mode()
     }
 
-    /// `IceShield_State`'s birth clamps: armed unrepeated, watching for the reference's handover.
+    /// `IceShield_State`'s birth clamps: armed unrepeated, watching for the handover to `Hold`.
     #[test]
     fn state_arms_the_birth_and_watches_for_the_handover() {
         let mut player = AnimationPlayer::default();

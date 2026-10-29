@@ -1,5 +1,5 @@
 //! `SpellDuration.dbc`: the duration a spell's `DurationIndex`
-//! ([`crate::spells::SpellDisplay::duration_index`]) resolves to in `Spell_C::GetSpellDuration`,
+//! ([`crate::spells::SpellDisplay::duration_index`]) resolves to in the reference's duration read,
 //! before spell-mod op 1 (`SPELLMOD_DURATION`). All three columns are signed: a few rows (427,
 //! Resurrection Sickness's) pair a negative base with a per-level term.
 

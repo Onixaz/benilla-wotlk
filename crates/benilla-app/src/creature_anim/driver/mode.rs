@@ -76,8 +76,8 @@ pub(super) fn run(
     match drv.mode {
         Mode::Entering(sp) => {
             // A swim re-latch lets JumpStart play out and the swim gait resume at its end, as the
-            // reference plays it; the byte reading, a cut where the reference releases, does not
-            // reproduce that. A ground landing, a water exit or a new Special still cuts.
+            // reference plays it; the byte reading, a cut where the airborne freeze releases, does
+            // not reproduce that. A ground landing, a water exit or a new Special still cuts.
             let swim_relatch_hold = sp == select::Special::Jump
                 && special.is_none()
                 && mv.flags & move_flags::SWIMMING != 0
@@ -251,8 +251,8 @@ pub(super) fn run(
                 }
             } else if oneshot_finished(player, anims, id, catalog) || mv.flags != drv.gait_flags {
                 // A finished one-shot recomputes the base, fire clips too: bow ids reach the
-                // dispatcher through its deferred site, and 46/49/107 land on slot 22,
-                // `RecomputeBaseAnim(-1)`, so a shooter re-pulls. A movement-flag edge re-arms the
+                // dispatcher through its deferred site, and 46/49/107 land on slot 22, a base
+                // recompute with no id, so a shooter re-pulls. A movement-flag edge re-arms the
                 // base over any one-shot; steady flags let it play out. The edge is against
                 // `gait_flags`, what the base was armed for, as the reference keeps no per-one-shot
                 // latch.
@@ -330,7 +330,7 @@ pub(super) fn run(
                 });
                 let base = base_candidates(&mv, walk, ready, ranged_load, state_anim);
                 let cands = base.as_slice();
-                // The stationary cast/channel pin (`[CGUnit+0xb4]`), full-body over the Ready and
+                // The stationary cast/channel pin (`[unit+0xb4]`), full-body over the Ready and
                 // state-emote idles; stationary is `[9e8] & 0x20000f`, never the turn bits, so a
                 // turning caster keeps it and a moving one gets the masked hold instead.
                 let hold_cands;
@@ -343,8 +343,8 @@ pub(super) fn run(
                 };
                 // The loot kneel (Loot 50) of a stationary, unmounted unit with the trigger up,
                 // over the cast pin, the Ready and ranged idles, the chair loops and the state
-                // emote: the reference tries locomotion, then loot, then the cast/channel pin and
-                // the Ready idle before the rest.
+                // emote: the reference's base selector tries locomotion, then loot, then the
+                // cast/channel pin and the Ready idle before the rest.
                 let loot_cands;
                 let cands: &[u16] = if looting {
                     loot_cands = [select::LOOT, STAND];
@@ -364,9 +364,10 @@ pub(super) fn run(
                 };
                 let target = cands[0];
                 // A turn shuffle ends at its own clip window, not with the turn: the reference's
-                // per-frame tail can start one but not stop it (needs a turn bit), and the
+                // per-frame tail can start one but not stop it (stopping needs a turn bit), and the
                 // completion callback ends it, so a step lasts `ceil(t_turn / span) · span`. Only
-                // against Stand: other targets arrive through the reference's edge sites at once.
+                // against Stand: other targets arrive through the base recompute's edge sites at
+                // once.
                 let target = match drv.gait {
                     Some(g @ (select::SHUFFLE_LEFT | select::SHUFFLE_RIGHT))
                         if target == STAND && !window_complete(drv, player) =>

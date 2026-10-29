@@ -184,8 +184,8 @@ fn a_pet_view_scales_blood_pact_by_the_pets_level() {
 }
 
 /// Seduction (6358, 24% of base mana) on the pet bar costs 24% of the succubus's
-/// `UNIT_FIELD_BASE_MANA`, as the reference on the pet: 449 of 1874, not 329 of the warlock's 1373.
-/// No pet unit is `GetPowerCost`'s -1, no cost cell.
+/// `UNIT_FIELD_BASE_MANA`, as the reference reads the cost basis off the pet: 449 of 1874, not 329
+/// of the warlock's 1373. No pet unit is the power-cost getter's -1, no cost cell.
 #[test]
 fn a_pet_view_costs_seduction_from_the_pets_base_mana() {
     let Some(spells) = real_spells() else { return };
@@ -449,9 +449,9 @@ fn improved_fire_blast_shortens_the_cooldown_cell() {
     assert_eq!(improved.cooldown.as_deref(), Some("6.5 sec cooldown"));
 }
 
-/// The cast cell reads `GetCastTime(1)`: op 10 applies and nothing clamps, so a modifier past the
-/// whole cast time reaches the negative "Instant cast" arm, where a clamped zero would take the
-/// no-mana "Instant".
+/// The cast cell reads the cast-time getter with selector 1: op 10 applies and nothing clamps, so a
+/// modifier past the whole cast time reaches the negative "Instant cast" arm, where a clamped zero
+/// would take the no-mana "Instant".
 #[test]
 fn the_cast_cell_takes_op_10_unclamped() {
     // The cells fill the install's `GlobalStrings.lua`.
@@ -982,9 +982,9 @@ fn eval(app: &mut App, lua: &str) -> Option<i64> {
         .unwrap()
 }
 
-/// The hover pushes `"mouseover"` with the hovered guid, the pair writes: `UnitIsUnit` resolves
-/// both tokens through the reference and compares guids, so hovering the target answers 1 and
-/// hovering anyone else nil.
+/// The hover pushes `"mouseover"` with the hovered guid, the pair the mouseover publisher writes:
+/// `UnitIsUnit` resolves both tokens through the unit-token resolver and compares guids, so
+/// hovering the target answers 1 and hovering anyone else nil.
 #[test]
 fn the_mouseover_token_carries_the_hovered_guid() {
     let (mut app, wolf, boar) = mouseover_app();

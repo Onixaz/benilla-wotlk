@@ -1379,8 +1379,8 @@ fn entity_kind(t: ObjectType) -> EntityKind {
     }
 }
 
-/// A create's display id. A player resolves like a unit (the 1.12 client's `CGPlayer` inherits
-/// `CGUnit`'s display build); a corpse's is the player's native display. A bone pile's id is still
+/// A create's display id. A player resolves like a unit (the 1.12 client's player object inherits
+/// the unit's display build); a corpse's is the player's native display. A bone pile's id is still
 /// reported: `entities::corpse` swaps in `<Race><Sex>DeathSkeleton`, and `None` would hide the
 /// flesh-to-bones flip the reference reloads the model on.
 fn display_id(t: ObjectType, mask: &ObjectFields) -> Option<u32> {

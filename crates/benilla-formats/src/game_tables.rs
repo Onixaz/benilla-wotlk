@@ -1,10 +1,10 @@
 //! The gt tables behind the barber shop's prices and the character sheet's ratings, crit chances
-//! and spirit regeneration, read as 12340 reads them: `GameTable_Lookup(slot, row, col)`
+//! and spirit regeneration, read as 12340 reads them: the lookup of `(slot, row, col)`
 //! (`0x7f6990`) fetches the record whose id is `col × rows + row` (`0x7f69b0`), `rows` being the
-//! table's `GameTables.dbc` row count (`GameTable_Bind` `0x7f6a10`). A one-column table's record
-//! id is its index (`0x65c330`); `gtOCTClassCombatRatingScalar` keeps its id in column 0 and its
-//! value in column 1 (`0x660f80`, `0x7f69e0`). An id outside the table reads 0, where `GetRecord`
-//! (`0x65c290`) finds none.
+//! table's `GameTables.dbc` row count (`0x7f6a10`). A one-column table's record id is its index
+//! (`0x65c330`); `gtOCTClassCombatRatingScalar` keeps its id in column 0 and its value in column 1
+//! (`0x660f80`, `0x7f69e0`). An id outside the table reads 0, where the record fetch (`0x65c290`)
+//! finds none.
 
 use std::collections::HashMap;
 
@@ -15,7 +15,7 @@ use crate::chain::Chain;
 use crate::dbc::{f32_at, parse, str_at, u32_at};
 
 /// The gt tables the barber shop and the character sheet read, by their lookup slot in 12340's
-/// adapter table (`g_gameTableAdapters` `0xaf4f90`).
+/// adapter table (`0xaf4f90`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GameTableId {
     /// Slot 0: the barber shop's base price in copper by level (`0x52e850`, `0x52eba0`).

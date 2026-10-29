@@ -20,8 +20,8 @@ use crate::ui_script::gate;
 
 use super::GroupState;
 
-/// Which roster a pet token counts its owner in: the two resolve the pet's guid apart (behind the
-/// owner's online bit).
+/// Which roster a pet token counts its owner in: the two resolve the pet's guid apart (the party's
+/// behind the owner's online bit, the raid's with none).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Roster {
     Party,

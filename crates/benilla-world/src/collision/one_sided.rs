@@ -434,7 +434,7 @@ fn for_each_contact(
 }
 
 /// Whether every vertex lies more than [`BACKFACE_BAND`] behind the shape's support point along
-/// `dir`, the reference's per-vertex test.
+/// `dir`, the clip's per-vertex test.
 fn behind_the_band(tri: &Triangle, shape_pose: &Pose3, shape: &Collider, dir: Vec3) -> bool {
     let Some(support) = shape.shape_scaled().as_support_map() else {
         return false;

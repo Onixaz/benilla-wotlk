@@ -28,8 +28,8 @@ pub(crate) use twist::{wrap_pi, BodyTwist};
 /// parked unit's events fire only for a `MORE_AUDIBLE` template.
 mod lod;
 
-/// Wielded `(item class, subclass)` per hand as worn (`GetWeapon(slot, 1)`, what the paperdoll
-/// shows); behaviour reads `armed_main`/`armed_off`, which apply the disarm ladder.
+/// Wielded `(item class, subclass)` per hand as worn (the weapon getter's worn read, what the
+/// paperdoll shows); behaviour reads `armed_main`/`armed_off`, which apply the disarm ladder.
 #[derive(Component, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct Wielded {
     pub(crate) main: Option<(u8, u8)>,
@@ -49,20 +49,20 @@ pub(crate) struct Wielded {
     /// wire, since the weapon class does not determine it.
     pub(crate) materials: [u8; 3],
     /// `UNIT_FIELD_FLAGS & UNIT_FLAG_DISARMED`, replicated for every unit; the reference reads it
-    /// inside `GetWeapon` (`[[unit+0x110]+0xa0] & 0x200000`), for creatures as for players.
+    /// inside the weapon getter (`[[unit+0x110]+0xa0] & 0x200000`), for creatures as for players.
     pub(crate) disarmed: bool,
 }
 
-/// `UNIT_FIELD_FLAGS` bit 21 (vmangos `UnitDefines.h:566`), tested inside `GetWeapon` (CGPlayer)
-/// and (CGUnit).
+/// `UNIT_FIELD_FLAGS` bit 21 (vmangos `UnitDefines.h:566`), tested inside the weapon getter, the
+/// player's and the unit's alike.
 pub(crate) const UNIT_FLAG_DISARMED: u32 = 0x0020_0000;
 
 /// `ItemClass` 2, weapon: the disarm ladder's whole test, so a shield is never the hand it hides.
 pub(crate) const ITEM_CLASS_WEAPON: u8 = 2;
 
 /// The one held slot the disarm hides: the main hand if it holds a weapon, else the off hand if it
-/// does (`GetWeapon(slot, 0)`); the ranged slot is never gated, as vmangos agrees (`Unit.h:991`).
-/// Over classes so the action bar's equipped-item test can use it on raw inventory.
+/// does (the weapon getter's held read); the ranged slot is never gated, as vmangos agrees
+/// (`Unit.h:991`). Over classes so the action bar's equipped-item test can use it on raw inventory.
 pub(crate) fn disarmed_hand(main_class: Option<u8>, off_class: Option<u8>) -> Option<usize> {
     if main_class == Some(ITEM_CLASS_WEAPON) {
         return Some(0);
@@ -81,20 +81,20 @@ impl Wielded {
             .flatten()
     }
 
-    /// The main hand as `GetWeapon(0, 0)` sees it, read by the swing, the Ready idle, the parry
-    /// table, the sheath machine and the swing sound.
+    /// The main hand as the weapon getter's held read sees it, read by the swing, the Ready idle,
+    /// the parry table, the sheath machine and the swing sound.
     pub(crate) fn armed_main(&self) -> Option<(u8, u8)> {
         self.main.filter(|_| self.disarmed_hand() != Some(0))
     }
 
-    /// The off hand as `GetWeapon(1, 0)` sees it.
+    /// The off hand as the weapon getter's held read sees it.
     pub(crate) fn armed_off(&self) -> Option<(u8, u8)> {
         self.off.filter(|_| self.disarmed_hand() != Some(1))
     }
 }
 
 /// Auto-attacking (`SMSG_ATTACKSTART` to `ATTACKSTOP`), holding the target guid, the reference's
-/// `[+0xc48]`: the Ready idle gates on it, not on sheath; the reference reads its reach.
+/// `[+0xc48]`: the Ready idle gates on it, not on sheath; the reference's reach check reads it.
 #[derive(Component)]
 pub(crate) struct Engaged(pub(crate) u64);
 
@@ -115,7 +115,7 @@ pub(crate) struct AutoRepeatArmed;
 #[derive(Component)]
 pub(crate) struct RangedHold;
 
-/// The displayed nocked ammo, the reference's `[+0xd28]`/`[+0xd2c]` (`UpdateAmmoDisplay`): an
+/// The displayed nocked ammo, the reference's `[+0xd28]`/`[+0xd2c]` (the ammo display update): an
 /// `ItemDisplayInfo` model at HandArrow (35), bow only, set per shot from the `SMSG_SPELL_START`
 /// ammo tail. Removed by the un-nock: the local cancel, leaving the ranged sheath, or a weapon
 /// change.
@@ -153,8 +153,8 @@ pub(crate) fn drive_nock_latch(
     }
 }
 
-/// The one local auto-repeat cancel, reference: clears the key, both idle bits and the nock and
-/// sends `CMSG_CANCEL_AUTO_REPEAT_SPELL`; the sheath stays drawn.
+/// The one local auto-repeat cancel, as in the reference: clears the key, both idle bits and the
+/// nock and sends `CMSG_CANCEL_AUTO_REPEAT_SPELL`; the sheath stays drawn.
 pub(crate) fn cancel_auto_repeat_local(
     entity: Option<Entity>,
     auto_repeat: &mut crate::spell::AutoRepeatActive,
@@ -174,17 +174,18 @@ pub(crate) fn cancel_auto_repeat_local(
     let _ = net.0.send(crate::net::ClientCommand::CancelAutoRepeat);
 }
 
-/// The local StopAttack, reference: when attacking, `CMSG_ATTACKSTOP`, then `CancelQueuedCast`
-/// cancels a queued on-next-swing spell with `CMSG_CANCEL_CAST`, which is why Auto Shot darkens a
-/// Raptor Strike ring. `Engaged` stays until the `SMSG_ATTACKSTOP` echo, as in the reference.
+/// The local StopAttack, as in the reference: when attacking, `CMSG_ATTACKSTOP`, then the
+/// queued-cast cancel drops a queued on-next-swing spell with `CMSG_CANCEL_CAST`, which is why Auto
+/// Shot darkens a Raptor Strike ring. `Engaged` stays until the `SMSG_ATTACKSTOP` echo, as in the
+/// reference.
 pub(crate) fn stop_attack_local(
     engaged: bool,
     queued_melee: &mut crate::spell::QueuedMeleeSpell,
     net: &crate::net::NetCommands,
 ) {
     if !engaged {
-        // The reference's `!IsAttacking && [+0xc50] = 0` early-out (`[+0xc50]`, a locally started
-        // attack, is not modelled): nothing sent, a queued strike survives.
+        // The reference's not-attacking and `[+0xc50] == 0` early-out (`[+0xc50]`, a locally
+        // started attack, is not modelled): nothing sent, a queued strike survives.
         return;
     }
     let _ = net.0.send(crate::net::ClientCommand::AttackStop);
@@ -196,10 +197,11 @@ pub(crate) fn stop_attack_local(
     }
 }
 
-/// The local StartAttack, reference: the swing send is skipped while attacking unless a stop is in
-/// flight (`[+0xc54]`, which the target switch passes as `stop_in_flight`); the tail, melee sheath
-/// snap then auto-repeat cancel, always runs, so melee and auto-shot are exclusive. Callers own the
-/// entry checks: no call from a cast press while engaged, the attackability walk and.
+/// The local StartAttack, as in the reference: the swing send is skipped while attacking unless a
+/// stop is in flight (`[+0xc54]`, which the target switch passes as `stop_in_flight`); the tail,
+/// melee sheath snap then auto-repeat cancel, always runs, so melee and auto-shot are exclusive.
+/// Callers own the entry checks: no call from a cast press while engaged, the attackability walk
+/// and the world gate.
 pub(crate) fn start_attack_local(
     entity: Entity,
     target: u64,
@@ -227,9 +229,9 @@ pub(crate) fn start_attack_local(
     cancel_auto_repeat_local(Some(entity), auto_repeat, commands, net);
 }
 
-/// The Attack toggle, reference (the Attack pseudo-spell): stop when attacking, else start. Only
-/// the start arm cancels auto-repeat, so toggling melee off leaves Auto Shot running. The stop
-/// arm's world gate is not modelled.
+/// The Attack toggle, as in the reference (the Attack pseudo-spell): stop when attacking, else
+/// start. Only the start arm cancels auto-repeat, so toggling melee off leaves Auto Shot running.
+/// The stop arm's world gate is not modelled.
 pub(crate) fn toggle_attack_local(
     entity: Entity,
     target: u64,
@@ -257,7 +259,7 @@ pub(crate) fn toggle_attack_local(
 }
 
 /// The attack seams' write set as one param, for the selection writers that run the reference's
-/// stop, select, re-swing (`SetSelection`), and the loot its teardown closes.
+/// stop, select, re-swing, and the loot its teardown closes.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttackSeam<'w, 's> {
     pub(crate) net: Res<'w, crate::net::NetCommands>,
@@ -297,7 +299,7 @@ impl AttackSeam<'_, '_> {
         self.stop_on_change.as_deref().is_some_and(|s| s.0)
     }
 
-    /// `Spell_C_CancelAutoRepeat` (`0x807560`).
+    /// The auto-repeat cancel (`0x807560`).
     pub(crate) fn cancel_auto_repeat(&mut self) {
         let me = self.me.single().ok();
         cancel_auto_repeat_local(me, &mut self.auto_repeat, &mut self.ecs, &self.net);
@@ -325,7 +327,7 @@ impl AttackSeam<'_, '_> {
 }
 
 /// Mid-cast (`SMSG_SPELL_START` to GO or failure), inserted only for a nonzero cast time and
-/// removed by the same spell id (the reference's reap `(spellId, 0)` is keyed).
+/// removed by the same spell id (the reference's reap is keyed by spell id).
 #[derive(Component, Clone, Copy)]
 pub(crate) struct Casting {
     pub(crate) spell_id: u32,
@@ -333,10 +335,10 @@ pub(crate) struct Casting {
     pub(crate) until: Option<Instant>,
 }
 
-/// The reference's PlayAnimation order: handlers run in packet order and the later play wins bone 0.
-/// benilla's swing and cast pipelines are separate streams, so each animation-bearing message
-/// carries a stamp (the wire in packet order, scene-time emitters when they fire), and the driver
-/// resolves a same-frame collision by the highest.
+/// The reference's animation play order: handlers run in packet order and the later play wins
+/// bone 0. benilla's swing and cast pipelines are separate streams, so each animation-bearing
+/// message carries a stamp (the wire in packet order, scene-time emitters when they fire), and the
+/// driver resolves a same-frame collision by the highest.
 #[derive(Resource, Default)]
 pub(crate) struct PlaySeq(u64);
 
@@ -377,7 +379,7 @@ pub(crate) enum CastEventKind {
 }
 
 /// The anim held while a cast is in flight (`SpellVisualKit` field 2): full-body when standing
-/// (`[CGUnit+0xb4]`), a looping masked overlay when moving; reaped by `spell_id`.
+/// (`[unit+0xb4]`), a looping masked overlay when moving; reaped by `spell_id`.
 #[derive(Component, Clone, Copy)]
 pub(crate) struct CastHold {
     pub(crate) anim_id: u16,
@@ -433,13 +435,13 @@ pub(crate) struct EmoteAnim {
 }
 
 /// A state kit's `AnimID`, compared and never played: both field-4 callers pass stage 2, which the
-/// reference diverts, and a mismatch with the armed id recomputes the base. So it only cuts:
-/// Charge's Knockdown (121) falls to Stand, since the reference never yields its Stun (14). An
+/// kit player diverts, and a mismatch with the armed id recomputes the base. So it only cuts:
+/// Charge's Knockdown (121) falls to Stand, since the base selector never yields its Stun (14). An
 /// in-place aura refresh emits nothing.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct BaseAnimRecompute {
     pub(crate) entity: Entity,
-    /// The right side of the reference's compare.
+    /// The right side of the reference's armed-id compare.
     pub(crate) anim_id: u16,
 }
 
@@ -475,7 +477,7 @@ fn flourish_to_anim(
     }
 }
 
-/// A spell-side wound flinch, the reference's `(unit, 0)` from the kit player, the instant-hit loop
+/// A spell-side wound flinch, the reference's wound play from the kit player, the instant-hit loop
 /// (harmful only) and the missile impact: CombatWound (9) or StandWound (8) by engagement, in the
 /// secondary-blend slot.
 #[derive(Message, Clone, Copy)]
@@ -513,7 +515,7 @@ pub(crate) use sheath::{
 /// The `SMSG_EMOTE` to `EmoteAnim` consumer.
 mod emote_anim;
 
-/// The client-local gestures (chat, NPC interact), the reference's.
+/// The client-local gestures (chat, NPC interact), as the reference plays them.
 mod gesture;
 use emote_anim::emote_to_anim;
 pub(crate) use emote_anim::{local_play_eligible, LocalPlay};
@@ -588,15 +590,15 @@ pub(crate) struct AnimDriver {
     /// The movement flags the base was last armed for: the reference has no per-one-shot latch,
     /// so a root landing with a cast one-shot (Ice Block) still lets the base overwrite bone 0.
     gait_flags: u32,
-    /// Whether the unit was the interact NPC last frame: `SetInteractNPC` re-picks its base on open
-    /// and on clear, so a flip cuts a one-shot.
+    /// Whether the unit was the interact NPC last frame: the interact-NPC setter re-picks its base
+    /// on open and on clear, so a flip cuts a one-shot.
     interacting: bool,
     /// Whether the interaction in `interacting` (or the one just cleared) targets a player, whose
     /// open and clear skip the re-pick (the PLAYER typemask bit).
     interact_player: bool,
-    /// The clear's re-pick runs while the reference still names the NPC, so it picks Stand; the
-    /// global is zeroed after. The state returns at the next re-pick: the Stand window's end, a
-    /// movement-flag edge, or leaving Gait.
+    /// The clear's re-pick runs while the reference's interact-NPC global still names the NPC, so
+    /// it picks Stand; the global is zeroed after. The state returns at the next re-pick: the Stand
+    /// window's end, a movement-flag edge, or leaving Gait.
     interact_hold: bool,
     /// The reference's `[unit+0xd58] & 0xc0000`: while Knockdown, LiftOff or Land holds it, base
     /// requests are refused, so a stun's knockdown survives the root's Stand recompute.
@@ -609,8 +611,8 @@ pub(crate) struct AnimDriver {
     /// The pending mid-animation weapon swap while a draw/stow one-shot plays.
     sheath_swap: Option<SheathSwap>,
     /// Whether any animation started this frame, for the weapon-trail latch: the reference reads
-    /// `unit+0xd1c` in `PlayAnimation`, its single entry point, locomotion included, so starting to
-    /// run starts Charge's trail.
+    /// `unit+0xd1c` in the animation play call, its single entry point, locomotion included, so
+    /// starting to run starts Charge's trail.
     started_anim: bool,
     /// A masked upper-body one-shot on the SpineLow overlay while the base drives the legs; a
     /// full-body one lives in `Mode::Swing` until locomotion transplants it here.
@@ -630,7 +632,7 @@ pub(crate) struct AnimDriver {
     last_vertical_speed: f32,
     /// FALLING last frame: marks takeoff and a step-off fall's landing.
     was_falling: bool,
-    /// The reference's `CGUnit+0xd60`: a combat clip requested over another doubles the playing
+    /// The reference's `unit+0xd60`: a combat clip requested over another doubles the playing
     /// clip's rate and parks here until no one-shot is live; any normal arm clears it.
     deferred: Option<u16>,
     /// The looping arm's node and rolled budget `R` (`block+0xbc`): the watchdog re-picks after `R`
@@ -845,8 +847,9 @@ impl Plugin for CreatureAnimPlugin {
                     (arm_aura_state_fx, play_state_done_kits)
                         .chain()
                         .before(WorldStage::Present),
-                    // The reference arms, replays on a display swap; arm first, since the swap
-                    // crosses from last frame's teardown, armed by the same wire burst.
+                    // The reference arms the latch and replays it on a display swap; arm first,
+                    // since the swap crosses from last frame's teardown, armed by the same wire
+                    // burst.
                     (arm_morph_latch, replay_morph_kit).chain(),
                     blood_spurts,
                     hard_landing_dust,
@@ -916,7 +919,7 @@ mod attack_stand_tests {
     use super::*;
 
     /// StartAttack stands a seated player even on the already-engaged skip, which jumps past the
-    /// stand to the reference and sends no `CMSG_ATTACKSWING`.
+    /// stand to the auto-repeat cancel and sends no `CMSG_ATTACKSWING`.
     #[test]
     fn starting_an_attack_stands_you_even_when_the_swing_is_skipped() {
         let mut app = App::new();

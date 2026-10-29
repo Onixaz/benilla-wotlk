@@ -5,7 +5,7 @@
 //! Unlike the player book, its add-gate refuses only `Attributes & 0x80` (`DO_NOT_DISPLAY`); it has
 //! no tabs, so a button's 1..12 id is the book id; and each slot carries the raw word's autocast
 //! bits (31, 30) and the word itself, which `PickupSpell` puts on the cursor. The order is shared:
-//! the reference sorts with, the player book's comparator.
+//! the reference sorts it with the player book's comparator.
 //!
 //! A book cooldown is the pet's own store, the one `GetPetActionCooldown` reads (with `isPet`), so
 //! bar and book share one timer. `CastSpell(id, "pet")` sends `CMSG_PET_ACTION` with a word built
@@ -116,8 +116,8 @@ pub(crate) fn feed_pet_book(
         let changed = book_changed(&fresh, &memory.pushed);
         script.set_pet_book(fresh.clone());
         memory.pushed = fresh;
-        // One `SPELLS_CHANGED` for both books off the shared re-sort (tail-jumps
-        // `SignalEvent(0x104)`). A cooldown repaints the pet page through the flush's
+        // One `SPELLS_CHANGED` for both books off the shared re-sort (it tail-jumps to the event
+        // signal, event `0x104`). A cooldown repaints the pet page through the flush's
         // `SPELL_UPDATE_COOLDOWN` (`SpellBookFrame.lua:209`, `221`), which `ui_pet`'s
         // `fire_pet_cooldown_events` fires after this feed's push; autocast, through
         // `PET_BAR_UPDATE` (`227-231`), which `ui_pet`'s feed fires.
@@ -169,8 +169,8 @@ fn slot_view(
     }
 }
 
-/// `CastSpell(id, "pet", onSelf)` (`CGSpellBook::CastSpell` `0x53bc40`): the spell word through
-/// the bar's dispatcher `SendPetAction`, at the player with `onSelf`, else at the selection.
+/// `CastSpell(id, "pet", onSelf)` (`0x53bc40`): the spell word through the bar's pet-action
+/// dispatcher, at the player with `onSelf`, else at the selection.
 pub(crate) fn cast_pet_spell(
     p: &mut crate::ui_pet::PetPress,
     spell_id: u32,
@@ -213,7 +213,7 @@ pub(crate) fn drain_pet_book(
         let Some(on) = flip_autocast(&mut bar.spells, spell_id) else {
             continue;
         };
-        // The reference's `SignalEvent(0x161)`: the bar repaints before the packet leaves, and the
+        // The reference's event signal `0x161`: the bar repaints before the packet leaves, and the
         // signal count carries that to the feed.
         bar.bar_signals = bar.bar_signals.wrapping_add(1);
         debug!("ui_pet_book: autocast {spell_id} -> {on}");

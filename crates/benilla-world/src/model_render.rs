@@ -129,7 +129,7 @@ pub enum ShadeSel {
     /// units, players and GameObjects alike.
     Lit,
     /// Lit ground at 1.0: exterior WMO MODD props and ADT map doodads, never the 2.5 site; a map
-    /// doodad's `CMapDoodadDef` `[+0xa4]` is only ever 0.0, 0.5 or 1.0.
+    /// doodad's placement `[+0xa4]` is only ever 0.0, 0.5 or 1.0.
     Matte,
     /// The base sits on MCSH-shadowed terrain: the reference's dim 0.5.
     Shaded,
@@ -315,7 +315,7 @@ pub fn model_material(
                 // x WMO (FFP N·L × MOCV), y fade variant, z WMO interior group (sun off), w unlit:
                 // M2 UNLIT 0x01, or WMO UNLIT on an exterior group (the interior drawer ignores
                 // it). M2 Mod/Mod2x are always unlit, and additive is lit unless 0x01 is set
-                // (`DAT_00811fa8 = {1,1,1,1,1,0,0}`).
+                // (the per-blend-mode lit table `{1,1,1,1,1,0,0}`).
                 model_flags: Vec4::new(
                     if is_wmo { 1.0 } else { 0.0 },
                     if fade_variant { 1.0 } else { 0.0 },
@@ -1068,9 +1068,9 @@ pub enum ModelKind {
 }
 
 /// A model root whose projected batches draw whatever `projectedTextures` says: the reference's
-/// `CM2Model` flag `0x4`, set on a spell effect, missile or dynamic object whose spell carries
-/// attribute ExE `0x40000000` (`CGDynamicObject_C::ModelLoaded`, `CGMissile_C`, `CEffect`).
-/// GameObject models carry it always (`CGGameObject_C`), here by their [`ModelKind`].
+/// model flag `0x4`, set on a spell effect, missile or dynamic object whose spell carries attribute
+/// ExE `0x40000000` (set as each one's model loads). GameObject models carry it always, here by
+/// their [`ModelKind`].
 #[derive(Component)]
 // Sparse: a few effect roots carry it, and a column would split their tables.
 #[component(storage = "SparseSet")]

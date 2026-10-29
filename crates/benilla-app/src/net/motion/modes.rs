@@ -7,7 +7,7 @@ use crate::creature_anim::move_flags;
 
 /// A streamed unit's server-granted movement modes as `MOVEMENTFLAGS` bits: root, water-walk,
 /// feather-fall, hover, walk-mode and swim. The reference keeps one flags dword per unit
-/// (`CMovement` at `CGUnit+0x9a8`, word `+0x40`); the granted half is kept apart from
+/// (the movement object at unit `+0x9a8`, word `+0x40`); the granted half is kept apart from
 /// [`super::RemoteMotion::flags`] because the relay merge rewrites that word from every pose and a
 /// creature sends none. Absent means no modes; once inserted it lives as long as the entity, as the
 /// reference's word lives as long as the unit.
@@ -45,8 +45,8 @@ impl UnitMoveModes {
 // `MOVEFLAG_SAFE_FALL` has no accessor: only our mover (`MoveModes::feather_fall`) and relayed
 // players (their own pose flags) fall; a creature rides its spline and never does.
 
-/// What `SetRoot` clears from the flags word at apply, as an AND mask: the direction, turn and
-/// pitch bits (`0xff`), the `0x8000` latch and the input latches (`0x1f0000`); `ROOT` survives. A
+/// What the root apply clears from the flags word, as an AND mask: the direction, turn and pitch
+/// bits (`0xff`), the `0x8000` latch and the input latches (`0x1f0000`); `ROOT` survives. A
 /// one-shot wipe, not a gate: with no direction bits the unit fails the integration test
 /// (`move_flags::INTEGRATED`) and stops rather than coasting. 3.3.5a's apply (`0x9884b8`,
 /// `and 0xff203f00`) also clears ascending and descending.

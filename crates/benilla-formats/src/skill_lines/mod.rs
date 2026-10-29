@@ -3,8 +3,8 @@
 //!
 //! - `SkillLine.dbc`, 56 fields: `ID`, `categoryId`, `skillCostID`, the name (3-19), the
 //!   description (20-36), `spellIcon` (37), the alternate verb (38-54) and `canLink`.
-//! - `SkillLineAbility.dbc`, 14 fields: every row of a spell, resolved per race and class as
-//!   `SpellTableLookupAbility` (`0x812410`) does; `forward_spellid` is the first non-zero across
+//! - `SkillLineAbility.dbc`, 14 fields: every row of a spell, resolved per race and class as the
+//!   reference's ability lookup (`0x812410`) does; `forward_spellid` is the first non-zero across
 //!   the spell's rows, as in vmangos's `SpellMgr::GetSpellBookSuccessorSpellId`.
 //! - `SkillRaceClassInfo.dbc`, `SkillRaceClassInfofmt = "diiiiiix"`: the row admitting the player's
 //!   race and class, which the reference resolves; here the first such row. With flag `0x80`, or
@@ -111,7 +111,7 @@ pub struct LinkAbility {
 }
 
 impl LinkAbility {
-    /// `SpellTableMatchRaceClass` (`0x810320`) with no exclusions: a zero mask admits all.
+    /// The race and class match (`0x810320`) with no exclusions: a zero mask admits all.
     pub fn admits(&self, race: u8, class: u8) -> bool {
         let bit = |n: u8| 1u32.wrapping_shl(u32::from(n).wrapping_sub(1));
         (self.race_mask == 0 || self.race_mask & bit(race) != 0)
@@ -209,7 +209,7 @@ impl SlaRow {
         }
     }
 
-    /// `SpellTableMatchRaceClass` (`0x810320`): an exclude flag inverts its mask, a zero mask
+    /// The race and class match (`0x810320`): an exclude flag inverts its mask, a zero mask
     /// admits all.
     fn admits(&self, race: u8, class: u8) -> bool {
         let bit = |n: u8| 1u32.wrapping_shl(u32::from(n).wrapping_sub(1));
@@ -285,7 +285,7 @@ impl SkillLineCatalog {
 
     /// A spell's `SkillLineAbility` row for a 1-based `race` and `class`: the last row in file
     /// order whose line has a `SkillRaceClassInfo` row admitting the pair and whose own masks admit
-    /// it, the bucket head `SpellTableLookupAbility` (`0x812410`) returns, since each admitted row
+    /// it, the bucket head the ability lookup (`0x812410`) returns, since each admitted row
     /// links at the head (`0x811cc0`). Before the descriptor (race or class 0), the first row.
     pub fn ability(&self, spell_id: u32, race: u8, class: u8) -> Option<&SlaInfo> {
         let rows = self.abilities.get(&spell_id)?;
@@ -321,7 +321,7 @@ impl SkillLineCatalog {
         head
     }
 
-    /// Whether a higher rank of `spell_id` is known, the reference's `KnownHigherRank`; the
+    /// Whether a higher rank of `spell_id` is known, the reference's higher-rank test; the
     /// trainer's colouring and state re-evaluator OR it with plain known-ness.
     pub fn higher_rank_known(
         &self,
@@ -376,7 +376,7 @@ impl SkillLineCatalog {
         s
     }
 
-    /// A linkable line's rows in link-bit order (`SpellTableGetSkillLineLinkInfo 0x8104a0`).
+    /// A linkable line's rows in link-bit order (`0x8104a0`).
     pub fn link_run(&self, line_id: u32) -> Option<&[LinkAbility]> {
         self.link_runs.get(&line_id).map(Vec::as_slice)
     }

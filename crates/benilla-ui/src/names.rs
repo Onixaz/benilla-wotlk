@@ -1,14 +1,14 @@
-//! The client's name checker `0x7e18c0`, behind a guild charter's name (`ValidateGuildName
-//! 0x7e1f60`) and a pet's rename (`0x7e1f00`), and the message its code shows
-//! (`CGGameUI::DisplayNameError 0x5218c0`). The server re-checks every name and answers a refusal
-//! with the same codes (`SMSG_GUILD_COMMAND_RESULT` 6, `SMSG_PET_NAME_INVALID`).
+//! The client's name checker `0x7e18c0`, behind a guild charter's name (`0x7e1f60`) and a pet's
+//! rename (`0x7e1f00`), and the message its code shows (the name-error display, `0x5218c0`). The
+//! server re-checks every name and answers a refusal with the same codes
+//! (`SMSG_GUILD_COMMAND_RESULT` 6, `SMSG_PET_NAME_INVALID`).
 //!
 //! Not built: the reserved and profane pattern lists (code 8, `NamesReserved.dbc` and
-//! `NamesProfanity.dbc` compiled at `ValidateNameInitialize 0x7e2250`), and the realm category's
+//! `NamesProfanity.dbc` compiled at the checker's init, `0x7e2250`), and the realm category's
 //! charset mask from `Cfg_Categories.dbc` (`0x4db582`). Every charset is allowed, the reference's
 //! own fallback when the category has no row (`0x4db5a7` passes mask 0).
 
-/// A checker or server code: the `u32` `DisplayNameError` takes, and the `reason` of
+/// A checker or server code: the `u32` the name-error display takes, and the `reason` of
 /// `SMSG_PET_NAME_INVALID`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct NameError(pub u32);
@@ -18,7 +18,8 @@ impl NameError {
     pub const NO_NAME: Self = Self(2);
     pub const TOO_SHORT: Self = Self(3);
     pub const TOO_LONG: Self = Self(4);
-    /// A character outside the name's charset and its extras; `DisplayNameError`'s default arm.
+    /// A character outside the name's charset and its extras; the name-error display's default
+    /// arm.
     pub const INVALID_CHARACTER: Self = Self(5);
     pub const RESERVED: Self = Self(8);
     /// An apostrophe first or last.
@@ -31,7 +32,7 @@ impl NameError {
     pub const RUSSIAN_CONSECUTIVE_SILENT_CHARACTERS: Self = Self(14);
     pub const RUSSIAN_SILENT_CHARACTER_AT_BEGINNING_OR_END: Self = Self(15);
 
-    /// The message `DisplayNameError` shows for this code: its jump table at `0x52199c` covers
+    /// The message the name-error display shows for this code: its jump table at `0x52199c` covers
     /// 2..=16, and 5, 9, 10 and every code outside it take `ERR_NAME_INVALID` (`0x52198d`).
     pub fn key(self) -> &'static str {
         match self.0 {
@@ -52,7 +53,7 @@ impl NameError {
     }
 }
 
-/// `ValidateGuildName 0x7e1f60`: the space is the one extra, and more than 24 UTF-16 units is
+/// The guild-name check (`0x7e1f60`): the space is the one extra, and more than 24 UTF-16 units is
 /// too long.
 pub fn check_guild_name(name: &str) -> Result<(), NameError> {
     let checked = check(name, &[u16::from(b' ')], false)?;
@@ -77,8 +78,8 @@ pub fn check_pet_name(name: &str) -> Result<(), NameError> {
     Ok(())
 }
 
-/// `ValidateGuildBankTabName 0x7e1fb0`: the space and the digits are extras, the checker runs
-/// relaxed, and more than 16 UTF-16 units is too long.
+/// The guild-bank tab-name check (`0x7e1fb0`): the space and the digits are extras, the checker
+/// runs relaxed, and more than 16 UTF-16 units is too long.
 pub fn check_guild_bank_tab_name(name: &str) -> Result<(), NameError> {
     let extras: Vec<u16> = std::iter::once(b' ')
         .chain(b'0'..=b'9')

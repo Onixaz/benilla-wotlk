@@ -1,6 +1,6 @@
 //! The addon index space that `GetNumAddOns` and every verb's index form address: an array, not the
-//! registry, rebuilt only by `SMSG_ADDON_INFO` (`AddOn_ReadAddonInfoReply`). It is
-//! `## Title`-sorted with `SStrCmpI` (`qsort`), filtered by `[rec+0x29]`, and empty before the
+//! registry, rebuilt only by `SMSG_ADDON_INFO` (the reference's addon-info reply read). It is
+//! `## Title`-sorted case-insensitively (`qsort`), filtered by `[rec+0x29]`, and empty before the
 //! reply.
 
 use crate::script::{AddOnInfo, UiScript};
@@ -35,8 +35,8 @@ fn by_index(s: &UiScript) -> Vec<String> {
     .unwrap()
 }
 
-/// Comparator compares `AddOn_GetTitle` with `SStrCmpI` (`_strnicmp`), folding ASCII only; a
-/// byte-wise sort would put `"Middle"` first.
+/// The comparator compares each addon's title case-insensitively (`_strnicmp`), folding ASCII only;
+/// a byte-wise sort would put `"Middle"` first.
 #[test]
 fn the_index_space_is_title_sorted_case_insensitively_and_not_registry_order() {
     let mut s = seeded();
@@ -44,7 +44,7 @@ fn the_index_space_is_title_sorted_case_insensitively_and_not_registry_order() {
     assert_eq!(by_index(&s), vec!["Zulu", "Mike", "Alpha"]);
 }
 
-/// The comparator's fallback: `AddOn_GetTitle` misses and the reference substitute the folder name.
+/// The comparator's fallback: the title read misses and the comparator substitutes the folder name.
 #[test]
 fn a_titleless_addon_sorts_under_its_folder_name() {
     let mut s = UiScript::new().unwrap();
@@ -178,7 +178,7 @@ fn disable_all_leaves_a_hidden_addon_enabled_and_loadable() {
     assert_eq!(s.eval::<i64>("return AuctionLoaded").ok(), Some(1));
 }
 
-/// `EnableAllAddOns` walks the same array, so a hidden addon keeps its own row, and `AddOn_CanLoad`
+/// `EnableAllAddOns` walks the same array, so a hidden addon keeps its own row, and the load gate's
 /// check 3 still reads that row: no check of the gate reads `[rec+0x29]`, so a hidden addon
 /// disabled by name stays `DISABLED`.
 #[test]

@@ -55,7 +55,7 @@ fn attack_swing_refusal_wire() {
         SessionEvent::CancelCombat
     ));
 
-    // SMSG_FEIGN_DEATH_RESISTED: in the reference only a `DisplayError(421)`.
+    // SMSG_FEIGN_DEATH_RESISTED: in the reference only an error-display line, error id 421.
     assert!(matches!(
         messages::parse_server(messages::opcode::SMSG_FEIGN_DEATH_RESISTED, &[]).unwrap(),
         ServerPacket::FeignDeathResisted

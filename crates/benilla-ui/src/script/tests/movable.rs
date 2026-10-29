@@ -62,8 +62,8 @@ fn the_canonical_addon_idiom_moves_a_frame_and_the_position_survives_the_stop() 
     assert_eq!(corner(&mut s), (200.0, 150.0), "no longer following");
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 
-    // The stop unflattens the frame (`UnflattenFrame` `0x48a840`): one anchor, to the screen
-    // point nearest its own, here the centres.
+    // The stop unflattens the frame (`0x48a840`): one anchor, to the screen point nearest its own,
+    // here the centres.
     let (n, point, rel, x, y) = s
         .eval::<(i64, String, Option<String>, f64, f64)>(
             "local p, r, _, x, y = MovePanel:GetPoint() return MovePanel:GetNumPoints(), p, r, x, y",
@@ -569,7 +569,7 @@ fn region_getters_answer_in_the_owners_units_under_scale() {
     assert!((cx - (fl + fr) * 0.5).abs() < 1e-3);
 }
 
-/// `SavePlacedFrames` writes a frame only when it is user-placed (`0x1000`) and movable or
+/// The placed-frame save writes a frame only when it is user-placed (`0x1000`) and movable or
 /// resizable (`0x300`): the drag start and the restore set the bit past `SetUserPlaced`'s guard, so
 /// clearing the flags stops the save.
 #[test]
@@ -611,7 +611,7 @@ fn the_write_filter_is_user_placed_and_movable_or_resizable() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `LoadPlacedFrames` seats the position only on a movable frame and the size only on a
+/// The placed-frame load seats the position only on a movable frame and the size only on a
 /// resizable one, each arm stamping userPlaced; a frame with neither flag is left alone. The
 /// snapshot names the point nearest the screen's same point, so it reads back where it was.
 #[test]

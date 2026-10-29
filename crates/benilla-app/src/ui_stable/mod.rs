@@ -327,8 +327,8 @@ fn stable_subject(
     (unit, display)
 }
 
-/// Stable refusals as message keys: only `ERR_NOT_ENOUGH_MONEY`, `DisplayError(0x25)` in the
-/// `SMSG_STABLE_RESULT` handler, whose row also speaks (line `0x28`).
+/// Stable refusals as message keys: only `ERR_NOT_ENOUGH_MONEY`, the error display's message
+/// `0x25` in the `SMSG_STABLE_RESULT` handler, whose row also speaks (line `0x28`).
 #[derive(Resource, Default)]
 pub(crate) struct StableErrors(pub(crate) Vec<&'static str>);
 

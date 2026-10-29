@@ -156,8 +156,8 @@ pub(super) fn emit(
         }
     }
     // A region FontString whose wrapped text needs more lines than its rect holds draws
-    // `prefix + "..."` (`CSimpleFontString`); an editbox never truncates and a message line sizes
-    // to its text. Before the shadow, which the client draws from the same string.
+    // `prefix + "..."`, as the client's font string does; an editbox never truncates and a message
+    // line sizes to its text. Before the shadow, which the client draws from the same string.
     let ellipsized = match host.target {
         ZTarget::Region(region) if ebox.is_none() => {
             crate::ui_text::ellipsize_to_fit(atlas, region, draw_text, draw_rect, spec)

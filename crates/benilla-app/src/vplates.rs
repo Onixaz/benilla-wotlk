@@ -1,9 +1,9 @@
-//! V-key nameplates, `CGNamePlateFrame`: health-bar plates drawn as a 2-D overlay that replaces a
-//! unit's overhead name. This file owns the world side (gate, anchor, projection, seat, basis); the
-//! widgets live in [`benilla_ui::script::nameplate`].
+//! V-key nameplates, the client's nameplate frames: health-bar plates drawn as a 2-D overlay that
+//! replaces a unit's overhead name. This file owns the world side (gate, anchor, projection, seat,
+//! basis); the widgets live in [`benilla_ui::script::nameplate`].
 //!
 //! - Toggles: the per-character CVars `nameplateShowEnemies` and `nameplateShowFriends`, both
-//!   `"0"` at registration, which `ShouldShowNamePlate` (`0x72b060`) tests per category.
+//!   `"0"` at registration, which the nameplate show test (`0x72b060`) reads per category.
 //! - Gate: `0x72b060`, [`plate_shown`] for the unit's own legs, then 41 yd from the
 //!   camera's unit outside arenas; no occlusion; a unit not projected into view loses its plate.
 //! - Seat: `nameplateAllowOverlap` "1" hangs each plate on its point (`[0xbd09d8]`, read at `0x7258c1`); "0" solves it
@@ -169,7 +169,7 @@ const LEVEL_OFF_Y: f32 = 0.0071;
 const SKULL_SIZE: f32 = 0.01;
 /// The raid-target icon: its RIGHT on the border's LEFT, hanging off the plate's left edge.
 const RAID_ICON_SIZE: f32 = 0.02;
-/// .
+/// The plate's lift above the unit's head, in yards.
 const PLATE_LIFT: f32 = 2.0 / 3.0;
 /// 41 yd from the camera's unit (`[0xadaa7c]` = 1681, `0x72b331`).
 const MAX_DIST_SQ: f32 = 1681.0;
@@ -185,7 +185,7 @@ const PLATE_NEUTRAL: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const PLATE_FRIENDLY: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const PLATE_PLAYER: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 
-/// The class bar colours, `s_classColors` at `0xb2da20`, by `UNIT_FIELD_BYTES_0` byte 1.
+/// The class bar colours, the client's table at `0xb2da20`, by `UNIT_FIELD_BYTES_0` byte 1.
 const PLATE_CLASS: [[u8; 3]; 12] = [
     [0x00, 0x00, 0x00],
     [0xc6, 0x9b, 0x6d],
@@ -201,7 +201,7 @@ const PLATE_CLASS: [[u8; 3]; 12] = [
     [0xff, 0x7c, 0x0a],
 ];
 
-/// `UpdateColorDisplay`'s test order (`0x98ee30`): a hostile player in its class colour while
+/// The plate colour's test order (`0x98ee30`): a hostile player in its class colour while
 /// `ShowClassColorInNameplate` is on, then reaction 1 or less red, else a player blue, else 4 or
 /// more green, else (2 and 3) yellow.
 fn plate_tint(rank: u8, is_player: bool, class: Option<u8>) -> [f32; 4] {
@@ -222,7 +222,7 @@ fn plate_tint(rank: u8, is_player: bool, class: Option<u8>) -> [f32; 4] {
     }
 }
 
-/// The level con palette, the reference's dwords, not FrameXML's `QuestDifficultyColor`.
+/// The level con palette, the con colour's dwords, not FrameXML's `QuestDifficultyColor`.
 const CON_RED: [f32; 4] = [1.0, 25.0 / 255.0, 25.0 / 255.0, 1.0];
 const CON_ORANGE: [f32; 4] = [1.0, 127.0 / 255.0, 63.0 / 255.0, 1.0];
 const CON_YELLOW: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
@@ -283,7 +283,7 @@ pub(crate) fn text_px(h: f32, basis: f32) -> f32 {
 }
 
 /// Re-read the two CVars whenever the registry moved; read rather than observed, so the silent
-/// per-character drop at logout (`CVar::DeleteCharacterCVars` `0x767350`) turns them off too.
+/// per-character drop at logout (`0x767350`) turns them off too.
 pub(crate) fn read_plate_cvars(
     cvars: Option<Res<crate::cvars::Cvars>>,
     mut mode: ResMut<VPlateMode>,
@@ -431,9 +431,9 @@ fn drive_vplates(
         *mouse_told.get(&script) = Some(looking);
         script.set_nameplate_mouse(!looking);
     }
-    // While a ground-targeted spell is armed (the reference's `flag & 0x60`), plates refuse the hit
-    // test (the `+0x3c` override) without clearing the mouse-enabled bit, so `IsMouseEnabled()` is
-    // unchanged.
+    // While a ground-targeted spell is armed (the spell cursor's `flag & 0x60`), plates refuse the
+    // hit test (the `+0x3c` override) without clearing the mouse-enabled bit, so `IsMouseEnabled()`
+    // is unchanged.
     script.set_nameplate_hit_test_veto(
         world
             .targeting
@@ -474,7 +474,7 @@ fn drive_vplates(
         if store.is_some_and(|s| s.0.unit_flags() & (1 << 25) != 0) {
             continue;
         }
-        // The reference's first test: health 0 or less (absent reads 0) has no plate. Feign death
+        // The plate gate's first test: health 0 or less (absent reads 0) has no plate. Feign death
         // keeps health, so it passes here.
         if store.is_none_or(|s| s.0.unit_health().unwrap_or(0) == 0) {
             continue;
@@ -547,7 +547,7 @@ fn drive_vplates(
         if !plate_shown(&mode, &subject) {
             continue;
         }
-        // Behind the camera or outside the viewport there is no plate: the reference destroys it
+        // Behind the camera or outside the viewport there is no plate: the plate gate destroys it
         // before the seat, never clamping it in from off-screen.
         let anchor = overhead_anchor(
             entity,
@@ -773,7 +773,7 @@ impl Plugin for VPlatesPlugin {
 mod tests {
     use super::*;
 
-    /// The reference at level 30 (grayband[6] = 7: green down to 23, gray at 22) and the low edge.
+    /// The con colour at level 30 (grayband[6] = 7: green down to 23, gray at 22) and the low edge.
     #[test]
     fn con_color_matches_the_byte_table() {
         assert_eq!(con_color(30, 35), CON_RED);

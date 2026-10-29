@@ -520,9 +520,9 @@ fn an_unfloated_image_reserves_height_without_becoming_the_anchor() {
     );
 }
 
-/// The `<IMG>` in `page_text` 2654 has no `width=` or `height=`, and the reference's
-/// `CSimpleTexture::GetWidth`/`GetHeight` answer an authored 0 with the art's texel size, a texel
-/// to a FrameXML unit: the 128×128 crest is a 128-unit square.
+/// The `<IMG>` in `page_text` 2654 has no `width=` or `height=`, and the reference texture's
+/// `GetWidth`/`GetHeight` answer an authored 0 with the art's texel size, a texel to a FrameXML
+/// unit: the 128×128 crest is a 128-unit square.
 #[test]
 fn the_books_unsized_crest_is_its_arts_texel_square_not_the_whole_page() {
     const CREST: &str = "Interface\\PvPRankBadges\\PvPRankAlliance";
@@ -607,7 +607,7 @@ fn an_unsized_image_reserves_its_arts_texel_height_unless_it_is_floated() {
 }
 
 /// With no size oracle a zero-size image has no span and does not resolve, as in the reference for
-/// a texture with no `CGxTex*`: `assemble` returns 0 and the quad is all zeros.
+/// a texture with no device texture: `assemble` returns 0 and the quad is all zeros.
 #[test]
 fn without_a_size_oracle_an_unsized_image_does_not_resolve() {
     let mut s = script();
@@ -761,7 +761,7 @@ fn the_paint_setters_land_on_the_element_and_reach_the_next_parse() {
     );
 }
 
-/// An element with no font path takes `elementFont[0]` whole, colour included: the reference swap
+/// An element with no font path takes `elementFont[0]` whole, colour included: the reference swaps
 /// the register before the one `SetFontObject`, so an `H1` given only a colour draws in `P`'s.
 #[test]
 fn an_element_with_no_font_of_its_own_loses_its_own_colour_too() {
@@ -810,8 +810,8 @@ fn block_color(s: &UiScript, name: &str, i: usize) -> Option<[f32; 4]> {
 }
 
 /// `SetFontObject` on an element font: a re-point keeps what a local setter set (the inheritMask
-/// bit at `CSimpleFont+0x2c`/`CSimpleFontString+0xD4` is never restored), and nil unlinks the
-/// object but leaves the paint.
+/// bit at font `+0x2c`/font string `+0xD4` is never restored), and nil unlinks the object but
+/// leaves the paint.
 #[test]
 fn set_font_object_keeps_local_overrides_and_the_nil_form_leaves_the_paint_standing() {
     let s = script();

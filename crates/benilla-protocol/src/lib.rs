@@ -161,7 +161,7 @@ impl Logon {
         self.stream.is_some()
     }
 
-    /// `CLoginMgr::Cancel`: the realmd socket closes; the session key and the last list are kept.
+    /// The login cancel: the realmd socket closes; the session key and the last list are kept.
     pub fn close(&mut self) {
         self.stream = None;
     }

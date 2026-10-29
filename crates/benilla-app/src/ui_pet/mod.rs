@@ -53,7 +53,7 @@ pub(crate) struct PetBar {
     /// GCD. Each mutation but the seed fires the flush, off [`Cooldowns::generation`]
     /// (`bar::fire_pet_cooldown_events`).
     pub(crate) cooldowns: Cooldowns,
-    /// The client's, a local latch: all of `IsPetAttackActive`, and the only thing that lights
+    /// The client's attack latch, local: all of `IsPetAttackActive`, and the only thing that lights
     /// Attack. Raised only for a possessed unit, so never on a hunter's bar; lowered by
     /// `PetStopAttack`, a new pet and the old-target clear. `PET_ATTACK_*` read the pet's flag
     /// `0x800` instead.
@@ -66,7 +66,7 @@ pub(crate) struct PetBar {
     /// duration is 0, as for a hunter's or warlock's own pet.
     pub(crate) expires: Option<Instant>,
     /// The pet's pending cast, the spell a cast as the pet sent and its expiry: the per-caster
-    /// pending list `Spell_C_CastSpell` asks (`0x80d34b`), released by the pet's go or failure.
+    /// pending list the cast ladder asks (`0x80d34b`), released by the pet's go or failure.
     pub(crate) pending_cast: Option<(u32, Instant)>,
 }
 

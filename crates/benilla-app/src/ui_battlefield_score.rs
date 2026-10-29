@@ -30,7 +30,8 @@ const INSTANCE_TYPE_ARENA: u32 = 4;
 #[derive(Resource, Default)]
 pub(crate) struct BattlefieldScoreboard {
     log: Option<PvpLogData>,
-    /// `m_nextLogUpdate` (`0xbea584`): the next request's earliest moment, `None` until the first.
+    /// The next log update (`0xbea584`): the next request's earliest moment, `None` until the
+    /// first.
     next_request: Option<Instant>,
 }
 
@@ -160,7 +161,7 @@ pub(crate) fn feed_battlefield_score(
     }
 }
 
-/// `RequestScoreData` (`0x54ce30`): once asked, a finished match's or an arena's board is not
+/// The score request (`0x54ce30`): once asked, a finished match's or an arena's board is not
 /// asked again; otherwise once per 5000 ms.
 fn drain_battlefield_score(
     script: Option<NonSendMut<UiScript>>,

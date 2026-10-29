@@ -1,9 +1,9 @@
 //! `/afk` and `/dnd`, which the reference's `SendChatMessage` handles differently. DND reads
 //! `PLAYER_FLAGS` bit `0x4` live and falls through to the plain `CMSG_MESSAGECHAT` send. AFK reads
-//! the client-side [`AfkMirror`] and hands off to `CGPlayer_C::SetAFK` or `ClearAFK`, which send
-//! their own packets. Both echo before the send, never from the descriptor: the `PLAYER_FLAGS`
-//! delta arm prints nothing. The four lines are `CHAT_MSG_SYSTEM` (type `0xA`); the
-//! `CHAT_MSG_AFK`/`DND` events are other players' auto-replies.
+//! the client-side [`AfkMirror`] and hands off to the player's AFK set or clear, which send their
+//! own packets. Both echo before the send, never from the descriptor: the `PLAYER_FLAGS` delta arm
+//! prints nothing. The four lines are `CHAT_MSG_SYSTEM` (type `0xA`); the `CHAT_MSG_AFK`/`DND`
+//! events are other players' auto-replies.
 
 use bevy::prelude::*;
 
@@ -45,7 +45,7 @@ pub(crate) fn afk_line(
     let text = |key: &str| strings(key).unwrap_or_default();
     if mirror.is_afk() {
         if msg.is_empty() {
-            // `ClearAFK` prints `CLEARED_AFK` unformatted and still sends, with an empty body.
+            // The AFK clear prints `CLEARED_AFK` unformatted and still sends, with an empty body.
             AwayOutcome {
                 line: Some(text("CLEARED_AFK")),
                 mirror: Some(0),
@@ -171,9 +171,9 @@ pub(crate) fn reconcile_afk_mirror(
 }
 
 /// The movement AFK clears: jump, forward/back, strafe and keyboard turn. They sit in the movement
-/// emitters, so only a key press clears; mouse-look turning never reaches, and knockback, fear and
-/// splines press nothing. Jump is here but not in `player::follow`'s cancel set: two separate
-/// reference tables.
+/// emitters, so only a key press clears; mouse-look turning never reaches the keyboard-turn
+/// emitter, and knockback, fear and splines press nothing. Jump is here but not in
+/// `player::follow`'s cancel set: two separate reference tables.
 pub(crate) fn movement_clears_afk(
     binds: Res<crate::bindings::BindingsState>,
     cvars: Res<crate::cvars::Cvars>,
@@ -205,7 +205,7 @@ pub(crate) fn movement_clears_afk(
         .unwrap_or_default();
     push_system(&mut chat, line);
     mirror.0 = 0;
-    // `ClearAFK`'s own packet: the empty `0x14` the command path sends.
+    // The AFK clear's own packet: the empty `0x14` the command path sends.
     let _ = commands.0.send(crate::net::ClientCommand::Chat {
         kind: crate::net::ChatKind::Afk,
         target: None,

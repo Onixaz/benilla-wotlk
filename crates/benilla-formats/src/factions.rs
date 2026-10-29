@@ -1,12 +1,12 @@
 //! Unit reaction: the `FactionTemplate.dbc` catalog and the 1.12 client's reaction comparator.
 //!
 //! A unit's `UNIT_FIELD_FACTIONTEMPLATE` indexes `FactionTemplate.dbc`, and the reference's
-//! comparator turns two rows into hostile, neutral or friendly; every `UnitReaction`, `CanAttack`
-//! and `CanAssist` bottoms out in it. It is only the DBC half of `UnitReaction`, whose group,
+//! comparator turns two rows into hostile, neutral or friendly; every `UnitReaction`, attack check
+//! and assist check bottoms out in it. It is only the DBC half of `UnitReaction`, whose group,
 //! charm, PvP-flag and sanctuary overrides need session state.
 //!
-//! Also `Faction.dbc`'s reputation identity: the reference checks `FactionHasReputation` before the
-//! comparator, so a reputation faction's NPCs colour by the player's rank.
+//! Also `Faction.dbc`'s reputation identity: the reference checks whether a faction has reputation
+//! before the comparator, so a reputation faction's NPCs colour by the player's rank.
 
 use std::collections::HashMap;
 
@@ -36,7 +36,7 @@ pub struct FactionTemplate {
     pub friends: [u32; 4],
 }
 
-/// A unit's base reaction toward another on the reference's scale: the reference returns these
+/// A unit's base reaction toward another on the reference's scale: the comparator returns these
 /// three, and the reputation path widens the scale to 0..=6, hence the gaps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Reaction {
@@ -92,7 +92,7 @@ impl FactionTemplate {
 #[derive(Debug, Clone, Copy)]
 pub struct FactionInfo {
     /// `reputationIndex`, the slot in the `SMSG_INITIALIZE_FACTIONS` standings, or -1 for none
-    /// (`FactionHasReputation` tests `[faction+4] >= 0`).
+    /// (the reputation test reads `[faction+4] >= 0`).
     pub rep_index: i32,
     /// `Faction.dbc` field 18 (`team` in mangos): the parent faction, 0 for none, the only tree
     /// edge the 1.12 table has and the reputation pane's grouping key. A row is a header by
@@ -302,7 +302,7 @@ impl FactionCatalog {
     }
 
     /// A `Faction.dbc` id's reputation identity, `Some` only with a reputation slot: the
-    /// reference's `FactionHasReputation`, tested before the comparator.
+    /// reference's reputation test, made before the comparator.
     pub fn reputation_faction(&self, faction_id: u32) -> Option<&FactionInfo> {
         self.factions.get(&faction_id).filter(|f| f.rep_index >= 0)
     }
@@ -623,8 +623,8 @@ mod tests {
         assert_eq!(a.reaction_toward(&b_names_a), Reaction::Hostile);
     }
 
-    /// Unit templates toward a human player (template 1), the direction colours by; ids from
-    /// vmangos `creature_template.faction`, expected colours from a reference capture.
+    /// Unit templates toward a human player (template 1), the direction the reference colours by;
+    /// ids from vmangos `creature_template.faction`, expected colours from a reference capture.
     #[test]
     fn real_dbc_reactions_match_reference_capture() {
         let data = crate::wow_data_or_skip!();

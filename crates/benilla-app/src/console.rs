@@ -1,11 +1,9 @@
-//! The console command registry: the reference's `ConsoleCommand` table (`ConsoleCommandRegister`).
-//! Subsystems register from their plugins; `/console <line>` reaches [`execute`] through the chat
-//! drain.
+//! The console command registry, as the reference's command table. Subsystems register from their
+//! plugins; `/console <line>` reaches [`execute`] through the chat drain.
 //!
 //! Each CVar is also a command under its own name: a bare name prints `CVar "%s" is "%s"`, a name
-//! with a value sets it, looked up after the registered commands. The built-ins are
-//! `ConsoleVar.cpp`'s four (`set`, `cvar_reset`, `cvar_default`, `cvarlist`) plus the registry's
-//! `help`.
+//! with a value sets it, looked up after the registered commands. The built-ins are the CVar
+//! system's four (`set`, `cvar_reset`, `cvar_default`, `cvarlist`) plus the registry's `help`.
 //!
 //! The reference's drop-down console screen is not built: output is a system line in chat.
 
@@ -32,7 +30,7 @@ pub(crate) struct ConsoleCommands {
     by_key: BTreeMap<String, ConsoleCommand>,
 }
 
-/// Registers a command from a plugin, the reference's `ConsoleCommandRegister`.
+/// Registers a command from a plugin, as the reference's subsystems register theirs.
 pub(crate) trait ConsoleCommandApp {
     fn console_command(
         &mut self,
@@ -79,7 +77,7 @@ impl ConsoleEcho {
     }
 }
 
-/// The built-ins: the reference's four `ConsoleVar.cpp` commands and `help`.
+/// The built-ins: the reference's four CVar commands and `help`.
 pub(crate) struct ConsolePlugin;
 
 impl Plugin for ConsolePlugin {
@@ -98,11 +96,11 @@ impl Plugin for ConsolePlugin {
     }
 }
 
-/// Runs one console line, the reference's `ConsoleCommandExecute`: a registered command, else a
-/// CVar's own command, else unknown, matched case-insensitively. Returns the lines to print.
+/// Runs one console line, as the reference's console does: a registered command, else a CVar's own
+/// command, else unknown, matched case-insensitively. Returns the lines to print.
 ///
-/// A CVar write runs its observers before this returns, as the callback runs inside `CVar::Set`
-/// in the reference.
+/// A CVar write runs its observers before this returns, as the callback runs inside the CVar set in
+/// the reference.
 pub(crate) fn execute(world: &mut World, line: &str) -> Vec<String> {
     let line = line.trim();
     let (name, args) = line
@@ -154,7 +152,7 @@ fn set_cvar(world: &mut World, name: &str, value: &str) -> Vec<String> {
         let outcome = cvars.set(name, value);
         (outcome, cvars.take_events())
     };
-    // The callbacks' own lines come first, as they print inside `CVar::Set`.
+    // The callbacks' own lines come first, as they print inside the CVar set.
     if let Some(mut echo) = world.get_resource_mut::<ConsoleEcho>() {
         echo.capture = Some(Vec::new());
     }

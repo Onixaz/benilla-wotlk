@@ -4,7 +4,7 @@
 
 use crate::layout::Rect;
 
-/// The default `edgeSize`, logical 32: the constructor writes device 0.025 (`DAT_0081c9b0`).
+/// The default `edgeSize`, logical 32: the constructor writes device 0.025.
 pub const DEFAULT_EDGE_SIZE: f32 = 32.0;
 
 /// `BackgroundInsets`: the background's inset from the frame rect; the border is never inset.
@@ -122,7 +122,7 @@ fn aa_corners(x0: f32, x1: f32, y_bottom: f32, y_top: f32) -> [[f32; 2]; 4] {
 }
 
 /// The drawable pieces for a frame's resolved rect (y-up), in paint order: the background (layer
-/// `BACKGROUND`), then the 8 border pieces (layer `BORDER`). Geometry, UVs.
+/// `BACKGROUND`), then the 8 border pieces (layer `BORDER`).
 pub fn pieces(frame: Rect, bd: &Backdrop) -> Vec<BackdropPiece> {
     let mut out = Vec::with_capacity(9);
     let e = bd.edge_size;
@@ -136,8 +136,8 @@ pub fn pieces(frame: Rect, bd: &Backdrop) -> Vec<BackdropPiece> {
             bd.insets.top,
             bd.insets.bottom,
         );
-        // The four anchors, y-up. Bottom-right takes the top inset, as the reference does (the
-        // reference loads `+0x50`, top, not `+0x54`); invisible when the two are equal.
+        // The four anchors, y-up. Bottom-right takes the top inset, as the reference does (it loads
+        // `+0x50`, top, not `+0x54`); invisible when the two are equal.
         let corners = [
             [l + il, t - it],
             [r - ir, t - it],

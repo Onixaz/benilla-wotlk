@@ -244,7 +244,7 @@ fn declares_handler(
     own || inherits(el).any(|t| declares_handler(t, frames, handlers, depth + 1))
 }
 
-/// Whether the reference frame takes the mouse once loaded: the reference is reached from its
+/// Whether the reference frame takes the mouse once loaded: the mouse enable is reached from its
 /// constructor, `enableMouse`, or an auto-enabling handler.
 fn reference_takes_mouse(name: &str, frames: &HashMap<String, Element>) -> bool {
     let Some(el) = frames.get(name) else {

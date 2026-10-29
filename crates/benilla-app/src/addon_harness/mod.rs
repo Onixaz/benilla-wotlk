@@ -267,8 +267,9 @@ fn survey_one(
         "UNIT_AURA",
         vec![benilla_ui::script::ScriptValue::Str("player".into())],
     );
-    // The addon's dependencies, first and recursively, as `AddOn_Load` does in its first two steps.
-    // Loaded before `globals_of` below, so a name a dependency provides is not missing.
+    // The addon's dependencies, first and recursively, as the client's addon loader does in its
+    // first two steps. Loaded before `globals_of` below, so a name a dependency provides is not
+    // missing.
     let mut dep_loads: Vec<LoadedDep> = Vec::new();
     load_dependencies(
         &mut script,
@@ -571,12 +572,12 @@ fn only_on(have: &[String], probes: &[String]) -> String {
 
 /// Drive the session-start sequence over a loaded addon and report what its handlers raised.
 ///
-/// The order is the 1.12 client's (`UI_Init`): `ADDON_LOADED`, `VARIABLES_LOADED`, `PLAYER_LOGIN`,
-/// with `PLAYER_ENTERING_WORLD` in the cascade, then ten ticks of 0.1 s for `OnUpdate` and
-/// first-tick timers (Ace's one-second `AceEvent_FullyInitialized` included; a longer timer is not
-/// reached). Only the surveyed addon's `ADDON_LOADED` fires here: each dependency's fired in
-/// [`load_dependencies`], inside its own `AddOn_Load`. Not `ui_script::finish_ui_load`, which would
-/// read the real saved variables.
+/// The order is the 1.12 client's: `ADDON_LOADED`, `VARIABLES_LOADED`, `PLAYER_LOGIN`, with
+/// `PLAYER_ENTERING_WORLD` in the cascade, then ten ticks of 0.1 s for `OnUpdate` and first-tick
+/// timers (Ace's one-second `AceEvent_FullyInitialized` included; a longer timer is not reached).
+/// Only the surveyed addon's `ADDON_LOADED` fires here: each dependency's fired in
+/// [`load_dependencies`], inside its own load. Not `ui_script::finish_ui_load`, which would read
+/// the real saved variables.
 fn drive_session_start(
     script: &mut UiScript,
     name: &str,
@@ -733,9 +734,9 @@ fn drive_ui_probe(script: &mut UiScript) -> Vec<String> {
 
 /// Load an addon's declared dependencies into the VM, depth-first, each at most once.
 ///
-/// The 1.12 client's order (`AddOn_Load`): optional dependencies first, failures ignored; required
-/// ones next, a failure aborting the dependent; then its own files. The abort is not reproduced,
-/// only the state the dependent's file scope meets; a missing required dependency is reported
+/// The 1.12 client's order: optional dependencies first, failures ignored; required ones next, a
+/// failure aborting the dependent; then its own files. The abort is not reproduced, only the state
+/// the dependent's file scope meets; a missing required dependency is reported
 /// ([`AddonReport::missing_deps`]), an absent optional one is silent. Errors inside a dependency
 /// are its own row, never the dependent's.
 fn load_dependencies(
@@ -766,9 +767,9 @@ fn load_dependencies(
         };
         load_dependencies(script, root, &dep_toc, installed, seen, loaded);
         let files = load_addon_files(script, root, dep, &dep_toc);
-        // `ADDON_LOADED` fires here, at the 1.12 client's position: `AddOn_Load` runs an addon's
-        // dependencies, its `.toc` files, `Bindings.xml`, the two SavedVariables chunks, then
-        // `ADDON_LOADED` (event 429), before the next addon. The loaded flag is set first
+        // `ADDON_LOADED` fires here, at the 1.12 client's position: its addon loader runs an
+        // addon's dependencies, its `.toc` files, `Bindings.xml`, the two SavedVariables chunks,
+        // then `ADDON_LOADED` (event 429), before the next addon. The loaded flag is set first
         // (`[rec+0x18]=1`), so a handler's `IsAddOnLoaded` is true. Fired outside the surveyed
         // addon's error mark: a library raising in its initialiser is its own row.
         script.mark_addon_loaded(dep);
@@ -1021,10 +1022,9 @@ fn global_strings() -> Option<&'static str> {
     .as_deref()
 }
 
-/// Put a player and a realm in the VM before the addon loads: the 1.12 client runs `AddOn_Load`
-/// from `UI_Init`, after the world is entered, so an addon's file scope always sees a real
-/// character (AceDB-2.0 opens with
-/// `string.format(PLAYER_OF_REALM, UnitName("player"), GetRealmName())`).
+/// Put a player and a realm in the VM before the addon loads: the 1.12 client loads addons at UI
+/// start-up, after the world is entered, so an addon's file scope always sees a real character
+/// (AceDB-2.0 opens with `string.format(PLAYER_OF_REALM, UnitName("player"), GetRealmName())`).
 ///
 /// Every seat below is a state an in-world character is always in, kept minimal and ordinary: a VM
 /// answering nil or zero there would fail addons on a state the 1.12 client cannot be in.
@@ -2572,7 +2572,7 @@ mod tests {
 mod dependency_tests {
     use super::*;
 
-    /// A dependency is loaded before its dependent, depth-first, as `AddOn_Load` does.
+    /// A dependency is loaded before its dependent, depth-first, as the client's addon loader does.
     #[test]
     fn a_dependency_runs_before_the_addon_that_declares_it() {
         let tmp = std::env::temp_dir().join(format!("benilla-harness-deps-{}", std::process::id()));
@@ -3197,8 +3197,8 @@ mod dependency_tests {
         let _ = std::fs::remove_dir_all(&tmp);
     }
 
-    /// An optional dependency loads first (`AddOn_Load`'s order; `FuBar_BagFu` needs `Ace2` first),
-    /// and an uninstalled one is silent: `missing_deps` is required-only.
+    /// An optional dependency loads first (the client's addon-load order; `FuBar_BagFu` needs
+    /// `Ace2` first), and an uninstalled one is silent: `missing_deps` is required-only.
     #[test]
     fn an_optional_dependency_loads_first_and_a_missing_one_is_silent() {
         let tmp =

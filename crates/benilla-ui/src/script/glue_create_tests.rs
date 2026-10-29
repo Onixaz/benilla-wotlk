@@ -268,7 +268,7 @@ fn race_class_validity_reads_char_base_info() {
     );
 }
 
-/// `GetSelectedClass` answers the row's 1-based index and the class's roles off `s_classRoles`.
+/// `GetSelectedClass` answers the row's 1-based index and the class's roles off the roles table.
 #[test]
 fn the_selected_class_carries_its_roles() {
     let s = vm(2);
@@ -487,7 +487,7 @@ fn the_dials_offer_the_rows_the_class_may_take() {
 }
 
 /// A face the skin lacks moves the skin to one the face has, scanning up from the skin last picked
-/// (`m_prevSkinIndex`), so stepping on through the faces brings that skin back.
+///, so stepping on through the faces brings that skin back.
 #[test]
 fn a_face_step_moves_the_skin_and_remembers_the_one_picked() {
     let s = class_vm(2);

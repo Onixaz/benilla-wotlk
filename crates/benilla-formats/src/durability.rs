@@ -167,8 +167,9 @@ mod tests {
         assert_eq!(t.repair_cost(42, 23, 1, 2, 7, 0.5), 21);
     }
 
-    /// The reference at the discounts returns: the f32 multiplier and the f32 product make a
-    /// near-tie an exact `.5`, which then rounds to even where the f64 shortcut rounds down.
+    /// The reference's repair cost at the discounts the price reader returns: the f32 multiplier
+    /// and the f32 product make a near-tie an exact `.5`, which then rounds to even where the f64
+    /// shortcut rounds down.
     #[test]
     fn the_discounted_cost_stores_the_multiplier_and_the_product_as_f32() {
         let mut t = tables();

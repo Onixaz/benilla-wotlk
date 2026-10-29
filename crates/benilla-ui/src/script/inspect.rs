@@ -115,7 +115,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                             Some(Ordering::Less | Ordering::Equal) | None
                         )
                 }
-                // No live unit: nil, through the reference's null-`this` guard.
+                // No live unit: nil, through the inspect check's null-`this` guard.
                 None => false,
             };
             Ok(if ok { Value::Integer(1) } else { Value::Nil })

@@ -106,13 +106,13 @@ fn shared_root(here: &Path) -> PathBuf {
     here.to_path_buf()
 }
 
-/// `WTF\Config.wtf`: the CVars archived outside any account (`CVar::SaveAll` `0x767100`).
+/// `WTF\Config.wtf`: the CVars archived outside any account (`0x767100`).
 pub(crate) fn config_path() -> Option<PathBuf> {
     client_root().map(|r| r.join("WTF").join("Config.wtf"))
 }
 
-/// `WTF\RunOnce*.wtf`, names sorted case-blind (`ForEveryRunOnceWTF` `0x406740`): run once after
-/// `Config.wtf` at startup, deleted at exit.
+/// `WTF\RunOnce*.wtf`, names sorted case-blind (`0x406740`): run once after `Config.wtf` at
+/// startup, deleted at exit.
 pub(crate) fn run_once_files() -> Vec<PathBuf> {
     let Some(dir) = client_root().map(|r| r.join("WTF")) else {
         return Vec::new();
@@ -134,7 +134,7 @@ pub(crate) fn run_once_files() -> Vec<PathBuf> {
     files
 }
 
-/// `WTF\Account\<ACCOUNT>\` (`OpenAccountFile` `0x6b8b90`): the account's account-data files
+/// `WTF\Account\<ACCOUNT>\` (`0x6b8b90`): the account's account-data files
 /// ([`crate::account_data`]) and saved variables. `account` is the upper-cased login name.
 pub(crate) fn account_dir(account: &str) -> Option<PathBuf> {
     Some(
@@ -155,9 +155,9 @@ pub(crate) fn character_dir(account: &str, realm: &str, character: &str) -> Opti
     )
 }
 
-/// The logged-in account, upper-cased as the reference keeps it (`CGlueMgr::LoginServerLogin`
-/// upper-cases `m_accountName` before the logon; `s_addOnAccountName` `0xc24418`): the `<ACCOUNT>`
-/// of every `WTF\Account` path the UI's files take.
+/// The logged-in account, upper-cased as the reference keeps it (the login upper-cases the account
+/// name before the logon; `0xc24418`): the `<ACCOUNT>` of every `WTF\Account` path the UI's files
+/// take.
 static ACCOUNT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// Name the logged-in account, at the world server's accept.
@@ -231,7 +231,7 @@ pub(crate) fn addon_saved_legacy_dir(character: &str) -> Option<PathBuf> {
     )
 }
 
-/// `Cache\WDB\<locale>\` (`GetCacheDirectory` `0x667ef0`): the query caches' `.wdb` files
+/// `Cache\WDB\<locale>\` (`0x667ef0`): the query caches' `.wdb` files
 /// ([`crate::wdb`]), one set per install as the reference keeps them.
 pub(crate) fn wdb_dir(locale: &str) -> Option<PathBuf> {
     client_root().map(|r| r.join("Cache").join("WDB").join(file_token(locale)))
@@ -247,7 +247,7 @@ pub(crate) fn shots_path() -> Option<PathBuf> {
     home().map(|h| h.join("shots.txt"))
 }
 
-/// `Screenshots\` (`CaptureScreen` `0x4a85c1`): where the print-screen key writes, each image once,
+/// `Screenshots\` (`0x4a85c1`): where the print-screen key writes, each image once,
 /// not through [`write_atomic`].
 pub(crate) fn screenshots_dir() -> Option<PathBuf> {
     client_root().map(|r| r.join("Screenshots"))
@@ -348,10 +348,9 @@ pub(crate) fn client_relative(path: &Path) -> String {
     rel.to_string_lossy().replace('/', "\\")
 }
 
-/// Write a saved-variables file as 12340 does (`CGGameUI::SaveSavedVariables` `0x5271da`,
-/// `UnloadAddOns` `0x5f5721`): an existing file first moves to `<path>.bak` through `MoveFileA`,
-/// which fails once a `.bak` exists, so the backup is the first file ever replaced and is never
-/// refreshed; then the file is written whole.
+/// Write a saved-variables file as 12340 does (`0x5271da`, `0x5f5721`): an existing file first
+/// moves to `<path>.bak` through `MoveFileA`, which fails once a `.bak` exists, so the backup is
+/// the first file ever replaced and is never refreshed; then the file is written whole.
 pub(crate) fn write_saved_file(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     let mut bak = path.as_os_str().to_owned();
     bak.push(".bak");

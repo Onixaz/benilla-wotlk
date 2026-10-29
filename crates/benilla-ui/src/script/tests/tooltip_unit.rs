@@ -73,8 +73,8 @@ fn creature_line_law() {
     assert!(s.take_errors().is_empty());
 }
 
-/// The skinnable line is the GlobalString the app names (`AddSkinnableText 0x620ee0`), and a unit
-/// without one, a player's body among them, has no line.
+/// The skinnable line is the GlobalString the app names (`0x620ee0`), and a unit without one, a
+/// player's body among them, has no line.
 #[test]
 fn the_skinnable_line_reads_its_kind_and_a_player_has_none() {
     let mut s = script();
@@ -115,7 +115,7 @@ fn the_skinnable_line_reads_its_kind_and_a_player_has_none() {
 }
 
 /// A creature just seen: its descriptor fields are in, but the record fields (name, subtitle, type,
-/// rank, civilian) wait for the `SMSG_CREATURE_QUERY_RESPONSE` that fills `CGUnit+0xb30`.
+/// rank, civilian) wait for the `SMSG_CREATURE_QUERY_RESPONSE` that fills unit `+0xb30`.
 fn unqueried_wolf() -> UnitState {
     UnitState {
         exists: true,
@@ -131,9 +131,8 @@ fn unqueried_wolf() -> UnitState {
     }
 }
 
-/// `CGUnit_C::GetUnitName` reads the name, as for `UnitName`, and every miss, a null `CGUnit+0xb30`
-/// among them, ends at `FrameScript_GetText("UNKNOWNOBJECT")`. The `"player"` fast path is the
-/// binding's.
+/// The unit's name getter reads the name, as for `UnitName`, and every miss, a null unit `+0xb30`
+/// among them, ends at the GlobalString `UNKNOWNOBJECT`. The `"player"` fast path is the binding's.
 #[test]
 fn a_pending_name_titles_unknownobject_and_the_answer_replaces_it() {
     let mut s = script();
@@ -222,7 +221,7 @@ fn a_pending_name_titles_unknownobject_and_the_answer_replaces_it() {
     assert!(s.take_errors().is_empty());
 }
 
-/// The title line is `GetUnitChosenTitle` with titles on (`0x72a290`), the builder `UnitPVPName`
+/// The title line is the chosen-title read with titles on (`0x72a290`), the builder `UnitPVPName`
 /// runs: a player's chosen title gendered by the unit's sex, a medal on a second line under it;
 /// anyone else the plain name, and the rank byte decorates nothing.
 #[test]

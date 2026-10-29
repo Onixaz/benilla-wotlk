@@ -110,8 +110,8 @@ pub struct QuestDetails {
     pub title: String,
     pub details: String,
     pub objectives: String,
-    /// `CGQuestInfo::m_autoLaunched`: the publisher stores it in the decline latch (`0x58de4f`),
-    /// so Decline closes the window instead of going back to the greeting.
+    /// The quest info's auto-launched flag: the publisher stores it in the decline latch
+    /// (`0x58de4f`), so Decline closes the window instead of going back to the greeting.
     pub auto_launched: bool,
     pub flags: u32,
     pub suggested_players: u32,

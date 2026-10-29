@@ -791,9 +791,9 @@ fn editbox_justify_masks_to_its_axis_and_answers_unknown() {
 }
 
 /// `EditBox:SetJustifyV` reaches the getter but never the pixels: `SetMultiLine`, which the ctor
-/// always calls, clears the vertical inherit bits (`CSimpleFontString+0x124`, over the drawn
-/// justify `+0x120`) and writes TOP or MIDDLE itself; nothing sets those bits back, so the
-/// reference masks the setter's value out.
+/// always calls, clears the vertical inherit bits (font string `+0x124`, over the drawn justify
+/// `+0x120`) and writes TOP or MIDDLE itself; nothing sets those bits back, so the reference masks
+/// the setter's value out.
 #[test]
 fn editbox_justify_v_echoes_but_multiline_alone_decides_the_pixels() {
     let mut s = crate::script::UiScript::new().unwrap();
@@ -1178,7 +1178,7 @@ fn the_type_identity_verbs_answer_what_the_binary_answers() {
         .unwrap()
         .is_none());
 
-    // Case-insensitive and whole-string (`SStrCmpI`).
+    // Case-insensitive and whole-string.
     for spelling in ["texture", "TEXTURE", "TeXtUrE", "region", "REGION"] {
         assert_eq!(
             s.eval::<i64>(&format!("return TITex:IsObjectType('{spelling}')"))
@@ -1238,8 +1238,8 @@ fn the_type_identity_verbs_answer_what_the_binary_answers() {
     );
 }
 
-/// Frames also carry 1.12's frame-side pair, `GetFrameType`/`IsFrameType`
-/// (`CSimpleFrameScript.cpp`), beside `CScriptRegion`'s `GetObjectType`/`IsObjectType`.
+/// Frames also carry 1.12's frame-side pair, `GetFrameType`/`IsFrameType`, beside the region's
+/// `GetObjectType`/`IsObjectType`.
 #[test]
 fn the_frame_side_type_identity_verbs_are_1_12s_own_names() {
     let s = crate::script::UiScript::new().unwrap();

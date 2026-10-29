@@ -47,9 +47,9 @@ pub(super) fn pickup_action(model: &mut Model, id: u32) -> bool {
 pub(crate) fn place_action(model: &mut Model, id: u32) -> bool {
     // The two accept filters refuse with a bare return: nothing stored or sent, and the payload
     // stays held. An item needs an on-use spell or an equip slot, so a bag is placeable; a passive
-    // spell (`Attributes & 0x40`) also raises errorId `0x9e` through `DisplayError`, where the item
-    // refusal is mute. A totem slot takes only a spell of its element, else refuses and keeps it
-    // held (`0x5ab24b`).
+    // spell (`Attributes & 0x40`) also raises errorId `0x9e` through the error display, where the
+    // item refusal is mute. A totem slot takes only a spell of its element, else refuses and keeps
+    // it held (`0x5ab24b`).
     if model.cursor.is_some() {
         let spell = match &model.cursor {
             Some(CursorPayload::Spell(s)) => Some(s.spell_id),
@@ -379,7 +379,7 @@ mod tests {
         );
         assert!(
             s.take_ui_errors().is_empty(),
-            "the ITEM refusal is MUTE — only the SPELL arm carries a DisplayError; a \
+            "the ITEM refusal is MUTE — only the SPELL arm raises an error; a \
              toast here would be ours, not the reference's"
         );
     }

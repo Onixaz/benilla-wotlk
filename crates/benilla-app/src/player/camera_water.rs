@@ -2,18 +2,18 @@
 //! against the waterline before the boom's origin is built from it.
 //!
 //! The one CVar read has two consumers: its `0xf0000` nibble rides the trace mask of all three
-//! queries, so the boom hits the waterline ([`benilla_world::collision`]), and the reference gates
-//! this block. They ship together: without the floor, a surface swimmer's pivot sits 11 mm under
-//! the plane the trace makes solid, and the boom straddles it.
+//! queries, so the boom hits the waterline ([`benilla_world::collision`]), and a test on the same
+//! nibble gates this block. They ship together: without the floor, a surface swimmer's pivot sits
+//! 11 mm under the plane the trace makes solid, and the boom straddles it.
 //!
-//! Not built: the reference's catch-up pair (pivot height) and (distance), which hard-store a live
-//! channel more than 1/9 above the solved `H` to `H + 1/9 + 2⁻²⁰` and ease it for 2.0 s toward the
-//! untouched target. They are one mechanism (the shared duration is loaded once, in the distance
-//! block), neither is gated on this CVar, and both run after the eye is stored, so here only the
-//! corridor's upper edge would move.
+//! Not built: the reference's catch-up pair, one for the pivot height and one for the distance,
+//! which hard-store a live channel more than 1/9 above the solved `H` to `H + 1/9 + 2⁻²⁰` and ease
+//! it for 2.0 s toward the untouched target. They are one mechanism (the shared duration is loaded
+//! once, in the distance block), neither is gated on this CVar, and both run after the eye is
+//! stored, so here only the corridor's upper edge would move.
 //!
-//! Untraced: whether the followed unit's z is swept or pinned entering the submerge band
-//! (`CMovement::UpdateLiquid`); ours is pinned.
+//! Untraced: whether the followed unit's z is swept or pinned entering the submerge band (the
+//! mover's liquid update); ours is pinned.
 
 /// The resting floor, and the pivot's depth under the surface in the submerge band.
 const REST: f32 = 5.0 / 6.0;
@@ -38,8 +38,8 @@ pub(super) enum WaterBand {
 }
 
 /// The band, and `d = liquidSurfaceZ − z` of the followed unit's own origin (vtable slot `+0x14`),
-/// the origin the pivot base also comes. The surface is a cached field; with no valid liquid it
-/// returns `+0.0` with both bits clear. The band is judged against the pivot target
+/// the origin the pivot base also comes from. The surface is a cached field; with no valid liquid
+/// it returns `+0.0` with both bits clear. The band is judged against the pivot target
 /// (`[cam+0x1c8]`), not the live value (`[cam+0xfc]`) the cap seeds from; banding on the eased live
 /// value would chatter.
 pub(super) fn classify(surface_y: Option<f32>, feet_y: f32, target: f32) -> (WaterBand, f32) {
@@ -101,7 +101,7 @@ pub(super) fn corridor(band: WaterBand, d: f32, live: f32) -> Corridor {
     }
 }
 
-/// The CVar off: the reference's `je` to the reference leaves both seeds, the same corridor as dry
+/// The CVar off: the reference's `je` past the block leaves both seeds, the same corridor as dry
 /// land.
 pub(super) fn corridor_off(live: f32) -> Corridor {
     Corridor {
@@ -110,12 +110,12 @@ pub(super) fn corridor_off(live: f32) -> Corridor {
     }
 }
 
-/// The pivot height the boom's origin is built,
-/// `floor + max(max(target, live) − floor, 1/9) × headroom`, then capped. `headroom` is the
-/// head-room probe's hit fraction, 1.0 when clear. The cap applies last, so it wins on a crossed
-/// corridor (arm A with the live pivot under the waterline), landing the pivot at `surface + 2/9`.
-/// On NaN the reference's compares leave the seeds standing, as Rust's `max`/`min` (returning the
-/// other operand) do, so a NaN `d` yields the resting corridor.
+/// The pivot height the boom's origin is built from, `floor + max(max(target, live) − floor, 1/9) ×
+/// headroom`, then capped. `headroom` is the head-room probe's hit fraction, 1.0 when clear. The
+/// cap applies last, so it wins on a crossed corridor (arm A with the live pivot under the
+/// waterline), landing the pivot at `surface + 2/9`. On NaN the reference's compares leave the
+/// seeds standing, as Rust's `max`/`min` (returning the other operand) do, so a NaN `d` yields the
+/// resting corridor.
 pub(super) fn pivot_height(c: &Corridor, target: f32, live: f32, headroom: f32) -> f32 {
     let reach = (target.max(live) - c.floor).max(MIN_HEADROOM) * headroom;
     (c.floor + reach).min(c.cap)
@@ -240,7 +240,7 @@ mod tests {
         assert_eq!(off.floor, REST);
     }
 
-    /// No liquid is the reference's null return, `+0.0` with both bits clear.
+    /// No liquid is the band test's null return, `+0.0` with both bits clear.
     #[test]
     fn a_missing_surface_is_clear_and_a_nan_depth_does_not_poison_the_pivot() {
         assert_eq!(classify(None, 0.0, SWIM_PIVOT), (WaterBand::Clear, 0.0));

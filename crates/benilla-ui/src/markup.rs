@@ -295,7 +295,7 @@ impl Entry {
 
 /// The edit box's per-byte class array (`E+0x330`) and the cursor primitives over it: one entry per
 /// byte plus a zero terminator. It holds no text; the edit box rebuilds it after every edit, as the
-/// client calls at the end of each insert.
+/// client rebuilds it at the end of each insert.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ClassMap {
     entries: Vec<Entry>,
@@ -774,9 +774,9 @@ mod tests {
 
     // ── The cursor law ───────────────────────────────────────────────────────────────────────
 
-    /// The reachable sets the reference's produced, executed on this buffer: 30, between `|h` and
-    /// `[`, is reachable in neither mode, and after the name the stop is 43 in both, the trailing
-    /// `|h|r` absorbing forward.
+    /// The reachable sets the reference's cursor walk produced, executed on this buffer: 30,
+    /// between `|h` and `[`, is reachable in neither mode, and after the name the stop is 43 in
+    /// both, the trailing `|h|r` absorbing forward.
     #[test]
     fn the_reachable_sets_match_the_emulation_oracle() {
         // `[` at 30, `]` at 38, the `d` of the typed text at 43; 51 bytes.

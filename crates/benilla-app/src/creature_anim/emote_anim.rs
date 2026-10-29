@@ -58,16 +58,17 @@ pub(super) fn emote_to_anim(
     }
 }
 
-/// The posture half of the gate, which both producers apply (`SMSG_EMOTE`): only sleep (stand state 3)
-/// or swimming suppresses; a seated performer plays, masked to waist-up downstream.
+/// The posture half of the gate, which both producers apply (the `SMSG_EMOTE` handler and the
+/// gesture dispatcher): only sleep (stand state 3) or swimming suppresses; a seated performer
+/// plays, masked to waist-up downstream.
 pub(super) fn receive_eligible(stand_state: u8, swimming: bool) -> bool {
     stand_state != 3 && !swimming
 }
 
 /// The shared player's half: no play while channeling or in combat, and LiftOff (192) and Land
-/// (200) skip the combat test alone (the reference set the flag that the reference branches past
-/// on). Its already-armed test is the driver's `armed_id`, and its `[+0xd58] & 0x400` test (the
-/// weapon-visual hold) is [`super::RangedHold`].
+/// (200) skip the combat test alone (they set the flag the combat test is branched past on; the
+/// channel test runs first). Its already-armed test is the driver's `armed_id`, and its `[+0xd58] &
+/// 0x400` test (the weapon-visual hold) is [`super::RangedHold`].
 fn player_eligible(anim_id: u32, channeling: bool, in_combat: bool) -> bool {
     let exempt = anim_id == u32::from(select::LIFT_OFF) || anim_id == u32::from(select::LAND);
     !channeling && (exempt || !in_combat)
@@ -121,9 +122,9 @@ const SHUFFLE_VOID: u32 = move_flags::HOVER | move_flags::SWIMMING | 0x800;
 /// auto-attack target, a turn shuffle (approximated) and any stand state but 0 (and the cached
 /// `[+0xc1c]`, which tracks it). The `[+0xd58]` test refuses only when both 0x400
 /// ([`super::RangedHold`]) and 0x10000 (unmodelled) are set, and so is not tested here; the
-/// turn-shuffle test approximates, which also exempts on the armed id, exempts on `d58 & 0xc` and
-/// fires on the mouse-turn latch `d58 & 0x1800`. The ranged auto-repeat test needs sheath state 2,
-/// which the stow `DoEmote` runs first has cleared.
+/// turn-shuffle test approximates the reference's, which also exempts on the armed id, exempts on
+/// `d58 & 0xc` and fires on the mouse-turn latch `d58 & 0x1800`. The ranged auto-repeat test needs
+/// sheath state 2, which the stow `DoEmote` runs first has cleared.
 pub(crate) fn local_play_eligible(i: &LocalPlay) -> bool {
     let f = i.move_flags;
     let turning = f & (move_flags::TURN_LEFT | move_flags::TURN_RIGHT) != 0;
@@ -199,8 +200,8 @@ mod tests {
         );
     }
 
-    /// The attack-target half of (`[+0xc48]`, from ATTACKSTART to ATTACKSTOP) refuses on its own:
-    /// on vmangos the flag half never fires for a fighting player or creature.
+    /// The attack-target half of the in-combat test (`[+0xc48]`, from ATTACKSTART to ATTACKSTOP)
+    /// refuses on its own: on vmangos the flag half never fires for a fighting player or creature.
     #[test]
     fn an_engaged_unit_refuses_the_play_without_the_flag_bit() {
         assert!(

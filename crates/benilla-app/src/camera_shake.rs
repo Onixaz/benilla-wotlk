@@ -1,5 +1,5 @@
 //! Camera shake: a heavy creature's footfall, its death thud, and spell effects, all spawned
-//! through the reference's one spawner, `AddShake(id, worldPos)`.
+//! through the reference's one spawner, which takes a preset id and a world position.
 //!
 //! `CreatureModelData.FootstepShakeSize` (field 11, on the visual footfall tags, not `$FSD`) and
 //! `DeathThudShakeSize` (field 12, on `$DTH`) name a `CameraShakes.dbc` preset. `SpellVisualKit`
@@ -285,11 +285,11 @@ fn fire_shakes(
 }
 
 /// Fire the shake group a spell-visual kit's field 14 names, once per kit play, with no stage test
-/// and no cancel (when the play created no effect node).
+/// and no cancel, whether or not the play created an effect node.
 ///
-/// The shake spawns at the kit play's position. The reference reads `&node+0x48` before the
-/// reference writes it, so a bone-attached first node shakes at the origin and is culled, silencing
-/// 26 of the 58 shipped shake kits; that read-before-write is not copied.
+/// The shake spawns at the kit play's position. The reference reads `&node+0x48` before it is
+/// written, so a bone-attached first node shakes at the origin and is culled, silencing 26 of the
+/// 58 shipped shake kits; that read-before-write is not copied.
 fn fire_kit_shakes(
     mut events: MessageReader<SpellKitShake>,
     time: Res<Time>,

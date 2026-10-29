@@ -1,4 +1,4 @@
-//! The zone-channel auto-join, the reference's `ZoneChannelRefresh`. The server joins nobody
+//! The zone-channel auto-join, the reference's zone-channel refresh. The server joins nobody
 //! (vmangos `Player::UpdateLocalChannels` is empty, `Objects/Player.cpp:5121`), so the client joins
 //! every [`ChannelState::zone_mask`] row composed for the current zone, and on each zone change
 //! leaves and re-joins the zone-named ones, LEAVE then JOIN per slot.
@@ -219,13 +219,13 @@ pub(crate) enum WalkStep {
     Confirm(String),
 }
 
-/// The walk as a plan: `ZoneChannelRefresh`'s two passes, for a player in `zone_name`. Pass 1
-/// composes each held slot, in slot order, for this zone whatever the mask says. A moved name
-/// leaves if confirmed, then the city gate suspends it or renames and re-joins it; a suspended slot
-/// the gate admits re-joins (the state-3 bypass). A row that stopped applying under an unchanged
-/// name, or no longer composes, leaves and suspends here, where the reference skips any other
-/// unchanged name: its city-named rows move to the zone name outside a capital ([`compose`]). Pass
-/// 2 registers the unslotted rows whose mask bit is set, in DBC order, before the gate.
+/// The walk as a plan: the reference's two passes, for a player in `zone_name`. Pass 1 composes
+/// each held slot, in slot order, for this zone whatever the mask says. A moved name leaves if
+/// confirmed, then the city gate suspends it or renames and re-joins it; a suspended slot the gate
+/// admits re-joins (the state-3 bypass). A row that stopped applying under an unchanged name, or no
+/// longer composes, leaves and suspends here, where the reference skips any other unchanged name:
+/// its city-named rows move to the zone name outside a capital ([`compose`]). Pass 2 registers the
+/// unslotted rows whose mask bit is set, in DBC order, before the gate.
 pub(crate) fn plan_walk(
     channels: &ChannelState,
     zone_name: &str,
@@ -357,8 +357,8 @@ fn zone_is_settled(player: Option<&crate::player::Player>) -> bool {
 /// The walk, re-run whenever the zone changes. It composes from the real zone name, the
 /// `GetRealZoneText` cache, never the display text, which the indoor override renames.
 ///
-/// The reference walks in `UpdateZoneText` on each zone change and once at world entry; this polls
-/// the same inputs every frame. It waits while the world arrives (`Player::settling`), as the
+/// The reference walks from its zone-text update on each zone change and once at world entry; this
+/// polls the same inputs every frame. It waits while the world arrives (`Player::settling`), as the
 /// reference walks after its loading screen and our leaf area moves while terrain streams in, and
 /// for the chat cache to seat the mask, as the reference bails on its ready flag until the cache
 /// loader calls the walk.
@@ -383,10 +383,10 @@ pub(super) fn auto_join_zone_channels(
         walk.live = true;
     }
 
-    // A cinematic suppresses the rejoin: two of the six reads of the reference's cinematic cell
-    // (the zone-text update) and (an `UPDATEFLAGS` reflex), skip `ZoneChannelRefresh` while one
-    // runs, and `EndCinematic` calls it. A race intro flies the streaming focus far off a body that
-    // has not moved.
+    // A cinematic suppresses the rejoin: two of the six reads of the reference's cinematic cell,
+    // the zone-text update and an `UPDATEFLAGS` reflex, skip the refresh while one runs, and the
+    // cinematic's end calls it. A race intro flies the streaming focus far off a body that has not
+    // moved.
     let cinematic_running = cinematic.as_deref().is_some_and(|c| c.is_playing());
     let areas = areas.as_deref();
 
@@ -986,7 +986,7 @@ mod tests {
         assert_eq!(
             c.leave_target("1abc").as_deref(),
             Some("General - Elwynn Forest"),
-            "SStrToInt takes the leading digits"
+            "the integer parse takes the leading digits"
         );
         assert_eq!(
             c.leave_target("2"),
@@ -1013,7 +1013,7 @@ mod tests {
         assert_eq!(
             c.leave_target("4294967297").as_deref(),
             Some("General - Elwynn Forest"),
-            "`SStrToInt` wraps: 2^32 + 1 reads 1"
+            "the integer parse wraps: 2^32 + 1 reads 1"
         );
 
         // The mask clear needs a slot carrying the wire name.

@@ -1,8 +1,8 @@
 //! The script calls whose effects touch the selection, the player's cast or the targeting cursor,
 //! held in one queue in the order the script made them. In the reference each such call is done
 //! when it returns: the macro runner fires every line in one pass, `TargetUnit`, `TargetByName` and
-//! `ClearTarget` commit through `SetSelection` before returning, and `CastSpellByName` casts at the
-//! selection as it stands then. So `/target Bob` then `/cast Flash Heal` heals Bob, and the app
+//! `ClearTarget` commit through the selection set before returning, and `CastSpellByName` casts at
+//! the selection as it stands then. So `/target Bob` then `/cast Flash Heal` heals Bob, and the app
 //! applies this queue front to back at one point in the frame.
 
 use super::{ActionUse, SelectionRequest, UiScript};
@@ -27,7 +27,7 @@ pub enum ScriptCall {
     /// `SpellTargetUnit(unit)`, made while the cursor was up.
     SpellTargetUnit(String),
     /// `PlaceGlyphInSocket(index)` (`0x5b75a0`) with a targeting cast: the 0-based socket and
-    /// `Spell_C_HandleGlyphClick`'s verdict on it.
+    /// the glyph click's verdict on it.
     PlaceGlyph {
         socket: u32,
         verdict: super::GlyphPlacement,
@@ -55,8 +55,8 @@ pub enum ScriptCall {
     UseAction(ActionUse),
     /// `UseContainerItem(bag, slot)` outside repair mode.
     UseContainerItem { bag: i64, slot: u32 },
-    /// `UseQuestLogSpecialItem(index)`: the bag item's own use (`CGItem_C::UseItem` `0x708c20`), past
-    /// the right-click's merchant, bank and equip arms.
+    /// `UseQuestLogSpecialItem(index)`: the bag item's own use (`0x708c20`), past the right-click's
+    /// merchant, bank and equip arms.
     UseItem { bag: i64, slot: u32 },
     /// `UseInventoryItem(id)` outside repair mode.
     UseInventoryItem(u32),

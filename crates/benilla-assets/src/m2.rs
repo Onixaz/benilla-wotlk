@@ -465,7 +465,7 @@ impl AssetLoader for M2ModelLoader {
                 }
             }
             // Groups 3 and 4 hold every joint outside the right and the left fingers, for the
-            // weapon grip (`CloseHand`).
+            // weapon grip (the reference's hand close).
             let finger_roots = finger_subtree_roots(&skeleton_raw);
             for i in 0..skeleton_raw.bones.len() {
                 let target = bone_target_id(i as u16);

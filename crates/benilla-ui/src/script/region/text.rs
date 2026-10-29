@@ -7,9 +7,9 @@ use crate::justify;
 
 use super::region_handle_of;
 
-/// Whether FontString `rh` holds a font handle (`[fs+0xe8]`), which `CSimpleFontString::SetFont`
-/// makes only from a face and a non-zero height. A Button's label also counts its button's state
-/// fonts and `Button:SetFont`, which extract paints it with.
+/// Whether FontString `rh` holds a font handle (`[fs+0xe8]`), which the FontString's font set makes
+/// only from a face and a non-zero height. A Button's label also counts its button's state fonts
+/// and `Button:SetFont`, which extract paints it with.
 fn has_font(model: &crate::script::Model, rh: crate::widget::RegionHandle) -> bool {
     let own = model
         .region_data
@@ -65,8 +65,8 @@ fn require_font(lua: &Lua, this: &Table, verb: &str) -> mlua::Result<()> {
     }
 }
 
-/// The XML `text=` store: the loader calls `CSimpleFontString::SetText` (`0x483910`) itself, not
-/// the binding, so no font check applies.
+/// The XML `text=` store: the loader calls the FontString's text set (`0x483910`) itself, not the
+/// binding, so no font check applies.
 pub(crate) fn store_text(lua: &Lua, this: &Table, text: Option<String>) -> mlua::Result<()> {
     set_text(lua, this, text, None)
 }
@@ -81,8 +81,8 @@ fn set_text(
 ) -> mlua::Result<()> {
     let rh = region_handle_of(lua, this)?;
     let text = text.map(crate::language::process_owned);
-    // The string it holds, or empty over empty, returns untouched (`SStrCmp` at `0x483969`, the
-    // empty arm before it): no `ClearString`, so an armed gradient stays, and no model write.
+    // The string it holds, or empty over empty, returns untouched (a string compare at `0x483969`,
+    // the empty arm before it): no string clear, so an armed gradient stays, and no model write.
     let (missing, same) = {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()

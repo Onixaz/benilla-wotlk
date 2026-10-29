@@ -86,8 +86,8 @@ pub(crate) fn queue_sent(ecs: &mut Commands, spell_id: u32, target: Option<u64>)
 pub(crate) struct UnitCasts {
     casts: HashMap<u64, Running>,
     channels: HashMap<u64, Running>,
-    /// Each unit's state bit `+0xa34 & 8`, set by `ProcessCastNotInterruptible` (`0x7262e0`) and
-    /// kept until its next evaluation.
+    /// Each unit's state bit `+0xa34 & 8`, set by the reference's not-interruptible evaluation
+    /// (`0x7262e0`) and kept until its next evaluation.
     not_interruptible: HashMap<u64, bool>,
     /// Each caster's last cast immunities, `(school, mechanic)` (`+0xa64`, `+0xa68`).
     immunities: HashMap<u64, (u32, u32)>,
@@ -98,8 +98,8 @@ pub(crate) struct UnitCasts {
 }
 
 impl UnitCasts {
-    /// `IsCastNotInterruptible` (`0x71ab20`): the unit's bit, and any of the player's masks, the
-    /// two specials only against a non-player.
+    /// The reference's not-interruptible test (`0x71ab20`): the unit's bit, and any of the player's
+    /// masks, the two specials only against a non-player.
     fn reads_not_interruptible(&self, caster: u64) -> bool {
         self.not_interruptible
             .get(&caster)
@@ -114,8 +114,8 @@ fn is_player(guid: u64) -> bool {
     benilla_protocol::guid::is_player(guid)
 }
 
-/// `CGSpellBook::UpdateSpells`' four school masks (`0x53cd48`-`0x53ce75`) over the known spells:
-/// an interrupt (effect 68), a silence (an aura 27), and the `AttributesEx7` specials `0x800` and
+/// The spell book update's four school masks (`0x53cd48`-`0x53ce75`) over the known spells: an
+/// interrupt (effect 68), a silence (an aura 27), and the `AttributesEx7` specials `0x800` and
 /// `0x1000`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct InterruptSchools {
@@ -177,8 +177,8 @@ impl InterruptSchools {
     }
 }
 
-/// `ProcessCastNotInterruptible` (`0x7262e0`): the bit for a cast of `d`. Never under
-/// `AttributesEx7 & 0x2000`; always for a spell no silence prevents (`PreventionType != 1`);
+/// The reference's not-interruptible evaluation (`0x7262e0`): the bit for a cast of `d`. Never
+/// under `AttributesEx7 & 0x2000`; always for a spell no silence prevents (`PreventionType != 1`);
 /// otherwise when the player's masks against the caster are left empty by its cast immunities
 /// (mechanic 26 interrupt, 9 silence, else the school mask) and its aura immunities (37 to 68, 38
 /// to 27, 39 by school, 77 to 9 or 26). Masks empty from the start leave the bit clear.
@@ -433,7 +433,8 @@ pub(crate) fn feed_cast_bar(
                     end_ms: now_ms + f64::from(cast_time_ms),
                 };
                 units.casts.insert(caster, run);
-                // `SetUICasting` evaluates the bit for the target and focus only (`0x72ac50`).
+                // The UI's cast setter evaluates the bit for the target and focus only
+                // (`0x72ac50`).
                 if watched.contains(&Some(caster)) {
                     shield.evaluate(
                         &mut units,
@@ -534,7 +535,8 @@ pub(crate) fn feed_cast_bar(
                     end_ms: now_ms + f64::from(duration_ms),
                 };
                 units.channels.insert(caster, run);
-                // `SetUIChannel` evaluates the bit for the target and focus only (`0x72ad20`).
+                // The UI's channel setter evaluates the bit for the target and focus only
+                // (`0x72ad20`).
                 if watched.contains(&Some(caster)) {
                     shield.evaluate(
                         &mut units,
@@ -676,7 +678,7 @@ pub(crate) struct ShieldInputs<'w, 's> {
 }
 
 impl ShieldInputs<'_, '_> {
-    /// Run `ProcessCastNotInterruptible` for `caster`'s cast of `spell_id` into its bit.
+    /// Run the not-interruptible evaluation for `caster`'s cast of `spell_id` into its bit.
     fn evaluate(
         &self,
         units: &mut UnitCasts,
@@ -966,7 +968,7 @@ mod tests {
         }
     }
 
-    /// `ProcessCastNotInterruptible` (`0x7262e0`) over its arms.
+    /// The not-interruptible evaluation (`0x7262e0`) over its arms.
     #[test]
     fn the_bit_sets_when_the_players_interrupts_cannot_land() {
         let schools = InterruptSchools::of([&kick()]);

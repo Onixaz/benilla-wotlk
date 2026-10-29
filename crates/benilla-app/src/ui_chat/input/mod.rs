@@ -153,9 +153,9 @@ fn engine_verbs(
     out
 }
 
-/// A manual join or leave of `GuildRecruitment` turns its auto-join option off: (join) and (leave)
-/// call when the `ChatChannels.dbc` row has `flags & 0x20000` and the caller passes its flag, which
-/// the Lua bindings do and the cascade's own calls do not.
+/// A manual join or leave of `GuildRecruitment` turns its auto-join option off: the join and the
+/// leave clear it when the `ChatChannels.dbc` row has `flags & 0x20000` and the caller passes its
+/// flag, which the Lua bindings do and the cascade's own calls do not.
 fn manual_join_or_leave(
     channels: &super::edit::ChannelState,
     script: &mut benilla_ui::script::UiScript,
@@ -440,8 +440,8 @@ pub(super) fn drain_chat_input(
                 })()
                 .unwrap_or_else(|| "at-war not evaluated (no catalog, store or template)".into());
                 lines.push(format!("reaction: {war}"));
-                // The world cursor's two predicates's order: `CanInteract` picks the service
-                // ladder, then `CanAttack` the sword. Neither is a reaction threshold.
+                // The world cursor's two predicates, in order: the interact check picks the
+                // service ladder, then the attack check the sword. Neither is a reaction threshold.
                 let interactable = crate::target::can_interact(
                     target_store,
                     factions.as_deref(),
@@ -468,10 +468,10 @@ pub(super) fn drain_chat_input(
                         "nothing matched → Point"
                     },
                 ));
-                // The V-plate category is its own predicate (`CanAttack` player-to-unit, plus
-                // `CanCooperate` for a player), printed with the faction-group masks it compares.
-                // A GM-mode character is mask 0 on vmangos (`.gm on` sets faction template 35),
-                // so a friendly player can plate as an enemy.
+                // The V-plate category is its own predicate (the attack check player-to-unit, plus
+                // the cooperate check for a player), printed with the faction-group masks it
+                // compares. A GM-mode character is mask 0 on vmangos (`.gm on` sets faction
+                // template 35), so a friendly player can plate as an enemy.
                 let mask = |s| {
                     crate::target::ring::faction_group_mask(factions.as_deref(), s)
                         .map_or("none".to_string(), |m| m.to_string())
@@ -595,7 +595,7 @@ pub(super) fn drain_chat_input(
                     name.or_else(|| target_player_name(&selection, &names, &commands))
                 {
                     // `CMSG_GROUP_SET_LEADER` takes a guid, resolved against the roster. A miss
-                    // prints the server's error wording; the reference's `PromoteByName` miss is
+                    // prints the server's error wording; the reference's promote-by-name miss is
                     // untraced.
                     match group
                         .members
@@ -644,7 +644,7 @@ pub(super) fn drain_chat_input(
                 chat_out.assist.write(crate::target::AssistRequest { name });
             }
             // Bare is `FollowUnit("target")`, where the stock handler (`ChatFrame.lua:754`) first
-            // tries a selected player's name; named is `FollowByName(name)` with no exact flag, so
+            // tries a selected player's name; named is a follow by name with no exact flag, so
             // prefix matching.
             ParsedChat::Follow { name } => {
                 chat_out.follow.write(match name {
@@ -699,9 +699,9 @@ pub(super) fn drain_chat_input(
                 let swimming = flags & move_flags::SWIMMING != 0;
                 let emote_id = emotes.as_deref().and_then(|e| e.text_emote(text_id));
                 let posture = emote_id.and_then(|id| emotes.as_deref()?.posture_state(id));
-                // `DoEmote`'s gates: a possessed unit, then the `Emotes.dbc` row, then
-                // `CheckEmoteEligible`; only its `0x4000` arm refuses out loud. A chat-only text
-                // emote (`EmoteID` 0) reads row 0.
+                // `DoEmote`'s gates: a possessed unit, then the `Emotes.dbc` row, then the emote
+                // eligibility check; only its `0x4000` arm refuses out loud. A chat-only text emote
+                // (`EmoteID` 0) reads row 0.
                 let self_unit_flags = self_store.single().map_or(0, |s| s.0.unit_flags());
                 let gate = match emotes.as_deref() {
                     Some(e) => emote_gate(
@@ -749,7 +749,7 @@ pub(super) fn drain_chat_input(
                         ceremony: false,
                     });
                 }
-                // The posture branch (`EmoteSpecProc == 1` → `SetStandState`) is the whole
+                // The posture branch (`EmoteSpecProc == 1` → a stand-state change) is the whole
                 // visible effect: the server plays nothing for SIT, SLEEP and KNEEL
                 // (`ChatHandler.cpp:728`).
                 if let Some(state) = posture {
@@ -1047,7 +1047,7 @@ fn chattest_battery(log: &mut super::feed::ChatLog) {
     info!("chattest: battery queued");
 }
 
-/// What `CheckEmoteEligible` decides about one emote.
+/// What the emote eligibility check decides about one emote.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum EmoteGate {
     /// Send it: packet, posture, animation.
@@ -1055,14 +1055,14 @@ pub(super) enum EmoteGate {
     /// Dropped silently: no packet, no animation, no line. A seated `/bow` is this.
     Suppressed,
     /// The `0x4000` "requires standing still" arm tripped. `DoEmote` raises
-    /// `ERR_NOEMOTEWHILERUNNING` and aborts only when `IsSelfControlled`, false while
+    /// `ERR_NOEMOTEWHILERUNNING` and aborts only when the player is self-controlled, false while
     /// `UNIT_FIELD_FLAGS & 0xc00004`, so a feared player emotes; that test is the caller's.
     Moving,
 }
 
-/// `CheckEmoteEligible`, the only reader of `Emotes.dbc` `EmoteFlags`, in the client's order;
-/// `DoEmote` calls it before building `CMSG_TEXT_EMOTE`. The `0x4000` arm tests movement, not
-/// `SWIMMING`, so it is no water gate.
+/// The emote eligibility check, the only reader of `Emotes.dbc` `EmoteFlags`, in the client's
+/// order; `DoEmote` calls it before building `CMSG_TEXT_EMOTE`. The `0x4000` arm tests movement,
+/// not `SWIMMING`, so it is no water gate.
 pub(super) fn emote_send_eligible(
     emote_flags: u32,
     stand_state: u8,
@@ -1099,8 +1099,8 @@ pub(super) fn emote_send_eligible(
 const UNIT_FLAG_POSSESSED: u32 = 0x0100_0000;
 
 /// `DoEmote`'s entry gates in the client's order: the unit's own `UNIT_FIELD_FLAGS`, the
-/// `Emotes.dbc` row by `EmoteID` (`None` is a missing row, which returns), then
-/// `CheckEmoteEligible` over the row's flags.
+/// `Emotes.dbc` row by `EmoteID` (`None` is a missing row, which returns), then the emote
+/// eligibility check over the row's flags.
 pub(super) fn emote_gate(
     row_flags: Option<u32>,
     unit_flags: u32,
@@ -1241,7 +1241,7 @@ pub(super) fn drain_addon_chat_sends(
             target: send.target,
             text,
             // Every type but AFK carries the language the binding resolved; the AFK arm's own
-            // builder, `SetAFK`, never reads the argument.
+            // builder, the AFK mark, never reads the argument.
             language: match wire {
                 crate::net::ChatKind::Afk => None,
                 _ => send.language,

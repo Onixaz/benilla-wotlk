@@ -1,6 +1,6 @@
-//! The reference's software single-precision arithmetic, which `GetEffectPoints` and its modifier
-//! applier run on instead of the FPU: an int-to-float, an add and a multiply that truncate where
-//! IEEE rounds, and a floor and ceil. Values are `f32` bit patterns throughout.
+//! The reference's software single-precision arithmetic, which the effect-points read and its
+//! modifier applier run on instead of the FPU: an int-to-float, an add and a multiply that truncate
+//! where IEEE rounds, and a floor and ceil. Values are `f32` bit patterns throughout.
 
 /// An integer's float; exact below 2^24, the low bits shifted out above it.
 fn from_int(v: i32) -> u32 {
@@ -122,18 +122,18 @@ pub(crate) fn int_to_float(v: i32) -> f32 {
     f32::from_bits(from_int(v))
 }
 
-/// The reference over floats.
+/// The soft add over floats.
 pub(crate) fn add_f32(a: f32, b: f32) -> f32 {
     f32::from_bits(add(a.to_bits(), b.to_bits()))
 }
 
-/// The reference over floats.
+/// The soft multiply over floats.
 pub(crate) fn mul_f32(a: f32, b: f32) -> f32 {
     f32::from_bits(mul(a.to_bits(), b.to_bits()))
 }
 
-/// `GetEffectPoints`' tail: to the nearest 1/128, as `floor(x·128 + 0.5) / 128` with the ×128 and
-/// ÷128 done on the exponent field and the add and floor in the soft arithmetic.
+/// The effect-points read's tail: to the nearest 1/128, as `floor(x·128 + 0.5) / 128` with the ×128
+/// and ÷128 done on the exponent field and the add and floor in the soft arithmetic.
 pub(crate) fn quantize(x: f32) -> f32 {
     let bits = x.to_bits();
     let scaled = if bits & 0x7f80_0000 != 0 {
@@ -148,7 +148,7 @@ pub(crate) fn quantize(x: f32) -> f32 {
     f32::from_bits(if flips { 0 } else { shrunk })
 }
 
-/// The integral bounds `GetEffectPoints` hands a rounding effect.
+/// The integral bounds the effect-points read hands a rounding effect.
 pub(crate) fn floor_ceil(min: f32, max: f32) -> (f32, f32) {
     (
         f32::from_bits(floor(min.to_bits())),

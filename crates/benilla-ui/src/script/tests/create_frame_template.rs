@@ -170,8 +170,8 @@ fn a_comma_list_applies_each_name_and_a_single_name_still_chains() {
         .unwrap());
 }
 
-/// The lookup folds ASCII case: `SStrHash` uppercases before hashing, so a mis-cased name lands in
-/// the same bucket, and the compare is `SStrCmpI`.
+/// The lookup folds ASCII case: the name hash uppercases before hashing, so a mis-cased name lands
+/// in the same bucket, and the compare is case-insensitive.
 #[test]
 fn a_template_name_is_matched_case_insensitively() {
     let mut s = script();
@@ -353,7 +353,7 @@ fn a_scroll_child_element_gives_the_frame_a_real_scroll_range() {
 }
 
 /// The scroll range is the child's whole subtree, not its own height: the reference seeds a box and
-/// the reference walks the child's regions and child frames. The shape is
+/// then walks the child's regions and child frames. The shape is
 /// `ItemTextPageScrollChild`, 10×10 around a 270×304 page (`ItemTextFrame.xml:198`).
 #[test]
 fn the_scroll_range_is_the_childs_whole_subtree() {
@@ -425,7 +425,7 @@ fn an_empty_scroll_child_is_reported() {
     assert!(s.eval::<bool>("return Hollow ~= nil").unwrap());
 }
 
-/// The ScrollFrame's `LoadXML` (`0x96b920`) builds the `<ScrollChild>`, its `OnLoad` included,
+/// The ScrollFrame's XML load (`0x96b920`) builds the `<ScrollChild>`, its `OnLoad` included,
 /// before the post-load pass builds `<Frames>` (`0x48f400`) and fires the frame's own `OnLoad`
 /// (`0x490410`): a nested scrollbar's `OnLoad` already sees the scroll child.
 #[test]
@@ -465,7 +465,7 @@ fn a_scroll_child_loads_before_nested_frames_and_the_onload() {
 }
 
 /// A template's `<ScrollChild>` and `<Frames>` follow the same order on an instance: the
-/// template's scroll child is built by the template's `LoadXML` pass, before any `<Frames>`.
+/// template's scroll child is built by the template's XML load pass, before any `<Frames>`.
 #[test]
 fn an_inherited_scroll_child_loads_before_the_templates_frames() {
     let s = script();

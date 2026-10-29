@@ -48,8 +48,8 @@ pub struct ExtendedCost {
     pub arena: u32,
     /// The required items with a non-zero id, in record order (`+0x10..+0x20`).
     pub items: Vec<CostItem>,
-    /// The record's arena-rating requirement passes `CheckPersonalAndTeamRating` (`0x5a37b0`), or
-    /// it has none.
+    /// The record's arena-rating requirement passes the personal and team rating check
+    /// (`0x5a37b0`), or it has none.
     pub rating_met: bool,
 }
 
@@ -439,7 +439,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 row: row0,
                 texture: item.texture.clone(),
             });
-            // The grab's `SignalEvent(CURSOR_UPDATE)`; mode 5 skips the mode-7 `ACTIONBAR_SHOWGRID`
+            // The grab's `CURSOR_UPDATE` signal; mode 5 skips the mode-7 `ACTIONBAR_SHOWGRID`
             // branch.
             model.cursor = Some(payload);
             crate::script::cursor::queue_cursor_update(&mut model);
@@ -570,7 +570,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // RepairAllItems([guildBank]) (`0x585c90`): nothing unless the open merchant repairs
-    // (`UNIT_NPC_FLAGS` bit 12); the flag is `GetBoolOrDefault(1, false)`.
+    // (`UNIT_NPC_FLAGS` bit 12); the flag is argument 1 through the bool-or-default read, false.
     g.set(
         "RepairAllItems",
         lua.create_function(|lua, args: MultiValue| {
@@ -619,8 +619,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ShowMerchantSellCursor(index) (`0x5856d0`) and ShowBuybackSellCursor(index) (`0x585890`):
     // despite the names, the buy cursor, re-armed each frame an item is hovered. Every fail path
-    // returns without `CursorSetMode`; the base-mode Point gate lives app-side. The merchant
-    // cursor's reputation, points and cost-item tests are not built: only the copper is.
+    // returns without setting the cursor mode; the base-mode Point gate lives app-side. The
+    // merchant cursor's reputation, points and cost-item tests are not built: only the copper is.
     g.set(
         "ShowMerchantSellCursor",
         lua.create_function(|lua, index: usize| {
@@ -647,7 +647,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 /// greyed UnableBuy(23); no price leaves the cursor untouched.
 fn arm_vendor_cursor(lua: &Lua, price_of: impl FnOnce(&MerchantState) -> Option<u32>) {
     let mut model = crate::script::model_mut_of(lua);
-    // The family bails on `IsTargeting` first: an armed spell keeps its cursor.
+    // The family bails on the targeting check first: an armed spell keeps its cursor.
     if model.spell_targeting {
         return;
     }
@@ -1086,7 +1086,7 @@ mod tests {
         assert_eq!(s.take_repair_all(), None, "a vendor that does not repair");
     }
 
-    /// `RepairAllItems(guildBank)` reads its flag through `GetBoolOrDefault`, as the stock
+    /// `RepairAllItems(guildBank)` reads its flag through the bool-or-default read, as the stock
     /// guild-bank button's `RepairAllItems(1)` passes it.
     #[test]
     fn repair_all_carries_the_guild_bank_flag() {

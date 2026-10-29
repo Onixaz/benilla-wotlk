@@ -1,12 +1,12 @@
 //! The `AUTO_JOIN_GUILD_CHANNEL` cascade, the one place the client joins or leaves
-//! `GuildRecruitment - City` on its own. On AUTO (`CGChat::m_guildRecruitmentMode`, the default) a
+//! `GuildRecruitment - City` on its own. On AUTO (the chat's guild-recruitment mode, the default) a
 //! guilded player leaves it and an unguilded one in a capital joins it (`0x49eb70`), with no
 //! membership check; otherwise a retry waits for the next zone change. Once joined, the zone walk
 //! owns it as it owns Trade. Triggers: the `guildRecruitmentChannel` CVar moving to 1 (`0x512750` →
-//! `SetGuildRecruitmentMode`) and the `PLAYER_GUILDID` watcher, whose first sight is the player
-//! create; its move to 0 leaves a joined channel. Deviation: no re-run when a remote player streams
-//! in, because the reference's re-run only repeats the join, which vmangos swallows, or the leave,
-//! whose "Not on channel" notice nothing prints.
+//! the mode setter) and the `PLAYER_GUILDID` watcher, whose first sight is the player create; its
+//! move to 0 leaves a joined channel. Deviation: no re-run when a remote player streams in, because
+//! the reference's re-run only repeats the join, which vmangos swallows, or the leave, whose "Not
+//! on channel" notice nothing prints.
 
 use bevy::prelude::*;
 
@@ -25,8 +25,8 @@ const AREA_FLAG_CAPITAL: u32 = 0x100;
 /// The cascade's own state: whether a run is owed, and the guild id its watcher last saw.
 #[derive(Resource, Default)]
 pub(crate) struct GuildRecruitmentCascade {
-    /// A run is owed: the one-shot and the tail-jump from the reference in one flag, kept while the
-    /// cascade cannot act.
+    /// A run is owed: the one-shot and the tail-jump from the mode setter in one flag, kept while
+    /// the cascade cannot act.
     pending: bool,
     /// The last `PLAYER_GUILDID` seen; `None` makes the first sight a change, the create trigger.
     last_guild_id: Option<u32>,
@@ -58,9 +58,9 @@ impl GuildRecruitmentCascade {
     }
 }
 
-/// `guildRecruitmentChannel`'s change callback (`CVarHandler_guildRecruitmentChannel 0x512750`),
-/// queued for [`guild_recruitment_cascade`]. Before the chat cache seats the latch it is dropped:
-/// the restore overwrites the mode (`LoadChatSettingsCallback 0x508320`).
+/// `guildRecruitmentChannel`'s change callback (`0x512750`), queued for
+/// [`guild_recruitment_cascade`]. Before the chat cache seats the latch it is dropped: the restore
+/// overwrites the mode (`0x508320`).
 pub(crate) fn on_cvar(
     ev: On<crate::cvars::CvarChanged>,
     mut state: ResMut<GuildRecruitmentCascade>,
@@ -71,7 +71,7 @@ pub(crate) fn on_cvar(
     }
 }
 
-/// What does once the player and the zone row have resolved.
+/// What the cascade does once the player and the zone row have resolved.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Cascade {
     /// Guilded: leave `GuildRecruitment - City`.
@@ -82,7 +82,7 @@ pub(crate) enum Cascade {
     Deferred,
 }
 
-/// The reference's verdict: `None` when the latch is not AUTO, not even a retry. The guild test
+/// The cascade's verdict: `None` when the latch is not AUTO, not even a retry. The guild test
 /// comes first, so a guilded player leaves from anywhere.
 pub(crate) fn cascade(auto: bool, guild_id: u32, in_capital: bool) -> Option<Cascade> {
     if !auto {
@@ -109,8 +109,8 @@ pub(super) fn guild_recruitment_cascade(
     commands: Res<NetCommands>,
 ) {
     let Some(mut script) = script else { return };
-    // `SetGuildRecruitmentMode(mode, 0)` (`0x508260`): unmoved is a no-op; 1 runs the cascade
-    // (`UpdateGuildStatus`), 0 leaves a joined recruitment channel and refreshes the windows.
+    // The mode setter (`0x508260`), called with 0: unmoved is a no-op; 1 runs the cascade, 0
+    // leaves a joined recruitment channel and refreshes the windows.
     if let Some(mode) = state.cvar.take() {
         if script.set_guild_recruitment_mode_from_cvar(mode) {
             if mode == 1 {
@@ -157,7 +157,7 @@ pub(super) fn guild_recruitment_cascade(
         return;
     };
     if action == Cascade::Deferred {
-        return; //: the retry stays armed
+        return; // the retry stays armed
     }
     // The name is composed against the "City" row whatever the zone; with no row or city word the
     // run is consumed, not retried.

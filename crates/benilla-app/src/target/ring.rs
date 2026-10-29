@@ -247,7 +247,7 @@ pub(super) fn update_ring(
                         .is_some_and(|g| *last_vitals == Some((g, false)));
                 *last_vitals = selection.guid.map(|g| (g, is_dead));
                 if died {
-                    // `SetSelection(0,0)`, so the dead target becomes the last one.
+                    // The selection set to nothing, so the dead target becomes the last one.
                     deselect(&mut selection, &mut seam, !engaged.is_empty());
                     *last_vitals = None;
                     state.shown = false;
@@ -375,11 +375,12 @@ pub(super) fn push_ring(
 /// (ask `UnitReaction` with the unit as `this`). The player-vs-player rungs ([`pvp_rungs`]) decide
 /// first: the unit itself is friendly, then, when both carry `UNIT_FIELD_FLAGS` bit 3, a duel, one
 /// controller, the party and mutual FFA. Then: a reaction the server forces on the target's faction
-/// answers first (`0x71f822`, `GetForcedReaction 0x5d06a0`); then a faction with a reputation slot
-/// answers with our reputation rank, even in GM mode; any other goes to the template comparator.
-/// Neutral when anything is missing. The reference caps that answer at 6, so Revered and Exalted
-/// both read 6. A party rung lands on this same generic leg, `0x71f770` with the unit as `this` and
-/// the player as the actor. Not applied: the contested guard and the summon tail.
+/// answers first (`0x71f822`, the forced-reaction lookup at `0x5d06a0`); then a faction with a
+/// reputation slot answers with our reputation rank, even in GM mode; any other goes to the
+/// template comparator. Neutral when anything is missing. The reference caps that answer at 6, so
+/// Revered and Exalted both read 6. A party rung lands on this same generic leg, `0x71f770` with
+/// the unit as `this` and the player as the actor. Not applied: the contested guard and the summon
+/// tail.
 pub(crate) fn ring_reaction(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -416,7 +417,7 @@ pub(crate) fn ring_reaction(
         let self_tpl = catalog.template(self_store.0.unit_faction_template()?)?;
         Some(target_tpl.reaction_toward(self_tpl) as u8)
     })();
-    // (`cmp esi,6` / `jl` / `mov esi,6`) caps the reference's answer: Exalted's 7 reads 6.
+    // A clamp (`cmp esi,6` / `jl` / `mov esi,6`) caps the reference's answer: Exalted's 7 reads 6.
     resolved.map_or(Reaction::Neutral as u8, |rank| rank.min(REACTION_CAP))
 }
 
@@ -425,7 +426,7 @@ const REACTION_CAP: u8 = 6;
 
 /// `UNIT_FIELD_FLAGS` bit 3, player-controlled in behaviour: players and their pets carry it, wild
 /// creatures do not. `UnitReaction` needs it on both sides before any player-vs-player rung, and
-/// `CanAttack` picks its reaction arm by it.
+/// the attack check picks its reaction arm by it.
 const UNIT_FLAG_PVP_ATTACKABLE: u32 = 1 << 3;
 
 /// The duel rung of `UnitReaction`: hostile (1) between opposing teams, friendly (4) on one team,
@@ -556,14 +557,15 @@ fn ffa_reaction(
         && own.unit_byte2_flags() & BYTE2_FFA_PVP != 0
 }
 
-/// Target `UNIT_FIELD_FLAGS` bits, any one of which makes `CanAttack` refuse; their vanilla names
-/// are unconfirmed, so none is used.
+/// Target `UNIT_FIELD_FLAGS` bits, any one of which makes the attack check refuse; their vanilla
+/// names are unconfirmed, so none is used.
 const CANNOT_BE_ATTACKED: u32 = 0x2 | 0x80 | 0x1_0000 | 0x10_0000 | 0x200_0000;
-/// The cross-flag immunity bits `CanAttack` reads on both sides, each against the other unit's bit 3.
+/// The cross-flag immunity bits the attack check reads on both sides, each against the other unit's
+/// bit 3.
 const IMMUNE_TO_PLAYER_CONTROLLED: u32 = 0x100;
 const IMMUNE_TO_UNCONTROLLED: u32 = 0x200;
-/// `UNIT_FIELD_BYTES_2` byte 1 (`[unit+0xd0]+0x1d1`), the PvP state `CanAttack 0x729740` reads:
-/// flagged, the bit a contested zone sets, free-for-all and sanctuary (AzerothCore's
+/// `UNIT_FIELD_BYTES_2` byte 1 (`[unit+0xd0]+0x1d1`), the PvP state the attack check (`0x729740`)
+/// reads: flagged, the bit a contested zone sets, free-for-all and sanctuary (AzerothCore's
 /// `UNIT_BYTE2_FLAG_*`).
 const BYTE2_PVP: u8 = 0x1;
 const BYTE2_CONTESTED: u8 = 0x2;
@@ -644,10 +646,10 @@ pub(crate) fn at_war_with(
     )
 }
 
-/// `CanInteract` from the local player, the world cursor's service gate: bit 25 of
+/// The interact check from the local player, the world cursor's service gate: bit 25 of
 /// `UNIT_FIELD_FLAGS` clear, some `UNIT_NPC_FLAGS`, and both reactions at least neutral,
 /// [`ring_reaction`] and [`reaction_from_player`]. Not applied, each only ever making a unit less
-/// interactable: the `CanInteractNow` wrapper's gates (charm, alive) and the ghost leg.
+/// interactable: the interact check's timed wrapper's gates (charm, alive) and the ghost leg.
 pub(crate) fn can_interact_from_player(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -667,11 +669,11 @@ pub(crate) fn can_interact_from_player(
         && reaction_from_player(factions, reputations, party, target_store, self_store) >= NEUTRAL
 }
 
-/// `CanAttack` from the local player (`0x729740`), every leg in the reference's order; the V-plate
-/// category turns on it. Not a reaction threshold: an unflagged opposite-faction player on a PvE
-/// realm is hostile yet not attackable, a same-faction duel opponent friendly yet attackable.
-/// Not applied: the vehicle leg (`0x7298a9`–`0x7298db`) and the controller resolve
-/// (`0x729976`), which takes the controller-less arm for a charmed unit.
+/// The attack check from the local player (`0x729740`), every leg in the reference's order; the
+/// V-plate category turns on it. Not a reaction threshold: an unflagged opposite-faction player on
+/// a PvE realm is hostile yet not attackable, a same-faction duel opponent friendly yet attackable.
+/// Not applied: the vehicle leg (`0x7298a9`–`0x7298db`) and the controller resolve (`0x729976`),
+/// which takes the controller-less arm for a charmed unit.
 pub(crate) fn can_attack_from_player(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -750,8 +752,8 @@ pub(crate) fn can_attack_from_player(
     }
 }
 
-/// A unit's `FactionTemplate` faction-group mask (`row + 0xc`), the one number `CanCooperate`
-/// compares: 3 on every Alliance race row, 5 on every Horde one. `/reaction` prints it.
+/// A unit's `FactionTemplate` faction-group mask (`row + 0xc`), the one number the cooperation
+/// check compares: 3 on every Alliance race row, 5 on every Horde one. `/reaction` prints it.
 pub(crate) fn faction_group_mask(
     factions: Option<&Factions>,
     store: Option<&ObjectStore>,
@@ -764,8 +766,8 @@ pub(crate) fn faction_group_mask(
     )
 }
 
-/// `CanCooperate` from the local player: equal faction-group masks, neither side charmed, and not
-/// the same unit; it reads no party or raid state.
+/// The cooperation check from the local player: equal faction-group masks, neither side charmed,
+/// and not the same unit; it reads no party or raid state.
 pub(crate) fn can_cooperate_with_player(
     factions: Option<&Factions>,
     target_store: Option<&ObjectStore>,
@@ -793,8 +795,8 @@ pub(crate) fn can_cooperate_with_player(
 }
 
 /// The V-plate category: `true` is the friendly bucket (Shift-V, bit `0x8`), `false` the enemy one
-/// (V, bit `0x1`). A unit is friendly when `CanAttack` refuses it, and a player only when
-/// `CanCooperate` also passes; no reaction rank takes part.
+/// (V, bit `0x1`). A unit is friendly when the attack check refuses it, and a player only when the
+/// cooperation check also passes; no reaction rank takes part.
 pub(crate) fn plate_is_friendly(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -1075,7 +1077,7 @@ mod tests {
         );
         assert!(
             !attackable(&silent, &quiet),
-            "not at war → CanAttack says no: the sword was the bug"
+            "not at war → the attack check says no: the sword was the bug"
         );
         assert!(
             !interactable(&silent, &quiet),
@@ -1112,9 +1114,9 @@ mod tests {
         assert!(!interactable(&chicken, &quiet));
     }
 
-    /// A player is friendly only if `CanCooperate`, faction-group-mask equality, also passes.
-    /// Template 35, which vmangos's `.gm on` sets (`Player.cpp:2661`), is faction 31 with mask 0,
-    /// so a GM-mode character leaves every player's friendly bucket while NPCs keep theirs.
+    /// A player is friendly only if the cooperation check, faction-group-mask equality, also
+    /// passes. Template 35, which vmangos's `.gm on` sets (`Player.cpp:2661`), is faction 31 with
+    /// mask 0, so a GM-mode character leaves every player's friendly bucket while NPCs keep theirs.
     #[test]
     fn the_player_subject_category_on_the_real_dbc() {
         use crate::net::{ObjectStore, Reputations};
@@ -1173,7 +1175,7 @@ mod tests {
                 "FT {tpl} is enemy-category to a GM-mode observer",
             );
         }
-        // …while NPCs keep theirs: `CanCooperate` is never asked for an NPC.
+        // …while NPCs keep theirs: the cooperation check is never asked for an NPC.
         let npc = |tpl: u32| ObjectStore(ObjectFields::from_pairs(&[(35, tpl)]));
         let npc_category = |subject: &ObjectStore, me: &ObjectStore| {
             plate_is_friendly(
@@ -1196,7 +1198,7 @@ mod tests {
         ));
     }
 
-    /// `CanAttack`'s flag refusals beat a hostile reaction.
+    /// The attack check's flag refusals beat a hostile reaction.
     #[test]
     fn an_unattackable_flag_beats_a_hostile_reaction() {
         use crate::net::{ObjectStore, Reputations};
@@ -1254,9 +1256,9 @@ mod tests {
     }
 
     /// A torn-down object stops being an object at the teardown, not when its model has faded: both
-    /// of the reference's routes (`SMSG_DESTROY_OBJECT`, the out-of-range block) reach, which
-    /// clears a matching selection and sends `CMSG_SET_SELECTION 0` at once, while only the
-    /// detached model fades on.
+    /// of the reference's routes (`SMSG_DESTROY_OBJECT`, the out-of-range block) reach one
+    /// teardown, which clears a matching selection and sends `CMSG_SET_SELECTION 0` at once, while
+    /// only the detached model fades on.
     mod teardown {
         use benilla_protocol::field::{
             FIELD_UNIT_FLAGS, FIELD_UNIT_HEALTH, FIELD_UNIT_LEVEL, FIELD_UNIT_MAXHEALTH,
@@ -1288,7 +1290,7 @@ mod tests {
                 transport: None,
                 spline: None,
                 // `OBJECT_FIELD_TYPE` (2) 0x9, object and unit, as a creature's create carries it:
-                // `SetSelection`'s `IsSelectable` refuses any other type.
+                // the selection set's selectable test refuses any other type.
                 fields: ObjectFields::from_pairs(&[
                     (2, 0x9),
                     (FIELD_UNIT_HEALTH, 100),

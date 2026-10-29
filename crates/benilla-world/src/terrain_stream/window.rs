@@ -1,5 +1,5 @@
-//! The residency window, derived from `farclip` (177..777) as the reference derives it:
-//! `SetFarClip` sets `r = 1 + trunc(farclip / 33.333)` chunks, and the world tick centres two
+//! The residency window, derived from `farclip` (177..777) as the reference derives it: the
+//! far-clip setter sets `r = 1 + trunc(farclip / 33.333)` chunks, and the world tick centres two
 //! windows on the viewer's chunk, the inner `idx ± r` (must be resident) and the outer
 //! `idx ± max(r + 2, 8)` (requested ahead, built under 5 ms a frame). Eviction is membership in the
 //! outer window, by tile (`[area+0x88]` vs `bounds >> 4`).

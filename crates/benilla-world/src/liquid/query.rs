@@ -24,7 +24,7 @@ fn flood_of(room: WmoRoom, placements: &RoomPlacements) -> Option<LiquidKind> {
 }
 
 /// The camera eye's claim: the environment probe samples the containing map-object's MLIQ when the
-/// reference names one, else the ADT liquid.
+/// claim names one, else the ADT liquid.
 pub fn camera_claim(claim: &CameraInteriorClaim, placements: &RoomPlacements) -> LiquidClaim {
     match claim.0 {
         Some(c) => LiquidClaim::Inside {
@@ -68,8 +68,7 @@ pub struct Underwater(pub(crate) benilla_formats::Submersion);
 /// Where a surface came from and, for WMO liquid, whose room it is: the scope key for
 /// [`liquid_at`]. The reference's terrain query tries the map-object leg first, which moves the
 /// point into each map-object's own space before sampling MLIQ, then the ADT; the camera probe
-/// samples the current group's MLIQ when the reference names a containing map-object, else the ADT
-/// query.
+/// samples the current group's MLIQ when a containing map-object is claimed, else the ADT query.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LiquidSource {
     /// An ADT map-chunk surface (MCLQ).
@@ -684,9 +683,9 @@ pub(super) fn lowest_near_corner_drop(rotation: Quat, fov: f32, aspect: f32, nea
     drop
 }
 
-// The reference's camera probe spans: it reads the render eye, samples one source, the current
-// group's MLIQ when the reference names a containing map-object, else the ADT liquid, and writes.
-// `CameraInteriorClaim` comes off the down-ray that writes.
+// The reference's camera probe: it reads the render eye, samples one source, the current group's
+// MLIQ when a containing map-object is claimed, else the ADT liquid, and writes the eye's liquid
+// type. `CameraInteriorClaim` comes off the down-ray that writes the claim.
 pub(super) fn detect_submersion(
     mut underwater: ResMut<Underwater>,
     camera: Query<(&Transform, &Projection), With<WorldCamera>>,

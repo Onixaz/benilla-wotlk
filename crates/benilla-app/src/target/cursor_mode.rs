@@ -1,5 +1,5 @@
 //! The world cursor's classifier: the hovered unit, GameObject or corpse resolves to a
-//! [`CursorKind`] as the reference's `CGWorldFrame` classifier does: the NPC service ladder, else
+//! [`CursorKind`] as the reference's world-frame classifier does: the NPC service ladder, else
 //! loot, skin or attack by state, each grayed by its own range gate. Loot rights never gray; they
 //! decide whether the loot cursor shows at all.
 
@@ -93,7 +93,7 @@ const CURSOR_TABLE: [(&str, CursorKind); 26] = [
     ("vehichleCursor", CursorKind::Vehicle),
 ];
 
-/// A creature's cursor name as `CursorGetModeFromName 0x616290` reads it: a table name to its
+/// A creature's cursor name as the cursor-name lookup (`0x616290`) reads it: a table name to its
 /// mode, any other name to its own file.
 fn cursor_from_name(name: &str) -> CursorKind {
     CURSOR_TABLE
@@ -202,7 +202,7 @@ pub(crate) mod npc_flags {
     pub const SPELLCLICK: u32 = 0x100_0000;
     pub const MAILBOX: u32 = 0x400_0000;
 
-    /// `CGUnit::IsGuildMaster 0x4f5f80`: petitioner and tabard designer both.
+    /// The guild master test (`0x4f5f80`): petitioner and tabard designer both.
     pub fn is_guild_master(flags: u32) -> bool {
         flags & PETITIONER != 0 && flags & TABARDDESIGNER != 0
     }
@@ -211,9 +211,9 @@ pub(crate) mod npc_flags {
 pub(super) const UNIT_FLAG_SKINNABLE: u32 = 0x0400_0000;
 const UNIT_FLAG_PACIFIED: u32 = 0x0002_0000;
 
-/// The spell the skin leg casts at a dead skinnable unit, shared by the cursor (`0x4f7e18`) and
-/// the click (`0x7313a3`): `GetSkinningSpell 0x53bce0`'s slot for it, refused for a player that
-/// `CanAssist` passes (`0x7313c5`, `0x4f7e3a`), so a friendly body takes no skin leg.
+/// The spell the skin leg casts at a dead skinnable unit, shared by the cursor (`0x4f7e18`) and the
+/// click (`0x7313a3`): the skinning spell lookup's (`0x53bce0`) slot for it, refused for a player
+/// that the assist check passes (`0x7313c5`, `0x4f7e3a`), so a friendly body takes no skin leg.
 pub(super) fn unit_skin_spell(
     learned: &crate::ui_action::LearnedAbilities,
     store: &ObjectStore,
@@ -240,7 +240,7 @@ fn skin_leg_spell(
     (subject != crate::ui_action::SkinSubject::PlayerOrCorpse || !can_assist()).then_some(spell)
 }
 
-/// The skin leg's cursor by `GetSkinningType 0x715e50` (`0x4f7ece`): Skin(12) for leather,
+/// The skin leg's cursor by the skinning type (`0x715e50`, `0x4f7ece`): Skin(12) for leather,
 /// GatherHerbs(13) for herb, Mine(11) for rock and bolts.
 fn skin_cursor(store: &ObjectStore, names: Option<&crate::names::NameCache>) -> CursorKind {
     use crate::ui_action::SkinSubject;
@@ -259,8 +259,8 @@ fn skin_cursor_kind(type_flags: u32) -> CursorKind {
 }
 
 /// The hovered unit is one the unit dispatcher forks to its attack arm for: alive or feigning,
-/// refused by `CanInteract` and passed by `CanAttack`. The sword also needs the player's own legs
-/// ([`player_attack_legs`]), which the arm tests again inside.
+/// refused by the interact check and passed by the attack check. The sword also needs the player's
+/// own legs ([`player_attack_legs`]), which the arm tests again inside.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct AttackFork(pub(crate) bool);
 
@@ -286,7 +286,7 @@ pub(crate) fn unit_interact_reach_sq(unit: &ObjectStore) -> f32 {
 /// Attack's range, squared: gray beyond a fixed 10.45 yd, not the melee reach.
 const ATTACK_RANGE_SQ: f32 = 109.2025;
 /// Melee interact reach `max(reachA + reachB + 1.333, 5.0)`: 5.0 is a floor, so large creatures
-/// reach farther. Gates skin and loot (`CanLootNow`), center to center, boundary-inclusive.
+/// reach farther. Gates skin and loot, center to center, boundary-inclusive.
 pub(super) const MELEE_OFFSET: f32 = 1.333_33;
 pub(super) const MELEE_FLOOR: f32 = 5.0;
 
@@ -295,7 +295,7 @@ pub(super) fn melee_reach(target: &ObjectStore, me: &ObjectStore) -> f32 {
 }
 
 /// A corpse's interact reach, squared: a flat 5 yd, since a corpse has no combat reach and the
-/// melee formula falls to its floor. `CanLootNow` and the `CMSG_LOOT` sender both compare against
+/// melee formula falls to its floor. The loot check and the `CMSG_LOOT` sender both compare against
 /// 25.0.
 pub(super) const CORPSE_INTERACT_RANGE_SQ: f32 = 25.0;
 
@@ -336,7 +336,7 @@ const GO_TYPE_RITUAL: i32 = 18;
 pub(super) const GO_TYPE_MAILBOX: i32 = 19;
 const GO_TYPE_28: i32 = 28;
 /// `GAMEOBJECT_TYPE_GUILD_BANK` (34), a guild vault: 3.3.5a gives it a strategy of its own
-/// (`0x712ac0`), whose cursor is Buy, grayed out of reach (`CanChangeCursor 0x70b910`).
+/// (`0x712ac0`), whose cursor is Buy, grayed out of reach (`0x70b910`).
 pub(super) const GO_TYPE_GUILD_BANK: i32 = 34;
 /// Every other type's interact range: the NPC-service reach, standing in for the reference's
 /// per-type strategy constant (`[strat+0xc]`, compared squared by `usable`; base 5.0, overridden by
@@ -367,7 +367,7 @@ const GO_FLAG_INTERACT_COND: u32 = 0x4;
 /// (`GameObject::ActivateToQuest`); read only under `INTERACT_COND`.
 const GO_DYNFLAG_ACTIVATE: u32 = 0x1;
 
-/// The types whose highlightable slot `+0x14` is constant false, so the reference never runs.
+/// The types whose highlightable slot `+0x14` is constant false, so the shared gate never runs.
 fn strategy_never_highlightable(type_id: i32) -> bool {
     strategy_is_default(type_id)
         || matches!(
@@ -401,14 +401,14 @@ pub(crate) struct GoOverrides {
     pub(crate) meeting_stone_queued: bool,
 }
 
-/// `GAMEOBJECT_TYPE_MEETINGSTONE` (23): its `+0x14` is only `template.data[2] !=`, the queued area;
-/// it never calls.
+/// `GAMEOBJECT_TYPE_MEETINGSTONE` (23): its `+0x14` only compares `template.data[2]` with the
+/// queued area; it never calls the shared gate.
 pub(super) const GO_TYPE_MEETINGSTONE: i32 = 23;
 
-/// Whether a GameObject shows an interact cursor at all: the reference plus the per-type overrides.
-/// An INTERACT_COND object passes only while the server has set its per-player activate bit: the
-/// quest gate. The FISHINGNODE override compares our channel object, not `CREATED_BY`, then runs
-/// the shared gate.
+/// Whether a GameObject shows an interact cursor at all: the shared gate plus the per-type
+/// overrides. An INTERACT_COND object passes only while the server has set its per-player activate
+/// bit: the quest gate. The FISHINGNODE override compares our channel object, not `CREATED_BY`,
+/// then runs the shared gate.
 fn highlightable_flags(
     type_id: i32,
     flags: u32,
@@ -446,10 +446,10 @@ fn highlightable_flags(
     true
 }
 
-/// `GAMEOBJECT_DYNFLAG` `0x4`, which `CanUse` refuses.
+/// `GAMEOBJECT_DYNFLAG` `0x4`, which the use check refuses.
 const GO_DYNFLAG_NO_USE: u32 = 0x4;
 
-/// The shared `CanUse` (`0x7112a0`) of an ordinary GameObject type: a reaction toward us above
+/// The shared use check (`0x7112a0`) of an ordinary GameObject type: a reaction toward us above
 /// hostile (an unresolved one passes), not in use or uninteractable, and an interact-condition
 /// object only while activated for us. The trap arm and the creator-only rule are not applied.
 pub(crate) fn go_can_use(flags: u32, dyn_flags: u32, reaction: Option<u8>) -> bool {
@@ -522,9 +522,9 @@ pub(crate) fn go_highlightable(
     )
 }
 
-/// MEETINGSTONE's override for one stone, `template.data[2] =`. `queued_area` is the reference's
-/// global: 0 until the `SMSG_MEETINGSTONE_SETQUEUE` handler writes it. An unanswered template reads
-/// not queued; a `data[2]` of 0 matches the unqueued 0, as in the reference.
+/// MEETINGSTONE's override for one stone, `template.data[2] == queued_area`. `queued_area` is the
+/// reference's global: 0 until the `SMSG_MEETINGSTONE_SETQUEUE` handler writes it. An unanswered
+/// template reads not queued; a `data[2]` of 0 matches the unqueued 0, as in the reference.
 pub(crate) fn meeting_stone_queued(area: Option<u32>, queued_area: u32) -> bool {
     area.is_some_and(|a| a == queued_area)
 }
@@ -541,7 +541,7 @@ pub(crate) fn fishing_channel_owned(
     }
 }
 
-/// A `LockType.dbc` CursorName to its cursor, the reference's `CursorModeFromName` over the three
+/// A `LockType.dbc` CursorName to its cursor, the reference's cursor-name lookup over the three
 /// cursor-bearing lock types in 1.12.
 fn cursor_kind_from_lock_name(name: &str) -> Option<CursorKind> {
     match name {
@@ -568,8 +568,8 @@ fn go_lock_cursor(
     cursor_kind_from_lock_name(name)
 }
 
-/// A highlightable GameObject's cursor (`GetCursorMode`): TEXT and the Mail types by type, any
-/// other its lock's data-named cursor or the gear.
+/// A highlightable GameObject's cursor: TEXT and the Mail types by type, any other its lock's
+/// data-named cursor or the gear.
 fn go_cursor_kind(type_id: i32, lock_cursor: Option<CursorKind>) -> CursorKind {
     match type_id {
         GO_TYPE_TEXT => CursorKind::Inspect,
@@ -579,8 +579,8 @@ fn go_cursor_kind(type_id: i32, lock_cursor: Option<CursorKind>) -> CursorKind {
     }
 }
 
-/// `CGUnit_C::UnitCanGossip 0x6d1de0`'s status half: the cached `SMSG_QUESTGIVER_STATUS` is 2
-/// or above, and a missing one reads as NONE since the server sends it unprompted.
+/// The gossip test's (`0x6d1de0`) status half: the cached `SMSG_QUESTGIVER_STATUS` is 2 or above,
+/// and a missing one reads as NONE since the server sends it unprompted.
 pub(crate) fn questgiver_has_quest(quest_status: Option<u32>) -> bool {
     quest_status.is_some_and(|s| s >= 2)
 }
@@ -650,9 +650,9 @@ fn loot_cursor(auto_loot: bool, shift_held: bool) -> CursorKind {
     }
 }
 
-/// Whether a corpse becomes the mouseover (`[CGCorpse_C vtbl+0x54]` =): a body always, your own
-/// included; a bone pile only while it has loot. A refused corpse is still picked but shows no name
-/// and no brighten.
+/// Whether a corpse becomes the mouseover (the corpse object's `vtbl+0x54`): a body always, your
+/// own included; a bone pile only while it has loot. A refused corpse is still picked but shows no
+/// name and no brighten.
 pub(crate) fn corpse_mouseover_eligible(store: &ObjectStore) -> bool {
     !store.0.corpse_is_bones() || store.0.corpse_lootable()
 }
@@ -671,7 +671,7 @@ struct CorpseFacts {
     dist_sq: f32,
     /// The already-looting override: `[player+0x1d28/2c] == corpse GUID`.
     looting_this: bool,
-    /// `CanAutoInteract`, which `CanLootNow` asks first and then skips its range.
+    /// The auto-interact test, which the loot check asks first and then skips its range.
     can_auto_interact: bool,
     auto_loot: bool,
     /// Key 0, shift.
@@ -679,8 +679,8 @@ struct CorpseFacts {
 }
 
 fn corpse_cursor(f: CorpseFacts) -> Option<(CursorKind, bool)> {
-    // Leg 1, lootable: able within `CanLootNow`'s reach or while this corpse's loot window is open;
-    // Pickup or LootAll by key 0, grayed.
+    // Leg 1, lootable: able within the loot check's reach or while this corpse's loot window is
+    // open; Pickup or LootAll by key 0, grayed.
     if f.lootable {
         let able = f.can_auto_interact || f.dist_sq <= CORPSE_INTERACT_RANGE_SQ || f.looting_this;
         return Some((loot_cursor(f.auto_loot, f.shift_held), !able));
@@ -845,7 +845,7 @@ pub(super) fn classify(
         let dead = store.0.unit_is_dead();
         if dead {
             if store.0.unit_lootable() {
-                // Grayed by `CanLootNow`'s melee reach; the reference's mid-loot state block and
+                // Grayed by the loot check's melee reach; the reference's mid-loot state block and
                 // open-loot-window override are not applied to units.
                 let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
                 return Some((
@@ -873,8 +873,8 @@ pub(super) fn classify(
             return None; // a plain corpse: Point
         }
 
-        // `CanInteract`, asked through `CanInteractNow`, picks the ladder; it is not a reaction
-        // threshold.
+        // The interact check, asked through its timed wrapper, picks the ladder; it is not a
+        // reaction threshold.
         if super::can_interact(
             Some(store),
             factions.as_deref(),
@@ -893,7 +893,7 @@ pub(super) fn classify(
             return service_cursor(store.0.unit_npc_flags(), status, cursor_name)
                 .map(|kind| (kind, dist_sq > unit_interact_reach_sq(store)));
         }
-        // `CanAttack`, the predicate TAB, the combat flash and `UnitCanAttack` share; not
+        // The attack check, the predicate TAB, the combat flash and `UnitCanAttack` share; not
         // attackable clears the cursor: Point.
         if !super::can_attack(
             Some(store),
@@ -941,8 +941,9 @@ mod tests {
     use super::*;
     use benilla_protocol::messages::dialog_status;
 
-    /// `GetSkinningSpell 0x53bce0` and the click's player refusal (`0x7313c5`), for a character
-    /// with Skinning 8613 and Mining 32606 learned as the learn switch files them (`0x5420c7`).
+    /// The skinning spell lookup (`0x53bce0`) and the click's player refusal (`0x7313c5`), for a
+    /// character with Skinning 8613 and Mining 32606 learned as the learn switch files them
+    /// (`0x5420c7`).
     #[test]
     fn the_skin_leg_reads_the_corpses_own_slot() {
         use crate::ui_action::{LearnedAbilities, SkinSubject};
@@ -957,7 +958,7 @@ mod tests {
             skinning: [None, None, Some(MINING), None],
             ..Default::default()
         };
-        let never = || -> bool { panic!("CanAssist is asked of a player only") };
+        let never = || -> bool { panic!("the assist check is asked of a player only") };
         assert_eq!(
             skin_leg_spell(&miner, beast, never),
             None,
@@ -971,8 +972,8 @@ mod tests {
         };
         assert_eq!(skin_leg_spell(&both, beast, never), Some(SKINNING));
         assert_eq!(skin_leg_spell(&both, rock, never), Some(MINING));
-        // A player's body reads the Remove Insignia slot, never a Skinning one, and only while
-        // `CanAssist` refuses it.
+        // A player's body reads the Remove Insignia slot, never a Skinning one, and only while the
+        // assist check refuses it.
         assert_eq!(skin_leg_spell(&both, player, || false), None);
         let insignia = LearnedAbilities {
             skin_player_corpse: Some(REMOVE_INSIGNIA),
@@ -986,7 +987,7 @@ mod tests {
         );
     }
 
-    /// The skin cursor by `GetSkinningType 0x715e50` (`0x4f7ece`).
+    /// The skin cursor by the skinning type (`0x715e50`, `0x4f7ece`).
     #[test]
     fn the_skin_cursor_follows_the_creature_kind() {
         assert_eq!(skin_cursor_kind(0), CursorKind::Skin);
@@ -997,8 +998,8 @@ mod tests {
         assert_eq!(skin_cursor_kind(0x300), CursorKind::GatherHerbs);
     }
 
-    /// `CanLootNow` skips its range under `CanAutoInteract`, so the click that walks there finds a
-    /// lit pouch.
+    /// The loot check skips its range under the auto-interact test, so the click that walks there
+    /// finds a lit pouch.
     #[test]
     fn click_to_move_lights_a_far_corpses_pouch() {
         let far = CorpseFacts {

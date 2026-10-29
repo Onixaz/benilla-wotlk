@@ -32,8 +32,8 @@ pub(crate) const GLUE_SLOT: &str = "glue";
 const GLUE_SIZE: u32 = 1024;
 
 /// The create screen's look: race, sex, class and the five appearance dials. The body wears the
-/// (race, class, sex) `CharStartOutfit`, so a class change re-dresses it (reference:
-/// `SelectClass`).
+/// (race, class, sex) `CharStartOutfit`, so a class change re-dresses it, as the reference's class
+/// pick does.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct CreateLook {
     pub(crate) race: u8,
@@ -404,11 +404,11 @@ fn may_swap(standing: bool, art_ready: bool, body_ready: bool, waited: f32) -> b
     !standing || (art_ready && body_ready) || waited >= GLUE_SWAP_HOLD_SECS
 }
 
-/// A glue scene's light rig, folded as a scene model's gather (`CM2Scene::SelectLights` `0x81e400`,
-/// `CM2Lighting::AddLight` `0x834f60`): directional ambients sum, each directional's diffuse ×
-/// intensity becomes an SH lobe ([`benilla_world::lighting::prop_probe_coeffs`]), and point lights
-/// go to the point table with the `CM2Light` ctor's fixed falloff `1/(0.7·d + 0.03·d²)`
-/// (`0x834a40`); the authored attenuation radii are not read.
+/// A glue scene's light rig, folded as a scene model's gather (`0x81e400`, `0x834f60`): directional
+/// ambients sum, each directional's diffuse × intensity becomes an SH lobe
+/// ([`benilla_world::lighting::prop_probe_coeffs`]), and point lights go to the point table with
+/// the model light constructor's fixed falloff `1/(0.7·d + 0.03·d²)` (`0x834a40`); the authored
+/// attenuation radii are not read.
 #[derive(Debug)]
 struct SceneRig {
     /// The summed directional ambient; a point light adds none (`0x834f60`).
@@ -419,12 +419,12 @@ struct SceneRig {
     points: Vec<(Vec3, [f32; 3])>,
 }
 
-/// Range packed with a scene point light: the reference gather has no range gate; the device
-/// takes the 3 nearest (`CM2Lighting::SetupGxLights` `0x8353d0`).
+/// Range packed with a scene point light: the reference gather has no range gate; the device takes
+/// the 3 nearest (`0x8353d0`).
 const SCENE_POINT_RANGE: f32 = 1.0e6;
 
 /// Fold the scene model's lights into a [`SceneRig`]. A directional's to-light direction is its
-/// bone's local +Z: `CM2Model::AnimateST` (`0x828a00`) sets the light's direction to the bone
+/// bone's local +Z: the model's animate step (`0x828a00`) sets the light's direction to the bone
 /// matrix's −Z, never the def position.
 fn scene_rig(lights: &[benilla_assets::ModelLight]) -> SceneRig {
     let mut ambient = [0.0f32; 3];
@@ -433,8 +433,8 @@ fn scene_rig(lights: &[benilla_assets::ModelLight]) -> SceneRig {
     for l in lights.iter().map(|l| &l.def) {
         let color = l.diffuse_color.map(|c| c * l.diffuse_intensity);
         if l.is_point() {
-            // `LightBlob::point` commits the colour raw, as `SetupGxLights` (`0x8353d0`) hands the
-            // device the light's colour.
+            // `LightBlob::point` commits the colour raw, as the device-light setup (`0x8353d0`)
+            // hands the device the light's colour.
             points.push((benilla_assets::coords::wow_to_bevy(l.position), color));
         } else {
             for (a, c) in ambient.iter_mut().zip(l.ambient_color) {
@@ -451,13 +451,13 @@ fn scene_rig(lights: &[benilla_assets::ModelLight]) -> SceneRig {
     }
 }
 
-/// The ghost select screen's rig: `GenericLightingCallback` (`0x4e3a20`), on the scene, the
+/// The ghost select screen's rig: the glue's lighting callback (`0x4e3a20`), on the scene, the
 /// character and the pet, takes this fork for a selected record with flag `0x2000` off the create
-/// screen, when the pane gave the set no ghost lights. It wipes the gather
-/// (`CM2Lighting::Initialize` `0x834900`: no authored ambient, no point lights) and adds one
-/// directional travelling `(0,0,-1)` (`0x834ae0`), so the light is overhead.
+/// screen, when the pane gave the set no ghost lights. It wipes the gather (`0x834900`: no authored
+/// ambient, no point lights) and adds one directional travelling `(0,0,-1)` (`0x834ae0`), so the
+/// light is overhead.
 ///
-/// The colours are `LightParams` row 3, the death preset, through `DayNight::LoadLightIntBand`
+/// The colours are `LightParams` row 3, the death preset, through the day-night band load
 /// (`0x7ebf30`) to `LightIntBand` 37 (diffuse) and 38 (ambient) at time 0. Both bands are
 /// single-key in 3.3.5a, and the glue screens have no `LightParams` state to read, so they are
 /// literals.
@@ -475,11 +475,11 @@ fn ghost_rig() -> SceneRig {
     }
 }
 
-/// A pane's custom set over the scene model's lights, as `GenericLightingCallback` (`0x4e3a20`)
-/// lights a set with any: `CM2Lighting::Reset` (`0x4e2730`) clears the directional sums and the
-/// sun but keeps the gathered point lights, and each set light is then added (`0x834f60`). A
-/// directional's vector is its travel direction ([`benilla_ui::widget::ModelLight::vector`]), so
-/// the to-light is its negation; a disabled light adds nothing.
+/// A pane's custom set over the scene model's lights, as the glue's lighting callback (`0x4e3a20`)
+/// lights a set with any: its reset (`0x4e2730`) clears the directional sums and the sun but keeps
+/// the gathered point lights, and each set light is then added (`0x834f60`). A directional's vector
+/// is its travel direction ([`benilla_ui::widget::ModelLight::vector`]), so the to-light is its
+/// negation; a disabled light adds nothing.
 fn custom_rig(set: &[benilla_ui::widget::ModelLight], scene: SceneRig) -> SceneRig {
     let mut rig = SceneRig {
         ambient: [0.0; 3],
@@ -516,12 +516,12 @@ fn stage_rig(model: &[benilla_assets::ModelLight], lights: &PaneLights, ghost: b
     })
 }
 
-/// Fold a rig's directionals into the one sun a model's shader receives: `CM2Lighting::AddDiffuse`
+/// Fold a rig's directionals into the one sun a model's shader receives: the diffuse add
 /// (`0x834dc0`) sums each light's travel direction per colour channel and weighted by luminance,
-/// `SetupSunlight` (`0x835280`) takes the sun along the luminance sum (straight down with none),
-/// its diffuse `1.25·proj − 0.25·sum` and adds `0.25·(sum − proj)` to the ambient, and
-/// `CShaderEffect::SetLocalLighting` (`0x873ca0`) caps the diffuse at 1 for the vertex constants
-/// `c10`-`c12`. One light folds to itself; opposed lights cancel.
+/// the sun setup (`0x835280`) takes the sun along the luminance sum (straight down with none), its
+/// diffuse `1.25·proj − 0.25·sum` and adds `0.25·(sum − proj)` to the ambient, and the shader's
+/// local-lighting upload (`0x873ca0`) caps the diffuse at 1 for the vertex constants `c10`-`c12`.
+/// One light folds to itself; opposed lights cancel.
 fn sun_fold(rig: SceneRig) -> SceneRig {
     let lum = |c: [f32; 3]| 0.212671 * c[0] + 0.71516 * c[1] + 0.072169 * c[2];
     let (mut per_channel, mut weighted, mut sum) = ([Vec3::ZERO; 3], Vec3::ZERO, [0.0f32; 3]);
@@ -533,7 +533,7 @@ fn sun_fold(rig: SceneRig) -> SceneRig {
         }
         weighted += travel * lum(color);
     }
-    // `SetupSunlight`'s threshold on the squared length, then its default.
+    // The sun setup's threshold on the squared length, then its default.
     let travel = if weighted.length_squared() <= 0.00001 {
         benilla_assets::coords::wow_to_bevy([0.0, 0.0, -1.0])
     } else {
@@ -624,10 +624,10 @@ pub(crate) struct PreviewEffects {
     pub(crate) emitters: Vec<benilla_assets::ModelEmitter>,
 }
 
-/// The select screen's ghost treatment of the body, applied by the reference for a record with
-/// `CHARSELECT+0xfc & 0x2000`: `SpellVisualKit` 989, the state kit of spell 8326 "Ghost" that the
-/// world ghost rides, resolved through [`crate::aura_visual::node_for`]. There is no ramp: the
-/// world's 1000 ms alpha ease is never reached, and the values go straight.
+/// The select screen's ghost treatment of the body, applied by the reference for a record with flag
+/// `0x2000` at `+0xfc`: `SpellVisualKit` 989, the state kit of spell 8326 "Ghost" that the world
+/// ghost rides, resolved through [`crate::aura_visual::node_for`]. There is no ramp: the world's
+/// 1000 ms alpha ease is never reached, and the values go straight.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) struct GhostKit {
     /// The whole-model modulate colour (CharProc 1, `cc+0x184..0x18c`).
@@ -648,7 +648,7 @@ pub(crate) struct GluePreviewBake {
     pub(crate) effects: Vec<PreviewEffects>,
     /// The look's camera-facing batches ([`PreviewBillboard`]), faced to the booth camera.
     pub(crate) billboards: Vec<PreviewBillboard>,
-    /// Per-hand weapon grip `[right, left]`, closing into `HandsClosed` (`CloseHand`).
+    /// Per-hand weapon grip `[right, left]`, closing into `HandsClosed`.
     pub(crate) grip: [bool; 2],
     /// The selection's ghost kit ([`GhostKit`]); its effect models are already in the lists above.
     pub(crate) ghost: Option<GhostKit>,
@@ -1386,7 +1386,7 @@ pub(super) fn sync_glue_booth(
                 _ => booth_light.studio.variant(material, materials),
             }
         };
-        // One instance alpha per CM2, which attached models compose onto.
+        // One instance alpha per M2 model, which attached models compose onto.
         let instance = BoothInstance {
             alpha: bake.ghost.map_or(1.0, |g| g.alpha),
         };
@@ -2152,7 +2152,7 @@ mod tests {
         ]
     }
 
-    /// A pane light as `SetLightHelper` (`0x960a10`) leaves it: colours already × intensity.
+    /// A pane light as the light setter (`0x960a10`) leaves it: colours already × intensity.
     fn pane_light(
         vector: [f32; 3],
         ambient: f32,
@@ -2167,9 +2167,9 @@ mod tests {
         }
     }
 
-    /// A pane set replaces the scene's directional lights and keeps its lamps
-    /// (`CM2Lighting::Reset` `0x4e2730` clears only the directional sums): the race light's
-    /// travel direction becomes a lobe toward its negation.
+    /// A pane set replaces the scene's directional lights and keeps its lamps (the reset,
+    /// `0x4e2730`, clears only the directional sums): the race light's travel direction becomes a
+    /// lobe toward its negation.
     #[test]
     fn a_pane_set_replaces_the_scene_directionals_and_keeps_its_lamps() {
         let model = stage_lights();
@@ -2232,7 +2232,7 @@ mod tests {
         assert_eq!(dark.points.len(), 1);
     }
 
-    /// `SetupSunlight` (`0x835280`): one light is its own sun; two opposed lights of one colour
+    /// The sun setup (`0x835280`): one light is its own sun; two opposed lights of one colour
     /// cancel into ambient; a key and a weaker fill split `1.25·proj − 0.25·sum`, the remainder a
     /// quarter to the ambient, the diffuse capped at 1.
     #[test]

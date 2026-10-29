@@ -1515,9 +1515,9 @@ fn convert_entry(
                 return;
             }
             // A path the archives lack draws nothing. The reference keeps the widget's previous
-            // texture and returns nil to Lua (`CSimpleTexture::SetTexture`); a path here is
-            // re-resolved every frame, so the cell is empty. With no `WorldAssets` at all (a
-            // data-less run) the quad draws untextured.
+            // texture and returns nil to Lua from `SetTexture`; a path here is re-resolved every
+            // frame, so the cell is empty. With no `WorldAssets` at all (a data-less run) the quad
+            // draws untextured.
             //
             // `SetTexCoord`'s edges map to raw UV corners, so a mirrored slice (`left > right`)
             // keeps its flip; resolved before the handle because the wrap mode follows it.

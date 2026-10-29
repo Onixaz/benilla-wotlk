@@ -103,10 +103,10 @@ if UpperBlackBar and LowerBlackBar then
 end
 "#;
 
-/// Runs a UI load in the counted sound-suppression scope, as `CGGameUI::Initialize` (called at
-/// login and `/reloadui`) runs its own: enter, leave, and `PlaySoundByName` drops every call in
-/// between. `PLAYER_LOGIN` fires inside it only on `/reloadui`; a fresh login fires it from the
-/// player's create, a cascade with its own scope. The stock `TargetFrame_OnHide` at load is one
+/// Runs a UI load in the counted sound-suppression scope, as the game UI's init (called at login
+/// and `/reloadui`) runs its own: it enters the scope, leaves it, and the sound play drops every
+/// call in between. `PLAYER_LOGIN` fires inside it only on `/reloadui`; a fresh login fires it from
+/// the player's create, a cascade with its own scope. The stock `TargetFrame_OnHide` at load is one
 /// sound it swallows.
 pub(super) fn silenced_ui_load<S: std::borrow::Borrow<UiScript>, R>(
     script: &mut S,
@@ -147,11 +147,11 @@ pub(crate) fn load_default_ui(script: &UiScript) -> Vec<String> {
 
 /// The core: every row of the chain's `FrameXML.toc`, in its order, each file in document order,
 /// then the chain's `Bindings.xml`. A chain without the toc builds no stock interface: the runner
-/// reports `"Couldn't open %s"` at severity 2 and returns 0, which `UI_Init` never reads, going on
-/// to `Bindings.xml` and the addons. benilla goes on the same way and reports it as a load failure,
-/// an `ERROR` line and a row in `/errors`.
+/// reports `"Couldn't open %s"` at severity 2 and returns 0, which the UI init never reads, going
+/// on to `Bindings.xml` and the addons. benilla goes on the same way and reports it as a load
+/// failure, an `ERROR` line and a row in `/errors`.
 ///
-/// Deviation: no `FrameXML.toc` signature check, where `UI_Init` loads on a failed one and then
+/// Deviation: no `FrameXML.toc` signature check, where the UI init loads on a failed one and then
 /// quits, because the check verifies Blizzard's signature with a key carried in the client binary,
 /// which benilla does not ship, and a modified interface file is loaded rather than refused.
 pub(super) fn load_core(script: &UiScript) -> Vec<String> {
@@ -183,9 +183,9 @@ pub(super) fn load_core(script: &UiScript) -> Vec<String> {
     failures
 }
 
-/// The stock key-binding commands, `UI_Init`'s next step after the toc walk: the chain's
-/// `Interface\FrameXML\Bindings.xml`, when the chain has it, through the loader addons' files go
-/// through. Every command benilla has is a row of this file, its body the file's own Lua.
+/// The stock key-binding commands, the UI init's next step after the toc walk: the chain's
+/// `Interface\FrameXML\Bindings.xml`, when the chain has it, through the same loader an addon's
+/// files go through. Every command benilla has is a row of this file, its body the file's own Lua.
 pub(super) fn load_core_bindings(script: &UiScript) -> Vec<String> {
     let Some(bytes) = reference_ui::read(reference_ui::BINDINGS) else {
         warn!(
@@ -263,7 +263,7 @@ fn load_layer(script: &UiScript) -> Vec<String> {
 }
 
 /// The in-game UI, the core, then the layer unless [`layer_enabled`] says no, then every
-/// third-party addon, on entering the world. The reference loads both in `CGGameUI::Initialize`,
+/// third-party addon, on entering the world. The reference loads both in the game UI's init,
 /// reached only from world entry: `FrameXML.toc`, its addons.
 ///
 /// `identity`, `(realm, character)`, names the character's AddOn enable-state file, as the
@@ -438,7 +438,7 @@ mod tests {
         }
     }
 
-    /// Order shows: the frames registered for one event run in registration order (`SignalEvent`,
+    /// Order shows: the frames registered for one event run in registration order (the event signal
     /// walks its tail-appended list), so the toc's row order is their handlers' order.
     /// `ExhaustionTick` (`MainMenuBar.lua:13`) and `PlayerFrame` (`PlayerFrame.lua:17`) both take
     /// `PLAYER_UPDATE_RESTING`, and the toc lists `MainMenuBar.xml` above `PlayerFrame.xml`.
@@ -512,9 +512,9 @@ mod tests {
 </Bindings>"#;
 
     /// The core's commands are the chain's `Bindings.xml`, loaded after the toc's files (which see
-    /// none) as `UI_Init` does: its order, its headers and its bodies are what registers and runs,
-    /// the defaults are the chain's `DefaultBindings.wtf`, and a debug, an empty, a nested and a
-    /// Mac row are no commands.
+    /// none) as the UI init does: its order, its headers and its bodies are what registers and
+    /// runs, the defaults are the chain's `DefaultBindings.wtf`, and a debug, an empty, a nested
+    /// and a Mac row are no commands.
     #[test]
     fn the_cores_commands_are_the_chain_bindings_xml() {
         const TOC_LUA: &[u8] =

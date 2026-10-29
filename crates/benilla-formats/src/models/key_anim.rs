@@ -64,7 +64,7 @@ pub struct KeyAnim<V> {
     /// would snap a Death fade-out back to its opening value.
     pub wrap: bool,
     /// A global-sequence loop, whose reference cursor is `(sceneClock − attachTime) % duration`,
-    /// the attach time stamped once per model instance (`CM2Model+0x68`); a band loop instead runs
+    /// the attach time stamped once per model instance (at `+0x68`); a band loop instead runs
     /// on the host's clip time, re-armed every play.
     pub gseq: bool,
     /// `(secs from loop start, value)`, time-ascending.

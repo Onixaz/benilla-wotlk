@@ -1,6 +1,6 @@
-//! The markup parse of `CSimpleHTML::SetText`: a string in, a block list out, with no Lua or model.
+//! The markup parse of `SimpleHTML:SetText`: a string in, a block list out, with no Lua or model.
 //!
-//! The markup is strict XML: the reference calls `XMLTree::Parse`, an embedded expat 1.95.5. An
+//! The markup is strict XML: the reference calls its XML tree parser, an embedded expat 1.95.5. An
 //! unclosed `<BR>`, a `</p>` closing a `<P>` (XML matching is case-sensitive, SimpleHTML's own name
 //! compares are not), a bare `&`, an entity such as `&nbsp;`, a duplicate attribute or text after
 //! `</HTML>` fails the parse, and the widget renders the raw string. [`roxmltree`] gives expat's
@@ -11,8 +11,8 @@
 
 use crate::justify;
 
-/// The four block elements in the client's `elementFont` order (`+0x350`), the numbering the ctor,
-/// the block builder and the Lua resolver share.
+/// The four block elements in the client's element-font order (`+0x350`), the numbering the
+/// constructor, the block builder and the Lua resolver share.
 pub(crate) const ELEMENT_NAMES: [&str; 4] = ["P", "H1", "H2", "H3"];
 
 /// `P`: the element of the fallback block, of `<BR/>`, and of a Lua call without a known element
@@ -27,23 +27,23 @@ pub(crate) const ALIGN_CENTER: u32 = 0x02;
 /// `align="right"`.
 pub(crate) const ALIGN_RIGHT: u32 = 0x04;
 
-/// The ctor's `hyperlinkFormat`: `<A href="X">Y</A>` becomes `|HX|hY|h`, a hyperlink to the
+/// The constructor's hyperlink format: `<A href="X">Y</A>` becomes `|HX|hY|h`, a hyperlink to the
 /// FontString, which never disables `|H`.
 pub(crate) const DEFAULT_HYPERLINK_FORMAT: &str = "|H%s|h%s|h";
 
-/// One block, the arguments of `AddTextBlock` or `AddImage`.
+/// One block, the arguments of the text-block add or the image add.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Block {
-    /// A text block: one `CSimpleFontString`, `SetWidth(frame width)`, no height.
+    /// A text block: one FontString, `SetWidth(frame width)`, no height.
     Text {
         /// The spliced, collapsed string, or the raw input on the fallback path.
         text: String,
-        /// The `elementFont[]` index this block draws with, before the empty-path fallback.
+        /// The element-font index this block draws with, before the empty-path fallback.
         elem: usize,
         /// The `align` bits; masked `& 7` into the block's justifyH.
         align: u32,
     },
-    /// An `<IMG>`: one `CSimpleTexture`, sized by `width`/`height` and anchored by `align`.
+    /// An `<IMG>`: one Texture, sized by `width`/`height` and anchored by `align`.
     Image {
         /// `src=`, used verbatim as the texture path.
         src: Option<String>,
@@ -76,8 +76,8 @@ pub(crate) fn parse_markup(raw: &str, frame: &str, hyperlink_format: &str) -> Pa
         used_markup: false,
         errors: Vec::new(),
     };
-    // `usedMarkup` is raised before the BODY walk, so an empty `<BODY/>` renders nothing rather
-    // than the raw string.
+    // The used-markup flag is raised before the BODY walk, so an empty `<BODY/>` renders nothing
+    // rather than the raw string.
     if let Ok(doc) = roxmltree::Document::parse(raw) {
         let root = doc.root_element();
         if root.tag_name().name().eq_ignore_ascii_case("HTML") {
@@ -102,8 +102,8 @@ pub(crate) fn parse_markup(raw: &str, frame: &str, hyperlink_format: &str) -> Pa
     }
     if !out.used_markup {
         // A failed parse, a non-`HTML` root or no `BODY` all land: the raw string as one LEFT `P`
-        // block, without the collapse, as the reference is never entered, so its `\n` stay line
-        // breaks, which stock `ItemTextFrame.lua` relies on.
+        // block, without the collapse, as the collapse never runs, so its `\n` stay line breaks,
+        // which stock `ItemTextFrame.lua` relies on.
         out.blocks.push(Block::Text {
             text: raw.to_string(),
             elem: ELEM_P,
@@ -219,8 +219,8 @@ fn align_of(node: roxmltree::Node) -> u32 {
         .unwrap_or(ALIGN_LEFT)
 }
 
-/// Case-insensitive attribute lookup, as the reference compares names (`SStrCmpI`); roxmltree's own
-/// lookup is case-sensitive.
+/// Case-insensitive attribute lookup, as the reference compares names; roxmltree's own lookup is
+/// case-sensitive.
 fn attr_ci<'a>(node: roxmltree::Node<'a, '_>, name: &str) -> Option<&'a str> {
     node.attributes()
         .find(|a| a.name().eq_ignore_ascii_case(name))
@@ -236,9 +236,9 @@ fn direct_text(node: roxmltree::Node) -> String {
         .collect()
 }
 
-/// `SStrPrintf` of the format with `href` and the inner text. Deviation: only `%s` and `%%` are
-/// expanded and other specs copied, because the real `printf` would read the string pointers as
-/// other types.
+/// The reference's formatted print of the format with `href` and the inner text. Deviation: only
+/// `%s` and `%%` are expanded and other specs copied, because the real `printf` would read the
+/// string pointers as other types.
 fn sprintf_two(fmt: &str, a: &str, b: &str) -> String {
     let mut out = String::with_capacity(fmt.len() + a.len() + b.len());
     let mut used = 0usize;
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn an_empty_body_renders_nothing_at_all() {
-        // `usedMarkup` rises before the walk, so this does not fall back.
+        // The used-markup flag rises before the walk, so this does not fall back.
         let p = parse_markup("<HTML><BODY/></HTML>", "F", DEFAULT_HYPERLINK_FORMAT);
         assert!(p.used_markup);
         assert!(p.blocks.is_empty());

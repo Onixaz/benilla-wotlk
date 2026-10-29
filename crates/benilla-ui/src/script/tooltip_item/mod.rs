@@ -1,15 +1,15 @@
 //! The engine item-tooltip renderer: every item hover renders through one line law, as the
-//! reference's `Set*Item` bindings share the builder `CGTooltip::SetItem 0x6277f0`. A template in
-//! flight shows `RETRIEVING_ITEM_INFO` and repaints on arrival ([`wait`]). The methods register
-//! into the GameTooltip kind table beside the widget verbs ([`super::tooltip`]). Every family's
-//! order, gate and colour is the reference's, and every sentence is a key resolved off the player's
-//! own `GlobalStrings.lua` at render time. Red (`0xffff2020`) marks unmet requirements, LOCKED,
-//! broken durability and "Already known"; the name never recolors.
+//! reference's `Set*Item` bindings share one builder (`0x6277f0`). A template in flight shows
+//! `RETRIEVING_ITEM_INFO` and repaints on arrival ([`wait`]). The methods register into the
+//! GameTooltip kind table beside the widget verbs ([`super::tooltip`]). Every family's order, gate
+//! and colour is the reference's, and every sentence is a key resolved off the player's own
+//! `GlobalStrings.lua` at render time. Red (`0xffff2020`) marks unmet requirements, LOCKED, broken
+//! durability and "Already known"; the name never recolors.
 //!
 //! Stock FrameXML seats the shopping plates (`MerchantFrame.xml:63-80`,
 //! `Blizzard_AuctionUI.lua:1078`). There is no hover compare: `SHOW_COMPARE_TOOLTIP` has no fire
-//! site (the reference never produce event 377), so `PaperDollFrame.lua`'s listener for it is dead
-//! code.
+//! site (the reference's two candidate sites never produce event 377), so `PaperDollFrame.lua`'s
+//! listener for it is dead code.
 
 use mlua::{Lua, MultiValue, Table, Value};
 
@@ -26,10 +26,11 @@ use render::{render_view, BuilderFlags};
 use wait::{note_item_miss, retrieving};
 pub(crate) use wait::{note_set_miss, wrap_setters, ItemRender, ItemWait};
 
-/// The body both compare bindings run: walk `[InventoryType]`'s slots, skipping empty ones
-/// uncounted and ones whose worn item's class differs, until `left` matches have passed; then run
-/// `SetInventoryItem` there with the header latch armed, as the reference with p4 = 0, p5 = 1. The
-/// number 1, or nil on a miss, which leaves the tooltip untouched.
+/// The body both compare bindings run: walk the slots the reference's mask table gives the
+/// `InventoryType`, skipping empty ones uncounted and ones whose worn item's class differs, until
+/// `left` matches have passed; then run `SetInventoryItem` there with the header latch armed, as
+/// the reference calls the item builder with p4 = 0, p5 = 1. The number 1, or nil on a miss, which
+/// leaves the tooltip untouched.
 fn compare_against_worn(
     lua: &Lua,
     this: &Table,
@@ -114,8 +115,8 @@ fn link_name(link: &str) -> Option<&str> {
     Some(&link[start..end])
 }
 
-/// Fire `OnTooltipAddMoney(cost, maxcost)`, maxcost nil when absent (`CGTooltip::AddMoney`
-/// `0x61a0d0`): the engine computes, FrameXML's `SetTooltipMoney` draws.
+/// Fire `OnTooltipAddMoney(cost, maxcost)`, maxcost nil when absent (`0x61a0d0`): the engine
+/// computes, FrameXML's `SetTooltipMoney` draws.
 fn fire_add_money(lua: &Lua, h: crate::widget::FrameHandle, cost: u64, max: Option<u64>) {
     let id = {
         let mut model = crate::script::model_mut_of(lua);
@@ -177,8 +178,9 @@ pub(super) fn render_by_id(lua: &Lua, this: &Table, item_id: u32, sell: Sell) ->
     Ok(())
 }
 
-/// An action-bar item's money source: the copy `SetAction` (`0x631000`) finds through
-/// `FindItemOfType`: a worn copy of equipment, else the first carried stack, else the template.
+/// An action-bar item's money source: the copy `SetAction` (`0x631000`) finds through the
+/// reference's item-of-type lookup: a worn copy of equipment, else the first carried stack, else
+/// the template.
 pub(super) fn carried_sell(lua: &Lua, item_id: u32) -> Sell {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
@@ -252,7 +254,7 @@ fn set_quest_item_view(
 }
 
 /// An InventoryType's compare candidate slots, as `GetInventorySlotInfo` ids: the reference's mask
-/// table `[InventoryType]`.
+/// table, indexed by `InventoryType`.
 fn equip_slots_for(inventory_type: u32) -> &'static [u32] {
     match inventory_type {
         1 => &[1],             // head
@@ -272,17 +274,18 @@ fn equip_slots_for(inventory_type: u32) -> &'static [u32] {
         13 => &[16, 17],       // one-hand
         21 => &[16],           // main hand
         14 | 22 | 23 => &[17], // shield / off-hand weapon / held
-        // Two-hand: main hand only, though a two-hander displaces both: the reference is `0x8000`,
-        // bit 15.
+        // Two-hand: main hand only, though a two-hander displaces both: the reference's mask is
+        // `0x8000`, bit 15.
         17 => &[16],
         15 | 25 | 26 | 28 => &[18], // bow / thrown / wand-gun / relic
         _ => &[],
     }
 }
 
-/// `SetCompareItem` (`0x631850`): the worn item a shopping tooltip shows beside `offered`, as a
-/// `GetInventorySlotInfo` id. A one-hander or two-hander against two worn weapons answers the off
-/// hand first; any other item walks its slots, `offset` counting the worn candidates.
+/// The reference's compare-item pick (`0x631850`): the worn item a shopping tooltip shows beside
+/// `offered`, as a `GetInventorySlotInfo` id. A one-hander or two-hander against two worn weapons
+/// answers the off hand first; any other item walks its slots, `offset` counting the worn
+/// candidates.
 fn compare_slot(
     model: &crate::script::Model,
     offered: &ItemTemplateView,
@@ -605,8 +608,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             |lua, (this, unit, slot, name_only): (Table, String, usize, Value)| {
                 let h = frame_handle_of(lua, &this)?;
                 // `nameOnly` is set only by a number above 0; anything else builds the ordinary
-                // tooltip, without an error. Three of the binding's four builder legs pass it on,
-                // not.
+                // tooltip, without an error. Three of the binding's four builder legs pass it on;
+                // one does not.
                 let name_only = super::binding_abi::positive_number_flag(lua, name_only)?;
                 let (item_id, inst, repair_cost, currently_equipped, stack) = {
                     let mut model = crate::script::model_mut_of(lua);
@@ -740,7 +743,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             s.count.max(1),
                             has_cd,
                             render::ItemInstance {
-                                // The link's name: the reference builds both.
+                                // The link's name: the reference builds both with its name builder.
                                 name: s.link.as_deref().and_then(link_name).map(str::to_string),
                                 durability: s.durability,
                                 creator: s.creator.clone(),
@@ -791,8 +794,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
 
     // GameTooltip:SetTradePlayerItem(slot) / SetTradeTargetItem(slot) (`TradeFrame.xml:150`,
     // `TradeFrame.xml:106`), no returns: the slot's item, the target side off the partner's slot
-    // guids (`[ + slot*4]`). An empty or out-of-range slot leaves the tooltip untouched. The
-    // enchant line is not rendered: the trade view has no enchant id.
+    // guids (a guid table indexed by slot). An empty or out-of-range slot leaves the tooltip
+    // untouched. The enchant line is not rendered: the trade view has no enchant id.
     for (name, player_side) in [("SetTradePlayerItem", true), ("SetTradeTargetItem", false)] {
         m.set(
             name,
@@ -995,12 +998,12 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
 
     // GameTooltip:SetMerchantCompareItem(index [, offset]) (method-table entry 43): the shopping
-    // tooltip beside a vendor row. `offset` counts candidate slots, 1-based: set in
-    // `[InventoryType]`, occupied, and holding an item of the offered class (never subclass), so a
-    // worn shield makes offset 2 nil for a one-hand weapon and a worn wand compares against a bow.
-    // One value on every non-raising path: the number 1 (`lua_pushnumber`) or nil. A bad `this` or
-    // a non-number index raises; a missing `offset` is 1, one of 0 or less is nil. An uncached
-    // template answers nil and fires the query, as in the reference.
+    // tooltip beside a vendor row. `offset` counts candidate slots, 1-based: set in the mask
+    // table's row for its `InventoryType`, occupied, and holding an item of the offered class
+    // (never subclass), so a worn shield makes offset 2 nil for a one-hand weapon and a worn wand
+    // compares against a bow. One value on every non-raising path: the number 1 (`lua_pushnumber`)
+    // or nil. A bad `this` or a non-number index raises; a missing `offset` is 1, one of 0 or less
+    // is nil. An uncached template answers nil and fires the query, as in the reference.
     m.set(
         "SetMerchantCompareItem",
         lua.create_function(
@@ -1059,8 +1062,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         )?,
     )?;
 
-    // GameTooltip:SetAuctionCompareItem("type", index [, offset]): the vendor compare's body (p5 = 1)
-    // over an auction list. `type` is `lua_isstring`-gated; a non-string type or non-number index
+    // GameTooltip:SetAuctionCompareItem("type", index [, offset]): the vendor compare's body
+    // (p5 = 1) over an auction list. `type` is `lua_isstring`-gated; a non-string type or non-number index
     // raises the reference's usage, and a bad list, row or uncached template is nil. The number 1
     // on success, which `Blizzard_AuctionUI.lua:1081` gates each shopping tooltip on.
     m.set(

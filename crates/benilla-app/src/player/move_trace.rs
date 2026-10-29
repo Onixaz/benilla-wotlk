@@ -61,7 +61,7 @@ pub(super) fn sent(kind: crate::net::MoveKind, flags: u32, facing: f32, pos: [f3
 
 /// One `sit` line per stand-state decision. `what` is `commit` or `REFUSED`, `state` the
 /// `UnitStandStateType` asked for (0 STAND, 1 SIT, 2 SIT_CHAIR, 3 SLEEP, 8 KNEEL), `from` the
-/// current one, and `flags` the `CMovement` word the reference's gate reads
+/// current one, and `flags` the movement-block word the reference's gate reads
 /// (`[[this+0x118]+0x40]`), its swim and move bits spelled out. The reference refuses silently.
 pub(super) fn posture(what: &str, state: u8, from: u8, flags: u32) {
     if !trace::enabled() {

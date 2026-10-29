@@ -257,7 +257,7 @@ pub(crate) fn arm_entry_ui_load(world: &mut World) {
 }
 
 /// Retire the glue VM and build the one the entry load runs on: the reference re-makes its Lua
-/// state inside `UI_Init`, so no login shares a session id (and so a [`super::VmMemo`]) with the
+/// state inside the UI init, so no login shares a session id (and so a [`super::VmMemo`]) with the
 /// character screen before it. The glue VM's CVars fold first, since the character screen can write
 /// one (the AddOns panel's out-of-date toggle) and this is the last moment its table exists.
 /// Everything else is re-seeded onto the new VM or is a [`super::VmMemo`], which is meant to reset
@@ -381,9 +381,9 @@ fn seat_raster_seam_for_load(world: &mut World, script: &mut UiScript) {
 }
 
 /// Load the in-game UI for this session onto a VM built for it, once per world entry. The reference
-/// builds the UI in `UI_Init` (re-making the Lua state) and destroys it, so every login runs every
-/// addon's file scope afresh. Safe on the state edge because the initial transition runs after
-/// `PostStartup`: a capture booting straight into `InWorld` still loads after
+/// builds the UI in the UI init (re-making the Lua state) and destroys it, so every login runs
+/// every addon's file scope afresh. Safe on the state edge because the initial transition runs
+/// after `PostStartup`: a capture booting straight into `InWorld` still loads after
 /// [`benilla_assets::AssetSet::Open`].
 pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
     // The parked VM goes back into the world, where the CVar fold reads it; a reload has none
@@ -394,7 +394,7 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
     }
     mint_entry_vm(world);
     // The account's and the character's `config-cache.wtf` before the UI reads a CVar
-    // (`LoadAccountVariables` `0x518c80` in `InitializeFrameXML`).
+    // (`0x518c80`, in the FrameXML init).
     crate::account_data::load_config_slots(world);
     let Some(mut script) = world.remove_non_send_resource::<UiScript>() else {
         warn!("ui_script: entering the world with no VM — the in-game UI will not load");
@@ -411,7 +411,7 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
         .map(|r| r.chars.iter().map(|c| c.name.clone()).collect())
         .unwrap_or_default();
     // The addon array before any addon file runs: `SMSG_ADDON_INFO` lands during the handshake, so
-    // the reference has it before `UI_Init`'s addon walk and `GetNumAddOns()` at file scope sees
+    // the reference has it before the UI init's addon walk and `GetNumAddOns()` at file scope sees
     // it. A server that never answered leaves it empty for the session, as in the reference.
     if let Some(reply) = world
         .get_resource::<crate::net::AddonInfoReply>()
@@ -442,10 +442,10 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
     if let Some(expansion) = world.get_resource::<crate::net::AccountExpansion>() {
         script.set_account_expansion(expansion.0);
     }
-    // `CGGameUI::InitializeGame` flags these read-only before `UI_Init` loads anything, so an
-    // in-game `SetCVar` of one raises, logout handlers included; `ShutdownGame` clears them, and
-    // here the flags die with this VM. The host's own realm writes are engine writes, which the
-    // flag does not stop.
+    // The game UI's init flags these read-only before the UI init loads anything, so an in-game
+    // `SetCVar` of one raises, logout handlers included; the game shutdown clears them, and here
+    // the flags die with this VM. The host's own realm writes are engine writes, which the flag
+    // does not stop.
     for name in benilla_ui::script::IN_WORLD_READ_ONLY_CVARS {
         script.set_cvar_read_only(name, true);
     }
@@ -496,7 +496,7 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
         let z = world.resource::<crate::minimap::MinimapZoom>();
         (z.outdoor, z.inside)
     };
-    // No sound during the load edge, as in the reference's `UI_Init`.
+    // No sound during the load edge, as in the reference's UI init.
     silenced_ui_load(&mut script, |script| {
         let _ = load_ingame_ui(script, identity.as_ref(), &roster, version_check);
         crate::ui_chat::commands::register_dev_commands(script, crate::run_mode::dev_affordances());
@@ -504,15 +504,15 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
         // copies each CVar into its live index; `Minimap:SetZoom` owns them from here.
         script.set_minimap_zoom(zoom.0, zoom.1);
         // The saved-variables chunk runs after the files set their defaults and before
-        // `VARIABLES_LOADED`, the reference's order (`AddOn_Load`); reversed, the defaults always
-        // win. The chat cache restores after `VARIABLES_LOADED` and before any chat is routed: its
+        // `VARIABLES_LOADED`, the reference's addon-load order; reversed, the defaults always win.
+        // The chat cache restores after `VARIABLES_LOADED` and before any chat is routed: its
         // `UPDATE_CHAT_WINDOWS` registers each chat frame for its `CHAT_MSG_*` events
         // (`ChatFrame.lua:1261-1273`).
         finish_ui_load_with(
             script,
             identity.as_ref(),
             // Before `VARIABLES_LOADED`: the minimap's town type restores there
-            // (`LoadTrackedState 0x5128d0`).
+            // (`0x5128d0`).
             |script| script.load_tracked_state(class_id),
             |script| {
                 crate::ui_chat::restore_chat_looks(world, script);
@@ -532,10 +532,10 @@ pub(crate) fn load_ingame_ui_on_world_entry(world: &mut World) {
     script.clear_instruction_budget();
     world.insert_non_send_resource(script);
     world.insert_resource(AddOnIdentity(identity));
-    // Arm the world latch, the reference's: a reload creates no entity to re-arm it, so without
-    // this a second `/reload` would not fire `PLAYER_LEAVING_WORLD`. The reference skips this leg
-    // on a fresh login (the GUID still 0) and arms from the player's create instead; both reach the
-    // same armed byte.
+    // Arm the world latch, as the UI init's call into the world-enter cascade does: a reload
+    // creates no entity to re-arm it, so without this a second `/reload` would not fire
+    // `PLAYER_LEAVING_WORLD`. The reference skips this leg on a fresh login (the GUID still 0) and
+    // arms from the player's create instead; both reach the same armed byte.
     if let Some(mut armed) = world.get_resource_mut::<LeavingWorldArmed>() {
         armed.arm();
     }
@@ -606,12 +606,12 @@ pub(crate) fn seat_from_roster(
 #[derive(Resource, Default)]
 pub(crate) struct AddOnIdentity(pub(crate) Option<(String, String)>);
 
-/// The world latch, the reference's: set in the world-enter cascade and cleared by the leave-world
-/// sweep, which then fires `PLAYER_LEAVING_WORLD` (its one site), so the first departure in a world
-/// sweeps and the rest are no-ops until the next entry. Ours is spent through [`LeaveWorldSweep`]
-/// or [`run_leave_world_sweep`], by [`shutdown_ui_state`]'s roots and `ui_unit`'s worldport fire. A
-/// cross-map worldport spends it without leaving `InWorld`, so a quit on its loading screen fires
-/// nothing; a `/reload` fires, and its rebuild re-arms.
+/// The world latch, as in the reference: set in the world-enter cascade and cleared by the
+/// leave-world sweep, which then fires `PLAYER_LEAVING_WORLD` (its one site), so the first
+/// departure in a world sweeps and the rest are no-ops until the next entry. Ours is spent through
+/// [`LeaveWorldSweep`] or [`run_leave_world_sweep`], by [`shutdown_ui_state`]'s roots and
+/// `ui_unit`'s worldport fire. A cross-map worldport spends it without leaving `InWorld`, so a quit
+/// on its loading screen fires nothing; a `/reload` fires, and its rebuild re-arms.
 #[derive(Resource, Default)]
 pub(crate) struct LeavingWorldArmed(bool);
 
@@ -653,7 +653,7 @@ pub(crate) fn run_leave_world_sweep(world: &mut World) -> bool {
 }
 
 impl LeavingWorldArmed {
-    /// A world began. Idempotent, like the reference's.
+    /// A world began. Idempotent, like the reference's latch write.
     pub(crate) fn arm(&mut self) {
         self.0 = true;
     }
@@ -681,9 +681,9 @@ pub(crate) fn arm_leaving_world_on_self_create(
     }
 }
 
-/// The UI shutdown in the reference's order, the reference's tail: `PLAYER_LEAVING_WORLD` (273) →
-/// `PLAYER_LOGOUT` (271) → the two `SavedVariables.lua` files → the per-addon files → `AddOns.txt`
-/// → destroy the frame-script owner → nil all 216 C bindings out of `_G`.
+/// The UI shutdown's tail in the reference's order: `PLAYER_LEAVING_WORLD` (273) → `PLAYER_LOGOUT`
+/// (271) → the two `SavedVariables.lua` files → the per-addon files → `AddOns.txt` → destroy the
+/// frame-script owner → nil all 216 C bindings out of `_G`.
 ///
 /// `PLAYER_LOGOUT` fires before any write, an addon's last chance to change a saved global. One
 /// function on every root because the steps are ordered against each other. No autosave, as the
@@ -693,8 +693,9 @@ pub(crate) fn shutdown_ui_state(
     identity: Option<&(String, String)>,
     leaving_world: bool,
 ) {
-    // The one conditional step: the reference reaches only past the active-player guard and the
-    // world latch, while `PLAYER_LOGOUT` fires on every root. The caller spends the latch.
+    // The one conditional step: the reference reaches the leave-world sweep only past the
+    // active-player guard and the world latch, while `PLAYER_LOGOUT` fires on every root. The
+    // caller spends the latch.
     if leaving_world {
         script.fire_event("PLAYER_LEAVING_WORLD", vec![]);
     }
@@ -706,14 +707,14 @@ pub(crate) fn shutdown_ui_state(
 
 /// `OnExit(InWorld)`, a `/logout` or a disconnect (two of the reference's five roots): run the
 /// shutdown tail, then end this session's Lua state, so no frame, global or addon upvalue reaches
-/// the next login. The reference's state outlives and is replaced twice, in `ShutdownGame` and then
-/// in the glue build, so the character screen runs on a state of its own. Ours is a fresh boot VM,
-/// or the stock glue's ([`install_glue_side_vm`]).
+/// the next login. The reference's state outlives the UI shutdown and is replaced twice, in the
+/// game shutdown and then in the glue build, so the character screen runs on a state of its own.
+/// Ours is a fresh boot VM, or the stock glue's ([`install_glue_side_vm`]).
 pub(crate) fn end_ui_session(world: &mut World) {
     close_ui_session(world);
     crate::account_data::release_character(world);
-    // The reference's glue leg: `"charselect"` after a logout, `"login"` after a disconnect; the
-    // state this exit enters says which.
+    // The reference's exit to the glue: `"charselect"` after a logout, `"login"` after a
+    // disconnect; the state this exit enters says which.
     let screen = match world
         .get_resource::<State<crate::char_select::ClientState>>()
         .map(|s| *s.get())
@@ -802,7 +803,7 @@ pub(crate) fn run_pending_reload(world: &mut World) {
     let combat_log = world
         .get_non_send_resource_mut::<UiScript>()
         .map(|mut s| s.take_combat_log());
-    // So does the calendar (`CGCalendar`'s statics, `0xc207e8`-`0xc20f90`).
+    // So does the calendar (the calendar's statics, `0xc207e8`-`0xc20f90`).
     let calendar = world
         .get_non_send_resource_mut::<UiScript>()
         .map(|mut s| s.take_calendar());
@@ -821,9 +822,9 @@ pub(crate) fn run_pending_reload(world: &mut World) {
     {
         script.restore_calendar(calendar);
     }
-    // `UI_Init` ends by re-entering the world-enter cascade, its sends included, but only with the
-    // active player set: our own player's entity exists. Not `SetActiveMover`, which only the
-    // player's create runs.
+    // The UI init ends by re-entering the world-enter cascade, its sends included, but only with
+    // the active player set: our own player's entity exists. Not the active-mover set, which only
+    // the player's create runs.
     let seated = world
         .query_filtered::<(), With<crate::net::SelfPlayer>>()
         .iter(world)
@@ -858,15 +859,14 @@ pub(crate) fn shutdown_on_exit(
 }
 
 /// The load's ordered tail without the host seams, for tests; production runs
-/// [`finish_ui_load_with`]. The reference's `UI_Init` loads every non-LoadOnDemand addon, each
-/// firing `ADDON_LOADED`, reads the flat saved file and fires `VARIABLES_LOADED`, and arms
-/// `PLAYER_LOGIN`. The world-enter cascade fires `PLAYER_LOGIN` if armed, then
-/// `PLAYER_ENTERING_WORLD`.
+/// [`finish_ui_load_with`]. The reference's UI init loads every non-LoadOnDemand addon, each firing
+/// `ADDON_LOADED`, reads the flat saved file and fires `VARIABLES_LOADED`, and arms `PLAYER_LOGIN`.
+/// The world-enter cascade fires `PLAYER_LOGIN` if armed, then `PLAYER_ENTERING_WORLD`.
 ///
-/// On a `/reload`, `UI_Init` enters the cascade itself. On a fresh login that call is skipped (the
-/// active-player GUID still 0) and the cascade runs from the local player's own create. This fires
-/// `PLAYER_LOGIN` at the end of the load on both, the `/reload` shape; `PLAYER_ENTERING_WORLD`
-/// fires from [`crate::ui_unit`] once the self descriptor lands.
+/// On a `/reload`, the UI init enters the cascade itself. On a fresh login that call is skipped
+/// (the active-player GUID still 0) and the cascade runs from the local player's own create. This
+/// fires `PLAYER_LOGIN` at the end of the load on both, the `/reload` shape;
+/// `PLAYER_ENTERING_WORLD` fires from [`crate::ui_unit`] once the self descriptor lands.
 #[cfg(test)]
 pub(crate) fn finish_ui_load(script: &mut UiScript) {
     finish_ui_load_with(script, None, |_| {}, |_| {});
@@ -876,8 +876,8 @@ pub(crate) fn finish_ui_load(script: &mut UiScript) {
 /// chunk and `VARIABLES_LOADED`, seating host state the stock handlers read there. `between` is the
 /// chat-cache restore's `UPDATE_CHAT_WINDOWS` + `UPDATE_CHAT_COLOR` burst, after `VARIABLES_LOADED`
 /// and before `PLAYER_LOGIN`, where the reference registers its reader. On a fresh login the
-/// reference's cache defers that reader until the server's account data reconciles, after `UI_Init`
-/// has returned. Either way a `VARIABLES_LOADED` handler sees the boot chat colours, not the
+/// reference's cache defers that reader until the server's account data reconciles, after the UI
+/// init has returned. Either way a `VARIABLES_LOADED` handler sees the boot chat colours, not the
 /// file's.
 pub(crate) fn finish_ui_load_with(
     script: &mut UiScript,
@@ -1139,7 +1139,7 @@ mod tests {
         );
     }
 
-    /// The reference re-makes its Lua state inside `UI_Init`.
+    /// The reference re-makes its Lua state inside the UI init.
     #[test]
     fn the_world_entry_builds_its_own_vm_rather_than_adopting_the_glue_phases() {
         let mut world = World::new();

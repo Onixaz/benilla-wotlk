@@ -94,9 +94,9 @@ fn misses_last(a: &str, b: &str) -> Ordering {
     }
 }
 
-/// The reference's eight-slot `{key, direction}` chain, most recent first: the reference maintains
-/// it and the reference walks it, so every column clicked before stays a tie-break, and one
-/// returned to keeps the direction it was left at.
+/// The reference's eight-slot `{key, direction}` chain, most recent first: a column click moves its
+/// key to the front and the comparator walks the chain, so every column clicked before stays a
+/// tie-break, and one returned to keeps the direction it was left at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SortStack([(SortField, bool); 8]);
 

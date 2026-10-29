@@ -334,35 +334,35 @@ fn the_base_library_answers_the_reference_s_return_arity_and_kinds() {
 /// several tables at different arities, so each method is probed on its own table's class; an
 /// unmapped table is skipped. The 3.3.5a table ids are not mapped yet (#54), so every one is.
 const WIDGET_PROBES: &[(&str, &str, &str)] = &[
-    ("", "Frame", "PGFrame"),
-    ("", "Button", "PGButton"),
-    ("", "CheckButton", "PGCheck"),
-    ("", "EditBox", "PGEdit"),
-    ("", "Slider", "PGSlider"),
-    ("", "StatusBar", "PGStatus"),
-    ("", "ScrollFrame", "PGScroll"),
-    ("", "SimpleHTML", "PGHtml"),
-    ("", "ColorSelect", "PGColor"),
-    ("", "MessageFrame", "PGMessage"),
-    ("", "ScrollingMessageFrame", "PGScrollMsg"),
-    ("", "Model", "PGModel"),
-    ("", "GameTooltip", "PGTip"),
-    ("", "Minimap", "PGMinimap"),
-    ("", "TabardModel", "PGTabard"),
-    ("", "DressUpModel", "PGDress"),
+    ("unmapped-1", "Frame", "PGFrame"),
+    ("unmapped-2", "Button", "PGButton"),
+    ("unmapped-3", "CheckButton", "PGCheck"),
+    ("unmapped-4", "EditBox", "PGEdit"),
+    ("unmapped-5", "Slider", "PGSlider"),
+    ("unmapped-6", "StatusBar", "PGStatus"),
+    ("unmapped-7", "ScrollFrame", "PGScroll"),
+    ("unmapped-8", "SimpleHTML", "PGHtml"),
+    ("unmapped-9", "ColorSelect", "PGColor"),
+    ("unmapped-10", "MessageFrame", "PGMessage"),
+    ("unmapped-11", "ScrollingMessageFrame", "PGScrollMsg"),
+    ("unmapped-12", "Model", "PGModel"),
+    ("unmapped-13", "GameTooltip", "PGTip"),
+    ("unmapped-14", "Minimap", "PGMinimap"),
+    ("unmapped-15", "TabardModel", "PGTabard"),
+    ("unmapped-16", "DressUpModel", "PGDress"),
     // `PlayerModel` is `Model` plus three verbs, in a table of its own.
-    ("", "PlayerModel", "PGPlayerModel"),
-    ("", "MovieFrame", "PGMovie"),
+    ("unmapped-17", "PlayerModel", "PGPlayerModel"),
+    ("unmapped-18", "MovieFrame", "PGMovie"),
     // The base every widget falls back to (`REGION_MAP_METHODS`' 19 names), probed on a Frame.
-    ("", "Frame", "PGRegionBase"),
+    ("unmapped-19", "Frame", "PGRegionBase"),
 ];
 
 /// The classes `CreateFrame` cannot make: the two regions, made by a frame, and the font object.
 const REGION_PROBES: &[(&str, &str)] = &[
-    ("", "PGFrame:CreateTexture('PGTex')"),
-    ("", "PGFrame:CreateFontString('PGFS')"),
+    ("unmapped-r1", "PGFrame:CreateTexture('PGTex')"),
+    ("unmapped-r2", "PGFrame:CreateFontString('PGFS')"),
     // The font object (`CreateFont`), not a FontString: 22 methods of its own.
-    ("", "CreateFont('PGFontObject')"),
+    ("unmapped-r3", "CreateFont('PGFontObject')"),
 ];
 
 /// The widget arity gate: the global gate's rules, with each method called on an instance of its

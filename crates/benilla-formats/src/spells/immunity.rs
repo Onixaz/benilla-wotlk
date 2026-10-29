@@ -1,7 +1,8 @@
 //! The crowd-control exemption each of the cast validator's six crowd-control arms checks before
 //! refusing: does the spell being cast grant immunity to the aura blocking it (Ice Block while
-//! stunned)? The scan, the matcher, whose first gate, `AttributesEx` bit 15 on the cast, is clear
-//! on almost every spell, so the scan mostly picks the refusal's message.
+//! stunned)? The client scans the cast's effects and runs a matcher on each, whose first gate,
+//! `AttributesEx` bit 15 on the cast, is clear on almost every spell, so the scan mostly picks the
+//! refusal's message.
 
 use super::SpellDisplay;
 

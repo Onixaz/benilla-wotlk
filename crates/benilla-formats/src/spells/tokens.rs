@@ -1,9 +1,8 @@
 //! The spell-text parser the 3.3.5a client runs over `Spell.dbc` description and aura text
-//! (`SpellParserParseText` `0x57abc0`): the description's variables from
-//! `SpellDescriptionVariables.dbc` (`0x579d60`), then each `$` token (`0x579e50`): a `${…}`
-//! expression ([`super::expr`]), a `$<name>` variable, a `$?cond[a][b]` conditional, or a letter
-//! with its optional `$/N;` or `$*N;` scale, cross-spell id and slot digit. A token the parser
-//! cannot read leaves a `$` and the text after it.
+//! (`0x57abc0`): the description's variables from `SpellDescriptionVariables.dbc` (`0x579d60`),
+//! then each `$` token (`0x579e50`): a `${…}` expression ([`super::expr`]), a `$<name>` variable, a
+//! `$?cond[a][b]` conditional, or a letter with its optional `$/N;` or `$*N;` scale, cross-spell id
+//! and slot digit. A token the parser cannot read leaves a `$` and the text after it.
 
 use super::expr::{self, ExprEnv, MathVar, PlayerValue};
 use super::soft_float;
@@ -12,9 +11,8 @@ use super::{
     SpellRangeCatalog,
 };
 
-/// The caster's spell-modifier appliers over its tables (`Spell_C_ModifySpellValue`): the
-/// integer, the FPU float and the software float forms, each returning `value` unchanged when no
-/// modifier matches.
+/// The caster's spell-modifier appliers over its tables: the integer, the FPU float and the
+/// software float forms, each returning `value` unchanged when no modifier matches.
 pub trait SpellMods {
     fn apply_int(&self, d: &SpellDisplay, op: u8, value: i32) -> i32;
     fn apply_float(&self, d: &SpellDisplay, op: u8, value: f32) -> f32;
@@ -25,12 +23,11 @@ pub trait SpellMods {
 pub trait Caster {
     /// `IsSpellKnown` `0x7260e0`: the spell is in the player's known set.
     fn knows_spell(&self, spell: u32) -> bool;
-    /// `HasAuraBySpellId` `0x7282a0`: an aura of the spell is on the player.
+    /// The aura test (`0x7282a0`): an aura of the spell is on the player.
     fn has_aura(&self, spell: u32) -> bool;
     /// An expression operand read off the player's fields.
     fn value(&self, value: PlayerValue) -> f32;
-    /// `Spell_C_GetPowerCost` and `Spell_C_GetPowerCostPerSecond` `0x7ff100` for the view's
-    /// caster.
+    /// The power cost and cost per second (`0x7ff100`) for the view's caster.
     fn power_cost(&self, d: &SpellDisplay) -> i32;
     fn power_cost_per_second(&self, d: &SpellDisplay) -> i32;
     /// `UNIT_MOD_CAST_SPEED`, which scales a hasted period.
@@ -51,9 +48,9 @@ pub struct TokenContext<'a> {
     pub ranges: Option<&'a SpellRangeCatalog>,
     /// `SpellDescriptionVariables.dbc`, the `$name=` definitions a description's `$<name>` reads.
     pub variables: Option<&'a SpellDescriptionVariablesCatalog>,
-    /// The active player's skill in a spell's `SkillLineAbility` line, bonuses included, by
-    /// spell id; 0 without a player or a line. Every per-level term scales by the level derived
-    /// from it (`Spell_C_GetSpellLevel` `0x7ff070`, [`SpellDisplay::skill_level`]).
+    /// The active player's skill in a spell's `SkillLineAbility` line, bonuses included, by spell
+    /// id; 0 without a player or a line. Every per-level term scales by the level derived from it
+    /// (`0x7ff070`, [`SpellDisplay::skill_level`]).
     pub skill: &'a dyn Fn(u32) -> u32,
     pub lookup: &'a dyn Fn(u32) -> Option<&'a SpellDisplay>,
     /// The caster's live spell-modifier tables; absent for contexts without a caster.
@@ -70,10 +67,10 @@ pub struct TokenContext<'a> {
     /// The active player's other state; `None` without one, where every expression operand reads
     /// 0 (`0x578303`) and every condition is false.
     pub caster: Option<&'a dyn Caster>,
-    /// `FrameScript_GetText` `0x819d40`: a `GlobalStrings` template by key. `None` leaves the
+    /// The global-string lookup (`0x819d40`): a `GlobalStrings` template by key. `None` leaves the
     /// token unexpanded.
     pub global: &'a dyn Fn(&str) -> Option<String>,
-    /// `SStrPrintf`: a template's `%` holes filled, as the CRT formats them.
+    /// The format call: a template's `%` holes filled, as the CRT formats them.
     pub printf: &'a dyn Fn(&str, &[TokenNumber]) -> String,
 }
 
@@ -93,12 +90,12 @@ fn fixed(ctx: &TokenContext, decimals: u8, v: f64) -> String {
     (ctx.printf)(&format!("%.{decimals}f"), &[TokenNumber::Float(v)])
 }
 
-/// `Spell_C_GetSpellLevel` `0x7ff070` for the active player.
+/// The spell level (`0x7ff070`) for the active player.
 fn skill_level(ctx: &TokenContext, d: &SpellDisplay) -> u32 {
     d.skill_level((ctx.skill)(d.id))
 }
 
-/// `GetEffectModifierType` `0x7fd440` (jump tables `0x7fd498` and `0x7fd53c`): whether the
+/// The effect's modifier type (`0x7fd440`, jump tables `0x7fd498` and `0x7fd53c`): whether the
 /// effect's points round to whole numbers, whether its damage is periodic, and whether it takes a
 /// damage op at all.
 fn classify(effect: u32, aura: u32) -> (bool, bool, bool) {
@@ -115,12 +112,12 @@ fn classify(effect: u32, aura: u32) -> (bool, bool, bool) {
     }
 }
 
-/// `Spell_C_GetMinMaxPoints` `0x7ff770`: the slot's `(min, max)` as soft floats. With `level` 0
-/// the spell's own; less `baseLevel` when that is positive, floored at 0. The bounds are
+/// The min-max points (`0x7ff770`): the slot's `(min, max)` as soft floats. With `level` 0 the
+/// spell's own; less `baseLevel` when that is positive, floored at 0. The bounds are
 /// `BasePoints + 1` and `BasePoints + DieSides`, each plus `RealPointsPerLevel × level`. Unless
-/// modifiers are off: op 8, the slot's own op (3, 12, 23), the damage op (22 periodic, else 0),
-/// and op 2 for auras 10, 103 and 183. Both quantize to 1/128; a rounding effect floors the
-/// minimum and ceils the maximum.
+/// modifiers are off: op 8, the slot's own op (3, 12, 23), the damage op (22 periodic, else 0), and
+/// op 2 for auras 10, 103 and 183. Both quantize to 1/128; a rounding effect floors the minimum and
+/// ceils the maximum.
 fn effect_points(d: &SpellDisplay, slot: usize, ctx: &TokenContext, level: u32) -> (f32, f32) {
     let level = if level == 0 {
         skill_level(ctx, d)
@@ -183,10 +180,10 @@ const ATTR_EX3_IGNORE_HASTE: u32 = 0x2000_0000;
 /// `AttributesExB` `0x1000000`: a referenced spell scales by the player's level.
 const ATTR_EX2_PLAYER_LEVEL: u32 = 0x100_0000;
 
-/// A tick or duration scaled by cast speed, as `Spell_C_GetDuration` and `$t` scale them: the spell
-/// is periodic, opts in and is not exempt, and the player's speed is at least 0.001; rounded to
-/// nearest (`CMath::fint_`). Deviation: the duration's haste (`0x800a70`) also opts in a spell an
-/// aura of type 316 reaches, which the modifier tables here do not report.
+/// A tick or duration scaled by cast speed, as the duration read and `$t` scale them: the spell is
+/// periodic, opts in and is not exempt, and the player's speed is at least 0.001; rounded to
+/// nearest. Deviation: the duration's haste (`0x800a70`) also opts in a spell an aura of type 316
+/// reaches, which the modifier tables here do not report.
 fn hasted(ctx: &TokenContext, d: &SpellDisplay, ms: i32) -> i32 {
     let Some(caster) = ctx.caster else { return ms };
     let periodic = d.effect_amplitude.iter().any(|&p| p != 0);
@@ -202,9 +199,9 @@ fn hasted(ctx: &TokenContext, d: &SpellDisplay, ms: i32) -> i32 {
     }
 }
 
-/// `Spell_C_GetDuration` `0x800a70`: 0 with no row, else the row's base plus its per-level term
-/// at the spell's own level less `baseLevel`, unfloored, capped at the row's maximum, then op 1
-/// unless modifiers are off, then cast speed when `haste` asks for it.
+/// The duration read (`0x800a70`): 0 with no row, else the row's base plus its per-level term at
+/// the spell's own level less `baseLevel`, unfloored, capped at the row's maximum, then op 1 unless
+/// modifiers are off, then cast speed when `haste` asks for it.
 fn duration_ms(d: &SpellDisplay, ctx: &TokenContext, haste: bool) -> i32 {
     let Some(row) = ctx.durations.get(d.duration_index) else {
         return 0;
@@ -226,7 +223,7 @@ fn duration_ms(d: &SpellDisplay, ctx: &TokenContext, haste: bool) -> i32 {
     }
 }
 
-/// `TimeFractionBelow` `0x61a960`: the time in its largest unit, its float copy less the floor
+/// The time-fraction test (`0x61a960`): the time in its largest unit, its float copy less the floor
 /// of the double, under `fraction`.
 fn time_fraction_below(ms: f32, fraction: f32) -> bool {
     let t = f64::from(ms);
@@ -242,9 +239,9 @@ fn time_fraction_below(ms: f32, fraction: f32) -> bool {
     f64::from(value as f32) - value.floor() < f64::from(fraction)
 }
 
-/// The `$d` text: no positive duration is `SPELL_DURATION_UNTIL_CANCELLED`; a whole unit takes
-/// `GetDurationString` `0x61a9e0` over `INT_SPELL_DURATION`, a fractional one
-/// `GetFloatDurationString` `0x61aee0` over `SPELL_DURATION`.
+/// The `$d` text: no positive duration is `SPELL_DURATION_UNTIL_CANCELLED`; a whole unit takes the
+/// duration string (`0x61a9e0`) over `INT_SPELL_DURATION`, a fractional one the float duration
+/// string (`0x61aee0`) over `SPELL_DURATION`.
 fn duration_text(ms: i32, ctx: &TokenContext) -> Option<String> {
     if ms <= 0 {
         return text_of(ctx, "SPELL_DURATION_UNTIL_CANCELLED");
@@ -394,7 +391,7 @@ impl ExprEnv for Env<'_, '_, '_> {
     }
 }
 
-/// `GetVariableValue` `0x5782d0` for one named operand.
+/// The variable value (`0x5782d0`) for one named operand.
 fn operand(
     ctx: &TokenContext,
     d: &SpellDisplay,
@@ -442,8 +439,8 @@ fn operand(
 }
 
 impl Parser<'_, '_> {
-    /// `SpellParserParseSubText` `0x57aaf0`: `text` with each token replaced; false when one
-    /// failed, which also leaves a `$` in its place.
+    /// The sub-text parse (`0x57aaf0`): `text` with each token replaced; false when one failed,
+    /// which also leaves a `$` in its place.
     fn sub_text(&mut self, text: &str, out: &mut String) -> bool {
         let mut ok = true;
         let mut start = 0;
@@ -462,7 +459,7 @@ impl Parser<'_, '_> {
         ok
     }
 
-    /// `SpellParserReplaceText` `0x579e50` with `pos` just past the `$`.
+    /// The token replace (`0x579e50`) with `pos` just past the `$`.
     fn replace(&mut self, text: &str, pos: &mut usize, out: &mut String) -> bool {
         match byte(text, *pos) {
             b'{' => {
@@ -589,7 +586,7 @@ impl Parser<'_, '_> {
                 fixed(ctx, 1, v)
             }
             b'F' => {
-                // ±0.5 by the sign, then chopped (`CMath::fint_n`).
+                // ±0.5 by the sign, then chopped.
                 let v =
                     (f64::from(scale) * f64::from(spell.damage_multiplier[slot])).round() as i32;
                 self.key(v);
@@ -779,9 +776,9 @@ impl Parser<'_, '_> {
         Some((text, plural))
     }
 
-    /// `SpellParserExpression` `0x579980` over `text[pos+1..end]`: the cursor moves past the `}`
-    /// and an optional `.1`..`.9` precision first, so a failed expression drops its text. The
-    /// shown value (`%.0f` or `%.Nf`), its integer (`fistp`, round to nearest) and the value.
+    /// The expression token (`0x579980`) over `text[pos+1..end]`: the cursor moves past the `}` and
+    /// an optional `.1`..`.9` precision first, so a failed expression drops its text. The shown
+    /// value (`%.0f` or `%.Nf`), its integer (`fistp`, round to nearest) and the value.
     fn expression(&self, text: &str, pos: &mut usize, end: usize) -> Option<(String, i32, f32)> {
         let body = &text[*pos + 1..end];
         *pos = end + 1;
@@ -797,7 +794,7 @@ impl Parser<'_, '_> {
         Some((shown, value.round_ties_even() as i32, value))
     }
 
-    /// `SpellParserVariable` `0x577c40`: `$<name>`, the name cut at 14 characters, prints its
+    /// The variable token (`0x577c40`): `$<name>`, the name cut at 14 characters, prints its
     /// variable's text and keys `$l` on its integer; an unknown name fails.
     fn variable(&mut self, text: &str, pos: &mut usize, end: usize, out: &mut String) -> bool {
         let name = &text.as_bytes()[*pos + 1..end.min(*pos + 15)];
@@ -810,9 +807,8 @@ impl Parser<'_, '_> {
         true
     }
 
-    /// `SpellParserPluralConditional` `0x576ef0`: `$l` over `a:b[:c…];`, the form the plural
-    /// index of the last number picks, leading and trailing spaces trimmed. With no `;` nothing is
-    /// consumed.
+    /// The plural conditional (`0x576ef0`): `$l` over `a:b[:c…];`, the form the plural index of the
+    /// last number picks, leading and trailing spaces trimmed. With no `;` nothing is consumed.
     fn plural(&self, text: &str, pos: &mut usize, out: &mut String) {
         while byte(text, *pos) == b' ' {
             *pos += 1;
@@ -829,10 +825,10 @@ impl Parser<'_, '_> {
         out.push_str(form.trim_start_matches(' ').trim_end_matches(' '));
     }
 
-    /// `SpellParserConditional` `0x579ba0` with `pos` past the `?`. The condition picks its arm,
-    /// or the next condition of a `]?` chain, else the last `[…]`. Into `var` (`0x579d60`'s
-    /// definitions) the arm's first `${…}` is evaluated as that variable; otherwise the arm is
-    /// parsed as text. A conditional without its brackets consumes nothing.
+    /// The conditional (`0x579ba0`) with `pos` past the `?`. The condition picks its arm, or the
+    /// next condition of a `]?` chain, else the last `[…]`. Into `var` (`0x579d60`'s definitions)
+    /// the arm's first `${…}` is evaluated as that variable; otherwise the arm is parsed as text. A
+    /// conditional without its brackets consumes nothing.
     fn conditional(
         &mut self,
         text: &str,
@@ -882,8 +878,8 @@ impl Parser<'_, '_> {
         ok
     }
 
-    /// `SpellParserParseConditional` `0x5797f0` from `pos` up to `end`: `s<id>` known, `a<id>` on
-    /// the player, `!` negating the next term, `&`, `|` short-circuiting, brackets nesting.
+    /// The condition parse (`0x5797f0`) from `pos` up to `end`: `s<id>` known, `a<id>` on the
+    /// player, `!` negating the next term, `&`, `|` short-circuiting, brackets nesting.
     fn condition(&self, text: &str, pos: &mut usize, end: usize) -> bool {
         let mut cond = false;
         if byte(text, *pos) == 0 {
@@ -937,8 +933,8 @@ impl Parser<'_, '_> {
         cond
     }
 
-    /// `SpellParserGetCondition` `0x5796c0`: the letter, then the spell id; false without digits
-    /// or a player.
+    /// The condition read (`0x5796c0`): the letter, then the spell id; false without digits or a
+    /// player.
     fn condition_term(&self, text: &str, pos: &mut usize) -> bool {
         let kind = byte(text, *pos);
         *pos += 1;
@@ -961,8 +957,8 @@ impl Parser<'_, '_> {
         }
     }
 
-    /// `SpellParserVariables` `0x579d60` over a `SpellDescriptionVariables.dbc` text: each
-    /// `$name=` followed by a `${…}` or a `$?…` defines `name`.
+    /// The variables block (`0x579d60`) over a `SpellDescriptionVariables.dbc` text: each `$name=`
+    /// followed by a `${…}` or a `$?…` defines `name`.
     fn define_all(&mut self, defs: &str) {
         let mut cursor = find(defs, 0, b'$');
         while let Some(at) = cursor {
@@ -996,8 +992,7 @@ impl Parser<'_, '_> {
         }
     }
 
-    /// `SpellParserVariableExpression` `0x579b30`: a new entry, named only once its expression
-    /// evaluates.
+    /// The variable expression (`0x579b30`): a new entry, named only once its expression evaluates.
     fn define(&mut self, name: &str, text: &str, pos: &mut usize, close: usize) {
         let entry = match self.expression(text, pos, close) {
             Some((shown, int_value, value)) => Variable {
@@ -1012,7 +1007,7 @@ impl Parser<'_, '_> {
     }
 }
 
-/// The three bracket pairs of a conditional (`SpellParserVerifyConditional` `0x577030`).
+/// The three bracket pairs of a conditional (`0x577030`).
 struct Arms {
     true_start: usize,
     true_end: usize,
@@ -1047,7 +1042,7 @@ fn verify_conditional(text: &str, at: usize) -> Option<Arms> {
     })
 }
 
-/// `SpellParserSkipParenthesis` `0x576ff0`: past the `)` that closes the open bracket.
+/// The bracket skip (`0x576ff0`): past the `)` that closes the open bracket.
 fn skip_bracket(text: &str, pos: &mut usize, end: usize) {
     let mut depth = 1;
     while *pos < end && byte(text, *pos) != 0 {
@@ -1066,9 +1061,10 @@ fn skip_bracket(text: &str, pos: &mut usize, end: usize) {
     }
 }
 
-/// `GenderConditional` `0x576cd0` with `pos` past the `g`: `male:female[:selector];`, the first
-/// form on gender 0, else the second, each trimmed; `pos` lands on the `;`. A `:c` or `:r` selector
-/// switches the reference to the class's or race's display gender, which is the player's own here.
+/// The gender conditional (`0x576cd0`) with `pos` past the `g`: `male:female[:selector];`, the
+/// first form on gender 0, else the second, each trimmed; `pos` lands on the `;`. A `:c` or `:r`
+/// selector switches the reference to the class's or race's display gender, which is the player's
+/// own here.
 fn gender_branch(text: &str, pos: &mut usize, gender: u8, out: &mut String) {
     while byte(text, *pos) == b' ' {
         *pos += 1;

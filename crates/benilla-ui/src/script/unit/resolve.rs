@@ -110,7 +110,7 @@ pub enum UnitBase {
     Commentator(u32),
 }
 
-/// What makes of a token's text, before it reads any state.
+/// What the reference's unit-token resolver makes of a token's text, before it reads any state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnitTokenParse {
     /// None of the compares match: the reference raises `Unknown unit name`.
@@ -147,10 +147,10 @@ fn index_of(s: &[u8]) -> (u32, usize) {
     (n.wrapping_sub(1), digits)
 }
 
-/// Read `token`'s text as the reference does, before any state: the base by the compares in their
-/// order, a numbered base's row, then `target` hops to the end of the text. `"party1target"` is
-/// party1 and one hop, `"targettarget"` the target and one, and `"npctarget"` is none of the
-/// compares, as `npc` is one full-string compare.
+/// Read `token`'s text as the reference's unit-token resolver does, before any state: the base by
+/// the compares in their order, a numbered base's row, then `target` hops to the end of the text.
+/// `"party1target"` is party1 and one hop, `"targettarget"` the target and one, and `"npctarget"`
+/// is none of the compares, as `npc` is one full-string compare.
 pub fn parse_unit_token(token: &str) -> UnitTokenParse {
     let bytes = token.as_bytes();
     if bytes.is_empty() {
@@ -256,8 +256,8 @@ impl UnitGuids {
             UnitBase::Pet => self.pet,
             UnitBase::Target => self.target,
             UnitBase::Npc => self.npc,
-            // Deviation: the reference has no bound and reads past its four-entry table, which is
-            // stale memory, not a mechanism; past it, nobody.
+            // Deviation: the reference's party-pet lookup has no bound and reads past its
+            // four-entry table, which is stale memory, not a mechanism; past it, nobody.
             UnitBase::PartyPet(row) => at(&self.party_pets, row),
             // Capped at 4.
             UnitBase::Party(row) => at(&self.party, row),

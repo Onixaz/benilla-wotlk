@@ -1,7 +1,7 @@
 //! Facing: resolving the wire's `MonsterMoveFacing`, and the unit display-facing smoother (the 1.12
 //! client's goal chain and `+0xc98` box filter) with the turn-shuffle latch.
 //!
-//! A unit has a raw wire facing (`CMovement+0x1c`) and a display facing (`CGUnit+0xc94`) that the
+//! A unit has a raw wire facing (movement `+0x1c`) and a display facing (unit `+0xc94`) that the
 //! client turns every frame toward a goal from an ordered chain; two goals are local and never
 //! sent: squaring up on `UNIT_FIELD_TARGET`, and an NPC facing you while its window is open.
 //! `Transform.rotation` is the display facing; [`DisplayFacing::wire`] keeps the raw one, the
@@ -16,13 +16,13 @@ use bevy::prelude::*;
 use super::super::{ActiveMover, GuidIndex, NetEntity, ObjectStore, SelfPlayer};
 use super::{yaw_of, RemoteMotion, Spline};
 
-/// The turn-shuffle latch's sign band,+1e-5 and-1e-5, tested on the yaw the pump applied: above it
-/// latches bit `0x800` (ShuffleLeft 11), below it `0x1000` (ShuffleRight 12). Shared with the
+/// The turn-shuffle latch's sign band, +1e-5 and -1e-5, tested on the yaw the pump applied: above
+/// it latches bit `0x800` (ShuffleLeft 11), below it `0x1000` (ShuffleRight 12). Shared with the
 /// remote facing interp.
 pub(super) const TURN_LATCH_BAND: f32 = 1.0e-5;
 
-/// In radians, tested inclusively on the unfolded goal-minus-current delta; inside it the goal is
-/// taken verbatim and the ring resets.
+/// The goal dead band in radians, tested inclusively on the unfolded goal-minus-current delta;
+/// inside it the goal is taken verbatim and the ring resets.
 const DEAD_BAND: f32 = 0.01;
 
 /// A plain mean over the 4-sample ring.
@@ -38,11 +38,11 @@ const UNIT_FLAG_STUNNED: u32 = 0x0004_0000;
 /// name is ours, the tested bit is the reference's.
 const EMOTE_PERMITS_FACING: u32 = benilla_formats::EMOTE_FLAG_INTERACTION;
 
-/// A stationary unit's display-facing state, the client's `CGUnit+0xc98` goal and
+/// A stationary unit's display-facing state, the client's unit `+0xc98` goal and
 /// `+0xc9c..+0xca8` delta ring; present only while [`drive_display_facing`] governs the unit.
 #[derive(Component)]
 pub(crate) struct DisplayFacing {
-    /// The raw wire yaw (`CMovement+0x1c`), never written client-side.
+    /// The raw wire yaw (movement `+0x1c`), never written client-side.
     wire: f32,
     /// A zero head means the next pump takes the ring-fill leg.
     hist: [f32; 4],
@@ -217,7 +217,7 @@ pub(crate) fn drive_display_facing(
             goals.push((e, Some(goal), GoalSource::Target));
             continue;
         }
-        // Row 9: `InteractNpc` stands for the client's global, the open NPC window.
+        // Row 9: `InteractNpc` stands for the client's open-NPC-window global.
         let facing_me = (interact_npc == Some(e))
             .then_some(self_pos)
             .flatten()
@@ -252,7 +252,7 @@ pub(crate) fn drive_display_facing(
         if tf.rotation != rot {
             tf.rotation = rot;
         }
-        // The latch tests the yaw this pump applied (the reference's `param_2`, the increment
+        // The latch tests the yaw this pump applied (the shuffle latch's input, the increment
         // written to `+0xc94`), not the gap left; folded because a pump may cross the wrap.
         let step = crate::creature_anim::wrap_pi(new - cur);
         if step.abs() > TURN_LATCH_BAND {

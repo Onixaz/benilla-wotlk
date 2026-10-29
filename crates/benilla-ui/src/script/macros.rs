@@ -4,20 +4,20 @@
 //! icon list ([`UiScript::set_macro_icons`]).
 //!
 //! Indices 1..=36 are the account macros and 37..=54 the character macros, each list dense from its
-//! base (`MacroFrame.macroBase`): 12340 sorts each set into 36 slots (`m_sortedMacros`, read at
-//! `36 * set + i`), the account set holding 36 and the character set 18 (`s_maxMacros`). A macro's
-//! bound spell (the reference's macro arm returns `[rec+0x564]`) is the app's to derive: it needs
-//! the spell catalog and the player's book.
+//! base (`MacroFrame.macroBase`): 12340 sorts each set into 36 slots (read at `36 * set + i`), the
+//! account set holding 36 and the character set 18 (its per-set maximum). A macro's bound spell
+//! (the reference's macro arm returns `[rec+0x564]`) is the app's to derive: it needs the spell
+//! catalog and the player's book.
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::cursor::{queue_cursor_update, CursorMacro, CursorPayload};
 use super::Model;
 
-/// Account macros (`MAX_ACCOUNT_MACROS`, `s_maxMacros[0]`), and so the character set's base.
+/// Account macros (`MAX_ACCOUNT_MACROS`), and so the character set's base.
 pub const MAX_ACCOUNT_MACROS: usize = 36;
 
-/// Character macros (`MAX_CHARACTER_MACROS`, `s_maxMacros[1]`).
+/// Character macros (`MAX_CHARACTER_MACROS`).
 pub const MAX_CHARACTER_MACROS: usize = 18;
 
 /// The highest macro index, the character set's last.
@@ -207,7 +207,7 @@ fn create_macro(
         MAX_ACCOUNT_MACROS
     };
     if list.len() >= cap {
-        // The message names 36 for either set (`Script_CreateMacro`).
+        // The message names 36 for either set, as the reference's `CreateMacro` does.
         model.record_warning(format!(
             "CreateMacro() failed, already have {MAX_ACCOUNT_MACROS} macros"
         ));
@@ -297,8 +297,8 @@ fn opt_string(v: Option<&Value>) -> Option<String> {
 }
 
 /// The `local` and `perCharacter` flags: `nil`, `false` and `0` are false, as in `UseAction`. The
-/// reference reads them with `GetBoolOrDefault`, which also takes `"0"` and any number that
-/// truncates to 0 as false; the stock popup passes a Lua boolean and never `local`.
+/// reference reads them with its boolean-or-default read, which also takes `"0"` and any number
+/// that truncates to 0 as false; the stock popup passes a Lua boolean and never `local`.
 fn flag(v: Option<&Value>) -> bool {
     v.is_some_and(super::action::truthy_nonzero)
 }

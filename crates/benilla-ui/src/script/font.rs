@@ -1,23 +1,23 @@
 //! Font objects: a `<Font name=…>` or a `CreateFont` font is a Lua object, published as the global
 //! of its name with its own method table. Stock FrameXML never calls this API; addons do.
 //!
-//! The reference's class is `CSimpleFont`. Its method table has 22 entries (`mov edx,0x16`), and
-//! its lookup has no base-class fallback. All are here but the `SetSpacing` pair ([`install`]);
+//! The reference's font class has a method table of 22 entries (`mov edx,0x16`), and its lookup
+//! has no base-class fallback. All are here but the `SetSpacing` pair ([`install`]);
 //! `CopyFontObject` is the one a FontString lacks. A named font is published by the reference
-//! through `SetName` and `CreateLuaHandle`, which leaves a non-nil `_G[name]` alone.
+//! through its name setter and its Lua-handle create, which leaves a non-nil `_G[name]` alone.
 //!
 //! A setter repaints every FontString that inherits the font. The reference links dependents into
-//! the font's list (`+0x74`/`+0x78`) and each setter ends in `NotifyDependents`, calling
-//! `OnFontChanged`; here each setter writes the [`FontObject`] and calls [`propagate`]. A local
-//! setter clears its property's bit in the dependent's inherit mask (`+0x2c`, FontString `+0xd4`)
-//! and nothing restores it, so a colour set on a FontString survives a later `SetFontObject`:
-//! [`RegionData::font_explicit`] is that mask. `+0x38` is not it; its high bits mark a held value,
-//! which the inheriting merge also sets.
+//! the font's list (`+0x74`/`+0x78`) and each setter ends in a dependents notice, calling each
+//! dependent's font-changed handler; here each setter writes the [`FontObject`] and calls
+//! [`propagate`]. A local setter clears its property's bit in the dependent's inherit mask
+//! (`+0x2c`, FontString `+0xd4`) and nothing restores it, so a colour set on a FontString survives
+//! a later `SetFontObject`: [`RegionData::font_explicit`] is that mask. `+0x38` is not it; its high
+//! bits mark a held value, which the inheriting merge also sets.
 //!
 //! Not built: a `<Font inherits=…>` chain is flattened at load (`Loader::do_font`), so mutating
-//! `MasterFont` does not reach `GameFontNormal`, where the reference links it live: `LoadXML` calls
-//! the `SetFontObject` link for `inherits=` and `font=`. No corpus addon mutates a declared font
-//! object.
+//! `MasterFont` does not reach `GameFontNormal`, where the reference links it live: its XML load
+//! calls the `SetFontObject` link for `inherits=` and `font=`. No corpus addon mutates a declared
+//! font object.
 
 use mlua::{Lua, Table, Value};
 
@@ -393,9 +393,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── justification ───────────────────────────────────────────────────────────────────────
-    // Parsing is [`crate::justify`]'s, shared with the FontString pair: `SStrCmpI` over the whole
-    // string, no trim. `None` means the font does not specify the axis (inheritance), not a
-    // cleared axis; a fresh object reads CENTER/MIDDLE, the constructor default `0x212`.
+    // Parsing is [`crate::justify`]'s, shared with the FontString pair: a case-insensitive compare
+    // over the whole string, no trim. `None` means the font does not specify the axis
+    // (inheritance), not a cleared axis; a fresh object reads CENTER/MIDDLE, the constructor
+    // default `0x212`.
     m.set(
         "SetJustifyH",
         lua.create_function(|lua, (this, j): (Table, String)| {

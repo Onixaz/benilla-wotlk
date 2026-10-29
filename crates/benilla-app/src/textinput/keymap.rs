@@ -1,7 +1,7 @@
 //! The per-OS text-editing keymap: a keypress and modifiers to an engine [`EditAction`] or a
-//! host-side clipboard operation. The Windows/Linux table is the reference's key handler (:
+//! host-side clipboard operation. The Windows/Linux table is the reference's key handler:
 //! Ctrl+arrows by word, Ctrl+HOME/END to the text's edge, Ctrl+A/C/X/V, Ctrl/Shift+Insert,
-//! Shift+Delete). Deviation: macOS takes the Cocoa text-field chords and Ctrl+Backspace/Delete
+//! Shift+Delete. Deviation: macOS takes the Cocoa text-field chords and Ctrl+Backspace/Delete
 //! delete a word, because editing follows each OS's own text fields.
 
 use benilla_ui::script::{EditAction, EditUnit};

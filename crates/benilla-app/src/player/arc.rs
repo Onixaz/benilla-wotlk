@@ -15,10 +15,10 @@ impl Player {
     /// `launch_y` is the pre-step feet Y, the true takeoff height.
     ///
     /// A new arc (a first airborne frame, or any `jumped`, which the mover raises only when
-    /// grounded) snapshots the fall clock, the launch speed (`StartFalling`'s `+0xa0`: the jump
-    /// speed, or exactly 0 for a step-off's `StartFalling(0)`) and the launch height (`+0x7c`),
-    /// and clears the far latch. The height is `launch_y`, not the post-step `pos.y` a tick
-    /// higher, which would read a flat jump's descent as a far fall.
+    /// grounded) snapshots the fall clock, the launch speed (the fall start's `+0xa0`: the jump
+    /// speed, or exactly 0 for a step-off's zero-speed fall start) and the launch height (`+0x7c`),
+    /// and clears the far latch. The height is `launch_y`, not the post-step `pos.y` a tick higher,
+    /// which would read a flat jump's descent as a far fall.
     ///
     /// FALLINGFAR splits on the launch speed: a jump latches [`FALL_FAR_DROP`] below its launch, a
     /// step-off after [`FALL_FAR_TIME`] airborne; only a landing clears it.
@@ -34,13 +34,13 @@ impl Player {
         if new_arc {
             self.airborne_since = Some(now);
             // `launch_vz`, not `vel_y`, which the mover has already moved one `g·dt` down. The
-            // reference writes `+0xa0` once, in `StartFalling`, and the jump tail sends it all arc.
+            // reference writes `+0xa0` once, in the fall start, and the jump tail sends it all arc.
             self.jump_zspeed = if jumped { self.launch_vz } else { 0.0 };
             self.fall_start_y = launch_y;
             self.fall_far = false;
         } else if !airborne {
             self.airborne_since = None;
-            // The reference's `StopFalling` edge: the arc's steer nibble and knockback go with it.
+            // The reference's fall-stop edge: the arc's steer nibble and knockback go with it.
             self.arc_dirs_set = false;
             self.knock_arc = false;
         }
@@ -58,9 +58,9 @@ impl Player {
         ArcEdges {
             new_arc,
             // A same-frame relaunch stays airborne and streams a JUMP. A root ends the arc in
-            // mid-air (`SetRoot`'s `StopFalling`) with no land packet (before opcode `0xc9`), which
-            // would hand vmangos `Player::HandleFall` the whole fall clock; the release is a fresh
-            // arc, `ClearRoot`'s `StartFalling(0)`.
+            // mid-air (the root's fall stop) with no land packet (the stop is tested before opcode
+            // `0xc9`), which would hand vmangos `Player::HandleFall` the whole fall clock; the
+            // release is a fresh arc, the unroot's zero-speed fall start.
             landed: !airborne && was_airborne && !self.modes.rooted,
         }
     }
@@ -269,8 +269,8 @@ mod tests {
         );
     }
 
-    /// A mid-air release is `ClearRoot`'s `StartFalling(0)`: a fresh arc from a zero clock, so the
-    /// server measures the fall from the release.
+    /// A mid-air release is the unroot's zero-speed fall start: a fresh arc from a zero clock, so
+    /// the server measures the fall from the release.
     #[test]
     fn releasing_the_root_mid_air_starts_a_fresh_fall_not_a_resumption() {
         let mut p = take_off(100.0);

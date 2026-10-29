@@ -98,8 +98,7 @@ pub struct PetStats {
     /// mask (every warlock minion) or a failed hunter gate, which the app applies.
     pub food_types: Vec<String>,
     /// `GetPetTalentTree()` (`0x5d3d80`): the name of the first `TalentTab.dbc` row the family's
-    /// talent type admits, for a pet that can gain experience (`CGUnit_C::CanGainXP`,
-    /// `0x71b630`); `None` is nil.
+    /// talent type admits, for a pet that can gain experience (`0x71b630`); `None` is nil.
     pub talent_tree: Option<String>,
 }
 
@@ -193,8 +192,8 @@ impl super::UiScript {
         bar.stats = stats;
     }
 
-    /// Push the pet's expiry on the `GetTime` clock, `None` for none: `SetPet` stores
-    /// `OsTick() + duration` for each `SMSG_PET_SPELLS` whose duration is not 0, else 0.
+    /// Push the pet's expiry on the `GetTime` clock, `None` for none: the pet's set stores the tick
+    /// count plus the duration for each `SMSG_PET_SPELLS` whose duration is not 0, else 0.
     pub fn set_pet_expiry(&mut self, expiry: Option<f64>) {
         set_field!(self, pet_bar.expiry, expiry);
     }
@@ -454,8 +453,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // IsPetAttackAction(index) (`0x5d5a10`): a real boolean, true for the Attack order's slot
-    // while there is a pet (`CGPetInfo::IsAttackAction`, `0x5d41b0`).
+    // IsPetAttackAction(index) (`0x5d5a10`): a real boolean, true for the Attack order's slot while
+    // there is a pet (the pet info's attack-action test, `0x5d41b0`).
     g.set(
         "IsPetAttackAction",
         lua.create_function(|lua, i: Value| {

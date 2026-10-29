@@ -1,4 +1,4 @@
-//! The ride frame, `[CM2Model+0x17c]`: the world matrix of the transport a model is riding.
+//! The ride frame, the model's `[+0x17c]`: the world matrix of the transport a model is riding.
 //!
 //! World-mode particle clouds (`0x10` clear) and every ribbon store committed content in absolute
 //! coordinates, so on a transport the reference stores them in the transport's frame and
@@ -22,7 +22,7 @@ use bevy::prelude::*;
 
 use crate::model_fade::{ParentModel, MAX_MODEL_CHAIN};
 
-/// This model instance rides a transport: `[CM2Model+0x17c]`, held as the transport's entity so
+/// This model instance rides a transport: the model's `[+0x17c]`, held as the transport's entity so
 /// the pose is read live. Set on the rider's own model; its [`ParentModel`] chain inherits it.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RideFrame(pub Entity);
@@ -79,7 +79,7 @@ impl StoredFrame {
     /// Move the store to `now`, returning the transform every stored point is re-expressed by
     /// (directions take its rotation), or `None` while the transport is unchanged. Boarding folds
     /// `A⁻¹`, leaving the old `A`, and a transport-to-transport step both: the reference wires only
-    /// the NULL↔non-NULL edges, since `SetMoveBase` clears before it sets.
+    /// the NULL↔non-NULL edges, since its move-base setter clears before it sets.
     pub fn retarget(&mut self, now: Option<(Entity, Affine3A)>) -> Option<Affine3A> {
         let fold = match (self.0, now) {
             (None, Some((_, a))) => Some(a.inverse()),

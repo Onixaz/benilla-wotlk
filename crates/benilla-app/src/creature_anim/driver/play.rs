@@ -11,11 +11,11 @@ use bevy::prelude::*;
 use super::super::{find_resolved, AnimDriver};
 use super::select::{self, jump_land_pick, Mode, Special};
 
-/// The base-animation lock, the reference's `[unit+0xd58] & 0xc0000`: while it is held,
-/// `CGUnit::PlayAnimation` returns at once, so a stun's `Stand(0)` recompute is refused and a
-/// `Knockdown` runs its full 2000 ms. The arm helper sets it on the id actually armed (table: 121
-/// `Knockdown`, 192 `LiftOff`, 200 `Land`); `OnAnimationFinished` clears it on completion or
-/// pre-emption, as does a model rebuild. Held as the id, since a second arm would be refused.
+/// The base-animation lock, the reference's `[unit+0xd58] & 0xc0000`: while it is held, the unit's
+/// animation play returns at once, so a stun's `Stand(0)` recompute is refused and a `Knockdown`
+/// runs its full 2000 ms. The arm helper sets it on the id actually armed (from a table: 121
+/// `Knockdown`, 192 `LiftOff`, 200 `Land`); the animation-finished callback clears it on completion
+/// or pre-emption, as does a model rebuild. Held as the id, since a second arm would be refused.
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct BaseAnimLock(Option<u16>);
 
@@ -87,10 +87,9 @@ pub(super) fn play_clip(
     true
 }
 
-/// Arms a looping clip with no cross-fade, as the dismount teardown calls op4 with
-/// `crossFadeFlag = 0`: the reference skips the blend block and its primary-to-secondary copy, so
-/// the clip is the pose at once and a full-body secondary overlay survives, while
-/// `[bone+0xf8] = animId` still runs.
+/// Arms a looping clip with no cross-fade, as the dismount teardown calls op4 with `crossFadeFlag =
+/// 0`: op4 then skips the blend block and its primary-to-secondary copy, so the clip is the pose at
+/// once and a full-body secondary overlay survives, while `[bone+0xf8] = animId` still runs.
 pub(super) fn cut_loop(
     tr: &mut AnimationTransitions,
     player: &mut AnimationPlayer,

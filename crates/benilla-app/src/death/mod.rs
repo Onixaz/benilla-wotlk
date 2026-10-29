@@ -117,12 +117,12 @@ enum CorpseRange {
 /// The forced-release window, vmangos `CORPSE_REPOP_TIME` (`Player.h:71`); never on the wire.
 const RELEASE_WINDOW_SECS: f64 = 360.0;
 
-/// The corpse-range dialog radius, 40 yd inclusive: the 1.12 client compares d² ≤ (1600.0) against
+/// The corpse-range dialog radius, 40 yd inclusive: the 1.12 client compares d² ≤ 1600.0 against
 /// the corpse-query position. The server's reclaim gate, `CORPSE_RECLAIM_RADIUS` 39
 /// (`Corpse.h:40`), sits 1 yd inside it.
 const CORPSE_RANGE_SQ: f32 = 40.0 * 40.0;
 
-/// The spirit-healer dialog range: `CheckSpiritHealerDist` compares d² ≤ (30.864).
+/// The spirit-healer dialog range: `CheckSpiritHealerDist` compares d² ≤ 30.864.
 const SPIRIT_HEALER_RANGE_SQ: f32 = 5.5556 * 5.5556;
 
 /// `PLAYER_FLAGS_IS_OUT_OF_BOUNDS`, the bit `IsOutOfBounds` tests (`0x6123eb`).
@@ -268,8 +268,8 @@ fn feed_death(
         (Some((_, _, true)), false, false) => {
             feed.died_at = None;
             // The not-found answer drops the map markers. The reference sends nothing on this edge:
-            // its ghost-bit watcher clears the corpse cache, and the reference queries only while a
-            // ghost. The server's own push needs a looter (`Map.cpp:3617-3629`).
+            // its ghost-bit watcher clears the corpse cache, and it queries only while a ghost. The
+            // server's own push needs a looter (`Map.cpp:3617-3629`).
             let _ = net.0.send(ClientCommand::CorpseQuery);
         }
         // Logging in a ghost: no edge, just the corpse ask.

@@ -4,10 +4,10 @@
 //! change re-composites every cached look into its own image, so standing bodies keep their
 //! materials. An arriving body's first composite runs off the main thread: the reference's world
 //! composite is unforced, so its section loads poll and never block the frame, and it draws nothing
-//! of a unit whose first composite has not finished, its ShouldRender answering `(cc, 0)`'s result.
-//! Only the forced callers wait on their loads: the glue model, the dressing room, `PlayerModel`'s
-//! `SetUnit` and world entry. Here the forced lane ([`SkinComposites::force`]) composites on the
-//! calling thread.
+//! of a unit whose first composite has not finished, its render gate answering the unforced
+//! composite's result. Only the forced callers wait on their loads: the glue model, the dressing
+//! room, `PlayerModel`'s `SetUnit` and world entry. Here the forced lane
+//! ([`SkinComposites::force`]) composites on the calling thread.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -121,8 +121,8 @@ impl SkinComposites {
 
     /// An atlas composited on this thread on a miss, or waited for if it is already running, as the
     /// reference's forced composite waits on its section loads and passes no admission test: the
-    /// glue model's (`(cc, 1)`) and the dressing room's. A re-dress of a standing body and a
-    /// rig-heal rebuild come here too, so neither drops out for a frame.
+    /// glue model's and the dressing room's. A re-dress of a standing body and a rig-heal rebuild
+    /// come here too, so neither drops out for a frame.
     pub(super) fn force(
         &mut self,
         key: SkinKey,

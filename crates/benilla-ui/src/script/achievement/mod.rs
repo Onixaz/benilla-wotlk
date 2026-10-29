@@ -1,7 +1,7 @@
-//! 3.3.5a's achievement engine (`CGAchievementInfo`): the three DBC tables the app pushes once
-//! ([`AchievementDb`]), the player's completed list and criteria progress and an inspected
-//! player's ([`AchievementBook`]), the tracked list, and the 37 bindings registered from
-//! `0xacfc70` bar the two quest-completion ones.
+//! 3.3.5a's achievement engine: the three DBC tables the app pushes once ([`AchievementDb`]), the
+//! player's completed list and criteria progress and an inspected player's ([`AchievementBook`]),
+//! the tracked list, and the 37 bindings registered from `0xacfc70` bar the two quest-completion
+//! ones.
 //!
 //! The app keeps its own book and applies every packet to it, so a fresh VM is seeded whole
 //! ([`super::UiScript::set_achievement_book`]); the VM's copy takes the same packets
@@ -103,7 +103,7 @@ pub struct AchievementDb {
     /// Each achievement's criteria, file order; a criterion of an unknown achievement or of a
     /// type past 123 joins none.
     criteria_of: HashMap<u32, Vec<usize>>,
-    /// The achievements naming each id as `supercedes`, for `IsSupersededByCompleted`.
+    /// The achievements naming each id as `supercedes`, for the superseded-by-completed test.
     successors: HashMap<u32, Vec<u32>>,
 }
 
@@ -213,14 +213,14 @@ impl AchievementDb {
         false
     }
 
-    /// `IsRealAchievement` (`0x5b0d50`): a row in a category outside the Statistics tree.
+    /// The real-achievement test (`0x5b0d50`): a row in a category outside the Statistics tree.
     pub(crate) fn is_real(&self, id: u32) -> bool {
         self.get(id).is_some_and(|a| {
             self.category(a.category).is_some() && !self.under_statistics(a.category)
         })
     }
 
-    /// `IsCriteriaStat` (`0x5b0de0`): a criterion of a statistic.
+    /// The criteria-statistic test (`0x5b0de0`): a criterion of a statistic.
     fn is_criteria_stat(&self, id: u32) -> bool {
         self.criterion(id)
             .and_then(|c| self.get(c.achievement))
@@ -403,7 +403,7 @@ impl AchievementBook {
         self.criteria.iter().find(|c| c.id == id)
     }
 
-    /// `IsSupersededByCompleted` (`0x5b37c0`): an achievement following `id` is complete.
+    /// The superseded-by-completed test (`0x5b37c0`): an achievement following `id` is complete.
     pub(crate) fn superseded(&self, db: &AchievementDb, id: u32) -> bool {
         db.successors(id)
             .iter()
@@ -524,7 +524,7 @@ impl AchievementBook {
         events
     }
 
-    /// `UpdateCriteria` (`0x5b2520`): a new row goes before the first one not newer; flag bit 0
+    /// The criteria update (`0x5b2520`): a new row goes before the first one not newer; flag bit 0
     /// drops the row; a statistic's update leads the recent list.
     fn update_criteria(&mut self, db: &AchievementDb, c: CriteriaWire, now: u32) {
         let state = held_state(c, now);
@@ -557,7 +557,7 @@ impl AchievementBook {
         );
     }
 
-    /// `UpdateInspectCriteria` (`0x5b2cb0`): as the player's, with no delete bit and the recent
+    /// The inspect criteria update (`0x5b2cb0`): as the player's, with no delete bit and the recent
     /// list deduplicated by criterion alone.
     fn update_inspect_criteria(&mut self, db: &AchievementDb, c: CriteriaWire, now: u32) {
         let state = held_state(c, now);
@@ -583,7 +583,7 @@ impl AchievementBook {
         );
     }
 
-    /// `ReleaseInspect` (`0x5b2fb0`): the inspected lists empty; the guid stays.
+    /// The inspect release (`0x5b2fb0`): the inspected lists empty; the guid stays.
     pub(crate) fn release_inspect(&mut self) {
         self.inspect_criteria.clear();
         self.inspect_recent.clear();
@@ -638,7 +638,7 @@ fn push_recent(
     }
 }
 
-/// `UpdateAchievement` (`0x5b28d0`, inspect `0x5b2ab0`): an id already held only takes the new
+/// The achievement update (`0x5b28d0`, inspect `0x5b2ab0`): an id already held only takes the new
 /// date; a new one goes after every newer row and, among same-date rows, after those whose
 /// `ui_order` is not below its own. The player's list refuses an id the table lacks; the
 /// inspect list keeps it.
@@ -726,7 +726,7 @@ pub(crate) struct AchievementModel {
     pub(crate) name_wants: Vec<u64>,
     /// `CMSG_QUERY_INSPECT_ACHIEVEMENTS` guids `SetAchievementComparisonUnit` queued.
     pub(crate) inspect_queries: Vec<u64>,
-    /// Each tooltip's shown achievement (`CGTooltip+m_achievementId`), cleared with its lines.
+    /// Each tooltip's shown achievement, cleared with its lines.
     pub(crate) tooltips: HashMap<crate::widget::FrameHandle, u32>,
 }
 
@@ -751,7 +751,7 @@ fn wrong_side(a: &AchievementRow, faction: Option<i32>) -> bool {
     faction.is_some_and(|f| a.faction != -1 && a.faction != f)
 }
 
-/// The `trackedAchievements` CVar's encoding (`CVarIntListWrapper`, `0x766720`/`0x766f70`): a
+/// The `trackedAchievements` CVar's encoding (the int-list CVar wrapper, `0x766720`/`0x766f70`): a
 /// `v\x01` tag, then three base-93 digits from `#` per id.
 pub(crate) fn encode_tracked(ids: &[u32]) -> String {
     let mut out = String::from("v\u{1}");
@@ -801,7 +801,7 @@ impl super::UiScript {
     }
 
     /// Seed a fresh VM with the app's book, then load the tracked list from
-    /// `trackedAchievements` as `LoadTrackedState` does (`0x5128d0` → `0x5b3840`), each add
+    /// `trackedAchievements` as the tracked-state load does (`0x5128d0` → `0x5b3840`), each add
     /// announcing itself.
     pub fn set_achievement_book(&mut self, book: AchievementBook) {
         let ids = {
@@ -871,7 +871,7 @@ impl super::UiScript {
         self.model_ref().achievement.tracked.clone()
     }
 
-    /// `SaveTrackedAchievements` (`0x5b1fa0`) into `trackedAchievements`. The reference saves at
+    /// The tracked-list save (`0x5b1fa0`) into `trackedAchievements`. The reference saves at
     /// shutdown; every change saves here, which leaves the stored value the same.
     fn save_tracked(&mut self) {
         let mut model = self.model_mut();

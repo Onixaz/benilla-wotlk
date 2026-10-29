@@ -1,8 +1,8 @@
 //! 3.3.5a's `SetFormattedText` formatter (`0x818070`), which is the client's own and not
 //! `string.format`. It takes `%N$` argument positions, reads each argument with `lua_tonumber` or
 //! `lua_tolstring` (so a wrong or missing one prints 0 or `(null)` and never raises), and hands
-//! each conversion to MSVC's `_vsnprintf` (`0x88bbd2`, through `SStrPrintf` `0x76f070`) inside the
-//! binding's 4096-byte buffer.
+//! each conversion to MSVC's `_vsnprintf` (`0x88bbd2`, through a printf wrapper, `0x76f070`) inside
+//! the binding's 4096-byte buffer.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -28,7 +28,7 @@ pub(crate) fn format(lua: &Lua, args: &MultiValue) -> mlua::Result<String> {
     // Bytes left in the buffer, the terminator's included.
     let mut room = BUFFER;
     let put = |out: &mut Vec<u8>, room: &mut usize, piece: &[u8]| {
-        // `SStrPrintf` writes at most `size - 1` and answers what it wrote.
+        // The printf wrapper writes at most `size - 1` and answers what it wrote.
         let n = piece.len().min(*room - 1);
         out.extend_from_slice(&piece[..n]);
         *room -= n;

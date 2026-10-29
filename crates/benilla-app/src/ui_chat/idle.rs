@@ -1,8 +1,8 @@
-//! The idle handler, the reference's `WorldFrame::Render`: from 5 minutes without input it sits the
-//! player and marks them AFK; from 30 minutes it prints `IDLE_MESSAGE` and requests a logout
-//! instead, with no sit and no AFK.
+//! The idle handler, which the reference runs in the world frame's render: from 5 minutes without
+//! input it sits the player and marks them AFK; from 30 minutes it prints `IDLE_MESSAGE` and
+//! requests a logout instead, with no sit and no AFK.
 //!
-//! The logout is a camp, not a kick: the reference sends the game menu's `CMSG_LOGOUT_REQUEST`,
+//! The logout is a camp, not a kick: the request is the game menu's `CMSG_LOGOUT_REQUEST`,
 //! which the server refuses in combat, grants at once when resting, or counts down for 20 seconds
 //! (vmangos `MiscHandler.cpp:284-339`). The 30-minute leg, line and request together, is skipped
 //! while the logout-pending byte `[session+0x1b1d]` is set, the byte the request itself sets and a
@@ -19,7 +19,7 @@ use bevy::time::Real;
 use super::away::{afk_line, push_system, AfkMirror};
 use super::feed::ChatLog;
 
-/// The last-input stamp: elapsed real time on the clock both its one writer and the handler read.
+/// The last-input stamp: elapsed real time on the one clock both its writers and the handler read.
 /// Process-global, zero at start and never reset, not even at world entry, so a client untouched
 /// from launch is idle at five minutes.
 #[derive(Resource, Debug, Clone, Copy, Default)]
@@ -36,11 +36,11 @@ impl LastInput {
 /// 5 minutes, `0x493e0` = 300 000 ms.
 const AUTO_AFK_AFTER: Duration = Duration::from_millis(300_000);
 
-/// 30 minutes from the last input, not 5 + 30: the reference subtracts from the raw elapsed, since
-/// the 5-minute subtraction wrote `ecx`.
+/// 30 minutes from the last input, not 5 + 30: the reference subtracts 30 minutes from the raw
+/// elapsed, since the 5-minute subtraction wrote `ecx`.
 const AUTO_LOGOUT_AFTER: Duration = Duration::from_millis(1_800_000);
 
-/// Stamp the clock on raw input, as the reference's seven writers of the reference do: key down,
+/// Stamp the clock on raw input, as the reference's seven writers of the stamp do: key down,
 /// first press only, key up, button down and up, motion (mouselook included) and the wheel. Holding
 /// a key is idle: auto-repeat is category 0xa, whose handler has no store, so running with W held
 /// reaches the auto-AFK. A zero move does not stamp. A horizontal wheel stamps here; the reference
@@ -70,9 +70,9 @@ pub(crate) fn stamp_input(
 /// What the timer decides this frame, one flag per leg.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IdleAction {
-    /// .
+    /// The sit: a stand-state request to sitting.
     pub(crate) sit: bool,
-    /// `call (NULL)`.
+    /// The AFK mark with no message.
     pub(crate) afk: bool,
     /// `IDLE_MESSAGE` and the logout request. The band only: the leg's own gate, the logout-pending
     /// byte, is the handler's to read.
@@ -119,7 +119,7 @@ pub(crate) fn idle_action(idle: Duration, gates: IdleGates) -> IdleAction {
     }
 }
 
-/// The handler, in-world only: the reference is `WorldFrame::Render`.
+/// The handler, in-world only: the reference runs it in the world frame's render.
 pub(crate) fn idle_handler(
     time: Res<Time<Real>>,
     last: Res<LastInput>,
@@ -169,8 +169,8 @@ pub(crate) fn idle_handler(
 
     let strings = |key: &str| crate::ui_chat::combat::global_string(&script, key);
     if action.afk {
-        // `SetAFK(NULL)` is `/afk` with an empty message and a clear mirror, so it shares that
-        // path: the `DEFAULT_AFK_MESSAGE` echo and body, and the optimistic mirror.
+        // The AFK mark with no message is `/afk` with an empty message and a clear mirror, so it
+        // shares that path: the `DEFAULT_AFK_MESSAGE` echo and body, and the optimistic mirror.
         let out = afk_line("", *mirror, &strings);
         if let Some(line) = out.line {
             push_system(&mut chat, line);
@@ -191,7 +191,7 @@ pub(crate) fn idle_handler(
         if let Some(line) = strings("IDLE_MESSAGE") {
             push_system(&mut chat, line);
         }
-        // The reference with the game menu's arguments; `crate::ui_logout` owns the rest.
+        // The logout request with the game menu's arguments; `crate::ui_logout` owns the rest.
         script.queue_session_request(benilla_ui::script::SessionRequest::Logout);
     }
 }
@@ -224,7 +224,7 @@ mod tests {
         assert_eq!(
             idle_action(FIVE_MIN - one_ms, open()),
             IdleAction::default(),
-            "4:59.999 does nothing — the reference leaves the whole block"
+            "4:59.999 does nothing — the 5-minute test leaves the whole block"
         );
         assert_eq!(
             idle_action(FIVE_MIN, open()),
@@ -308,7 +308,7 @@ mod tests {
             ),
             (
                 "on a taxi: no AFK — and the sit is NOT gated on the taxi bit here (its own \
-                  guard #3 is what covers that downstream)",
+                  sit setter's guard #3 is what covers that downstream)",
                 IdleGates {
                     on_taxi: true,
                     ..open()
@@ -322,7 +322,7 @@ mod tests {
             (
                 "following someone who has stopped walking: no sit — this is the ONLY case the \
                  fourth gate does work nothing else does, since anything else that leaves \
-                  non-`0xc` implies translating, which `stand_state_refused` refuses \
+                  the mode non-`0xc` implies translating, which `stand_state_refused` refuses \
                  downstream. The AFK mark is untouched: it is not one of the sit's gates",
                 IdleGates {
                     auto_moving: true,
@@ -375,7 +375,7 @@ mod tests {
             }
             if a.afk {
                 marks += 1;
-                gates.afk = true; // `SetAFK` writes the mirror it is gated on
+                gates.afk = true; // the AFK mark writes the mirror it is gated on
             }
         }
         assert_eq!((sits, marks), (1, 1));
@@ -567,7 +567,7 @@ mod tests {
         assert!(rx.try_iter().next().is_none());
     }
 
-    /// The reference is the game menu's Logout: a session request and nothing else.
+    /// The logout request is the game menu's Logout: a session request and nothing else.
     #[test]
     fn thirty_minutes_idle_camps_instead_of_marking_afk() {
         let (mut app, rx) = world(1_800_000, &[]);
@@ -579,8 +579,8 @@ mod tests {
                 "You have been inactive for some time and will be logged out of the game. If you \
                  wish to remain logged in, hit the cancel button."
             ],
-            "IDLE_MESSAGE goes out unformatted — hands `GetText`'s result straight to \
-             the chat sink, with no snprintf in between. It carries no format slot, and the \
+            "IDLE_MESSAGE goes out unformatted — the reference hands `GetText`'s result straight \
+             to the chat sink, with no snprintf in between. It carries no format slot, and the \
              sentence it does carry (\"hit the cancel button\") is the CAMP dialog's, which is \
              the string's own confirmation that this leg is a logout REQUEST and not a kick."
         );
@@ -603,10 +603,10 @@ mod tests {
             .is_none());
     }
 
-    /// The leg, line and request, is skipped while the logout it asked for is pending, and arms
-    /// again once a cancel clears the byte. The pending byte is the real drain's, run after the
-    /// handler as the app orders it and before it as well, so the gate holds whichever frame the
-    /// byte is set in.
+    /// The whole leg, line and request, is skipped while the logout it asked for is pending, and
+    /// arms again once a cancel clears the byte. The pending byte is the real drain's, run after
+    /// the handler as the app orders it and before it as well, so the gate holds whichever frame
+    /// the byte is set in.
     #[test]
     fn thirty_minutes_idle_prints_and_asks_once_per_logout() {
         use benilla_ui::script::{SessionRequest, UiScript};

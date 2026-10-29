@@ -1,11 +1,11 @@
 //! `Sound_EnableDSPEffects`: the named DSP chains of `SoundFilter.dbc`, which the reference builds
-//! at sound init (`SI2::DSP_Init 0x4ce7c0`) and attaches to a sound whose kit properties name one
-//! (`SI2::DSP_AttachCustomDspChain 0x4ce250`). Every shipped chain is a Death Knight's voice,
-//! `"Death Knight <race> <Male|Female>"` (`SI2::DK_GetPlayerFilterName`), put on a Death Knight
-//! player's vocals ([`VoiceFilters::for_unit`]).
+//! at sound init (`0x4ce7c0`) and attaches to a sound whose kit properties name one (`0x4ce250`).
+//! Every shipped chain is a Death Knight's voice, `"Death Knight <race> <Male|Female>"` (the
+//! reference's player filter name), put on a Death Knight player's vocals
+//! ([`VoiceFilters::for_unit`]).
 //!
-//! The stages are FMOD's built-in DSPs, run here from their documented parameters
-//! (`DSP_CreateDsp 0x4cdf70` hands `params[i + 1]` to parameter `i`):
+//! The stages are FMOD's built-in DSPs, run here from their documented parameters (the reference's
+//! DSP factory, `0x4cdf70`, hands `params[i + 1]` to parameter `i`):
 //!
 //! - pitch shift: pitch, a 512-point FFT, overlap 4;
 //! - low and high pass: cutoff Hz and resonance, a biquad with Q = resonance;
@@ -41,7 +41,7 @@ pub(crate) struct VoiceFilters {
 
 impl VoiceFilters {
     /// Index the Death Knight chains by body: `race_file` gives each race's `ChrRaces` file
-    /// string, the name's middle word (`s_raceFileNames`).
+    /// string, the name's middle word (the reference's race file-name table).
     pub(crate) fn build(
         catalog: &SoundFilterCatalog,
         race_file: impl Fn(u8) -> Option<String>,
@@ -345,7 +345,7 @@ impl Biquad {
 // ---------------------------------------------------------------------------------------------
 // Pitch shift
 
-/// FMOD's pitch shifter at the size the reference sets (`DSP_CreateDsp`, parameter 1 = 512).
+/// FMOD's pitch shifter at the size the reference sets (its DSP factory, parameter 1 = 512).
 const FFT: usize = 512;
 /// FMOD's default overlap.
 const OVERLAP: usize = 4;

@@ -25,7 +25,7 @@ pub struct MessageLine {
     pub rows_key: u64,
 }
 
-/// A `CSimpleMessageScrollFrame`'s runtime state: a drop-oldest ring of lines, a scrollback cursor
+/// A `ScrollingMessageFrame`'s runtime state: a drop-oldest ring of lines, a scrollback cursor
 /// counted up from the newest line, and the fade config new lines copy.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollingMessageState {
@@ -51,7 +51,7 @@ pub struct ScrollingMessageState {
     /// Lines scrolled back from the newest; 0 is AtBottom, the only state in which fades tick.
     pub scroll_offset: usize,
     /// `+0x348`, on at construction (`0x96a45b`): off, the lines' link spans take no clicks
-    /// (`RefreshHyperlinks` `0x9699c0`), what an uninteractable chat window sets.
+    /// (`0x9699c0`), what an uninteractable chat window sets.
     pub hyperlinks_enabled: bool,
 }
 
@@ -208,8 +208,8 @@ impl ScrollingMessageState {
     // ── The scroll entries ──────────────────────────────────────────────────────────────────
     //
     // Each re-arms the displayed lines' fade after moving the cursor. A scroll that cannot move
-    // calls directly; one that moves relayouts, whose helper re-arms on landing off the bottom or
-    // back onto it.
+    // calls the re-arm directly; one that moves relayouts, whose helper re-arms on landing off the
+    // bottom or back onto it.
 
     /// `ScrollUp`: one line older, then re-arm.
     pub fn scroll_up(&mut self, viewport_rows: usize) {
@@ -342,7 +342,7 @@ pub enum InsertMode {
     Bottom,
 }
 
-/// A `CSimpleMessageFrame`'s runtime state, the class of `UIErrorsFrame` and a sibling of
+/// A `MessageFrame`'s runtime state, the class of `UIErrorsFrame` and a sibling of
 /// [`ScrollingMessageState`]: no ring, no `maxLines` (the cap is what fits), no scrollback, an
 /// `AddMessage` alpha in place of the id, and a faded line freed.
 ///

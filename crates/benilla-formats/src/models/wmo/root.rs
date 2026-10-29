@@ -297,8 +297,8 @@ pub fn parse_wmo_portals(bytes: &[u8]) -> WmoPortals {
     }
 }
 
-/// One MFOG fog record, the v17 on-disk layout at the reference's stride `0x30` (`CMapObj+0x158`),
-/// read field for field. Position and radii are WMO model space.
+/// One MFOG fog record, the v17 on-disk layout at the reference's stride `0x30` (map object
+/// `+0x158`), read field for field. Position and radii are WMO model space.
 #[derive(Debug, Clone, Copy)]
 pub struct WmoFog {
     pub flags: u32,
@@ -380,7 +380,7 @@ fn parse_wmo_doodads(bytes: &[u8]) -> (Vec<WmoDoodad>, Vec<WmoDoodadSet>) {
                 position: [f(4), f(8), f(12)],
                 orientation: [f(16), f(20), f(24), f(28)],
                 scale: f(32),
-                // `CImVector` at `+0x24` is BGRA; stored RGBA.
+                // The colour at `+0x24` is BGRA; stored RGBA.
                 color: [rec[38], rec[37], rec[36], rec[39]],
             });
         }

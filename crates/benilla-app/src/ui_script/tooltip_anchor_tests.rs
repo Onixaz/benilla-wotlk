@@ -470,8 +470,8 @@ fn buff_hover_hangs_below_left_of_the_button() {
 }
 
 /// The cursor-seated GameObject plate is owned: the reference's publisher sets the owner through
-/// the SetOwner core (the reference calls `(owner, 6, 0, 0)`, whose the reference writes `+0x314`).
-/// The cursor arm fires no `OnTooltipSetDefaultAnchor`, so no Lua sets it.
+/// the SetOwner core (called with `(owner, 6, 0, 0)`, which writes `+0x314`). The cursor arm fires
+/// no `OnTooltipSetDefaultAnchor`, so no Lua sets it.
 #[test]
 fn a_cursor_seated_gameobject_plate_is_owned() {
     benilla_formats::wow_data_or_skip!();
@@ -508,7 +508,7 @@ fn a_cursor_seated_gameobject_plate_survives_an_addons_on_show_hook() {
 
 /// The corner arm writes no owner itself: its `+0x444` handler, `OnTooltipSetDefaultAnchor`, sets
 /// it through `GameTooltip_SetDefaultAnchor`'s `SetOwner(UIParent, "ANCHOR_NONE")`. Every hover
-/// starts unowned, since `Tooltip::Hide` is `SetOwner(NULL, 0, 0, 0)`.
+/// starts unowned, since the tooltip's hide is the `SetOwner` core with `(NULL, 0, 0, 0)`.
 #[test]
 fn a_corner_seated_gameobject_plate_is_owned_and_shown() {
     benilla_formats::wow_data_or_skip!();

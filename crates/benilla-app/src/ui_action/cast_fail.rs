@@ -1,8 +1,8 @@
 //! Cast-failure text, resolved in the three layers of the reference's handler:
 //!
 //! 1. The wire reason names a `SPELL_FAILED_*` GlobalStrings key ([`CAST_FAIL_KEYS`]).
-//! 2. A per-reason errorId goes to `CGGameUI::DisplayError`: the default `0x2c` is a bare `"%s"`,
-//!    an override replaces the text. The pet's handler has its own overrides ([`Caster`]); layers 1
+//! 2. A per-reason errorId goes to the UI's error display: the default `0x2c` is a bare `"%s"`, an
+//!    override replaces the text. The pet's handler has its own overrides ([`Caster`]); layers 1
 //!    and 3 are shared.
 //! 3. An argument arm fills the template's `%s`: the DBC arms in [`FailArgs::fill`], the item,
 //!    subclass and two-word arms (`0x78`, `0x5c`, `0x19`-`0x1b`, `0x31`, `0x97`, `0x90`) in the
@@ -340,8 +340,8 @@ impl FailArgs<'_> {
 pub(super) const PASSTHROUGH: &str = "ERR_SPELL_FAILED_S";
 
 /// One resolved cast-failure line: the text, and the errorId's key, whose catalog record picks
-/// the surface (`DisplayError` reads its kind); `ERR_SPELL_FAILED_NOTUNSHEATHED` is the one yellow
-/// override.
+/// the surface (the error display reads its kind); `ERR_SPELL_FAILED_NOTUNSHEATHED` is the one
+/// yellow override.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct CastFailLine {
     pub key: &'static str,
@@ -419,13 +419,13 @@ pub(super) fn cast_fail_text(
         // Reasons above `0x8d` take the default arm, the rest the index table. Six overrides are
         // the `ERR_PET_SPELL_*` rows only this handler raises.
         Caster::Pet => match reason {
-            0x00 => return get_display("ERR_PET_SPELL_AFFECTING_COMBAT"), // 0x14c @
-            0x13 => return get_display("ERR_PET_SPELL_DEAD"),             // 0x150 @
-            0x32 => return get_display("ERR_PET_SPELL_NOPATH"),           // 0x151 @
-            0x33 => return get_display("ERR_PET_SPELL_NOT_BEHIND"),       // 0x14e @
-            0x59 => return get_display("ERR_PET_SPELL_OUT_OF_RANGE"),     // 0x14d @
-            0x5F => return get_display("ERR_PET_SPELL_ROOTED"),           // 0x14b @
-            0x65 => return get_display("ERR_PET_SPELL_TARGETS_DEAD"),     // 0x14f @
+            0x00 => return get_display("ERR_PET_SPELL_AFFECTING_COMBAT"), // 0x14c
+            0x13 => return get_display("ERR_PET_SPELL_DEAD"),             // 0x150
+            0x32 => return get_display("ERR_PET_SPELL_NOPATH"),           // 0x151
+            0x33 => return get_display("ERR_PET_SPELL_NOT_BEHIND"),       // 0x14e
+            0x59 => return get_display("ERR_PET_SPELL_OUT_OF_RANGE"),     // 0x14d
+            0x5F => return get_display("ERR_PET_SPELL_ROOTED"),           // 0x14b
+            0x65 => return get_display("ERR_PET_SPELL_TARGETS_DEAD"),     // 0x14f
             // `((SpellRec+0x18 & 0x10) | 0x300) >> 4`, ability or spell only; unlike the player's,
             // no food or potion leg.
             0x3C => {
@@ -435,8 +435,8 @@ pub(super) fn cast_fail_text(
                     "ERR_SPELL_COOLDOWN"
                 });
             }
-            // Health takes `0x123`, the rest `[ + 4*power]`, the same five ids as the player's, so
-            // [`power_keys`] serves both.
+            // Health takes `0x123`, the rest a per-power table entry, the same five ids as the
+            // player's, so [`power_keys`] serves both.
             0x4D => {
                 let power = spell.map_or(0, |d| d.power_type);
                 return get_display(power_keys(power).0).map(CastFailLine::arm_blanked);
@@ -447,7 +447,7 @@ pub(super) fn cast_fail_text(
             // `0xd6`, a bare `"%s"` like `0x2c`) is in [`FailArgs::fill`].
             _ => {}
         },
-        // Overrides.
+        // The player's overrides.
         Caster::Player => match reason {
             0x01 => return get_display("ERR_SPELL_FAILED_ALREADY_AT_FULL_HEALTH"),
             0x02 => {
@@ -462,7 +462,7 @@ pub(super) fn cast_fail_text(
                 });
             }
             0x09 => return get_display("ERR_GENERIC_NO_TARGET"),
-            0x17 => return None, // DONT_REPORT jumps past DisplayError
+            0x17 => return None, // DONT_REPORT jumps past the error display
             0x18 => return get_display("ERR_SPELL_FAILED_EQUIPPED_ITEM"),
             0x28 => {
                 return get_display(if is_potion(spell) {

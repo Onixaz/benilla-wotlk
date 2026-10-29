@@ -61,7 +61,7 @@ fn conform_rotation(mode: u8, n_local: Vec3) -> Quat {
 
 /// Conform every flagged model to the ground under its unit: one face normal per unit from a
 /// down-ray against the decal receivers (the reference averages its walkable contact normals,
-/// `CMovement+0x24`; the two agree on a uniform slope), smoothed on the up-vector.
+/// the movement block's `+0x24`; the two agree on a uniform slope), smoothed on the up-vector.
 ///
 /// Deviation: the reference updates every unit every frame; here only units showing a flagged
 /// visual are tracked, and a parked rig skips its ray and re-seeds at the slope on waking, to bound

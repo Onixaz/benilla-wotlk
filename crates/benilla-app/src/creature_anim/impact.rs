@@ -3,7 +3,7 @@
 //! when the clip crosses a `$AH0`-`$AH3` or `$CAH` key. `$HIT` is no impact key: it re-fires only
 //! the flinch and rides hit-reaction clips. `$CPP` plays the victim's defense clip and clears
 //! `HitInfo & 0x2` in the record, so no flinch or blood, unless an impact key consumed the record
-//! first. A whiff plays the rest of the attacker's swing at half speed (`(bone 0, 0.5)`). A
+//! first. A whiff plays the rest of the attacker's swing at half speed (bone 0 at 0.5). A
 //! superseding swing or `SMSG_ATTACKSTOP` flushes the old record as floating text only, a
 //! `text_only` [`SwingImpact`]. A clip with no impact key never fires: there is no timer fallback.
 
@@ -13,7 +13,7 @@ use super::events::AnimSoundEvent;
 use super::SwingMessage;
 use crate::net::ObjectStore;
 
-/// The victim dispatcher's lootable gate (`UNIT_DYNAMIC_FLAGS` bit `0x1`): the reference bails
+/// The victim dispatcher's lootable gate (`UNIT_DYNAMIC_FLAGS` bit `0x1`): the dispatcher bails
 /// before every consequence it owns, the floating number included, so a corpse you can loot shows
 /// no hits. The supersede and attack-stop flushes call the number emitter directly and the whiff
 /// slow-down is outside the dispatcher, so only a full dispatch is gated.
@@ -31,7 +31,7 @@ pub(crate) struct SwingImpact {
     /// latches `SWINGNOHITSOUND` in place of the weapon-impact sound. `None` for `$CAH`, the
     /// receive-time fallback and flushes.
     pub(crate) natural: Option<u8>,
-    /// The firing tag's world point, which the reference carries from the reference into both
+    /// The firing tag's world point, which the reference carries from the tag handler into both
     /// weapon-sound legs; `None` when no tag fired.
     pub(crate) pos: Option<Vec3>,
 }
@@ -140,7 +140,7 @@ pub(super) fn route_swing_impacts(
                     slows.write(SwingSlowdown(ev.entity));
                 }
                 // A lootable victim takes nothing, not even the number; the record is consumed all
-                // the same, as the reference clears it whatever the dispatcher does.
+                // the same, as the reference's tag handler clears it whatever the dispatcher does.
                 if lootable_victim(&stores, p.swing.victim) {
                     continue;
                 }

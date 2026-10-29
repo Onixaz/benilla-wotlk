@@ -62,8 +62,8 @@ pub(crate) fn near_field_atten(d_sq: f32, maxdist: f32) -> f32 {
     1.0 - clamped / band
 }
 
-// NOTE: the reference is the SFX-bus auto-duck, not a music crossfade, and benilla does not model
-// it. The music transition is a 4.0 s backend fade-stop (`sound::zone`).
+// NOTE: the reference's volume ramp here is the SFX-bus auto-duck, not a music crossfade, and
+// benilla does not model it. The music transition is a 4.0 s backend fade-stop (`sound::zone`).
 
 /// The global 3D rolloff factor: `FSOUND_3D_SetRolloffFactor(4.0)` at device init, the
 /// `SoundRolloffFactor` CVar's default.

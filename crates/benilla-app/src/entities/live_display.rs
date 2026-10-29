@@ -55,9 +55,9 @@ fn live_display_id(kind: EntityKind, store: &ObjectStore) -> Option<u32> {
             .gameobject_displayid()
             .filter(|&d| d > 0)
             .map(|d| d as u32),
-        // A death-time snapshot. The in-place flesh-to-bones flip, which the reference reloads on
-        // (`CORPSE_FIELD_FLAGS` handler), is not built: vmangos removes the corpse and adds a
-        // separate bones object under the same guid (`Map.cpp:3608-3649`).
+        // A death-time snapshot. The in-place flesh-to-bones flip, which the reference's
+        // `CORPSE_FIELD_FLAGS` handler reloads on, is not built: vmangos removes the corpse and
+        // adds a separate bones object under the same guid (`Map.cpp:3608-3649`).
         EntityKind::Corpse => store.0.corpse_display_id(),
         _ => None,
     }

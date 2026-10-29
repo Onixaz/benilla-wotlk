@@ -78,7 +78,7 @@ fn integrate_particle(p: &mut Particle, env: &StepEnv) -> bool {
 /// The follow-delta fraction (file flag `0x4000`, rt `0x40000`): the share of the emitter's
 /// per-frame translation added to every live particle, keyed on `speed` = |Δ|/dt in yd/s; zero when
 /// unauthored or degenerate. The ride-vs-trail baseline is the storage space, not this term, which
-/// applies whatever `0x10` says (the reference builds `rt+0x26c`, the reference adds `rt+0x278`).
+/// applies whatever `0x10` says (the reference builds `rt+0x26c` and adds `rt+0x278`).
 fn follow_fraction(def: &benilla_formats::ParticleEmitterDef, speed: f32) -> f32 {
     if !def.follow_emitter() {
         return 0.0;
@@ -465,7 +465,8 @@ pub(super) fn simulate_particles(
         && !gates.changed()
         && !interleave.surfaces_changed();
     let cam_pos = cam_tf.translation();
-    // The emission scalar, unfloored: `EmitNewParticles 0x97d8c0` multiplies it straight in.
+    // The emission scalar, unfloored: the reference's emission (`0x97d8c0`) multiplies it straight
+    // in.
     let density = tuning.density;
     let snap_filter = crate::collision::WorldCollision::body_filter();
     let (_, cam_rot, _) = cam_tf.to_scale_rotation_translation();
@@ -728,7 +729,7 @@ pub(super) fn simulate_particles(
             // `$WOW_EMIT_DUMP`'s model, taken before `anchor` is shadowed below.
             let dump_owner = (*host).or(*anchor);
 
-            // 0a. The ride frame (`[CM2Model+0x17c]`): the transport the model stands on, inherited
+            // 0a. The ride frame (model `[+0x17c]`): the transport the model stands on, inherited
             //     down the `ParentModel` chain; one that streamed out reads as none.
             let deck = anchor
                 .or(*owner)
@@ -754,7 +755,7 @@ pub(super) fn simulate_particles(
                     p.vel = rot * p.vel;
                 }
                 // The emitter-motion state crosses too, or the frame change reads as motion;
-                // whether the reference's re-expresses `rt+0x248` is untraced.
+                // whether the reference re-expresses `rt+0x248` is untraced.
                 *emitter_prev = emitter_prev.map(|prev| fold.transform_point3(prev));
                 *inherit_vel = rot * *inherit_vel;
             }
@@ -773,8 +774,8 @@ pub(super) fn simulate_particles(
             };
 
             // 0b. The emitter-motion terms feed off the origin's one-frame Δ in the stored frame
-            //     (`rt+0x22c`, the translation row of `rt+0x1fc`), refreshed every frame (`rt+0x248`,
-            // ). Deviation: in model mode the reference adds the raw world vector to
+            //     (`rt+0x22c`, the translation row of `rt+0x1fc`), refreshed every frame
+            //     (`rt+0x248`). Deviation: in model mode the reference adds the raw world vector to
             //     local coordinates; we fold it into the local frame, because our world axes are
             //     Bevy's, not WoW's.
             let emitter_world = emit_place.transform_point(wow_to_bevy(def.position));

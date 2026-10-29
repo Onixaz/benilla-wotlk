@@ -65,7 +65,7 @@ pub(crate) fn attack_nearest_probe(
 }
 
 /// What the player's Attack reads and writes: `AttackTarget`, the ATTACKTARGET binding and
-/// `UseAction`'s Attack slot (through `TryCast`) all run.
+/// `UseAction`'s Attack slot (through the cast attempt) all run this one press.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttackPress<'w, 's> {
     pick: crate::target::AttackPick<'w, 's>,
@@ -104,9 +104,9 @@ impl AttackPress<'_, '_> {
         );
     }
 
-    /// TryCast's attack pick for a spell press held there ([`crate::spell::HeldForPick`]): the
-    /// validator alone, with no swing after it. Whether the cast goes on, at the unit the pick left
-    /// selected.
+    /// The cast attempt's attack pick for a spell press held there ([`crate::spell::HeldForPick`]):
+    /// the validator alone, with no swing after it. Whether the cast goes on, at the unit the pick
+    /// left selected.
     pub(crate) fn pick_for_cast(&mut self, held: crate::spell::HeldCast) -> bool {
         self.validate(held.passed).is_some()
     }
@@ -127,9 +127,9 @@ impl AttackPress<'_, '_> {
     }
 }
 
-/// Sends the queued GameObject openers through the cast ladder. The reference reaches `TryCast`
-/// from a right-click as from a button, so every rung applies: a second click on a chest mid-cast
-/// is the reference's silent same-spell bail.
+/// Sends the queued GameObject openers through the cast ladder. The reference reaches its cast
+/// attempt from a right-click as from a button, so every rung applies: a second click on a chest
+/// mid-cast is the ladder's silent same-spell bail.
 pub(super) fn drain_go_openers(
     mut queue: ResMut<crate::ui_action::GoOpenerCasts>,
     script: Option<NonSendMut<UiScript>>,
@@ -150,7 +150,7 @@ pub(super) fn drain_go_openers(
                 debug!("ui_action: gameobject opener casts {spell_id} at {go_guid:#x}");
                 ladder.send_at_object(spell_id, &ctx, go_guid);
             }
-            // The key goes through the shared `CGItem::Use` fork, as a bag click does.
+            // The key goes through the shared item-use fork, as a bag click does.
             super::GoOpener::Key(it) => {
                 let Some(script) = script.as_deref_mut() else {
                     continue;
@@ -192,7 +192,8 @@ pub(crate) struct ActionPress<'w, 's> {
 #[must_use]
 pub(crate) enum UseOutcome {
     Done,
-    /// The Attack slot passed `TryCast`'s dead rung: the player's Attack ([`AttackPress`]) runs.
+    /// The Attack slot passed the cast attempt's dead rung: the player's Attack ([`AttackPress`])
+    /// runs.
     Attack,
 }
 
@@ -221,9 +222,9 @@ pub(crate) fn use_action(
     };
     match actions.buttons.get(&slot) {
         Some(b) if b.kind == ACTION_KIND_SPELL && b.action == SPELL_ATTACK => {
-            // `UseAction` casts Attack through TryCast, so its dead rung comes first: "You are
-            // dead", where the binding, which skips TryCast, reads "Can't attack while dead." Then
-            // TryCast's effect-0x4e short-circuit runs the Attack toggle.
+            // `UseAction` casts Attack through the cast attempt, so its dead rung comes first: "You
+            // are dead", where the binding, which skips the attempt, reads "Can't attack while
+            // dead." Then the attempt's effect-0x4e short-circuit runs the Attack toggle.
             if ladder.dead_refusal(SPELL_ATTACK, targeting.self_store.iter().next()) {
                 return UseOutcome::Done;
             }
@@ -231,8 +232,7 @@ pub(crate) fn use_action(
         }
         Some(b) if b.kind == ACTION_KIND_SPELL => {
             // In `UseAction` only: re-pressing the spell whose targeting cursor is up cancels it
-            // before `TryCast` (`GetTargetingSpellId`, `StopTargeting`). A spellbook re-press
-            // aborts and re-enters.
+            // before the cast attempt. A spellbook re-press aborts and re-enters.
             if ladder.ground.spell() == Some(b.action) {
                 debug!(
                     "ui_action: cast {} re-pressed — targeting toggles off",
@@ -299,7 +299,7 @@ pub(crate) fn use_action(
             };
             if equip {
                 // No quest guard: the bar tests only `InventoryType`, unlike the bag click
-                // (`StartQuest`), so a quest-starter equips.
+                // (which starts the quest), so a quest-starter equips.
                 debug!("ui_action: item action {action} auto-equip (wire {bag_index}/{slot0})");
                 // The shared auto-equip sender, so a BoE asks before binding, as from a bag.
                 crate::ui_items::send_auto_equip(
@@ -314,8 +314,8 @@ pub(crate) fn use_action(
                     false,
                 );
             } else {
-                // The shared `CGItem::Use` fork: a quest-starter offers its quest, and the use runs
-                // the whole cast ladder.
+                // The shared item-use fork: a quest-starter offers its quest, and the use runs the
+                // whole cast ladder.
                 debug!("ui_action: item action {action} use (wire {bag_index}/{slot0})");
                 crate::ui_items::send_item_use(
                     crate::ui_items::ItemUse {

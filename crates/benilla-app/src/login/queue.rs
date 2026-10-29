@@ -2,7 +2,7 @@
 //! `SMSG_AUTH_RESPONSE(AUTH_WAIT_QUEUE)` carries a position, is re-sent as the line moves, and
 //! ends with `AUTH_OK`; it is a wait, not a refusal.
 //!
-//! The arithmetic is the reference's (`CGlueMgr::UpdateQueuePosition`), including its
+//! The arithmetic is the reference's queue-position update, including its
 //! divide-before-multiply truncation. Three reference defects are not reproduced: the 32-bit
 //! overflow, the leading blank line and the stale-position redisplay on a truncated packet
 //! ([`benilla_protocol`]'s parser).

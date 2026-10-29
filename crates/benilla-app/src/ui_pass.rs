@@ -75,7 +75,8 @@ pub(crate) struct UiQuad {
     pub uv: UvRect,
     /// Straight-alpha tint in client-space sRGB, the raw FrameXML/Lua value, never converted.
     pub color: [f32; 4],
-    /// WoW `ADD` blend (EGxBlend 3, `glBlendFunc(GL_SRC_ALPHA, GL_ONE)`) instead of straight alpha.
+    /// WoW `ADD` blend (blend mode 3, `glBlendFunc(GL_SRC_ALPHA, GL_ONE)`) instead of straight
+    /// alpha.
     pub additive: bool,
     /// Mask to the inscribed circle: the live unit portrait.
     pub circular: bool,
@@ -92,7 +93,7 @@ pub(crate) struct UiQuad {
     pub gamma_texel: bool,
     /// Alpha test against this value on `texel.a × tint.a` instead of blending: a pass writes
     /// opaque, a fail discards. `Some(224.0 / 255.0)` is the WMO-interior minimap tile, drawn by
-    /// the reference with EGxBlend 1 (blending off) and `glAlphaFunc(GL_GEQUAL, 0.87843144)`;
+    /// the reference with blend mode 1 (blending off) and `glAlphaFunc(GL_GEQUAL, 0.87843144)`;
     /// blended, two tiles' seam keeps `(1−a)(1−b)` of the black clear.
     pub alpha_test: Option<f32>,
     /// The half-texel-inset window `[u_min, v_min, u_max, v_max]` sampled, so an atlas cell clamps
@@ -307,8 +308,8 @@ pub(crate) struct UiQuadMaterial {
 
 /// A run's one colour for the batch entity's [`MeshTag`], unpacked by `ui_quad.wgsl`'s vertex
 /// stage, so a colour pulse is a component write, never a mesh or material write. One byte per
-/// channel, `×255 + 0.5`, as the reference packs a vertex colour (`CImVector`; `SetVertexColor`).
-/// Complemented, so an entity with no tag (the minimap's interior tiles) unpacks to opaque white.
+/// channel, `×255 + 0.5`, as the reference packs a vertex colour (`SetVertexColor`). Complemented,
+/// so an entity with no tag (the minimap's interior tiles) unpacks to opaque white.
 fn tint_tag(color: [f32; 4]) -> u32 {
     let byte = |v: f32| {
         // `×255.0 + 0.5`, truncated, after the binding's `[0, 1]` clamp; no overflow.
@@ -370,8 +371,8 @@ impl Material2d for UiQuadMaterial {
         if let Some(fragment) = descriptor.fragment.as_mut() {
             if let Some(target) = fragment.targets.first_mut().and_then(|t| t.as_mut()) {
                 // `(One, OneMinusSrcAlpha)` over gamma values: the shader emits `(rgb·a, a)` for
-                // BLEND and `(rgb·a, 0)` for ADD, so this one state is EGxBlend 2 and EGxBlend 3,
-                // clamped at each write like the reference's 8-bit backbuffer.
+                // BLEND and `(rgb·a, 0)` for ADD, so this one state is blend modes 2 and 3, clamped
+                // at each write like the reference's 8-bit backbuffer.
                 let premultiplied = BlendComponent {
                     src_factor: BlendFactor::One,
                     dst_factor: BlendFactor::OneMinusSrcAlpha,
@@ -398,7 +399,7 @@ pub(crate) struct UiQuadAppend;
 
 /// Project a world point for a world-anchored overlay, with the reference projector's verdict:
 /// `None` does not draw. The reference rejects a point behind the near plane or outside the
-/// WorldFrame's region, which the reference mirrors ÷G44/÷G48 so the aspect cancels: exactly the
+/// WorldFrame's region, which its projection mirrors ÷G44/÷G48 so the aspect cancels: exactly the
 /// viewport, inclusive. A viewport rejection has already written a plausible out-param, so the
 /// verdict must be honoured; plate and world-text callers destroy what they were placing. The chat
 /// bubble does not call this: its seat ignores the verdict, and a bubble slides off with its

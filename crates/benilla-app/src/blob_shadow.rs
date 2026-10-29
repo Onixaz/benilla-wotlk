@@ -1,5 +1,5 @@
 //! The unit blob shadow: the dark oval under every player, NPC and creature, drawn by the
-//! reference's and rebuilt here on the shared surface-decal projector.
+//! reference's shadow pass and rebuilt here on the shared surface-decal projector.
 //!
 //! - Draw path: the per-frame model-node pass gates and draws through the selection ring's decal
 //!   chain. Its collector flags `0x2f0122` add liquid receivers to the ring's; `GroundDecalSurface`
@@ -16,10 +16,10 @@
 //!   axis-aligned-bounded. Vertically `+(h/2)` up and `-(5/3)(h/2)` down about the origin. A zero
 //!   horizontal box draws nothing.
 //! - Appearance: multiply (`GL_DST_COLOR/GL_ZERO`, `EffectBlend::Multiply`), white vertices with
-//!   alpha = the model's base alpha `CM2Model+0x180`. That carries the appear and despawn fades,
-//!   the first-person fade and the stealth or ghost aura fade, but not the M2 colour and
-//!   texture-weight tracks, exactly like `UnitRenderAlpha`. Unlit, no fog, no depth write; the
-//!   texture is `Rgba8Unorm`, so the multiply runs on raw bytes as the reference's does.
+//!   alpha = the model's base alpha (`+0x180`). That carries the appear and despawn fades, the
+//!   first-person fade and the stealth or ghost aura fade, but not the M2 colour and texture-weight
+//!   tracks, exactly like `UnitRenderAlpha`. Unlit, no fog, no depth write; the texture is
+//!   `Rgba8Unorm`, so the multiply runs on raw bytes as the reference's does.
 //! - Registration: units, players and corpses cast one; game objects and dynamic objects never do.
 //!   The reference's `shadowLOD` toggle is not built: always on.
 //! - Deviation: the shadow is gated on `InheritedVisibility`, though the reference draws one under
@@ -41,7 +41,7 @@ use benilla_world::particles::buffer::{begin_effect_frame, EffectVertex};
 use benilla_world::schedule::WorldStage;
 use benilla_world::view::WorldCamera;
 
-/// The reference's shadow disc, created.
+/// The reference's shadow disc.
 const SHADOW_TEXTURE: &str = "mpq://textures/shadowblob.blp";
 /// Each box corner component is clamped into ±5 yd pre-scale.
 const BOX_CLAMP: f32 = 5.0;

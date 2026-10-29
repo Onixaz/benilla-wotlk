@@ -194,8 +194,8 @@ pub(crate) fn item_icon(
         .and_then(|d| d.icon.clone())
 }
 
-/// The walker's section mask (the reference's `ebx`) over the player's 113-guid slot array. A
-/// container in an enabled section is always recursed into: sections gate only at the player's
+/// The walker's section mask (the reference walker's `ebx`) over the player's 113-guid slot array.
+/// A container in an enabled section is always recursed into: sections gate only at the player's
 /// root, and no caller sets the recursion bit `0x10`. Buyback (74-85) has no bit and is never
 /// walked.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -213,8 +213,8 @@ pub(crate) struct InventoryScope {
 }
 
 impl InventoryScope {
-    /// `0x47`, what mask 0 becomes: ORs it in at the local player's root (the `CGPlayer_C` ctor
-    /// sets that flag). No bank.
+    /// `0x47`, what mask 0 becomes: the walker ORs it in at the local player's root (the player
+    /// object's constructor sets that flag). No bank.
     pub(crate) const DEFAULT: Self = Self {
         equipment: true,
         bags: true,
@@ -602,17 +602,17 @@ pub(crate) struct ItemUse {
     /// The template entry: the cooldown store keys item records on `(use_spell, entry)` (the
     /// client's `[eax+8]==spellId && [eax+0xc]==itemID`).
     pub(crate) entry: u32,
-    /// The ON_USE spell, the reference's answer: the first block with `SpellId != 0` and
-    /// `SpellTrigger == 0`.
+    /// The ON_USE spell, as the reference's on-use lookup answers it: the first block with
+    /// `SpellId != 0` and `SpellTrigger == 0`.
     pub(crate) use_spell: Option<u32>,
-    /// The GameObject a key is used on, `CGItem::Use`'s target argument.
+    /// The GameObject a key is used on, the item use's target argument.
     pub(crate) on_object: Option<u64>,
     /// The template's `ITEM_FLAG_CHARTER` (`0x2000`), a signable petition.
     pub(crate) is_charter: bool,
 }
 
-/// What using an item sends: the reference's `CGItem::Use`, the one fork behind the bag click, the
-/// doll click and the action bar.
+/// What using an item sends: the reference's item use, the one fork behind the bag click, the doll
+/// click and the action bar.
 ///
 /// A non-zero `StartQuest` sends `CMSG_QUESTGIVER_QUERY_QUEST` with the item's own guid, and the
 /// server answers with the quest details, the item as giver. Never `CMSG_USE_ITEM`: vmangos
@@ -626,10 +626,10 @@ pub(crate) enum ItemUseRoute {
     /// click sends `CMSG_CANCEL_AURA` and casts nothing; a mount item clicked while mounted
     /// dismounts.
     ToggleCancel(u32),
-    /// The cast tail (`TryCast`): the whole ladder.
+    /// The cast tail: the whole ladder.
     Cast(u32),
-    /// No ON_USE block: `TryCast` gets spell id 0, whose record is null, and bails with nothing
-    /// sent.
+    /// No ON_USE block: the cast attempt gets spell id 0, whose record is null, and bails with
+    /// nothing sent.
     Nothing,
     /// The charter arm, rung 9 (template `Flags & 0x2000`), whose sole caller, sends
     /// `CMSG_PETITION_SHOW_SIGNATURES` (`0x1BE`), one `u64` guid, instead of `CMSG_USE_ITEM`. It
@@ -673,10 +673,10 @@ pub(crate) fn item_use_route(
 }
 
 /// Send what [`item_use_route`] decides; the only place a `CMSG_USE_ITEM` leaves benilla. The
-/// reference's cast tail calls, whose body, `TryCast`: the function the spellbook, `/cast` and the
-/// action bar run, with the item as an argument no gate skips for, and `SendCast` picks the opcode
-/// from it. So an item use takes the whole cast ladder, [`crate::spell::CastLadder::send`]. The
-/// toggle-cancel scan above the tail (`CancelAura`) is the action button's predicate,
+/// reference's cast tail runs the cast attempt the spellbook, `/cast` and the action bar run, with
+/// the item as an argument no gate skips for, and the cast send picks the opcode from it. So an
+/// item use takes the whole cast ladder, [`crate::spell::CastLadder::send`]. The toggle-cancel scan
+/// above the tail (an aura cancel) is the action button's predicate,
 /// [`crate::ui_action::toggle::active_action_toggle`], applied to the item's spell.
 ///
 /// Returns whether anything left for the server.
@@ -741,7 +741,7 @@ pub(crate) fn send_item_use(
         }
         // The bind-on-use deferral, the last rung: every arm above has claimed the click first, so
         // re-pressing a bind-on-use trinket to cancel its aura never asks. It covers `Nothing` too:
-        // four of the reference's five predecessors are on-use spell lookup failures, so the
+        // four of the five paths into the deferral are on-use spell lookup failures, so the
         // reference asks with no usable on-use spell.
         ItemUseRoute::Nothing | ItemUseRoute::Cast(_)
             if !suppress
@@ -754,7 +754,7 @@ pub(crate) fn send_item_use(
         }
         ItemUseRoute::Nothing => {
             debug!(
-                "ui_items: the item at wire {}/{} has no ON_USE block — nothing sent (TryCast's null-rec bail)",
+                "ui_items: the item at wire {}/{} has no ON_USE block — nothing sent (the cast attempt's null-rec bail)",
                 it.bag_index, it.slot
             );
             false
@@ -776,8 +776,8 @@ pub(crate) fn send_item_use(
     }
 }
 
-/// The client's quality colour escape for an item link: the reference indexes the seven-entry table
-/// and clamps anything `>= 7` to index 1, white, which is the catch-all arm.
+/// The client's quality colour escape for an item link: it indexes the seven-entry table and clamps
+/// anything `>= 7` to index 1, white, which is the catch-all arm.
 pub(super) fn quality_color(quality: u32) -> &'static str {
     match quality {
         0 => "ff9d9d9d",
@@ -790,7 +790,7 @@ pub(super) fn quality_color(quality: u32) -> &'static str {
     }
 }
 
-/// One item hyperlink, as the client's builds every one it shows: `SStrPrintf` over
+/// One item hyperlink, as the client's link builder makes every one it shows: a formatted print of
 /// `"%s|Hitem:%d:%d:%d:%d|h[%s]|h%s"`, the colour escape, item id, enchant id, random-property id,
 /// suffix factor, name, then the `|r` reset.
 pub(crate) fn item_link_full(
@@ -819,10 +819,10 @@ pub(super) const INVTYPE_AMMO: u32 = 24;
 /// The `InventoryType` → live-API equip slots map (wire `EQUIPMENT_SLOT_*` + 1, bag icons 20..23;
 /// empty is not equippable), from vmangos `ItemPrototype::GetAllowedEquipSlots`
 /// (`Objects/Item.cpp:577-696`), which `Player::FindEquipSlot` (`Objects/Player.cpp:8440`) walks.
-/// The client's own check, `IsValidForSlot`, is a fixed slot mask per `InventoryType` that answers
-/// 1 for every 0-based slot from 23, plus the RANGED leg below; it has no dual-wield input.
-/// `INVTYPE_WEAPON` offers both hands here, where vmangos offers the off hand only to a dual
-/// wielder and refuses the equip otherwise (`EQUIP_ERR_CANT_DUAL_WIELD`, `Player.cpp:9915`).
+/// The client's own slot check is a fixed slot mask per `InventoryType` that answers 1 for every
+/// 0-based slot from 23, plus the RANGED leg below; it has no dual-wield input. `INVTYPE_WEAPON`
+/// offers both hands here, where vmangos offers the off hand only to a dual wielder and refuses the
+/// equip otherwise (`EQUIP_ERR_CANT_DUAL_WIELD`, `Player.cpp:9915`).
 pub(super) fn find_equip_slot(inventory_type: u32, has_relic_slot: bool) -> Vec<u8> {
     // Live-API ids: wire `EQUIPMENT_SLOT_*` + 1. `AmmoSlot` is 0 (`GetInventorySlotInfo`), loaded
     // by entry with `CMSG_SET_AMMO`.
@@ -867,7 +867,7 @@ pub(super) fn find_equip_slot(inventory_type: u32, has_relic_slot: bool) -> Vec<
         13 => vec![MAINHAND, OFFHAND],  // INVTYPE_WEAPON (no dual-wield test)
         14 => vec![OFFHAND],            // INVTYPE_SHIELD
         // The RANGED slot is the relic slot for Paladin, Shaman and Druid (`ChrClasses.dbc` field
-        // 16): `IsValidForSlot`'s slot `0x11` leg takes it iff `(InventoryType == 28) ==
+        // 16): the client slot check's `0x11` leg takes it iff `(InventoryType == 28) ==
         // hasRelicSlot`, so the ranged types and RELIC exclude each other.
         15 if !has_relic_slot => vec![RANGED], // INVTYPE_RANGED
         16 => vec![BACK],                      // INVTYPE_CLOAK
@@ -1161,7 +1161,7 @@ mod tests {
         );
     }
 
-    /// `CGItem::Use`'s toggle scan sits above the cast tail. The predicate is stubbed here (it is
+    /// The item use's toggle scan sits above the cast tail. The predicate is stubbed here (it is
     /// tested in `ui_action::toggle`), so this pins the fork and its order.
     #[test]
     fn a_live_aura_makes_the_item_click_cancel_instead_of_cast() {
@@ -1251,7 +1251,7 @@ mod tests {
         }
     }
 
-    /// `IsValidForSlot`'s slot `0x11` leg is an equality: a relic class is offered the slot for a
+    /// The client slot check's `0x11` leg is an equality: a relic class is offered the slot for a
     /// relic and never for a ranged weapon, everyone else the reverse.
     #[test]
     fn the_ranged_slot_takes_a_relic_or_a_weapon_never_both() {

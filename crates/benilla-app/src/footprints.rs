@@ -3,8 +3,8 @@
 //! replay with the current alpha until it fades, as the reference's per-frame draw does.
 //!
 //! - Surface: `TerrainType.Flags & 1` (Snow and Sand) on the unit's one resolved surface
-//!   (`CGUnit+0xc60`), which the decal, the spray and `$FSD` share; indoors it is the building's
-//!   floor.
+//!   (the unit object's `+0xc60`), which the decal, the spray and `$FSD` share; indoors it is the
+//!   building's floor.
 //! - Trigger: the per-foot tags `$xL*`/`$xR*` of [`AnimSoundEvent`], placed at the event's authored
 //!   offset through the live bone; `$FSD` is sound-only.
 //! - Ink and size: `CreatureModelData.FootprintTextureID` to `FootprintTextures.dbc`, Length and
@@ -183,7 +183,7 @@ fn spawn_footprints(
         if footfall_culls(eye, foot) {
             continue;
         }
-        // The unit's surface, not a per-foot sample (`CGUnit+0xc60`, module doc).
+        // The unit's surface, not a per-foot sample (the unit object's `+0xc60`, module doc).
         let terrain = world.terrain_type(
             &footsteps.0,
             benilla_world::world_point::Subject::Unit(ev.entity),

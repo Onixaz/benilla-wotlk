@@ -1,5 +1,5 @@
 //! The account-data wire, 3.3.5a's: the server's copies of the eight `WTF\Account\` slots
-//! (handlers registered in `AccountDataInitializeBasicSystem` `0x6b9900`).
+//! (handlers registered at the account-data system's start, `0x6b9900`).
 
 use std::io::{self, Read, Write};
 
@@ -87,13 +87,13 @@ impl AccountDataUpdate {
     }
 }
 
-/// `CMSG_REQUEST_ACCOUNT_DATA` body (`DownloadAccountData` `0x6b92c0`): the slot.
+/// `CMSG_REQUEST_ACCOUNT_DATA` body (the download, `0x6b92c0`): the slot.
 pub fn request_account_data(slot: u32) -> Vec<u8> {
     slot.to_le_bytes().to_vec()
 }
 
-/// `CMSG_UPDATE_ACCOUNT_DATA` body (`UploadAccountData` `0x6b9100`): `u32 slot, u32 time, u32
-/// size`, then the bytes deflated at level 1 (`0x778040`), nothing for an empty slot.
+/// `CMSG_UPDATE_ACCOUNT_DATA` body (the upload, `0x6b9100`): `u32 slot, u32 time, u32 size`, then
+/// the bytes deflated at level 1 (`0x778040`), nothing for an empty slot.
 pub fn update_account_data(slot: u32, time: u32, bytes: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(12 + bytes.len() / 2);
     out.extend_from_slice(&slot.to_le_bytes());

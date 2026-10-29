@@ -86,7 +86,7 @@ pub(super) fn probe_sample_rate() -> Option<u32> {
 }
 
 /// Every output device's name, the list the reference caches behind its own "System Default"
-/// entry (`s_outputDrivers`, `SE2::Init 0x87c710`).
+/// entry (built by the engine init, `0x87c710`).
 pub(super) fn device_names() -> Vec<String> {
     device::output_names()
 }
@@ -187,7 +187,7 @@ pub(super) enum Event {
     Lost(&'static str),
     OpenFailed(String),
     /// The chosen device is gone and the output follows the system default, as the reference
-    /// resets `Sound_OutputDriverIndex` to 0 and restarts (`SI2::ValidateOutputDriver 0x4c6560`).
+    /// resets `Sound_OutputDriverIndex` to 0 and restarts (`0x4c6560`).
     FellBack(String),
     /// The stream is gone for good: the ring's consumer never came back, a bug, not a device.
     Dead(String),
@@ -436,8 +436,8 @@ impl OutputBackend {
     }
 
     /// Move the output to `device` (`None` follows the system default) by rebuilding the stream,
-    /// as the reference's restart reopens FMOD (`Script_Sound_GameSystem_RestartSoundSystem
-    /// 0x985d30`); the next [`Self::service`] opens it.
+    /// as the reference's restart reopens FMOD (`Sound_GameSystem_RestartSoundSystem`,
+    /// `0x985d30`); the next [`Self::service`] opens it.
     pub(super) fn select(&mut self, device: Option<String>) -> Vec<Event> {
         self.settings.device = device;
         let mut events = Vec::new();

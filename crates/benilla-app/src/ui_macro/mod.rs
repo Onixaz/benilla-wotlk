@@ -1,7 +1,7 @@
 //! The app half of `benilla_ui::script::macros`: the icon chooser's catalog, the two
 //! `macros-cache.txt` files (account-data slots 4 and 5, [`crate::account_data`]), the runner, and
 //! the bound spell the action bar reads. The files load with the in-game UI and are written at its
-//! shutdown when a macro was created, edited or deleted (`CGUIMacros::SaveMacros` `0x566a30`).
+//! shutdown when a macro was created, edited or deleted (`0x566a30`).
 
 use bevy::prelude::*;
 
@@ -15,8 +15,7 @@ mod store;
 #[cfg(test)]
 mod tests;
 
-/// The macro files' state: whether this VM has loaded them, and whether a save is owed
-/// (`m_saveMacros`).
+/// The macro files' state: whether this VM has loaded them, and whether a save is owed.
 #[derive(Resource, Default)]
 pub(crate) struct MacroFiles {
     /// Loaded into this VM: a relog meets a fresh VM with an empty macro table.
@@ -25,8 +24,8 @@ pub(crate) struct MacroFiles {
 }
 
 /// Macro index to its bound spell, the reference's `[rec+0x564]`, which an action-bar macro slot's
-/// state reads through. A missing entry names no macro, which the reference greys, unlike a macro
-/// that casts nothing.
+/// state reads through. A missing entry names no macro, which the bar greys, unlike a macro that
+/// casts nothing.
 #[derive(Resource, Default)]
 pub(crate) struct MacroBoundSpells(pub(crate) std::collections::HashMap<u32, BoundSpell>);
 
@@ -37,7 +36,7 @@ pub(crate) use run::BoundSpell;
 #[derive(Resource, Default)]
 struct MacroIconList(std::sync::Arc<std::sync::OnceLock<Vec<String>>>);
 
-/// The guild bank tab chooser's `INV_` list, built beside it (`MacroIcons_Build 0x565840`).
+/// The guild bank tab chooser's `INV_` list, built beside it by the macro icon build (`0x565840`).
 #[derive(Resource, Default)]
 struct MacroItemIconList(std::sync::Arc<std::sync::OnceLock<Vec<String>>>);
 
@@ -144,7 +143,7 @@ pub(crate) fn identity(roster: &crate::char_select::Roster) -> Option<(String, S
 }
 
 /// Seed the engine's macro table from the two slots once per VM, when both have heard from the
-/// server (`LoadMacrosCallback` `0x567c10` runs from the deferred load).
+/// server (the reference's macro read `0x567c10` runs from the deferred load).
 fn load_macros(
     script: Option<NonSendMut<UiScript>>,
     data: Res<crate::account_data::AccountData>,
@@ -185,7 +184,7 @@ fn note_dirty_macros(script: Option<NonSendMut<UiScript>>, mut files: ResMut<Mac
     script.fire_event("UPDATE_MACROS", vec![]);
 }
 
-/// `CGUIMacros::SaveMacros` (`0x566a30`) at the UI shutdown: both files, if anything moved.
+/// The macro save (`0x566a30`) at the UI shutdown: both files, if anything moved.
 pub(crate) fn save_to_account_data(world: &mut World) {
     use crate::account_data::store::{MACROS_ACCOUNT, MACROS_CHARACTER};
     let dirty = world.get_resource::<MacroFiles>().is_some_and(|f| f.dirty)
@@ -277,8 +276,8 @@ fn rebind_macro_spells(
     }
 }
 
-/// The event each macro line is fired as: id `0x188`, whose registry slot is written once, with the
-/// string.
+/// The event each macro line is fired as: id `0x188`, whose registry slot is written once, with
+/// this name.
 const EXECUTE_CHAT_LINE: &str = "EXECUTE_CHAT_LINE";
 
 /// Run a macro by its 1-based index; returns whether anything ran. Like the reference's runner

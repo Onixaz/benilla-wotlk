@@ -210,7 +210,7 @@ pub struct ItemSpellEntry {
 
 /// An item's first ON_USE spell block. The server substitutes the spell's own cooldowns for unset
 /// ones (`ItemHandler.cpp:354-380`), but a `-1` can still arrive; negative means the spell's
-/// `Spell.dbc` value, as the reference's `StartCooldown` reads it.
+/// `Spell.dbc` value, as the reference's cooldown start reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemUseSpell {
     pub spell_id: u32,
@@ -475,7 +475,7 @@ pub const SLOT_KEYRING_FIRST: u8 = 86;
 pub const KEYRING_SLOTS: u8 = 32;
 
 /// The `SpellCastTargets` block of a `CMSG_USE_ITEM`, the same block a `CMSG_CAST_SPELL` carries:
-/// the reference's `SendCast` only picks the opcode.
+/// the reference's cast send only picks the opcode.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum UseItemTarget {
     /// Mask 0 (`TARGET_FLAG_SELF`): an ordinary consumable; the server resolves the target.
@@ -485,20 +485,20 @@ pub enum UseItemTarget {
     Unit(u64),
     /// `TARGET_FLAG_GAMEOBJECT` and a packed guid: a key used on a lock, which the server honours
     /// only from an item cast (`Spell.cpp:7892`). The mask is `0x0800` alone; the reference's
-    /// `BindTarget` never writes `TARGET_FLAG_LOCKED`.
+    /// target binding never writes `TARGET_FLAG_LOCKED`.
     Object(u64),
     /// `TARGET_FLAG_DEST_LOCATION` and three `f32` coords: a thrown item, dynamite or a grenade.
     Dest([f32; 3]),
     /// `TARGET_FLAG_ITEM` and a packed guid: a poison, oil or stone applied to a clicked item.
     Item(u64),
-    /// `TARGET_FLAG_SOURCE_LOCATION` and three `f32` coords (`BindLocation`); only items carrying
-    /// spell 265, such as Martin Fury, use it. vmangos reads it before the dest.
+    /// `TARGET_FLAG_SOURCE_LOCATION` and three `f32` coords (the location binding); only items
+    /// carrying spell 265, such as Martin Fury, use it. vmangos reads it before the dest.
     Source([f32; 3]),
     /// A corpse bit and the corpse's packed guid: Goblin Jumper Cables' Defibrillate
     /// (`Targets 0x8000`) on a released player's corpse.
     Corpse(super::spells::CorpseTarget, u64),
     /// `TARGET_FLAG_GLYPH_SLOT` and no payload; the 0-based socket rides in the glyph index
-    /// (`Spell_C_HandleGlyphClick` `0x80c57b`): a glyph inscribed from the bags.
+    /// (`0x80c57b`): a glyph inscribed from the bags.
     Glyph(u32),
 }
 

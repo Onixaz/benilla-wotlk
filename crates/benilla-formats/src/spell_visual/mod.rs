@@ -152,7 +152,7 @@ pub mod char_proc_type {
     /// alone, never a product over the list, ramped over 1000 ms. Stealth's 0.3 and the ghost's 0.5
     /// are this proc.
     pub const ALPHA: i32 = 14;
-    /// Body animation rate, the freeze: `SetBoneAnimSpeed` sets `params[0]` as the rate of the
+    /// Body animation rate, the freeze: the bone-speed setter sets `params[0]` as the rate of the
     /// mount's bone 0, the body's key bone 4 when it has one and the body's bone 0, re-basing so
     /// the current frame holds. Arming an animation never resets it, so rate 0 holds the pose for
     /// the aura's life; the old rates return when the node expires. Of the 15 kits a live spell
@@ -161,7 +161,7 @@ pub mod char_proc_type {
     pub const ANIM_RATE: i32 = 11;
 
     /// Weapon swing trail, the ribbon between a weapon's `$WTB` and `$WTT` markers. It latches on
-    /// the unit: the next `PlayAnimation` hands it to both weapon-hand trails and clears it, so it
+    /// the unit: the next animation start hands it to both weapon-hand trails and clears it, so it
     /// fires once per arm. For 21 of the 34 kits carrying it (Heroic Strike's 324, Hamstring's
     /// 3050, Sunder's 557) it is the whole visual: they fill no effect slot.
     pub const WEAPON_TRAIL: i32 = 8;

@@ -1,7 +1,7 @@
 //! Global-sequence bone channels: loops on a free clock (the eyelid blink, fidget pulses, an
 //! effect's twinkles), which the per-sequence reader drops. The reference's cursor is
 //! `(sceneClock − attachTime) % duration`, one ms clock per scene (`[scene+0xc]`) snapshotted once
-//! per model instance at attach (`CM2Model+0x68`); a spell effect is a fresh instance per play (no
+//! per model instance at attach (model `+0x68`); a spell effect is a fresh instance per play (no
 //! pooling).
 
 use bevy::prelude::*;
@@ -21,7 +21,7 @@ pub struct GlobalSeqDrive {
     /// The scene clock at attach (secs), stamped once, like the reference's `+0x68`.
     anchor: Option<f64>,
     /// The owning scene's clock (secs) when it is not the world's: the reference reads
-    /// `[[model+0x2c]+0xc]`, and a `<Model>` widget owns a private scene (`CSimpleModel+0x314`)
+    /// `[[model+0x2c]+0xc]`, and a `<Model>` widget owns a private scene (widget `+0x314`)
     /// advanced only by its `OnUpdate`, so a hidden pane's clock stops.
     clock: Option<f64>,
     /// Skip the writes: the doodad lane pauses culled instances, as the reference evaluates a model

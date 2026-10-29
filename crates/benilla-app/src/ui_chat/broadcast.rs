@@ -10,8 +10,7 @@
 //! joins WorldDefense and in practice only LocalDefense, in the broadcast's zone, hears them.
 //!
 //! `SMSG_SERVER_MESSAGE` is one `CHAT_MSG_SYSTEM` line. `SMSG_CHAT_RESTRICTED` carries nothing and
-//! is `DisplayError` 451, `ERR_CHAT_RESTRICTED`, a chat row, not a red toast; vmangos never sends
-//! it.
+//! is error 451, `ERR_CHAT_RESTRICTED`, a chat row, not a red toast; vmangos never sends it.
 
 use bevy::prelude::*;
 
@@ -60,8 +59,8 @@ pub(super) fn load_server_messages(mut commands: Commands, assets: Option<Res<Wo
 }
 
 /// The joined channels a defense broadcast about `subject_zone` reaches, in slot order. With
-/// `player_zone` unknown only non-`ZONE_DEP` rows pass, as with the reference's unset. Every slot
-/// counts whatever its state; the reference takes only state 0 (`[e+0x9c]`), skipping pending,
+/// `player_zone` unknown only non-`ZONE_DEP` rows pass, as with the reference's unset zone. Every
+/// slot counts whatever its state; the reference takes only state 0 (`[e+0x9c]`), skipping pending,
 /// renamed and suspended slots.
 pub(crate) fn defense_targets(
     channels: &ChannelState,
@@ -110,7 +109,8 @@ pub(super) fn feed_broadcasts(
     }
     // The format string lives in the VM, so the queue waits for one; it clears at session end.
     let Some(script) = script else { return };
-    // The player's zone, the reference's; `top_zone` is the single-hop parent on 5875 data.
+    // The player's zone, as the reference keeps it; `top_zone` is the single-hop parent on 5875
+    // data.
     let player_zone = areas
         .as_ref()
         .and_then(|a| world.area().and_then(|leaf| a.0.top_zone(leaf)));
@@ -143,7 +143,7 @@ pub(super) fn feed_broadcasts(
             Broadcast::ChatRestricted => {
                 // Its row is a chat row (tested below), so it is written as a system line here.
                 // Deviation: a missing global prints nothing, where the reference prints an empty
-                // line, because benilla's other `DisplayError` routes do the same.
+                // line, because benilla's other error-display routes do the same.
                 if let Some(text) = super::combat::global_string(&script, "ERR_CHAT_RESTRICTED") {
                     log.push_event(ChatEvent::text_only(ChatEventKind::System, text));
                 }

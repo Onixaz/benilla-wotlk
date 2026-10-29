@@ -1,5 +1,5 @@
 //! The `MessageFrame` methods over [`MessageFrameState`](crate::widget::MessageFrameState):
-//! `CSimpleMessageFrame`, `UIErrorsFrame`'s class and what `CreateFrame("MessageFrame")` makes. Its
+//! `UIErrorsFrame`'s class and what `CreateFrame("MessageFrame")` makes. Its
 //! `AddMessage(text [, r, g, b [, a]])` takes a real alpha and reads nothing after it, where the
 //! scrolling class's takes an id there and forces alpha opaque. `SetInsertMode` and `GetInsertMode`
 //! exist on this class only.

@@ -86,8 +86,8 @@ impl PendingItemOps {
         self.clear_by_guid(item_guid)
     }
 
-    /// `UnlockItem`: clears the entries naming `item_guid`; a non-item guid or 0 clears nothing, as
-    /// the reference's resolve-as-item finds nothing. The loot close calls it: an opened lockbox
+    /// The item unlock: clears the entries naming `item_guid`; a non-item guid or 0 clears nothing,
+    /// as the reference's resolve-as-item finds nothing. The loot close calls it: an opened lockbox
     /// closed with loot left never changes its slot. Returns the unlocked slots.
     pub(crate) fn clear_by_guid(&mut self, item_guid: u64) -> Vec<(i64, u32)> {
         let mut unlocked = Vec::new();

@@ -211,7 +211,7 @@ fn cancel_combat(edges: &mut MessageWriter<SwingRefusalEdge>) {
 }
 
 /// `SMSG_FEIGN_DEATH_RESISTED`: one red "Resisted" line and nothing else. The reference's handler
-/// is a bare `DisplayError(421)`, with no latch and no state. vmangos sends it together with
+/// is a bare error display of 421, with no latch and no state. vmangos sends it together with
 /// `SMSG_CANCEL_COMBAT` (`Unit.cpp:9469-9470`).
 fn feign_death_resisted(errors: &mut UiErrorKeys) {
     debug!("net: feign death resisted");
@@ -281,9 +281,9 @@ fn attacker_state(
         seq,
     };
     if let Some(&e) = index.0.get(&s.attacker) {
-        // A resolved attacker draws melee (`SetSheatheState(1)`) before any hit-info handling, even
-        // when `HitInfo & 0x10000` suppresses the swing's animation; the per-animation reconcile
-        // never forces melee over a drawn bow.
+        // A resolved attacker draws melee (sheath state 1) before any hit-info handling, even when
+        // `HitInfo & 0x10000` suppresses the swing's animation; the per-animation reconcile never
+        // forces melee over a drawn bow.
         sheaths.write(SheathRequest {
             entity: e,
             state: 1,

@@ -134,7 +134,7 @@ pub struct UnitCombatStats {
     pub expertise: [u32; 2],
     /// The 25 combat ratings (`PLAYER_FIELD_COMBAT_RATING_1`).
     pub combat_ratings: [i32; 25],
-    /// Each rating's bonus percent, `CGPlayer_C::GetCombatRatingPct` (`0x6de410`).
+    /// Each rating's bonus percent, the player's combat-rating percent (`0x6de410`).
     pub combat_rating_bonus: [f32; 25],
     /// Mana regen per second out of casting and while casting, with no mana `None`.
     pub mana_regen: Option<[f32; 2]>,
@@ -151,9 +151,8 @@ pub struct UnitCombatStats {
     pub mana_regen_from_spirit: f32,
     /// `UNIT_FIELD_MAXHEALTHMODIFIER`, the multiplier less one.
     pub max_health_modifier: f32,
-    /// `CGUnit_C::GetHealthModifier` (`0x71b8d0`) and `GetPowerModifier` (`0x71b960`): 1.0 for a
-    /// hunter's pet, else the creature record's multipliers; 0.0 for the player, whose entry
-    /// names no record.
+    /// The unit's health and power modifiers (`0x71b8d0`, `0x71b960`): 1.0 for a hunter's pet, else
+    /// the creature record's multipliers; 0.0 for the player, whose entry names no record.
     pub health_modifier: f32,
     pub power_modifier: f32,
     /// `PLAYER_PET_SPELL_POWER`, the player's only (`GetPetSpellBonusDamage` `0x60e410`).
@@ -290,7 +289,7 @@ pub(super) fn slot_id_by_name(name: &str) -> Option<i64> {
 }
 
 /// The GlobalStrings key naming equipment slot `slot0` (0..18), the button name upper-cased
-/// (`GetInventorySlotToken`, `0x622dd0`'s missing lines).
+/// (`0x622dd0`'s missing lines).
 pub(super) fn slot_token(slot0: usize) -> Option<&'static str> {
     const TOKENS: [&str; 19] = [
         "HEADSLOT",
@@ -499,8 +498,8 @@ fn skill_clamped((base, modifier): (i32, i32)) -> (i64, i64) {
     (base, if modifier + base < 0 { -base } else { modifier })
 }
 
-/// A non-player's `UnitDefense` and `UnitAttackBothHands` answer: `CGUnit_C`'s vtable bodies return
-/// level * 5 with a 0 modifier; a creature has no skill block.
+/// A non-player's `UnitDefense` and `UnitAttackBothHands` answer: the unit class's vtable bodies
+/// return level * 5 with a 0 modifier; a creature has no skill block.
 fn cgunit_skill(model: &Model, token: &str) -> i64 {
     model.unit(token).map_or(0, |u| i64::from(u.level)) * 5
 }
@@ -784,7 +783,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // UnitAttackBothHands(unit) → (mainBase, mainMod, offBase, offMod): the reference calls
     // `[vtbl+0xb0]` for hand 0 then hand 1. Stock reads only the first pair
-    // (`PaperDollFrame.lua:398-399`). A pet's `CGUnit_C` body ignores the hand, so both pairs are
+    // (`PaperDollFrame.lua:398-399`). A pet's unit-class body ignores the hand, so both pairs are
     // `(level * 5, 0)`.
     g.set(
         "UnitAttackBothHands",
@@ -825,8 +824,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // UnitDefense(unit) → (base, modifier); stock splits the modifier's sign itself
     // (`PaperDollFrame.lua:259-271`). The gate is SELF or `UNIT_FIELD_SUMMONEDBY` = us, then
-    // `[vtbl+0xac]`: `CGPlayer_C` reads the Defense skill, `CGUnit_C` answers level * 5 and 0. Any
-    // other token gets the gate's zeros.
+    // `[vtbl+0xac]`: the player class reads the Defense skill, the unit class answers level * 5 and
+    // 0. Any other token gets the gate's zeros.
     g.set(
         "UnitDefense",
         lua.create_function(|lua, token: Option<String>| {
@@ -926,8 +925,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The reference's verbatim strings: the reference when arg 1 is neither number nor string, when
-    // arg 2 is not a number or not a whitelisted slot.
+    // The reference's verbatim strings: the usage line when arg 1 is neither number nor string, the
+    // slot error when arg 2 is not a number or not a whitelisted slot.
     const USAGE_GET_INVENTORY_ITEM_COUNT: &str = "Usage: GetInventoryItemCount(unit, slot)";
     const INVALID_SLOT_GET_INVENTORY_ITEM_COUNT: &str =
         "Invalid inventory slot in GetInventoryItemCount";

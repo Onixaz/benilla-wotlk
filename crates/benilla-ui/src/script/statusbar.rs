@@ -1,7 +1,7 @@
-//! The `StatusBar` methods (`CSimpleStatusBar`, `LoadXML`). The fill is a left-anchored crop, the
-//! art sliced and never squeezed: `SetValue` sets the UV's `u1` to the fill fraction and the right
-//! edge with it, applied at extract. Only StatusBar frames answer these, so a duck-typing addon
-//! sees nil on every other kind.
+//! The `StatusBar` methods. The fill is a left-anchored crop, the art sliced and never squeezed:
+//! `SetValue` sets the UV's `u1` to the fill fraction and the right edge with it, applied at
+//! extract. Only StatusBar frames answer these, so a duck-typing addon sees nil on every other
+//! kind.
 
 use mlua::{Lua, Table, Value};
 
@@ -95,8 +95,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "SetMinMaxValues",
         lua.create_function(|lua, (this, min, max): (Table, f32, f32)| {
-            // A reversed pair is swapped, as `LoadXML` does; the held value re-clamps, and a move
-            // fires `OnValueChanged`. A new range fires `OnMinMaxChanged` first (`0x961859`).
+            // A reversed pair is swapped, as its XML load does; the held value re-clamps, and a
+            // move fires `OnValueChanged`. A new range fires `OnMinMaxChanged` first (`0x961859`).
             let (changed, range) = with_bar(lua, &this, |sb| {
                 let before = (sb.min, sb.max);
                 (sb.min, sb.max) = if min <= max { (min, max) } else { (max, min) };

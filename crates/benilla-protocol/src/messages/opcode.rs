@@ -186,8 +186,8 @@ pub const SMSG_TIME_SYNC_REQ: u16 = 0x0390; // 912
 /// (`0x6e9bb0`).
 pub const CMSG_TIME_SYNC_RESP: u16 = 0x0391; // 913
 /// Another mover's clock skip, relayed: packed guid, `u32` lag (`MovementHandler.cpp:1005-1011`).
-/// The reference adds it to that unit's last wire timestamp (`CMovement+0xac`); if dropped, the
-/// unit's next packet lands `lag` ms late.
+/// The reference adds it to that unit's last wire timestamp (movement object `+0xac`); if dropped,
+/// the unit's next packet lands `lag` ms late.
 pub const MSG_MOVE_TIME_SKIPPED: u16 = 0x0319; // 793
 pub const SMSG_ATTACKSTART: u16 = 0x0143; // 323
 pub const SMSG_ATTACKSTOP: u16 = 0x0144; // 324
@@ -310,7 +310,7 @@ pub const CMSG_PET_NAME_QUERY: u16 = 0x0052; // 82
 /// A pet bar press: the slot's packed word and a target guid, dispatched on its type byte.
 pub const CMSG_PET_ACTION: u16 = 0x0175; // 373
 /// A cast whose caster is not the active player, the pet's client-targeted or possessed casts
-/// (`Spell_C::SendPendingCast`, `0x80b315`).
+/// (the pending-cast send, `0x80b315`).
 pub const CMSG_PET_CAST_SPELL: u16 = 0x01F0; // 496
 /// A pet bar drag: one or two `(position, packed)` pairs, told apart by body size alone.
 pub const CMSG_PET_SET_ACTION: u16 = 0x0174; // 372
@@ -432,9 +432,9 @@ pub const CMSG_CAST_SPELL: u16 = 0x012E; // 302
 /// before the local cancel.
 pub const CMSG_CANCEL_CAST: u16 = 0x012F; // 303
 pub const CMSG_CANCEL_AURA: u16 = 0x0136; // 310
-/// Get off the mount (`CGUnit_C::Dismount 0x7412e0`, `0x741325`): no body.
+/// Get off the mount (the unit's dismount `0x7412e0`, `0x741325`): no body.
 pub const CMSG_CANCEL_MOUNT_AURA: u16 = 0x0375; // 885
-/// Send the summoned companion home (`Spell_C_CancelAura` `0x80303d`): the critter's guid.
+/// Send the summoned companion home (the aura cancel, `0x80303d`): the critter's guid.
 pub const CMSG_DISMISS_CRITTER: u16 = 0x048D; // 1165
 /// Empty a glyph socket (`RemoveGlyphFromSocket` `0x5b76ea`): the 0-based socket as a `u32`.
 pub const CMSG_REMOVE_GLYPH: u16 = 0x048A; // 1162
@@ -735,9 +735,9 @@ pub const SMSG_CRITERIA_DELETED: u16 = 0x049E;
 pub const SMSG_CLIENTCACHE_VERSION: u16 = 0x04AB;
 /// The server's time per account-data slot (`0x6b94c0`); 1.12's `SMSG_ACCOUNT_DATA_MD5` number.
 pub const SMSG_ACCOUNT_DATA_TIMES: u16 = 0x0209;
-/// Ask for one account-data slot's bytes (`DownloadAccountData` `0x6b92c0`).
+/// Ask for one account-data slot's bytes (the download, `0x6b92c0`).
 pub const CMSG_REQUEST_ACCOUNT_DATA: u16 = 0x020A;
-/// One account-data slot's bytes up (`UploadAccountData` `0x6b9100`).
+/// One account-data slot's bytes up (the upload, `0x6b9100`).
 pub const CMSG_UPDATE_ACCOUNT_DATA: u16 = 0x020B;
 /// One account-data slot's bytes down (`0x6b9730`).
 pub const SMSG_UPDATE_ACCOUNT_DATA: u16 = 0x020C;
@@ -755,7 +755,7 @@ pub const SMSG_TALENTS_INFO: u16 = 0x04C0;
 pub const SMSG_EQUIPMENT_SET_LIST: u16 = 0x04BC;
 /// 3.3.5a only: a set swap's verdict, one `u8` (`0x5af710`).
 pub const SMSG_EQUIPMENT_SET_USE_RESULT: u16 = 0x04D6;
-/// 3.3.5a only: save a set (`CGEquipmentManager::SaveSet` `0x5ade50`).
+/// 3.3.5a only: save a set (the equipment manager's save, `0x5ade50`).
 pub const CMSG_EQUIPMENT_SET_SAVE: u16 = 0x04BD;
 /// 3.3.5a only: delete a set by its guid (`0x5ae260`).
 pub const CMSG_EQUIPMENT_SET_DELETE: u16 = 0x013E;
@@ -839,9 +839,9 @@ pub const SMSG_BATTLEFIELD_MGR_EJECTED: u16 = 0x04E6; // 1254
 pub const CMSG_BATTLEFIELD_MGR_EXIT_REQUEST: u16 = 0x04E7; // 1255
 pub const SMSG_BATTLEFIELD_MGR_STATE_CHANGE: u16 = 0x04E8; // 1256
 
-/// The arena-team family (`CGArenaTeamInfo`, `0x5a40e0`, and the player's `0x6cc910`..).
+/// The arena-team family (the arena-team info, `0x5a40e0`, and the player's `0x6cc910`..).
 pub const SMSG_ARENA_TEAM_COMMAND_RESULT: u16 = 0x0349; // 841
-/// The team cache's ask (`DBCache<ArenaTeamCache>`): `u32 teamId`.
+/// The team cache's ask: `u32 teamId`.
 pub const CMSG_ARENA_TEAM_QUERY: u16 = 0x034B; // 843
 pub const SMSG_ARENA_TEAM_QUERY_RESPONSE: u16 = 0x034C; // 844
 /// `ArenaTeamRoster(team)` (`0x5a3600`): `u32 teamId`, 10 s apart per team.
@@ -1145,8 +1145,8 @@ pub const SMSG_START_MIRROR_TIMER: u16 = 0x01D9; // 473
 pub const SMSG_PAUSE_MIRROR_TIMER: u16 = 0x01DA; // 474
 pub const SMSG_STOP_MIRROR_TIMER: u16 = 0x01DB; // 475
 
-// Mail (`CGMailInfo`): a mailbox opens client-side or by `SMSG_SHOW_MAILBOX`; every CMSG leads
-// with the mailbox guid.
+// Mail: a mailbox opens client-side or by `SMSG_SHOW_MAILBOX`; every CMSG leads with the mailbox
+// guid.
 pub const CMSG_SEND_MAIL: u16 = 0x0238; // 568
 pub const SMSG_SEND_MAIL_RESULT: u16 = 0x0239; // 569
 pub const CMSG_GET_MAIL_LIST: u16 = 0x023A; // 570
@@ -1167,7 +1167,7 @@ pub const MSG_QUERY_NEXT_MAIL_TIME: u16 = 0x0284; // 644
 /// A mail arrived: an `f32` delay until it is delivered.
 pub const SMSG_RECEIVED_MAIL: u16 = 0x0285; // 645
 
-// The auction house (`CGAuctionHouse`): every CMSG leads with the auctioneer guid.
+// The auction house: every CMSG leads with the auctioneer guid.
 /// Both ways: we send the auctioneer guid; the reply adds `u32 houseId` and `u8 enabled`.
 pub const MSG_AUCTION_HELLO: u16 = 0x0255; // 597
 pub const CMSG_AUCTION_SELL_ITEM: u16 = 0x0256; // 598
@@ -1218,10 +1218,10 @@ pub const SMSG_UPDATE_LAST_INSTANCE: u16 = 0x0320; // 800
 /// Whether we hold any permanent bind: `u32` flag, half of `CanShowResetInstances()`.
 pub const SMSG_UPDATE_INSTANCE_OWNERSHIP: u16 = 0x032B; // 811
 
-// ── The dungeon finder (`CGLookingForGroup`, handlers set by `InitializeGame 0x55d440`) ──
+// ── The dungeon finder (handlers set at game start, `0x55d440`) ──
 
-/// The world-enter status request (`RequestLFGStatus 0x555920`): empty; answered by
-/// `SMSG_LFG_UPDATE_PLAYER` and `SMSG_LFG_UPDATE_PARTY`.
+/// The world-enter status request (`0x555920`): empty; answered by `SMSG_LFG_UPDATE_PLAYER` and
+/// `SMSG_LFG_UPDATE_PARTY`.
 pub const CMSG_LFG_GET_STATUS: u16 = 0x0296; // 662
 /// `JoinLFG` (`0x5572d0`): see [`super::lfg_join`].
 pub const CMSG_LFG_JOIN: u16 = 0x035C; // 860
@@ -1265,8 +1265,8 @@ pub const SMSG_OPEN_LFG_DUNGEON_FINDER: u16 = 0x0515; // 1301
 /// The map's difficulty on entry: `u32` difficulty, `u32` dynamic difficulty (`0x526530`).
 pub const SMSG_INSTANCE_DIFFICULTY: u16 = 0x033B; // 827
 
-// The calendar (`CGCalendar`, `0x5b7820`-`0x5c43b0`): every server message routes through
-// `PH_CALENDAR_GROUP` (`0x5c3fe0`) except the command result (`0x6cd380`).
+// The calendar (`0x5b7820`-`0x5c43b0`): every server message routes through the calendar packet
+// group (`0x5c3fe0`) except the command result (`0x6cd380`).
 pub const CMSG_CALENDAR_GET_CALENDAR: u16 = 0x0429; // 1065
 pub const CMSG_CALENDAR_GET_EVENT: u16 = 0x042A; // 1066
 pub const CMSG_CALENDAR_GUILD_FILTER: u16 = 0x042B; // 1067
@@ -1305,14 +1305,14 @@ pub const SMSG_CALENDAR_RAID_LOCKOUT_UPDATED: u16 = 0x0471; // 1137
 pub const CMSG_CALENDAR_EVENT_SIGN_UP: u16 = 0x04BA; // 1210
 pub const SMSG_CALENDAR_CLEAR_PENDING_ACTION: u16 = 0x04BB; // 1211
 
-/// The group outside a battleground, sent while in one (`Packet_SMSG_REAL_GROUP_UPDATE` `0x6cc300`).
+/// The group outside a battleground, sent while in one (`0x6cc300`).
 pub const SMSG_REAL_GROUP_UPDATE: u16 = 0x0397; // 919
 
-/// A unit's power, set outright (`Packet_SMSG_POWER_UPDATE` `0x7236c0`).
+/// A unit's power, set outright (`0x7236c0`).
 pub const SMSG_POWER_UPDATE: u16 = 0x0480; // 1152
-/// Our combo points and the unit they sit on (`CGGameUI::MessageHandler` `0x526530`).
+/// Our combo points and the unit they sit on (the game UI's message handler, `0x526530`).
 pub const SMSG_UPDATE_COMBO_POINTS: u16 = 0x039D; // 925
-/// The pet's combo points (`Packet_SMSG_PET_UPDATE_COMBO_POINTS` `0x5d36a0`).
+/// The pet's combo points (`0x5d36a0`).
 pub const SMSG_PET_UPDATE_COMBO_POINTS: u16 = 0x0492; // 1170
 /// One spell's cooldown moved by a signed delay (`0x804010`'s `0x491` arm).
 pub const SMSG_MODIFY_COOLDOWN: u16 = 0x0491; // 1169
@@ -1326,9 +1326,9 @@ pub const SMSG_THREAT_UPDATE: u16 = 0x0483; // 1155
 pub const SMSG_THREAT_REMOVE: u16 = 0x0484; // 1156
 /// A unit's whole threat list dropped (`0x734b00`).
 pub const SMSG_THREAT_CLEAR: u16 = 0x0485; // 1157
-/// A unit dismounts now, ahead of its descriptor (`Packet_SMSG_DISMOUNT` `0x741a40`).
+/// A unit dismounts now, ahead of its descriptor (`0x741a40`).
 pub const SMSG_DISMOUNT: u16 = 0x03AC; // 940
-/// Ask for a clone's caster look (`CGUnit_C::RequestMirrorImageData` `0x716f10`).
+/// Ask for a clone's caster look (the unit's mirror-image request, `0x716f10`).
 pub const CMSG_GET_MIRRORIMAGE_DATA: u16 = 0x0401; // 1025
 /// A clone's caster look, the answer to [`CMSG_GET_MIRRORIMAGE_DATA`] (`0x7324b0`).
 pub const SMSG_MIRRORIMAGE_DATA: u16 = 0x0402; // 1026
@@ -1338,5 +1338,5 @@ pub const CMSG_ALTER_APPEARANCE: u16 = 0x0426; // 1062
 pub const SMSG_ENABLE_BARBER_SHOP: u16 = 0x0427; // 1063
 /// The answer to [`CMSG_ALTER_APPEARANCE`] (`0x52e5b0`).
 pub const SMSG_BARBER_SHOP_RESULT: u16 = 0x0428; // 1064
-/// The faction reactions the server forces (`Packet_SMSG_SET_FORCED_REACTIONS` `0x5d15d0`).
+/// The faction reactions the server forces (`0x5d15d0`).
 pub const SMSG_SET_FORCED_REACTIONS: u16 = 0x02A5; // 677

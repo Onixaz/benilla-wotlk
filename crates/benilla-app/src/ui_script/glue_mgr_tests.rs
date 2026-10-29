@@ -33,7 +33,7 @@ fn failed(refusal: Option<LoginRefusal>, terminal: bool) -> LoginFailedMessage {
     }
 }
 
-/// The reference's arms, after the handlers' clamp past `0x0f`: 0x0E is a success, and a proof's
+/// The logon result's arms, after the handlers' clamp past `0x0f`: 0x0E is a success, and a proof's
 /// 0x0A reports nothing.
 #[test]
 fn a_realmd_refusal_maps_through_the_references_table() {
@@ -392,8 +392,8 @@ fn the_character_list_query_loads_the_roster_on_its_reply() {
     }
 }
 
-/// A reply completes the character list query as `SetStatus` does: a reply that lands between the
-/// Cancel and the tick that takes it turns the cancel into a load, as the reference's does. One
+/// A reply completes the character list query as the status set does: a reply that lands between
+/// the Cancel and the tick that takes it turns the cancel into a load, as the reference's does. One
 /// that comes once the query is over (the realm list the cancel raised), or to an operation that is
 /// not the query's (a realm change's connect), or from another link, completes nothing.
 #[test]
@@ -419,7 +419,7 @@ fn a_late_roster_reply_is_dropped_unless_it_lands_before_the_tick() {
         m.outbox
     );
 
-    // A reply in the frame of the Cancel, before the tick takes it: `SetStatus` overwrites the
+    // A reply in the frame of the Cancel, before the tick takes it: the status set overwrites the
     // cancelled status, so the query succeeds and the roster loads (after the teardown the click
     // made).
     let mut m = accepted();
@@ -1764,7 +1764,7 @@ fn the_roster_names_come_from_the_dbc_rows() {
 
 /// The sequence `GlueDialog`'s SUGGEST_REALM and REALM_IS_FULL `OnAccept` run: the character
 /// screen is put up, which asks for its list, and `ChangeRealm` follows in the same Lua call. The
-/// reference sends that `CMSG_CHAR_ENUM` on the old link at once and `ConnectToRealm` then only
+/// reference sends that `CMSG_CHAR_ENUM` on the old link at once and its realm connect then only
 /// drops the link, so the old session sees that ask whichever of the two requests the IO thread
 /// meets first, its reply completes nothing, and the new realm's session is asked once by the
 /// screen's show after the connect and loads its own roster.
@@ -1953,7 +1953,7 @@ fn a_fetched_alert_cancels_the_logon_and_shows_the_alert_frame() {
         shown(app, "ServerAlertFrame")
     });
 
-    // After the prefix, short of the last byte (`SStrCopy` of the whole body).
+    // After the prefix, short of the last byte (a bounded string copy of the whole body).
     let want = &body[b"SERVERALERT:".len()..body.len() - 1];
     assert_eq!(vm(&app).eval::<String>("return ALERT_ARG").unwrap(), want);
     assert_eq!(abandon.load(Ordering::SeqCst), 1, "the logon was abandoned");

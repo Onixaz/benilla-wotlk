@@ -1,5 +1,5 @@
-//! The chat lines 3.3.5a still prints beside its combat log (`CGChat::Log*`), queued for their
-//! names; the wording law is [`crate::ui_chat::combat`].
+//! The chat lines 3.3.5a still prints beside its combat log, queued for their names; the wording
+//! law is [`crate::ui_chat::combat`].
 
 use crate::net::Reputations;
 use crate::ui_chat::combat::{self, Fills, Named, PendingCombat};
@@ -28,7 +28,7 @@ fn line(
     }
 }
 
-/// `LogTradeSkillCreate` (`0x50bd90`): the created item, `CHAT_MSG_TRADESKILLS`.
+/// The tradeskill-create line (`0x50bd90`): the created item, `CHAT_MSG_TRADESKILLS`.
 pub(crate) fn tradeskill_create(log: &mut ChatLog, me: Option<u64>, caster: u64, item: u32) {
     log.push_combat(line(
         ChatEventKind::Tradeskills,
@@ -40,7 +40,7 @@ pub(crate) fn tradeskill_create(log: &mut ChatLog, me: Option<u64>, caster: u64,
     ));
 }
 
-/// `LogFeedPet` (`0x50baf0`): the food, `CHAT_MSG_PET_INFO`.
+/// The feed-pet line (`0x50baf0`): the food, `CHAT_MSG_PET_INFO`.
 pub(crate) fn feed_pet(log: &mut ChatLog, me: Option<u64>, caster: u64, item: u32) {
     log.push_combat(line(
         ChatEventKind::PetInfo,
@@ -52,7 +52,7 @@ pub(crate) fn feed_pet(log: &mut ChatLog, me: Option<u64>, caster: u64, item: u3
     ));
 }
 
-/// `LogDismissPet` (`0x50bcc0`): the pet, `CHAT_MSG_PET_INFO`.
+/// The dismiss-pet line (`0x50bcc0`): the pet, `CHAT_MSG_PET_INFO`.
 pub(crate) fn dismiss_pet(log: &mut ChatLog, me: Option<u64>, caster: u64, pet: u64) {
     log.push_combat(line(
         ChatEventKind::PetInfo,
@@ -64,7 +64,7 @@ pub(crate) fn dismiss_pet(log: &mut ChatLog, me: Option<u64>, caster: u64, pet: 
     ));
 }
 
-/// `LogPetHappinessDecrease` (`0x50bbf0`), the happiness drain in place of its entry: the pet and
+/// The pet-happiness line (`0x50bbf0`), the happiness drain in place of its entry: the pet and
 /// the shown amount, `CHAT_MSG_PET_INFO`.
 pub(crate) fn happiness_drain(
     log: &mut ChatLog,
@@ -94,7 +94,7 @@ pub(crate) enum Opened {
     GameObject(String),
 }
 
-/// `LogOpenLock` (`0x50dde0`, `0x50deb0`): the spell and what it opened, `CHAT_MSG_OPENING`.
+/// The open-lock line (`0x50dde0`, `0x50deb0`): the spell and what it opened, `CHAT_MSG_OPENING`.
 pub(crate) fn open_lock(
     log: &mut ChatLog,
     me: Option<u64>,

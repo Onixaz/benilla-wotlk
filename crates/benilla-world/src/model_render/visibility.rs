@@ -234,7 +234,7 @@ pub(super) fn apply_model_visibility(
                 .is_some_and(|o| matches!(card_owners.get(o), Ok(v) if !v.get()));
 
         // A projected batch draws only under `projectedTextures` or a forcing model
-        // (`World::ProjectTextureCallback 0x77f500`).
+        // (the world's projected-texture callback, `0x77f500`).
         let projection_off = !projected.0
             && batch_sort.is_some_and(|s| s.key.projected)
             && part.kind != ModelKind::GameObject

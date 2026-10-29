@@ -2,8 +2,8 @@
 //! animation clock) while it lives; the kit's attach-point models are
 //! [`arm_aura_state_fx`](crate::creature_anim::arm_aura_state_fx)'s.
 //!
-//! In the reference an aura slot change reaches, which plays the spell's state kit (`SpellVisual`
-//! field 4) at stage 2, and the kit's tail runs the CharProc dispatcher over its four proc slots
+//! In the reference an aura slot change plays the spell's state kit (`SpellVisual` field 4) at
+//! stage 2, and the kit's tail runs the CharProc dispatcher over its four proc slots
 //! (`SpellVisualKit` fields 15-34). Three procs act on the body: 14 installs an alpha node, 1 a
 //! tint node, 11 an animation rate. A node is keyed by spell id and linked at the head of its list,
 //! only the head counts, and the aura's removal drops its spell's nodes.
@@ -22,7 +22,7 @@ use benilla_assets::materials::WowModelMaterial;
 use benilla_world::interior::InteriorLit;
 use benilla_world::model_fade::{fade_alpha, FadeMaterials, PendingAppearFade, RenderFade};
 
-/// The aura-alpha ramp, `StartAlphaFade(target, 1000 ms)` eased `clamp01(t)³` by [`fade_alpha`]. A
+/// The aura-alpha ramp, a 1000 ms alpha fade to the target eased `clamp01(t)³` by [`fade_alpha`]. A
 /// code constant, not a kit column: the ghost kit's proc 14 carries no `1000.0` yet ramps over the
 /// same second.
 pub(crate) const AURA_ALPHA_FADE_SECS: f32 = 1.0;
@@ -42,7 +42,7 @@ pub(crate) enum AuraNode {
 }
 
 /// One unit's CharProc node lists (the reference's `unit+0xb50` alpha and `unit+0xce0` tint lists)
-/// and its alpha ramp. On the net entity root: the reference keeps one per CGUnit, and every
+/// and its alpha ramp. On the net entity root: the reference keeps one per unit object, and every
 /// attached model renders off its owner's.
 #[derive(Component, Debug, Default)]
 pub(crate) struct AuraNodes {
@@ -300,7 +300,7 @@ pub(crate) fn node_for(proc: benilla_formats::CharProc) -> Option<AuraNode> {
     use benilla_formats::char_proc_type as ty;
     match proc.ty {
         ty::ALPHA => Some(AuraNode::Alpha(proc.params[0])),
-        // A float holding an integral `0x00RRGGBB`, rounded: the ghost's 9222653.0.
+        // A float holding an integral `0x00RRGGBB`, rounded: the ghost's 9222653.0 is `0x8CB9FD`.
         ty::TINT => {
             let packed = proc.params[0].round().clamp(0.0, 0xff_ffff as f32) as u32;
             Some(AuraNode::Tint([
@@ -309,7 +309,8 @@ pub(crate) fn node_for(proc: benilla_formats::CharProc) -> Option<AuraNode> {
                 packed as u8,
             ]))
         }
-        // A playback rate, passed through: the reference hands it to `SetBoneAnimSpeed` unexamined.
+        // A playback rate, passed through: the reference hands it to the bone speed setter
+        // unexamined.
         ty::ANIM_RATE => Some(AuraNode::AnimRate(proc.params[0])),
         _ => None,
     }

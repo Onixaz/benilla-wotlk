@@ -1,6 +1,6 @@
 //! `SummonProperties.dbc`: how a summon effect's unit is held; slot 5 is a companion (`0x8009b0`),
 //! flag `0x20` keeps the menu's Dismiss off (`PetCanBeDismissed`, `0x5d3820`), and control 3 is a
-//! possession (`CGPetInfo::FindPossessedSpell`, `0x5d6413`).
+//! possession (`0x5d6413`).
 
 use std::collections::HashMap;
 

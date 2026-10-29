@@ -73,7 +73,7 @@ fn live_or_packet(
     }
 }
 
-/// `GetFlagToken` (`0x54d010`): the carrier's side indexes `{AllianceFlag, HordeFlag}`, so a
+/// The flag token (`0x54d010`): the carrier's side indexes `{AllianceFlag, HordeFlag}`, so a
 /// Horde carrier (side 0) holds the Alliance flag; Eye of the Storm (map 566) reverses it.
 fn flag_token(carrier_side: i8, map: u32) -> Option<&'static str> {
     const TOKENS: [&str; 2] = ["AllianceFlag", "HordeFlag"];

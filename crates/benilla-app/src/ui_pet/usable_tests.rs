@@ -443,7 +443,7 @@ fn each_exit_alone_stops_the_drags_writes() {
 
 /// `PickupPetAction` looks the pet up and returns at once with no object, then again on
 /// `UNIT_FLAG_POSSESSED`, so a drag from an unstreamed or a possessed pet's bar lifts nothing.
-/// Every other state lifts the action, an unusable pet included: the reference refuses only the
+/// Every other state lifts the action, an unusable pet included: the bar write refuses only the
 /// pickup's blank, never the lift.
 #[test]
 fn the_pickup_lifts_only_with_the_pets_object_held_and_not_possessed() {

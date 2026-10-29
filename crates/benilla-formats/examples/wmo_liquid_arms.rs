@@ -1,7 +1,7 @@
 //! Which WMO water arm each shipped liquid group takes. The reference's dispatch splits water
 //! (nibbles 0/4/8) on the owning group's `MOGP.flags & 0x48`: set runs the exterior kernel, a
 //! 9-float vertex with an up normal, binding `MapObjExtWater0.bls`; clear runs the interior kernel,
-//! a 6-float vertex with no normal, coloured from the map object's lights (`CMapObj+0x1d8`). Magma
+//! a 6-float vertex with no normal, coloured from the map object's lights (at `+0x1d8`). Magma
 //! and slime (nibbles 2/3/6/7) take whatever the flags, and neither arm is the ADT path
 //! (`ocean0_s.bls`). Output is Blizzard data: never commit it.
 //! `cargo run -p benilla-formats --example wmo_liquid_arms`

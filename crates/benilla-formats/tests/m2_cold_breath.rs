@@ -8,7 +8,7 @@ const HUMAN_MALE: &str = "Character\\Human\\Male\\HumanMale.m2";
 /// `SpellVisualEffectName` 107, "HARDCODED Breath Cold", names `Particles\ColdBreath.mdl`, which
 /// ships as `.m2`.
 const COLD_BREATH: &str = "Particles\\ColdBreath.m2";
-/// The `$BTH` family's attach tag, `DAT_0080c968[3]`: a raw M2 `AttachmentID`.
+/// The `$BTH` family's attach tag, its table's entry 3: a raw M2 `AttachmentID`.
 const BREATH_ATTACH: u16 = 0x11;
 const STAND: u16 = 0;
 

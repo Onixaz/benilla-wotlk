@@ -32,7 +32,7 @@ pub struct ShapeshiftForm {
 
 impl ShapeshiftForm {
     /// A stance (flag `0x1`: warrior stances, Stealth, Shadowform, Moonkin and Tree of Life),
-    /// which `IsShapeShifted` (`0x721ca0`) and so the form gate
+    /// which the shapeshift test (`0x721ca0`) and so the form gate
     /// ([`crate::spells::SpellDisplay::usable_in_form`]) do not count as shapeshifted.
     pub fn is_stance(&self) -> bool {
         self.flags & 1 != 0

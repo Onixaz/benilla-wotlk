@@ -67,7 +67,7 @@ impl NpcSession for BinderState {
 }
 
 /// Publishes `CheckBinderDist()` every frame and fires `CONFIRM_BINDER` for each packet that
-/// asked, unconditionally, as the reference's handler always reaches its `SignalEvent2`.
+/// asked, unconditionally, as the reference's handler always reaches its event signal.
 fn feed_binder(
     script: Option<NonSendMut<UiScript>>,
     mut binder: ResMut<BinderState>,
@@ -199,9 +199,9 @@ pub(crate) mod net {
     }
 
     /// `SMSG_PLAYERBOUND`, in the handler's order: retract the question, play the handler's own
-    /// sound (the error row has none), then queue `ERR_DEATHBIND_SUCCESS_S` (`DisplayError(0x138)`,
-    /// a system chat line) named by the area. The hearthstone moves on `SMSG_BINDPOINTUPDATE`,
-    /// which this leaves alone, as the reference does.
+    /// sound (the error row has none), then queue `ERR_DEATHBIND_SUCCESS_S` (error id `0x138`, a
+    /// system chat line) named by the area. The hearthstone moves on `SMSG_BINDPOINTUPDATE`, which
+    /// this leaves alone, as the reference does.
     pub(crate) fn bound(
         area: u32,
         binder: &mut BinderState,

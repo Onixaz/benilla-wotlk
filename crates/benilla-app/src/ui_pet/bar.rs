@@ -16,8 +16,8 @@ use crate::ui_action::Spells;
 
 use super::{PetBar, PetUnit};
 
-/// What `Spell_C_IsUsableAction` (`0x80b5d0`) reads for a pet spell slot besides the pet; with any
-/// of it absent the walk is skipped and the slot reads usable.
+/// What the reference's action usability test (`0x80b5d0`) reads for a pet spell slot besides the
+/// pet; with any of it absent the walk is skipped and the slot reads usable.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct PetSlotWalk<'w, 's> {
     selection: Option<Res<'w, crate::target::Selection>>,
@@ -175,7 +175,7 @@ pub(super) fn slot_paint(
         .then(|| reaction_token(action))
         .flatten()
     {
-        // A vehicle's bar reads as Passive (`CGPetInfo::GetPetMode`, `0x5a7980`).
+        // A vehicle's bar reads as Passive (the pet mode getter, `0x5a7980`).
         let showing = if bar.vehicle() {
             benilla_protocol::messages::PET_REACT_PASSIVE
         } else {
@@ -222,7 +222,7 @@ pub(super) fn slot_paint(
     }
 }
 
-/// The spell id when the slot shows active, the pet-side twin of
+/// The spell id when the slot shows active, the pet-side twin of the action bar's
 /// ([`crate::ui_action::toggle::active_action_toggle`]). It tests `ActiveIconID != 0` first, so a
 /// press on a spell without one re-casts rather than cancels.
 pub(super) fn active_aura_press(
@@ -353,9 +353,9 @@ pub(super) fn feed_pet_bar(
 }
 
 /// The flush behind every mutation of the pet's cooldown list: the reference fires
-/// `ACTIONBAR_UPDATE_COOLDOWN` (event `0xd8`) then `SPELL_UPDATE_COOLDOWN` (`0x106`), and the
-/// reference fires `PET_BAR_UPDATE_COOLDOWN` (`0x162`). Its callers are the pet's `SMSG_SPELL_GO`
-/// leg, `StartGlobalCooldown` for the list, `SMSG_SPELL_COOLDOWN` for the pet's guid (`0x807033`,
+/// `ACTIONBAR_UPDATE_COOLDOWN` (event `0xd8`) then `SPELL_UPDATE_COOLDOWN` (`0x106`), and then
+/// `PET_BAR_UPDATE_COOLDOWN` (`0x162`). Its callers are the pet's `SMSG_SPELL_GO` leg, the global
+/// cooldown's start for the list, `SMSG_SPELL_COOLDOWN` for the pet's guid (`0x807033`,
 /// `0x807039`), `SMSG_COOLDOWN_EVENT` and `SMSG_CLEAR_COOLDOWN` and `SMSG_COOLDOWN_CHEAT`; each is
 /// a change of [`Cooldowns::generation`](crate::spell::Cooldowns), and one frame's changes fire it
 /// once. `SMSG_PET_SPELLS` seeds without it, so the events never fire for a rebuild. Runs after

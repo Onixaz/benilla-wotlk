@@ -54,7 +54,7 @@ pub(super) fn this_texture(lua: &Lua, this: &Value) -> mlua::Result<RegionHandle
     Ok(rh)
 }
 
-/// `CSimpleTexture::SetTexture(NULL)`: the texture slot emptied, a file, a solid fill and a baked
+/// The Texture's set with no texture: the texture slot emptied, a file, a solid fill and a baked
 /// unit portrait alike; the shader slot, and so the desaturation, stays.
 pub(super) fn clear_texture(model: &mut Model, rh: RegionHandle) {
     let data = model.region_data.entry(rh).or_default();
@@ -78,9 +78,9 @@ fn set_region_hidden(lua: &Lua, rh: RegionHandle, hidden: bool) {
 }
 
 /// Apply the font parts an XML element supplies (`font=`, `<FontHeight>`, `outline=`), any of which
-/// may be absent. Not the `SetFont` binding: the reference applies XML fonts in `LoadXML`, and its
-/// `SetFont` requires a path and a height. Each part is an explicit set, so it survives a change to
-/// the inherited font object; an empty `font=` keeps the inherited face.
+/// may be absent. Not the `SetFont` binding: the reference applies XML fonts in its XML load, and
+/// its `SetFont` requires a path and a height. Each part is an explicit set, so it survives a
+/// change to the inherited font object; an empty `font=` keeps the inherited face.
 pub(crate) fn apply_font_parts(
     lua: &Lua,
     this: &Table,
@@ -477,7 +477,7 @@ pub(super) fn region_type_name(model: &Model, rh: RegionHandle) -> &'static str 
 }
 
 /// Free a region and every trace of its identity (arena slot, paint, rect, name, id), so a held
-/// wrapper raises as stale; the reference frees too, as `CSimpleButton::SetFontString 0x96f7b0`
+/// wrapper raises as stale; the reference frees too, as the Button's font-string set (`0x96f7b0`)
 /// deletes the label it replaces.
 pub(crate) fn free_region(model: &mut Model, rh: RegionHandle) {
     // The edges the cached graph holds for it: its anchor targets and its owner.
@@ -624,8 +624,8 @@ pub(super) fn size_bits_eq(a: Option<(f32, f32)>, b: Option<(f32, f32)>) -> bool
     }
 }
 
-/// `Region:SetPoint`, the same binding as the frame's (on `CScriptRegion`): the shared argument
-/// ladder ([`super::object::anchor_args`]), with the owner as layout parent.
+/// `Region:SetPoint`, the same binding as the frame's (on the script region base): the shared
+/// argument ladder ([`super::object::anchor_args`]), with the owner as layout parent.
 pub(super) fn region_set_point(lua: &Lua, this: &Table, args: &MultiValue) -> mlua::Result<()> {
     let rh = region_handle_of(lua, this)?;
     let (who, base) = region_ladder_context(lua, rh);

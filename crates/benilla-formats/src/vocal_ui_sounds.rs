@@ -1,11 +1,11 @@
 //! `VocalUISounds.dbc`, the error speech a character says in its own race and sex voice when the
 //! client refuses something. One row per `(race, line)`, the line being the message catalog's
-//! `type_tag` (the record's `+0x0c`), so a refusal reaching `CGGameUI::DisplayError` names it.
+//! `type_tag` (the record's `+0x0c`), so a refusal reaching the error display names it.
 //!
 //! Layout: 7 `u32` fields in 28-byte records (the builder strides `0x1c`): `ID`, the line, the
-//! race, the male and female kits (to `[ + line*12]` and `[ + line*12]`), then the annoyed pair (to
-//! `[ + line*12]` and `[ + line*12]`). A kit id of `0` or `0xFFFF_FFFF` misses in the kit lookup,
-//! so that line is silent.
+//! race, the male and female kits (each into a per-line table of 12-byte entries), then the annoyed
+//! pair (into the same entries' next slot). A kit id of `0` or `0xFFFF_FFFF` misses in the kit
+//! lookup, so that line is silent.
 
 use crate::Chain;
 use anyhow::{Context, Result};

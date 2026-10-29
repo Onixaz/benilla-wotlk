@@ -1,7 +1,7 @@
-//! `OnSizeChanged`, the base-map layout script (`+0x120`). `ApplyRect` fires it only when width or
-//! height moves by `ε = _DAT_008029d4` ([`crate::layout::SIZE_EPS`]). Deviation: the client fires
-//! per rect application; we fire once per resolve on the size before and after, because our solver
-//! settles the whole graph to a fixpoint.
+//! `OnSizeChanged`, the base-map layout script (`+0x120`). The rect apply fires it only when width
+//! or height moves by `ε` ([`crate::layout::SIZE_EPS`]). Deviation: the client fires per rect
+//! application; we fire once per resolve on the size before and after, because our solver settles
+//! the whole graph to a fixpoint.
 
 use super::common::script;
 
@@ -37,7 +37,7 @@ fn a_resize_fires_on_size_changed_and_a_move_does_not() {
     assert_eq!(
         s.eval::<i64>("return fires").unwrap(),
         1,
-        "the rect moved but width/height did not — ApplyRect's gate is on the size alone"
+        "the rect moved but width/height did not — the rect apply's gate is on the size alone"
     );
 
     s.run("Panel:SetHeight(120)").unwrap();

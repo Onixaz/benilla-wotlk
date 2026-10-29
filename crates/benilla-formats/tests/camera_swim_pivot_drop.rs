@@ -1,5 +1,5 @@
-//! The camera's swim framing pivot. Per frame picks one of three presets: `cam+0x124` while
-//! swimming (movement flag `0x200000`), else `cam+0x11c` or `cam+0x120` split on
+//! The camera's swim framing pivot. Per frame the camera picks one of three presets: `cam+0x124`
+//! while swimming (movement flag `0x200000`), else `cam+0x11c` or `cam+0x120` split on
 //! `cam+0x198 < 1.8315`, a pair benilla serves with one standing height. The reference builds all
 //! three from `attach17.z + 0.0972` and lowers only `+0x124`, by `S * (Stand.max.z - Swim.max.z)`
 //! over the boxes of sequences 0 and 42. For the Human Male at scale 1 the binary gives

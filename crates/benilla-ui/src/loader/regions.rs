@@ -53,7 +53,7 @@ impl Loader<'_> {
         }
     }
 
-    /// A region's own `LoadXML` past its creation: its animations, `hidden` and `alpha`, layout,
+    /// A region's own XML load past its creation: its animations, `hidden` and `alpha`, layout,
     /// font and visual, then the implicit creation anchor, which leaves an anchored region alone.
     pub(super) fn load_region(
         &mut self,
@@ -211,7 +211,7 @@ impl Loader<'_> {
                 let rel_to: Option<String> = anchor
                     .attr("relativeTo")
                     .map(|r| framexml::resolve_name(r, parent_name));
-                // The `<Offset>` child, else the anchor's own `x`/`y` (`CLayoutFrame::LoadXML`,
+                // The `<Offset>` child, else the anchor's own `x`/`y` (the layout frame's XML load,
                 // `0x48b2d0`).
                 let (x, y) = children_named(anchor, "Offset")
                     .next()
@@ -345,8 +345,8 @@ impl Loader<'_> {
             })
     }
 
-    /// Whether `name` is a registered font object: the reference's flat, case-insensitive lookup
-    /// (`SStrCmpI`), with no template walk.
+    /// Whether `name` is a registered font object: the reference's flat, case-insensitive lookup,
+    /// with no template walk.
     pub(super) fn is_font_object(&self, name: &str) -> bool {
         let model = self.model();
         let fonts = model.framexml_fonts.borrow();

@@ -11,8 +11,8 @@
 //! ASLR, as the reference's Lua does. So the walk runs [`DEFAULT_RUNS`] times in fresh VMs and
 //! each row reports how many runs raised: every run is a real failure, some is order-sensitive.
 //!
-//! `## LoadOnDemand: 1` is ignored: the reference's boot walk skips those (the reference loads only
-//! records whose LoadOnDemand byte is 0), but corpus addons demand-load them at once (FuBar's
+//! `## LoadOnDemand: 1` is ignored: the reference's boot walk skips those (it loads only records
+//! whose LoadOnDemand byte is 0), but corpus addons demand-load them at once (FuBar's
 //! `LoadLoadOnDemandPlugins`, Auctioneer's stub), so honouring the flag would model a shorter
 //! session than anyone plays.
 

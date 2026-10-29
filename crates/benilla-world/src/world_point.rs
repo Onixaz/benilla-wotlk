@@ -46,7 +46,7 @@ pub struct WorldPoint<'w, 's> {
     underwater: Res<'w, Underwater>,
     surface: SurfaceUnderfoot<'w, 's>,
     /// Where the player is, as three answers that disagree on purpose: the finest MCNK area (the
-    /// client's own `GetAreaID`), the render-ray interior claim and the zone-text one.
+    /// client's own area lookup), the render-ray interior claim and the zone-text one.
     area: Res<'w, CurrentArea>,
     interior: Res<'w, CurrentWmoInterior>,
     area_interior: Res<'w, CurrentAreaInterior>,
@@ -126,7 +126,7 @@ impl WorldPoint<'_, '_> {
     }
 
     /// The `TerrainType` id under a subject's feet, read by the `$FSD` sound, the footprint decal
-    /// and the spray alike; the reference caches one per unit (`CGUnit+0xc60`). `pos` is Bevy
+    /// and the spray alike; the reference caches one per unit (unit `+0xc60`). `pos` is Bevy
     /// space. `None` is the client's `-1`: silent, no print, no fallback to the other leg.
     pub fn terrain_type(
         &self,
@@ -152,7 +152,7 @@ impl WorldPoint<'_, '_> {
         }
     }
 
-    /// The finest area the player stands in, the client's `GetAreaID` with the WMO-interior claim;
+    /// The finest area the player stands in, the client's area lookup with the WMO-interior claim;
     /// `None` until the ground tile is resident, or off-terrain.
     pub fn area(&self) -> Option<u32> {
         self.area.0
@@ -221,8 +221,8 @@ impl WorldPoint<'_, '_> {
     }
 
     /// The liquid whose ambient loop plays at `wow`: of the surfaces within `radius` in 3D whose
-    /// `LiquidType` `keep` accepts, the one horizontally nearest (`World::QueryLiquidSounds`
-    /// `0x77f390`, picked by `0x4d21b0`). The point is the footprint's AABB clamp where the
+    /// `LiquidType` `keep` accepts, the one horizontally nearest (the world's liquid-sound
+    /// query, `0x77f390`, picked by `0x4d21b0`). The point is the footprint's AABB clamp where the
     /// reference walks tiles.
     pub fn nearest_liquid(
         &self,

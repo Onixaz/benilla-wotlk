@@ -23,7 +23,7 @@ use crate::ui_party::GroupState;
 use crate::ui_script::{UiFeed, UiInput, WorldLeaveSweepMessage};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
-/// The pet trainer's pending question: the latch (`b4`) and the cost.
+/// The pet trainer's pending question: the latch and the cost.
 #[derive(Resource, Default)]
 pub(crate) struct PetUnlearnState {
     npc: Option<u64>,
@@ -91,8 +91,9 @@ impl InstanceBoot {
 /// `UNIT_NPC_FLAGS` `SPIRITGUIDE`, which the area spirit healer's acquire callback tests.
 const NPC_FLAG_SPIRITGUIDE: u32 = crate::target::cursor_mode::npc_flags::SPIRITGUIDE;
 
-/// The area spirit healer's aura, cancelled by the reference and `CancelAreaSpiritHeal`; the
-/// reference fires `AREA_SPIRIT_HEALER_OUT_OF_RANGE` for this spell id alone.
+/// The area spirit healer's aura, cancelled by the reference's healer set and
+/// `CancelAreaSpiritHeal`; the reference's aura cancel fires `AREA_SPIRIT_HEALER_OUT_OF_RANGE` for
+/// this spell id alone.
 pub(crate) const AREA_SPIRIT_HEALER_AURA: u32 = 2584;
 
 /// The acquire radius, squared `[0x9e898c]` = 400 in the enumerate callback `0x523f80`.
@@ -101,7 +102,7 @@ const SPIRIT_GUIDE_ACQUIRE_YD: f32 = 20.0;
 /// kept until 22.
 const SPIRIT_GUIDE_RETAIN_YD: f32 = SPIRIT_GUIDE_ACQUIRE_YD * 1.1;
 
-/// What [`AreaSpiritHealer::set_healer`] owes the frame; the reference does both.
+/// What [`AreaSpiritHealer::set_healer`] owes the frame; the reference's healer set does both.
 #[derive(Default, PartialEq, Eq, Debug)]
 pub(crate) struct SetHealerOutcome {
     /// A wave was pending and the healer changed: `AREA_SPIRIT_HEALER_OUT_OF_RANGE` fires and
@@ -114,7 +115,7 @@ pub(crate) struct SetHealerOutcome {
 /// The current-area spirit healer and its wave clock.
 #[derive(Resource, Default)]
 pub(crate) struct AreaSpiritHealer {
-    /// Written only by [`Self::set_healer`], the reference's.
+    /// Written only by [`Self::set_healer`], the reference's healer set.
     healer: Option<u64>,
     deadline: Option<Instant>,
     in_range: bool,
@@ -150,8 +151,8 @@ impl AreaSpiritHealer {
         }
     }
 
-    /// The spirit-guide click: the reference then `(guid)`, a cache-bust that makes the second call
-    /// query even for the healer already cached.
+    /// The spirit-guide click: the reference sets the healer to 0, then to the guid, a cache-bust
+    /// that makes the second call query even for the healer already cached.
     pub(crate) fn click_guide(&mut self, guid: u64) -> SetHealerOutcome {
         let bust = self.set_healer(None);
         let set = self.set_healer(Some(guid));
@@ -183,7 +184,7 @@ enum StoneText {
     Built(String),
 }
 
-/// `SStrPrintf`'s buffer at the rebuild: 256 bytes, so 255 of text.
+/// The rebuild's print buffer: 256 bytes, so 255 of text.
 const STONE_TEXT_BYTES: usize = 255;
 
 /// The meeting-stone queue: the two globals and what the wire still owes the screen.
@@ -320,8 +321,8 @@ fn feed_meeting_stone(
         let new = stone.area;
         lines.extend(stone_line(&script, areas, old, new, status));
         if status == 1 && new != old {
-            // Status 1's extra block: `Effect_C` kind `0xc` on the local player, then the Meeting
-            // Stones tutorial.
+            // Status 1's extra block: a spell effect of kind `0xc` on the local player, then the
+            // Meeting Stones tutorial.
             if let (Some(visuals), Ok(entity)) = (inputs.visuals.as_deref(), inputs.self_q.single())
             {
                 if let Some(fx) = meeting_stone_join_fx(visuals, entity) {
@@ -417,7 +418,7 @@ pub(crate) enum StoneJoin {
 /// The meeting stone's use slot. With no local player it is silent; otherwise four refusals in this
 /// order, the first two only in a group:
 ///
-/// 1. not the leader (the full 64-bit guid against);
+/// 1. not the leader (the full 64-bit guid against the leader's);
 /// 2. four other members (`GetNumPartyMembers`);
 /// 3. a level outside `data[0]..=data[1]`, unsigned;
 /// 4. in a raid.
@@ -517,7 +518,7 @@ pub(crate) fn meeting_stone_leave_world(
 }
 
 /// Drop the cached spirit guide when the world does, so no healer, wave or event reaches the next
-/// session; the reference clears it only, its world-leave path untraced.
+/// session; the reference clears it only through its healer set, its world-leave path untraced.
 fn area_spirit_healer_leave_world(mut spirit: ResMut<AreaSpiritHealer>) {
     *spirit = AreaSpiritHealer::default();
 }
@@ -645,11 +646,11 @@ fn drain_queue_verbs(
     }
 }
 
-/// The area-spirit-healer poll `UpdateAreaSpiritHealerDistance 0x524010`, run every frame from
-/// `CGWorldFrame`'s update: only a ghost (`PLAYER_FLAGS` `0x10`) holds a healer; a cached one is
-/// kept within 22 yd, else the last unit in the walk that is a `SPIRITGUIDE`, may assist us
-/// (`0x523fc5`, guide → player) and is within 20 yd is adopted. Last, not nearest: the enumerate
-/// callback `0x523f80` never stops the walk.
+/// The area-spirit-healer poll (`0x524010`), run every frame from the world frame's update: only a
+/// ghost (`PLAYER_FLAGS` `0x10`) holds a healer; a cached one is kept within 22 yd, else the last
+/// unit in the walk that is a `SPIRITGUIDE`, may assist us (`0x523fc5`, guide → player) and is
+/// within 20 yd is adopted. Last, not nearest: the enumerate callback `0x523f80` never stops the
+/// walk.
 fn poll_area_spirit_healer(
     mut spirit: ResMut<AreaSpiritHealer>,
     me: Query<(&ObjectStore, &Transform), With<SelfPlayer>>,
@@ -696,7 +697,7 @@ fn poll_area_spirit_healer(
     }
     let here = self_tf.translation;
 
-    // Retain: a guid that no longer streams drops like one out of range (an `ObjectPtr` miss).
+    // Retain: a guid that no longer streams drops like one out of range (an object-lookup miss).
     if let Some(cached) = spirit.healer() {
         let still = units.iter().find(|(guid, ..)| guid.0 == cached);
         let keep = still.is_some_and(|(_, _, _, tf)| {
@@ -820,9 +821,9 @@ impl Plugin for UiDialogVerbsPlugin {
                     feed_dialog_verbs
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    // After the mouse pick, the reference's order: `CGWorldFrame`'s OnUpdate picks,
-                    // then polls. Gating is safe: the poll is level-triggered and re-derives the
-                    // cache every frame.
+                    // After the mouse pick, the reference's order: the world frame's OnUpdate
+                    // picks, then polls. Gating is safe: the poll is level-triggered and re-derives
+                    // the cache every frame.
                     poll_area_spirit_healer
                         .after(crate::target::TargetUpdate)
                         .run_if(crate::ui_script::ingame_ui_up)
@@ -862,8 +863,8 @@ impl Plugin for UiDialogVerbsPlugin {
 #[cfg(test)]
 const AREA_SPIRIT_HEALER_SPELL: u32 = AREA_SPIRIT_HEALER_AURA;
 
-/// The cancel-aura routine sends nothing when `AttributesEx` has bit 13 set, bit 2 clear and
-/// `(player)` holds; these are the first two terms.
+/// The cancel-aura routine sends nothing when `AttributesEx` has bit 13 set, bit 2 clear and a
+/// third test on the player holds; these are the first two terms.
 #[cfg(test)]
 fn cancel_gate_could_apply(attributes_ex: u32) -> bool {
     attributes_ex & 0x2000 != 0 && attributes_ex & 0x4 == 0

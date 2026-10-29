@@ -129,8 +129,8 @@ pub(crate) struct GuildState {
     bank_withdraw_money: i32,
     /// `GE_BANK_MONEY_SET` owes the server `MSG_GUILD_BANK_MONEY_WITHDRAWN`'s ask.
     bank_withdraw_ask: bool,
-    /// A guild or rank change owes `QueryPermissions` (`0x5caa40`): `MSG_GUILD_PERMISSIONS`, then
-    /// the withdrawal ask.
+    /// A guild or rank change owes the permissions query (`0x5caa40`): `MSG_GUILD_PERMISSIONS`,
+    /// then the withdrawal ask.
     permissions_ask: bool,
     /// `GUILDBANK_UPDATE_MONEY` is owed.
     bank_money_event: bool,
@@ -455,7 +455,7 @@ impl GuildState {
     }
 
     /// Our rank's rights for bank tab `tab`: its rights mask and its daily withdrawals, 0s before
-    /// a roster (`GetGuildBankTabPermissionsByRankID` `0x5a41c0`, `0x5a41f0`).
+    /// a roster (`0x5a41c0`, `0x5a41f0`).
     pub(crate) fn own_bank_tab(&self, tab: u8) -> (u32, u32) {
         self.rank_bank
             .get(self.rank_index as usize)
@@ -677,7 +677,7 @@ pub(crate) mod net {
 
     /// Reset at session end: the next login may be another character. The identity cache goes
     /// too, as 12340 builds `guildcache` with persistence off and clears it at world entry
-    /// (`DBCache_ClearTemporaryCaches`, `0x52b7c4`).
+    /// (`0x52b7c4`).
     fn on_session_end(In(_): In<SessionEvent>, mut guild: ResMut<GuildState>) {
         *guild = GuildState::default();
     }
@@ -704,7 +704,7 @@ pub(crate) mod net {
     /// 2. `guildMemberNotify` is on;
     /// 3. the subject is not us: the reference compares names, we compare guids, and vmangos sends
     ///    the sign-on to the signer too (`Guild.cpp:651-656`);
-    /// 4. the subject is not a friend (`FriendList::FindFriendSlot`, not the ignore check), since
+    /// 4. the subject is not a friend (the friend-slot lookup, not the ignore check), since
     ///    `SMSG_FRIEND_STATUS` prints the same line ungated.
     pub(crate) fn event(
         guild: &mut GuildState,

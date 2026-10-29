@@ -1,8 +1,7 @@
-//! The `Button` and `CheckButton` methods (`CSimpleButton`, `CSimpleCheckbox`). The shown state
-//! texture latches at each state edge (`SetState`), not at paint. `<PushedTextOffset>` is not
-//! built: a pushed label does not shift. Lookup runs CheckButton's table, then Button's, then the
-//! frame table, the client's class chain, so `SetChecked` is nil on a plain Button and `GetText` on
-//! a plain Frame.
+//! The `Button` and `CheckButton` methods. The shown state texture latches at each state edge, not
+//! at paint. `<PushedTextOffset>` is not built: a pushed label does not shift. Lookup runs
+//! CheckButton's table, then Button's, then the frame table, the client's class chain, so
+//! `SetChecked` is nil on a plain Button and `GetText` on a plain Frame.
 
 use mlua::{Lua, MultiValue, ObjectLike, Table, Value};
 
@@ -89,7 +88,7 @@ fn normal_font_justify(model: &Model, bs: &ButtonState) -> Justify {
 
 /// `SetFontString`'s tail (`0x96f7b0`), which `SetText` also creates its label through
 /// (`0x96f860`): an unanchored label anchors LEFT, RIGHT or CENTER by the normal font's justify,
-/// never its own, then takes the per-state font (`UpdateTextState 0x96f4a0`).
+/// never its own, then takes the per-state font (the text-state update, `0x96f4a0`).
 fn adopt_label(model: &mut Model, owner: FrameHandle, rh: RegionHandle) {
     let point = {
         let Some(frame) = model.arena.frame(owner) else {
@@ -104,11 +103,12 @@ fn adopt_label(model: &mut Model, owner: FrameHandle, rh: RegionHandle) {
     apply_normal_font(model, owner);
 }
 
-/// Link the label to the normal font object (`UpdateTextState 0x96f4a0` → `SetFontObject
-/// 0x485160`), so its `GetFont` answers what it paints; the stock `DropDownList1` reads it
-/// (`UIDropDownMenu.xml:11`). Deviation: a hovered or disabled label still reports the normal
-/// font, since the state fonts are overlaid at paint and a link made here would outlive the state.
-/// `font::repaint` keeps what the label set itself (its severance mask, `CSimpleFontString+0xd4`).
+/// Link the label to the normal font object (the text-state update, `0x96f4a0` →
+/// `SetFontObject 0x485160`), so its `GetFont` answers what it paints; the stock `DropDownList1`
+/// reads it (`UIDropDownMenu.xml:11`). Deviation: a hovered or disabled label still reports the
+/// normal font, since the state fonts are overlaid at paint and a link made here would outlive the
+/// state. `font::repaint` keeps what the label set itself (its severance mask, the font string's
+/// `+0xd4`).
 fn apply_normal_font(model: &mut Model, owner: FrameHandle) {
     let (rh, name) = {
         let Some(frame) = model.arena.frame(owner) else {
@@ -158,11 +158,11 @@ fn with_button<T>(
     }
 }
 
-/// `Enable()`/`Disable()`. `Disable` reaches `SetEnabled`, which also turns draw layer 4,
-/// HIGHLIGHT, off in the array `DisableDrawLayer` writes, so every region in that layer goes dark,
-/// not only the HighlightTexture. `Enable()` here turns it back on; the reference restores it only
-/// on a hovered button, by re-running its `<OnEnter>`, and never while `LockHighlight` holds
-/// (`[frame+0xf8]`).
+/// `Enable()`/`Disable()`. `Disable` reaches the button's enable setter, which also turns draw
+/// layer 4, HIGHLIGHT, off in the array `DisableDrawLayer` writes, so every region in that layer
+/// goes dark, not only the HighlightTexture. `Enable()` here turns it back on; the reference
+/// restores it only on a hovered button, by re-running its `<OnEnter>`, and never while
+/// `LockHighlight` holds (`[frame+0xf8]`).
 fn set_enabled(lua: &Lua, this: &Table, on: bool) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let fire = {
@@ -207,8 +207,8 @@ pub(super) fn edge(model: &mut Model, h: FrameHandle, f: impl FnOnce(&mut Button
 
 /// Whether a hover edge on `h` reaches the base notify, the HIGHLIGHT layer and the Lua
 /// `<OnEnter>`/`<OnLeave>`: `OnEnter`/`OnLeave` skip it on a DISABLED Button, leaving only the
-/// hover sound. Every hover path goes through that pair (`SetMouseFocus`), and the Hyperlink and
-/// NamePlate overrides chain back. The hover target still moves, so `GetMouseFocus()` answers a
+/// hover sound. Every hover path goes through that pair (the mouse-focus set), and the Hyperlink
+/// and NamePlate overrides chain back. The hover target still moves, so `GetMouseFocus()` answers a
 /// disabled button.
 pub(super) fn hover_notify_runs(model: &Model, h: Option<FrameHandle>) -> bool {
     let Some(h) = h else { return true };
@@ -641,8 +641,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // SetFont(file, height [, flags]) sets all three embedded fonts and returns nothing, discarding
-    // the shared the reference's load result. It never touches the label (`+0x338`), so creates
-    // none: extract applies the stored font to whatever label exists. Its checks are 5.0's coercing
+    // the shared font load's result. It never touches the label (`+0x338`), so creates none:
+    // extract applies the stored font to whatever label exists. Its checks are 5.0's coercing
     // `lua_isstring`/`lua_isnumber`, else a usage error.
     m.set(
         "SetFont",
@@ -827,8 +827,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // SetButtonState(state [, lock]): DISABLED, NORMAL or PUSHED in any case, else a usage error;
-    // `lock` is `GetBoolOrDefault` with default 0, so the `1` of `MainMenuBarMicroButtons.lua:22`
-    // sets it. While locked, presses and releases leave the state alone; unlocked, the next release
+    // `lock` reads as a boolean with default 0, so the `1` of `MainMenuBarMicroButtons.lua:22` sets
+    // it. While locked, presses and releases leave the state alone; unlocked, the next release
     // un-pushes a scripted push.
     m.set(
         "SetButtonState",
@@ -894,9 +894,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     c.set(
         "SetChecked",
         lua.create_function(|lua, (this, v): (Table, Value)| {
-            // `SetChecked` reads its argument through the reference with default 1, not Lua
-            // truthiness: a number truncates toward zero, so `SetChecked(0)` unchecks, and the
-            // stock UI passes `"true"`/`"false"` (`SpellBookFrame.lua:296-303`). Here a missing
+            // `SetChecked` reads its argument through the reference's boolean read with default 1,
+            // not Lua truthiness: a number truncates toward zero, so `SetChecked(0)` unchecks, and
+            // the stock UI passes `"true"`/`"false"` (`SpellBookFrame.lua:296-303`). Here a missing
             // argument unchecks and a string checks only as `"true"` or a nonzero number, where the
             // reference checks for a missing one and reads a string by its first byte, so `"yes"`
             // checks there.
@@ -937,8 +937,8 @@ pub(super) fn wants_click(model: &Model, h: FrameHandle, button: &str, up: bool)
     }
 }
 
-/// Whether a press on `h` pushes the art: any Button, whatever its click mask, since
-/// `OnLayerMouseDown` (`0x96fb34`) sets PUSHED after the mask test, not under it.
+/// Whether a press on `h` pushes the art: any Button, whatever its click mask, since The layer
+/// mouse-down (`0x96fb34`) sets PUSHED after the mask test, not under it.
 pub(super) fn wants_press_visual(model: &Model, h: FrameHandle) -> bool {
     matches!(
         model.arena.frame(h).map(|f| &f.kind_state),

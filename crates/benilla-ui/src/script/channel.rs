@@ -132,7 +132,7 @@ impl super::UiScript {
         drain_field!(self, guild_recruitment_changed)
     }
 
-    /// `CGChat::SetGuildRecruitmentMode(mode, fromJoin = 0)` (`0x508260`), the
+    /// The chat's guild-recruitment mode setter, called with `fromJoin = 0` (`0x508260`), the
     /// `guildRecruitmentChannel` callback's call (`0x512750`): a moved latch, which the chat cache
     /// saves. Returns whether it moved; the caller runs the cascade on 1 and the leave on 0.
     pub fn set_guild_recruitment_mode_from_cvar(&mut self, mode: u8) -> bool {
@@ -320,12 +320,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // LeaveChannelByName(name) returns nothing and raises `Usage:` on a non-string, non-number. A
-    // key whose `SStrToInt` is non-zero is a joined slot, resolved app-side and never a window
+    // key whose integer parse is non-zero is a joined slot, resolved app-side and never a window
     // entry; a Shortcut leaves the name composed for this zone (a no-op with no zone text) and
     // strips by Shortcut; anything else is a custom channel. Deviation: the reference composes the
-    // Shortcut with `GetRealZoneText` alone, so in a capital `/leave Trade` sends
-    // `Trade - Stormwind City` and leaves nothing; ours uses the join's city-aware name, because
-    // the reference's form cannot leave the channel it joined. The slot is freed app-side when the
+    // Shortcut with `GetRealZoneText` alone, so in a capital `/leave Trade` sends `Trade -
+    // Stormwind City` and leaves nothing; ours uses the join's city-aware name, because the
+    // reference's form cannot leave the channel it joined. The slot is freed app-side when the
     // server's `YOU_LEFT` arrives.
     g.set(
         "LeaveChannelByName",
@@ -513,7 +513,8 @@ fn join_by_name(
             ..
         }) => (id, resolved, shortcut),
     };
-    // The reference skips.
+    // The reference takes the frame number less one (a missing one reads -1) and skips a window
+    // registration for anything outside the ten chat windows.
     let window = match frame {
         Value::Integer(n) => Some(n as f64),
         Value::Number(n) => Some(n),

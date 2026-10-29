@@ -136,8 +136,8 @@ pub(crate) fn resolve_lock(
     outcome
 }
 
-/// The out-params `CGGameObject_C::IsLocked` (`0x70f160`) writes on each `OPEN_LOCK` match, before
-/// its sufficiency test: the spell, its value (`Spell_C_GetMinMaxPoints`) and the requirement.
+/// The out-params the GameObject's lock test (`0x70f160`) writes on each `OPEN_LOCK` match, before
+/// its sufficiency test: the spell, its value (the effect's points) and the requirement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LockMatch {
     pub(crate) spell: u32,
@@ -268,7 +268,7 @@ mod tests {
         }
     }
 
-    /// The reference against: the cursor's question differs from the resolver's.
+    /// The cursor's lock question against the resolver: the two differ.
     #[test]
     fn the_cursor_lock_predicate_ignores_skill_and_refuses_the_lockless() {
         use benilla_formats::SpellDisplay;
@@ -297,7 +297,7 @@ mod tests {
         let brutal = [skill_slot(1, 9999, 1), LockSlot::default()];
         assert!(
             spell_opens_lock(&brutal, &pick_lock, unlocked),
-            "the reference compares no skill values — an out-of-reach lock still lights"
+            "the cursor's question compares no skill values — an out-of-reach lock still lights"
         );
 
         // Wrong LockType (3, Mining): a lockpick greys over an ore vein.
@@ -431,7 +431,7 @@ mod tests {
         assert_eq!(resolve(None, Some(&lines)), LockOutcome::Unmet);
     }
 
-    /// The lock is marked real (`[ebp-1] = 1`) before the reference is asked.
+    /// The lock is marked real (`[ebp-1] = 1`) before the slot's opener test is asked.
     #[test]
     fn a_gated_out_slot_still_makes_the_lock_real() {
         let slots = [

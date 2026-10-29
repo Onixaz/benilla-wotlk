@@ -1,8 +1,8 @@
-//! Press-again-to-cancel. The reference cancels in its dispatchers, above `TryCast`, and the two
-//! toggles differ: the active-action one runs in both `UseAction` and the `CastSpell` dispatcher,
-//! the form-match one in `CastSpell` only. Both cancel through `CancelAura`, the buff right-click's
-//! `CMSG_CANCEL_AURA`; its own guard (`AttributesEx & 0x2000` set, `& 0x4` clear) never fires for a
-//! shipped toggle and is not built.
+//! Press-again-to-cancel. The reference cancels in its dispatchers, above the cast attempt, and the
+//! two toggles differ: the active-action one runs in both `UseAction` and the `CastSpell`
+//! dispatcher, the form-match one in `CastSpell` only. Both cancel through the aura cancel, the
+//! buff right-click's `CMSG_CANCEL_AURA`; its own guard (`AttributesEx & 0x2000` set, `& 0x4`
+//! clear) never fires for a shipped toggle and is not built.
 
 use benilla_formats::{ShapeshiftForm, SpellDisplay};
 

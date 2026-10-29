@@ -1,4 +1,4 @@
-//! The resize-bounds quad, as the reference stores it (`CLayoutFrame`).
+//! The resize-bounds quad, as the reference stores it on the layout frame.
 
 use crate::script::UiScript;
 

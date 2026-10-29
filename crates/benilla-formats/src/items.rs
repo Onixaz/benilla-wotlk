@@ -48,8 +48,8 @@ pub struct ItemDisplay {
     /// The `ItemVisuals.dbc` id of the display's intrinsic weapon glow. Signed, as the reference's
     /// `jle` gate reads it: 0 and `-1` both mean none.
     pub item_visual: i32,
-    /// The model's particle colour override (`ParticleColorID`), which `AddLink` (`0x4eaa70`)
-    /// applies to every item model it attaches; `None` for id 0.
+    /// The model's particle colour override (`ParticleColorID`), which the item attach
+    /// (`0x4eaa70`) applies to every item model it attaches; `None` for id 0.
     pub particle_colors: Option<crate::ParticleColors>,
 }
 

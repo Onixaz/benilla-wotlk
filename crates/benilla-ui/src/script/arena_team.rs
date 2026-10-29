@@ -1,14 +1,14 @@
-//! `CGArenaTeamInfo`'s bindings (`0x5a2930`-`0x5a3cf0`) and the arena-team verbs beside them:
-//! the PvP window's three team banners, the roster pane, and the captain's commands. The app
-//! pushes each slot's `PLAYER_FIELD_ARENA_TEAM_INFO_1_1` words, the team cache's record and the
-//! last stats and roster; the VM owns what the bindings write, the roster's sort, its offline
+//! The reference arena-team table's bindings (`0x5a2930`-`0x5a3cf0`) and the arena-team verbs
+//! beside them: the PvP window's three team banners, the roster pane, and the captain's commands.
+//! The app pushes each slot's `PLAYER_FIELD_ARENA_TEAM_INFO_1_1` words, the team cache's record and
+//! the last stats and roster; the VM owns what the bindings write, the roster's sort, its offline
 //! filter and the selected member.
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::{bool_or_default, flag, number_arg};
 
-/// The team cache's record (`ArenaTeamCache`, `0x98d220`).
+/// The team cache's record (`0x98d220`).
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct ArenaTeamRecordView {
     pub name: String,
@@ -67,20 +67,20 @@ pub enum ArenaTeamRequest {
     Decline,
 }
 
-/// The roster's seven sort columns (`m_sortOrder`, `0xc0f7fc`).
+/// The roster's seven sort columns (`0xc0f7fc`).
 const ROSTER_COLUMNS: usize = 7;
 
-/// The VM's `CGArenaTeamInfo` mirror.
+/// The VM's mirror of the reference's arena-team table.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ArenaTeams {
     slots: [ArenaTeamSlotView; 3],
     /// Each slot's members in display order, indices into its `members`.
     order: [Vec<usize>; 3],
-    /// `m_showOffline` (`0xacf834`), on until a call turns it off.
+    /// The show-offline toggle (`0xacf834`), on until a call turns it off.
     show_offline: bool,
     /// `(column, reverse)`, most significant first.
     sort: [(u32, bool); ROSTER_COLUMNS],
-    /// `m_selectedMember` (`0xc0f838`), a guid.
+    /// The selected member (`0xc0f838`), a guid.
     selected: u64,
     requests: Vec<ArenaTeamRequest>,
 }
@@ -99,7 +99,7 @@ impl Default for ArenaTeams {
 }
 
 impl ArenaTeams {
-    /// `QSortRoster` (`0x5a2bd0`): with offline members hidden, the online first; then each
+    /// The roster sort (`0x5a2bd0`): with offline members hidden, the online first; then each
     /// column in turn, the name and class A to Z, the counts high first.
     fn compare(&self, a: &ArenaTeamMemberView, b: &ArenaTeamMemberView) -> std::cmp::Ordering {
         use std::cmp::Ordering;

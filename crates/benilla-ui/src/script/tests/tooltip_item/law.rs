@@ -41,8 +41,8 @@ fn item_line_law_and_red_requirements() {
             "[DMG 68 - 103]",
             "[+DMGS 2 - 4 [SCHOOL5]]",
             "[DPS 25.3]",
-            // Display order, not field order: the reference prints STR, AGI, STA, INT, SPI, HP,
-            // MANA.
+            // Display order, not field order: the reference's stat table prints STR, AGI, STA,
+            // INT, SPI, HP, MANA.
             "[MOD_STRENGTH +9]",
             "[MOD_STAMINA +12]",
             "[RESIST_SINGLE +10 [SCHOOL5]]",
@@ -203,7 +203,7 @@ fn verified_families_signable_locked_resists_known() {
     "#,
     )
     .unwrap();
-    // The five that print follow the builder, not the fields: the reference runs `edi` 1..5 reading
+    // The five that print follow the builder, not the fields: its loop runs `edi` 1..5 reading
     // school `(edi == 1) ? 6 : edi`, so Arcane leads.
     s.set_item_template(
         5520,
@@ -232,10 +232,10 @@ fn verified_families_signable_locked_resists_known() {
     assert!(s.take_errors().is_empty());
 }
 
-/// The slot and type cells red separately: a hard proficiency miss (`[class]` bit `1 << subclass`)
-/// reds the type; usable only through the alternate subclass, or an off-hand weapon without Dual
-/// Wield, reds the slot. The reputation line takes the red below the required rank, and a hidden
-/// subclass prints no type cell.
+/// The slot and type cells red separately: a hard proficiency miss (the class's proficiency mask,
+/// bit `1 << subclass`) reds the type; usable only through the alternate subclass, or an off-hand
+/// weapon without Dual Wield, reds the slot. The reputation line takes the red below the required
+/// rank, and a hidden subclass prints no type cell.
 #[test]
 fn proficiency_and_reputation_reds() {
     let mut s = script();
@@ -696,8 +696,9 @@ fn instance_tail_creator_and_readable() {
 }
 
 /// Bonding `[record+0x194]` in 1..5 decides whether a bind line prints; a runtime-bound instance
-/// (or a live enchant slot that binds) prints `ITEM_SOULBOUND`, or `ITEM_BIND_QUEST` for the quest
-/// kinds; else the jump table picks 1 picked up, 2 equipped, 3 used, 4 and 5 Quest Item.
+/// (the soulbound flag, or a live enchant slot that binds) prints `ITEM_SOULBOUND`, or
+/// `ITEM_BIND_QUEST` for the quest kinds; else the jump table picks 1 picked up, 2 equipped, 3
+/// used, 4 and 5 Quest Item.
 #[test]
 fn a_runtime_bound_instance_overrides_the_bind_line_to_soulbound() {
     let mut s = script();

@@ -1,6 +1,6 @@
-//! The group relations the party and raid words ask: `BindTarget`'s party arm needs
-//! `(caster, unit)` and `CanAssist`, its raid arm `(caster, unit)` and `CanAssist`, and the world
-//! pick's party leg (`480686`) asks.
+//! The group relations the party and raid words ask: the target bind's party arm needs the party
+//! test `(caster, unit)` and the assist check, its raid arm the group test `(caster, unit)` and the
+//! assist check, and the world pick's party leg (`480686`) asks the party test.
 //!
 //! - [`GroupRoster`]: the guids the reference's two tables hold, and [`publish_group_roster`],
 //!   which copies them out of `GroupState` before the input pass, so no cast or hover system
@@ -91,14 +91,14 @@ impl crate::target::GroupMembers for GroupInputs<'_> {
 }
 
 impl TargetRelations<'_> {
-    /// `(caster, candidate)`: the candidate is the caster, or a member of his party, or a unit that
-    /// answers to one ([`Self::related`]).
+    /// The party test `(caster, candidate)`: the candidate is the caster, or a member of his party,
+    /// or a unit that answers to one ([`Self::related`]).
     pub(super) fn in_party(&self, is_self: bool) -> bool {
         self.related(is_self, GroupRoster::in_party)
     }
 
-    /// `(caster, candidate)`: the reference in place, so a member of the raid roster counts as well
-    /// as one of the party slots.
+    /// The group test `(caster, candidate)`: the party test with the raid roster's lookup in place
+    /// of the party's, so a member of the raid roster counts as well as one of the party slots.
     pub(super) fn in_group(&self, is_self: bool) -> bool {
         self.related(is_self, GroupRoster::in_group)
     }
@@ -138,7 +138,7 @@ impl TargetRelations<'_> {
     }
 }
 
-/// The player a unit answers to, its charmer else its creator (`606170`-) or the unit itself when
+/// The player a unit answers to, its charmer else its creator or the unit itself when
 /// neither is set, and only when that object is a player (`TYPEMASK_PLAYER`). `owner_store` is the
 /// charmer's or creator's descriptor, `None` while it has not streamed.
 fn controller(store: &ObjectStore, guid: u64, owner_store: Option<&ObjectStore>) -> Option<u64> {
@@ -246,7 +246,7 @@ mod tests {
         }
     }
 
-    /// The reference toward a candidate, with the stores that stand behind it.
+    /// The party and group tests toward a candidate, with the stores that stand behind it.
     fn asked(
         roster: &GroupRoster,
         me: &ObjectStore,
@@ -271,8 +271,8 @@ mod tests {
         (rel.in_party(false), rel.in_group(false))
     }
 
-    /// The reference on players: the party slots satisfy both, the raid roster only the second, and
-    /// a player in neither answers neither.
+    /// The party and group tests on players: the party slots satisfy both, the raid roster only the
+    /// second, and a player in neither answers neither.
     #[test]
     fn the_raid_roster_adds_to_the_party_slots_for_the_second_predicate_alone() {
         let (roster, me, other) = (roster(), player(1), player(1));
@@ -473,8 +473,8 @@ mod tests {
         );
     }
 
-    /// The party bit `0x8` and the raid bit `0x4` clear for the group the predicates name and
-    /// `CanAssist` passes, and only the raid bit for a raid member outside the party.
+    /// The party bit `0x8` and the raid bit `0x4` clear for the group the predicates name and the
+    /// assist check passes, and only the raid bit for a raid member outside the party.
     #[test]
     fn the_party_and_raid_bits_clear_for_the_group_and_only_when_assistable() {
         let factions = fx::factions();
@@ -542,7 +542,7 @@ mod tests {
                 true,
             ),
             ("a friendly creature", NPC, &npc, None, false, false),
-            // In the party, and no friend: `CanAssist` refuses after the predicate passes.
+            // In the party, and no friend: the assist check refuses after the predicate passes.
             (
                 "a member of the other faction",
                 ORC_MEMBER,

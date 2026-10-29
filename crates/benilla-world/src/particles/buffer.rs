@@ -31,7 +31,7 @@ pub enum EffectBlend {
     Alpha,
     /// No blend, depth write on, drawn in the transparent bracket at the owner rung.
     Opaque,
-    /// EGxBlend 1: [`EffectBlend::Opaque`]'s state plus an alpha test discarding below 224/255
+    /// Blend mode 1: [`EffectBlend::Opaque`]'s state plus an alpha test discarding below 224/255
     /// (`VANILLA_ALPHA_KEY_REF`, the mesh cutouts' ref; see [`ParticleBlend::AlphaKey`]).
     AlphaKey,
     /// `dst · lerp(1, src, α)`, bevy's `AlphaMode::Multiply` state: the blob shadow's
@@ -296,7 +296,7 @@ pub struct EffectDrawSpec {
     /// [`Self::anchor`] stays absolute.
     pub cam_relative: bool,
     /// Depth compare `Always`: the weapon swing trail, whose callback turns the depth test off
-    /// (EGxRs id `0x10` = 0) so the swinger's shoulder never eats the arc.
+    /// (render state `0x10` = 0) so the swinger's shoulder never eats the arc.
     pub no_depth_test: bool,
     pub main_entity: Entity,
     pub light: Option<Buffer>,
@@ -593,7 +593,7 @@ impl EffectBatch<'_> {
     }
 
     /// `SRC_ALPHA / INV_SRC_ALPHA`, the default, for a reference alpha state (the swing trail's
-    /// EGxRs `0x07 = 2`).
+    /// render state `0x07 = 2`).
     pub fn alpha(mut self) -> Self {
         self.spec.blend = EffectBlend::Alpha;
         self

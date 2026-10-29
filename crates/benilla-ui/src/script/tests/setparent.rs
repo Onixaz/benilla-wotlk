@@ -139,7 +139,7 @@ fn a_visible_reparent_refires_onhide_then_onshow() {
     );
 }
 
-/// 12340's `CSimpleFrame::SetParent` (`0x4911b0`) runs the show half for a shown frame (`+0xdc`)
+/// 12340's frame `SetParent` (`0x4911b0`) runs the show half for a shown frame (`+0xdc`)
 /// under a visible parent (`+0xe0`), so a frame moved out of a hidden parent shows, firing
 /// `OnShow` once; it hid nothing, so no `OnHide`.
 #[test]
@@ -211,7 +211,7 @@ fn the_binding_raises_on_cycle_bad_name_and_absent_argument() {
     assert_eq!(
         s.eval::<i64>("return B:GetFrameLevel()").unwrap(),
         9,
-        "the reference skips everything — the level is not re-derived"
+        "the same-parent call skips everything — the level is not re-derived"
     );
 }
 

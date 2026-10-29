@@ -36,7 +36,7 @@ pub enum CursorPayload {
     Spell(CursorSpell),
     Action(CursorAction),
     Macro(CursorMacro),
-    /// Mode 13, a saved equipment set (`SetCursorEquipmentSet` `0x520dc0`), placeable on a bar.
+    /// Mode 13, a saved equipment set (`0x520dc0`), placeable on a bar.
     EquipmentSet(CursorEquipmentSet),
     PetAction(CursorPetAction),
     /// Mode 5, a vendor row. Not an `Item`: `CursorHasItem` is true for modes 1 and 9 only, so all
@@ -46,7 +46,7 @@ pub enum CursorPayload {
     StablePet(CursorStablePet),
     /// Mode 2, coins taken off a money frame.
     Money(CursorMoney),
-    /// Mode 11, an item taken from a guild bank slot (`SetCursorVirtualItem`, `0x520d30`).
+    /// Mode 11, an item taken from a guild bank slot (`0x520d30`).
     GuildBankItem(CursorGuildBankItem),
     /// Mode 12, coins taken off the guild bank (`PickupGuildBankMoney`, `0x5a4330`).
     GuildBankMoney(CursorMoney),
@@ -61,7 +61,7 @@ pub struct CursorGuildBankItem {
     pub item_id: u32,
     pub texture: Option<String>,
     pub link: Option<String>,
-    /// `Some(n)` for a split of `n` (`m_stackSplit`), `None` for the whole stack.
+    /// `Some(n)` for a split of `n`, `None` for the whole stack.
     pub split: Option<u32>,
 }
 
@@ -153,8 +153,8 @@ pub struct CursorAction {
 }
 
 /// A pet-bar payload, mode 4, from `PickupPetAction` or the pet spellbook: the packed action word
-/// copied verbatim into the reference and dropped undecoded. Pet bar only: `PlaceAction` refuses
-/// it.
+/// copied verbatim into the cursor's slot and dropped undecoded. Pet bar only: `PlaceAction`
+/// refuses it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CursorPetAction {
     /// The 1-based pet bar slot it came from, 0 from the spellbook.
@@ -228,7 +228,7 @@ pub(crate) fn queue_lock_changed(model: &mut Model, bag: i64, slot: u32) {
         .push(("ITEM_LOCK_CHANGED".to_string(), item_lock_args(bag, slot)));
 }
 
-/// An item event's arguments for the item at `(bag, slot)`, as `CGItem_C::SignalEvent`
+/// An item event's arguments for the item at `(bag, slot)`, as the item's event signal
 /// (`0x60bfe0`) locates it: an inventory slot alone, but a bank-bag slot as `(-1, slot - 38)`;
 /// anywhere else the container and its 1-based slot, which are the Lua API's numbering.
 pub fn item_lock_args(bag: i64, slot: u32) -> Vec<ScriptValue> {
@@ -286,9 +286,9 @@ pub(crate) fn clear_cursor(model: &mut Model) {
     }
 }
 
-/// The sell fork's clear, `SetCursorItem(0, …)`, shared by `PickupMerchantItem` and the interact
-/// ladder's vendor arm: unlike [`clear_cursor`] it leaves the source slot locked, grey until the
-/// server removes the item. Any other payload is no sale and stays held (`GetCursorItem`).
+/// The sell fork's clear, the cursor item set to none, shared by `PickupMerchantItem` and the
+/// interact ladder's vendor arm: unlike [`clear_cursor`] it leaves the source slot locked, grey
+/// until the server removes the item. Any other payload is no sale and stays held.
 pub(crate) fn take_cursor_item_for_sale(model: &mut Model) -> Option<CursorItem> {
     let item = match model.cursor.take() {
         Some(CursorPayload::Item(item)) => item,
@@ -439,9 +439,8 @@ impl super::UiScript {
 // The targeting cursor's item pick and the enchant confirms
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 impl super::UiScript {
-    /// Arm or disarm the targeting cursor's item half (`TargetingWantsItem`): while armed, a bag or
-    /// paper-doll click queues its `(bag, slot)` as a pick instead of picking up, as the
-    /// reference's two pickups do.
+    /// Arm or disarm the targeting cursor's item half: while armed, a bag or paper-doll click
+    /// queues its `(bag, slot)` as a pick instead of picking up, as the reference's two pickups do.
     pub fn set_item_pick_armed(&mut self, armed: bool) {
         set_field!(self, item_pick_armed, armed);
     }
@@ -643,7 +642,7 @@ mod tests {
     use super::{CursorAction, CursorItem, CursorPayload, CursorSpell};
     use crate::script::UiScript;
 
-    /// `CGItem_C::SignalEvent` (`0x60bfe0`): an inventory slot alone, a bank-bag slot as the bank's
+    /// The item's event signal (`0x60bfe0`): an inventory slot alone, a bank-bag slot as the bank's
     /// 29-35, and a container slot as `(bag, slot)`.
     #[test]
     fn an_item_event_locates_the_item_as_the_reference_does() {
@@ -704,7 +703,7 @@ mod tests {
         }
     }
 
-    /// `SetCursorItem(0, …)` skips `ClearCursor`'s unlock and takes only a held item.
+    /// The sell clear skips `ClearCursor`'s unlock and takes only a held item.
     #[test]
     fn the_sell_clear_keeps_the_source_slot_locked() {
         let mut s = UiScript::new().unwrap();
@@ -735,7 +734,7 @@ mod tests {
         assert!(
             !fired.iter().any(|e| e == "ITEM_LOCK_CHANGED"),
             "the sell clear must NOT un-lock the source slot (that is `ClearCursor`'s job, not \
-             `SetCursorItem(0, …)`'s) — got {fired:?}"
+             the sell clear's) — got {fired:?}"
         );
 
         let mut s = UiScript::new().unwrap();

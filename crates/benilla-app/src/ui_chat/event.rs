@@ -149,8 +149,8 @@ impl ChatEventKind {
 /// | 10 | none | the split index, 0 from vmangos (`Chat/Channel.cpp:823-827`) |
 ///
 /// arg4, arg7, arg8 and arg9 are one record ([`super::edit::ChannelState::stamp_channel`]). arg1 is
-/// the garbled text: the reference fills one buffer (`SStrCopy`) that the line, arg1 and the bubble
-/// share ([`super::language`]).
+/// the garbled text: the reference fills one buffer that the line, arg1 and the bubble share
+/// ([`super::language`]).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct ChatEvent {
     pub kind: Option<ChatEventKind>,

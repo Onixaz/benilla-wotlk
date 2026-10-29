@@ -26,8 +26,8 @@ const HELD_SLOTS: usize = 3;
 /// The held items' equipment slots, which index the `PLAYER_VISIBLE_ITEM_*` blocks.
 const PLAYER_HELD_SLOTS: [u8; HELD_SLOTS] = [15, 16, 17];
 
-/// M2 attachment ids. A stowed item's is the reference's: K - 1 for the mainhand and K for the
-/// offhand, K = 27 two-hander, 31 staff, 33 one-hander; 28 for a shield.
+/// M2 attachment ids. A stowed item's follows the reference's stow pick: K - 1 for the mainhand
+/// and K for the offhand, K = 27 two-hander, 31 staff, 33 one-hander; 28 for a shield.
 pub(crate) mod attach_id {
     /// Left forearm: a drawn shield.
     pub(crate) const SHIELD: u16 = 0;
@@ -46,8 +46,9 @@ pub(crate) mod attach_id {
     /// The mainhand's hip is the left one.
     pub(crate) const HIP_MAIN: u16 = 32;
     pub(crate) const HIP_OFF: u16 = 33;
-    /// HandArrow, the nocked arrow's one body attach (`(body, 0x23)` and the `$BWP` handler). The
-    /// 0x18/0x19 that the reference takes pick a model directory, not an attach.
+    /// HandArrow, the nocked arrow's one body attach (id `0x23` on the body, in the bow draw and
+    /// the `$BWP` handler). The 0x18/0x19 the item-model loader takes pick a model directory, not
+    /// an attach.
     pub(crate) const HAND_ARROW: u16 = 0x23;
     /// The worn quiver's attachment, the stowed mainhand two-hander's point.
     pub(crate) const QUIVER: u16 = 26;
@@ -124,9 +125,9 @@ pub(super) struct HeldItems {
 pub(super) const ATTACH_SLOTS: usize = 8;
 
 /// What the disarm reflex left attached: the reference builds attachments from events, and this is
-/// the one such state kept across frames. The reference runs on any unit whose disarm bit changes;
-/// as it rises, a drawn weapon leaves the hidden hand (`(model, 0xf, 0, 0)`) and a stowed one
-/// stays, and no attach site moves it while `GetWeapon(slot, 0)` reads NULL.
+/// the one such state kept across frames. The reference's disarm handler runs on any unit whose
+/// disarm bit changes; as it rises, a drawn weapon leaves the hidden hand (attach `0xf`) and a
+/// stowed one stays, and no attach site moves it while the unit's weapon getter reads NULL.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub(super) struct DisarmFreeze {
     /// The hand hidden at the edge: 0 mainhand, 1 offhand.

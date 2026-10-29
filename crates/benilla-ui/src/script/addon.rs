@@ -2,7 +2,7 @@
 //! (`reference/3.3.5a-globals.tsv`), over a registry the host fills at discovery. A verb that names
 //! an addon takes a 1-based index or a name. `reason` is a token the stock UI splices into
 //! `getglobal("ADDON_"..reason)` (`UIParent.lua:642`), so its spelling is the contract. Verdicts
-//! come from [`super::addon_gate`], the reference's `AddOn_CanLoad` (`0x5f7e90`).
+//! come from [`super::addon_gate`], the reference's load gate (`0x5f7e90`).
 
 use std::path::PathBuf;
 
@@ -58,14 +58,14 @@ pub struct AddOnInfo {
 }
 
 /// Each verb's `Usage:` string as the reference's `.data` holds it; an error handler prints it.
-const USAGE_INFO: &str = "Usage: GetAddOnInfo(index or \"name\")"; //
-const USAGE_METADATA: &str = "Usage: GetAddOnMetadata(index or \"name\", \"variable\")"; //
-const USAGE_DEPENDENCIES: &str = "Usage: GetAddOnDependencies(index or \"name\")"; //
-const USAGE_ENABLE: &str = "Usage: EnableAddOn(index or \"name\")"; //
-const USAGE_DISABLE: &str = "Usage: DisableAddOn(index or \"name\")"; //
-const USAGE_LOAD_ON_DEMAND: &str = "Usage: IsAddOnLoadOnDemand(index or \"name\")"; //
-const USAGE_LOADED: &str = "Usage: IsAddOnLoaded(index or \"name\")"; //
-const USAGE_LOAD: &str = "Usage: LoadAddOn(index or \"name\")"; //
+const USAGE_INFO: &str = "Usage: GetAddOnInfo(index or \"name\")";
+const USAGE_METADATA: &str = "Usage: GetAddOnMetadata(index or \"name\", \"variable\")";
+const USAGE_DEPENDENCIES: &str = "Usage: GetAddOnDependencies(index or \"name\")";
+const USAGE_ENABLE: &str = "Usage: EnableAddOn(index or \"name\")";
+const USAGE_DISABLE: &str = "Usage: DisableAddOn(index or \"name\")";
+const USAGE_LOAD_ON_DEMAND: &str = "Usage: IsAddOnLoadOnDemand(index or \"name\")";
+const USAGE_LOADED: &str = "Usage: IsAddOnLoaded(index or \"name\")";
+const USAGE_LOAD: &str = "Usage: LoadAddOn(index or \"name\")";
 
 /// The `index or "name"` argument, read by the prologue all eight in-game verbs share
 /// (`GetAddOnInfo`, `GetAddOnMetadata`, `GetAddOnDependencies`, `EnableAddOn`, `DisableAddOn`,
@@ -85,7 +85,7 @@ fn addon_key(lua: &Lua, model: &Model, key: &Value, usage: &'static str) -> mlua
         // `_ftol` truncates; minus one, compared unsigned, so 0 raises like count + 1.
         let index0 = (n as i64 as i32).wrapping_sub(1) as u32 as usize;
         // An index into the sorted, filtered name array, not the registry (the reference reads
-        // `[ + 4*idx]`); the message is the reference's.
+        // the array's base plus `4*idx`); the message is the reference's.
         return match model.addon_index.get(index0) {
             Some(&row) => Ok(AddonKey::Index(row)),
             None => Err(mlua::Error::RuntimeError(format!(
@@ -101,10 +101,10 @@ fn addon_key(lua: &Lua, model: &Model, key: &Value, usage: &'static str) -> mlua
     }
 }
 
-/// Rebuild the Lua index array as `AddOn_ReadAddonInfoReply` does in its tail, the array's only
+/// Rebuild the Lua index array as the addon-info reply's handler does in its tail, the array's only
 /// builder: hidden records dropped, the rest sorted case-insensitively by `## Title`, else folder
-/// name (through `AddOn_GetTitle`, `SStrCmpI`). Empty until the server replies. The reference's
-/// `qsort` is unstable, which a stable sort refines.
+/// name. Empty until the server replies. The reference's `qsort` is unstable, which a stable sort
+/// refines.
 fn rebuild_index(model: &mut Model) {
     let Some(hidden) = model.addon_info_hidden.as_ref() else {
         model.addon_index = Vec::new(); // no reply yet, as in the reference
@@ -175,7 +175,7 @@ fn version_check(model: &Model) -> bool {
 }
 
 /// [`can_load`] in the in-game flavour, the demand arm skipped (`0x51138b`, `0x528a6d` push 1). A
-/// loaded addon is loadable before the gate runs, as the reference, so disabling it mid-session
+/// loaded addon is loadable before the gate runs, as in the reference, so disabling it mid-session
 /// does not mark it unloadable.
 fn verdict(model: &Model, i: usize) -> Verdict {
     if model.addons[i].loaded {
@@ -420,8 +420,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `AddOn_Load`, dependencies first; `Err` is the reason token. Synchronous inside the Lua call, as
-/// stock callers use the addon on the next line (`UIParent.lua:577`).
+/// The reference's addon load, dependencies first; `Err` is the reason token. Synchronous inside
+/// the Lua call, as stock callers use the addon on the next line (`UIParent.lua:577`).
 fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     let (name, root, files, deps, already, chain, chain_reader) = {
         let model = lua
@@ -441,7 +441,7 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     if already {
         return Ok(()); // a redundant load succeeds, as in the reference
     }
-    // `LoadAddOn` refuses through `AddOn_CanLoad` and takes the reason from the same gate; an
+    // `LoadAddOn` refuses through the load gate and takes the reason from the same gate; an
     // out-of-date addon loads only with the version check off.
     {
         let model = lua
@@ -465,9 +465,9 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     };
 
     // Loaded is stamped after the gate, so a refusal stays retryable, and before the dependencies,
-    // which is what ends a cycle: `AddOn_Load` has no re-entrancy guard, but its store precedes
-    // both dependency loops, so a re-entry takes the loaded early-out. Inside a cycle, then,
-    // `IsAddOnLoaded("A")` is 1 while B runs and `ADDON_LOADED` fires B before A, as in the
+    // which is what ends a cycle: the reference's load has no re-entrancy guard, but its store
+    // precedes both dependency loops, so a re-entry takes the loaded early-out. Inside a cycle,
+    // then, `IsAddOnLoaded("A")` is 1 while B runs and `ADDON_LOADED` fires B before A, as in the
     // reference.
     {
         let mut model = crate::script::model_mut_of(lua);
@@ -806,8 +806,8 @@ pub(super) fn install_glue(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// A glue AddOn verb's 1-based index into the array (`lua_isnumber`, then `GetAddOnByIndex`):
-/// the usage error for a non-number, the range error for an index off the array.
+/// A glue AddOn verb's 1-based index into the array (`lua_isnumber`, then the by-index lookup): the
+/// usage error for a non-number, the range error for an index off the array.
 pub(super) fn glue_index(
     lua: &Lua,
     model: &Model,

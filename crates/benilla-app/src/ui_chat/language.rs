@@ -1,10 +1,10 @@
-//! The language gate, the reference's share of garbling: the exemptions, and how well the character
-//! knows the language, the second argument of the substitution [`benilla_formats::garble`]. Fluency
-//! is the reference's client-side chain; the server sends no language list: language → the known
-//! spell whose effect 39 declares it → its `SkillLineAbility` row → the `PLAYER_SKILL_INFO` value.
-//! At 300 a line passes whole; below, each word passes when `hash % 300 < skill`. The fold runs
-//! spell → language over known spells only (on spell add): five spells declare Common, so the
-//! inverse would map Common to Old Tongue.
+//! The language gate, the chat display's share of garbling: the exemptions, and how well the
+//! character knows the language, the second argument of the substitution
+//! [`benilla_formats::garble`]. Fluency is a client-side chain; the server sends no language list:
+//! language → the known spell whose effect 39 declares it → its `SkillLineAbility` row → the
+//! `PLAYER_SKILL_INFO` value. At 300 a line passes whole; below, each word passes when
+//! `hash % 300 < skill`. The fold runs spell → language over known spells only (on spell add): five
+//! spells declare Common, so the inverse would map Common to Old Tongue.
 
 use std::collections::HashMap;
 
@@ -41,7 +41,7 @@ pub(crate) struct ChatLanguages {
 }
 
 impl ChatLanguages {
-    /// This character's skill in `language`, the second argument.
+    /// This character's skill in `language`, the garble's second argument.
     pub(crate) fn skill(&self, language: u32) -> u32 {
         self.skill.get(&language).copied().unwrap_or(0)
     }
@@ -51,7 +51,8 @@ impl ChatLanguages {
         self.gm
     }
 
-    /// The language a line renders as after the reference's exemptions; 0 renders plain, no header.
+    /// The language a line renders as after the chat display's exemptions; 0 renders plain, no
+    /// header.
     pub(crate) fn effective_language(&self, chat_type: u8, language: u32) -> u32 {
         if self.gm || !self.have_player || ALWAYS_UNIVERSAL.contains(&chat_type) {
             return 0;

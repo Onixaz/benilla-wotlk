@@ -1,8 +1,8 @@
 //! UI source files are bytes, not text. The reference reads a Lua file whole and binary (no
-//! trailing NUL), and the reference hands it untranscoded to `luaL_loadbuffer`, so a cp1252 file's
-//! literals keep their raw bytes. [`chunk`] prepares a Lua chunk byte for byte; [`decode`] gives
-//! our own `.xml` and `.toc` parsers the `&str` they need. Transcoding Lua instead would change
-//! `string.len`, `string.sub` and `string.byte` on every non-ASCII literal.
+//! trailing NUL), and hands it untranscoded to `luaL_loadbuffer`, so a cp1252 file's literals keep
+//! their raw bytes. [`chunk`] prepares a Lua chunk byte for byte; [`decode`] gives our own `.xml`
+//! and `.toc` parsers the `&str` they need. Transcoding Lua instead would change `string.len`,
+//! `string.sub` and `string.byte` on every non-ASCII literal.
 
 use std::borrow::Cow;
 

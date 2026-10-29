@@ -208,7 +208,7 @@ pub(super) fn stream_self_movement(
     const STRAFE: u32 = move_flags::STRAFE_LEFT | move_flags::STRAFE_RIGHT;
     const TURN: u32 = move_flags::TURN_LEFT | move_flags::TURN_RIGHT;
     // Airborne, the forward, back and strafe transitions are silent: while FALLING the reference's
-    // `StartMove` defers a press into an inert latch (`0x20000`/`0x40000`), so the broadcaster sees
+    // move start defers a press into an inert latch (`0x20000`/`0x40000`), so the broadcaster sees
     // no flag delta. It defers nothing with nothing moving, so the standstill air nudge does send,
     // carrying the re-seeded jump tail.
     let falling = wire_flags & move_flags::FALLING != 0;
@@ -234,8 +234,8 @@ pub(super) fn stream_self_movement(
     }
     // `START_SWIM` (0xca) and `STOP_SWIM` (0xcb) go out the frame `SWIMMING` flips, enqueued by the
     // swim decision; airborne and swimming never overlap, so the arc cannot race. A take-off out of
-    // the water sends no STOP: StartFalling clears SWIMMING itself (`0x988370`), and the decision's
-    // stop arm runs only on a swimmer below the leave depth (`0x730e83`).
+    // the water sends no STOP: the fall start clears SWIMMING itself (`0x988370`), and the
+    // decision's stop arm runs only on a swimmer below the leave depth (`0x730e83`).
     if added & move_flags::SWIMMING != 0 {
         send_move!(MoveKind::StartSwim);
     } else if removed & move_flags::SWIMMING != 0 && !jumped {

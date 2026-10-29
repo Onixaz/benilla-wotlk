@@ -94,7 +94,7 @@ fn truthy(v: &Value) -> bool {
     !matches!(v, Value::Nil | Value::Boolean(false))
 }
 
-/// `CGCooldown::OnLayerUpdate`, in the cooldown's walk slot after the base update: the clock
+/// The Cooldown widget's layer update, in the cooldown's walk slot after the base update: the clock
 /// advances, and a cooldown whose flash ended hides, firing its visibility events. A hidden
 /// cooldown's clock stands still until it shows again, as the walk reaches only shown frames.
 pub(super) fn update(lua: &Lua, h: FrameHandle) {

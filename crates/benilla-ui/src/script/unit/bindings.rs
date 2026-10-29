@@ -198,7 +198,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // `IsReferAFriendLinked(unit)` (`0x51d1b0`): 1 or nil, never raising, and nil with no player
-    // object; the token resolves to a guid (`0x60c1c0`) that `IsRAFPlayer` (`0x6d7590`) asks.
+    // object; the token resolves to a guid (`0x60c1c0`) that the refer-a-friend test (`0x6d7590`)
+    // asks.
     g.set(
         "IsReferAFriendLinked",
         lua.create_function(|lua, token: Value| {
@@ -354,9 +355,9 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitCanAttack delegates to `CanAttack`. The snapshot holds only whether the player can attack
-    // the unit, fed for `target`, `targettarget` and `npc`, and that answers both argument orders;
-    // the reverse direction stock FrameXML also asks (`TargetFrame.lua:147`) is not built.
+    // UnitCanAttack delegates to the attack check. The snapshot holds only whether the player can
+    // attack the unit, fed for `target`, `targettarget` and `npc`, and that answers both argument
+    // orders; the reverse direction stock FrameXML also asks (`TargetFrame.lua:147`) is not built.
     g.set(
         "UnitCanAttack",
         lua.create_function(|lua, (a, b): (Value, Value)| {
@@ -377,8 +378,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetQuestGreenRange: the green-to-grey boundary `QuestLogFrame.lua:593` buckets by, from the
-    // table. The reference answers 0 with no player object; here a level of 0 reads the table's
-    // first entry, 4.
+    // client's level table. The reference answers 0 with no player object; here a level of 0 reads
+    // the table's first entry, 4.
     g.set(
         "GetQuestGreenRange",
         lua.create_function(|lua, ()| {
@@ -1032,8 +1033,8 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
                 token,
                 r#"Usage: UnitPowerType("unit")"#,
             )?);
-            // (type, token) as `0x60f100` pushes them: the token is `GetPowerString` (`0x7fe4b0`),
-            // and a unit that resolves nothing answers 0 and "" (`0x60f32a`).
+            // (type, token) as `0x60f100` pushes them: the token is the power-type string
+            // (`0x7fe4b0`), and a unit that resolves nothing answers 0 and "" (`0x60f32a`).
             let ty = with_unit(lua, &token, None, |u| Some(u.power_type))?;
             Ok(match ty {
                 Some(ty) => (i64::from(ty), power_token(ty)),
@@ -1381,7 +1382,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // AssistUnit(unit): select the unit's `UNIT_FIELD_TARGET`. The shared tail returns silently on
-    // 0 and selects, which leaves the selection alone when nothing resolves; no `CanAssist` gate,
+    // 0 and selects, which leaves the selection alone when nothing resolves; no assist-check gate,
     // any unit, and a swing only with `assistAttack` set (default "0"). A token that resolves
     // nothing is silent here, where the reference shows `0xb8` ERR_GENERIC_NO_TARGET.
     g.set(
@@ -1422,7 +1423,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, (name, exact): (Value, Option<Value>)| {
             let name =
                 super::super::binding_abi::string_arg(lua, name, "Usage: TargetByName(\"name\")")?;
-            // Argument 2 comes from the reference with default 0: it never raises, and 0 is absent.
+            // Argument 2 is read as a boolean with default 0: it never raises, and 0 is absent.
             let exact = match exact {
                 None | Some(Value::Nil) | Some(Value::Boolean(false)) => false,
                 Some(Value::Integer(n)) => n != 0,
@@ -1453,7 +1454,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     // SpellTargetUnit(unit): an argument that is not a string or a number raises `Usage:`; while
     // not targeting the call is a silent no-op, before the token is read; an unknown token then
     // raises `Unknown unit name`. The token queues for the host, which ends targeting with "Out of
-    // range." when it names no unit and otherwise runs `BindTarget`.
+    // range." when it names no unit and otherwise runs the target bind.
     g.set(
         "SpellTargetUnit",
         lua.create_function(|lua, token: Value| {
@@ -1492,7 +1493,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `GetPowerString` (`0x7fe4b0`): the power type's token, "" past the seven.
+/// The power-type string (`0x7fe4b0`): the power type's token, "" past the seven.
 fn power_token(ty: u8) -> &'static str {
     const TOKENS: [&str; 7] = [
         "MANA",

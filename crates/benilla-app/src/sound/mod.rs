@@ -104,10 +104,10 @@ pub(crate) struct SoundConfig {
     /// and the zone beds stay down, since the reference blocks on its world load; sounds already
     /// playing, such as the glue theme's fade tail, play out as the reference's do.
     pub world_hold: bool,
-    /// Not a CVar: set while a cinematic plays ([`feed_music_suppression`]), the reference's. The
-    /// cinematic start reaches the same setter as `EnableMusic 0`, which stop-and-destroys the
-    /// track, a cut, never a fade, and the music pump idles while it is set. Ambience is untouched:
-    /// the cinematic never writes its flag.
+    /// Not a CVar: set while a cinematic plays ([`feed_music_suppression`]), the reference's music
+    /// suppression flag. The cinematic start reaches the same setter as `EnableMusic 0`, which
+    /// stop-and-destroys the track, a cut, never a fade, and the music pump idles while it is set.
+    /// Ambience is untouched: the cinematic never writes its flag.
     ///
     /// Kept apart from [`Self::music_enabled`]: the CVar persists to `Config.wtf`, so asserting it
     /// would save music off for a player who quits mid-cinematic. So the reference's restore latch,
@@ -124,8 +124,8 @@ pub(crate) struct SoundConfig {
     pub listener_at_character: bool,
     /// `Sound_EnableEmoteSounds` (default "1", `0x4d17e5`): gates only the received text-emote
     /// voice line ([`emote::emote_sounds`]); a zero fetches no kit at all. The reference's check
-    /// sits or on the shared leg, which `$CSD` also enters; which one is untraced, and benilla
-    /// gates the received path alone.
+    /// sits on the received text-emote leg or on the shared leg, which `$CSD` also enters; which
+    /// one is untraced, and benilla gates the received path alone.
     pub emote_sounds: bool,
     /// `Sound_EnablePetSounds` (default "1"): off, a unit with a pet number makes no aggro, order or
     /// attack bark and no emote voice (`0x7474b0`, `0x746d60`).

@@ -1,6 +1,6 @@
 //! The GM ticket flow behind the stock Help window, as the 12340 client runs it: one handler
 //! (`0x5ad240`) for the eight answers, and the senders' gates on the client's two ids,
-//! `m_ticketID` (`[0xc1e8d0]`) and `m_responseID` (`[0xc1e8d4]`), zeroed at each world entry
+//! the ticket id (`[0xc1e8d0]`) and the response id (`[0xc1e8d4]`), zeroed at each world entry
 //! (`0x5ac160`). Every `SMSG_GMTICKET_GETTICKET` fires `UPDATE_TICKET`, an unchanged one too, as
 //! the window re-polls `GetGMTicket()` every 10 minutes; no ticket fires it with no arguments,
 //! which the stock `HelpFrame.lua` reads as "no ticket".
@@ -19,7 +19,7 @@ use crate::ui_script::{UiFeed, UiInput, VmMemo};
 /// moves the player to their last safe position.
 const SPELL_STUCK: u32 = 7355;
 
-/// The longest ticket text, in UTF-8 characters (`IsTicketTextValid` `0x5ac170`).
+/// The longest ticket text, in UTF-8 characters (the ticket text check, `0x5ac170`).
 const TICKET_TEXT_MAX: usize = 500;
 
 /// One thing the handler tells Lua, in arrival order.
@@ -40,9 +40,9 @@ enum Signal {
 /// The client's ticket state and what the handler owes Lua.
 #[derive(Resource, Default)]
 pub(crate) struct GmTicketState {
-    /// `m_ticketID`: the open ticket's id, nonzero while one is held; gates edit and delete.
+    /// The ticket id: the open ticket's id, nonzero while one is held; gates edit and delete.
     ticket_id: u32,
-    /// `m_responseID`: a GM's answer awaiting resolve; gates the follow-up and the resolve.
+    /// The response id: a GM's answer awaiting resolve; gates the follow-up and the resolve.
     response_id: u32,
     /// Signals not yet fired, oldest first.
     pending: Vec<Signal>,
@@ -189,7 +189,7 @@ impl GmTicketState {
     }
 }
 
-/// `IsTicketTextValid` (`0x5ac170`): at most 500 UTF-8 characters, and one token that is not
+/// The ticket text check (`0x5ac170`): at most 500 UTF-8 characters, and one token that is not
 /// whitespace.
 fn ticket_text_valid(text: &str) -> Result<(), &'static str> {
     if text.chars().count() > TICKET_TEXT_MAX {
@@ -498,7 +498,7 @@ mod tests {
             state.pending,
             vec![Signal::Message("ERR_TICKET_DB_ERROR"), Signal::Ticket(None)]
         );
-        assert_eq!(state.ticket_id, 9, "0x5ad322 leaves m_ticketID alone");
+        assert_eq!(state.ticket_id, 9, "0x5ad322 leaves the ticket id alone");
     }
 
     /// The window's 10-minute poll must be re-fed each time.
@@ -609,7 +609,7 @@ mod tests {
         assert_eq!(state.gate(&GmTicketIntent::Ask, true), Ok(Some(())));
     }
 
-    /// `IsTicketTextValid` (`0x5ac170`): 500 UTF-8 characters, and something besides whitespace.
+    /// The ticket text check (`0x5ac170`): 500 UTF-8 characters, and something besides whitespace.
     #[test]
     fn ticket_text_is_bounded_in_characters_and_must_not_be_blank() {
         assert_eq!(ticket_text_valid(&"é".repeat(500)), Ok(()));

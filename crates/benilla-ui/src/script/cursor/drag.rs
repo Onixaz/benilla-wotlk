@@ -57,7 +57,7 @@ pub(crate) fn maybe_start_drag(model: &mut Model, pos: (f32, f32)) -> Option<(u3
         (g.source, g.button.clone())
     };
     model.drag.as_mut().expect("checked Some above").started = true;
-    // A dragged button un-presses at the threshold, not on leaving its rect: `CSimpleButton`'s
+    // A dragged button un-presses at the threshold, not on leaving its rect: the button class's
     // `+0x74` override un-presses before firing `OnDragStart`.
     super::super::button::edge(model, source, crate::widget::ButtonState::on_drag_start);
     let id = model

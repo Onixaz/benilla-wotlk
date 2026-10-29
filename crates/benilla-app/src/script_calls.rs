@@ -1,7 +1,7 @@
 //! The one point in the frame where the script calls that touch the selection, the player's cast or
 //! the targeting cursor take effect, in the order the script made them. In the reference each such
 //! call is done when it returns (the macro runner fires every line in one pass; `TargetByName` and
-//! `TargetUnit` commit through `SetSelection`; `CastSpellByName` casts at the selection as it
+//! `TargetUnit` commit through the selection setter; `CastSpellByName` casts at the selection as it
 //! stands then), so `/target Bob` then `/cast Flash Heal` heals Bob, and `/cast` then `/target`
 //! casts at the old target. A fixed order between per-kind drains cannot give both, so the VM keeps
 //! one queue ([`ScriptCall`]) and this system applies it front to back, each call through its
@@ -86,8 +86,8 @@ pub(crate) fn apply_script_calls(
                 cast_as_pet(&mut appliers.p3(), out);
             }
         }
-        // TryCast's attack pick can move the selection mid-cast, so a press held there is picked
-        // and resumed before the next call reads the selection.
+        // The cast attempt's attack pick can move the selection mid-cast, so a press held there is
+        // picked and resumed before the next call reads the selection.
         let Some(held) = appliers.p3().ladder.take_held() else {
             return;
         };
@@ -204,8 +204,8 @@ mod tests {
                 ])),
             )
         };
-        // We are a player (`OBJECT_FIELD_TYPE` 0x19, `UNIT_FLAG_PVP_ATTACKABLE`), which selects
-        // `CanAttack`'s player arm: with no `FactionTemplate.dbc` a plain unit is attackable.
+        // We are a player (`OBJECT_FIELD_TYPE` 0x19, `UNIT_FLAG_PVP_ATTACKABLE`), which selects The
+        // attack check's player arm: with no `FactionTemplate.dbc` a plain unit is attackable.
         let me = world.spawn((SelfPlayer, unit(ME, 0.0))).id();
         world
             .entity_mut(me)
@@ -477,7 +477,8 @@ mod tests {
             f.app
                 .world_mut()
                 .insert_resource(crate::spell::AutoSelfCast(auto));
-            // `CanAssist` passes a friendly player-controlled unit (`UNIT_FLAG_PLAYER_CONTROLLED`).
+            // The assist check passes a friendly player-controlled unit
+            // (`UNIT_FLAG_PLAYER_CONTROLLED`).
             with_factions(&mut f, selected_template, &[(FLAGS, 0x8)]);
             with_fortitude(&mut f);
             run(&mut f, lua);
@@ -509,9 +510,8 @@ mod tests {
             .collect()
     }
 
-    /// The book's pet cast (`CGSpellBook::CastSpell` `0x53bc40`) hands `SendPetAction` the guid it
-    /// was given, so `CastSpell(slot, "pet", 1)` aims the pet's spell at the player, not the
-    /// selection.
+    /// The book's pet cast (`0x53bc40`) hands the pet-action send the guid it was given, so
+    /// `CastSpell(slot, "pet", 1)` aims the pet's spell at the player, not the selection.
     #[test]
     fn a_pet_book_cast_on_self_aims_at_the_player() {
         for (lua, target) in [
@@ -571,8 +571,8 @@ mod tests {
         }
     }
 
-    /// `/target` then `/cast`: `TargetUnit` commits through `SetSelection` before it returns, and
-    /// `CastSpellByName` casts at the selection as it stands then.
+    /// `/target` then `/cast`: `TargetUnit` commits through the selection setter before it returns,
+    /// and `CastSpellByName` casts at the selection as it stands then.
     #[test]
     fn a_cast_after_a_target_goes_to_the_new_target() {
         let mut f = frame(true);
@@ -611,8 +611,8 @@ mod tests {
         }
     }
 
-    /// `TargetNearestEnemy` commits through `SetSelection` before it returns, so the cast after it
-    /// in the same script goes to the unit the TAB cycle picked.
+    /// `TargetNearestEnemy` commits through the selection setter before it returns, so the cast
+    /// after it in the same script goes to the unit the TAB cycle picked.
     #[test]
     fn a_cast_after_target_nearest_enemy_goes_to_the_picked_unit() {
         let mut f = frame(true);
@@ -623,8 +623,9 @@ mod tests {
         assert_eq!(selected(&f), Some(MOB));
     }
 
-    /// `TargetLastTarget` reads the pair `SetSelection` stamps with the outgoing selection: a held
-    /// pair re-selects, which swaps the two; an empty one deselects, which stamps what it drops.
+    /// `TargetLastTarget` reads the pair the selection setter stamps with the outgoing selection: a
+    /// held pair re-selects, which swaps the two; an empty one deselects, which stamps what it
+    /// drops.
     #[test]
     fn target_last_target_swaps_and_deselects_on_an_empty_pair() {
         let mut f = frame(false);
@@ -658,8 +659,8 @@ mod tests {
     }
 
     /// A unit we are friendly toward is dropped and `TargetNearestEnemy` runs, moving the
-    /// selection; the swing goes at what it picked. The Attack button reaches the same through
-    /// `TryCast`.
+    /// selection; the swing goes at what it picked. The Attack button reaches the same through the
+    /// cast attempt.
     #[test]
     fn attack_with_a_friend_selected_swings_at_the_nearest_enemy_instead() {
         for lua in ["AttackTarget()", "UseAction(1)"] {
@@ -703,7 +704,7 @@ mod tests {
     }
 
     /// With no enemy in reach the scan moves nothing, so the selection re-read is the friend, which
-    /// the final gate's `CanAttack` refuses; only an empty selection is "There is nothing to
+    /// the final gate's attack check refuses; only an empty selection is "There is nothing to
     /// attack.". Neither swings.
     #[test]
     fn attack_with_no_enemy_near_refuses_by_what_is_selected() {
@@ -736,8 +737,8 @@ mod tests {
         assert_eq!(swings(&f), (vec![], false));
     }
 
-    /// The reference toggles only past the validator: attacking a live foe stops, and a press the
-    /// validator refuses neither stops nor swings.
+    /// The reference's Attack toggle acts only past the validator: attacking a live foe stops, and
+    /// a press the validator refuses neither stops nor swings.
     #[test]
     fn attack_toggles_off_only_past_the_validator() {
         for (health, stopped, refused) in [
@@ -798,8 +799,8 @@ mod tests {
         assert_eq!(selected(&f), Some(NEW));
     }
 
-    /// Sinister Strike: `AttributesEx & 0x200`, one of predicate the reference's bits, and the
-    /// enemy word (implicit target 6).
+    /// Sinister Strike: `AttributesEx & 0x200`, one of the bits a reference cast predicate tests,
+    /// and the enemy word (implicit target 6).
     const SINISTER_STRIKE: u32 = 1752;
 
     /// Sinister Strike in the catalog and on action slot 1.
@@ -844,9 +845,9 @@ mod tests {
             .collect()
     }
 
-    /// TryCast's attack pick: a strike pressed with no target selects the nearest enemy before its
-    /// bind, so the selection goes out ahead of the cast and its swing, and the call after it reads
-    /// the selection only once the cast is done.
+    /// The cast attempt's attack pick: a strike pressed with no target selects the nearest enemy
+    /// before its bind, so the selection goes out ahead of the cast and its swing, and the call
+    /// after it reads the selection only once the cast is done.
     #[test]
     fn a_strike_with_no_target_selects_the_nearest_enemy_and_casts_at_it() {
         let mut f = frame(false);

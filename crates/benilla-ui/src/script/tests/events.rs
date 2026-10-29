@@ -17,7 +17,8 @@ fn globals_are_restored_after_firing_nesting_safe() {
     )
     .unwrap();
     s.fire_event("E", vec![ScriptValue::Str("x".into())]);
-    // The reference sets the globals for the handler and restores the prior values after.
+    // The reference's dispatch sets the globals for the handler and restores the prior values
+    // after.
     let (t, e, a): (String, String, String) = s.eval("return this, event, arg1").unwrap();
     assert_eq!(
         (t.as_str(), e.as_str(), a.as_str()),

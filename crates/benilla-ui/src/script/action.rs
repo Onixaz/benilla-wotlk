@@ -142,7 +142,7 @@ impl super::UiScript {
     }
 
     /// Drain the GlobalStrings keys of engine-side refusals; the app fires `UI_ERROR_MESSAGE` for
-    /// each, where the reference calls `CGGameUI::DisplayError` inline.
+    /// each, where the reference calls its error display inline.
     pub fn take_ui_errors(&mut self) -> Vec<&'static str> {
         drain_field!(self, ui_errors)
     }
@@ -338,7 +338,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             if super::cursor::use_action_places(&mut model, action, in_binding) {
                 return Ok(());
             }
-            // A set slot wears the set (`0x5abdcc` → `CGEquipmentManager::EquipSet` `0x5ae660`).
+            // A set slot wears the set (`0x5abdcc` → the equipment manager's set equip `0x5ae660`).
             if let Some(set) = model
                 .actions
                 .get(&action)
@@ -477,7 +477,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "IsAttackAction",
         lua.create_function(|lua, action: u32| Ok(state_flag(lua, action, |s| s.is_attack)))?,
     )?;
-    // From the slot, not the state map: the reference depends only on the item template.
+    // From the slot, not the state map: the reference's answer depends only on the item template.
     g.set(
         "IsConsumableAction",
         lua.create_function(|lua, action: u32| {
@@ -884,7 +884,7 @@ mod tests {
         assert_eq!(s.take_action_sets(), vec![(9, 111)]);
     }
 
-    /// The fork is skipped inside a key binding (`m_keyStateOverride`, `0x5abbe6`) and on slots
+    /// The fork is skipped inside a key binding (the key-state override, `0x5abbe6`) and on slots
     /// 121-132 (`0x5abbee`): the press uses the slot and the payload stays held.
     #[test]
     fn a_binding_or_a_possess_slot_uses_with_the_payload_held() {

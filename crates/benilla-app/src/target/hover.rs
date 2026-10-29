@@ -23,8 +23,8 @@ use benilla_world::view::WorldCamera;
 
 use super::{Hovered, HoveredObject, PickOcclusion};
 
-/// Trace this frame's world hit, the world leg of `CGWorldFrame::HitTest` (flags `0x1000124`): the
-/// [`PickOccluder`] colliders (terrain, WMO faces), then the drawn doodads nearer than that
+/// Trace this frame's world hit, the world leg of the world frame's hit test (flags `0x1000124`):
+/// the [`PickOccluder`] colliders (terrain, WMO faces), then the drawn doodads nearer than that
 /// ([`DoodadOccluders`]). Net entities are the object trace, not occluders, so a chest never
 /// occludes itself. The picks run unbounded and compare against it after. Aimed as the picks are:
 /// the OS pointer, else the hover probe's aim.
@@ -72,7 +72,7 @@ pub(super) fn update_pick_occlusion(
 }
 
 /// The model instances whose parts are `unit`'s pick geometry: the body, everything it wears, and
-/// its mount. The reference's walks the CM2 attachment tree (`[model+0x1dc]` head, `[+0x1e4]`
+/// its mount. The reference walks the model attachment tree (`[model+0x1dc]` head, `[+0x1e4]`
 /// sibling) and registers each model under one candidate, so a hit on a held axe is a hit on its
 /// wielder. `pub(crate)` for the capture census, which counts the same.
 pub(crate) fn pick_model_roots(
@@ -98,7 +98,8 @@ pub(super) struct PickPose<'w, 's> {
 /// the picker's param limit.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(super) struct TargetHoverState<'w, 's> {
-    /// For `IsSelectable`'s `UNIT_FIELD_CREATEDBY` clause and the pick filter's possession clause.
+    /// For the selectable test's `UNIT_FIELD_CREATEDBY` clause and the pick filter's possession
+    /// clause.
     self_guid: Res<'w, crate::net::SelfGuid>,
     /// The reference's pick flag `0x20`, as the frame began.
     picks_self: Res<'w, crate::spell::PicksSelf>,
@@ -113,21 +114,21 @@ pub(super) struct TargetHoverState<'w, 's> {
 
 impl TargetHoverState<'_, '_> {
     /// The reference's two exclusions, which come first and which a pick whose flags carry `0x20`
-    /// skips ([`crate::spell::PicksSelf`]; so outside targeting they always run): the active player
-    /// (`480638`), and a unit they possess, an Eye of Kilrogg or a Mind Controlled target
-    /// ([`super::is_possessed_by`],-`480674`), so the cursor and the click pass through it to what
-    /// lies behind.
+    /// skips ([`crate::spell::PicksSelf`]; it is set only for a word that takes the player, so
+    /// outside targeting they always run): the active player, and a unit they possess, an Eye of
+    /// Kilrogg or a Mind Controlled target ([`super::is_possessed_by`]), so the cursor and the
+    /// click pass through it to what lies behind.
     fn excludes(&self, is_self: bool, store: Option<&ObjectStore>) -> bool {
         !self.picks_self.0 && (is_self || super::is_possessed_by(store, self.self_guid.0))
     }
 
     /// Whether an object of this kind is a candidate of this pick, the posed pass and the box
     /// fallback alike: every unit and player outside targeting but the two [`Self::excludes`]
-    /// drops, and while targeting the ones passes for the word
+    /// drops, and while targeting the ones the unit filter passes for the word
     /// ([`crate::spell::targeting::PickChecks::admits_unit`]); a corpse always outside targeting,
-    /// whose pick flags carry `0x40`, and while targeting only one passes. A corpse whose store has
-    /// not streamed is refused then. `is_self` is the active player's own body. The hover and the
-    /// press, which latches this pick, share it.
+    /// whose pick flags carry `0x40`, and while targeting only one the corpse filter passes. A
+    /// corpse whose store has not streamed is refused then. `is_self` is the active player's own
+    /// body. The hover and the press, which latches this pick, share it.
     fn is_candidate(
         &self,
         entity: Entity,
@@ -159,7 +160,7 @@ impl TargetHoverState<'_, '_> {
 
 /// The posed pick's geometry under one model root: its skinned parts. Ours are dropped while
 /// hidden: first person hides them ([`crate::player::apply_self_model_fade`] at alpha 0), where the
-/// reference's camera fade clears its player-visible flag and `ShouldRender` refuses the active
+/// reference's camera fade clears its player-visible flag and the render test refuses the active
 /// player, so it is never picked.
 #[allow(clippy::type_complexity)] // the picker's own part query, borrowed as-is
 fn posed_parts<'a>(
@@ -280,8 +281,8 @@ pub(super) fn update_hover(
     let mut faithful: HashSet<Entity> = HashSet::new();
     for (entity, is_self, gt, net, anims, drv, store, children, mount_child, drawn, held) in &roots
     {
-        // Units, players and corpses: the reference picks every CGObject in one trace and
-        // switches on type at the end, below.
+        // Units, players and corpses: the reference picks every object in one trace and switches on
+        // type at the end, below.
         if !target_state.is_candidate(entity, net.kind, is_self, store) {
             continue;
         }
@@ -422,7 +423,7 @@ pub(super) fn update_hover(
         best = None;
     }
     // Switch on type at the end, as the reference does: the one pick lands in the unit slot or the
-    // corpse slot, and a unit the `IsSelectable` grader refuses in neither.
+    // corpse slot, and a unit the selectable grader refuses in neither.
     if let Some((t, entity)) = best {
         if let Ok((guid, net)) = units.get(entity) {
             if net.kind == EntityKind::Corpse {
@@ -445,13 +446,13 @@ pub(super) fn update_hover(
     *last_pick = best.map(|(_, e)| e);
 }
 
-/// The hover grader's `IsSelectable` test: the reference calls vtable slot 21 (the predicate
-/// `SetSelection` runs), and a refusal jumps to the reference and `ResetCursor`, past the
+/// The hover grader's selectable test: the reference calls vtable slot 21 (the predicate the
+/// selection set runs), and a refusal jumps to the mouseover clear and `ResetCursor`, past the
 /// publisher: no tooltip, cursor, brighten or click.
 ///
 /// It grades the winner and filters no candidate: the pick reads no unit field, so a refused unit
-/// in front of a chest still takes the pick ([`Hovered::refused`]). A corpse's slot 21 is
-/// `CGCorpse_C`'s, so only the unit arms run this. A plate hover skips the grader, but the plate
+/// in front of a chest still takes the pick ([`Hovered::refused`]). A corpse's slot 21 is the
+/// corpse object's, so only the unit arms run this. A plate hover skips the grader, but the plate
 /// gate already refuses the same units. Graded at the publish, so [`Hovered`] is never readable
 /// ungraded.
 #[allow(clippy::type_complexity)] // the picker's own root query, borrowed as-is
@@ -529,12 +530,12 @@ fn net_entity_of(
 
 /// What the GameObject gates read beside the object's store: the template cache (GENERIC's
 /// eligibility is its `data[1]`, MEETINGSTONE's its `data[2]`), the faction catalog, and the
-/// meeting-stone queue, the reference's.
+/// meeting-stone queue, the reference's global.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct GoGateInputs<'w> {
     pub(crate) templates: Res<'w, crate::go_templates::GameObjectTemplates>,
     pub(crate) factions: Option<Res<'w, super::ring::Factions>>,
-    /// Absent in a net-less build, read as the reference's zeroed: not queued.
+    /// Absent in a net-less build, read as the reference's zeroed global: not queued.
     pub(crate) stone: Option<Res<'w, crate::ui_dialog_verbs::MeetingStone>>,
 }
 
@@ -728,8 +729,9 @@ pub(super) fn update_hovered_object(
         return;
     };
     // The mouseover-eligibility gate (vtable `+0x54`): an ineligible object publishes the null
-    // mouseover, so no tooltip, brighten or cursor; the reference reaches only past it. Its null
-    // mouseover also hides a unit behind the object, which our split picks leave hoverable.
+    // mouseover, so no tooltip, brighten or cursor; the reference reaches the tooltip, the brighten
+    // and the cursor only past it. Its null mouseover also hides a unit behind the object, which
+    // our split picks leave hoverable.
     if let Ok(store) = stores.get(net_entity) {
         let tmpl = go_gate.templates.get(guid.0);
         let reaction = crate::target::cursor_mode::go_reaction(
@@ -864,7 +866,7 @@ mod tests {
     }
 
     /// First person hides our own parts (`Visibility::Hidden`), and the posed pick drops them, as
-    /// `ShouldRender` refuses the active player then; anyone else's stay the root's call.
+    /// the render test refuses the active player then; anyone else's stay the root's call.
     #[test]
     fn our_hidden_parts_leave_the_posed_pick() {
         let mut world = World::new();
@@ -961,7 +963,7 @@ mod tests {
     }
 
     /// Our own body joins the unit pick only while [`crate::spell::PicksSelf`] says the word takes
-    /// it (at `480638`), here through the box fallback of a body with no skinned parts.
+    /// it, here through the box fallback of a body with no skinned parts.
     #[test]
     fn our_body_joins_the_pick_only_while_the_word_takes_it() {
         let mut world = pick_world();
@@ -994,8 +996,8 @@ mod tests {
     }
 
     /// A corpse is a candidate outside targeting (`0x5c` carries flag `0x40`); while targeting,
-    /// only under a word in `0x8600` and only one passes, as [`crate::spell::CorpsePick`] carries
-    /// the standing word to the picker.
+    /// only under a word in `0x8600` and only one the corpse filter passes, as
+    /// [`crate::spell::CorpsePick`] carries the standing word to the picker.
     #[test]
     fn a_corpse_joins_the_pick_as_the_word_admits_it() {
         use crate::spell::targeting::corpse_fixture as fx;
@@ -1143,7 +1145,7 @@ mod tests {
         world
     }
 
-    /// The reference while a word stands: a unit the word cannot take is no candidate, so the one
+    /// The unit filter while a word stands: a unit the word cannot take is no candidate, so the one
     /// behind it takes the pick, where outside targeting the nearer wins whatever it is. The front
     /// unit is 5 yards nearer the camera than the rear one.
     #[test]
@@ -1238,7 +1240,7 @@ mod tests {
     }
 
     /// With nothing behind it, a unit the word cannot take leaves the pick empty, which is no
-    /// refusal: `IsSelectable` grades the winner only, and there is none.
+    /// refusal: the selectable grader grades the winner only, and there is none.
     #[test]
     fn a_lone_unit_the_word_cannot_take_is_no_pick_at_all() {
         let mut world = unit_pick_world();
@@ -1268,9 +1270,9 @@ mod tests {
     const SELF_WORD: u32 = 0x0002;
     const ENEMY_WORD: u32 = 0x0080;
 
-    /// -`480676`: a unit flagged `UNIT_FLAG_POSSESSED` whose charmer, else creator, is the active
-    /// player is no candidate outside targeting, or while a word without `0x20` stands, so the pick
-    /// passes through it to the unit behind. Us is guid 1.
+    /// A unit flagged `UNIT_FLAG_POSSESSED` whose charmer, else creator, is the active player is no
+    /// candidate outside targeting, or while a word without `0x20` stands, so the pick passes
+    /// through it to the unit behind. Us is guid 1.
     #[test]
     fn a_unit_you_possess_lets_the_pick_through_to_the_one_behind() {
         let possessed = crate::target::UNIT_FLAG_POSSESSED;

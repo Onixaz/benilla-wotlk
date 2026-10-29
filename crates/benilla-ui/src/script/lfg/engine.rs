@@ -1,5 +1,5 @@
-//! `CGLookingForGroup`'s state and its packet handler's transitions (`LFGPacketHandler
-//! 0x55bdc0`). Each transition returns the events it fires, in order, and the lines it shows.
+//! The dungeon finder's state and its packet handler's transitions (`0x55bdc0`). Each transition
+//! returns the events it fires, in order, and the lines it shows.
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -23,17 +23,17 @@ pub(super) const TYPE_RAID: i32 = 2;
 /// `LfgDungeons` type 6: a random dungeon.
 pub(super) const TYPE_RANDOM: i32 = 6;
 
-/// `SI2::PlayUISound` kits: the queue join, the role check and the failure chimes.
+/// The UI sound kits: the queue join, the role check and the failure chimes.
 const SOUND_JOINED: u32 = 0x210e;
 const SOUND_ROLE_CHECK: u32 = 0x43a6;
 const SOUND_FAILED: u32 = 0x43bd;
 
-/// `s_classRoles` (`0xa394b0`), by class id - 1: bit 1 leader, 2 tank, 4 healer, 8 damage.
+/// The class role table (`0xa394b0`), by class id - 1: bit 1 leader, 2 tank, 4 healer, 8 damage.
 const CLASS_ROLES: [u8; 11] = [
     0x0b, 0x0f, 0x09, 0x09, 0x0d, 0x0b, 0x0d, 0x09, 0x09, 0x00, 0x0f,
 ];
 
-/// `s_joinResultErrors` (`0xacdda8`): a join result's line.
+/// The join result error table (`0xacdda8`): a join result's line.
 const JOIN_RESULT_ERRORS: [(u32, &str); 17] = [
     (1, "ERR_LFG_ROLE_CHECK_FAILED"),
     (2, "ERR_LFG_GROUP_FULL"),
@@ -59,7 +59,7 @@ pub(super) fn slot_of(d: &LfgDungeonView) -> u32 {
     (d.id as u32 & 0xff_ffff) | ((d.type_id as u32) << 24)
 }
 
-/// `GetClassRoles` (`0x552940`): the class's role mask, 0 for an unknown class.
+/// The class roles (`0x552940`): the class's role mask, 0 for an unknown class.
 pub(super) fn class_roles(class_id: u32) -> u8 {
     class_id
         .checked_sub(1)
@@ -127,14 +127,14 @@ impl LfgInfo {
         info
     }
 
-    /// `AddDungeon` (`0x559950`): no duplicate.
+    /// A dungeon added (`0x559950`): no duplicate.
     fn add_dungeon(&mut self, slot: u32) {
         if !self.dungeons.contains(&slot) {
             self.dungeons.push(slot);
         }
     }
 
-    /// `Equals` (`0x5570f0`): the flags, the needs, the comment and the dungeon set.
+    /// The equality (`0x5570f0`): the flags, the needs, the comment and the dungeon set.
     fn equals(&self, other: &Self) -> bool {
         self.joined == other.joined
             && self.lfg_joined == other.lfg_joined
@@ -147,7 +147,7 @@ impl LfgInfo {
             && self.dungeons.iter().all(|d| other.dungeons.contains(d))
     }
 
-    /// `CopyFrom` (`0x5599f0`): the flags and comment copied; dungeons gone from `other` dropped,
+    /// The copy (`0x5599f0`): the flags and comment copied; dungeons gone from `other` dropped,
     /// new ones appended, so kept ones hold their place.
     fn copy_from(&mut self, other: &Self) {
         self.joined = other.joined;
@@ -163,7 +163,7 @@ impl LfgInfo {
         }
     }
 
-    /// `HasRaidDungeon` (`0x557260`): joined, with a raid among the dungeons.
+    /// The raid test (`0x557260`): joined, with a raid among the dungeons.
     fn has_raid(&self, catalog: &Catalog) -> bool {
         self.joined
             && self.dungeons.iter().any(|&s| {
@@ -174,7 +174,7 @@ impl LfgInfo {
     }
 }
 
-/// `LFGDungeonEntry`: one dungeon of a lock info, its rewards and its lock.
+/// One dungeon of a lock info, its rewards and its lock.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct DungeonEntry {
     pub(crate) slot: u32,
@@ -188,7 +188,7 @@ pub(crate) struct DungeonEntry {
     pub(crate) rewards: Vec<LfgRewardItemView>,
 }
 
-/// `LFGLockInfo`: one player's dungeons.
+/// One player's lock info: their dungeons.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct LockInfo {
     pub(crate) valid: bool,
@@ -197,7 +197,7 @@ pub(crate) struct LockInfo {
 }
 
 impl LockInfo {
-    /// `AddDungeon` (`0x559840`): the slot's entry, appended when new.
+    /// A dungeon added (`0x559840`): the slot's entry, appended when new.
     fn entry(&mut self, slot: u32) -> &mut DungeonEntry {
         let i = match self.dungeons.iter().position(|d| d.slot == slot) {
             Some(i) => i,
@@ -212,7 +212,7 @@ impl LockInfo {
         &mut self.dungeons[i]
     }
 
-    /// `ParseBlackList` (`0x559b10`).
+    /// The lock list's parse (`0x559b10`).
     fn add_locks(&mut self, locks: &[(u32, u32)]) {
         for &(slot, reason) in locks {
             let e = self.entry(slot);
@@ -239,7 +239,7 @@ pub(crate) struct Proposal {
     pub(crate) members: [LfgProposalMemberView; 5],
 }
 
-/// `LFGQueueStatus`, with the queued time on the `GetTime()` clock.
+/// A queue status, with the queued time on the `GetTime()` clock.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct QueueStatus {
     pub(crate) lfg_id: u32,
@@ -254,7 +254,8 @@ pub(crate) struct QueueStatus {
     pub(crate) queued_at: f64,
 }
 
-/// A verb's send throttle: three calls per window (`s_joinAttempts` and kin start at 2).
+/// A verb's send throttle: three calls per window (the join attempt counter and its kin start at
+/// 2).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Throttle {
     count: i32,
@@ -298,7 +299,7 @@ pub(crate) struct Throttles {
     pub(crate) party_lock: Throttle,
 }
 
-/// The tables, by id where 12340 looks rows up by id (`GetRecord`), in file order otherwise.
+/// The tables, by id where 12340 looks rows up by id, in file order otherwise.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Catalog {
     pub(crate) view: LfgCatalogView,
@@ -335,7 +336,7 @@ impl Catalog {
         self.group_index.get(&id).map(|&i| &self.view.groups[i])
     }
 
-    /// `GetLfgDungeonExpansionRec` (`0x6349f0`): the run after the dungeon's first row.
+    /// The dungeon expansion row (`0x6349f0`): the run after the dungeon's first row.
     pub(crate) fn expansion(&self, id: i32, expansion: i32) -> Option<&LfgExpansionView> {
         let rows = &self.view.expansions;
         let first = rows.iter().position(|r| r.lfg_id == id)?;
@@ -345,7 +346,7 @@ impl Catalog {
             .find(|r| r.expansion_level == expansion)
     }
 
-    /// `GetMapDifficultyEntryByMapIdAndDifficulty` (`0x634950`).
+    /// The map difficulty row by map and difficulty (`0x634950`).
     pub(crate) fn map_difficulty(&self, map: i32, difficulty: i32) -> Option<&MapDifficultyView> {
         let rows = &self.view.map_difficulties;
         let first = rows.iter().position(|r| r.map_id == map)?;
@@ -355,7 +356,7 @@ impl Catalog {
             .find(|r| r.difficulty == difficulty)
     }
 
-    /// `DungeonEncounterCountMatchingRows` (`0x553830`): `(total, completed)`.
+    /// The matching encounter count (`0x553830`): `(total, completed)`.
     pub(crate) fn encounter_counts(&self, map: i32, difficulty: i32, mask: u32) -> (u32, u32) {
         let mut total = 0;
         let mut done = 0;
@@ -375,10 +376,10 @@ impl Catalog {
 }
 
 /// One entry of the dungeon window's or the raid browser's list: a dungeon id and its group, or
-/// a negated group id and its parent group (`LFGEntryInfo`).
+/// a negated group id and its parent group.
 pub(crate) type Entry = (i32, i32);
 
-/// `QSortLFGDungeons` (`0x5536a0`): by group order, the header first, then by order index, then
+/// The dungeon sort (`0x5536a0`): by group order, the header first, then by order index, then
 /// by mean level, then by name.
 fn compare_entries(a: Entry, b: Entry, catalog: &Catalog, expansion: i32) -> Ordering {
     let group_of = |e: Entry| if e.0 < 0 { -e.0 } else { e.1 };
@@ -471,7 +472,7 @@ impl LfgModel {
         self.catalog = Catalog::new(view);
     }
 
-    /// `InitializeGame` (`0x55d440`).
+    /// The game initialization (`0x55d440`).
     pub(super) fn initialize_game(&mut self, expansion: u8) {
         let keep = (
             std::mem::take(&mut self.catalog),
@@ -490,7 +491,7 @@ impl LfgModel {
         self.update_entries(i32::from(expansion));
     }
 
-    /// `UpdateLFDEntries` (`0x558350`) and `UpdateLFREntries` (`0x558520`).
+    /// The dungeon and raid list updates (`0x558350`, `0x558520`).
     fn update_entries(&mut self, expansion: i32) {
         let cat = &self.catalog;
         let mut lfd: Vec<Entry> = cat
@@ -534,7 +535,7 @@ impl LfgModel {
         }
     }
 
-    /// `ClearDungeonList` (`0x559340`).
+    /// The dungeon list clear (`0x559340`).
     pub(crate) fn clear_dungeon_list(&mut self) {
         self.local.dungeons.clear();
         self.local.dirty = true;
@@ -572,7 +573,8 @@ impl LfgModel {
         }
     }
 
-    /// `IsSlotValidForAll` (`0x559c90`): no lock on us, nor, outside a raid, on a party member.
+    /// The slot test for everyone (`0x559c90`): no lock on us, nor, outside a raid, on a party
+    /// member.
     pub(crate) fn slot_valid_for_all(&self, slot: u32) -> bool {
         if self.player_lock.valid && self.player_lock.find(slot).is_some_and(|e| e.locked) {
             return false;
@@ -587,7 +589,7 @@ impl LfgModel {
         true
     }
 
-    /// `UpdateRandomDungeons` (`0x55aaf0`): every random dungeon, and every seasonal one the
+    /// The random dungeon update (`0x55aaf0`): every random dungeon, and every seasonal one the
     /// server lists unlocked, in file order; then the best choice.
     fn update_random_dungeons(&mut self) {
         let lock = &self.player_lock;
@@ -606,7 +608,7 @@ impl LfgModel {
         self.update_best_choice();
     }
 
-    /// `UpdateRandomDungeonBestChoice` (`0x559ea0`): the newest expansion, then the highest
+    /// The random dungeon best choice (`0x559ea0`): the newest expansion, then the highest
     /// target level, then the highest minimum level, among the random dungeons all can join.
     fn update_best_choice(&mut self) {
         let mut best: Option<&LfgDungeonView> = None;
@@ -622,7 +624,7 @@ impl LfgModel {
         self.best_choice = choice;
     }
 
-    /// `IsBetterRandomDungeon` (`0x559da0`).
+    /// The better-random-dungeon test (`0x559da0`).
     fn better_random(&self, d: &LfgDungeonView, best: Option<&LfgDungeonView>) -> bool {
         if d.type_id != TYPE_RANDOM
             || !self.slot_valid_for_all(d.id as u32 & 0xff_ffff | 0x0600_0000)
@@ -656,7 +658,7 @@ impl LfgModel {
         min(d) > min(best)
     }
 
-    /// `GetDungeonRewardItem` (`0x5574c0`).
+    /// The dungeon reward item (`0x5574c0`).
     pub(crate) fn reward_item(&self, slot: u32, index: i64) -> Option<LfgRewardItemView> {
         if !self.player_lock.valid {
             return None;
@@ -667,7 +669,7 @@ impl LfgModel {
             .and_then(|i| e.rewards.get(i).copied())
     }
 
-    /// `ClearPartyInfo` (`0x55b120`).
+    /// The party info clear (`0x55b120`).
     pub(super) fn clear_party_info(&mut self) -> Events {
         let mut events = Vec::new();
         self.party_lock.clear();
@@ -685,7 +687,7 @@ impl LfgModel {
         events
     }
 
-    /// `ShowProposal` (`0x552900`): an update, and a show for a new proposal id.
+    /// The proposal show (`0x552900`): an update, and a show for a new proposal id.
     fn show_proposal(&mut self, events: &mut Events) {
         events.push(("LFG_PROPOSAL_UPDATE", Vec::new()));
         if self.last_proposal_id != self.proposal.id {
@@ -807,7 +809,7 @@ impl LfgModel {
             .unwrap_or_default()
     }
 
-    /// `ParsePartyInfo` (`0x55b080`): each member found or added, its dungeons replaced.
+    /// The party info parse (`0x55b080`): each member found or added, its dungeons replaced.
     fn add_party_locks(&mut self, members: Vec<LfgMemberLocksView>) {
         for m in members {
             let i = match self.party_lock.iter().position(|l| l.guid == m.guid) {

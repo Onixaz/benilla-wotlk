@@ -33,7 +33,7 @@ pub(crate) struct GuildRegistrarState {
 
 #[derive(Clone, Debug)]
 struct Registrar {
-    /// What `BuyGuildCharter` addresses (`m_registrar`, `0xc0e570`).
+    /// What `BuyGuildCharter` addresses (`0xc0e570`).
     npc: u64,
     /// Price in copper, unsigned.
     cost: u32,
@@ -47,7 +47,7 @@ const REGISTRAR_NPC_FLAGS: u32 = crate::target::cursor_mode::npc_flags::PETITION
     | crate::target::cursor_mode::npc_flags::TABARDDESIGNER;
 
 impl GuildRegistrarState {
-    /// `SetRegistrar` (`0x599e00`): the first row is the registrar's charter.
+    /// The registrar setter (`0x599e00`): the first row is the registrar's charter.
     fn open(&mut self, list: &PetitionShowList) {
         let first = list.entries.first().cloned().unwrap_or_default();
         self.open = Some(Registrar {
@@ -78,15 +78,14 @@ impl NpcSession for GuildRegistrarState {
     }
 }
 
-/// The arena registrar's session (`CGPetitionVendorInfo`, `0xc0f7c8`): its charter rows, up to
-/// ten (`0x5a22f0`).
+/// The arena registrar's session (`0xc0f7c8`): its charter rows, up to ten (`0x5a22f0`).
 #[derive(Resource, Default)]
 pub(crate) struct PetitionVendorState {
     npc: Option<u64>,
     items: Vec<PetitionShowListEntry>,
     /// The VM closed it itself and fired `PETITION_VENDOR_CLOSED` already.
     closed_by_vm: bool,
-    /// `ShowPetitionList` fires `PETITION_VENDOR_UPDATE` with a vendor (`0x5a22e8`).
+    /// The petition list show fires `PETITION_VENDOR_UPDATE` with a vendor (`0x5a22e8`).
     update: bool,
 }
 
@@ -293,9 +292,9 @@ impl PetitionState {
             .map_or(0, |r| (r.min_signatures + 1) as u32)
     }
 
-    /// An arena charter whose record is cached and, for a turn-in of `team_size`, whose
-    /// requirement is `team_size − 1` (`TurnInArenaCharter`, `0x6dd680`); the item's record is
-    /// asked once on the way.
+    /// An arena charter whose record is cached and, for a turn-in of `team_size`, whose requirement
+    /// is `team_size − 1` (the turn-in lookup, `0x6dd680`); the item's record is asked once on the
+    /// way.
     pub(crate) fn is_arena_charter(
         &self,
         petition_id: u32,

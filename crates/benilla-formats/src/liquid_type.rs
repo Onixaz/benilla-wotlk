@@ -24,7 +24,7 @@ const SOUND_BANK: usize = 3;
 const SOUND_ID: usize = 4;
 const MATERIAL_ID: usize = 14;
 const TEXTURES: std::ops::RangeInclusive<usize> = 15..=20;
-/// `Int[0]`: which depth table the swatch V reads (the reference's `s_depthCoordTables`).
+/// `Int[0]`: which depth table the swatch V reads (the reference's depth-coordinate tables).
 const DEPTH_TABLE: usize = 41;
 
 /// `LiquidType.Flags` bit: the loop is not played while the player is inside (`0x4d2390`).

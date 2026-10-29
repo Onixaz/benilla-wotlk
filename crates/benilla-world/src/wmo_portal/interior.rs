@@ -1,6 +1,6 @@
 //! The WMO-interior claims published each frame: [`CurrentWmoInterior`], the player's claim by the
 //! render seed's ray (faces and portal crossings), and [`CurrentAreaInterior`], the zone-text claim
-//! (faces only, the CGLight node's `+0x90` bit 0 set). A doorway portal under the eye seeds the
+//! (faces only, the light node's `+0x90` bit 0 set). A doorway portal under the eye seeds the
 //! render flood without making you indoors.
 
 use bevy::math::Affine3A;
@@ -92,7 +92,7 @@ pub const INTERIOR_PROBE_HEIGHT: f32 = 1.7;
 /// `z <= eye.z` test must not lose the floor to rounding.
 pub(crate) const POSITION_PROBE_LIFT: f32 = 0.1;
 
-/// The zone-text indoor claim, the CGLight node's `[node+0x90]` bit 0: the keys of the group owning
+/// The zone-text indoor claim, the light node's `[node+0x90]` bit 0: the keys of the group owning
 /// the nearest face under the player (faces only, EXTERIOR excluded, terrain raced, 1000 yd), or
 /// `None` outdoors.
 #[derive(Resource, Default, Clone, Copy, PartialEq, Eq)]
@@ -176,7 +176,7 @@ pub(super) fn track_current_interior(
     } else {
         return;
     };
-    // The terrain leg, sampled once for the column (`GetAreaID` races the same two probes): a
+    // The terrain leg, sampled once for the column (the area lookup races the same two probes): a
     // tunnel under a hill must not claim the player on the grass above it.
     let terrain = terrain_height_under(&streamer, &adt_tiles, eye_world);
     let mut found = None;

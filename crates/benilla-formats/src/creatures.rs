@@ -163,7 +163,7 @@ impl CreatureCatalog {
     }
 
     /// Every model path: being a creature model decides whether an M2's animation events reach
-    /// `CGUnit_C::HandleAnimEvent`.
+    /// the unit's anim-event handler.
     pub fn model_paths(&self) -> impl Iterator<Item = &str> + '_ {
         self.models.values().map(|m| m.path.as_str())
     }
@@ -197,9 +197,10 @@ impl CreatureCatalog {
     }
 
     /// `CreatureModelData.collisionHeight`, the `h` of every depth line (swim `0.75·h`, splash
-    /// `0.4·h`, foam gate `2·h`, read against `CMovement+0xb4`). It is the M2's collision-box Z
-    /// extent, pre-scale: the prism is this × `max(OBJECT_FIELD_SCALE_X, creatureModelScale)`. A
-    /// miss takes the constructor default, `2.0277777`.
+    /// `0.4·h`, foam gate `2·h`, read against the movement block's `+0xb4`). It is the M2's
+    /// collision-box Z extent, pre-scale: the prism is this ×
+    /// `max(OBJECT_FIELD_SCALE_X, creatureModelScale)`. A miss takes the constructor default,
+    /// `2.0277777`.
     pub fn collision_height(&self, display_id: u32) -> Option<f32> {
         let row = self.display.get(&display_id)?;
         Some(self.models.get(&row.model_id)?.collision_height)

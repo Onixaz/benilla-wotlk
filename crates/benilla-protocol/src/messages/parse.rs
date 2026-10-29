@@ -213,8 +213,8 @@ pub fn parse_server(opcode: u16, body: &[u8]) -> io::Result<ServerPacket> {
     parse_server_with_tail(opcode, body).map(|(packet, _)| packet)
 }
 
-/// 3.3.5a's `SMSG_AUTH_RESPONSE` as `RealmConnection::HandleAuthResponse` (`0x464640`) reads it:
-/// `u8 code`; for OK or WAIT_QUEUE with 10 bytes left past the queue's 5 (`0x46469e`), `u32
+/// 3.3.5a's `SMSG_AUTH_RESPONSE` as the realm connection's auth-response handler (`0x464640`) reads
+/// it: `u8 code`; for OK or WAIT_QUEUE with 10 bytes left past the queue's 5 (`0x46469e`), `u32
 /// billingTimeRemaining, u8 billingPlanFlags, u32 billingTimeRested, u8 expansion`; then, for
 /// WAIT_QUEUE, `u32 position, u8 freeCharacterMigration`. A refusal is the code alone. Deviation: a
 /// body too short for the position gives `None` where the client keeps a stale global.
@@ -440,7 +440,7 @@ fn parse_server_body(
             // day serial assumes 31-day months and 372-day years, monotonic but not calendar-true.
             let datetime = read_u32_le(&mut r)?;
             let timescale = read_f32_le(&mut r)?;
-            // The server's zone offset in hours, `m_tzHours` (`0x7e28e0`); AzerothCore sends 0.
+            // The server's zone offset in hours (`0x7e28e0`); AzerothCore sends 0.
             let zone = read_u32_le(&mut r)?;
             let (day, month, year) = (
                 (datetime >> 14) & 0x3F,
@@ -1510,7 +1510,7 @@ fn parse_server_body(
                 opcode::SMSG_SPLINE_MOVE_START_SWIM => (SplineMode::Swimming, true),
                 opcode::SMSG_SPLINE_MOVE_STOP_SWIM => (SplineMode::Swimming, false),
                 // The one inverted pair: RUN_MODE clears `MOVEFLAG_WALK_MODE`, because the
-                // reference's feeds the opcode's bool to `SetRunMode`.
+                // reference's handler feeds the opcode's bool to its run-mode set.
                 opcode::SMSG_SPLINE_MOVE_SET_WALK_MODE => (SplineMode::WalkMode, true),
                 opcode::SMSG_SPLINE_MOVE_SET_RUN_MODE => (SplineMode::WalkMode, false),
                 opcode::SMSG_SPLINE_MOVE_SET_FLYING => (SplineMode::Flying, true),
@@ -1585,8 +1585,9 @@ fn parse_server_body(
                     info: None,
                 }
             } else {
-                // `CreatureStats::Unpack 0x98d4c0`: four names, the subname, the cursor name, ten
-                // `u32`s, two `f32`s, the leader byte, six quest items and the movement id.
+                // The creature record unpack (`0x98d4c0`): four names, the subname, the cursor
+                // name, ten `u32`s, two `f32`s, the leader byte, six quest items and the movement
+                // id.
                 let name = read_cstring(&mut r)?;
                 for _ in 0..3 {
                     let _ = read_cstring(&mut r)?;

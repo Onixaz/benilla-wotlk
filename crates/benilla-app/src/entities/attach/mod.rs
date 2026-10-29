@@ -355,7 +355,7 @@ pub(super) fn attach_entity_visuals(
         let look =
             model.and_then(|_| resolve_char_look(net, dm, entity, &stores, mirror, equipment));
         // A body whose composite is still running is not built: nothing of it draws, its mount
-        // included, until it can draw dressed, as the reference's ShouldRender answers the
+        // included, until it can draw dressed, as the reference's render gate answers the
         // composite driver's 0. Retried each frame, with the look of that frame. A display swap
         // waits the same way, a fresh component in the reference; a body benilla rebuilds while it
         // was drawn does not.
@@ -418,8 +418,8 @@ pub(super) fn attach_entity_visuals(
                 ) {
                     super::mount::Seat::Wait => continue,
                     super::mount::Seat::Frame(anchor) => rider_root = anchor,
-                    // The reference leaves the body at the unit matrix (the reference's
-                    // present-test miss).
+                    // The reference leaves the body at the unit matrix (its mount present-test
+                    // misses).
                     super::mount::Seat::UnitMatrix => {}
                 }
             } else if let Some(&super::mount::MountChild(child)) = mount_child {

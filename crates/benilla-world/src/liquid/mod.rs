@@ -19,7 +19,7 @@
 //!
 //! One per-vertex depth `V` indexes colour and alpha alike: `min(byte/42, 1)` on river/lake,
 //! `min(byte/255, 1)` on ocean, both tables built. The reference's `1.6·(i/63)^8` is no water
-//! alpha: it fills the sky glare texture, whose one liquid binding, sits in a branch that never
+//! alpha: it fills the sky glare texture, whose one liquid binding sits in a branch that never
 //! runs.
 
 use bevy::pbr::MaterialPlugin;

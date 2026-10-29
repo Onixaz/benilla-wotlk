@@ -372,7 +372,8 @@ pub enum ServerPacket {
         binder: u64,
         area: u32,
     },
-    /// `SMSG_SET_PROFICIENCY`: equippable subclasses of item class 2 or 4 (`[class]`).
+    /// `SMSG_SET_PROFICIENCY`: equippable subclasses of item class 2 or 4 (the reference's
+    /// per-class table entry).
     SetProficiency {
         item_class: u8,
         subclass_mask: u32,
@@ -654,7 +655,7 @@ pub enum ServerPacket {
     AttackSwingError(AttackSwingError),
     /// `SMSG_CANCEL_COMBAT` (`0x14e`, empty): stop our attack, no message.
     CancelCombat,
-    /// `SMSG_FEIGN_DEATH_RESISTED` (`0x2b4`, empty): a bare `DisplayError(421)`.
+    /// `SMSG_FEIGN_DEATH_RESISTED` (`0x2b4`, empty): a bare error-display line, error id 421.
     FeignDeathResisted,
     /// `SMSG_AI_REACTION`: a creature's aggro flare (2 HOSTILE) or stealth alert (0 ALERT).
     AiReaction {
@@ -1086,9 +1087,9 @@ pub enum ServerPacket {
         difficulties: Option<GroupDifficulties>,
         /// Group-type bit `0x04`, `HasLFGRestrictions`.
         lfg_restricted: bool,
-        /// Group-type bit `0x08`'s status byte, `CGPartyInfo::m_playerLFGFlags`; 0 otherwise.
+        /// Group-type bit `0x08`'s status byte, the party's LFG flags; 0 otherwise.
         lfg_status: u8,
-        /// Group-type bit `0x08`'s dungeon slot, `CGPartyInfo::m_lfgSlot`; 0 otherwise.
+        /// Group-type bit `0x08`'s dungeon slot, the party's LFG slot; 0 otherwise.
         lfg_slot: u32,
         /// Group-type bit `0x01`: a battleground's group, which leaves the real group's counts.
         battleground: bool,

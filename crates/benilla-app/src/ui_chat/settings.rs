@@ -39,7 +39,7 @@
 //! The file is account-data slot 7 ([`crate::account_data`]); its reader is as lenient as the
 //! reference's (keys case-insensitive, unknown keys and blank lines skipped).
 //! `UPDATE_CHAT_WINDOWS`, then `UPDATE_CHAT_COLOR` per registry entry, fire file or no file. It is
-//! written whole at every UI shutdown (`CGChat::SaveChatSettings` `0x4ffda0`), and at no other time.
+//! written whole at every UI shutdown (`0x4ffda0`), and at no other time.
 
 use bevy::prelude::*;
 
@@ -65,11 +65,11 @@ pub(super) struct Parsed {
     pub(super) looks: Vec<(usize, ChatWindowLook)>,
     pub(super) colors: Vec<(String, [u8; 3], bool)>,
     pub(super) joined: Vec<super::edit::SavedChannel>,
-    /// The header's `ZONECHANNELS` word, the reference's, overwritten from the file; `None` without
-    /// the line, so the loader seeds from the DBC rather than 0.
+    /// The header's `ZONECHANNELS` word, the reference's zone-channel mask, overwritten from the
+    /// file; `None` without the line, so the loader seeds from the DBC rather than 0.
     pub(super) zone_mask: Option<u32>,
     /// `OPTION_GUILD_RECRUITMENT_CHANNEL`, the latch the `guildRecruitmentChannel` CVar moves:
-    /// `STANDARD` is 0 and any other word, or none, is 1 (`LoadChatSettingsCallback 0x508320`).
+    /// `STANDARD` is 0 and any other word, or none, is 1 (`0x508320`).
     pub(super) guild_recruitment_auto: bool,
 }
 
@@ -98,7 +98,7 @@ fn render(
     guild_recruitment_auto: bool,
 ) -> String {
     let mut out = String::new();
-    // The latch `SetGuildRecruitmentMode` (`0x508260`) moves; this is where it persists.
+    // The latch the mode setter (`0x508260`) moves; this is where it persists.
     let recruitment = if guild_recruitment_auto {
         "AUTO"
     } else {
@@ -140,7 +140,7 @@ fn render(
             l.docked.unwrap_or(0),
             i32::from(l.shown),
         ));
-        // `%f`, six decimals, as the writer's `SStrPrintf`; a blank line after the size.
+        // `%f`, six decimals, as the writer formats it; a blank line after the size.
         if l.placed {
             out.push_str(&format!(
                 "POSITION {} {:.6} {:.6}\nDIMENSIONS {:.6} {:.6}\n\n",
@@ -339,7 +339,7 @@ fn apply_key<'a>(
 ) {
     let byte = |s: Option<&str>| -> u8 { s.and_then(|v| v.parse::<u8>().ok()).unwrap_or(0) };
     let flag = |s: Option<&str>| -> bool { s.is_none_or(|v| v.trim() != "0") };
-    // `SStrToFloat`: 0 for a missing or malformed word.
+    // The reference's float parse: 0 for a missing or malformed word.
     let float = |s: Option<&str>| -> f32 { s.and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0) };
     if key.eq_ignore_ascii_case("SIZE") {
         look.font_size = it
@@ -357,7 +357,8 @@ fn apply_key<'a>(
     } else if key.eq_ignore_ascii_case("UNINTERACTABLE") {
         look.uninteractable = it.next().is_some_and(|v| v.trim() != "0");
     } else if key.eq_ignore_ascii_case("POSITION") {
-        // An unknown point keeps the old one, as `StringToFramePoint` writes only on a match.
+        // An unknown point keeps the old one, as the reference's point parse writes only on a
+        // match.
         if let Some(point) = it.next().and_then(frame_point_index) {
             look.point = point;
         }
@@ -505,9 +506,9 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
     }
 }
 
-/// `CGChat::SaveChatSettings` (`0x4ffda0`) at the UI shutdown: the whole file, unconditionally,
-/// from a VM that restored it. Never from an unseated mask: `None` means the file was never read,
-/// and writing would zero every block's `ZONECHANNELS`.
+/// The reference's chat-settings save (`0x4ffda0`) at the UI shutdown: the whole file,
+/// unconditionally, from a VM that restored it. Never from an unseated mask: `None` means the file
+/// was never read, and writing would zero every block's `ZONECHANNELS`.
 pub(crate) fn save_to_account_data(world: &mut World) {
     let Some(mut file) = world.remove_resource::<ChatWindowFile>() else {
         return;

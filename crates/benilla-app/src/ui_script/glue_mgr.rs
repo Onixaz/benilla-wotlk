@@ -1,5 +1,5 @@
-//! The glue manager, `CGlueMgr` host side, under the stock glue screens: the screen-state machine
-//! of `CGlueMgr::Update` (`screenState`) over the native login engine. The IO thread's parks and
+//! The glue manager, host side, under the stock glue screens: the screen-state machine of the
+//! reference's glue update (`screenState`) over the native login engine. The IO thread's parks and
 //! [`crate::login`]'s policy still do the network; this maps their messages onto the reference's
 //! screen states and fires the glue events the stock GlueXML answers: the status dialog
 //! (`OPEN_STATUS_DIALOG`, `UPDATE_STATUS_DIALOG`, `CLOSE_STATUS_DIALOG`), `SET_GLUE_SCREEN` and
@@ -8,7 +8,7 @@
 //!
 //! The login, in the reference's order:
 //!
-//! 1. `DefaultServerLogin` reaches `CGlueMgr::Login`. With the TOS and the EULA accepted and the
+//! 1. `DefaultServerLogin` reaches the glue login. With the TOS and the EULA accepted and the
 //!    state idle, an empty account or password opens an `OKAY` dialog (`LOGIN_ENTER_NAME`,
 //!    `LOGIN_ENTER_PASSWORD`); otherwise the logon's cells reset to -1, the state goes to 1, a
 //!    `CANCEL` dialog opens with no text and the logon starts.
@@ -17,13 +17,14 @@
 //!    `LOGIN_FAILED`; any other state but 11 and 12 opens `CANCEL` with its `LOGIN_STATE_*` text.
 //!    Authenticated (login state 4) sets the final latch, on which the state goes 0 then 2; a
 //!    failure cancels the logon and goes to 0.
-//! 3. State 2, the world connect, runs `ClientServices` operations: the connect (which fetches the
+//! 3. State 2, the world connect, runs client-services operations: the connect (which fetches the
 //!    realm list and dials the realm `realmName` names), then the authentication (begun once the
 //!    connect completes `RESPONSE_CONNECTED`). Every frame re-texts the dialog with the operation's
 //!    status text, empty while it runs (which `GlueDialog_OnEvent` ignores), so each completion
 //!    shows; in the queue (`AUTH_WAIT_QUEUE`) the text is the queue's, with the button relabelled
 //!    `CHANGE_REALM`. The authentication's success puts `charselect` up; a failure opens `OKAY`
-//!    with the status's text, or `OKAY_WITH_URL` with the URL key for the five codes, and goes to 0.
+//!    with the status's text, or `OKAY_WITH_URL` with the URL key for the five codes, and goes
+//!    to 0.
 //!
 //! `StatusDialogClick` is the dialog button's verb, a jump on the state: state 1 cancels the logon,
 //! states 2 and 4 complete the operation `RESPONSE_CANCELLED`.
@@ -44,14 +45,14 @@
 //!    when asked. State 4's frame re-texts the dialog; a success goes to 0, closes the dialog and
 //!    rebuilds, which is how the stock list's five-second refresh redraws; a failure opens `OKAY`
 //!    and goes to 0.
-//! 4. `ChangeRealm` reaches `ConnectToRealm`: the realm selected, state 2, the `CANCEL` dialog
+//! 4. `ChangeRealm` reaches the realm connect: the realm selected, state 2, the `CANCEL` dialog
 //!    `GAME_SERVER_LOGIN`, and the connect. `RealmListDialogCancelled` closes the realmd link on
 //!    the login screen only; `CancelRealmListQuery` cancels state 4 only.
 //!
 //! The list itself, its categories, sort and the verbs that read it are the glue VM's
 //! ([`benilla_ui::script::GlueRealm`]); the manager fills its holder and runs its rebuild where
-//! `CGlueMgr::Update` does. `SUGGEST_REALM_WRONG_PVP` and `SUGGEST_REALM_WRONG_CATEGORY` are in the
-//! event table but no glue code fires them: no `SignalEvent` site passes 19 or 20.
+//! the glue update does. `SUGGEST_REALM_WRONG_PVP` and `SUGGEST_REALM_WRONG_CATEGORY` are in the
+//! event table but no glue code fires them: no event-signal site passes 19 or 20.
 //!
 //! The character list, the other half of the character screen's show:
 //!
@@ -63,9 +64,9 @@
 //! 2. The world connect completes with the authentication response, not with a roster; the IO
 //!    thread fetches none of its own under the stock screen, so every call sends, in order with the
 //!    realm requests on the one park channel. A reply from the current link (the world session's
-//!    epoch) to that request completes the query, as `SetStatus` does, so one that lands before the
-//!    tick that takes a Cancel turns it into a load. A roster of another cause or link, or one with
-//!    no query pending, is dropped ([`GlueMgr::on_roster`]).
+//!    epoch) to that request completes the query, as the status set does, so one that lands before
+//!    the tick that takes a Cancel turns it into a load. A roster of another cause or link, or one
+//!    with no query pending, is dropped ([`GlueMgr::on_roster`]).
 //! 3. State 3's frame re-texts the dialog and acts on the completed query: success closes the
 //!    dialog and loads the roster (`lastCharacterIndex` selected, `CHARACTER_LIST_UPDATE`); an
 //!    empty roster with no realm chosen asks for the realm list instead and fires no update. A
@@ -92,16 +93,16 @@ use crate::net::{
     WorldAuthMessage,
 };
 
-/// `CGlueMgr`'s `screenState`, named by the functions that set each value: the states the login,
-/// the realm list and the character list reach. The reference's others are create, delete and
-/// rename (5-7), `EnterWorld` (8) and the patch and survey downloads (10 and 11), each set by a
+/// The glue manager's `screenState`, named by the functions that set each value: the states the
+/// login, the realm list and the character list reach. The reference's others are create, delete
+/// and rename (5-7), `EnterWorld` (8) and the patch and survey downloads (10 and 11), each set by a
 /// verb these screens do not have yet.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum ScreenState {
     /// No operation (and every terminal arm).
     #[default]
     Idle = 0,
-    /// The realmd logon (`CGlueMgr::Login`).
+    /// The realmd logon (the glue login).
     Logon = 1,
     /// The world connect: realm list, dial and authentication.
     Connect = 2,
@@ -109,14 +110,14 @@ pub(crate) enum ScreenState {
     CharList = 3,
     /// A realm list query (`RequestRealmList`).
     RealmList = 4,
-    /// A character create (`CGlueMgr::CreateCharacter`, `0x4d8c60`), until its result.
+    /// A character create (`0x4d8c60`), until its result.
     CreateCharacter = 5,
-    /// A character delete (`CGlueMgr::DeleteCharacter`), until its result.
+    /// A character delete, until its result.
     DeleteCharacter = 6,
-    /// The world entry (`CGlueMgr::EnterWorld`, `0x4d9bd0`), until the world is up.
+    /// The world entry (`0x4d9bd0`), until the world is up.
     EnterWorld = 8,
-    /// A refused character login back at `charselect` (`ClientDestroyGame` stores 11 at
-    /// `0x4066a0`), its `OKAY` up until pressed.
+    /// A refused character login back at `charselect` (the game teardown stores 11 at `0x4066a0`),
+    /// its `OKAY` up until pressed.
     WorldLogin = 11,
 }
 
@@ -162,8 +163,8 @@ const LOGIN_RESULT_KEYS: [&str; 21] = [
     "DISCONNECTED",
 ];
 
-/// The `ClientServices` status keys (`s_errorTokens`, `0xad91f0`, 104 entries), the response
-/// codes a status or result byte indexes directly (`GetErrorToken`, `0x6b0f40`).
+/// The client-services status keys (`0xad91f0`, 104 entries), the response codes a status or result
+/// byte indexes directly (`0x6b0f40`).
 const STATUS_KEYS: [&str; 0x68] = [
     "RESPONSE_SUCCESS",
     "RESPONSE_FAILURE",
@@ -310,10 +311,10 @@ const STATUS_CHAR_LIST_RETRIEVING: u8 = 0x2b;
 const STATUS_CHAR_LIST_RETRIEVED: u8 = 0x2c;
 const STATUS_CHAR_LIST_FAILED: u8 = 0x2d;
 
-/// What a realmd result byte becomes, `(login state, result)`: `Logon::OnAuthResult`'s dispatch
+/// What a realmd result byte becomes, `(login state, result)`: the logon's auth-result dispatch
 /// after the handlers' clamp of a byte past `0x0f` to `0xff`. 0x00 and 0x0E take the success arm,
 /// authenticated; the unknown account and the wrong password share one arm (result 7 with no PIN);
-/// a challenge's 0x0A is the patch state. A proof's 0x0A never gets here: `Grunt::OnLogonProof`
+/// a challenge's 0x0A is the patch state. A proof's 0x0A never gets here: the logon-proof handler
 /// returns on it, so the logon reports nothing and its dialog stands (`None`).
 pub(crate) fn realmd_result(byte: u8, reply: benilla_protocol::LogonReply) -> Option<(i32, i32)> {
     if byte == 0x0a && reply == benilla_protocol::LogonReply::Proof {
@@ -338,7 +339,7 @@ pub(crate) fn realmd_result(byte: u8, reply: benilla_protocol::LogonReply) -> Op
     Some((LOGIN_FAILED_STATE, result))
 }
 
-/// A `ClientServices` operation (`[svc+0x1b10]`).
+/// A client-services operation (`[svc+0x1b10]`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum OpKind {
     /// `COP_CONNECT` (2).
@@ -352,8 +353,8 @@ enum OpKind {
     CharList,
 }
 
-/// The operation record (`BeginOperation`, `SetStatus`): its status code (`[svc+0x1b14]`),
-/// completed (`[svc+0x1b08]`) and succeeded (`[svc+0x1b0c]`).
+/// The operation record, as the operation's begin and status set write it: its status code
+/// (`[svc+0x1b14]`), completed (`[svc+0x1b08]`) and succeeded (`[svc+0x1b0c]`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Operation {
     kind: OpKind,
@@ -383,7 +384,7 @@ impl Operation {
         self.done = true;
     }
 
-    /// `GetStatus`'s text: the status's key once completed, none while it runs.
+    /// The status's text: its key once completed, none while it runs.
     fn text(&self) -> Option<Text> {
         if !self.done {
             return None;
@@ -457,7 +458,7 @@ impl Default for LoginCells {
     }
 }
 
-/// The host side of `CGlueMgr`.
+/// The host side of the glue manager.
 #[derive(Resource, Default)]
 pub(crate) struct GlueMgr {
     pub(crate) state: ScreenState,
@@ -485,12 +486,12 @@ pub(crate) struct GlueMgr {
     holder: Vec<RealmInfo>,
     /// The holder changed since the VM was last seeded.
     holder_moved: bool,
-    /// The reference and its copy: the realm the next connect dials, set by the first selection and
-    /// kept for the process.
+    /// The selected realm and its copy: the realm the next connect dials, set by the first
+    /// selection and kept for the process.
     selected: Option<RealmInfo>,
     /// `[svc+0x1ae4]`: the last roster's character count.
     characters: u16,
-    /// The roster the last character list reply left in `ClientServices` (`[svc+0x1ae8]`), which
+    /// The roster the last character list reply left in client services (`[svc+0x1ae8]`), which
     /// the roster load walks.
     roster: Vec<Character>,
     /// The number of the world session the link is (`WorldAuthMessage::epoch`): the roster
@@ -507,8 +508,7 @@ pub(crate) struct GlueMgr {
     park_out: Vec<ParkRequest>,
     /// Asks of the login engine the per-frame arms made, sent with the verbs' own.
     login_out: Vec<GlueLogin>,
-    /// The server alert's fetch while it runs (`alertPending`), started once per process at the
-    /// glue init.
+    /// The server alert's fetch while it runs, started once per process at the glue init.
     alert_fetch: Option<crossbeam_channel::Receiver<Option<Vec<u8>>>>,
     /// The text a finished fetch left for the next frame (`alertReady`, and the buffer past its
     /// prefix).
@@ -558,7 +558,7 @@ impl GlueMgr {
         }
     }
 
-    /// The top of `CGlueMgr::Update`: a ready alert first runs the status dialog's button (the
+    /// The top of the glue update: a ready alert first runs the status dialog's button (the
     /// screen state's cancel), fires `SHOW_SERVER_ALERT` with the text, and is spent.
     fn show_alert(&mut self, asks: &mut Vec<GlueLogin>) {
         if let Some(text) = self.alert_ready.take() {
@@ -584,7 +584,7 @@ impl GlueMgr {
         });
     }
 
-    /// `CGlueMgr::Login`.
+    /// The glue login.
     fn login(&mut self, account: String, password: String, asks: &mut Vec<GlueLogin>) {
         if !self.notice(GlueNotice::Tos).accepted
             || !self.notice(GlueNotice::Eula).accepted
@@ -673,7 +673,7 @@ impl GlueMgr {
         }
     }
 
-    /// `CGlueMgr::CreateCharacter` (`0x4d8c60`): state 5, the `CHAR_CREATE_IN_PROGRESS` dialog and
+    /// The glue character create (`0x4d8c60`): state 5, the `CHAR_CREATE_IN_PROGRESS` dialog and
     /// the request. A paid change of an existing character is not built: it fails in the dialog.
     fn create_character(&mut self, c: benilla_ui::script::GlueCharCreate) {
         if c.existing.is_some() {
@@ -704,7 +704,7 @@ impl GlueMgr {
         );
     }
 
-    /// `CGlueMgr::DeleteCharacter`: state 6, the `CHAR_DELETE_IN_PROGRESS` dialog and the request.
+    /// The glue character delete: state 6, the `CHAR_DELETE_IN_PROGRESS` dialog and the request.
     fn delete_character(&mut self, guid: u64) {
         if guid == 0 {
             return;
@@ -800,7 +800,7 @@ impl GlueMgr {
         super::addons::register_for_glue(s, &realm, &roster, reply);
     }
 
-    /// `CGlueMgr::EnterWorld` (`0x4d9bd0`) for the record at the VM's selection: nothing with no
+    /// The glue world entry (`0x4d9bd0`) for the record at the VM's selection: nothing with no
     /// realm selected, no record there or no world link; a record locked for a transfer (flag
     /// `0x4`) or by billing (`0x1000000`) opens `OKAY` with its text, one flagged for a rename
     /// (`0x4000`) answers `FORCE_RENAME_CHARACTER`, neither entering. Otherwise
@@ -861,7 +861,7 @@ impl GlueMgr {
         }
     }
 
-    /// `ConnectToRealm` for the realm `ChangeRealm` named, `realmName` already set to it: the
+    /// The realm connect for the realm `ChangeRealm` named, `realmName` already set to it: the
     /// selection, state 2, the `GAME_SERVER_LOGIN` dialog and the connect. With a world connection
     /// up the reference drops it first and begins the same connect from the disconnect handler;
     /// here the drop is asked first and the connect follows at once, so a failed query finds no
@@ -885,7 +885,7 @@ impl GlueMgr {
 
     /// A realm list reply: the holder filled, then the pending operation's arm. A query's success
     /// is `REALM_LIST_SUCCESS`; a connect's dials the selected realm, or the one `realm_name`
-    /// names, and completes only through the dial (the reference calls no `SetStatus`); no answer
+    /// names, and completes only through the dial (the reference sets no status); no answer
     /// fails either `REALM_LIST_FAILED`.
     fn on_realm_list(&mut self, realms: Vec<RealmInfo>, failed: bool, realm_name: &str) {
         if !failed {
@@ -1066,9 +1066,9 @@ impl GlueMgr {
     }
 
     /// A roster reply from the current link stores the roster and completes the operation
-    /// `CHAR_LIST_RETRIEVED` (`SetStatus`), which overwrites the status whatever it was: a reply
-    /// that lands between a Cancel and the tick that takes it turns the cancel into a load, as the
-    /// reference's does, and a second reply replaces the first.
+    /// `CHAR_LIST_RETRIEVED` through the status set, which overwrites the status whatever it was: a
+    /// reply that lands between a Cancel and the tick that takes it turns the cancel into a load,
+    /// as the reference's does, and a second reply replaces the first.
     ///
     /// Deviation: the reference's handler completes whichever operation is current; here only the
     /// character list's does, in state 3, and a reply of another cause (a roster nothing of the
@@ -1089,7 +1089,7 @@ impl GlueMgr {
     }
 
     /// The roster ask failed on the stream: the query completes `CHAR_LIST_FAILED`
-    /// (`SetStatus(0, 0x2c)`), which the tick opens as `OKAY`. The session ends behind it as a
+    /// (status 0, `0x2c`), which the tick opens as `OKAY`. The session ends behind it as a
     /// dropped socket does, so the disconnect handler follows.
     fn on_roster_failed(&mut self, epoch: u64) {
         if epoch != self.link
@@ -1127,7 +1127,7 @@ impl GlueMgr {
     ///
     /// Out of state 2 it fires the event; in state 2 a completed, failed operation opens `OKAY`
     /// with its text instead. The handler's first test, that the dropped connection is
-    /// `ClientServices`' current one (else "Invalid disconnect"), has no native counterpart: the IO
+    /// client services' current one (else "Invalid disconnect"), has no native counterpart: the IO
     /// thread holds one session and reports only its own end.
     fn on_disconnected(&mut self, end: benilla_protocol::SessionEnd, session_over: bool) {
         if end == benilla_protocol::SessionEnd::LoggedOut {
@@ -1146,7 +1146,7 @@ impl GlueMgr {
         }
     }
 
-    /// `ClientConnection::HandleCharacterLoginFailed` (`0x6b2070`): the reason byte cancels the
+    /// The character-login-failed handler (`0x6b2070`): the reason byte cancels the
     /// entry with its status, and the way back to `charselect` enters state 11 (`0x4066a0`).
     fn on_char_login_failed(&mut self, result: u8) {
         self.char_login_refusal = match result {
@@ -1167,7 +1167,7 @@ impl GlueMgr {
         self.state = ScreenState::WorldLogin;
     }
 
-    /// The per-frame arms of `CGlueMgr::Update` that run without a new message.
+    /// The per-frame arms of the glue update that run without a new message.
     fn tick(&mut self) {
         match self.state {
             ScreenState::Logon => {
@@ -1176,9 +1176,9 @@ impl GlueMgr {
                     self.show_login_dialog();
                 }
                 if self.auth_final {
-                    // The reference's idle test passes and the connect begins at
-                    // `CSTATUS_CONNECTING`, its ring cleared, with no dialog of its own; the
-                    // logon's list is its query's reply.
+                    // The auth latch moves the state through 0, the idle test passes and the
+                    // connect begins at `CSTATUS_CONNECTING`, its ring cleared, with no dialog of
+                    // its own; the logon's list is its query's reply.
                     self.state = ScreenState::Connect;
                     self.auth_final = false;
                     self.op = Operation::begin(OpKind::Connect, STATUS_CONNECTING);
@@ -1322,8 +1322,8 @@ impl GlueMgr {
     }
 }
 
-/// `SelectRealmByName`: the first realm in the holder whose name matches, case folded, whatever its
-/// flags.
+/// The realm pick by name: the first realm in the holder whose name matches, case folded, whatever
+/// its flags.
 fn select_by_name(holder: &[RealmInfo], name: &str) -> Option<RealmInfo> {
     holder
         .iter()
@@ -1576,7 +1576,7 @@ pub(crate) fn drive_glue_mgr(
                 }
                 GlueRequest::RequestRealmList { dialog } => mgr.request_realm_list(dialog),
                 GlueRequest::CancelRealmListQuery => mgr.cancel_realm_list_query(),
-                // `CLoginMgr::Cancel`: nothing else moves, so no dialog shows.
+                // The login manager's cancel: nothing else moves, so no dialog shows.
                 GlueRequest::CancelLogon => logins.push(GlueLogin::Abandon),
                 GlueRequest::ChangeRealm(name) => mgr.connect_to_realm(&name),
                 // The VM cleared the roster in the verb.
@@ -1590,7 +1590,7 @@ pub(crate) fn drive_glue_mgr(
                             vec![benilla_ui::script::ScriptValue::Str(text.to_string())],
                         ),
                         EnterWorld::Picked(guid) => {
-                            // `CGlueMgr::EnterWorld` saves `Config.wtf` (`0x4d9ed8`).
+                            // The glue world entry saves `Config.wtf` (`0x4d9ed8`).
                             if let Some(m) = asks.save_config.as_deref_mut() {
                                 m.write(crate::cvars::SaveConfig);
                             }
@@ -1995,7 +1995,7 @@ fn flush_one(
 /// Seat a new glue VM before its first `SET_GLUE_SCREEN`: the manager takes it ([`GlueMgr::seat`])
 /// and seeds the realm setup, the AddOn registry and the per-frame slots (the connection, the
 /// server), so the screen's `OnShow` reads them as the reference's glue build leaves them
-/// (`CGlueMgr::Resume` `0x4da5f0` before the screen is set).
+/// (the glue resume `0x4da5f0` before the screen is set).
 pub(super) fn seat_glue_vm(world: &mut World, script: &mut UiScript) {
     let Some(mut mgr) = world.remove_resource::<GlueMgr>() else {
         return;

@@ -21,7 +21,7 @@ pub(crate) struct CvarSlot {
     pub value: String,
     pub default: String,
     /// The reference's flag bit1 (`rec+0x1c & 0x2`): a write goes to [`Self::pending`] and
-    /// `GetCVar` answers the applied value until the host commits it (`CVar::Update`). Host-seeded
+    /// `GetCVar` answers the applied value until the host commits it (the CVar update). Host-seeded
     /// only; a VM-registered row is never latched, like a console-created one.
     pub latched: bool,
     /// A latched row's staged value, reported to the host through the change queue when written.
@@ -213,9 +213,10 @@ impl super::UiScript {
         drain_field!(self, cvar_registrations)
     }
 
-    /// Flag a CVar read-only to Lua, or clear it: `CVar::SetReadOnly`. A flagged name makes
-    /// `SetCVar` raise `"%s" is read-only`; host and engine writes, and `ConsoleExec`, still land,
-    /// as the reference's `CVar::Set` never tests the flag. The name need not be registered yet.
+    /// Flag a CVar read-only to Lua, or clear it, as the reference's read-only flag does. A flagged
+    /// name makes `SetCVar` raise `"%s" is read-only`; host and engine writes, and `ConsoleExec`,
+    /// still land, as the reference's CVar set never tests the flag. The name need not be
+    /// registered yet.
     pub fn set_cvar_read_only(&mut self, name: &str, read_only: bool) {
         let key = name.to_ascii_lowercase();
         let mut model = self.model_mut();
@@ -308,15 +309,15 @@ impl super::UiScript {
 }
 
 /// An engine-side write, for a value the engine owns: queued like a Lua `SetCVar` so the config
-/// file is dirtied, as the reference's minimap `set_zoom` also `CVar::Set`s
-/// `minimapZoom`/`minimapInsideZoom`. An unregistered name is a silent no-op (a bare VM).
+/// file is dirtied, as the reference's minimap zoom also sets `minimapZoom`/`minimapInsideZoom`. An
+/// unregistered name is a silent no-op (a bare VM).
 pub(super) fn set_from_engine(model: &mut Model, name: &str, value: String) {
     store(model, &name.to_ascii_lowercase(), value);
 }
 
 /// The one store every write goes through; returns the registered spelling when the value moved and
 /// the change was queued. A latched slot stages the write, as the reference's `Set` stores
-/// `latchedValue` and skips `InternalSet`; writing back the applied value unstages it.
+/// `latchedValue` and skips the internal set; writing back the applied value unstages it.
 fn store(model: &mut Model, key: &str, value: String) -> Option<String> {
     let slot = model.cvars.get_mut(key)?;
     if slot.latched {
@@ -395,17 +396,17 @@ fn cvar_arg(v: Option<&Value>) -> Option<String> {
     }
 }
 
-/// A value as the video setters print it, `SStrPrintf(buf, 0x10, "%f", v)`: six decimals in a
-/// 16-byte buffer, so the stored string is cut at 15 characters.
+/// A value as the video setters print it, `"%f"`: six decimals in a 16-byte buffer, so the stored
+/// string is cut at 15 characters.
 pub(super) fn format_f(v: f64) -> String {
     let mut written = format!("{v:.6}");
     written.truncate(15);
     written
 }
 
-/// Storm's `SStrToInt`, how a CVar record's integer (`rec+0x28`) is parsed from its value and how a
-/// change callback reads it: an optional `-`, then decimal digits up to the first other byte, with
-/// no whitespace skip, no `+` and no overflow check (`10·n + d` wraps); no digit is 0.
+/// The reference's string-to-int, how a CVar record's integer (`rec+0x28`) is parsed from its value
+/// and how a change callback reads it: an optional `-`, then decimal digits up to the first other
+/// byte, with no whitespace skip, no `+` and no overflow check (`10·n + d` wraps); no digit is 0.
 pub fn sstr_to_int(s: &str) -> i32 {
     let (neg, digits) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -448,9 +449,9 @@ const USAGE_GET_CVAR_BOOL: &str = "Usage: GetCVarBool(\"cvar\")";
 /// Verbatim.
 const USAGE_REGISTER_CVAR: &str = "Usage: RegisterCVar(\"cvar\" [, default])";
 
-/// The CVars `CGGameUI::InitializeGame` flags read-only for the whole world session, the table
-/// walked; `ShutdownGame` clears them again. The host flags them on each in-game VM before its UI
-/// loads, as `InitializeGame` does before `UI_Init`.
+/// The CVars the game's start flags read-only for the whole world session, the table walked; the
+/// game's shutdown clears them again. The host flags them on each in-game VM before its UI loads,
+/// as the game's start does before the UI's init.
 pub const IN_WORLD_READ_ONLY_CVARS: [&str; 3] = ["realmList", "realmName", "scriptMemory"];
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
@@ -492,11 +493,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     install_cvar_verbs(lua)?;
     super::glue_system::install_cvar_ranges(lua)?;
     // `RestoreVideoResolutionDefaults` (`0x510dc0`) and `RestoreVideoEffectsDefaults` (`0x510dd0`),
-    // `ConsoleDeviceDefaults(page)` (`0x76a130`) for pages 0 and 1: page 0 rewrites the device
-    // format's `gx*` rows and restarts the device at once (`CCGxRestart`), then each page runs its
-    // defaults callbacks (`Client.cpp`'s `SetDefaults 0x4048a0`, `CWorldParam::SetDefaults
-    // 0x78e1a0`). Each row goes back to its registered default here, which for the hardware-detected
-    // rows is the matched `VideoHardware.dbc` row's value (the host table's `overridden` rows).
+    // the device defaults (`0x76a130`) for pages 0 and 1: page 0 rewrites the device format's `gx*`
+    // rows and restarts the device at once, then each page runs its defaults callbacks (the
+    // client's `0x4048a0`, the world parameters' `0x78e1a0`). Each row goes back to its registered
+    // default here, which for the hardware-detected rows is the matched `VideoHardware.dbc` row's
+    // value (the host table's `overridden` rows).
     lua.globals().set(
         "RestoreVideoResolutionDefaults",
         lua.create_function(|lua, _: mlua::MultiValue| {
@@ -593,10 +594,10 @@ pub(super) fn install_cvar_verbs(lua: &Lua) -> mlua::Result<()> {
                 }
             }
             // A third argument that passes `lua_isstring` is the `CVAR_UPDATE` token, arg1, with
-            // the value as arg2, fired on every such call, changed or not, and inside it:
-            // `SignalEvent2` walks the listeners in place. The 1.12 options panels pass their
-            // CheckButtons key, such as "STATUS_BAR_TEXT" (`UIOptionsFrame.lua` l.335), which is
-            // how `UIOptionsFrame_OnEvent` finds its row.
+            // the value as arg2, fired on every such call, changed or not, and inside it: the event
+            // signal walks the listeners in place. The 1.12 options panels pass their CheckButtons
+            // key, such as "STATUS_BAR_TEXT" (`UIOptionsFrame.lua` l.335), which is how
+            // `UIOptionsFrame_OnEvent` finds its row.
             if let Some(token) = cvar_arg(args.get(2)) {
                 super::tick::fire_event_into(
                     lua,
@@ -610,9 +611,8 @@ pub(super) fn install_cvar_verbs(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The video options table both states register (`CGVideoOptions::RegisterScriptFunctions`, table
-/// `0xacd320`; the glue manager's `Resume` `0x4da5f0` calls it too), with `RestartGx`, which both
-/// states' own tables carry.
+/// The video options table both states register (table `0xacd320`; the glue manager's resume
+/// `0x4da5f0` registers it too), with `RestartGx`, which both states' own tables carry.
 pub(super) fn install_video_options(lua: &Lua) -> mlua::Result<()> {
     // ── The Video options Multisampling dropdown ──────────────────────────────────────────────
     // `VideoOptionsResolutionPanelMultiSampleDropDown_OnLoad` seeds the selection from
@@ -687,8 +687,8 @@ pub(super) fn install_video_options(lua: &Lua) -> mlua::Result<()> {
     install_video_verbs(lua)
 }
 
-/// `ConsoleDeviceDefaults(0)`'s rows: the device format `SetGxCVars` (`0x769950`) writes, then
-/// `Client.cpp`'s page-0 callback (`DesktopGamma`, `Gamma`, `windowResizeLock`).
+/// The device defaults' page-0 rows: the device format the gx CVar write (`0x769950`) writes, then
+/// the client's page-0 callback (`DesktopGamma`, `Gamma`, `windowResizeLock`).
 pub const VIDEO_RESOLUTION_DEFAULT_CVARS: &[&str] = &[
     "gxColorBits",
     "gxDepthBits",
@@ -706,7 +706,7 @@ pub const VIDEO_RESOLUTION_DEFAULT_CVARS: &[&str] = &[
     "windowResizeLock",
 ];
 
-/// `ConsoleDeviceDefaults(1)`'s rows: `CWorldParam::SetDefaults` (`0x78e1a0`) and `Client.cpp`'s
+/// The device defaults' page-1 rows: the world parameters' defaults (`0x78e1a0`) and the client's
 /// page-1 callback (`textureFilteringMode`), among those benilla registers.
 pub const VIDEO_EFFECTS_DEFAULT_CVARS: &[&str] = &[
     "farclip",
@@ -911,11 +911,10 @@ fn install_video_verbs(lua: &Lua) -> mlua::Result<()> {
     )?;
     // ── RestartGx ────────────────────────────────────────────────────────────────────────────
     // "Apply the staged video settings now": the console command `gxRestart`, which commits the
-    // latched `gx*` rows (`UpdateGxCVars 0x7698b0`) and rebuilds the device from them. Here it
-    // queues a counted request, as `Screenshot()` does; the host commits its gx stages
-    // (`Cvars::commit_latched`) and re-asserts them against the window and the world camera.
-    // The reference runs each gx change callback at `SetCVar`, where it can veto the write; the
-    // host runs it at the commit.
+    // latched `gx*` rows (`0x7698b0`) and rebuilds the device from them. Here it queues a counted
+    // request, as `Screenshot()` does; the host commits its gx stages (`Cvars::commit_latched`) and
+    // re-asserts them against the window and the world camera. The reference runs each gx change
+    // callback at `SetCVar`, where it can veto the write; the host runs it at the commit.
     lua.globals().set(
         "RestartGx",
         lua.create_function(|lua, ()| {
@@ -1011,8 +1010,8 @@ mod tests {
         assert!(s.take_cvar_changes().is_empty());
     }
 
-    /// The reference's `Set` on flag bit1: `GetCVar` (`rec+0x20`) answers the old value until
-    /// `CVar::Update` commits, which here arrives as a host write.
+    /// The reference's CVar set on flag bit1: `GetCVar` (`rec+0x20`) answers the old value until
+    /// the CVar update commits, which here arrives as a host write.
     #[test]
     fn a_latched_row_stages_the_write_until_the_host_commits_it() {
         let mut s = UiScript::new().unwrap();

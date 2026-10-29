@@ -47,7 +47,7 @@ impl ObjectFields {
         self.get_i32(FIELD_UNIT_NATIVEDISPLAYID)
     }
     /// `UNIT_FIELD_FLAGS_2` (`[unit+0xd0]+0xd8`); bit `0x10` makes the unit a clone whose look
-    /// comes from `SMSG_MIRRORIMAGE_DATA` (`CGUnit_C::InitializeComponent` `0x730100`).
+    /// comes from `SMSG_MIRRORIMAGE_DATA` (the unit's component setup, `0x730100`).
     pub fn unit_flags2(&self) -> u32 {
         self.get_u32(FIELD_UNIT_FLAGS_2).unwrap_or(0)
     }
@@ -76,7 +76,7 @@ impl ObjectFields {
         self.get_guid(FIELD_UNIT_SUMMON).filter(|&g| g != 0)
     }
     /// `UNIT_FIELD_CRITTER`: the companion this unit has out; the summon arm of
-    /// `Spell_C_IsActiveSpell` (`0x802cb0`) compares its entry bits with the spell's creature.
+    /// the active-spell test (`0x802cb0`) compares its entry bits with the spell's creature.
     pub fn unit_critter(&self) -> Option<u64> {
         self.get_guid(FIELD_UNIT_CRITTER).filter(|&g| g != 0)
     }
@@ -85,7 +85,7 @@ impl ObjectFields {
         self.get_guid(FIELD_UNIT_CHARM).filter(|&g| g != 0)
     }
     /// A player's pet as the client reads it off the descriptor: `CHARM` if set, else `SUMMON`
-    /// (`partypetN`'s).
+    /// (as `partypetN` and the party snapshot read it).
     pub fn unit_pet_guid(&self) -> Option<u64> {
         self.unit_charm().or_else(|| self.unit_summon())
     }
@@ -98,7 +98,7 @@ impl ObjectFields {
         self.get_guid(FIELD_UNIT_CHARMEDBY).filter(|&g| g != 0)
     }
     /// The owner as the client's owner readers compute it: `CHARMEDBY` if set, else the fallback,
-    /// which differs by caller (the reference reads `CREATEDBY`, `SUMMONEDBY`).
+    /// which differs by caller (one reader takes `CREATEDBY`, another `SUMMONEDBY`).
     pub fn unit_owner(&self, fallback: OwnerFallback) -> Option<u64> {
         self.unit_charmed_by().or_else(|| match fallback {
             OwnerFallback::CreatedBy => self.unit_created_by(),
@@ -143,9 +143,9 @@ impl ObjectFields {
     pub fn unit_is_dead(&self) -> bool {
         self.unit_max_health().unwrap_or(0) > 0 && self.unit_health().unwrap_or(0) == 0
     }
-    /// Reads as dead, the reference's: health 0, `UNIT_DYNFLAG_DEAD` (feign death) or stand state 7.
-    /// Feign death sets only the flag (`Unit.cpp:9491`) and every viewer, the feigner included,
-    /// receives it.
+    /// Reads as dead, as the reference's reads-dead test has it: health 0, `UNIT_DYNFLAG_DEAD`
+    /// (feign death) or stand state 7. Feign death sets only the flag (`Unit.cpp:9491`) and every
+    /// viewer, the feigner included, receives it.
     pub fn unit_reads_dead(&self) -> bool {
         self.unit_is_dead()
             || self.unit_dynamic_flags() & UNIT_DYNFLAG_DEAD != 0
@@ -264,13 +264,13 @@ impl ObjectFields {
         self.get_u32(FIELD_UNIT_AURASTATE).unwrap_or(0)
     }
 
-    /// `UNIT_FIELD_BYTES_2` byte 3, the shapeshift form (`CGUnit_C::GetShapeshiftForm` `0x71af70`).
+    /// `UNIT_FIELD_BYTES_2` byte 3, the shapeshift form (`0x71af70`).
     pub fn unit_shapeshift_form(&self) -> u8 {
         (self.get_u32(FIELD_UNIT_BYTES_2).unwrap_or(0) >> 24) as u8
     }
     /// `UNIT_FIELD_POWER1..7`: current power of type `ty`, on the wire's raw scale (`0x71c2e0`);
     /// a predicted value `SMSG_POWER_UPDATE` set reads first, as `UnitPower` reads the client's
-    /// copy (`GetPredictedPower`).
+    /// predicted copy.
     pub fn unit_power(&self, ty: u8) -> Option<u32> {
         if let Some(predicted) = self.predicted_power(ty) {
             return Some(predicted);

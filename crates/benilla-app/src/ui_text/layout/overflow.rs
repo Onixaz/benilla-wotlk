@@ -1,5 +1,5 @@
-//! The pure side of the FontString overflow law: the height-limit line stack (`CGxString+0x40`) and
-//! the height-gated ellipsis truncate (`CSimpleFontString`). The tests run on stub row counts;
+//! The pure side of the FontString overflow law: the height-limit line stack (`[string+0x40]`) and
+//! the height-gated ellipsis truncate of the FontString. The tests run on stub row counts;
 //! [`super::ellipsize_to_fit`] binds the real one.
 
 /// The reference's truncation marker, three ASCII dots (`.rdata`), not the `…` glyph.
@@ -16,11 +16,11 @@ pub(super) fn lines_allowed(box_h: f32, pitch: f32) -> usize {
     (((box_h - HEIGHT_EPS) / pitch).ceil() as usize).max(1)
 }
 
-/// How many wrapped lines fit wholly inside a `box_h`-tall box, the ellipsis's law:
-/// `GxuFont_GetMaxCharsWithinHeight` stops when `boxH + 2⁻²⁰ < accumH + lineH`, the largest `n`
-/// with `n·pitch ≤ box_h`, so it floors where [`lines_allowed`] ceils. Its 0 under one line is
-/// never acted on ([`ellipsize_in_box`]). The slack is [`HEIGHT_EPS`], not `2⁻²⁰`: `box_h` is
-/// anchor-graph arithmetic, and `12.0 - 1e-6` must not lose a line.
+/// How many wrapped lines fit wholly inside a `box_h`-tall box, the ellipsis's law: the reference's
+/// fit count stops when `boxH + 2⁻²⁰ < accumH + lineH`, the largest `n` with `n·pitch ≤ box_h`, so
+/// it floors where [`lines_allowed`] ceils. Its 0 under one line is never acted on
+/// ([`ellipsize_in_box`]). The slack is [`HEIGHT_EPS`], not `2⁻²⁰`: `box_h` is anchor-graph
+/// arithmetic, and `12.0 - 1e-6` must not lose a line.
 pub(super) fn lines_fitting(box_h: f32, pitch: f32) -> usize {
     ((box_h + HEIGHT_EPS) / pitch).floor().max(0.0) as usize
 }

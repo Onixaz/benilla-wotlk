@@ -1,6 +1,6 @@
 //! The `TerrainType` id under a unit's feet, answered in one place. The reference caches it per
-//! unit at `CGUnit+0xc60`, resolved on movement by an environment down-ray, and four readers share
-//! it: the `$FSD` footstep sound, the footprint decal, the footstep spray and.
+//! unit at the unit's `+0xc60`, resolved on movement by an environment down-ray, and four readers
+//! share it: the `$FSD` footstep sound, the footprint decal, the footstep spray and one more.
 //!
 //! A terrain probe races a WMO probe over the building's collision faces, and the nearer surface
 //! supplies the type; here that race is the [`UnitWmoRoom`] claim. With a claim,

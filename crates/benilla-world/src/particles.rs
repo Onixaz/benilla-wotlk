@@ -34,8 +34,8 @@ pub struct ViewThrottled;
 /// A backstop cap on one emitter's live particles; a campfire's steady state is about 30 + 24.
 const MAX_PARTICLES: usize = 1024;
 
-/// The emission scalar, `ParticleSystemManager`'s `s_scaler`, which only the `particleDensity`
-/// callback (`0x78d860`) writes, through `SetScaler 0x980f70`.
+/// The emission scalar, the particle manager's global scale, which only the `particleDensity`
+/// callback (`0x78d860`) writes, through its setter (`0x980f70`).
 #[derive(Resource)]
 pub struct ParticleTuning {
     /// It scales emission rate only (its getter's two callers are the spawn-count `fmul`s), never
@@ -50,7 +50,7 @@ impl Default for ParticleTuning {
 }
 
 impl ParticleTuning {
-    /// `SetScaler 0x980f70`: clamp to [0.0, 1.0] and store.
+    /// The scale setter (`0x980f70`): clamp to [0.0, 1.0] and store.
     pub fn set_density(&mut self, density: f32) {
         self.density = density.clamp(0.0, 1.0);
     }
@@ -194,7 +194,7 @@ pub struct ParticleEmitter {
     owner: Option<Entity>,
     on_owner_loss: OwnerLoss,
     /// Draining after the owner's loss: no emission, the pool ages out in place, then despawns, as
-    /// the reference's `HasLiveParticles` latch keeps a disabled emitter ticking.
+    /// the reference's live-particles latch keeps a disabled emitter ticking.
     draining: bool,
     /// The model instance whose composed alpha multiplies this cloud: the reference's
     /// `emitter+0x1a8`, a per-frame copy of the model's `+0x19c` folded in by the over-life
@@ -391,9 +391,9 @@ impl ParticleEmitter {
     }
 
     /// Switch to [`OwnerLoss::Drain`]: the effect is ending, so its particles finish rather than
-    /// pop. The reference's `CEffect` teardown only hides and queues the node, which stops
-    /// emission; the draw admits by live-particle count (`emitter+0x64`), so the survivors age out,
-    /// and the reference frees the node once `CM2Model+0x3d8` reads zero. An attached instance
+    /// pop. The reference's effect teardown only hides and queues the node, which stops emission;
+    /// the draw admits by live-particle count (`emitter+0x64`), so the survivors age out, and the
+    /// reference frees the node once the model's `+0x3d8` reads zero. An attached instance
     /// spawns `Free`, since a model dtor frees its emitters at once.
     pub fn drain_on_owner_loss(&mut self) {
         self.on_owner_loss = OwnerLoss::Drain;

@@ -1,6 +1,6 @@
 //! `Wow.ini`, the client's `[WoW Config]` section. The reference loads it through the archive chain
-//! at startup (`SFileLoadFile`), and a stock install ships it in `interface.MPQ`. 5875's `Region`
-//! picked the realm categories; 12340's category set is every `Cfg_Categories.dbc` row
+//! at startup, and a stock install ships it in `interface.MPQ`. 5875's `Region` picked the realm
+//! categories; 12340's category set is every `Cfg_Categories.dbc` row
 //! ([`crate::load_realm_categories`]).
 
 use crate::Chain;
@@ -20,7 +20,7 @@ pub fn client_region(chain: &Chain) -> u32 {
         .unwrap_or(0) as u32
 }
 
-/// The value of `key` in `[section]`. Both names compare case-insensitively (`SStrCmpI`).
+/// The value of `key` in `[section]`. Both names compare case-insensitively.
 fn ini_value<'a>(text: &'a str, section: &str, key: &str) -> Option<&'a str> {
     let mut in_section = false;
     for line in text.lines().map(str::trim) {
@@ -36,8 +36,8 @@ fn ini_value<'a>(text: &'a str, section: &str, key: &str) -> Option<&'a str> {
 }
 
 /// An integer value as the reference reads one: a quoted run of up to four characters packed
-/// big-endian, else `SStrToInt`, an optional `-` then decimal digits up to the first non-digit, 0
-/// when there are none.
+/// big-endian, else a plain integer parse, an optional `-` then decimal digits up to the first
+/// non-digit, 0 when there are none.
 fn ini_int(value: &str) -> i32 {
     if let Some(quoted) = value.strip_prefix('\'') {
         return quoted

@@ -12,12 +12,12 @@
 //! and a release already past it, as at melee range, shows only the impact. In flight the missile
 //! homes on the target's live attachment and arrives on time.
 //!
-//! On arrival picks an arm by whether the target guid still resolves, then by the hit bit
-//! `[missile+0x38] & 1`, set only at the spawn:
-//! -, a live target hit: wound, flinch and impact visual, no word; here [`CastEventKind::Impact`].
-//! -, a live target missed: the outcome word, `UNIT_COMBAT` and chat, then the disposition; here
-//!   the defense clip and [`MissileMiss`].
-//! -, no live target: plays on the caster, then walks the missile's guid list skipping code 0; here
+//! On arrival the reference picks an arm by whether the target guid still resolves, then by the hit
+//! bit `[missile+0x38] & 1`, set only at the spawn:
+//! - A live target hit: wound, flinch and impact visual, no word; here [`CastEventKind::Impact`].
+//! - A live target missed: the outcome word, `UNIT_COMBAT` and chat, then the disposition; here the
+//!   defense clip and [`MissileMiss`].
+//! - No live target: plays on the caster, then walks the missile's guid list skipping code 0; here
 //!   [`CastEventKind::GroundImpact`]. A target that despawned mid-flight lands here as well as a
 //!   ground cast.
 //!
@@ -29,7 +29,7 @@
 //! still impacts on schedule.
 //!
 //! A GO with no unit targets but a point flies one projectile at it (the reference's
-//! empty-hit-array arm calls once, unit slot −1): the Flare, a bomb thrown at empty ground. It aims
+//! empty-hit-array arm spawns one, unit slot −1): the Flare, a bomb thrown at empty ground. It aims
 //! at a fixed point ([`Aim::Ground`]), arrives as [`CastEventKind::GroundImpact`] on the caster and
 //! flies the same straight, arrive-on-time line as a unit missile: the reference's flight is
 //! linear, with no gravity.
@@ -102,7 +102,7 @@ pub(crate) enum MissileSound {
     Stop { entity: Entity },
 }
 
-/// What a projectile flies at, the reference's two `CMissile` kinds: an owning unit slot, or −1 for
+/// What a projectile flies at, the reference's two missile kinds: an owning unit slot, or −1 for
 /// the location fallback.
 #[derive(Clone, Copy)]
 enum Aim {
@@ -212,8 +212,8 @@ struct QueuedGo {
     saw_oneshot: bool,
 }
 
-/// Every caster's queue of projectiles awaiting release, the reference's `CGUnit+0xac` list of
-/// `CMissile` nodes, filled by the spawner and drained by the release event; a caster that streams
+/// Every caster's queue of projectiles awaiting release, the reference's unit `+0xac` list of
+/// missile nodes, filled by the spawner and drained by the release event; a caster that streams
 /// out drops its queue. It is also a gate: the `$BWR` handler tests the list head and only when a
 /// projectile waits re-animates the ranged prop, looks up the attachment and launches, so a shot's
 /// flex and launch are one act.
@@ -295,9 +295,9 @@ fn ensure_ammo_model(
 pub(crate) struct MissileMiss {
     /// The colour law's source class (`K`).
     pub(crate) caster: Entity,
-    /// Always the missed target (the reference's is the per-entry target). Unlike the inline site
-    /// the arrival floats Reflect over the target, and the caster's word belongs to the re-launched
-    /// flight, which is not built.
+    /// Always the missed target; only the no-target arm's words take each list entry's target.
+    /// Unlike the inline site the arrival floats Reflect over the target, and the caster's word
+    /// belongs to the re-launched flight, which is not built.
     pub(crate) anchor: Entity,
     /// The colour law's `B` bit resolves off its record.
     pub(crate) spell_id: u32,
@@ -450,7 +450,7 @@ fn launch_go(
     }
 }
 
-/// Mark a new missile whose spell forces its projected batches (`CGMissile_C`'s attribute test),
+/// Mark a new missile whose spell forces its projected batches (the missile's attribute test),
 /// before its parts attach.
 pub(super) fn mark_forced_missiles(
     mut commands: Commands,
@@ -634,7 +634,7 @@ pub(super) fn attach_missile_models(
             false, // a missile's flat quads are geometry, never ground decals
             // A free world model: its trail stays world-frozen and its pool finishes in place.
             EffectHost::default(),
-            // A `CMissile`, not a `CEffect`: no kit stage and no Birth/Hold/Decay, one sequence.
+            // A missile, not a kit effect: no kit stage and no Birth/Hold/Decay, one sequence.
             None,
             &mut FxMaterials {
                 store: &mut wow_materials,
@@ -667,8 +667,9 @@ pub(super) fn move_missiles(
     let dt = time.delta_secs();
     for (entity, mut missile, mut transform) in &mut missiles {
         let Some(aim) = aim_point(missile.aim, &units, &joints) else {
-            // A unit target streamed out mid-flight: the reference's plays on the caster and floats
-            // a word per guid from the missile's list; not built, the flight ends silently.
+            // A unit target streamed out mid-flight: the reference's no-target arm plays on the
+            // caster and floats a word per guid from the missile's list; not built, the flight ends
+            // silently.
             sounds.write(MissileSound::Stop { entity });
             commands.entity(entity).despawn();
             continue;
@@ -950,9 +951,9 @@ mod tests {
         );
     }
 
-    /// The arm: a miss plays the victim's dodge or block clip, never the impact, and floats its
-    /// word over the target. A parry reads Deflect, rewritten at launch; a Reflect floats over the
-    /// target, where the inline site re-anchors it to the caster.
+    /// The live-target-missed arm: a miss plays the victim's dodge or block clip, never the impact,
+    /// and floats its word over the target. A parry reads Deflect, rewritten at launch; a Reflect
+    /// floats over the target, where the inline site re-anchors it to the caster.
     #[test]
     fn missed_arrival_words_the_target_deflects_a_parry_and_plays_dodge_or_block() {
         for (code, expect_state, expect_word) in [

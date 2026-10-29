@@ -1,10 +1,10 @@
 //! The loading screen's tip of the day. 1.12's FrameXML only has the `showGameTips` option, so the
-//! feature is engine-side: `CGlueMgr::EnterWorld` picks a `GameTips.dbc` row for the screen and
+//! feature is engine-side: the glue's world entry picks a `GameTips.dbc` row for the screen and
 //! writes the next index back to the `gameTip` CVar.
 //!
 //! Selection: `gameTip` holds the next index, not the shown one, so stored values run 1..=count and
 //! never 0. The walk is sequential and wraps by clamping (`i < 0 || i >= count` gives 0), not by
-//! modulo; `count <= 0` bails. `showGameTips` off skips the `CVar::Set` as well as the draw, so it
+//! modulo; `count <= 0` bails. `showGameTips` off skips the CVar write as well as the draw, so it
 //! freezes the index; so does `[selChar+0x10a]`, which the reference sets when `SMSG_CHAR_ENUM`
 //! reports level 0 (unreachable against vmangos, honoured anyway).
 //!
@@ -13,7 +13,7 @@
 //! the dismiss, so a later raise such as the `SMSG_LOGIN_VERIFY_WORLD` snap keeps it.
 //!
 //! Layout, laid out once per raise and drawn between the background and the progress bar, in the
-//! screen's `[0,1]` ortho: scale and wrap width `s = 515 / (a·1024)`, where `a =` is aspect × 0.75;
+//! screen's `[0,1]` ortho: scale and wrap width `s = 515 / (a·1024)`, where `a` is aspect × 0.75;
 //! position `(0.5 − s·0.5, 0.1 + yoff)`, left-justified; `0xd7c8c8c8` ARGB with an opaque black
 //! shadow at `(+0.001, −0.001)`. In a height-fit 4:3 box the `a` cancels, so the box gives the
 //! reference's numbers at every aspect:
@@ -47,10 +47,10 @@ const TIP_SCALE: f32 = 515.0 / 1024.0;
 /// `0.05·0.5 + 0.075`, the progress bar's top edge, so the block sits on the bar.
 const TIP_BOTTOM: f32 = 0.1;
 
-/// The font height as a fraction of the viewport height. In the reference's the slot is a unit
-/// conversion, not part of the size: the reference writes it as height/diagonal and the reference
-/// as width/diagonal, the diagonal-normalized units works. Applying its shipped `.data` value, 0.6,
-/// would shrink the line.
+/// The font height as a fraction of the viewport height. In the reference's `0.018 · k` the `k` is
+/// a unit conversion, not part of the size: height over diagonal (its twin is width over diagonal),
+/// the diagonal-normalized units the reference's text works in. Applying its shipped `.data` value,
+/// 0.6, would shrink the line.
 const TIP_FONT_FRACTION: f32 = 0.018;
 
 /// The body colour `0xd7c8c8c8` (ARGB) and its shadow offset, in the same `[0,1]` space.
@@ -84,7 +84,7 @@ pub(crate) struct GameTips {
 }
 
 impl GameTips {
-    /// `EnterWorld`'s tip block: clamps the stored index and returns that row with the index to
+    /// The world entry's tip block: clamps the stored index and returns that row with the index to
     /// store (`shown + 1`); `None` for an empty table (`count <= 0` bails).
     fn take(&self, stored: i64) -> Option<(&str, u32)> {
         let count = self.catalog.len();
@@ -242,7 +242,7 @@ fn empty_tip(e: &mut EntityCommands, vis: &mut Visibility) {
 }
 
 /// Takes the raise's tip edge, then paints what the screen shows: the reference picks the row in
-/// `EnterWorld`, lays it out once per raise and draws it every frame.
+/// the world entry, lays it out once per raise and draws it every frame.
 fn drive_game_tip(
     mut screen: ResMut<crate::loading_screen::LoadingScreen>,
     mut tips: ResMut<GameTips>,

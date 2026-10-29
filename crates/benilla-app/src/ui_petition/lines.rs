@@ -72,7 +72,7 @@ pub(super) fn no_arena_charter_line() -> Line {
 }
 
 /// A name the client's own validator refused ([`benilla_ui::script::validate_guild_name`]): the
-/// `ERR_NAME_*` row `DisplayNameError 0x5218c0` picked, a red line.
+/// `ERR_NAME_*` row the name-error display (`0x5218c0`) picked, a red line.
 pub(super) fn name_refused_line(key: &'static str) -> Line {
     UiError::key(key)
 }
@@ -196,7 +196,7 @@ mod tests {
         }
     }
 
-    /// Every `DisplayNameError` row is `kind 2`, the red `UI_ERROR_MESSAGE`.
+    /// Every name-error display row is `kind 2`, the red `UI_ERROR_MESSAGE`.
     #[test]
     fn refused_names_show_as_red_lines() {
         assert_eq!(

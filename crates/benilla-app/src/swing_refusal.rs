@@ -10,26 +10,26 @@
 //! player sees is the client's own latch and cooldown:
 //!
 //! ```text
-//! (0x145 NOTINRANGE)  ecx = 1 ; call; latch code 1
-//! (0x146 BADFACING)   ecx = 2 ; call; latch code 2
+//! (0x145 NOTINRANGE)  latch(1)
+//! (0x146 BADFACING)   latch(2)
 //! (0x148 DEADTARGET / 0x149 CANT_ATTACK)          ; no message, StopAttack only
 //!
-//! = code ; = OsGetAsyncTimeMs()    ; the code + "show at"
+//! latch(c):   code = c ; due = now                           ; the code + "show at"
 //!
-//! The reference the local player's tick:
-//!             this is the active player      else out
-//!             [this+0xc48] != 0      else out   ; an attack target is set
-//!             now - >= 0     else out
-//! == 1 -> DisplayError(0xd8) | == 2 -> DisplayError(0xd7) | else out
-//! = now + 0xfa0                                  ; re-arm, 4000 ms
+//! the local player's tick:
+//!             this is the active player          else out
+//!             [this+0xc48] != 0                  else out   ; an attack target is set
+//!             now - due >= 0                     else out
+//!             code == 1 -> error 0xd8 | == 2 -> error 0xd7 | else out
+//!             due = now + 0xfa0                             ; re-arm, 4000 ms
 //! ```
 //!
 //! So the first line shows on the next tick and repeats every 4 s while the latch stands. A landed
-//! swing clears it: `SMSG_ATTACKERSTATEUPDATE`'s arm calls when the attacker is the active player
-//! and the victim resolves, and its first act. A second refusal rewrites the deadline to now,
-//! defeating the cooldown, and the re-arm precedes the print, so it happens even when the string is
-//! missing. Both edges ride one message ([`SwingRefusalEdge`]) so they are consumed in packet
-//! order.
+//! swing clears it: when the attacker is the active player and the victim resolves,
+//! `SMSG_ATTACKERSTATEUPDATE`'s arm calls a routine whose first act is `latch(0)`. A second refusal
+//! rewrites the deadline to now, defeating the cooldown, and the re-arm precedes the print, so it
+//! happens even when the string is missing. Both edges ride one message ([`SwingRefusalEdge`]) so
+//! they are consumed in packet order.
 
 use std::time::Duration;
 
@@ -51,13 +51,13 @@ pub(crate) enum SwingRefusalEdge {
     /// `SMSG_CANCEL_COMBAT` (`0x14e`): the server forced our attack to stop (`Unit::CombatStop`,
     /// `Unit::StopAttackFaction`, `Unit::InterruptAttacksOnMe`, a resisted feign death).
     CombatCancelled,
-    /// One of our swings landed on a victim we can. The write site applies both gates: the attacker
-    /// is the local player and the victim resolves as a unit; benilla checks presence only, which
-    /// is equivalent since the victim is always a unit or player.
+    /// One of our swings landed on a victim we can see. The write site applies both gates: the
+    /// attacker is the local player and the victim resolves as a unit; benilla checks presence
+    /// only, which is equivalent since the victim is always a unit or player.
     Landed,
 }
 
-/// The latched refusal: the reference's (the code) and (the absolute time the next line is due).
+/// The latched refusal: the reference's code and due time (the absolute time the next line shows).
 /// `None` is code 0, whose timestamp the tick never reads.
 #[derive(Resource, Default)]
 struct SwingRefusal(Option<(Latched, Duration)>);
@@ -65,9 +65,9 @@ struct SwingRefusal(Option<(Latched, Duration)>);
 /// The two refusals that latch; arm 4 writes no latch.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Latched {
-    /// Code 1: `DisplayError(0xd8)`, `ERR_BADATTACKPOS`.
+    /// Code 1: error `0xd8`, `ERR_BADATTACKPOS`.
     NotInRange,
-    /// Code 2: `DisplayError(0xd7)`, `ERR_BADATTACKFACING`.
+    /// Code 2: error `0xd7`, `ERR_BADATTACKFACING`.
     BadFacing,
 }
 
@@ -82,12 +82,12 @@ impl Latched {
 }
 
 impl SwingRefusal {
-    /// `(code)`: latch the refusal, due now.
+    /// `latch(code)`: latch the refusal, due now.
     fn latch(&mut self, code: Latched, now: Duration) {
         self.0 = Some((code, now));
     }
 
-    /// .
+    /// `latch(0)`: drop the latch.
     fn clear(&mut self) {
         self.0 = None;
     }
@@ -147,8 +147,8 @@ fn show_swing_refusal(
     errors.0.push(UiError::key(code.key()));
 }
 
-/// Entering the world drops the latch: the reference's, from `ClientInitializeGame`, which runs
-/// once per world entry.
+/// Entering the world drops the latch: the reference clears it from the game's initialization,
+/// which runs once per world entry.
 fn on_world_enter(mut refusal: ResMut<SwingRefusal>) {
     refusal.clear();
 }
@@ -196,8 +196,7 @@ mod tests {
         assert_eq!(secs(100) + REPEAT, Duration::from_millis(104_000));
     }
 
-    /// A second refusal defeats the 4 s cooldown: the reference writes the deadline
-    /// unconditionally.
+    /// A second refusal defeats the 4 s cooldown: the latch writes the deadline unconditionally.
     #[test]
     fn a_second_refusal_packet_defeats_the_cooldown() {
         let mut r = SwingRefusal::default();

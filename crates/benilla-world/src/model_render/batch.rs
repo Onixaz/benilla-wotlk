@@ -100,7 +100,7 @@ impl M2BatchMaterials<'_> {
     /// it draws at the reverse-Z far value ([`crate::sky_order`]), never writes depth, and always
     /// tests it, overriding M2 flag `0x08`, which the reference uses only to order the sky inside
     /// its own depth slice `[0.975, 0.98]` (ported as [`super::skybox_sort_bias`]). The slot weight
-    /// (`[CM2Model+0x180]`) scales every batch's alpha, and `0 < A < 1` promotes a batch to
+    /// (model `[+0x180]`) scales every batch's alpha, and `0 < A < 1` promotes a batch to
     /// SRC_ALPHA blending: `fade_blend` is that twin, or `steady` when the batch already blends.
     pub fn skybox(
         &mut self,

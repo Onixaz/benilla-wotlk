@@ -282,8 +282,8 @@ fn spawn_slot(
             });
     }
     // The bowstring, for a drawn bow only, the ranged slot in the left hand: the reference
-    // registers for subclass Bow. The `$WTT`/`$WTB` markers are not the gate, as melee weapons
-    // author them too for the swing trail.
+    // registers its string anchors for subclass Bow alone. The `$WTT`/`$WTB` markers are not the
+    // gate, as melee weapons author them too for the swing trail.
     if slot_idx == 2 && hs.attach == attach_id::HAND_LEFT {
         if let Some([top, bottom]) = dm.string_anchors {
             commands.entity(root).insert(crate::bowstring::Bowstring {
@@ -312,7 +312,7 @@ fn spawn_slot(
                 .insert(crate::fishing_line::FishingPoleTip { owner: entity, tip });
         }
     }
-    // The ranged prop (`[CGUnit+0xd24]`) animates off the body's `$BWP`/`$BWR` keys: BowPull (160)
+    // The ranged prop (unit `+0xd24`) animates off the body's `$BWP`/`$BWR` keys: BowPull (160)
     // on the pull, then Stand or BowRelease (161), a firearm's muzzle blast (`crate::ranged_flex`).
     // So it gets a pose, a player and bone anchors; only bows, crossbows and firearms author them.
     let flexes = slot_idx == 2
@@ -1011,7 +1011,7 @@ mod tests {
                 clips: Vec::new(),
                 hand_close: [None, None],
                 playable_animation_lookup: Vec::new(),
-                // `owns(161)`, the reference's test.
+                // `owns(161)`, the reference's animation-presence test.
                 animation_lookup: {
                     let mut v = vec![0xffffu16; 162];
                     v[0] = 0;

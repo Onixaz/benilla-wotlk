@@ -241,10 +241,10 @@ enum Command {
         /// Internal-path prefix filter (e.g. `creature`), case-insensitive; all models if omitted.
         prefix: Option<String>,
     },
-    /// Census `GameObjectDisplayInfo.Sound[0..9]`: only reads them, called only from the GameObject
-    /// anim-event dispatcher, `$GO0..5` to slots 0-5 and `$GC0..3` to 6-9. Per slot: filled, tagged
-    /// by the display's model, on an armable sequence, and naming a looping kit (0x200, which picks
-    /// the reference's emitter-pool lane over its one-shot lane).
+    /// Census `GameObjectDisplayInfo.Sound[0..9]`: one reader takes them, called only from the
+    /// GameObject anim-event dispatcher, `$GO0..5` to slots 0-5 and `$GC0..3` to 6-9. Per slot:
+    /// filled, tagged by the display's model, on an armable sequence, and naming a looping kit
+    /// (0x200, which picks that reader's emitter-pool lane over its one-shot lane).
     Goslotscan,
     /// Sweep every `.m2` for batches whose visibility changes per sequence, drawn in one
     /// animation and culled by `A <= 0` in another.

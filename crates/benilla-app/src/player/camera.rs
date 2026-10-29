@@ -20,10 +20,10 @@ use benilla_world::model_fade::{
 
 /// The reference's up-edge click predicate: a click is a release within 200 ms, or within 800 ms
 /// under 2.25° of yaw and 2.0° of pitch travel (ms from `GetTickCount`). The travel gates only the
-/// click; the orbit engages on the down edge. Travel sums absolute motion per axis (:
-/// `fabs; fadd; fstp`). The literals are 8.0 event-units against `Σ|0.8·Δx|`, `Σ|0.6·Δy|` of mouse
-/// deltas of untraced device scale; we hold the angles they mean at the default speeds
-/// (`180·10/800`, `90·13.333/600`).
+/// click; the orbit engages on the down edge. Travel sums absolute motion per axis (`fabs; fadd;
+/// fstp`). The literals are 8.0 event-units against `Σ|0.8·Δx|`, `Σ|0.6·Δy|` of mouse deltas of
+/// untraced device scale; we hold the angles they mean at the default speeds (`180·10/800`,
+/// `90·13.333/600`).
 const CLICK_HOLD_CEILING: f32 = 0.800;
 const CLICK_FREE_WINDOW: f32 = 0.200;
 const CLICK_YAW_TRAVEL: f32 = 2.25 * std::f32::consts::PI / 180.0;
@@ -175,10 +175,10 @@ const FOLLOW_TIME_MAX: f32 = 2.0;
 const FOLLOW_EPS: f32 = 1.0e-3;
 
 /// Camera Following Style, 1.12's `cameraSmoothStyle`: whether the camera returns behind the
-/// character on its own. The engine's enum is 0 Never, 1 Smart, 2 Always (registers them in that
-/// order and the consumers index by `style × stride`), the values the stock dropdown writes
-/// (`UIOptionsFrame.lua:518`). The validator also accepts 3 (`(v, 0, 3)`), which arms nothing and
-/// reads past the terrain-tilt table; ours reads Never.
+/// character on its own. The engine's enum is 0 Never, 1 Smart, 2 Always (the reference registers
+/// them in that order and the consumers index by `style × stride`), the values the stock dropdown
+/// writes (`UIOptionsFrame.lua:518`). The validator also accepts 3 (its range is `[0, 3]`), which
+/// arms nothing and reads past the terrain-tilt table; ours reads Never.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(crate) enum FollowStyle {
     /// The offset stays put. The keyboard-turn carry is a separate mechanism (the reference's
@@ -248,8 +248,8 @@ pub(super) enum FollowState {
     Idle,
 }
 
-/// The camera's input command word, 1.12's `[InputControl+0x4]` bit for bit. PitchUp and
-/// PitchDown are not built, so their bits are never set.
+/// The camera's input command word, 1.12's input-control `[input+0x4]` bit for bit.
+/// PitchUp and PitchDown are not built, so their bits are never set.
 pub(super) mod follow_cmd {
     /// `TurnOrAction`: right mouse, mouselook.
     pub(in crate::player) const RIGHT_MOUSE: u32 = 0x1;
@@ -264,7 +264,7 @@ pub(super) mod follow_cmd {
     pub(in crate::player) const AUTORUN: u32 = 0x1000;
     /// The union of bits 20, 21 and 23, which the reference folds into the camera's `Track` flag.
     pub(in crate::player) const TRACK: u32 = 0x100000;
-    /// External control, the reference's `[cam+0x90] & 0x1000`: not an InputControl bit, carried
+    /// External control, the reference's `[cam+0x90] & 0x1000`: not an input-control bit, carried
     /// so one word holds every edge that arms.
     pub(in crate::player) const FEAR: u32 = 0x2000_0000;
 
@@ -364,7 +364,7 @@ pub(super) struct FollowRig {
     last_command: Option<u32>,
     arm: Option<FollowArm>,
     /// The camera's `0x20`, set by a look ended with the sticky flag: no return arms until a look
-    /// ends without it (`IsCustomViewSmoothingActive` `0x5fff40`, read by `0x602760`).
+    /// ends without it (`0x5fff40`, read by `0x602760`).
     pub(super) sticky: bool,
 }
 
@@ -464,7 +464,7 @@ impl FollowRig {
 pub(super) const CAM_PITCH_LIMIT: f32 = 89.0 * std::f32::consts::PI / 180.0;
 /// Rate (1/s) at which the arm eases back out once clear; pulling in is instant.
 const CAM_RETURN_RATE: f32 = 6.0;
-/// Floor on the world pivot height, 5/6 yd (the reference's corridor bound).
+/// Floor on the world pivot height, 5/6 yd (the reference's pivot clamp and corridor bound).
 pub(super) const CAM_PIVOT_FLOOR: f32 = 5.0 / 6.0;
 /// Ceiling on the world framing-pivot height, 15 yd.
 pub(super) const CAM_PIVOT_CEIL: f32 = 15.0;
@@ -472,10 +472,10 @@ pub(super) const CAM_PIVOT_CEIL: f32 = 15.0;
 pub(super) const CAM_PIVOT_FALLBACK: f32 = 1.8;
 
 /// A modeled unit's world framing-pivot height: [`CameraPivot`] × `scale`, clamped to
-/// `[CAM_PIVOT_FLOOR, CAM_PIVOT_CEIL]`. `swimming` picks the preset per frame as the reference does
-/// (MOVEFLAG_SWIMMING): the swim drop gives the reference's `cam+0x124`. Its third preset is not
-/// built: `cam+0x11c`/`cam+0x120`, split on `cam+0x198 < 1.8315`, are both 1.9002692 on a scale-1
-/// human, and what sets them apart is untraced.
+/// `[CAM_PIVOT_FLOOR, CAM_PIVOT_CEIL]`. `swimming` picks the preset per frame as the reference's
+/// pivot pick does (MOVEFLAG_SWIMMING): the swim drop gives the reference's `cam+0x124`. Its third
+/// preset is not built: `cam+0x11c`/`cam+0x120`, split on `cam+0x198 < 1.8315`, are both 1.9002692
+/// on a scale-1 human, and what sets them apart is untraced.
 pub(super) fn model_pivot_height(pivot: &CameraPivot, scale: f32, swimming: bool) -> f32 {
     let local = if swimming {
         pivot.height_local - pivot.swim_drop_local
@@ -498,9 +498,9 @@ pub(crate) fn head_height(pivot: Option<&CameraPivot>, scale: f32) -> f32 {
 /// no duration clamp.
 const CAM_PIVOT_SMOOTH_SPEED: f32 = 1.2;
 /// The framing pivot's height channel, a [`SmoothChannel`]: the reference's live `cam+0xfc` chasing
-/// `cam+0x1c8`, armed, stepped. It glides both ways: `max(target, live)` only seeds the collision
-/// corridor, and the far chain clamps back to the live value. Only the first arm snaps, and an
-/// unresolved model holds it.
+/// `cam+0x1c8`, armed and stepped each frame. It glides both ways: `max(target, live)` only seeds
+/// the collision corridor, and the far chain clamps back to the live value. Only the first arm
+/// snaps, and an unresolved model holds it.
 #[derive(Default)]
 pub(super) struct PivotGlide {
     /// Linear, not angular: the live value is yards, so the armer's `2π` rewrap must not run on it.
@@ -511,8 +511,8 @@ pub(super) struct PivotGlide {
 
 impl PivotGlide {
     /// Arm with this frame's target (`None` holds), step, and return the height. Called every
-    /// frame, as the reference is from the driver tail; the armer's epsilon makes a steady target a
-    /// no-op.
+    /// frame, as the reference's pivot pick is from the camera driver's tail; the armer's epsilon
+    /// makes a steady target a no-op.
     pub(super) fn advance(&mut self, target: Option<f32>, dt: f32) -> f32 {
         if let Some(target) = target {
             if self.seeded {
@@ -616,7 +616,7 @@ impl LookButton {
 
 /// The mouse buttons the world owns, latched at the press, and the two channels they drive. 1.12
 /// reads the `TurnOrAction` and `CameraOrSelectOrMove` bindings, which a press a UI frame captured
-/// never dispatches: no mouse bit in `[InputControl+0x4]`, no look session, no [`FollowState`].
+/// never dispatches: no mouse bit in `[input+0x4]`, no look session, no [`FollowState`].
 /// The world's down sets the bit and that button's up clears it, so a frame appearing under the
 /// locked cursor cannot steal it. `MouselookStart` sets the TurnOrAction bit with no button.
 #[derive(Default)]
@@ -642,7 +642,7 @@ impl WorldMouse {
         self.down[b as usize]
     }
 
-    /// The TurnOrAction channel, `[InputControl+4] & 1`: the world's right button, or a
+    /// The TurnOrAction channel, `[input+4] & 1`: the world's right button, or a
     /// `MouselookStart` with none.
     pub(super) fn turn(&self) -> bool {
         self.held(LookButton::Right) || self.scripted
@@ -656,13 +656,13 @@ impl WorldMouse {
         }
     }
 
-    /// Both channels held: the both-button run (nets `0x1` and `0x2` as forward).
+    /// Both channels held: the both-button run (the reference nets `0x1` and `0x2` as forward).
     pub(super) fn both(&self) -> bool {
         self.turn() && self.held(LookButton::Left)
     }
 
     /// A channel rose this frame, by a press or a `MouselookStart`: with [`Self::both`], the
-    /// transition into the both-button run (in the set helper both reach).
+    /// transition into the both-button run (the reference's is in the set helper both reach).
     pub(super) fn rose(&self) -> bool {
         self.down(LookButton::Left) || self.down(LookButton::Right) || self.scripted_rise
     }
@@ -705,11 +705,11 @@ impl WorldMouse {
 pub(super) fn latch_world_mouse(
     buttons: Res<ButtonInput<MouseButton>>,
     // The raw flag: a press on a nameplate is the plate's, so dragging from a plate never turns the
-    // camera, as in 1.12. The reference hands a mouse-down to one frame, and
-    // `CBindings::ExecuteBinding` runs only from `CGWorldFrame` handlers; the release goes to the
-    // plate's click slot. Entering freelook disables plate input for a world drag across one. A
-    // plate's ground-targeting veto (`+0x3c`) arrives through `PointerOverUi`
-    // (`UiScript::set_nameplate_hit_test_veto`). The wheel still zooms over a plate.
+    // camera, as in 1.12. The reference hands a mouse-down to one frame, and a key binding executes
+    // only from the world frame's handlers; the release goes to the plate's click slot. Entering
+    // freelook disables plate input for a world drag across one. A plate's ground-targeting veto
+    // (`+0x3c`) arrives through `PointerOverUi` (`UiScript::set_nameplate_hit_test_veto`). The
+    // wheel still zooms over a plate.
     pointer_over_ui: Res<crate::ui_script::PointerOverUi>,
     mut rig: ResMut<CameraControl>,
     cameras: Query<&Camera, With<FlyCam>>,
@@ -738,20 +738,20 @@ pub(super) fn latch_world_mouse(
         wm.scripted = false;
     }
     // The world enter behind the cover clears the whole word. A window deactivate clears none of it
-    // (the reference keeps the low bits): the session outlives the focus, and only the OS cursor
-    // goes back ([`sync_look_focus`]).
+    // (the reference's deactivate keeps the low bits): the session outlives the focus, and only the
+    // OS cursor goes back ([`sync_look_focus`]).
     if cover.is_some_and(|c| c.covering()) {
         wm.scripted = false;
     }
-    // `IsMouselooking` reads `[InputControl+4] & 1`, the TurnOrAction channel.
+    // `IsMouselooking` reads `[input+4] & 1`, the TurnOrAction channel.
     if let Some(mut script) = script {
         script.set_turn_or_action_held(rig.world_mouse.turn());
     }
 }
 
-/// The right button's down edge in the world, before the press is judged a click or a drag:
-/// `CGWorldFrame::OnMouseDown` runs its hook ahead of the button's binding, so ground targeting's
-/// cancel and the repair-mode reset read it before the look session.
+/// The right button's down edge in the world, before the press is judged a click or a drag: the
+/// world frame's mouse-down handler runs its hook ahead of the button's binding, so ground
+/// targeting's cancel and the repair-mode reset read it before the look session.
 pub(super) fn send_world_right_press(
     rig: Res<CameraControl>,
     mut world_right_press: MessageWriter<WorldRightPress>,
@@ -811,7 +811,7 @@ pub(super) fn run_look_session(
     left_click: &mut Option<PressGesture>,
     right_click: &mut Option<PressGesture>,
     look_cfg: LookConfig,
-    // `cameraPivot`'s routing lives here because the reference's does, the mouse-motion handler,
+    // `cameraPivot`'s routing lives here because the reference's does: the mouse-motion handler
     // sends each motion event to the pitch or the bias.
     dynamics: &DynamicsInput,
     // Seconds on the app clock, for the press predicate's two time gates.
@@ -828,8 +828,8 @@ pub(super) fn run_look_session(
     };
     // A chord is a both-button run, never a select: the reference kills the pending click and arms
     // none while another primary's binding is held. A `MouselookStart` or `Stop` disarms it too,
-    // ahead of the channel's move (stores mode 0 unguarded), so a stop's release, or the button's
-    // after it, selects nothing.
+    // ahead of the channel's move (the disarm stores mode 0 unguarded), so a stop's release, or the
+    // button's after it, selects nothing.
     let disarmed = rig.world_mouse.disarmed();
     if rig.world_mouse.both() || disarmed {
         *left_click = None;
@@ -1181,13 +1181,13 @@ pub(super) fn seat_camera(
     let boom_len = boom.length().max(1.0e-3);
     // The camera collides with the WMO camera/LOS faces (DETAIL kept, NOCAMCOLLIDE dropped),
     // terrain, doodads and GameObjects. Under `cameraWaterCollision` (default on) it also hits the
-    // waterline: ORs the ADT-liquid nibble `0xf0000` into the reference's query word, reaching a
-    // two-sided Möller–Trumbore test over the chunk's MCLQ slots with no near floor. That leg is a
-    // ray (the reference has no radius), so `cast_camera` traces water as a ray and solids as a
-    // sphere.
+    // waterline: the reference ORs the ADT-liquid nibble `0xf0000` into the camera solver's query
+    // word, reaching a two-sided Möller–Trumbore test over the chunk's MCLQ slots with no near
+    // floor. That leg is a ray (the liquid test has no radius), so `cast_camera` traces water as a
+    // ray and solids as a sphere.
     let hit = collide.cast_camera(head, boom, dynamics.options.water_collision);
-    // The solver's clip verdict (the reference's `0x30000`, OR'd into `[cam+0x90]` by the driver):
-    // [`SmartPivot`]'s sixth conjunct, so an unobstructed camera never pivots.
+    // The solver's clip verdict (the reference solver's `0x30000`, OR'd into `[cam+0x90]` by the
+    // driver): [`SmartPivot`]'s sixth conjunct, so an unobstructed camera never pivots.
     rig.clipped = hit.is_some();
     let open = hit.unwrap_or(boom_len);
     // Snap in when geometry intrudes; ease back out once it clears.
@@ -2151,8 +2151,8 @@ mod tests {
         assert_eq!(FollowStyle::default(), FollowStyle::Smart);
     }
 
-    /// Between 200 and 800 ms the travel gate applies per axis (the reference's `< 8.0` arm), at
-    /// 2.25° of yaw and 2.0° of pitch ([`CLICK_HOLD_CEILING`]).
+    /// Between 200 and 800 ms the travel gate applies per axis (the click predicate's `< 8.0` arm),
+    /// at 2.25° of yaw and 2.0° of pitch ([`CLICK_HOLD_CEILING`]).
     #[test]
     fn between_the_windows_a_steady_hand_still_clicks_but_a_drag_does_not() {
         assert!(press(2.0, 1.5).is_click(0.5), "inside both travel gates");

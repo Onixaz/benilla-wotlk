@@ -1,6 +1,6 @@
 //! The celestial layer over the sky dome: the sun and white moon (each a disc and an additive
 //! glare), moon02 and the `Stars.m2` stars. The reference's setup builds the six bodies, the
-//! builder places each at `cam + 12·dir`, `CSky::Render` draws stars, sun, white moon and moon02 in
+//! builder places each at `cam + 12·dir`, the sky render draws stars, sun, white moon and moon02 in
 //! a far depth slice without depth writes, and every disc takes the horizon clip and fade. One
 //! broadcast celestial diffuse (LightIntBand sub-9, alpha 0xFF) tints every disc and glare but
 //! moon02, which has no colour writer; the white moon's teal rim is the dome's night bands
@@ -85,13 +85,13 @@ impl Plugin for SunPlugin {
     }
 }
 
-/// Hide the sky pass's elements while a WMO skybox owns the sky or the eye is submerged.
-/// `CSky::Render` gates stars, sun disc, white moon, moon02, gradient and cloud dome on one
-/// boolean: the reference sets it, a skybox slot whose weight exceeds0.99 clears it, and the
-/// reference then skips all six; through the 4 s crossfade they draw under the skybox. A submerged
-/// eye skips `CSky::Render` whole, or the discs would draw black under the murk. The glares draw on
-/// their own path, which neither gate reaches, and fade underwater themselves; the gradient and
-/// cloud domes ([`crate::sky`], [`crate::clouds`]) gate themselves.
+/// Hide the sky pass's elements while a WMO skybox owns the sky or the eye is submerged. The sky
+/// render gates stars, sun disc, white moon, moon02, gradient and cloud dome on one boolean: the
+/// reference sets it, a skybox slot whose weight exceeds 0.99 clears it, and the sky render then
+/// skips all six; through the 4 s crossfade they draw under the skybox. A submerged eye skips the
+/// sky render whole, or the discs would draw black under the murk. The glares draw on their own
+/// path, which neither gate reaches, and fade underwater themselves; the gradient and cloud domes
+/// ([`crate::sky`], [`crate::clouds`]) gate themselves.
 #[allow(clippy::type_complexity)]
 fn apply_celestial_visibility(
     skybox: Res<crate::skybox::SkyboxWeight>,

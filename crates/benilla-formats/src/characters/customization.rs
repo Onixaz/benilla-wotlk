@@ -53,13 +53,13 @@ pub struct StartOutfitItem {
     pub inv_type: u8,
 }
 
-/// One (race, sex)'s CharSections grid as `BuildComponentArray` (`0x4f3dd0`) lays it out: per base
-/// section, skin, face, facial hair, hair, underwear, `[variation][color]`, each slot the `Flags` of
-/// the last row at it or `None`; a variation's width is its widest colour plus one.
+/// One (race, sex)'s CharSections grid as the component-array build (`0x4f3dd0`) lays it out: per
+/// base section, skin, face, facial hair, hair, underwear, `[variation][color]`, each slot the
+/// `Flags` of the last row at it or `None`; a variation's width is its widest colour plus one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CharSectionGrid {
     pub sections: [Vec<Vec<Option<u32>>>; SECTION_GRID_TYPES],
-    /// `CharacterFacialHairStyles.dbc`'s rows for the race and sex (`CountFacialFeatures`).
+    /// `CharacterFacialHairStyles.dbc`'s rows for the race and sex, as the reference counts them.
     pub facial_hair_styles: u32,
 }
 
@@ -471,7 +471,7 @@ fn load_start_outfits(chain: &mut Chain) -> Result<HashMap<(u8, u8, u8), Vec<Sta
     Ok(map)
 }
 
-/// CharSections → per (race, sex) the grid `BuildComponentArray` (`0x4f3dd0`) builds: rows of
+/// CharSections → per (race, sex) the grid the component-array build (`0x4f3dd0`) makes: rows of
 /// base section 5 and up are skipped, and a later row at a slot replaces an earlier one.
 fn load_section_grids(chain: &mut Chain) -> Result<HashMap<(u8, u8), CharSectionGrid>> {
     let bytes = chain

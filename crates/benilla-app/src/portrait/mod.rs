@@ -292,7 +292,7 @@ pub(crate) enum PortraitSource {
 /// range keeps their face. A booth losing its member hands its target in here ([`sync_portraits`]).
 ///
 /// Deviation: only the four party slots hand over, capped at [`Self::CAP`], instead of every
-/// portrait until `ClientDestroyGame`, because a general cache would pay a texture per unit ever
+/// portrait until the game is torn down, because a general cache would pay a texture per unit ever
 /// seen.
 #[derive(Resource, Default)]
 pub(crate) struct PortraitBakes {
@@ -304,7 +304,7 @@ impl PortraitBakes {
     /// A full party, plus slack for a churning roster.
     const CAP: usize = 8;
 
-    /// The bake standing for `guid`: the probe makes before the stand-in.
+    /// The bake standing for `guid`: the probe the reference makes before the stand-in.
     fn get(&self, guid: u64) -> Option<Handle<Image>> {
         self.faces.get(&guid).cloned()
     }
@@ -373,9 +373,9 @@ impl Default for PetDollBooth {
 }
 
 /// The stable pane's input. `SetPetStablePaperdoll` resolves the summoned pet by GUID (`unit`, when
-/// out and streamed) and any other through the creature cache (`display_id`; a dismissed pet falls,
-/// the summoned record's entry). Both `None` empties the booth. No size ramp: the reference write
-/// no scale, and the reference applies only the texture variation.
+/// out and streamed) and any other through the creature cache (`display_id`; a dismissed pet falls
+/// back to the summoned record's entry). Both `None` empties the booth. No size ramp: the stable
+/// pane writes no scale, and the model setup applies only the texture variation.
 #[derive(Resource)]
 pub(crate) struct StableBooth {
     pub(crate) yaw: f32,
@@ -497,7 +497,8 @@ struct Turn {
     spun: Option<u16>,
     /// The shuffle stepping and the wall-clock second it expires; `None` on Stand.
     shuffle: Option<(u16, f64)>,
-    /// The node the primary runs: every arm rolls a weighted variation (the reference's `-1`).
+    /// The node the primary runs: every arm rolls a weighted variation (the reference's variation
+    /// `-1`).
     playing: Option<bevy::animation::graph::AnimationNodeIndex>,
     fade: Option<Fade>,
 }
@@ -514,8 +515,9 @@ impl Turn {
 }
 
 /// The cross-fade out of the pose an arm replaced, the reference's secondary blend slot. Both turn
-/// call sites arm it through the reference copies the live primary track, still on its own clock,
-/// into `[blk+0xc4]`; blends by a smoothstep λ. One slot: a new arm overwrites it.
+/// call sites arm it through the same animation call, which copies the live primary track, still on
+/// its own clock, into `[blk+0xc4]`; the blend runs by a smoothstep λ. One slot: a new arm
+/// overwrites it.
 #[derive(Clone, Copy)]
 struct Fade {
     node: bevy::animation::graph::AnimationNodeIndex,
@@ -1097,7 +1099,7 @@ fn test_mode(cached: &mut Option<bool>) -> bool {
 ///
 /// - The manual sheath ceremony: `ToggleSheath` passes `bInstant = 0`, and the clip's `$SHL`/`$SHR`
 ///   event marks the unit. A snap sheath change (combat auto-draw) reaches the queue only through
-///   the enchant-gated.
+///   the enchant-gated path.
 /// - An item glow landing: not the reference's, whose widget duplicates a finished model.
 #[derive(Component, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct ModelRevision(pub(crate) u32);
@@ -1131,14 +1133,14 @@ fn sheath_lane(attach: Option<u16>) -> bool {
     matches!(attach, Some(0..=2 | 26..=28 | 30..=33))
 }
 
-/// What a body pane re-takes its snapshot on. A `<PlayerModel>` duplicates the unit's `CM2Model`
-/// once (which releases the source) and re-takes it on four things:
+/// What a body pane re-takes its snapshot on. A `<PlayerModel>` duplicates the unit's model once
+/// (which releases the source) and re-takes it on four things:
 ///
 /// 1. The pane becoming visible ([`Self::show`]): the show override re-duplicates on every
-///    hidden-to-visible edge; destroys on hide.
-/// 2. A change of dress ([`Self::dress`], [`Self::stable`]): `UNIT_MODEL_CHANGED`, fired only,
-///    marked by equipping, a displayId change, a helm or cloak toggle and an enchant; not by nocked
-///    ammo or combat.
+///    hidden-to-visible edge; the hide override destroys it.
+/// 2. A change of dress ([`Self::dress`], [`Self::stable`]): `UNIT_MODEL_CHANGED`, fired from one
+///    site only, marked by equipping, a displayId change, a helm or cloak toggle and an enchant;
+///    not by nocked ammo or combat.
 /// 3. A model event ([`Self::rev`], [`ModelRevision`]).
 /// 4. A resize ([`Self::aspect_bits`]): `DISPLAY_SIZE_CHANGED` → `RefreshUnit()`.
 #[derive(PartialEq, Eq)]
@@ -1212,7 +1214,7 @@ impl SnapKey {
     }
 }
 
-/// The reference's attach reset: does detach a sub-model at this attachment id from a widget's
+/// The reference's attach reset: does it detach a sub-model at this attachment id from a widget's
 /// duplicate? It cuts `0xf`–`0x19`, `0x1d`, `0x22` and `0x23` (the nocked arrow) and keeps the
 /// hands, the sheath family and the worn slots.
 fn attach_reset(attach: Option<u16>) -> bool {
@@ -1557,7 +1559,7 @@ fn sync_portraits(
                 anim_data.as_deref().map(|a| &a.0),
                 BoothMotion::Frozen,
                 // Open hands: the reference's portrait bake runs the attach reset but, unlike the
-                // reference, never probes the hand points or calls.
+                // pane's duplicate, never probes the hand points or closes a hand.
                 [false, false],
                 &booth_billboards,
                 BoothInstance::default(),
@@ -2265,7 +2267,8 @@ fn gate_booth_cameras(
 
 const TEMPORARY_PORTRAIT: &str = "Interface\\CharacterFrame\\TemporaryPortrait";
 
-/// The 2D stand-in for a unit that is not yet renderable: the player file is the reference's.
+/// The 2D stand-in for a unit that is not yet renderable: the player file is the one the reference
+/// loads.
 fn temporary_portrait(net: Option<&NetEntity>, store: Option<&crate::net::ObjectStore>) -> String {
     use benilla_protocol::EntityKind;
     if net.map(|n| n.kind) == Some(EntityKind::Player) {
@@ -2716,7 +2719,7 @@ mod tests {
     }
 
     /// The combat auto-draw is a snap (`bInstant != 0`), reaching `UNIT_MODEL_CHANGED` only through
-    /// the enchant-gated.
+    /// the enchant-gated path.
     #[test]
     fn drawing_a_bow_in_combat_does_not_re_snapshot_the_pane() {
         use crate::entities::attach_id::HAND_LEFT;
@@ -2839,7 +2842,7 @@ mod tests {
         );
     }
 
-    /// The reference close hands on ids `1`/`2` alone.
+    /// The reference closes hands on ids `1`/`2` alone.
     #[test]
     fn a_shield_on_the_forearm_closes_no_hand() {
         use crate::entities::attach_id::{HAND_RIGHT, SHIELD};

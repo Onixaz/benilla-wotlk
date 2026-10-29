@@ -5,9 +5,9 @@ use bevy::math::Vec3;
 
 use benilla_assets::coords::wow_to_bevy;
 
-/// The lighting sun, `DayNight::SetDirection` (wowdev.wiki Rendering/DayNight): azimuth fixed at
-/// 225° and polar angle wobbling between ~110° and ~127°, so the sun never sets and night comes
-/// from the colours. Returns the Bevy-space travel direction; `minute` is the game minute of day.
+/// The lighting sun's direction (wowdev.wiki Rendering/DayNight): azimuth fixed at 225° and polar
+/// angle wobbling between ~110° and ~127°, so the sun never sets and night comes from the colours.
+/// Returns the Bevy-space travel direction; `minute` is the game minute of day.
 pub(super) fn sun_direction(minute: f32) -> Vec3 {
     // `(dayProgression, φ)`; the client's half-minute / 2880 equals minute / 1440.
     const PHI_TABLE: [(f32, f32); 4] = [
@@ -47,8 +47,8 @@ pub(super) fn celestial_sun_direction(minute: f32) -> Vec3 {
     wow_to_bevy(wow_to_sun).normalize()
 }
 
-/// The white moon (`moon.blp`), camera to moon in Bevy space: elevation table puts it overhead at
-/// midnight (φ 35°, +55°) and parks it 10° below the horizon from 04:00 to 22:00; azimuth a
+/// The white moon (`moon.blp`), camera to moon in Bevy space: its elevation table puts it overhead
+/// at midnight (φ 35°, +55°) and parks it 10° below the horizon from 04:00 to 22:00; azimuth a
 /// constant 45°, the sun's bearing.
 pub(super) fn moon_direction(minute: f32) -> Vec3 {
     // Elevation table (dayProgression, polar φ rad): 35° = π·0.19444, 100° = π·0.55556.
@@ -72,7 +72,7 @@ pub(super) fn moon_direction(minute: f32) -> Vec3 {
 /// second moon. Its tracks run on `fmod(dayCounter + todPhase, 1.7)` (`day_continuous` is that
 /// sum), which the track kernel clamps to [0, 1], so the whole [1.0, 1.7) leg parks at azimuth
 /// 135°, elevation +55°. Azimuth sweeps 135° to 165°, elevation has the white moon's shape, and the
-/// size samples at base ×1.0.
+/// size samples the shared moon size table at base ×1.0.
 pub(super) fn moon02_state(day_continuous: f64) -> (Vec3, f32) {
     // (dayFraction, azimuth rad): 135° = π·0.75, 150° = π·0.8333, 165° = π·0.9167; key times 04:00
     // / 22:00 like the elevation track.
@@ -116,7 +116,7 @@ pub(super) fn sky_warp(minute: f32, highlight_sky: f32) -> f32 {
     interp_daynight(&SKY_WARP_CURVE, minute / 1440.0) * highlight_sky
 }
 
-/// The sun disc's size multiplier, table at base ×1.0: 2× at the horizon (06:00, 21:00) and 1×
+/// The sun disc's size multiplier, its table at base ×1.0: 2× at the horizon (06:00, 21:00) and 1×
 /// across midday; its night-side 2× is never seen, the sun being below the horizon.
 const SUN_SIZE_CURVE: [(f32, f32); 4] = [
     (0.25000, 2.0), // 06:00, sunrise (largest)
@@ -129,7 +129,7 @@ pub(super) fn sun_disc_scale(minute: f32) -> f32 {
     interp_daynight(&SUN_SIZE_CURVE, minute / 1440.0)
 }
 
-/// The moon discs' size multiplier, table, shared by both: 1.5× at moonrise and moonset (about
+/// The moon discs' size multiplier, one table shared by both: 1.5× at moonrise and moonset (about
 /// 22:00 and 04:00), 1× overhead, times the disc's base (white ×1.75, moon02 ×1.0).
 const MOON_SIZE_CURVE: [(f32, f32); 4] = [
     (0.041667, 1.0), // 01:00, overhead (smallest)
@@ -220,7 +220,7 @@ pub(super) fn cloud_glow_is_sun(minute: f32) -> bool {
     (0.201_388_9..=0.923_611_1).contains(&dp)
 }
 
-/// The reference's `DayNight::InterpTable`: wrap-around linear interpolation of a
+/// The reference's day/night table lookup: wrap-around linear interpolation of a
 /// `(dayProgression, value)` table over `dp ∈ [0, 1)`; both of its return branches are this lerp.
 fn interp_daynight(table: &[(f32, f32)], dp: f32) -> f32 {
     let n = table.len();
@@ -267,7 +267,7 @@ mod tests {
         assert!(!cloud_glow_is_sun(0.95 * 1440.0));
     }
 
-    // The `DayNight::SetDirection` φ keyframes.
+    // The lighting sun's φ keyframes.
     #[test]
     fn daynight_phi_matches_client_keyframes() {
         const PHI: [(f32, f32); 4] = [

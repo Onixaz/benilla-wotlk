@@ -150,7 +150,7 @@ fn footstep_sounds(
                     KitRef::Id(kit),
                     Some(at),
                     SoundCategory::Sfx,
-                    PlayExtras::default(), // bus 0, uncapped, volume 1.0: the reference's
+                    PlayExtras::default(), // bus 0, uncapped, volume 1.0, as in the reference
                 ) {
                     warn!("foley (kit {kit}): {e:#}");
                 }
@@ -201,8 +201,8 @@ fn footstep_sounds(
             &config,
             listener,
             KitRef::Id(kit),
-            // The step plays at the event's point: the reference hands `pos` to the reference as
-            // both the audibility reference and the play position.
+            // The step plays at the event's point: the handler hands `pos` to the positioned kit
+            // play as both the audibility reference and the play position.
             Some(ev.pos.unwrap_or_else(|| transform.translation())),
             SoundCategory::Sfx,
             PlayExtras {

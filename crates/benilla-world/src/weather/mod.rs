@@ -3,13 +3,13 @@
 //!
 //! - Channel A, the effect intensity (scale 1), swings fully in about 10 s. The effect density is
 //!   `max((A − 0.25)·4/3, 0)`, so nothing falls below 0.25.
-//! - Channel B, the sky density (scale 4), has its endpoints clamped to [0, 0.25] by `SetWeather`,
-//!   so it also swings in about 10 s. Lighting turns it into the storm blend: the overcast leads
-//!   the rain up and starts clearing at once on the way down.
+//! - Channel B, the sky density (scale 4), has its endpoints clamped to [0, 0.25] by the weather
+//!   setter, so it also swings in about 10 s. Lighting turns it into the storm blend: the overcast
+//!   leads the rain up and starts clearing at once on the way down.
 //!
-//! The wire's last byte is 0 for smooth, nonzero for instant: the net handler inverts it for
-//! `SetWeather`, whose flag is 1 for smooth; vmangos always sends 0. The channels run on real time,
-//! like the reference's ms tick, so a ramp continues through loading.
+//! The wire's last byte is 0 for smooth, nonzero for instant: the net handler inverts it for the
+//! weather setter, whose flag is 1 for smooth; vmangos always sends 0. The channels run on real
+//! time, like the reference's ms tick, so a ramp continues through loading.
 
 use bevy::prelude::*;
 
@@ -20,7 +20,7 @@ mod precip;
 /// Rain's forced-fog window, read by the effect lane's `EffectFog::Rain` row.
 pub(crate) use precip::{RAIN_FOG_END, RAIN_FOG_START};
 
-/// `Weather.dbc`'s effect types, which `SetWeather` (`0x7846a0`) takes below 4.
+/// `Weather.dbc`'s effect types, which the weather setter (`0x7846a0`) takes below 4.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum WeatherKind {
     #[default]
@@ -62,14 +62,14 @@ impl Channel {
     }
 
     fn value(&self, now: f64) -> f32 {
-        // The `+ 0.001` sits inside the abs, as the reference.
+        // The `+ 0.001` sits inside the abs, as in the reference.
         let den = ((self.to - self.from) * self.span_scale + 0.001).abs() * 10.0;
         let t = (((now - self.start) as f32) / den).clamp(0.0, 1.0);
         self.from + (self.to - self.from) * t
     }
 
-    /// Ramps toward `target` from the old target, not the current value, as `SetWeather` does: a
-    /// mid-swing retarget jumps back to the previous endpoint.
+    /// Ramps toward `target` from the old target, not the current value, as the weather setter
+    /// does: a mid-swing retarget jumps back to the previous endpoint.
     fn retarget(&mut self, target: f32, now: f64) {
         self.from = self.to;
         self.to = target;
@@ -83,7 +83,7 @@ impl Channel {
     }
 }
 
-/// The zone weather, the reference's `CMapWeather` manager.
+/// The zone weather, the reference's map weather manager.
 #[derive(Resource)]
 pub struct WeatherState {
     /// The latest wire type (`Fine` included).
@@ -129,7 +129,7 @@ impl Default for WeatherState {
 }
 
 impl WeatherState {
-    /// Applies one wire update as `SetWeather`; `Fine` targets 0 whatever its grade.
+    /// Applies one wire update as the weather setter does; `Fine` targets 0 whatever its grade.
     fn apply(&mut self, kind: WeatherKind, grade: f32, instant: bool, now: f64) {
         let target = if kind == WeatherKind::Fine {
             0.0
@@ -143,8 +143,8 @@ impl WeatherState {
             self.effect_kind = kind;
         }
         self.kind = kind;
-        // `SetWeather` clamps both sky endpoints to 0.25; the full grade here would hold the fog at
-        // 100% for most of every downswing.
+        // The weather setter clamps both sky endpoints to 0.25; the full grade here would hold the
+        // fog at 100% for most of every downswing.
         let sky_target = target.min(0.25);
         if instant {
             self.intensity.snap(target);

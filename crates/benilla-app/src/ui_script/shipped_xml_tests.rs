@@ -410,7 +410,7 @@ fn every_archive_path_a_shipped_lua_chunk_names_survives_its_own_escaping() {
 }
 
 /// Every shipped `text=` answers against the real `GlobalStrings.lua`: `text=` is a lookup
-/// (`FrameScript_GetText`) that shows the raw attribute only on a miss. A key-shaped value must
+/// (the global-string lookup) that shows the raw attribute only on a miss. A key-shaped value must
 /// resolve, or it shows its own key; a literal must not collide with a global, or the lookup swaps
 /// in that string.
 #[test]

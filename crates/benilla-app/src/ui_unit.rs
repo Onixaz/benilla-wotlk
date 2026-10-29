@@ -33,8 +33,8 @@ pub(crate) struct UnitFeed;
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct EnterWorldFeed;
 
-/// One `UNIT_COMBAT` over a unit, the portrait hit indicator's feed: `SignalUnitCombat` (`0x5132c0`)
-/// fires `(token, action, descriptor, amount, school)` once per token naming the guid
+/// One `UNIT_COMBAT` over a unit, the portrait hit indicator's feed: the unit-combat signal
+/// (`0x5132c0`) fires `(token, action, descriptor, amount, school)` once per token naming the guid
 /// (`0x60bb70`), with no self-suppression and no CVar gate. The melee victim event waits for the
 /// impact keyframe.
 #[derive(Message, Clone, Copy)]
@@ -50,7 +50,7 @@ pub(crate) struct UnitCombatFeedback {
     pub(crate) school: u32,
 }
 
-/// One `COMBAT_TEXT_UPDATE` (`SendToCombatText`, `0x74d460`-`0x74d550`): the type word, then the
+/// One `COMBAT_TEXT_UPDATE` (the combat-text send, `0x74d460`-`0x74d550`): the type word, then the
 /// fire's own `%s`/`%d` arguments. The combat log fires it only for the combat-text unit, the
 /// player (`0x74d430`).
 #[derive(Message, Clone)]
@@ -713,8 +713,8 @@ fn dist_sq(q: Vec3, p: Vec3) -> f64 {
 }
 
 /// `PLAYER_CONTROL_LOST`/`GAINED` on a change of the flag `SMSG_CLIENT_CONTROL_UPDATE` writes
-/// (`OnClientControlChanged 0x520fe0`); the boot value, and a fresh VM's memo, is in control. A
-/// world entry sets the flag with no event (`InitClientControlState 0x513880`).
+/// (`0x520fe0`); the boot value, and a fresh VM's memo, is in control. A world entry sets the flag
+/// with no event (`0x513880`).
 fn feed_player_control(
     script: Option<NonSendMut<UiScript>>,
     player: Option<Res<crate::player::Player>>,
@@ -939,7 +939,7 @@ pub(crate) fn snapshot(
         },
         // `UNIT_FIELD_FLAGS` PvP `0x1000` and Skinnable `0x04000000` (vmangos `UnitDefines.h`).
         pvp: store.0.unit_flags() & 0x1000 != 0,
-        // `CGTooltip::SetUnit` adds the line for a non-player only (`0x621dd8`); the creature
+        // The tooltip's unit setter adds the line for a non-player only (`0x621dd8`); the creature
         // record's kind is [`enrich_unit`]'s.
         skinnable: (store.0.unit_flags() & 0x0400_0000 != 0
             && !matches!(store.0.object_type(), Some(ObjectType::Player)))
@@ -991,8 +991,8 @@ pub(crate) fn enrich_unit(
     let Some(entry) = benilla_protocol::guid::entry(guid) else {
         return;
     };
-    // The creature record (`CGUnit+0xb30`); `None` until the query answers, a real state the
-    // plate draws under the name `UNKNOWNOBJECT`.
+    // The creature record (`unit+0xb30`); `None` until the query answers, a real state the plate
+    // draws under the name `UNKNOWNOBJECT`.
     let rec = names.creature_record(entry);
     if let Some(rec) = rec {
         state.subtitle = rec.subname.clone();
@@ -1215,8 +1215,8 @@ pub(crate) fn fire_transitions(
             script.fire_event(&format!("UNIT_MAX{suffix}"), vec![tok()]);
         }
     }
-    // The chosen title and the medal byte have their own name watches (`OnUpdatePVPTitle`
-    // `0x6cdd80` → `CGGameUI::UnitNameUpdate`).
+    // The chosen title and the medal byte have their own name watches (`0x6cdd80`, into the UI's
+    // unit-name update).
     if prev.is_none_or(|p| {
         (&p.name, p.chosen_title, p.pvp_medal) != (&cur.name, cur.chosen_title, cur.pvp_medal)
     }) {
@@ -1338,7 +1338,7 @@ fn feed_units(
             .map(str::to_string);
         let mut s = snapshot(store, guid.0, name, 0, chr, types);
         s.is_player = true;
-        // `CanAssist` answers the player for himself.
+        // The assist check answers the player for himself.
         s.can_assist = true;
         s.selection_color = crate::target::selection_color(
             store,
@@ -1435,8 +1435,8 @@ fn feed_units(
         script.set_unit("focus", focus.clone());
     }
 
-    // `"npc"`: the interaction NPC, the reference's that `CGGameUI::SetInteractNPC` writes, which
-    // `InteractNpc` models. No guild leg, as for `"targettarget"`.
+    // `"npc"`: the interaction NPC, the reference's global that the interact-NPC setter writes,
+    // which `InteractNpc` models. No guild leg, as for `"targettarget"`.
     let npc = interact
         .npc
         .as_deref()
@@ -1508,8 +1508,8 @@ fn feed_units(
     // as the reference's descriptor is. Below `0x6e0fd0`'s local-GUID gate (`0x6e10dc`) each arm
     // tests its own bits: `PLAYER_UPDATE_RESTING` on either edge of `0x20` (fire `0x6e112d`),
     // `PLAYTIME_CHANGED` on `0x3000` (`0x6e11c9`), `DISABLE_`/`ENABLE_XP_GAIN` on `0x2000000`
-    // (`0x6e121c`). `UPDATE_EXHAUSTION` is two other watchers, on the byte and the reference on the
-    // pool; here it also fires on first sight, where they stay silent on a create and on `/reload`.
+    // (`0x6e121c`). `UPDATE_EXHAUSTION` is two other watchers, one on the byte and one on the pool;
+    // here it also fires on first sight, where they stay silent on a create and on `/reload`.
     if let Some((store, _)) = self_q.iter().next() {
         let rest = (
             store.0.player_rest_state().unwrap_or(0),
@@ -1606,15 +1606,16 @@ fn feed_units(
         }
     }
 
-    // `PLAYER_ENTERING_WORLD` once per world entry, after our descriptor lands, as the reference's.
-    // At world exit, re-arm it and forget the player-global memos so the next character seeds them.
+    // `PLAYER_ENTERING_WORLD` once per world entry, after our descriptor lands, as the reference's
+    // does. At world exit, re-arm it and forget the player-global memos so the next character seeds
+    // them.
     if self_pair.is_some() {
         if !memo.entered_world {
             gate.audit("feed_units", "the PLAYER_ENTERING_WORLD arm");
             script.fire_event("PLAYER_ENTERING_WORLD", vec![]);
-            // The cascade's `CGReputationInfo::EnterWorld` (`0x5d2bc0`) re-sorts and fires
-            // `UPDATE_FACTION` (`0x5d1bfa`) with the player seated, which re-shows the XP bar the
-            // pre-player `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
+            // The cascade's reputation world entry (`0x5d2bc0`) re-sorts and fires `UPDATE_FACTION`
+            // (`0x5d1bfa`) with the player seated, which re-shows the XP bar the pre-player
+            // `SMSG_INITIALIZE_FACTIONS` fire hid at a 0 maximum.
             script.fire_event("UPDATE_FACTION", vec![]);
             memo.entered_world = true;
         }
@@ -1727,9 +1728,9 @@ fn feed_units(
 }
 
 /// The combo banks into the VM, then `UNIT_COMBO_POINTS` once per packet, changed or not, to every
-/// token naming the bank's unit: ours and the pet's (`0x5d34b0`), each through
-/// `Script_SendUnitSignal` (`0x60bf10`); the pet's packet then fires `PET_BAR_UPDATE_USABLE`
-/// (`0x5d3507`). A fresh VM takes the banks silently.
+/// token naming the bank's unit: ours and the pet's (`0x5d34b0`), each through the unit-signal send
+/// (`0x60bf10`); the pet's packet then fires `PET_BAR_UPDATE_USABLE` (`0x5d3507`). A fresh VM takes
+/// the banks silently.
 fn feed_combo_points(
     script: Option<NonSendMut<UiScript>>,
     combo: Option<Res<crate::spell::ComboPoints>>,
@@ -2450,8 +2451,8 @@ mod tests {
 
     /// The range verbs end to end, with the aura feed that pushes the resolver's inputs and the
     /// reach feed that measures the units they hold: `CheckInteractDistance` and `CanInspect`
-    /// answer for a `target` chain (the reference resolve their token), on the unit the chain names
-    /// and not on the base.
+    /// answer for a `target` chain (the reference's two resolve their token through the one
+    /// unit-token resolver), on the unit the chain names and not on the base.
     #[test]
     fn the_range_verbs_answer_for_a_target_chain() {
         use benilla_protocol::messages::{member_status, GroupMemberEntry, ObjectFields};
@@ -2984,8 +2985,8 @@ mod tests {
             vec!["PLAYER_FLAGS_CHANGED:target".to_string()]
         );
 
-        // `PLAYER_FLAGS_HIDE_HELM`: no `UnitState` field decodes it, and the reference tests no
-        // bit.
+        // `PLAYER_FLAGS_HIDE_HELM`: no `UnitState` field decodes it, and the reference's
+        // `PLAYER_FLAGS_CHANGED` watch tests no bit.
         assert_eq!(
             fired(Some(with(0)), with(0x400), &moved),
             vec!["PLAYER_FLAGS_CHANGED:target".to_string()],
@@ -3328,7 +3329,7 @@ mod tests {
             (0, 900),
             "UnitMana zeroes, UnitManaMax does not"
         );
-        assert!(feigning.dead, "UnitIsDead the reference's dynflag leg");
+        assert!(feigning.dead, "UnitIsDead's dynflag leg");
         assert!(
             !feigning.ghost,
             "feign is not a ghost — PLAYER_FLAGS is clear"
@@ -3869,7 +3870,7 @@ mod tests {
         assert_eq!(
             left(&mut app),
             1,
-            "a second departure with the latch spent fired again — the reference is per world"
+            "a second departure with the latch spent fired again — the reference latch is per world"
         );
 
         // Re-armed, as the new world's create does: the next departure is its own.

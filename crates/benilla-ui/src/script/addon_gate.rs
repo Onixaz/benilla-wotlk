@@ -1,6 +1,6 @@
-//! `AddOn_CanLoad` (`0x5f7e90`) as a pure function: the one load law every surface consults.
-//! The first check that fires decides, in the reference's order: missing, the visiting guard (a
-//! cycle is loadable), enabled, banned, corrupt, version, dependencies, demand.
+//! The reference's addon load check (`0x5f7e90`) as a pure function: the one load law every surface
+//! consults. The first check that fires decides, in the reference's order: missing, the visiting
+//! guard (a cycle is loadable), enabled, banned, corrupt, version, dependencies, demand.
 //!
 //! The version arm (`0x5f7f17`) has two steps: an `## Interface` below 20000 is `INCOMPATIBLE`,
 //! which nothing overrides; anything else but exactly 30300 is `INTERFACE_VERSION`, and with
@@ -80,7 +80,7 @@ impl Verdict {
     }
 }
 
-/// `AddOn_CanLoad` over a registry: can `rows[index]` load right now?
+/// The load check over a registry: can `rows[index]` load right now?
 ///
 /// `demand_gate` is the caller's second argument inverted: true for the startup walk and the
 /// glue's list, where a LoadOnDemand addon reports `DEMAND_LOADED`; false for `LoadAddOn` and the

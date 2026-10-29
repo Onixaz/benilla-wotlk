@@ -1,7 +1,7 @@
 //! The equip, auto-equip and use soulbind confirmations (`EQUIP_BIND`, `AUTOEQUIP_BIND`,
 //! `USE_BIND`). Unlike the loot arm (`bonding == 1` and `quality >= 2`), they read only the
-//! template's bonding at `+0x194`, never quality: `SwapItem` and `AutoEquipCursorItem` ask on 2,
-//! `CGItem::Use` on 3.
+//! template's bonding at `+0x194`, never quality: the item swap and `AutoEquipCursorItem` ask on 2,
+//! the item use on 3.
 //!
 //! There is no confirm packet: `EquipPendingItem(index)` re-runs the original action with the
 //! suppress flag set, and `CancelPendingEquip(index)` sends nothing and drops the record. The
@@ -61,7 +61,8 @@ impl PendingEquips {
         u32::try_from(idx).unwrap_or(u32::MAX)
     }
 
-    /// Frees the element. An index nobody filed does nothing, as the reference bounds-checks it.
+    /// Frees the element. An index nobody filed does nothing, as the reference bounds-checks the
+    /// index.
     pub(crate) fn take(&mut self, index: u32) -> Option<PendingEquip> {
         self.slots.get_mut(index as usize)?.take()
     }
@@ -74,8 +75,8 @@ impl PendingEquips {
 }
 
 /// The use arm's pending state, one cell with no index and no cancel verb: the reference stamps the
-/// item guid and target guid and `ConfirmBindOnUse()` re-issues
-/// `CGItem::Use(&target, suppress = 1)` off them.
+/// item guid and target guid and `ConfirmBindOnUse()` re-issues the item use on that target, with
+/// suppress set, off them.
 #[derive(Resource, Default)]
 pub(crate) struct PendingBindOnUse(pub(crate) Option<PendingUse>);
 
@@ -122,7 +123,7 @@ impl BindGate<'_> {
         t.bonding == BIND_WHEN_EQUIPPED && script.item_usable(entry)
     }
 
-    /// The use arm's predicate: the reference holds exactly three branches to the cast,
+    /// The use arm's predicate: the reference's item use holds exactly three branches to the cast,
     /// `bonding == 3`, not already bound and `suppress == 0`. There is no can-use leg: that failure
     /// exits before the bind arm.
     pub(crate) fn use_binds(

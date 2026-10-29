@@ -191,7 +191,7 @@ mod tests {
         assert_eq!(icon(DISARMED, None, 0), SPELL_RESET_ICON);
     }
 
-    /// The reference tests the form before the disarmed guard.
+    /// The reference's melee icon tests the form before the disarmed guard.
     #[test]
     fn the_form_icon_outranks_the_disarmed_guard() {
         assert_eq!(icon(DISARMED, Some(2), 1), BEAR_ICON);

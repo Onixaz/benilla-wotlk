@@ -4,14 +4,14 @@
 //! The proc latches two words on the unit and the unit's next animation fires them:
 //!
 //! ```text
-//! The reference the type-8 dispatcher arm      unit+0xd1c = ftol(ParamZero) | (ftol(ParamThree) << 24)
-//!                                          unit+0xd20 = ftol(ParamTwo)          -- ms
-//! CGUnit::PlayAnimation, the      if (unit+0xd20 != 0)(&colour, duration)
-//!           fields' only reader             unit+0xd20 = 0                       -- one-shot
-//! The reference fan out to CGUnit+0xd34[0..1]   one WTOBJECT per weapon hand
-//! The reference arm a SWING on that object      re-arming a live one resets its ring, never stacks
-//! The reference the weapon model's per-frame cb sample $WTB/$WTT
-//! The reference append / fade / draw / die      the arithmetic transcribed in [`Swing::step`]
+//! the type-8 dispatcher arm        unit+0xd1c = ftol(ParamZero) | (ftol(ParamThree) << 24)
+//!                                  unit+0xd20 = ftol(ParamTwo)          -- ms
+//! the unit's animation play, the   if (unit+0xd20 != 0) fan_out(&colour, duration)
+//!   fields' only reader            unit+0xd20 = 0                       -- one-shot
+//! fan out to unit+0xd34[0..1]      one WTOBJECT per weapon hand
+//! arm a SWING on that object       re-arming a live one resets its ring, never stacks
+//! the weapon model's per-frame cb  sample $WTB/$WTT
+//! append / fade / draw / die       the arithmetic transcribed in [`Swing::step`]
 //! ```
 //!
 //! Lighting is on over a vertex format with no normal (format 7, position and colour), which
@@ -21,15 +21,16 @@
 //! out = (Σ enabled lights' Ambient) × authoredColour
 //! ```
 //!
-//! The vertex colour is the material (sources diffuse and ambient from `COLOR1`). The normal array
-//! is disabled, so by the D3D9 lighting model, inferred rather than traced, the diffuse half
-//! contributes nothing. `D3DRS_AMBIENT` has no writers and stays 0, and the trail is a type-5
-//! render record, for which the reference commits emissive 0 (`SetState(2, 0)`). The lights are the
-//! wearer's (`[item+0x3b8] = [wearer+0x3b8]`): the day/night ambient outdoors, the light node's
-//! ramped word indoors. The ambient folds into the vertex colours on the CPU.
+//! The vertex colour is the material (the material setup sources diffuse and ambient from
+//! `COLOR1`). The normal array is disabled, so by the D3D9 lighting model, inferred rather than
+//! traced, the diffuse half contributes nothing. `D3DRS_AMBIENT` has no writers and stays 0, and
+//! the trail is a type-5 render record, for which the reference commits emissive 0 (render state 2
+//! set to 0). The lights are the wearer's (`[item+0x3b8] = [wearer+0x3b8]`): the day/night ambient
+//! outdoors, the light node's ramped word indoors. The ambient folds into the vertex colours on the
+//! CPU.
 //!
-//! The reference has no transport ride frame for a trail (stores world positions, so a swing on a
-//! moving deck smears), no sheath gate and no handedness test; creatures trail too.
+//! The reference has no transport ride frame for a trail (its sampler stores world positions, so a
+//! swing on a moving deck smears), no sheath gate and no handedness test; creatures trail too.
 
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
@@ -50,8 +51,8 @@ const READ_MODULUS: u32 = 0x7f;
 /// `0x3b5a740e`, the nearest f32 to 1/300, the per-millisecond fade coefficient.
 const FADE_PER_MS: f32 = 0.0033333334;
 
-/// The type-8 dispatcher arming a unit (the reference write `unit+0xd1c`/`unit+0xd20`), at every
-/// stage of every kit play carrying the proc.
+/// The type-8 dispatcher arming a unit (it writes `unit+0xd1c`/`unit+0xd20`), at every stage of
+/// every kit play carrying the proc.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct TrailArm {
     /// The unit the kit played on: the wielder, never the target.
@@ -141,7 +142,7 @@ struct Swing {
 
 /// One evaluated frame of a swing: the strip to draw, or the verdict that it is over.
 enum Step {
-    /// The reference returned 0: the caller frees the SWING.
+    /// The reference's step returned 0: the caller frees the SWING.
     Ended,
     /// The retained samples, oldest first, as `(bottom, top, alpha 0..=1)`; the oldest pair is the
     /// most opaque.
@@ -157,7 +158,7 @@ impl Swing {
         self.tail = self.tail.max(self.head.saturating_sub(RING_SLOTS));
     }
 
-    /// `(n)`: raise the floor so at most `n` samples remain, and report how many do.
+    /// Raise the floor so at most `n` samples remain, and report how many do.
     fn trim(&mut self, n: u32) -> u32 {
         self.tail = self.tail.max(self.head.saturating_sub(n));
         self.head - self.tail
@@ -230,13 +231,13 @@ fn fade_step(dt_ms: u32, alpha: u8) -> u32 {
 }
 
 /// Absorb this frame's arms into the latch, then fire it on every unit that started an animation:
-/// the reference's read, the reference's fan-out to both hands, the reference's clear.
+/// the reference's read in the animation play, its fan-out to both hands, and its clear.
 ///
-/// The drain comes first so a kit with both the proc and an anim fires in the frame it plays, as; a
-/// kit with anim `-1` (Charge's kit
-/// 44) waits for whatever the unit plays next. A combat clip re-timing itself returns before the
-/// latch read, and the driver raises no started edge there either. Nothing recomputes per frame, so
-/// an arm can wait for the next event, even a footstep.
+/// The drain comes first so a kit with both the proc and an anim fires in the frame it plays, as in
+/// the reference's kit play, where the dispatcher runs before the animation; a kit with anim `-1`
+/// (Charge's kit 44) waits for whatever the unit plays next. A combat clip re-timing itself returns
+/// before the latch read, and the driver raises no started edge there either. Nothing recomputes
+/// per frame, so an arm can wait for the next event, even a footstep.
 pub(crate) fn fire_weapon_trails(
     time: Res<Time>,
     mut arms: MessageReader<TrailArm>,
@@ -258,8 +259,8 @@ pub(crate) fn fire_weapon_trails(
         let Some(trail) = latch.0.remove(&entity) else {
             continue;
         };
-        // The reference walks two slots, skipping a null one: ours are the main- and off-hand
-        // props.
+        // The reference's fan-out walks two slots, skipping a null one: ours are the main- and
+        // off-hand props.
         for root in held.spawned_slots().iter().take(2).flatten() {
             if let Ok(mut t) = trails.get_mut(*root) {
                 t.arm(trail, now_ms);

@@ -36,9 +36,9 @@ pub struct GameObjectQueryInfo {
     pub quest_items: [u32; 6],
 }
 
-/// Read `SMSG_GAMEOBJECT_QUERY_RESPONSE` as 12340's `GameObjectStats_C::Unpack` (`0x98d750`)
-/// does: four names, icon, cast-bar caption and an unused string, `data[24]`, an `f32` scale and
-/// six quest items. A miss is the lone `u32` `entry | 0x8000_0000`.
+/// Read `SMSG_GAMEOBJECT_QUERY_RESPONSE` as 12340's GameObject record unpack (`0x98d750`) does:
+/// four names, icon, cast-bar caption and an unused string, `data[24]`, an `f32` scale and six
+/// quest items. A miss is the lone `u32` `entry | 0x8000_0000`.
 pub(super) fn read_gameobject_query_response(
     r: &mut &[u8],
 ) -> io::Result<(u32, Option<GameObjectQueryInfo>)> {

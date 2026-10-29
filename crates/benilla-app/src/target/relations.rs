@@ -1,15 +1,15 @@
 //! The three unit-relationship predicates the reference shares across systems, may I attack,
 //! interact with or help this unit, as the store-only entry points every consumer calls:
 //!
-//! - `CanAttack` forwards to [`super::ring::can_attack_from_player`],
-//! - `CanInteract` forwards to [`super::ring::can_interact_from_player`],
-//! - `CanAssist 0x7293d0` is derived here, in either direction ([`Assist`]).
+//! - The attack check forwards to [`super::ring::can_attack_from_player`],
+//! - The interact check forwards to [`super::ring::can_interact_from_player`],
+//! - The assist check (`0x7293d0`) is derived here, in either direction ([`Assist`]).
 //!
-//! The first two live in [`super::ring`] beside the reaction directions they turn on:
-//! `(this = player)` answers a reputation faction with the at-war bit, `(this = unit)` with the
+//! The first two live in [`super::ring`] beside the reaction directions they turn on: the reaction
+//! asked of the player answers a reputation faction with the at-war bit, asked of the unit with the
 //! standing, and the two often disagree.
 //!
-//! A corpse has its own reaction gate, ([`corpse_friendly`]).
+//! A corpse has its own reaction gate ([`corpse_friendly`]).
 
 use benilla_protocol::messages::{ObjectType, OwnerFallback};
 
@@ -18,18 +18,18 @@ use crate::ui_party::GroupState;
 
 use super::{ring_reaction, Factions, GroupMembers};
 
-/// `OBJECT_FIELD_TYPE` bit 4, the reference's own player test (in `CanAttack`, in `CanInteract`),
-/// read off the store the rest of the predicate walks.
+/// `OBJECT_FIELD_TYPE` bit 4, the reference's own player test (in the attack check, in the interact
+/// check), read off the store the rest of the predicate walks.
 ///
 /// Relies on the create block carrying field 2: vmangos sends every non-zero field, and a player's
-/// is `0x19`. A miss only skips `CanAttack`'s ghost refusal, which the both-player-controlled arm
-/// makes anyway; `/reaction` prints the field beside the `NetEntity` kind.
+/// is `0x19`. A miss only skips the attack check's ghost refusal, which the both-player-controlled
+/// arm makes anyway; `/reaction` prints the field beside the `NetEntity` kind.
 fn is_player_object(store: Option<&ObjectStore>) -> bool {
     store.and_then(|s| s.0.object_type()) == Some(ObjectType::Player)
 }
 
-/// `CanAttack`, the one attackability question of the world cursor's sword, the combat flash, the
-/// TAB scan's filter 3, `UnitCanAttack` and hostile spell targeting. Its mixed arm is
+/// The attack check, the one attackability question of the world cursor's sword, the combat flash,
+/// the TAB scan's filter 3, `UnitCanAttack` and hostile spell targeting. Its mixed arm is
 /// `UnitReaction(player → target) < 4`, which answers a reputation faction with the at-war bit,
 /// never the standing, so a not-at-war neutral faction (Cenarion Circle) is not attackable.
 pub(crate) fn can_attack(
@@ -49,8 +49,9 @@ pub(crate) fn can_attack(
     )
 }
 
-/// `CanInteract`, may I take a service from this unit: the world-cursor classifier runs it (through
-/// `CanInteractNow`) to choose between the NPC service ladder and the loot, skin and attack block.
+/// The interact check, may I take a service from this unit: the world-cursor classifier runs it
+/// (through the interact check's timed wrapper) to choose between the NPC service ladder and the
+/// loot, skin and attack block.
 pub(crate) fn can_interact(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
@@ -61,23 +62,23 @@ pub(crate) fn can_interact(
     super::ring::can_interact_from_player(factions, reputations, party, store, self_store)
 }
 
-/// `UNIT_FLAG_NOT_SELECTABLE`, bit 25 (vmangos `UnitDefines.h:570`): `CanAssist`'s first refusal
-/// and one of `CanAttack`'s.
+/// `UNIT_FLAG_NOT_SELECTABLE`, bit 25 (vmangos `UnitDefines.h:570`): the assist check's first
+/// refusal and one of the attack check's.
 const UNIT_FLAG_NOT_SELECTABLE: u32 = 1 << 25;
 
-/// `IsSelectable`, CGUnit_C's vtable slot 21: `UNIT_FLAG_NOT_SELECTABLE` clear, or the unit's
-/// `UNIT_FIELD_CREATEDBY` is the active player, so your own flagged totems and traps stay
-/// selectable. Every vtable but CGUnit_C's and CGPlayer_C's has the `xor eax,eax` stub there, so a
-/// GameObject, item or corpse never becomes the selection.
+/// The selectable test, the unit object's vtable slot 21: `UNIT_FLAG_NOT_SELECTABLE` clear, or the
+/// unit's `UNIT_FIELD_CREATEDBY` is the active player, so your own flagged totems and traps stay
+/// selectable. Every vtable but the unit object's and the player object's has the `xor eax,eax`
+/// stub there, so a GameObject, item or corpse never becomes the selection.
 ///
-/// `None` passes: `SetSelection` makes the call only on an object the manager resolved, which keeps
-/// an out-of-range party member selectable. A store whose `OBJECT_FIELD_TYPE` has not streamed
-/// passes the same way.
+/// `None` passes: the selection set makes the call only on an object the manager resolved, which
+/// keeps an out-of-range party member selectable. A store whose `OBJECT_FIELD_TYPE` has not
+/// streamed passes the same way.
 pub(crate) fn is_selectable(store: Option<&ObjectStore>, self_guid: Option<u64>) -> bool {
     let Some(store) = store else {
         return true; // no resolved object: the reference skips the call
     };
-    // Only CGUnit_C and CGPlayer_C override slot 21.
+    // Only the unit object and the player object override slot 21.
     if !matches!(
         store.0.object_type(),
         None | Some(ObjectType::Unit) | Some(ObjectType::Player)
@@ -104,8 +105,8 @@ pub(crate) fn is_possessed_by(store: Option<&ObjectStore>, self_guid: Option<u64
         && store.0.unit_owner(OwnerFallback::CreatedBy) == Some(me)
 }
 
-/// `(player, corpse)`, the corpse's reaction gate: the reference compares the player's template
-/// (`UNIT_FIELD_FACTIONTEMPLATE`) toward the dead player's race's (the race byte of
+/// The corpse's reaction gate, asked as `(player, corpse)`: the reference compares the player's
+/// template (`UNIT_FIELD_FACTIONTEMPLATE`) toward the dead player's race's (the race byte of
 /// `CORPSE_FIELD_BYTES_1`, then `ChrRaces.dbc` column 2) with the template comparator alone, no
 /// reputation, and passes at friendly (`setge` 4). A missing row on either side is neutral, so it
 /// fails, as does a missing catalog or player.
@@ -126,17 +127,18 @@ pub(crate) fn corpse_friendly(
 /// `UNIT_FIELD_FLAGS` bit 3, player-controlled (vmangos `UnitDefines.h:548`), the bit
 /// [`ring_reaction`]'s duel leg selects on.
 const UNIT_FLAG_PLAYER_CONTROLLED: u32 = 0x8;
-/// The cross-flag immunity bits `CanAssist` reads on its target (`0x7293d0`), as `CanAttack` does.
+/// The cross-flag immunity bits the assist check reads on its target (`0x7293d0`), as the attack
+/// check does.
 const IMMUNE_TO_PLAYER_CONTROLLED: u32 = 0x100;
 const IMMUNE_TO_UNCONTROLLED: u32 = 0x200;
-/// Creature template type flags: `CanAidPlayers` (`0x715f90`) and `IsTreatAsRaidUnit`
+/// Creature template type flags: the aids-players test (`0x715f90`) and the raid-unit test
 /// (`0x715df0`).
 const TYPE_FLAG_AIDS_PLAYERS: u32 = 1 << 12;
 const TYPE_FLAG_TREAT_AS_RAID_UNIT: u32 = 1 << 26;
 /// `UNIT_FIELD_BYTES_2` byte 1's free-for-all bit, beside [`BYTE2_PVP`] and [`BYTE2_SANCTUARY`].
 const BYTE2_FFA_PVP: u8 = 0x4;
 
-/// The side the local player takes in a `CanAssist` question.
+/// The side the local player takes in an assist check.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Assist {
     /// May the player assist the unit: every spell, `UnitCanAssist` and targeting caller.
@@ -145,8 +147,8 @@ pub(crate) enum Assist {
     UnitToPlayer,
 }
 
-/// `CanAssist 0x7293d0` from the player, toward `store` ([`Assist::PlayerToUnit`]). `names`
-/// resolves the creature template type flags; a unit not in the cache reads none.
+/// The assist check (`0x7293d0`) from the player, toward `store` ([`Assist::PlayerToUnit`]).
+/// `names` resolves the creature template type flags; a unit not in the cache reads none.
 pub(crate) fn can_assist(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
@@ -166,7 +168,8 @@ pub(crate) fn can_assist(
     )
 }
 
-/// `CanAssist 0x7293d0` with `ignoreFlags` 0, between the player and `store` in `dir`:
+/// The assist check (`0x7293d0`) with its ignore-flags argument 0, between the player and `store`
+/// in `dir`:
 /// 1. the target's `UNIT_FLAG_NOT_SELECTABLE` refuses, then the immunity bit facing the actor;
 /// 2. the actor's reaction toward the target below 4 refuses, unless the actor is a raid-unit
 ///    creature;
@@ -266,7 +269,7 @@ const BYTE2_SANCTUARY: u8 = 0x8;
 /// `UNIT_DYNFLAG_DEAD`, the second half of the resolver's dead test (`0x521f6b`).
 const DYNFLAG_DEAD: u32 = 0x20;
 
-/// The resolver's player-controlled verdict, from `CanAttack 0x729740` asked both ways.
+/// The resolver's player-controlled verdict, from the attack check (`0x729740`) asked both ways.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Matrix {
     /// The unit can attack us and we it (`0x521e60`).
@@ -287,8 +290,8 @@ fn attack_matrix(
     reputations: &Reputations,
     party: &dyn GroupMembers,
 ) -> Matrix {
-    // `CanAttack(unit, player)`: the arm both bit-3 flags select is the same either way round,
-    // so the player-side predicate with the two swapped asks it.
+    // The attack check of the unit on the player: the arm both bit-3 flags select is the same
+    // either way round, so the player-side predicate with the two swapped asks it.
     let attacks_us = super::ring::can_attack_from_player(
         factions,
         reputations,
@@ -315,13 +318,13 @@ fn attack_matrix(
 
 /// `UnitSelectionColor`'s ARGB dword, 12340's resolver `0x521bf0` with its third argument 0, as
 /// `0x60da6f` calls it: a unit that is not player-controlled takes the palette entry of its
-/// reaction toward the player (`0x521fa7`, no dead grey in this mode). A player-controlled one
-/// asks `CanAttack 0x729740` both ways: it can attack us and we it, red; it us only, blue; we it
-/// only, yellow (`0x521e45`-`0x521e9e`). Else a PvP-flagged unit, neither side in a sanctuary,
+/// reaction toward the player (`0x521fa7`, no dead grey in this mode). A player-controlled one asks
+/// the attack check (`0x729740`) both ways: it can attack us and we it, red; it us only, blue; we
+/// it only, yellow (`0x521e45`-`0x521e9e`). Else a PvP-flagged unit, neither side in a sanctuary,
 /// takes its reaction's entry, and any other blue. `self_store` is the player's own descriptor;
 /// passing it as `store` reads the player's own colour, whose reaction toward itself is 4
-/// (`0x7251c0`). Not applied: the active mover's vehicle or charm (`0x6dd060`, `0x5140a0`) and
-/// the zone's sanctuary test (`[0xbea570] == 4`).
+/// (`0x7251c0`). Not applied: the active mover's vehicle or charm (`0x6dd060`, `0x5140a0`) and the
+/// zone's sanctuary test (`[0xbea570] == 4`).
 pub(crate) fn selection_color(
     store: &ObjectStore,
     factions: Option<&Factions>,
@@ -420,7 +423,7 @@ mod tests {
 
     /// Free-for-all, every unit and our player carrying `UNIT_BYTE2_FLAG_FFA_PVP`: the rungs ahead
     /// of the FFA rung (`0x7251c0`) decide self, our pet, the group and a duel, and the ring and
-    /// name colour (`0x521bf0` mode 1) follows the `CanAttack` matrix they produce.
+    /// name colour (`0x521bf0` mode 1) follows the attack-check matrix they produce.
     mod ffa {
         use super::*;
         use crate::target::{reaction_from_player, ring_reaction, RingVariant};
@@ -493,7 +496,7 @@ mod tests {
             }
         }
 
-        /// Both reactions, both `CanAttack` directions and the ring and name colour of `them`.
+        /// Both reactions, both attack-check directions and the ring and name colour of `them`.
         struct Seen {
             toward_us: u8,
             from_us: u8,
@@ -800,9 +803,9 @@ mod tests {
         );
     }
 
-    /// `CanAttack 0x729740` between players reads the PvP byte of `UNIT_FIELD_BYTES_2`: a flagged
-    /// enemy is attackable, as in a battleground, an unflagged one is not, sanctuary on either
-    /// side refuses, both free-for-all passes, and a flagged ally stays friendly.
+    /// The attack check (`0x729740`) between players reads the PvP byte of `UNIT_FIELD_BYTES_2`: a
+    /// flagged enemy is attackable, as in a battleground, an unflagged one is not, sanctuary on
+    /// either side refuses, both free-for-all passes, and a flagged ally stays friendly.
     #[test]
     fn can_attack_reads_the_pvp_byte_between_players() {
         use benilla_formats::{FactionCatalog, FactionTemplate};
@@ -865,7 +868,7 @@ mod tests {
         assert!(!attack(&unit(2, BYTE2_PVP, 0x10), &me), "a ghost");
     }
 
-    /// `CanAssist 0x7293d0` both ways round. A spirit guide may assist the ghost
+    /// The assist check (`0x7293d0`) both ways round. A spirit guide may assist the ghost
     /// (`0x523f80` asks it so) though the player may not assist the guide, which carries neither
     /// the PvP bit nor an aiding template. Between players the FFA, sanctuary and duel legs decide.
     #[test]
@@ -947,7 +950,7 @@ mod tests {
         );
         assert!(
             ask(Assist::PlayerToUnit, &npc(AIDER, 11, 0, 0), &me),
-            "type flag 0x1000, CanAidPlayers"
+            "type flag 0x1000, the aids-players test"
         );
         assert!(
             ask(Assist::PlayerToUnit, &npc(GUIDE, 11, 0, BYTE2_PVP), &me),

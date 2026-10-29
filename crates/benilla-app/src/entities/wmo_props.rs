@@ -341,7 +341,7 @@ pub(super) fn spawn_wmo_gameobject_props(
                             anchor: Some(root),
                             // A placed prop's model is destroyed when its placement unloads.
                             on_owner_loss: particles::OwnerLoss::Free,
-                            // A WMO prop is lit by the `CMapDoodadDef` provider, not the `WENTITY`
+                            // A WMO prop is lit by the placed-doodad provider, not the `WENTITY`
                             // one this edge feeds; its interior words, folded at spawn, do not
                             // reach its emitters.
                             light_node: None,

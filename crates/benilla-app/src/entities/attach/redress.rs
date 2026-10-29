@@ -1,5 +1,5 @@
 //! Re-dressing a character in place when its worn equipment changes. The reference re-dresses the
-//! same `CM2Model`: its compositor re-blits the atlas and re-runs the geoset selection, which
+//! same model instance: its compositor re-blits the atlas and re-runs the geoset selection, which
 //! writes only the model's visibility array (`+0x98`), and never touches the attachments. So a
 //! re-dress re-points the standing parts at the new materials, despawns the batches the gear hides,
 //! spawns the ones it reveals, and leaves the rig and everything hanging off it alone.

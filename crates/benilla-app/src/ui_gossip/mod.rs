@@ -61,7 +61,7 @@ impl GossipState {
     }
 
     /// Latch a `SMSG_GOSSIP_MESSAGE` menu; `true` when the caller owes the `CMSG_NPC_TEXT_QUERY`.
-    /// A `text_id` of 0 stays pending: the reference's `DBCache::Get` never queries id 0.
+    /// A `text_id` of 0 stays pending: the reference's cache lookup never queries id 0.
     pub(crate) fn open_menu(&mut self, menu: WireMenu, npc_gender: u8) -> bool {
         let text_id = menu.text_id;
         self.npc = Some(menu.npc);
@@ -771,7 +771,7 @@ mod tests {
         );
     }
 
-    /// The reference's missing-text path ends the interaction, and its `DBCache::Get` never queries
+    /// The reference's missing-text path ends the interaction, and its cache lookup never queries
     /// id 0.
     #[test]
     fn missing_text_ends_the_interaction_and_id_zero_never_queries() {

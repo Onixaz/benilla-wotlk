@@ -665,9 +665,9 @@ fn temporary_enchant_line_carries_its_countdown_and_charges() {
     );
 }
 
-/// A loot hover shows the roll, never the placeholder: `SetLootItem` builds an instance block (p6 = 1)
-/// with the roll at `+0x424`, zeroed enchant slots and no object, so the builder copies the suffix
-/// row into slots 2..6 and never reaches `ITEM_RANDOM_ENCHANT`. The name is the suffixed one
+/// A loot hover shows the roll, never the placeholder: `SetLootItem` builds an instance block
+/// (p6 = 1) with the roll at `+0x424`, zeroed enchant slots and no object, so the builder copies the
+/// suffix row into slots 2..6 and never reaches `ITEM_RANDOM_ENCHANT`. The name is the suffixed one
 /// `GetLootSlotInfo` returns.
 #[test]
 fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
@@ -798,7 +798,7 @@ fn a_looted_item_with_no_roll_shows_neither_line_nor_placeholder() {
 }
 
 /// A chat link is a block source too (`SetHyperlink`, p6 = 1): its `|Hitem:` token 2 is the roll,
-/// expands it into slots 2..6, and the reference never reaches the placeholder.
+/// the builder expands it into slots 2..6, and it never reaches the placeholder.
 #[test]
 fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
     let mut s = script();

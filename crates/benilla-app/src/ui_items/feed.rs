@@ -672,7 +672,8 @@ pub(super) fn feed_player_req(
             );
         }
     }
-    // The reference's: a known spell whose Effect[0] is 40 (`SPELL_EFFECT_DUAL_WIELD`).
+    // The reference's dual-wield test: a known spell whose Effect[0] is 40
+    // (`SPELL_EFFECT_DUAL_WIELD`).
     let can_dual_wield = spells.as_deref().is_some_and(|s| {
         actions
             .spells
@@ -1350,7 +1351,7 @@ pub(crate) fn apply_container_source(
     }
     // After the push, so a repaint reads the corrected `locked`.
     pushed |= !transitioned.is_empty();
-    // Located as `CGItem_C::SignalEvent` (`0x60bfe0`) does: stock slot buttons repaint only on
+    // Located as the item's event signal (`0x60bfe0`) does: stock slot buttons repaint only on
     // their own `(bag, slot)` or inventory slot.
     for (bag, slot) in transitioned {
         script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
@@ -1415,11 +1416,10 @@ fn diff_and_push(
         script.fire_event("BAG_CLOSED", vec![ScriptValue::Int(*id)]);
     }
     // `PLAYERBANKSLOTS_CHANGED(slot)` has two producers in the reference, the slot's guid changing
-    // (`InventoryUpdate` `0x6dedd0`) and the same item's fields changing (`UpdateItem` `0x5e84c0`),
-    // both passing the bank slot, 1-28 for the vault (`0x5e857f`: player slot less 38). So the
-    // slot's guid decides, not its view: two identical stacks swapped push equal views and still
-    // fire twice. Planned before `memory` is rewritten, fired after the push, outside the `changed`
-    // gate.
+    // (`0x6dedd0`) and the same item's fields changing (`0x5e84c0`), both passing the bank slot,
+    // 1-28 for the vault (`0x5e857f`: player slot less 38). So the slot's guid decides, not its
+    // view: two identical stacks swapped push equal views and still fire twice. Planned before
+    // `memory` is rewritten, fired after the push, outside the `changed` gate.
     let vault: Vec<u32> = {
         let empty = HashMap::new();
         let now = fresh.get(&BANK_CONTAINER).map_or(&empty, |c| &c.slots);
@@ -1859,7 +1859,7 @@ mod tests {
     }
 
     /// A stack ticking down is a `BAG_UPDATE` alone: 12340 fires `ITEM_LOCK_CHANGED` only from
-    /// `CGItem_C::Lock`/`Unlock` (`0x706fe0`, `0x707020`), located as `0x60bfe0` locates the item.
+    /// the item lock and unlock (`0x706fe0`, `0x707020`), located as `0x60bfe0` locates the item.
     #[test]
     fn a_stack_ticking_down_is_a_bag_update_and_a_lock_names_its_slot() {
         use benilla_ui::script::ContainerSlot;
@@ -2068,7 +2068,7 @@ mod tests {
         );
     }
 
-    /// The trigger text's `$g` branch reads the gender handed: Conjure Food 587's "providing the
+    /// The trigger text's `$g` branch reads the gender handed in: Conjure Food 587's "providing the
     /// mage and `$ghis:her;` allies" takes "her" on 1, "his" on 0.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]

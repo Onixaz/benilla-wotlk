@@ -1,8 +1,8 @@
-//! The swing arithmetic, pinned against the reference's own numbers.
+//! The swing arithmetic, pinned against the reference step's own numbers.
 
 use super::*;
 
-/// A shipped proc, kit 324, alpha 100, 600 ms.
+/// A shipped proc, kit 324: `#f82929`, alpha 100, 600 ms.
 fn kit_324() -> TrailProc {
     TrailProc {
         packed: 0x64f8_2929,
@@ -16,8 +16,8 @@ fn armed(trail: TrailProc) -> WeaponTrail {
     t
 }
 
-/// The reference with the shipped `CharParamThree = 100` and a 16.7 ms frame: `fadeStep = 5`, so
-/// `nSegments = 20`, about 0.33 s of trail history.
+/// The reference's step with the shipped `CharParamThree = 100` and a 16.7 ms frame: `fadeStep =
+/// 5`, so `nSegments = 20`, about 0.33 s of trail history.
 #[test]
 fn shipped_frame_gives_five_and_twenty() {
     for dt in [16, 17] {
@@ -297,7 +297,7 @@ fn an_arm_alone_fires_nothing() {
     );
 }
 
-/// The reference clears the duration as it is read, so one arm is one trail.
+/// The animation play clears the duration as it is read, so one arm is one trail.
 #[test]
 fn the_latch_is_consumed_exactly_once() {
     let (mut app, unit, hands) = latch_app();
@@ -357,7 +357,7 @@ fn an_empty_hand_is_skipped() {
     assert!(trailing(&app, hands[0]), "the armed hand still fires");
 }
 
-/// The pending arm dies with the unit, in the CGUnit teardown.
+/// The pending arm dies with the unit, in the unit object's teardown.
 #[test]
 fn the_latch_is_swept_when_the_unit_goes() {
     let (mut app, unit, _) = latch_app();

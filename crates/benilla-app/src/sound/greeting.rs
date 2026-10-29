@@ -7,10 +7,10 @@
 //!
 //! ## The select greeting (left-click)
 //!
-//! Left-clicking a unit ([`crate::target::select_on_click`], before `SetTarget`) plays the cycling
-//! welcome ([`NpcGreetingRequest`]). A counter per NPC ([`GreetSeq`], reset when the greeted NPC
-//! changes) steps ([`greet_line`]): five hello takes, then the pissed kit's takes in order, then a
-//! wrap.
+//! Left-clicking a unit ([`crate::target::select_on_click`], before the target is set) plays the
+//! cycling welcome ([`NpcGreetingRequest`]). A counter per NPC ([`GreetSeq`], reset when the
+//! greeted NPC changes) steps ([`greet_line`]): five hello takes, then the pissed kit's takes in
+//! order, then a wrap.
 //!
 //! ## The window hello and goodbye (right-click)
 //!
@@ -83,7 +83,7 @@ fn greet_line(seq: usize, pissed_variations: usize) -> (GreetLine, usize) {
     }
 }
 
-/// The vocal an active-NPC change produces (`SetActiveNPC`).
+/// The vocal an active-NPC change produces (the reference's active-NPC set).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum WindowVocal {
     Hello(u64),

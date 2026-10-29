@@ -65,7 +65,7 @@ fn trade_status(
                 trade.owe_named_line(NamedLine {
                     key,
                     who,
-                    // The arm reads the live `CGUnit`; the feed applies that guard.
+                    // The arm reads the live unit; the feed applies that guard.
                     needs_live_object: true,
                 });
             }
@@ -80,8 +80,9 @@ fn trade_status(
         // anything or is in the tail's clear set.
         TradeStatus::Accept => trade.partner_accepted(),
         TradeStatus::Rejected => trade.partner_unaccepted(),
-        // Case 7 drops both accepts, ours, which sends `CMSG_UNACCEPT_TRADE` when the flag was up;
-        // vmangos then passes a `BACK_TO_TRADE` on to the partner (`TradeHandler.cpp:539`).
+        // Case 7 drops both accepts, ours through the unaccept, which sends `CMSG_UNACCEPT_TRADE`
+        // when the flag was up; vmangos then passes a `BACK_TO_TRADE` on to the partner
+        // (`TradeHandler.cpp:539`).
         TradeStatus::BackToTrade => {
             if trade.we_accepted() {
                 let _ = commands.0.send(ClientCommand::UnacceptTrade);
@@ -127,11 +128,11 @@ enum Line {
     Naming(&'static str),
 }
 
-/// The `GlobalStrings` key each status arm raises through `DisplayError`, or `None`. The catalog
+/// The `GlobalStrings` key each status arm raises through the error display, or `None`. The catalog
 /// row's `+0x04`, not the key, decides chat, yellow or red: the two successful outcomes are the
 /// yellow ones, and `ERR_TRADE_WRONG_REALM`'s text is the conjured-items sentence.
 ///
-/// Not built: `CLOSE_WINDOW` (12) prints an id computes from `result` (61 ids, `0x1d1` printing
+/// Not built: `CLOSE_WINDOW` (12) prints an id computed from `result` (61 ids, `0x1d1` printing
 /// nothing); vmangos never sends 12, so it closes silently.
 fn status_message(status: TradeStatus) -> Option<Line> {
     Some(match status {
@@ -326,7 +327,8 @@ mod tests {
         assert_eq!(kind_of("ERR_TRADE_TARGET_DEAD"), MsgKind::Error);
     }
 
-    /// The reference has four call sites in the dispatcher: one opens the window, three close it.
+    /// The trade-partner set has four call sites in the dispatcher: one opens the window, three
+    /// close it.
     #[test]
     fn only_canceled_complete_and_close_window_tear_the_window_down() {
         let closes: Vec<u32> = every_status()

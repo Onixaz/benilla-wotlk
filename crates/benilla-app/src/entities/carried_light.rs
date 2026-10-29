@@ -1,8 +1,8 @@
 //! Carried M2 lights: the point lights an entity's models bring, beside the placed ones
-//! (`benilla_world::terrain_stream`'s `spawn_lights_for`). The reference makes no distinction: the
-//! reference gathers every drawn model's `type == 1` lights each frame, attached children included,
-//! at the live bone matrix into the one scene light DB, so a held torch lights the ground. Each
-//! light here rides its host bone's joint.
+//! (`benilla_world::terrain_stream`'s `spawn_lights_for`). The reference makes no distinction: it
+//! gathers every drawn model's `type == 1` lights each frame, attached children included, at the
+//! live bone matrix into the one scene light DB, so a held torch lights the ground. Each light here
+//! rides its host bone's joint.
 
 use benilla_assets::coords::wow_to_bevy;
 use benilla_assets::ModelLight;

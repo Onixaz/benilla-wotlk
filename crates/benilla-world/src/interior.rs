@@ -1,11 +1,11 @@
 //! Interior lighting for entity M2s (units, players, GameObjects, held items): which stand in a
 //! WMO room, and the light law they take there.
 //!
-//! One law lights every entity M2 (`Node::SetModel`): indoors, the node's attach rays onto the WMO
-//! render mesh and bakes the hit's barycentric MOCV (floor-168 / cap-96) on the fixed interior
-//! axis, plus the hit group's MOLR lobes, folded here into an SH probe. Indoors is the lighting
-//! class (`[node+0xc]`: outdoor iff `MOGI & 0x48`), not the zone-text bit, which calls `0x40`-only
-//! streets indoors. One verdict per unit, at its anchor.
+//! One law lights every entity M2 (the light node's model set): indoors, the node's attach rays
+//! onto the WMO render mesh and bakes the hit's barycentric MOCV (floor-168 / cap-96) on the fixed
+//! interior axis, plus the hit group's MOLR lobes, folded here into an SH probe. Indoors is the
+//! lighting class (`[node+0xc]`: outdoor iff `MOGI & 0x48`), not the zone-text bit, which calls
+//! `0x40`-only streets indoors. One verdict per unit, at its anchor.
 
 use std::collections::HashSet;
 
@@ -113,7 +113,7 @@ pub struct BodyBakeCenter(pub Vec3);
 
 /// This anchor's node takes the containment attach from its bounding-box centre, not the down-ray
 /// from its position: `[node+0x90]` bit 13, set from the TYPEMASK at node creation for GameObjects
-/// alone, forked. A GameObject's origin often sits at or under its own floor.
+/// alone, which the attach forks on. A GameObject's origin often sits at or under its own floor.
 #[derive(Component)]
 pub struct ContainmentAttach;
 

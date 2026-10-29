@@ -18,8 +18,8 @@ use crate::net::{ClientCommand, NetCommands, ObjectStore};
 use crate::query_cache::QueryCache;
 
 /// The creature template's `type_flags` dword from `SMSG_CREATURE_QUERY_RESPONSE`, cached by the
-/// reference at `[CGUnit+0xb30] + 0x14`. Adjacent bits mean unrelated things, and the reference
-/// gives each its own getter, so every consumer names the bit it reads:
+/// reference at `[unit+0xb30] + 0x14`. Adjacent bits mean unrelated things, and the reference gives
+/// each its own getter, so every consumer names the bit it reads:
 ///
 /// | bit | meaning |
 /// |---|---|
@@ -103,7 +103,7 @@ pub(crate) fn gated_rank(rec: Option<&CreatureRecord>, store: Option<&ObjectStor
 }
 
 /// Which cache names a unit and under which key: the branch of the reference's `GetUnitName`, which
-/// the combat log's `GetObjectName` also calls.
+/// the combat log's name lookup also calls.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum NameKey {
     /// The `OBJECT_FIELD_TYPE` player bit: the name cache by guid.
@@ -152,7 +152,8 @@ impl NameCache {
         self.resolve_unit(guid_val, None, commands)
     }
 
-    /// The name for a unit keyed off its descriptor, as the reference keys it; asks once on a miss.
+    /// The name for a unit keyed off its descriptor, as the reference's unit-name branch keys it;
+    /// asks once on a miss.
     pub(crate) fn resolve_unit(
         &self,
         guid_val: u64,
@@ -251,9 +252,9 @@ impl NameCache {
         self.generation = self.generation.wrapping_add(1);
     }
 
-    /// The reference's world-session wipe: every `DBCache` whose persistence byte `[cache+0x39]` is
-    /// 0 is cleared, which is `'WNAM'` (player names), `'WGLD'`, `'WPNM'` (pet names) and `'WPTN'`.
-    /// Called at world entry, before the login seeds our own name.
+    /// The reference's world-session wipe: every record cache whose persistence byte `[cache+0x39]`
+    /// is 0 is cleared, which is `'WNAM'` (player names), `'WGLD'`, `'WPNM'` (pet names) and
+    /// `'WPTN'`. Called at world entry, before the login seeds our own name.
     pub(crate) fn clear_world_session(&mut self) {
         self.players.clear();
         self.player_traits.clear();
@@ -271,8 +272,8 @@ impl NameCache {
         self.player_traits.get(&guid).copied()
     }
 
-    /// Record a pet-name answer, keyed by pet number; an empty name is a negative answer, which
-    /// the reference denies rather than caching (`DBCache::DenyItem`, `0x635365`).
+    /// Record a pet-name answer, keyed by pet number; an empty name is a negative answer, which the
+    /// reference's cache denies rather than caching (`0x635365`).
     pub(crate) fn insert_pet(&mut self, pet_number: u32, name: String) {
         self.pets
             .insert(pet_number, (!name.is_empty()).then_some(name));
@@ -553,7 +554,7 @@ mod tests {
         assert_eq!(cache.peek(voidwalker), None);
     }
 
-    /// An empty answer is a negative (`DBCache::DenyItem`, `0x635365`): no `""` name, no re-ask.
+    /// An empty answer is a negative (the cache's deny, `0x635365`): no `""` name, no re-ask.
     #[test]
     fn an_empty_pet_name_is_a_negative_answer() {
         let (cmds, rx) = commands();
@@ -597,7 +598,7 @@ mod tests {
         );
     }
 
-    /// The reference's clears the stores whose `[cache+0x39]` byte is 0.
+    /// The reference's world-session wipe clears the stores whose `[cache+0x39]` byte is 0.
     #[test]
     fn world_entry_clears_the_identities_and_keeps_the_templates() {
         let (cmds, rx) = commands();
@@ -749,8 +750,8 @@ mod tests {
         }
     }
 
-    /// The reference's `UNIT_FIELD_PETNUMBER == 0` leg: a vmangos companion pet's guid holds a pet
-    /// number the server never answers for (`PetHandler.cpp:190-192`).
+    /// The reference's unit-name `UNIT_FIELD_PETNUMBER == 0` leg: a vmangos companion pet's guid
+    /// holds a pet number the server never answers for (`PetHandler.cpp:190-192`).
     #[test]
     fn a_companion_pet_is_named_by_its_descriptor_entry() {
         let (cmds, rx) = commands();

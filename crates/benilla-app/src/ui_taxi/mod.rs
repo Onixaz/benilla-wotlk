@@ -188,7 +188,7 @@ fn feed_taxi(
     if fresh != *last || (fresh.is_some() && name_changed) {
         script.set_taxi(fresh.clone());
         match (&*last, &fresh) {
-            // No arguments: the event's one fire site, is a plain `FrameScript_SignalEvent`.
+            // No arguments: the event's one fire site is a plain event signal.
             (None, Some(_)) | (Some(_), Some(_)) => {
                 script.fire_event("TAXIMAP_OPENED", Vec::new());
             }
@@ -351,7 +351,8 @@ mod tests {
 
     /// The map's fares take the flight master's discount and the express leg sends the raw route
     /// sum. Honored, a PvP-flagged flight master and honor rank byte 6 make 0.15: Sentinel Hill's
-    /// direct 110 shows 94, and Thelsamar's route through Ironforge, 50 + 110, shows 136 and sends 160.
+    /// direct 110 shows 94, and Thelsamar's route through Ironforge, 50 + 110, shows 136 and sends
+    /// 160.
     /// With the flight master unresolved the fares show 0.
     #[test]
     fn the_map_shows_discounted_fares_and_the_express_sends_the_raw_sum() {

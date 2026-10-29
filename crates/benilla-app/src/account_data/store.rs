@@ -1,7 +1,7 @@
-//! The account data's rules, without Bevy: 12340's eight slots (`s_accountData` `0xad94e0`), each
-//! a file under `WTF\Account\<ACCOUNT>\` or `WTF\Account\<ACCOUNT>\<Realm>\<Character>\`, its MD5
-//! and time in that folder's `cache.md5`, and the server's copy kept in step through the times
-//! packet, a download, and an upload 30 seconds after a save or at the logout flush.
+//! The account data's rules, without Bevy: 12340's eight slots (`0xad94e0`), each a file under
+//! `WTF\Account\<ACCOUNT>\` or `WTF\Account\<ACCOUNT>\<Realm>\<Character>\`, its MD5 and time in
+//! that folder's `cache.md5`, and the server's copy kept in step through the times packet, a
+//! download, and an upload 30 seconds after a save or at the logout flush.
 
 use std::path::{Path, PathBuf};
 
@@ -111,7 +111,7 @@ pub(crate) const SLOTS: [SlotDef; 8] = [
 /// The checksums' file in each scope folder (`0xa31394`).
 const CHECKSUMS: &str = "cache.md5";
 
-/// A save's upload waits this long for the next edit (`ScheduleAccountDataSave` `0x6b9440`).
+/// A save's upload waits this long for the next edit (`0x6b9440`).
 pub(crate) const SAVE_DELAY_SECS: f32 = 30.0;
 
 /// A slot's live state (`+0x15`..`+0x3c`).
@@ -158,15 +158,15 @@ impl<F: Fn(&SlotDef) -> bool> SyncGate for F {
 #[derive(Debug, Default, bevy::prelude::Resource)]
 pub(crate) struct AccountData {
     slots: [SlotState; 8],
-    /// `s_accountDataTime` (`0xc7bff0`): the server's clock from the last times packet, one step on
-    /// per upload.
+    /// The server's clock (`0xc7bff0`): its value from the last times packet, one step on per
+    /// upload.
     clock: u32,
     account_dir: Option<PathBuf>,
     character_dir: Option<PathBuf>,
     outbox: Vec<Wire>,
 }
 
-/// The MD5 of a file's bytes; a missing or empty file is all zero (`MD5AccountFile` `0x6b8ca0`).
+/// The MD5 of a file's bytes; a missing or empty file is all zero (`0x6b8ca0`).
 fn md5_of(path: Option<&Path>) -> [u8; 16] {
     match path.and_then(|p| std::fs::read(p).ok()) {
         Some(bytes) if !bytes.is_empty() => Md5::digest(&bytes).into(),
@@ -198,9 +198,9 @@ impl AccountData {
         (0..SLOTS.len()).filter(move |&s| SLOTS[s].global == global)
     }
 
-    /// `AccountDataInitialize` (`0x6b9970`): the scope's slots go live and wait for the server,
-    /// their checksums are read back, a file edited since is marked changed, and a cache file with
-    /// no backup yet gets one (`CopyAccountFile` `0x6b8ab0`). `dir` is `None` when nothing persists.
+    /// The scope's opening (`0x6b9970`): its slots go live and wait for the server, their checksums
+    /// are read back, a file edited since is marked changed, and a cache file with no backup yet
+    /// gets one (`0x6b8ab0`). `dir` is `None` when nothing persists.
     pub(crate) fn initialize(&mut self, global: bool, dir: Option<PathBuf>) {
         if global {
             self.account_dir = dir;
@@ -229,7 +229,7 @@ impl AccountData {
         }
     }
 
-    /// `AccountDataDestroy(false)` after a logout: the character's slots go dark.
+    /// The character scope's close after a logout: the character's slots go dark.
     pub(crate) fn release_character(&mut self) {
         for slot in Self::scope(false) {
             self.slots[slot] = SlotState::default();
@@ -238,7 +238,7 @@ impl AccountData {
     }
 
     /// `cache.md5`: per scope slot in slot order, the MD5 then an `i32` time; any other size is
-    /// ignored (`LoadCachedChecksums` `0x6b8d40`).
+    /// ignored (`0x6b8d40`).
     fn load_checksums(&self, global: bool) -> Vec<([u8; 16], i32)> {
         let count = Self::scope(global).count();
         let dir = if global {
@@ -267,7 +267,7 @@ impl AccountData {
             .collect()
     }
 
-    /// `SaveCachedChecksums` (`0x6b8ee0`).
+    /// The checksums written back (`0x6b8ee0`).
     fn save_checksums(&self, global: bool) {
         let dir = if global {
             &self.account_dir
@@ -287,7 +287,7 @@ impl AccountData {
         }
     }
 
-    /// `UpdateCachedChecksum` (`0x6b8f50`): after an upload or a download the file is in sync.
+    /// The checksum refresh (`0x6b8f50`): after an upload or a download the file is in sync.
     fn mark_synced(&mut self, slot: usize, time: i32) {
         let md5 = md5_of(self.cache_file(slot).as_deref());
         let s = &mut self.slots[slot];
@@ -298,7 +298,7 @@ impl AccountData {
         self.save_checksums(SLOTS[slot].global);
     }
 
-    /// Whether the slot's file may be read: live, and not waiting on the server (`LoadAccountData`
+    /// Whether the slot's file may be read: live, and not waiting on the server (the load at
     /// `0x6b9050` defers until then).
     pub(crate) fn ready(&self, slot: usize) -> bool {
         self.slots[slot].active && !self.slots[slot].downloading
@@ -321,9 +321,9 @@ impl AccountData {
         )
     }
 
-    /// `SaveAccountData` (`0x6b9be0`) then `ScheduleAccountDataSave` (`0x6b9440`): refused while
-    /// the server has not answered; else the file is rewritten whole and, where sync is on, the
-    /// upload check runs in 30 seconds. Whether it wrote.
+    /// The slot save (`0x6b9be0`) then its upload scheduled (`0x6b9440`): refused while the server
+    /// has not answered; else the file is rewritten whole and, where sync is on, the upload check
+    /// runs in 30 seconds. Whether it wrote.
     pub(crate) fn save(&mut self, slot: usize, bytes: &[u8], gate: &impl SyncGate) -> bool {
         if !self.slots[slot].active || self.slots[slot].downloading {
             return false;
@@ -403,7 +403,7 @@ impl AccountData {
         self.slots[slot].downloading = false;
     }
 
-    /// `UploadAccountData` (`0x6b9100`): the file's bytes under the next clock step.
+    /// The upload (`0x6b9100`): the file's bytes under the next clock step.
     fn upload(&mut self, slot: usize) {
         let bytes = self
             .cache_file(slot)
@@ -419,8 +419,8 @@ impl AccountData {
         self.mark_synced(slot, time as i32);
     }
 
-    /// `SaveTimerHandler` (`0x6b9340`): an unchanged file only refreshes the checksums; a changed
-    /// one goes up.
+    /// The save timer (`0x6b9340`): an unchanged file only refreshes the checksums; a changed one
+    /// goes up.
     fn fire(&mut self, slot: usize) {
         self.slots[slot].timer = None;
         let md5 = md5_of(self.cache_file(slot).as_deref());
@@ -446,7 +446,7 @@ impl AccountData {
         }
     }
 
-    /// `AccountDataFlush` (`0x6b9b90`): every pending save's check now, at the UI shutdown.
+    /// The flush (`0x6b9b90`): every pending save's check now, at the UI shutdown.
     pub(crate) fn flush(&mut self) {
         for slot in 0..SLOTS.len() {
             if self.slots[slot].timer.is_some() {

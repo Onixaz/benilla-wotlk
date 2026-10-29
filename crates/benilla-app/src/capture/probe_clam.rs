@@ -41,7 +41,7 @@ const CLOSE_TIMEOUT_SECS: f64 = 10.0;
 /// How long the `.additem -1` gets to take the probe's own copy back out of the bags.
 const CLEANUP_TIMEOUT_SECS: f64 = 8.0;
 /// How long the REOPEN round waits after the window goes down before clicking again. A race the
-/// reference shares: `CloseLoot()` clears the latch at the send (in `CloseInteraction`) and
+/// reference shares: `CloseLoot()` clears the latch at the send, in the interaction close, and
 /// `SMSG_LOOT_RELEASE_RESPONSE` clears it again, guid-matched, so a re-open of the same object
 /// inside that round trip is refused.
 const REOPEN_SETTLE_SECS: f64 = 1.0;

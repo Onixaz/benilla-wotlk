@@ -24,7 +24,7 @@ use crate::widget::RegionHandle;
 pub(super) type ResolveRegion = fn(&Lua, &Table) -> mlua::Result<RegionHandle>;
 
 /// A widget's listener on its font instance, run after `SetFont` loads a new face or size and after
-/// `SetFontObject` links another object: the notify `[vt+0x14]` that the reference call, which the
+/// `SetFontObject` links another object: the notify `[vt+0x14]` that both paths call, which the
 /// EditBox answers.
 pub(super) type FontChanged = fn(&Lua, &Table) -> mlua::Result<()>;
 
@@ -154,9 +154,9 @@ pub(super) fn install(
                 d.font_height = Some(height);
                 d.font_explicit.height = true;
                 if let Some(f) = flags {
-                    // The Lua spelling (`OUTLINE`, `THICKOUTLINE`), not the XML one, parsed like
-                    // the reference: a case-insensitive substring scan, so `THICKOUTLINE` sets
-                    // both.
+                    // The Lua spelling (`OUTLINE`, `THICKOUTLINE`), not the XML one, parsed as the
+                    // reference parses it: a case-insensitive substring scan, so `THICKOUTLINE`
+                    // sets both.
                     d.outline = Outline::flags(&f);
                     d.font_explicit.outline = true;
                 }
@@ -175,9 +175,9 @@ pub(super) fn install(
         )?,
     )?;
     // GetFont() → path, height, flags (`mov eax,3`); flags is "" when none, never nil. The height
-    // is a number even with no font: the reference loads `[esi+0xe4]` unconditionally (the
-    // reference skips its `+0xe0` test). That field has no constructor writer, so an unset height
-    // reads 0 here, like the Font object's `+0x48`.
+    // is a number even with no font: the reference's getter loads `[esi+0xe4]` unconditionally (it
+    // skips its `+0xe0` test). That field has no constructor writer, so an unset height reads 0
+    // here, like the Font object's `+0x48`.
     m.set(
         "GetFont",
         lua.create_function(move |lua, this: Table| {

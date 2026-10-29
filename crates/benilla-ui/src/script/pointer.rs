@@ -1,5 +1,5 @@
 //! Pointer input dispatch: the hit test, and the mouse move, button and wheel entry points that
-//! turn host pointer events into FrameScript handler calls. [`cursor`] owns the payload and
+//! turn host pointer events into script handler calls. [`cursor`] owns the payload and
 //! gesture state; this file dispatches.
 //!
 //! A frame captures the cursor when it is mouse-enabled and effective-visible and its rect and
@@ -80,7 +80,7 @@ pub(super) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `IndexToMouseButton` (`0x5eec20`): 1 left, 2 right, 3 middle, `n` up to 31 `Button<n>`.
+/// The index-to-button map (`0x5eec20`): 1 left, 2 right, 3 middle, `n` up to 31 `Button<n>`.
 fn index_to_mouse_button(index: u32) -> u32 {
     match index {
         1 => 0x1,
@@ -91,7 +91,7 @@ fn index_to_mouse_button(index: u32) -> u32 {
     }
 }
 
-/// `StringToMouseButton` (`0x7dc010`), case-insensitive: left 1, middle 2, right 4, `Button<n>`.
+/// The name-to-button map (`0x7dc010`), case-insensitive: left 1, middle 2, right 4, `Button<n>`.
 pub(super) fn string_to_mouse_button(name: &str) -> u32 {
     if name.eq_ignore_ascii_case("LeftButton") {
         return 0x1;
@@ -128,7 +128,7 @@ fn over_world(model: &Model, target: Option<FrameHandle>) -> bool {
 }
 
 /// Whether `(x, y)` falls inside one of this frame's hyperlink spans, the engine half of the
-/// reference's per-span `CSimpleHyperlinkButton` children.
+/// reference's per-span hyperlink-button children.
 fn link_span_hit(model: &Model, fh: FrameHandle, x: f32, y: f32) -> bool {
     model
         .link_spans
@@ -155,9 +155,9 @@ impl UiScript {
         let scroll_sources = scroll_clip_sources(&model);
         order::hit_test(&sorted, |fh| {
             // Mouse-enabled, or over one of the frame's hyperlink spans. The chat frame takes no
-            // mouse (`[+0xcc] = 0`); the reference gives each span a mouse-enabled
-            // `CSimpleHyperlinkButton` child that routes its scripts to the parent, so a chat
-            // window hits only over a link and drags by its tab, not its body.
+            // mouse (`[+0xcc] = 0`); the reference gives each span a mouse-enabled hyperlink-button
+            // child that routes its scripts to the parent, so a chat window hits only over a link
+            // and drags by its tab, not its body.
             (model.arena.is_mouse_enabled(fh) || link_span_hit(&model, fh, x, y))
                 // The nameplate's `+0x3c` veto, not its mouse-enabled bit: while a ground-targeted
                 // spell is armed a plate refuses the hit before its rect is tested, so the reticle
@@ -342,9 +342,10 @@ impl UiScript {
         }
         // ── The title region swallows the press ─────────────────────────────────────────────────
         //
-        // A press inside the title region starts a mode-2 move and ends there: the reference tests
-        // the region first and only a miss reaches, the capture and `OnMouseDown`. So no
-        // `OnMouseDown`, drag arm, `OnClick` or double-click stamp, and the event is consumed.
+        // A press inside the title region starts a mode-2 move and ends there: the mouse-down
+        // dispatcher tests the region first and only a miss reaches the capture and `OnMouseDown`.
+        // So no `OnMouseDown`, drag arm, `OnClick` or double-click stamp, and the event is
+        // consumed.
         if down {
             if let Some(h) = self.hit_test_frame(x, y) {
                 if self.title_region_hit(h, x, y) {
@@ -356,9 +357,9 @@ impl UiScript {
         }
         // ── The release ends a title move ───────────────────────────────────────────────────────
         //
-        // The reference cancels move modes 1 (modifier drag) and 2 (title region) on release and
-        // leaves mode 3 (`StartMoving`) to the addon's `StopMovingOrSizing`; `FrameMove::auto_stop`
-        // is that distinction.
+        // The release handler cancels move modes 1 (modifier drag) and 2 (title region) on release
+        // and leaves mode 3 (`StartMoving`) to the addon's `StopMovingOrSizing`;
+        // `FrameMove::auto_stop` is that distinction.
         if !down
             && self
                 .model_ref()
@@ -423,8 +424,8 @@ impl UiScript {
                 if let Some(h) = displaced {
                     button::edge(&mut model, h, ButtonState::on_mouse_up);
                 }
-                // The reference sets the capture `root+0x80` only when none is held: a second
-                // button pressed elsewhere does not displace it.
+                // The mouse-down dispatcher sets the capture `root+0x80` only when none is held: a
+                // second button pressed elsewhere does not displace it.
                 model.mouse_capture = model.mouse_capture.or(hit_handle);
                 // A press replaces any in-flight gesture; a started one gets its `OnDragStop`
                 // below, outside this borrow.
@@ -450,8 +451,8 @@ impl UiScript {
                 (click, None, false, jump, None, abandoned, color_jump)
             } else {
                 let pressed = model.mouse_down_on.remove(button);
-                // The reference clears the capture only when no button is still held, so a chorded
-                // release keeps it.
+                // The release handler clears the capture only when no button is still held, so a
+                // chorded release keeps it.
                 if model.mouse_down_on.is_empty() {
                     model.mouse_capture = None;
                 }
@@ -471,8 +472,8 @@ impl UiScript {
                     button::edge(&mut model, h, ButtonState::on_mouse_up);
                 }
                 // The world drop: a completed left click on the world, never a drag release, which
-                // keeps carrying (the reference runs on the WorldFrame click release). The world is
-                // `over_world`, not "no frame": the stock `WorldFrame` covers the screen.
+                // keeps carrying (the reference's drop runs on the WorldFrame click release). The
+                // world is `over_world`, not "no frame": the stock `WorldFrame` covers the screen.
                 let dropped = button == "LeftButton"
                     && !started
                     && over_world(&model, hit_handle)
@@ -485,7 +486,7 @@ impl UiScript {
                         .filter(|&h| same_frame && button::wants_click(&model, h, button, true))
                         .and(hit_id)
                 };
-                // The double click, on the release that qualified as a click: the reference in the
+                // The double click, on the release that qualified as a click: the reference's
                 // mouse-up dispatcher fires `OnDoubleClick` instead of the second `OnClick`, only
                 // for a frame with an `OnDoubleClick` script (`[+0x4d4] != 0`). What suppresses the
                 // click suppresses it too.

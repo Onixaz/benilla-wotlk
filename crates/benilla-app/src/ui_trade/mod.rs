@@ -34,9 +34,9 @@ pub(crate) struct TradeSession {
     partner: Option<u64>,
     /// An unanswered incoming `BEGIN_TRADE`, the initiator's guid; not yet a trade.
     request: Option<u64>,
-    /// Our `CMSG_INITIATE_TRADE` is live: the reference's, set only as it goes out and cleared by
-    /// the status handler's tail, which codes 1, 2, 4, 7, 9 and 22 skip, so it survives
-    /// `OPEN_WINDOW` for the life of a trade we opened.
+    /// Our `CMSG_INITIATE_TRADE` is live: the reference's initiate latch, set only as it goes out
+    /// and cleared by the status handler's tail, which codes 1, 2, 4, 7, 9 and 22 skip, so it
+    /// survives `OPEN_WINDOW` for the life of a trade we opened.
     initiated: bool,
     /// `OPEN_WINDOW` arrived; `partner` is set before it.
     open: bool,
@@ -78,9 +78,9 @@ pub(crate) struct NamedLine {
     pub(crate) key: &'static str,
     /// Whose name fills the `%s`.
     pub(crate) who: u64,
-    /// Print only while the player is streamed: the status arms read the live `CGUnit` after
-    /// `(guid, TYPEMASK_PLAYER)`, while `ERR_INITIATE_TRADE_S` goes through the name cache with no
-    /// object test.
+    /// Print only while the player is streamed: the status arms read the live unit after an object
+    /// lookup of `(guid, TYPEMASK_PLAYER)`, while `ERR_INITIATE_TRADE_S` goes through the name
+    /// cache with no object test.
     pub(crate) needs_live_object: bool,
 }
 
@@ -220,8 +220,8 @@ impl TradeSession {
         self.our_accept = true;
     }
 
-    /// Our accept flag, the reference's, which the reference reads before it changes it or sends
-    /// `CMSG_UNACCEPT_TRADE`.
+    /// Our accept flag, as the reference keeps it: its unaccept reads the flag before it changes
+    /// it or sends `CMSG_UNACCEPT_TRADE`.
     pub(crate) fn we_accepted(&self) -> bool {
         self.our_accept
     }
@@ -231,8 +231,7 @@ impl TradeSession {
         self.our_accept = false;
     }
 
-    /// Owe `TRADE_REQUEST_CANCEL`, the one Lua event the status dispatcher fires (the sole
-    /// `SignalEvent`).
+    /// Owe `TRADE_REQUEST_CANCEL`, the one Lua event the status dispatcher fires.
     pub(crate) fn signal_request_cancel(&mut self) {
         self.request_cancel = true;
     }
@@ -260,8 +259,8 @@ impl TradeSession {
         self.initiated.then_some(self.partner).flatten()
     }
 
-    /// Close the window, the reference's `SetTradePartner(0, 0)`, from `CANCELED`, `COMPLETE`,
-    /// `CLOSE_WINDOW` or the local `CloseTrade`: a full reset, a superset of
+    /// Close the window, the reference's trade-partner reset to `(0, 0)`, from `CANCELED`,
+    /// `COMPLETE`, `CLOSE_WINDOW` or the local `CloseTrade`: a full reset, a superset of
     /// [`Self::clear_pending`], keeping the two signals the reference raises before it,
     /// [`Self::request_cancel`] and [`Self::named_lines`].
     pub(crate) fn close_window(&mut self) {
@@ -383,8 +382,8 @@ impl Plugin for UiTradePlugin {
 #[derive(Resource, Default)]
 pub(crate) struct BlockTrades(pub(crate) bool);
 
-/// `(guid, TYPEMASK_PLAYER)`: the guid's live object, `None` when it is not a streamed player.
-/// Asked by the ladder's leg 3 and by the `%s` lines' second guard.
+/// The object lookup of `(guid, TYPEMASK_PLAYER)`: the guid's live object, `None` when it is not a
+/// streamed player. Asked by the ladder's leg 3 and by the `%s` lines' second guard.
 fn streamed_player<'a>(
     index: &GuidIndex,
     stores: &'a Query<&ObjectStore>,
@@ -458,7 +457,7 @@ fn answer_trade_request(
     }
 
     // Leg 8, Block Trades, the one leg that names the initiator. The reference reads the live
-    // `CGUnit`; this may wait on a name query, with no timer, since vmangos cancels the trade to us
+    // unit; this may wait on a name query, with no timer, since vmangos cancels the trade to us
     // when the initiator leaves (`Player.cpp:11747`), which clears the request.
     if block_trades.0 {
         let Some(name) = names.resolve(initiator, &commands).map(str::to_string) else {
@@ -467,7 +466,7 @@ fn answer_trade_request(
         info!(target: "trade", "BEGIN_TRADE from {name} refused by BlockTrades; sending CMSG_BUSY_TRADE");
         let _ = commands.0.send(ClientCommand::BusyTrade);
         trade.refuse_request();
-        // `(0xbb, name)`: one `DisplayError`; catalog row `0xbb` makes it a chat line.
+        // One error raise of `(0xbb, name)`; catalog row `0xbb` makes it a chat line.
         errors
             .0
             .push(crate::ui_action::UiError::s("ERR_TRADE_BLOCKED_S", name));
@@ -650,14 +649,14 @@ fn feed_trade(
         }
     }
     // `TRADE_REQUEST_CANCEL`, ahead of the `TRADE_CLOSED` the same arm fires: the reference
-    // signals, then, which fires `TRADE_CLOSED`. Stock `UIParent.lua:395` only hides the
-    // never-shown `TRADE` popup on it; addons may listen.
+    // signals, then closes the window, which fires `TRADE_CLOSED`. Stock `UIParent.lua:395` only
+    // hides the never-shown `TRADE` popup on it; addons may listen.
     if trade.take_request_cancel() {
         script.fire_event("TRADE_REQUEST_CANCEL", vec![]);
     }
     if opened {
-        // `SetTradePartner`'s open leg: coins held on the cursor fold into the offer first and fire
-        // the two money events locally; the send goes out with the money intent.
+        // The trade-partner set's open leg: coins held on the cursor fold into the offer first and
+        // fire the two money events locally; the send goes out with the money intent.
         if let Some(offer) = script.fold_cursor_money_into_trade() {
             trade.set_own_gold(offer);
             script.fire_event("PLAYER_TRADE_MONEY", vec![]);
@@ -1343,7 +1342,7 @@ mod tests {
                 "ERR_TRADE_BLOCKED_S",
                 "Grubbis".to_string()
             )],
-            "the refusal raises the reference's own `(0xbb, name)`"
+            "the refusal raises the reference's own error `(0xbb, name)`"
         );
         assert_eq!(
             benilla_ui::messages::kind_of("ERR_TRADE_BLOCKED_S"),

@@ -203,7 +203,7 @@ fn merchant_compare_renders_the_compare_shape_and_no_hover_seats_a_plate() {
 }
 
 /// `SetInventoryItem`'s third argument, `nameOnly`, is the builder's p4 and the one way to the
-/// compact render: of the reference's 31 call sites, 27 pass zero, one forwards and three are this
+/// compact render: of the builder's 31 call sites, 27 pass zero, one forwards and three are this
 /// binding's, and no stock caller passes it. The render is trimmed, not bare: the bind and lock
 /// lines, the stat body and everything past the cooldown line go; the white name, the slot and type
 /// cell, durability, the requirements and the spell triggers stay.

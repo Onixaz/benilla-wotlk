@@ -29,11 +29,11 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 
-/// What skips to find the text: the prefix names.
+/// The prefix the glue update skips to find the alert's text.
 const PREFIX: &[u8] = b"SERVERALERT:";
-/// The buffer and the stack copy in the callback, both 0x800 bytes with their NUL.
+/// The alert buffer and the stack copy in the callback, both 0x800 bytes with their NUL.
 const BUFFER: usize = 0x800;
-/// One read.
+/// One read's size.
 const CHUNK: usize = 0x4000;
 /// The user agent.
 const AGENT: &str = "Blizzard Web Client";
@@ -65,9 +65,10 @@ pub(super) struct AlertBuffer {
 
 impl AlertBuffer {
     /// One read's bytes. An empty read adds nothing. Otherwise the callback copies the chunk into a
-    /// 0x800-byte stack string with `SStrCopy` (size `min(len, 0x800)`), which stops at a NUL and
-    /// leaves room for its own, so the chunk's last byte is lost; then it appends that to the
-    /// buffer with `SStrPack` (size 0x800), so chunks add up to 0x7ff bytes and no more.
+    /// 0x800-byte stack string with a bounded string copy (size `min(len, 0x800)`), which stops at
+    /// a NUL and leaves room for its own, so the chunk's last byte is lost; then it appends that to
+    /// the buffer with a bounded string append (size 0x800), so chunks add up to 0x7ff bytes and no
+    /// more.
     pub(super) fn push(&mut self, chunk: &[u8]) {
         if chunk.is_empty() {
             return;
@@ -83,8 +84,8 @@ impl AlertBuffer {
         self.buf.len() >= BUFFER - 1
     }
 
-    /// The done call: the text after the prefix when the buffer begins with it, any case
-    /// (`SStrCmpI` over the prefix's length); a shorter or different buffer is no alert.
+    /// The done call: the text after the prefix when the buffer begins with it, any case (compared
+    /// over the prefix's length); a shorter or different buffer is no alert.
     pub(super) fn finish(self) -> Option<Vec<u8>> {
         let head = self.buf.get(..PREFIX.len())?;
         head.eq_ignore_ascii_case(PREFIX)
@@ -509,8 +510,8 @@ pub(super) fn begin_once(url: &str) -> Option<crossbeam_channel::Receiver<Option
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LaunchUrl(pub(crate) String);
 
-/// Open each launched URL in the player's browser (the reference's `ShellExecute "open"`), never in
-/// a test or an unattended run.
+/// Open each launched URL in the player's browser (`ShellExecute "open"`, as the reference does),
+/// never in a test or an unattended run.
 pub(crate) fn open_launched(mut urls: MessageReader<LaunchUrl>) {
     for LaunchUrl(url) in urls.read() {
         // The verb gated it, and the opener does not take the message's word for it.

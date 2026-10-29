@@ -9,7 +9,7 @@
 //! No selection decal: the reference draws one only for the locked target, and `SetSelection`
 //! refuses a corpse, whose selectability slot returns 0.
 //!
-//! The reference takes the drowned verdict inside the create (`CGCorpse_C::PostInit`, `0x705b20`)
+//! The reference takes the drowned verdict inside the create (`0x705b20`)
 //! from the object's liquid query (`0x77f1e0`); this asks the world at attach time.
 
 use std::collections::HashMap;
@@ -35,8 +35,8 @@ const DROWNED_DEPTH: f32 = 0.666_666_7;
 #[derive(Resource, Default)]
 pub(crate) struct BonesModels(pub(crate) HashMap<(u8, u8), DisplayModel>);
 
-/// A corpse's model source, the fork, read by both the display build and the attach pass so they
-/// agree on which cache holds it.
+/// A corpse's model source, the bones fork, read by both the display build and the attach pass so
+/// they agree on which cache holds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::entities) enum CorpseModel {
     /// `CORPSE_FLAG_BONES`: `<Race><Sex>DeathSkeleton`, from [`BonesModels`].
@@ -71,8 +71,8 @@ pub(in crate::entities) fn corpse_char_look(store: Option<&ObjectStore>) -> Opti
     (!s.corpse_is_bones()).then(|| s.corpse_look())?
 }
 
-/// The reference's format string with `ChrRaces[race]` column 15 and the sex table, clamped to its
-/// two shipped entries: the third, `NOSEX`, has no skeleton file.
+/// The reference's skeleton-path format string with `ChrRaces[race]` column 15 and the sex table,
+/// clamped to its two shipped entries: the third, `NOSEX`, has no skeleton file.
 fn bones_model_path(race_file: &str, sex: u8) -> String {
     let sex = if sex == 0 { "Male" } else { "Female" };
     format!("World\\Generic\\PassiveDoodads\\DeathSkeletons\\{race_file}{sex}DeathSkeleton.mdx")
@@ -104,7 +104,7 @@ pub(in crate::entities) fn ensure_bones_display(
 #[derive(Component)]
 pub(super) struct CorpsePosed;
 
-/// Arm each newly attached corpse's pose through `SetBoneSequence` (`0x832ab0`): `Dead`, or
+/// Arm each newly attached corpse's pose through the bone-sequence setter (`0x832ab0`): `Dead`, or
 /// `Drowned` past [`DROWNED_DEPTH`] under a liquid, held at the clip's end. The corpse is created
 /// already lying down, and the reference re-arms only from the cached verdict when the model loads
 /// (`0x705850`). No `AnimDriver`: that would enrol a corpse in the unit gait selector.

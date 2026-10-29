@@ -16,7 +16,7 @@ use crate::creature_anim::SpellVisuals;
 const STEALTH: u32 = 1784;
 const STEALTH_VISUAL: u32 = 184;
 const STEALTH_KIT: u32 = 312;
-/// The ghost aura → visual 886 → kit 989: proc 1 tint `9222653.0` and proc 14 at 0.5.
+/// The ghost aura → visual 886 → kit 989: proc 1 tint `9222653.0` (`0x8CB9FD`) and proc 14 at 0.5.
 const GHOST: u32 = 8326;
 const GHOST_VISUAL: u32 = 886;
 const GHOST_KIT: u32 = 989;
@@ -58,7 +58,7 @@ fn the_dispatch_names_only_the_verified_procs() {
         Some(AuraNode::Alpha(0.0)),
         "kit 5129's 0.0 is a real value, not an absent one"
     );
-    // 9222653, the ghost's blue-white; the client ORs on the opaque byte.
+    // 9222653 is 0x8CB9FD, the ghost's blue-white; the client ORs on the opaque byte.
     assert_eq!(
         node_for(proc(char_proc_type::TINT, 9_222_653.0)),
         Some(AuraNode::Tint([0x8C, 0xB9, 0xFD])),
@@ -68,7 +68,7 @@ fn the_dispatch_names_only_the_verified_procs() {
         node_for(proc(char_proc_type::TINT, 65_280.0)),
         Some(AuraNode::Tint([0x00, 0xFF, 0x00])),
     );
-    // Proc 11's rate passes on unexamined (`SetBoneAnimSpeed`).
+    // Proc 11's rate passes on unexamined to the bone speed setter.
     assert_eq!(
         node_for(proc(char_proc_type::ANIM_RATE, 0.0)),
         Some(AuraNode::AnimRate(0.0)),
@@ -146,7 +146,7 @@ fn re_arming_the_same_spell_replaces_its_node() {
     assert!((n.target() - 0.3).abs() < 1e-6);
 }
 
-/// `StartAlphaFade(target, 1000 ms)` eased `clamp01(t)³` both ways, retargeted from the live value.
+/// A 1000 ms alpha fade eased `clamp01(t)³` both ways, retargeted from the live value.
 #[test]
 fn the_ramp_eases_over_one_second_both_ways() {
     let mut n = AuraNodes::new(1.0);
@@ -446,8 +446,8 @@ fn an_unmodelled_proc_only_kit_arms_nothing() {
 
 // ── The render authoring ─────────────────────────────────────────────────────────────────────────
 
-/// The author writes the alpha down the whole tree (the reference's alpha is per CGUnit) and moves
-/// each part to its blend twin, as a cutout batch ignores alpha; at opaque it releases.
+/// The author writes the alpha down the whole tree (the reference's alpha is per unit object) and
+/// moves each part to its blend twin, as a cutout batch ignores alpha; at opaque it releases.
 #[test]
 fn the_author_owns_the_tree_then_releases_at_opaque() {
     use benilla_world::model_fade::FadeMaterials;
@@ -757,7 +757,7 @@ fn ice_block_holds_the_clocks_and_the_drop_lets_them_go() {
 
     let n = app.world().entity(unit).get::<AuraNodes>().unwrap();
     assert_eq!(n.head_anim_rate(), Some(0.0), "kit 3709's proc 11 is 0");
-    // 9074175, the same kit's ice-blue tint.
+    // 9074175 is 0x8A75FF, the same kit's ice-blue tint.
     assert_eq!(n.head_tint(), Some([0x8A, 0x75, 0xFF]), "kit 3709's proc 1");
     assert!(clip(&app, unit, 4).0, "the gait stops mid-stride");
     assert!(clip(&app, unit, 54).0, "so does the cast one-shot");
@@ -830,8 +830,8 @@ fn a_clip_armed_under_the_freeze_comes_back_at_its_own_speed() {
     );
 }
 
-/// The reference writes the mount `[unit+0xdc]` before the body `[unit+0xd8]`: the mount freezes
-/// too.
+/// The reference's freeze writes the mount `[unit+0xdc]` before the body `[unit+0xd8]`: the mount
+/// freezes too.
 #[test]
 fn the_freeze_reaches_the_mount_body() {
     let mut app = app_with_freeze();

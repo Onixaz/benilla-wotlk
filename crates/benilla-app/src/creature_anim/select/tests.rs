@@ -382,7 +382,8 @@ fn reconcile_mounted_is_a_persistent_draw_block() {
 
 #[test]
 fn reconcile_ranged_exemption_and_remote_pull_through() {
-    // Ranged-drawn, the reference's nine Load/Hold/Attack ids are exempt from the `& 0x10` stow…
+    // Ranged-drawn, the ranged exempt set's nine Load/Hold/Attack ids are exempt from the `& 0x10`
+    // stow…
     for anim in [46, 49, 105, 106, 107, 109, 110, 111, 112] {
         assert_eq!(reconcile_sheath(2, anim, 0x10, false, true, 2, false), None);
     }
@@ -480,10 +481,10 @@ fn ranged_load_idle_selects_by_weapon_and_ranks_below_ready() {
     );
 }
 
-/// The reference claims the drawn ranged idle ([`ranged_idle_gate`]) on the ranged sheath
-/// (`cmp [+0xd40],2`) and the local auto-repeat bit `0x200` (`test ah,0x2`) alone. The any-caster
-/// hold `0x400` is tested only by the reference's Hold sustain: one Serpent Sting sets it and no
-/// volley end clears it, so admitting it would leave a shooter aiming.
+/// The reference's ranged-idle resolver claims the drawn ranged idle ([`ranged_idle_gate`]) on the
+/// ranged sheath (`cmp [+0xd40],2`) and the local auto-repeat bit `0x200` (`test ah,0x2`) alone.
+/// The any-caster hold `0x400` is tested only by the completion dispatcher's Hold sustain: one
+/// Serpent Sting sets it and no volley end clears it, so admitting it would leave a shooter aiming.
 #[test]
 fn the_ranged_idle_is_entered_by_the_auto_repeat_bit_and_the_ranged_sheath_alone() {
     assert!(ranged_idle_gate(true, Some(2)));
@@ -555,14 +556,14 @@ fn a_set_state_outranks_the_idle_fallbacks_and_nothing_before_them() {
     assert_eq!(claimed(&still, Some(26), None, Some(234)), [26, 25, 0]);
     assert_eq!(claimed(&swimming, Some(26), None, Some(234)), [41, 0]);
     assert_eq!(claimed(&still, None, Some(105), Some(234)), [105, 25, 0]);
-    // The reference has no swim gate: a swimmer takes it too.
+    // The ranged-idle resolver has no swim gate: a swimmer takes it too.
     assert_eq!(claimed(&swimming, None, Some(105), Some(234)), [105, 25, 0]);
     let chair = MovementState {
         stand_state: 4,
         ..Default::default()
     };
     assert_eq!(claimed(&chair, None, None, Some(234)), [102, 0]);
-    // A turning swimmer is no shuffle (the reference refuses `SWIMMING`) and no mover: the state.
+    // A turning swimmer is no shuffle (the fidget gate refuses `SWIMMING`) and no mover: the state.
     let swim_turning = MovementState {
         flags: move_flags::SWIMMING | move_flags::TURN_LEFT,
         ..Default::default()
@@ -961,9 +962,9 @@ fn unify_stamps_flying_from_the_live_spline_on_every_leg() {
     assert!(v.flying && v.flags & move_flags::FORWARD != 0 && v.speed > 0.0);
 }
 
-/// Server-granted modes are bits of the `CMovement+0x40` word the selector tests, and the reference
-/// re-selects when a grant lands. Our own mover is exempt: its modes are the ack'd family's,
-/// already in its `MovementState`.
+/// Server-granted modes are bits of the movement block's `+0x40` word the selector tests, and the
+/// reference re-selects when a grant lands. Our own mover is exempt: its modes are the ack'd
+/// family's, already in its `MovementState`.
 #[test]
 fn the_granted_modes_fold_into_the_flags_word_on_every_leg_but_our_own() {
     use crate::net::UnitMoveModes;

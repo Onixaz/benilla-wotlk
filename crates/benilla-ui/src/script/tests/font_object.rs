@@ -644,8 +644,8 @@ fn set_font_returns_one_or_nil() {
     assert!(s.eval::<bool>("return f:SetFont('', 12) == nil").unwrap());
 }
 
-/// The justify tokens are one reference table (`.rdata`) matched whole and case-blind by
-/// `SStrCmpI`; a FontString and a `<Font>` object answer alike.
+/// The justify tokens are one reference table (`.rdata`) matched whole and case-blind; a FontString
+/// and a `<Font>` object answer alike.
 #[test]
 fn both_tables_speak_one_justify_law() {
     let s = script();
@@ -1231,7 +1231,7 @@ fn text_widgets_set_and_get_their_fonts_spacing() {
 }
 
 /// A scrolling frame's messages step `height + spacing`: each one is a block one spacing from the
-/// next (`ScrollMessages 0x969fa0`), and its wrapped lines draw at the same gap.
+/// next (the message scroll, `0x969fa0`), and its wrapped lines draw at the same gap.
 #[test]
 fn message_lines_step_the_font_height_plus_spacing() {
     let mut s = script();

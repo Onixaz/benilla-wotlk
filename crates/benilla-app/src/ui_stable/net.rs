@@ -74,7 +74,7 @@ fn list_stabled_pets(
 }
 
 /// `SMSG_STABLE_RESULT`, handled as the reference's jump table does: 1 shows `ERR_NOT_ENOUGH_MONEY`
-/// (`DisplayError(0x25)`), 8 and 9 re-request the list, as no success carries one, 10 counts a
+/// (error message `0x25`), 8 and 9 re-request the list, as no success carries one, 10 counts a
 /// bought slot and re-requests, and 0, 2-7 and 12 up show nothing. 11 fires `PET_STABLE_UPDATE` in
 /// the reference and nothing here: vmangos never sends it.
 fn stable_result(
@@ -84,7 +84,7 @@ fn stable_result(
     net_commands: &NetCommands,
 ) {
     use benilla_protocol::messages::stable_result as code;
-    // Before the guid test, as the reference precedes: the count moves even with no stable open.
+    // Before the guid test, as in the reference: the count moves even with no stable open.
     if result == code::SUCCESS_BUY_SLOT {
         stable_open.num_stable_slots = stable_open.num_stable_slots.saturating_add(1);
     }

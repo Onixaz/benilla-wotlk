@@ -48,7 +48,7 @@ const VERDICTS: &[(&str, Verdict)] = &[
         "KeyboardFocusLost",
         Open(
             "the window deactivate, not player input: `bindings.rs` clears the held direction \
-             bits on it, the reference's, which a load must not hide",
+             bits on it, as the reference's deactivate handler does, which a load must not hide",
         ),
     ),
     (

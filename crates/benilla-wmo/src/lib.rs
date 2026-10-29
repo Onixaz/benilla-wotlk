@@ -38,7 +38,7 @@ pub struct Material {
     /// colour: the reference's interior water kernel runs unlit with no pixel shader, its RGB this
     /// dword raw, `Cf = MOMT[MLIQ.materialId].diffColor`, combined with the animated sheet as
     /// `clamp(Cf + Ct)`. Its alpha at `+0x1f` is discarded; opacity comes per vertex. Stride 0x40,
-    /// base `[CMapObj+0x1d8]`.
+    /// base `[wmo+0x1d8]`.
     pub diff_color: [u8; 3],
     /// MOMT+0x20: the surface's `TerrainType.dbc` id, what a footstep on it sounds like. The
     /// client's down-ray takes the nearer of the terrain and WMO probes, so a building's floor
@@ -194,7 +194,7 @@ fn parse_root(b: &[u8]) -> Result<WmoRoot> {
             // A 64-byte MOMT entry: flags@0, shader@4, blend_mode@8, texture_1@12, sidnColor@16.
             b"TMOM" => {
                 for m in p.as_chunks::<64>().0 {
-                    // CImVector: BGRA on disk, so the LE u32 reads B | G<<8 | R<<16 | A<<24.
+                    // A BGRA colour on disk, so the LE u32 reads B | G<<8 | R<<16 | A<<24.
                     let sidn = m.u32_at(0x10).ok_or(Error::Truncated("MOMT"))?;
                     let diff = m.u32_at(0x1c).ok_or(Error::Truncated("MOMT"))?;
                     root.materials.push(Material {

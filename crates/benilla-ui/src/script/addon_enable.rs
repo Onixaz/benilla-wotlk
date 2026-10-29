@@ -6,14 +6,14 @@
 
 use std::collections::HashMap;
 
-/// A character's explicit enable rows: those `AddOnList_LoadCharacter` read from its `AddOns.txt`,
+/// A character's explicit enable rows: those the per-character load read from its `AddOns.txt`,
 /// whether or not that addon is installed now, plus those the setter put there since. An addon with
 /// no row here is not the character's choice, and the query answers it from the other characters.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct EnableHash {
     /// In insertion order, each name in the spelling that first put it here.
     rows: Vec<(String, bool)>,
-    /// Lowercased name to its row: every compare in the reference is `SStrCmpI`.
+    /// Lowercased name to its row: every compare in the reference is case-insensitive.
     index: HashMap<String, usize>,
     /// The node's `+0xc`: set when a setter call changes the hash, cleared by a reload and by the
     /// writer as it saves.
@@ -32,7 +32,7 @@ impl EnableHash {
     }
 
     /// The account-wide file's rows standing in for a character with no file of its own: dirty, so
-    /// the next save writes them as the character's (`LoadAddOnEnableState` `0x5f9382`).
+    /// the next save writes them as the character's (`0x5f9382`).
     pub fn from_account_rows(rows: impl IntoIterator<Item = (String, bool)>) -> Self {
         let mut hash = Self::from_rows(rows);
         hash.dirty = true;

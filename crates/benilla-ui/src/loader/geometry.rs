@@ -5,7 +5,8 @@ use crate::framexml::{self, Element};
 use super::{abs_dim, children_named, Loader};
 
 impl Loader<'_> {
-    /// A frame element's LoadXML attributes and simple children, and a model pane's own.
+    /// A frame element's XML attributes and simple children, as the frame's XML load reads them,
+    /// and a model pane's own.
     pub(super) fn apply_attrs(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         if el.attr_bool("hidden") {
             self.call(wrapper, "Hide", (), dbg);
@@ -41,8 +42,8 @@ impl Loader<'_> {
             }
         }
         // A model pane's `scale=` is the model's scale, the field `SetModelScale` writes; a value
-        // of 0 or less is refused, never clamped. A plain frame's `scale=` is ignored; whether
-        // reads one is untraced.
+        // of 0 or less is refused, never clamped. A plain frame's `scale=` is ignored; whether the
+        // frame's XML load reads one is untraced.
         if let Some(scale) = el.attr("scale") {
             if model_kind {
                 match scale.trim().parse::<f32>() {
@@ -190,8 +191,7 @@ impl Loader<'_> {
                 let rel_to: Option<String> = anchor
                     .attr("relativeTo")
                     .map(|r| framexml::resolve_name(r, parent_name));
-                // The `<Offset>` child, else the anchor's own `x`/`y` (`CLayoutFrame::LoadXML`,
-                // `0x48b2d0`).
+                // The `<Offset>` child, else the anchor's own `x`/`y` (`0x48b2d0`).
                 let (x, y) = children_named(anchor, "Offset")
                     .next()
                     .map_or_else(|| abs_dim(anchor), abs_dim);

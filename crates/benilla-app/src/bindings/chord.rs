@@ -102,7 +102,7 @@ impl Chord {
 /// The 1.12 name a key press gets: a letter, digit or punctuation key what the active layout
 /// names it ([`LayoutNames`]), every other key its fixed name. `None` for a key the reference
 /// names `UNKNOWN` or drops, and for the modifiers, which are only prefixes
-/// (`IsKeyPressIgnoredForBinding`). Both Enters are `ENTER`.
+/// (the reference's ignored-key test). Both Enters are `ENTER`.
 pub(crate) fn key_token(k: KeyCode, layout: &LayoutNames) -> Option<KeyName> {
     match layout.name(k) {
         // The lookup folds `a`-`z` up, so Turkish `VK_OEM_7`'s `i` is `I`'s key.
@@ -112,8 +112,8 @@ pub(crate) fn key_token(k: KeyCode, layout: &LayoutNames) -> Option<KeyName> {
     }
 }
 
-/// The fixed half of the reference and the Mac table: every key no layout names
-/// ([`super::layout::position`]).
+/// The fixed half of the reference's Windows key table, and the Mac table: every key no layout
+/// names ([`super::layout::position`]).
 fn fixed_name(k: KeyCode) -> Option<KeyName> {
     use KeyCode::*;
     use KeyName::Word;
@@ -134,8 +134,8 @@ fn fixed_name(k: KeyCode) -> Option<KeyName> {
         // `PRINTSCREEN`, and macOS has no PrintScreen keycode.
         #[cfg(target_os = "macos")]
         F13 => Word("PRINTSCREEN"),
-        // `IsValidBindingKeyString` accepts `F` + any digits and the Mac table maps keycode `0x6A`
-        // to `F16` (`0x30d`). Deviation: the Windows key table stops at `VK_F12` and drops later
+        // The key-string check accepts `F` + any digits and the Mac table maps keycode `0x6A` to
+        // `F16` (`0x30d`). Deviation: the Windows key table stops at `VK_F12` and drops later
         // F-keys; they are named here so a stored `F13`-`F24` can be pressed.
         #[cfg(not(target_os = "macos"))]
         F13 => Word("F13"),
@@ -184,12 +184,12 @@ fn fixed_name(k: KeyCode) -> Option<KeyName> {
         NumpadDivide => Word("NUMPADDIVIDE"),
         NumpadMultiply => Word("NUMPADMULTIPLY"),
         NumpadDecimal => Word("NUMPADDECIMAL"),
-        // The Mac keypad's `=`: the namer's `0x30c`, and in `IsValidBindingKeyString`'s table.
+        // The Mac keypad's `=`: the namer's `0x30c`, and in the key-string check's table.
         NumpadEqual => Word("NUMPADEQUALS"),
         NumLock => Word("NUMLOCK"),
         PrintScreen => Word("PRINTSCREEN"),
-        // No ScrollLock or Pause: the namer calls `0x210`/`0x211` `UNKNOWN`, and
-        // `IsValidBindingKeyString` has neither name.
+        // No ScrollLock or Pause: the namer calls `0x210`/`0x211` `UNKNOWN`, and the key-string
+        // check has neither name.
         CapsLock => Word("CAPSLOCK"),
         _ => return None,
     })
@@ -205,8 +205,8 @@ pub(crate) fn normalize_key(k: KeyCode) -> KeyCode {
 }
 
 /// `BUTTON6` to `BUTTON20`, indexed by `Other(n) - 5`: the reference names further buttons
-/// `BUTTON<n>` (the reference's bit-scan fallback), and winit passes the platform's button number,
-/// so the sixth button is `Other(5)`.
+/// `BUTTON<n>` (a bit-scan fallback), and winit passes the platform's button number, so the sixth
+/// button is `Other(5)`.
 const EXTRA_BUTTONS: &[&str] = &[
     "BUTTON6", "BUTTON7", "BUTTON8", "BUTTON9", "BUTTON10", "BUTTON11", "BUTTON12", "BUTTON13",
     "BUTTON14", "BUTTON15", "BUTTON16", "BUTTON17", "BUTTON18", "BUTTON19", "BUTTON20",
@@ -236,7 +236,7 @@ fn token_key(t: &str) -> Option<BindKey> {
         "MOUSEWHEELDOWN" => return Some(BindKey::WheelDown),
         _ => {}
     }
-    // One character: what a layout names some key, which the namer writes as UTF-8 (the reference's
+    // One character: what a layout names some key, which the namer writes as UTF-8 (its
     // `[0x21, 0xff]` arm). [`key_token`] folds `a`-`z` up as the lookup does, so a lowercase letter
     // is no press's name.
     let mut chars = t.chars();
@@ -316,7 +316,7 @@ fn token_key(t: &str) -> Option<BindKey> {
 mod tests {
     use super::*;
 
-    /// Ties this namer to the engine's `IsValidBindingKeyString`: every chord the install's
+    /// Ties this namer to the engine's key-string check: every chord the install's
     /// `WTF\DefaultBindings.wtf` ships is a key string it accepts and a chord the dispatcher can
     /// press, and one key of each token shape, since `KeyCode` cannot be enumerated.
     #[test]

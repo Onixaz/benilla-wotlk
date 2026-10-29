@@ -152,8 +152,8 @@ impl super::UiScript {
 }
 
 /// Retain an addon file that did not load: the one rule for the startup walk and for `LoadAddOn`,
-/// which holds only `&Lua`. The reference's failed open is non-fatal: the reference logs
-/// `Couldn't open %s` at severity 2 and loading goes on, never reaching the Lua error handler.
+/// which holds only `&Lua`. The reference's failed open is non-fatal: it logs `Couldn't open %s` at
+/// severity 2 and loading goes on, never reaching the Lua error handler.
 pub(crate) fn record_load_failure(lua: &Lua, msg: &str) {
     crate::script::model_mut_of(lua)
         .diagnostics

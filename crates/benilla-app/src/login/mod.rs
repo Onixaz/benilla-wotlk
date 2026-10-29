@@ -135,11 +135,11 @@ impl Attempt<'_> {
 /// guards ([`crate::ui_script::glue_mgr`]), and the native realm list's Cancel over login.
 #[derive(Message)]
 pub(crate) enum GlueLogin {
-    /// `CGlueMgr::Login` reaching `ClientServices`' logon: one attempt, typed, with the screen's
+    /// The glue login reaching the client's logon: one attempt, typed, with the screen's
     /// credentials. It supersedes a logon still parked at the realm list, as the reference starts
     /// the next logon whatever link the last one left.
     Submit { account: String, password: String },
-    /// `CLoginMgr::Cancel`: the status dialog's Cancel during the logon, and
+    /// The logon cancel: the status dialog's Cancel during the logon, and
     /// `RealmListDialogCancelled` on the login screen. The attempt in flight is dropped, the realmd
     /// link closes, and nothing resubmits.
     Abandon,
@@ -193,7 +193,7 @@ pub(crate) fn answer_glue(
     }
 }
 
-/// `CLoginMgr::Cancel`: the attempt in flight is dropped at its next stage boundary (a dial asked
+/// The logon cancel: the attempt in flight is dropped at its next stage boundary (a dial asked
 /// for under the old generation included), the realmd link closes, and nothing resubmits.
 fn close_logon(
     abandon: &LoginAbandon,

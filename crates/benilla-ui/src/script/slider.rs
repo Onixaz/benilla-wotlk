@@ -1,10 +1,9 @@
-//! The `Slider` methods of `CSimpleSlider` (`Slider::LoadXML`): a value in `[min, max]` with a step
-//! and an orientation, driving a thumb texture along the track, whose placement follows the
-//! documented widget model, untraced in the reference. `SetValue` fires `OnValueChanged` (slot
-//! `+0x330`) on the first value and then only on a change (`+0x314` bit 2, in `SetValue`), which
-//! ends the loop between the stock scrollbar's `OnValueChanged` and its ScrollFrame's
-//! `OnVerticalScroll`. The methods exist only on Slider frames, as in the client's per-class method
-//! sets.
+//! The `Slider` widget's methods and XML load: a value in `[min, max]` with a step and an
+//! orientation, driving a thumb texture along the track, whose placement follows the documented
+//! widget model, untraced in the reference. `SetValue` fires `OnValueChanged` (slot `+0x330`) on
+//! the first value and then only on a change (`+0x314` bit 2, in `SetValue`), which ends the loop
+//! between the stock scrollbar's `OnValueChanged` and its ScrollFrame's `OnVerticalScroll`. The
+//! methods exist only on Slider frames, as in the client's per-class method sets.
 
 use mlua::{Lua, Table, Value};
 

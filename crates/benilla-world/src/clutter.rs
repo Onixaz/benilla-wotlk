@@ -1,7 +1,7 @@
 //! Ground clutter (`GroundEffect*.dbc`): the terrain streamer registers each chunk that can carry
 //! tufts at tile load, and a chunk is scattered and meshed only inside the detail-doodad horizon,
-//! `groundEffectDist` (`CWorld::detailDoodadDist`, read by `CMapChunk::RenderPrep 0x7d3fe0`), the
-//! reference's per-chunk `CDetailDoodadInst` build and unlink.
+//! `groundEffectDist` (the world's detail-doodad distance, read by the chunk render prep at
+//! `0x7d3fe0`), the reference's per-chunk detail-doodad build and unlink.
 
 use std::collections::HashMap;
 
@@ -119,7 +119,7 @@ pub(crate) struct GroundClutter {
 /// The detail-doodad alpha-test ref, `detailDoodadAlpha` = 128/255, lower than the model key.
 pub(crate) const DETAIL_DOODAD_ALPHA_REF: f32 = 128.0 / 255.0;
 
-/// `groundEffectDist`'s registered 70 yd (`CWorld::detailDoodadDist`'s static `70.0`); clutter
+/// `groundEffectDist`'s registered 70 yd (the detail-doodad distance's static `70.0`); clutter
 /// fades out over its last quarter.
 pub(crate) const DETAIL_DOODAD_FADE_FAR: f32 = 70.0;
 
@@ -131,9 +131,9 @@ pub const GROUND_EFFECT_DENSITY_RANGE: std::ops::RangeInclusive<f32> = 16.0..=25
 
 /// Ground-clutter tunables. `density` scales the scatter's 16 cells per chunk, so
 /// `groundEffectDensity` is `density × 16`, and a change re-scatters loaded tiles, as the
-/// reference's setter dirties its pools (`World::SetDetailDoodadDensity 0x780710`). `fade_far` is
-/// `groundEffectDist`. Seeded from `$WOW_CLUTTER_DENSITY` (a multiple of 16 cells),
-/// `$WOW_CLUTTER_ALPHA` and `$WOW_CLUTTER_FADE`; density 0 is no clutter.
+/// reference's setter dirties its pools (`0x780710`). `fade_far` is `groundEffectDist`. Seeded
+/// from `$WOW_CLUTTER_DENSITY` (a multiple of 16 cells), `$WOW_CLUTTER_ALPHA` and
+/// `$WOW_CLUTTER_FADE`; density 0 is no clutter.
 #[derive(Resource, Clone, Copy)]
 pub struct ClutterConfig {
     pub density: f32,
@@ -263,7 +263,7 @@ struct ShadedPlacement {
     tint: f32,
     /// The ground normal under the tuft, in Bevy space, on every vertex: here the MCNR normal of
     /// the nearest outer-grid vertex ([`terrain_normal_at`]). The reference uses the plane of the
-    /// cell's centre-fan triangle the tuft lands.
+    /// cell's centre-fan triangle the tuft lands in.
     ground_normal: [f32; 3],
 }
 
@@ -597,9 +597,9 @@ mod tests {
         ((254.0 - 256.0 * u) / 255.0).clamp(0.0, 252.0 / 255.0)
     }
 
-    /// The reference's 64-texel clamp/linear ramp (70 anchors it): `alpha = (254 − 256u)/255`
-    /// capped at `252/255`, so the plateau ends at 52.63672 yd, zero falls at 69.86328 yd, and the
-    /// 128/255 cutout erases opaque grass at 61.11328 yd.
+    /// The reference's 64-texel clamp/linear ramp (the 70 yd distance anchors it):
+    /// `alpha = (254 − 256u)/255` capped at `252/255`, so the plateau ends at 52.63672 yd, zero
+    /// falls at 69.86328 yd, and the 128/255 cutout erases opaque grass at 61.11328 yd.
     #[test]
     fn the_ramp_hits_the_reference_landmarks() {
         assert!(

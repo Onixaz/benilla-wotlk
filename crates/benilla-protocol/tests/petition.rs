@@ -72,7 +72,7 @@ fn cmsg_bodies_golden() {
     );
 }
 
-/// `CMSG_PETITION_BUY` is the NPC and a whole packed `CGPetition` (`0x98cf70`): the name is its
+/// `CMSG_PETITION_BUY` is the NPC and a whole packed petition record (`0x98cf70`): the name is its
 /// title and the vendor row's index its `muid`, the word before the type.
 #[test]
 fn petition_buy_body_is_the_packed_record() {
@@ -182,8 +182,9 @@ fn petition_show_signatures_stride_is_twelve_bytes() {
     );
 }
 
-/// `SMSG_PETITION_QUERY_RESPONSE` (`CGPetition::Unpack`, `0x98d090`): `allowedGenders` alone is
-/// a `u16`, ten choice strings follow whatever the count says, and `muid` precedes the type.
+/// `SMSG_PETITION_QUERY_RESPONSE` (the petition record's unpack, `0x98d090`): `allowedGenders`
+/// alone is a `u16`, ten choice strings follow whatever the count says, and `muid` precedes the
+/// type.
 #[test]
 fn petition_query_response_reads_the_12340_record() {
     let body = hx(concat!(

@@ -1,7 +1,7 @@
-//! SmartScreenRect, the client's per-frame anti-overlap placement solver
-//! (`UIUtil\SmartScreenRect`). Each rect is relocated off the rects already claimed this frame in
-//! its bucket, then claimed. 5875 has two buckets that never interact: nameplates (0) and combat
-//! worldtext (1). No state crosses frames, so a pushed rect snaps back when its blocker goes.
+//! The smart screen rect, the client's per-frame anti-overlap placement solver. Each rect is
+//! relocated off the rects already claimed this frame in its bucket, then claimed. 5875 has two
+//! buckets that never interact: nameplates (0) and combat worldtext (1). No state crosses frames,
+//! so a pushed rect snaps back when its blocker goes.
 //!
 //! Our viewport is Y-down logical pixels; the reference's gx device space is Y-up, and every clamp
 //! is symmetric, so the mirror is exact.
@@ -53,7 +53,7 @@ impl SmartBucket {
         let (half_w, half_h) = (w * 0.5, h * 0.5);
         let input = normalize(desired, viewport);
         let solved = self.solve(input, viewport);
-        // The reference's center-X and top edge; `max()` keeps an over-wide rect's bounds ordered.
+        // The seat tail's center-X and top edge; `max()` keeps an over-wide rect's bounds ordered.
         let cx =
             ((solved.min.x + solved.max.x) * 0.5).clamp(half_w, (viewport.x - half_w).max(half_w));
         let top = solved
@@ -63,7 +63,7 @@ impl SmartBucket {
         normalize(Rect::new(cx - half_w, top, cx + half_w, top + h), viewport)
     }
 
-    /// .
+    /// Claims a solved rect for the rest of the frame.
     pub(crate) fn claim(&mut self, rect: Rect) {
         self.0.push(rect);
     }
@@ -72,7 +72,7 @@ impl SmartBucket {
     fn solve(&self, input: Rect, viewport: Vec2) -> Rect {
         let (seed, flags) = clamp_to_bands(input, viewport);
         let region = region_index(flags);
-        // . A degenerate size saturates, but never overlaps, so adopts at once.
+        // The dequeue cap. A degenerate size saturates, but never overlaps, so adopts at once.
         let bound = ((viewport.x / input.width()).trunc() as i64 + 1)
             .saturating_mul((viewport.y / input.height()).trunc() as i64 + 1);
         let mut queue = VecDeque::from([seed]);
@@ -141,7 +141,7 @@ fn band_flags(r: Rect, viewport: Vec2) -> u8 {
     flags
 }
 
-/// The reference mode 0: the flags and the seed, each offending edge clamped to its band.
+/// The region test in mode 0: the flags and the seed, each offending edge clamped to its band.
 ///
 /// The edge is assigned the boundary and its opposite derived from the size, as the reference
 /// does: translating by the gap can land one ULP short in `f32`, the seed then fails the strict

@@ -379,8 +379,8 @@ pub fn parse_m2_render_submeshes(
         // state on these bits, not on the blend mode.
         let no_depth_write = material.is_some_and(|m| m.flags.bits() & 0x10 != 0);
         let no_depth_test = material.is_some_and(|m| m.flags.bits() & 0x08 != 0);
-        // Fog colour: off under render flag 0x02, else by blend mode from
-        // `DAT_811fc4 = {1,1,1,2,2,3,4}`: modes 0/1/2 the scene colour, 3/4 black, 5 white, 6 grey.
+        // Fog colour: off under render flag 0x02, else by blend mode from The mode table
+        // `{1,1,1,2,2,3,4}`: modes 0/1/2 the scene colour, 3/4 black, 5 white, 6 grey.
         let fog_policy = match material {
             Some(m) if m.flags.bits() & 0x02 != 0 => FogPolicy::Off,
             Some(m) => match m.blend_mode.bits() {

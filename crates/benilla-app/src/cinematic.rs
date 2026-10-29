@@ -47,11 +47,11 @@ pub(crate) struct Cinematic {
     /// The reference's single-slot latch: a sequence the world was not ready to show.
     pending: Option<u32>,
     playing: Option<Playing>,
-    /// Seconds of black left while the world comes back after the end. The reference's EndCinematic
-    /// blocks on a terrain load at full black and raises no loading cover; streaming cannot block,
-    /// so the black holds instead, for at most [`SETTLE_BUDGET`].
+    /// Seconds of black left while the world comes back after the end. The reference's cinematic
+    /// end blocks on a terrain load at full black and raises no loading cover; streaming cannot
+    /// block, so the black holds instead, for at most [`SETTLE_BUDGET`].
     settling: Option<f32>,
-    /// A skip not yet paid: `StopCinematic` runs EndCinematic as its fade-out's completion, so
+    /// A skip not yet paid: `StopCinematic` runs the cinematic end as its fade-out's completion, so
     /// [`stop`] sets this and [`drive`] pays it at full black.
     skip: bool,
 }
@@ -157,7 +157,7 @@ impl Plugin for CinematicPlugin {
             )
             .add_systems(Update, send_opening_cinematic.in_set(WorldStage::Input))
             // Leaving the world drops a cinematic with no ack, as the reference's teardown does
-            // (the reference clears the flag and sends no `CMSG_COMPLETE_CINEMATIC`).
+            // (it clears the flag and sends no `CMSG_COMPLETE_CINEMATIC`).
             .add_systems(OnExit(ClientState::InWorld), abandon_on_leaving_world);
     }
 }
@@ -208,10 +208,10 @@ fn drive_letterbox(
     // The HUD is Lua's, as in the reference: `CINEMATIC_START` runs `ShowUIPanel`, whose
     // `area = "full"` routes to `SetFullScreenFrame`, which hides `UIParent`.
 
-    // The hardware cursor hides at StartCinematic and returns at EndCinematic and the leave-world
-    // teardown (/`(1)`); nothing else hides it while the view is detached. Written only on a real
-    // change: `bevy_winit` re-applies `CursorOptions` to AppKit on every change, which can stall
-    // the main thread.
+    // The hardware cursor hides at the cinematic start and returns at its end and the leave-world
+    // teardown; nothing else hides it while the view is detached. Written only on a real change:
+    // `bevy_winit` re-applies `CursorOptions` to AppKit on every change, which can stall the main
+    // thread.
     if let Ok(mut opts) = cursor.single_mut() {
         if playing && opts.visible {
             opts.visible = false;
@@ -422,7 +422,7 @@ fn drive(
                 );
             }
             cine.settling = None;
-            // The tail of EndCinematic fades back in to the live world.
+            // The tail of the cinematic end fades back in to the live world.
             fade.fade_in(crate::screen_fade::CINEMATIC);
         } else {
             cine.settling = Some(left);
@@ -517,7 +517,7 @@ fn drive(
 pub(crate) fn stop(cine: &mut Cinematic, net: Option<&NetCommands>) {
     if cine.playing.is_some() {
         // Something is on screen: [`drive`] pays at full black, as `StopCinematic` arms a 0.25 s
-        // fade-out with EndCinematic as its completion.
+        // fade-out with the cinematic end as its completion.
         cine.skip = true;
         return;
     }
@@ -873,7 +873,7 @@ mod opening_cinematic {
         assert_eq!(sent, 2);
         app.update();
         assert_eq!(rx.try_iter().count(), 0, "drained once");
-        // The opcode the reference puts.
+        // The opcode the reference sends.
         assert_eq!(
             benilla_protocol::messages::opcode::CMSG_OPENING_CINEMATIC,
             0xf9

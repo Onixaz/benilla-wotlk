@@ -163,14 +163,14 @@ impl BlizzardRandomizer {
 }
 
 /// The cells per chunk the scatter's `density_scale` multiplies: `groundEffectDensity`'s registered
-/// 16 (`CWorldParam::Initialize 0x78e400`), cells visited with repeats, so clutter is patchy.
+/// 16 (`0x78e400`), cells visited with repeats, so clutter is patchy.
 pub const FRILL_DENSITY: u32 = 16;
 
 /// The top of `groundEffectDensity`'s range, its change callback's (`0x78dab0`).
 pub const FRILL_DENSITY_MAX: u32 = 256;
 
-/// Scatter ground clutter over one terrain chunk, a port of the reference's
-/// `CMapChunk::CreateDetailDoodads`: one RNG stream per chunk, seeded by the global chunk coords
+/// Scatter ground clutter over one terrain chunk, a port of the reference's detail-doodad build:
+/// one RNG stream per chunk, seeded by the global chunk coords
 /// `(globalChunkY << 16) | globalChunkX`; pass 1 picks `groundEffectDensity` cells
 /// `(rng & 7, rng & 7)` with repeats, and pass 2 spawns `density` doodads in each, slot
 /// `(n + listIndex) & 3`, from the layer [`ChunkMesh::pred_tex`] names, never MCAL alpha.

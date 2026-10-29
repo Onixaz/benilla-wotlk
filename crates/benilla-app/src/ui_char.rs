@@ -42,7 +42,7 @@ pub(crate) struct SheetTables {
     pub(crate) form_flags: HashMap<u32, u32>,
 }
 
-/// `GetHealthRegenRateFromSpirit`'s cap on the spirit `gtOCTRegenHP` prices (`[0xadaa10]`).
+/// The spirit health-regen rate's cap on the spirit `gtOCTRegenHP` prices (`[0xadaa10]`).
 const SPIRIT_REGEN_CAP: i32 = 50;
 
 /// The figures 12340 derives from a unit's level, class and stats through the gt tables, for the
@@ -86,7 +86,7 @@ fn gt_derived(store: &ObjectStore, gt: &GameTables) -> [f32; 4] {
     ]
 }
 
-/// `CGPlayer_C::GetCombatRatingPct` (`0x6de410`) for each rating: the points over the level's
+/// The player's combat rating percentage (`0x6de410`) for each rating: the points over the level's
 /// `gtCombatRatings` price, times the class's `gtOCTClassCombatRatingScalar`; 0 when either is 0.
 fn combat_rating_bonus(store: &ObjectStore, gt: &GameTables) -> [f32; 25] {
     let f = &store.0;
@@ -421,8 +421,8 @@ fn weapon_skill_id(
     weapon_subclass_skill(t.subclass).unwrap_or(SKILL_UNARMED)
 }
 
-/// A skill's `(value + permanent bonus, temporary bonus)`, split as the reference's splits it;
-/// value 0 skips the permanent add. Signed: a malus can exceed the value.
+/// A skill's `(value + permanent bonus, temporary bonus)`, split as the reference splits it; value
+/// 0 skips the permanent add. Signed: a malus can exceed the value.
 fn skill_pair(store: &ObjectStore, skill_id: u32) -> (i32, i32) {
     for i in 0..PLAYER_SKILL_SLOTS {
         if let Some(s) = store.0.player_skill(i) {
@@ -587,7 +587,7 @@ fn combat_stats(
         }),
         combat_rating_bonus: tables.map_or([0.0; 25], |t| combat_rating_bonus(store, &t.gt)),
         // `GetManaRegen` answers only a mana user (power type byte 0, `0x612abb`); the base table
-        // `CGUnit::GetPowerRegenBase` adds is 0 for mana.
+        // the unit's power-regen base adds is 0 for mana.
         mana_regen: (f.unit_power_type() == 0).then(|| {
             [
                 f.unit_power_regen(0, false).unwrap_or(0.0),

@@ -1,5 +1,5 @@
-//! Chat bubbles, `CGChatBubbleFrame`: the speech bubble a chat line spawns over the speaker, a
-//! 2-D overlay like the V-plate ([`crate::vplates`]).
+//! Chat bubbles: the speech bubble a chat line spawns over the speaker, a 2-D overlay like the
+//! V-plate ([`crate::vplates`]).
 //!
 //! - Spawn (from the `SMSG_MESSAGECHAT` display path): the sender resolves to a live unit, its CVar
 //!   is on, the text is non-empty, the unit carries no V-plate (a live bubble in turn hides the
@@ -11,8 +11,8 @@
 //! - Stacking: every frame the bubbles sort farthest-first by camera distance and take frame levels
 //!   2, 3, 4…, so whole cards stack with the nearest speaker's on top.
 //!
-//! Only say, party, yell, monster say/yell and the party leader's line bubble: `ChatBubbleShow`
-//! (`0x720010`) admits types 1, 2, 6, 12, 14 and 51.
+//! Only say, party, yell, monster say/yell and the party leader's line bubble: the reference's
+//! bubble filter (`0x720010`) admits types 1, 2, 6, 12, 14 and 51.
 //!
 //! Deviation: sizes ride the plates' damped diagonal basis ([`plate_basis`]), not the unbounded
 //! reference law, so bubble text and plate text keep one em at every window size.
@@ -63,8 +63,8 @@ const TAIL_TEXTURE: &str = "Interface\\Tooltips\\ChatBubble-Tail";
 
 /// The 0.7 yd lift over the anchor height.
 const LIFT: f32 = 0.7;
-/// The spawn and per-frame range gate, 25 yd squared (`[0xa104b0]`, read at `0x7200ce` and
-/// `CGChatBubbleFrame::Update` `0x56c5e9`).
+/// The spawn and per-frame range gate, 25 yd squared (`[0xa104b0]`, read at `0x7200ce` and in the
+/// per-frame update at `0x56c5e9`).
 const MAX_DIST_SQ: f32 = 625.0;
 /// The 250 ms linear fade, in and out.
 const FADE_SECS: f32 = 0.25;
@@ -91,7 +91,7 @@ fn level_z(rank: usize) -> u64 {
     overlay_z::BUBBLE + level * overlay_z::BUBBLE_STRIDE
 }
 
-/// The CVar gating this kind's bubble (`ChatBubbleShow 0x720010`: types 2 and 51 read
+/// The CVar gating this kind's bubble (the bubble filter `0x720010`: types 2 and 51 read
 /// `chatBubblesParty`, 1, 6, 12 and 14 `chatBubbles`); `None` for a kind that does not bubble.
 fn bubble_cvar(kind: ChatEventKind, cfg: &BubbleConfig) -> Option<bool> {
     use ChatEventKind as K;
@@ -223,7 +223,7 @@ impl BubbleQueue {
     }
 }
 
-/// One live bubble: the `CGChatBubbleFrame` and its `CGUnit+0xe64` handle.
+/// One live bubble: the bubble frame and the unit's handle to it (unit `+0xe64`).
 struct Bubble {
     /// The [`sanitize`]d display text.
     text: String,

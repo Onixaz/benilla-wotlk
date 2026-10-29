@@ -6,7 +6,7 @@
 //!   EmoteLaugh's `$CSD 6923` `HumanMaleEmoteLaugh`.
 //! - `$TRD`: the held spell's SpellVisual field-14 strike sound (the mining pick, the smithing
 //!   hammer). The held spell is the unit's cast hold, cached client-side from the local GO
-//!   interaction (`[CGUnit+0xc8c]`).
+//!   interaction (unit `+0xc8c`).
 //! - `$ESD`: the unit's `UNIT_NPC_EMOTESTATE` → `Emotes.dbc` `EventSoundID`, gated on
 //!   `EmoteSpecProc == 2`.
 //!
@@ -27,7 +27,7 @@ use super::emote::{play_emote_voice, EmoteSounds, VOICE_ATTACH};
 use super::kit::{play_kit, KitRef, SoundCategory, SoundKits};
 use super::{AudioListener, SoundConfig, SoundOutput};
 
-/// `$TRD`'s height above the unit's origin (`fadd`); the arm is handed no point.
+/// `$TRD`'s height above the unit's origin, a constant the arm adds; the arm is handed no point.
 const TRD_HEIGHT: f32 = 1.0;
 
 pub(super) fn route_anim_events(
@@ -36,7 +36,7 @@ pub(super) fn route_anim_events(
     transforms: Query<&GlobalTransform, Without<Camera3d>>,
     units: Query<(Option<&ObjectStore>, Option<&CastHold>)>,
     // A family-A GameObject's events take the reference's GameObject dispatcher, whose `$DS*` arms
-    // differ from the placed-M2 handler the reference's.
+    // differ from the placed-M2 handler's.
     go_lane: Query<(), With<crate::go_anim::GoAnim>>,
     // The attachment read `$CSD` needs.
     attach: crate::entities::AttachPoints,
@@ -118,12 +118,12 @@ pub(super) fn route_anim_events(
             b"$DSE" if !go_lane.contains(ev.entity) => {
                 super::emitter_pool::release(&mut pool, ev.entity);
             }
-            // `$SND`/`$DSO` at the fired key: both lanes pass the event's point unchanged to
-            // `(id, pos, -1, 1.0f)`.
+            // `$SND`/`$DSO` at the fired key: both lanes pass the event's point unchanged to the
+            // positioned kit play, `(id, pos, -1, 1.0f)`.
             b"$SND" | b"$DSO" if ev.data != 0 => {
                 ring(&mut kits, &mut out, ev.data, ev, &mut complained);
             }
-            // `$CSD` is the emote voice: attachment 17, never the fired key (the CGUnit dispatcher
+            // `$CSD` is the emote voice: attachment 17, never the fired key (the unit dispatcher
             // hands it no position, origin + 2.0 z without the attachment), and it stops the unit's
             // previous emote voice.
             b"$CSD" if ev.data != 0 => {
@@ -156,7 +156,8 @@ pub(super) fn route_anim_events(
                     .then(|| emotes.state_event_sound(state))
                     .flatten()
                 {
-                    // At the event's point: the reference pushes it and the reference hands it.
+                    // At the event's point: the unit dispatcher pushes it and the handler passes
+                    // it to the positioned kit play.
                     ring(&mut kits, &mut out, kit, ev, &mut complained);
                 }
             }
@@ -167,8 +168,8 @@ pub(super) fn route_anim_events(
                 let hold = units.get(ev.entity).ok().and_then(|(_, h)| h);
                 let kit = hold.and_then(|h| held_strike_sound(spells, &visuals.0, h.spell_id));
                 if let Some(kit) = kit {
-                    // At the unit's origin + 1.0 z: the reference is handed no point and reads the
-                    // position itself.
+                    // At the unit's origin + 1.0 z: the strike handler is handed no point and reads
+                    // the position itself.
                     let at = transforms
                         .get(ev.entity)
                         .map(|t| t.translation() + Vec3::Y * TRD_HEIGHT)

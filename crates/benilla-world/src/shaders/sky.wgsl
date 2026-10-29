@@ -1,6 +1,6 @@
 // The sky-dome gradient (`SkyExt`): the five Light.dbc SkyColor stops at the reference's ring
-// elevations, then the fog colour at and below the horizon, interpolated
-// per fragment by elevation. Depth is the far pin in `sky_vertex.wgsl`; this writes colour only.
+// elevations, then the fog colour at and below the horizon, interpolated per fragment by elevation.
+// Depth is the far pin in `sky_vertex.wgsl`; this writes colour only.
 #import bevy_pbr::{
     forward_io::VertexOutput,
     mesh_view_bindings::view,
@@ -17,7 +17,7 @@ struct SkyColors {
 };
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> sky: SkyColors;
 
-// Glow `g` for a sun-relative azimuth phase, sampled linearly like the reference from the reference's
+// Glow `g` for a sun-relative azimuth phase, sampled linearly as the reference's warp samples its
 // six-keyframe wrap-around table; 0.125 is the sun bearing.
 fn azimuth_glow(phase: f32) -> f32 {
     let p = fract(phase);
@@ -30,8 +30,8 @@ fn azimuth_glow(phase: f32) -> f32 {
     else { return mix(0.0, 1.0, (p - 0.875) / 0.25); } // wrap 0.875(g0)→1.125(g1)
 }
 
-// One mid-ring's warped colour for glow `g`: `S^2` is the prepass S nested in the
-// per-segment S, and 0.7 is the constant.
+// One mid-ring's warped colour for glow `g`: `S^2` is the prepass S nested in the per-segment S,
+// and 0.7 is the reference's fixed constant.
 fn warp_one(base: vec3<f32>, g: f32, s: f32) -> vec3<f32> {
     let s2 = s * s;
     if (g >= 0.0) {

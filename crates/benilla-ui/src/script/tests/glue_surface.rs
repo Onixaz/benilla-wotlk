@@ -218,8 +218,8 @@ fn the_in_game_vm_keeps_its_events() {
     assert_eq!(s.eval::<i64>("return heard").unwrap(), 1);
 }
 
-/// The frame types: the 13 registered at startup (`FrameXML_RegisterDefault`) and `ModelFFX` (the
-/// glue manager's init) in both states; `CGWorldFrame::RegisterFrames`' types only in-game.
+/// The frame types: the 13 registered at startup (the default frame registration) and `ModelFFX`
+/// (the glue manager's init) in both states; the world frame's registered types only in-game.
 #[test]
 fn the_glue_vm_makes_the_startup_frame_types_only() {
     const STARTUP: [&str; 14] = [

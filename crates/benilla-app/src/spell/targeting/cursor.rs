@@ -1,6 +1,6 @@
-//! The cursor while a cast waits for its click: the ground point's range verdict
-//! (`CheckGroundPointInRange`), the hovered object's validity (a unit or a corpse) and the
-//! reticle's radius (`GetCurrentCastRadius`).
+//! The cursor while a cast waits for its click: the ground point's range verdict (the ground range
+//! check), the hovered object's validity (a unit or a corpse) and the reticle's radius (the
+//! cast-radius lookup).
 
 use bevy::prelude::*;
 
@@ -13,11 +13,10 @@ use crate::ui_action::Spells;
 
 use super::{SpellTargeting, TargetingWants};
 
-/// What `GetMinMaxRange` reads for the cursor's two range verdicts: the ground point
-/// (`CheckGroundPointInRange`) and the GameObject leg. Neither passes a unit, which the function
-/// tests for: the ranged arm pads nothing and takes no moving bonus, and the melee arm sums the
-/// caster's reach with its auto-attack target's and asks that unit's motion, with the caster's, for
-/// the bonus.
+/// What the range lookup reads for the cursor's two range verdicts: the ground point (the ground
+/// range check) and the GameObject leg. Neither passes a unit, which the function tests for: the
+/// ranged arm pads nothing and takes no moving bonus, and the melee arm sums the caster's reach
+/// with its auto-attack target's and asks that unit's motion, with the caster's, for the bonus.
 #[derive(Clone, Copy)]
 struct RangeCall<'a> {
     spell: &'a SpellDisplay,
@@ -41,11 +40,10 @@ fn range_call<'a>(checks: &'a super::BindChecks, spell_id: u32) -> Option<RangeC
     })
 }
 
-/// `CheckGroundPointInRange`: the squared caster-to-point distance against `GetMinMaxRange`'s
-/// bounds, whose max carries spell-mod op 5, so a range talent moves the verdict. The compare fails
-/// on min² > d² and on max² < d², a NaN failing both; the min has no `> 0` guard, a zero one is
-/// inert. Its one caller is the hover classifier, so it colours the cursor and the click never
-/// asks.
+/// The ground range check: the squared caster-to-point distance against the range lookup's bounds,
+/// whose max carries spell-mod op 5, so a range talent moves the verdict. The compare fails on
+/// min² > d² and on max² < d², a NaN failing both; the min has no `> 0` guard, a zero one is inert.
+/// Its one caller is the hover classifier, so it colours the cursor and the click never asks.
 fn ground_point_in_range(call: Option<RangeCall>, self_pos: Vec3, point: Vec3) -> bool {
     let Some(call) = call else {
         return true;
@@ -64,7 +62,7 @@ fn ground_point_in_range(call: Option<RangeCall>, self_pos: Vec3, point: Vec3) -
     min * min <= dist_sq && dist_sq <= max * max
 }
 
-/// `GetCurrentCastRadius`: per effect `radius + casterLevel × perLevel` over `EffectRadiusIndex[0]`
+/// The cast-radius lookup: per effect `radius + casterLevel × perLevel` over `EffectRadiusIndex[0]`
 /// and `[1]` only, the larger with slot 1 winning ties and NaN, clamped to 20.0. 0.0 means no
 /// radius rows and the reticle's default size. The reference then applies spell-mod op 6
 /// (SPELLMOD_RADIUS) before the reticle's 20-yard clamp.
@@ -111,7 +109,7 @@ pub(crate) fn ground_cast_radius(
 /// its ray and the world cursor stays grey.
 ///
 /// The object arm is the reference's GameObject leg: `word & 0x4800`, the lock predicate, then the
-/// same min/max range test through `GetMinMaxRange`, its range modifier included. Its unit leg is
+/// same min/max range test through the range lookup, its range modifier included. Its unit leg is
 /// [`SpellTargeting::can_target_unit`] and its corpse leg [`SpellTargeting::can_target_corpse`],
 /// over a corpse the pick admitted under a word in `0x8600`. The world-item leg is not built.
 ///
@@ -164,7 +162,7 @@ pub(crate) fn drive_targeting_cursor(
     {
         targeting.can_target_corpse(corpse, &checks)
     } else if targeting.wants(TargetingWants::Location) {
-        // . No ground hit (sky, mouselook) is state 0, UnableCast.
+        // The ground leg. No ground hit (sky, mouselook) is state 0, UnableCast.
         match (occlusion.point, me) {
             (Some(point), Some(me)) => ground_point_in_range(range, me, point),
             _ => false,
@@ -821,7 +819,8 @@ mod tests {
                 (114, row(8.0, 35.0)),
             ]));
             world.insert_resource(spells);
-            // `UNIT_FIELD_HEALTH` 100: a store with no health reads dead to `BindTarget`'s gates.
+            // `UNIT_FIELD_HEALTH` 100: a store with no health reads dead to the target bind's
+            // gates.
             let live = || {
                 crate::net::ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(22, 100)]))
             };
@@ -874,7 +873,7 @@ mod tests {
         );
     }
 
-    /// The unit leg's range compare, the tail of `SpellCanTargetUnit`, hands `GetMinMaxRange` the
+    /// The unit leg's range compare, the tail of `SpellCanTargetUnit`, hands the range lookup the
     /// hovered unit: a melee spell is in range to 7.667 yards while the caster and that unit both
     /// run, and to the 5.0 floor otherwise.
     #[test]

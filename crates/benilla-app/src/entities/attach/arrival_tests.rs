@@ -231,8 +231,8 @@ fn a_crowd_composites_off_the_main_thread_and_each_body_waits_for_its_atlas() {
 }
 
 /// A body that waited on its composite joins the appear ramp its arrival started: the reference's
-/// fade is stamped by the create block's appear handler and ramps on the wall clock whatever
-/// ShouldRender answers.
+/// fade is stamped by the create block's appear handler and ramps on the wall clock whatever the
+/// render gate answers.
 #[test]
 fn a_body_that_waited_for_its_atlas_fades_from_its_arrival() {
     let Some(mut app) = app() else { return };

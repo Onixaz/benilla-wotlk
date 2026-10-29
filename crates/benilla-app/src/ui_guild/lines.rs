@@ -12,8 +12,8 @@ use benilla_ui::names::NameError;
 use crate::ui_action::UiError;
 
 /// The strings the event handler's shared tail passes: one to three as they arrived, none for a
-/// count of 0 or 4 and up. Never padded: `SStrPrintf` copies a starved `%s` through as written, so
-/// a two-string promotion ends "to %s.".
+/// count of 0 or 4 and up. Never padded: the reference's formatter copies a starved `%s` through as
+/// written, so a two-string promotion ends "to %s.".
 fn emitted_params(notice: &GuildEventNotice) -> Vec<&str> {
     match notice.params.len() {
         1..=3 => notice.params.iter().map(String::as_str).collect(),

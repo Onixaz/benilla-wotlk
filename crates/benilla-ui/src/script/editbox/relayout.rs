@@ -72,7 +72,7 @@ pub(super) fn seat_text_region(model: &mut Model, h: FrameHandle) {
 }
 
 /// The EditBox's `OnSizeChanged` override (vtable slot `+0x48`): after the base script fire, the
-/// reference re-seats the text region on every resize of any box. `ApplyRect` calls it when the
+/// reference re-seats the text region on every resize of any box. The rect apply calls it when the
 /// width or height moved by the resize epsilon, the first resolve included, against the ctor's zero
 /// rect. `true` when a re-seat moved a layout input, for the caller to resolve it in the same pass,
 /// as the reference's drain does.
@@ -81,7 +81,7 @@ pub(in crate::script) fn reseat_resized(model: &mut Model) -> bool {
     for i in 0..model.arena.editbox_kinds().len() {
         let h = model.arena.editbox_kinds()[i];
         let Some(&now) = model.resolved.get(&h) else {
-            continue; // no rect, no `ApplyRect`
+            continue; // no rect, no rect apply
         };
         let Some(KindState::EditBox(eb)) = model.arena.frame_mut(h).map(|f| &mut f.kind_state)
         else {

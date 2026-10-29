@@ -1,5 +1,5 @@
-//! The dungeon finder's messages, as 12340's `LFGPacketHandler` (`0x55bdc0`) and
-//! `Packet_SMSG_LFG_OPEN_FROM_GOSSIP` (`0x5528d0`) read them, and the bodies its verbs send. A
+//! The dungeon finder's messages, as 12340's LFG packet handler (`0x55bdc0`) and its
+//! `SMSG_LFG_OPEN_FROM_GOSSIP` handler (`0x5528d0`) read them, and the bodies its verbs send. A
 //! dungeon on the wire is a slot: the `LfgDungeons.dbc` id in the low 24 bits, its type above.
 
 use std::io::{self, Read};
@@ -119,7 +119,7 @@ pub struct LfgDungeonReward {
     pub items: Vec<LfgRewardItem>,
 }
 
-/// One player's locked dungeons, `(slot, reason)` (`ParseBlackList 0x559b10`).
+/// One player's locked dungeons, `(slot, reason)` (the lock-list parse `0x559b10`).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LfgMemberLocks {
     pub guid: u64,
@@ -321,7 +321,7 @@ pub(super) fn read_role_check(r: &mut impl Read) -> io::Result<LfgRoleCheck> {
     })
 }
 
-/// A lock block: `u32` count, then `(slot, reason)` pairs (`ParseBlackList 0x559b10`).
+/// A lock block: `u32` count, then `(slot, reason)` pairs (the lock-list parse `0x559b10`).
 fn read_locks(r: &mut impl Read) -> io::Result<Vec<(u32, u32)>> {
     let n = read_u32_le(r)?;
     let mut locks = Vec::with_capacity(capacity_hint(n, 256));
@@ -331,7 +331,7 @@ fn read_locks(r: &mut impl Read) -> io::Result<Vec<(u32, u32)>> {
     Ok(locks)
 }
 
-/// A party lock block: `u8` count of `(guid, lock block)` (`ParsePartyInfo 0x55b080`).
+/// A party lock block: `u8` count of `(guid, lock block)` (the party-info parse `0x55b080`).
 fn read_party_locks(r: &mut impl Read) -> io::Result<Vec<LfgMemberLocks>> {
     let n = read_u8(r)?;
     (0..n)

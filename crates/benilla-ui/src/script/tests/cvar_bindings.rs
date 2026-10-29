@@ -130,13 +130,13 @@ fn set_cvar_refuses_a_read_only_row_only_once_flagged() {
     s.run("SetCVar(\"MusicVolume\", 0.5)").unwrap();
     assert_eq!(get(&s, "MusicVolume"), "0.5", "other rows stay writable");
 
-    // The host's and the console's writes go through `CVar::Set`, which never tests the flag.
+    // The host's and the console's writes go through the CVar set, which never tests the flag.
     s.set_cvar_engine("realmList", "logon.example.org");
     assert_eq!(get(&s, "realmList"), "logon.example.org");
     s.run("ConsoleExec(\"realmName Elsewhere\")").unwrap();
     assert_eq!(get(&s, "realmName"), "Elsewhere");
 
-    // `ShutdownGame`'s clear.
+    // The game shutdown's clear.
     s.set_cvar_read_only("realmList", false);
     s.run("SetCVar(\"realmList\", \"again\")").unwrap();
     assert_eq!(get(&s, "realmList"), "again");
@@ -158,7 +158,7 @@ fn the_read_only_flag_survives_a_host_reseed() {
 }
 
 /// `CVAR_UPDATE` fires whenever argument 3 passes `lua_isstring`, changed or not, with the token as
-/// arg1 and the value text as arg2, inside the call: `SignalEvent2` walks its listeners in place.
+/// arg1 and the value text as arg2, inside the call: the event signal walks its listeners in place.
 #[test]
 fn set_cvar_fires_cvar_update_inside_the_call_for_every_token() {
     let s = script_with(&[("MusicVolume", "1.0")]);

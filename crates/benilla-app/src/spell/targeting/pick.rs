@@ -1,10 +1,10 @@
 //! The world pick's unit and player filter while a word stands. The pick flags come from the word
-//! alone (-`481187`), and each unit and player the trace finds meets them, where the reference's
-//! unit and player arms send it. A unit the spell cannot take is no candidate, so the cursor and
-//! the click reach the one behind it.
+//! alone (the flag builder's targeting arm), and each unit and player the trace finds meets them
+//! in the candidate filter, where the pick's unit and player arms send it. A unit the spell cannot
+//! take is no candidate, so the cursor and the click reach the one behind it.
 //!
 //! - [`PickFlags`]: the unit-shaped bits of the flags, [`PickFlags::of`], and the legs of the
-//!   reference they switch on, [`PickFlags::admits`].
+//!   reference's candidate filter they switch on, [`PickFlags::admits`].
 //! - [`UnitPick`]: the flags as the frame began, [`publish_unit_pick`], beside
 //!   [`super::PicksSelf`] (flag `0x20`) and [`super::CorpsePick`] (flag `0x40`), which own the
 //!   other two bits the flags carry for these arms.
@@ -21,10 +21,11 @@ use crate::spell::cast_target::{owner_store, TargetRelations};
 use crate::spell::group_relation::{GroupInputs, GroupRoster};
 use crate::target::Factions;
 
-/// Flags `0x8` and `0x10`, which the reference's unit and player arms test and the reference sets
-/// together (`481116 or esi,0x18`) for a word with unit bits.
+/// Flags `0x8` and `0x10`, which the pick's unit and player arms test and the flag builder sets
+/// together (`or esi,0x18`) for a word with unit bits.
 const UNITS: u32 = 0x18;
-/// The relation flags, `CanAssist` and `CanAttack`, of which the reference needs one (`480686`).
+/// The relation flags, the party test, the assist check and the attack check, of which the
+/// candidate filter needs one.
 const PARTY: u32 = 0x1_0000;
 const ASSIST: u32 = 0x2_0000;
 const ATTACK: u32 = 0x4_0000;
@@ -38,8 +39,8 @@ const LIVENESS: u32 = ALIVE | DEAD;
 /// reference refuses while targeting.
 const UNIT_FLAG_IMMUNE_TO_PLAYER: u32 = 0x100;
 
-/// The unit-shaped bits of the pick flags builds from the standing word. The terrain (`0x3`),
-/// GameObject (`0x4`), self (`0x20`) and corpse (`0x40`) bits belong to their own arms.
+/// The unit-shaped bits of the pick flags the reference builds from the standing word. The terrain
+/// (`0x3`), GameObject (`0x4`), self (`0x20`) and corpse (`0x40`) bits belong to their own arms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PickFlags(u32);
 
@@ -76,17 +77,17 @@ impl PickFlags {
         Self(flags)
     }
 
-    /// Whether a unit or player is a candidate of the pick: the reference's arms need the unit
-    /// flags, then the reference's three legs:
+    /// Whether a unit or player is a candidate of the pick: the pick's arms need the unit flags,
+    /// then the candidate filter's three legs:
     ///
-    /// - `480686`: with a relation flag set, one of the set relations must hold. The party leg
+    /// - With a relation flag set, one of the set relations must hold. The party leg is
     ///   `in_party`, run only when asked.
-    /// -: with a liveness flag set, a living candidate needs `0x100000` and a dead one `0x200000`.
-    ///   Alive is the signed `UNIT_FIELD_HEALTH` above 0 (`480713 setg`), the bind's own test
+    /// - With a liveness flag set, a living candidate needs `0x100000` and a dead one `0x200000`.
+    ///   Alive is the signed `UNIT_FIELD_HEALTH` above 0 (`setg`), the bind's own test
     ///   ([`unit_alive`]), and a candidate with no descriptor reads dead.
-    /// - `480737`: while targeting, `UNIT_FIELD_FLAGS & 0x100` refuses.
+    /// - While targeting, `UNIT_FIELD_FLAGS & 0x100` refuses.
     ///
-    /// The self exclusions that come first (-`480683`) are the caller's.
+    /// The self exclusions that come first are the caller's.
     pub(crate) fn admits(
         self,
         is_self: bool,
@@ -166,7 +167,7 @@ impl PickChecks<'_, '_> {
         let self_store = self.self_q.iter().next().and_then(|(_, store)| store);
         let rel = TargetRelations {
             target_store: store,
-            // `CanAssist`'s `IsPvP` owner chase: charmer, else creator.
+            // The assist check's PvP owner chase: charmer, else creator.
             target_owner_store: owner_store(store, self.index.as_deref(), &self.stores),
             self_store,
             factions: self.factions.as_deref(),
@@ -223,7 +224,8 @@ mod tests {
         ObjectStore(ObjectFields::from_pairs(&pairs))
     }
 
-    /// A player of the caster's faction, which `CanAssist` passes on its player-controlled arm.
+    /// A player of the caster's faction, which the assist check passes on its player-controlled
+    /// arm.
     fn friend(health: u32) -> ObjectStore {
         friend_with(health, 0)
     }
@@ -370,7 +372,7 @@ mod tests {
         assert!(PickFlags::of(UNIT | DEAD_ONLY).admits(false, &rel, || true));
     }
 
-    /// `480737`: while targeting, `UNIT_FIELD_FLAGS & 0x100` is refused, whatever the word.
+    /// While targeting, `UNIT_FIELD_FLAGS & 0x100` is refused, whatever the word.
     #[test]
     fn a_unit_immune_to_players_is_never_a_candidate() {
         // The word, and the subject it takes: (friend or foe, health).

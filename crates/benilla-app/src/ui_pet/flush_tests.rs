@@ -1,6 +1,6 @@
 //! The flush behind every mutation of the pet's cooldown list, whole client headless: each packet
 //! that reaches the list arrives as the session event it is, and the pet's feeds run after it. The
-//! reference fires `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN` and the reference fires
+//! reference fires `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN`, and then
 //! `PET_BAR_UPDATE_COOLDOWN`; none of the callers fires `PET_BAR_UPDATE`.
 
 use std::time::{Duration, Instant};
@@ -94,8 +94,8 @@ impl Rig {
     }
 }
 
-/// The reference inserts into the pet's list, flush. The bar takes no `PET_BAR_UPDATE` from it,
-/// which the spellbook's pet tab would take as a repaint of its own.
+/// The GO's pet leg inserts into the pet's list, then flushes. The bar takes no `PET_BAR_UPDATE`
+/// from it, which the spellbook's pet tab would take as a repaint of its own.
 #[test]
 fn a_pets_spell_go_fires_the_flush_and_no_bar_update() {
     let mut rig = growl_rig();
@@ -199,9 +199,9 @@ fn several_mutations_in_a_frame_fire_the_flush_once() {
     assert_eq!(rig.frame(), FLUSH);
 }
 
-/// `SMSG_PET_SPELLS` seeds the list, which flushes nothing, and ends in `SetPet`'s
-/// `SignalEvent(0x161)` whatever the packet changed: a packet that moves only the cooldowns is one
-/// `PET_BAR_UPDATE`, not the flush.
+/// `SMSG_PET_SPELLS` seeds the list, which flushes nothing, and ends in the pet setter's
+/// `PET_BAR_UPDATE` signal (event `0x161`) whatever the packet changed: a packet that moves only
+/// the cooldowns is one `PET_BAR_UPDATE`, not the flush.
 #[test]
 fn the_pet_spells_packet_signals_the_bar_and_never_flushes() {
     let mut rig = growl_rig();

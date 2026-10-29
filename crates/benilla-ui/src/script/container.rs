@@ -274,7 +274,7 @@ pub enum UiCursorMode {
 /// - an empty cursor picks up a resolved item whose slot is not locked;
 /// - a click on the held item's own slot cancels;
 /// - a whole stack placed anywhere else queues the move and clears the cursor; a swap lands the
-///   displaced item in the source slot, never on the cursor (no `SetCursorItem`);
+///   displaced item in the source slot, never on the cursor (no cursor set);
 /// - a split carry places onto an empty or same-item slot, and stays held over another item;
 /// - a spell or action payload stays held.
 fn pickup_container_item(model: &mut super::Model, bag: i64, slot: u32) {
@@ -703,7 +703,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         Some(w) if w.bag == bag && w.slot == slot
                     ) ||
                 // The auction sell slot, a multi-sell's items and the mail attachments read
-                // locked (`LockItem`).
+                // locked, as the client's item lock marks them.
                     super::auction::holds_slot(&model, bag, slot)
                     || super::mail::holds_slot(&model, bag, slot);
                 (
@@ -1108,7 +1108,7 @@ mod tests {
             .unwrap());
     }
 
-    /// The reference's place runs no `SetCursorItem`: the displaced item is never held.
+    /// The reference's place never sets the cursor: the displaced item is never held.
     #[test]
     fn pickup_place_onto_occupied_different_item_swaps_and_clears() {
         let mut s = UiScript::new().unwrap();

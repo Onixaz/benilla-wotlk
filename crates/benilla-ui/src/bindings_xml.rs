@@ -1,6 +1,6 @@
 //! A `Bindings.xml`, its key-binding declarations, as the one loader both uses reads it: the core's
-//! `Interface\FrameXML\Bindings.xml` off the player's chain, which `UI_Init` loads after the
-//! `FrameXML.toc` walk, and each addon's, which `AddOn_Load` loads after the addon's `.toc` files
+//! `Interface\FrameXML\Bindings.xml` off the player's chain, which the UI init loads after the
+//! `FrameXML.toc` walk, and each addon's, which the addon load reads after the addon's `.toc` files
 //! and before its saved variables. The stock file has 219 commands (94 `runOnUp`, 13 `header`, 3
 //! `hidden`, 5 `platform`) once its nine `debug` rows are skipped; the six `MOVEVIEW*` ones sit in
 //! an XML comment.

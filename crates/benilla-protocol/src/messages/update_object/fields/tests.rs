@@ -741,8 +741,8 @@ fn dynamicobject_fields_read_the_live_blizzard_capture() {
     );
 }
 
-/// Health 0, or `PLAYER_FLAGS & 0x10`; a released ghost has health 1, so only the flag catches it,
-/// and feign death is neither.
+/// The dead-or-ghost test: health 0, or `PLAYER_FLAGS & 0x10`; a released ghost has health 1, so
+/// only the flag catches it, and feign death is neither.
 #[test]
 fn dead_or_ghost_is_health_zero_or_the_ghost_flag() {
     let unit = |pairs: &[(u16, u32)]| ObjectFields::from_pairs(pairs);
@@ -764,12 +764,13 @@ fn dead_or_ghost_is_health_zero_or_the_ghost_flag() {
     assert!(ghost.is_dead_or_ghost(), "the ghost-flag leg");
     assert!(
         !feigning.is_dead_or_ghost(),
-        "feign death is the reference's, not this"
+        "feign death is the reference's reads-dead test, not this"
     );
 }
 
 /// `Unit::SetFeignDeath` sets only `UNIT_DYNFLAG_DEAD`: the raw predicates stay false, the
-/// reads-dead ones (`UnitHealth`, `UnitMana`) flip, and the maxima stay.
+/// reads-dead ones (the reference's reads-dead test, `UnitHealth`, `UnitMana`) flip, and the maxima
+/// stay.
 #[test]
 fn feign_death_reads_dead_without_touching_the_raw_health_field() {
     const MANA: u8 = 0;
@@ -806,7 +807,7 @@ fn feign_death_reads_dead_without_touching_the_raw_health_field() {
             (FIELD_UNIT_BYTES_1, 7),
         ])
         .unit_reads_dead(),
-        "— stand state 7 (inert against vmangos, kept as the reference has it)"
+        "the stand-state leg: stand state 7 (inert against vmangos, kept as the reference has it)"
     );
 
     // Current values go to 0 and the maxima stay, so the bar shows empty.

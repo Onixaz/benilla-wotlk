@@ -2,16 +2,16 @@
 //! at the source, in `PreUpdate` after `InputSystems`, so no consumer needs to know the cover. The
 //! reference does the same: the raise registers the stub (`xor eax,eax; ret`) at priority 8.0 on
 //! event categories 1, 8 (key down), 0xa (repeat), 0xb (button down) and 0xc (mouse move), above
-//! every `CSimpleTop` handler at 1.0; the dispatcher stops on a zero return, and the dismiss
-//! unregisters them. Category 0xc feeds `UpdateMouseFocus`, so the cursor freezes.
+//! every UI-root handler at 1.0; the dispatcher stops on a zero return, and the dismiss unregisters
+//! them. Category 0xc feeds the mouse-focus update, so the cursor freezes.
 //!
 //! - Up edges are swallowed too, which matches by outcome: the reference's held key comes back
 //!   released on world enter.
 //! - Deviation: the wheel is swallowed, where the reference still zooms the hidden camera, because
 //!   nothing should act through the screen.
-//! - Deviation: the world pick is cleared, where the reference's keeps picking at the frozen point,
-//!   because ours is quieter and looks the same: the reference's pointer cannot move, so its pick
-//!   changes nothing visible.
+//! - Deviation: the world pick is cleared, where the reference's pick keeps running at the frozen
+//!   point, because ours is quieter and looks the same: the reference's pointer cannot move, so its
+//!   pick changes nothing visible.
 //!
 //! Taken: the button planes ([`swallow`]), the raw message queues, the mouse accumulators, and the
 //! window's cursor position, blanked so every hit-test takes its pointer-outside-the-window path

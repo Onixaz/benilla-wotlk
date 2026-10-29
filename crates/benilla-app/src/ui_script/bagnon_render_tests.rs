@@ -197,7 +197,7 @@ fn walk(s: &mut UiScript, root: &Path, name: &str, done: &mut Vec<String>, reg: 
     }
     let toc = read_toc(root, name);
     if toc.load_on_demand() {
-        return; // the reference's loads only records whose LoadOnDemand byte is 0
+        return; // the reference loads only records whose LoadOnDemand byte is 0
     }
     done.push(name.to_string());
     for dep in toc.dependencies() {
@@ -1022,8 +1022,8 @@ fn resolved_font(s: &UiScript, lua_expr: &str) -> (String, String) {
     (r[0].clone(), r[1].clone())
 }
 
-/// `CSimpleFontString::LoadXML` reads `<FontHeight>`, `outline=` and `monochrome=` only on the leg
-/// where `font=` names a file; with no `font=`. Stock `AutoFollowStatusText`
+/// The FontString XML load reads `<FontHeight>`, `outline=` and `monochrome=` only on the leg where
+/// `font=` names a file; with no `font=` it skips all three. Stock `AutoFollowStatusText`
 /// (`ZoneText.xml:172-183`) inherits `GameFontNormal` (12px) beside a dead `<FontHeight val="20">`.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]

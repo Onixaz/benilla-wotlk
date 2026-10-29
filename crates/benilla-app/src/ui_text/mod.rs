@@ -6,9 +6,9 @@
 //! more under a THICK outline. The four client faces have no ligature or contextual substitution,
 //! which `engine::differential_tests` asserts.
 //!
-//! Kerning is dropped, where the reference applies negative pair kerns only, rounded up
-//! (`ComputeStep`), about 0 px at UI sizes. A width is then a pure function of its characters, so
-//! one table answers a measure and a draw, even inside a Lua call.
+//! Kerning is dropped, where the reference applies negative pair kerns only, rounded up, about 0 px
+//! at UI sizes. A width is then a pure function of its characters, so one table answers a measure
+//! and a draw, even inside a Lua call.
 //!
 //! Glyph bitmaps are swash's unhinted coverage, where the reference runs FreeType with hinting
 //! (load flags `0x208a`/`0x20c2`), so stems are slightly slimmer at small sizes.
@@ -34,10 +34,10 @@ pub(crate) use layout::{
 /// The text size in logical px of a FontString with no font object: `GameFontNormal`'s 12.
 const DEFAULT_FONT_SIZE: f32 = 12.0;
 
-/// The one-to-one raster cap. Every `CSimpleFontString` sets the one-to-one bit (`+0x120` bit
-/// `0x200`, ctor default `0x212`), which only `SetTextHeight` clears, so it draws at its raster
-/// size, which is `min(32, max(2, round((height/768)·deviceH)))` (`[CGxFont+0x24c]`): a FontHeight
-/// of 32 or more draws 32 px, and nothing in the text pipeline scales to fit.
+/// The one-to-one raster cap. Every FontString sets the one-to-one bit (`+0x120` bit `0x200`, ctor
+/// default `0x212`), which only `SetTextHeight` clears, so it draws at its raster size, which is
+/// `min(32, max(2, round((height/768)·deviceH)))` (`[font+0x24c]`): a FontHeight of 32 or more
+/// draws 32 px, and nothing in the text pipeline scales to fit.
 ///
 /// Deviation: the cap is 32 logical units, not 32 device px, because the reference's raster-memory
 /// ceiling draws all big text at the same 32 device px on a modern display; at the 768-tall design
@@ -54,7 +54,7 @@ pub(crate) fn fontstring_em(height: Option<f32>) -> Option<f32> {
 /// The drawn pixel height of a UI FontString times the seam scale `s = windowH/768 × uiScale`
 /// (`crate::ui_script::seam_scale`), under the reference's two size regimes: one-to-one, the
 /// default, draws the raster size ([`FONTSTRING_EM_CAP`] applied in units), and a `SetTextHeight`
-/// size (`text_height`) draws uncapped, the reference magnifying the raster to it (the reference
+/// size (`text_height`) draws uncapped, the reference magnifying the raster to it (its setter
 /// clears bit `0x200`; the drawn em is `round(size/768·deviceH)`).
 pub(crate) fn drawn_px(font_height: Option<f32>, text_height: Option<f32>, s: f32) -> Option<f32> {
     match text_height {
@@ -79,15 +79,15 @@ mod cap_tests {
         assert_eq!(fontstring_em(None), None);
     }
 }
-// Line pitch has no line-height factor: the reference's `LayoutLines` steps `px(size) + spacing`,
-// XML `spacing` defaulting to 0. Cosmic buffers take `size` as their line height too, unused: every
-// run shapes single-line (`Wrap::None`).
+// Line pitch has no line-height factor: the reference's line layout steps `px(size) + spacing`, XML
+// `spacing` defaulting to 0. Cosmic buffers take `size` as their line height too, unused: every run
+// shapes single-line (`Wrap::None`).
 
 /// The FontString display string, the ellipsis seam's answer, remembered per region. The reference
-/// builds it once (into `CGxString+0xf8`) and rebuilds it only when the guard
-/// `[fontstring+0x60] & 1` is cleared: by `SetFont`, `SetTextHeight`, `SetText` or a resolved-rect
-/// size change; nothing per frame reaches. This compares those inputs instead of keeping a dirty
-/// flag, sizes at the reference's `1e-5`, and not position, as a move rebuilds nothing.
+/// builds it once (into `[string+0xf8]`) and rebuilds it only when the guard `[fontstring+0x60] &
+/// 1` is cleared: by `SetFont`, `SetTextHeight`, `SetText` or a resolved-rect size change; nothing
+/// per frame reaches the build. This compares those inputs instead of keeping a dirty flag, sizes
+/// at the reference's `1e-5`, and not position, as a move rebuilds nothing.
 #[derive(Default)]
 pub(crate) struct EllipsisMemo {
     entries: std::collections::HashMap<RegionHandle, Remembered>,

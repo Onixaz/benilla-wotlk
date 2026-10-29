@@ -575,9 +575,9 @@ fn an_emptied_pooled_line_drops_its_stale_box_and_the_plate_still_contains_the_c
 }
 
 /// An omitted `anchorType` is mode 0, ANCHOR_LEFT: `0x61ec64` zeroes the local and the
-/// `lua_isstring` gate (`0x61ec70`) skips the compare chain. `ResetPosition` (`0x61b040`) returns
-/// for mode 10 (`0x61b05c`) before its clear (`0x61b070`), and the core always passes the arg
-/// that gates mode 9's skip as 1 (`0x61ea9c`), so only ANCHOR_PRESERVE keeps the points.
+/// `lua_isstring` gate (`0x61ec70`) skips the compare chain. The position reset (`0x61b040`)
+/// returns for mode 10 (`0x61b05c`) before its clear (`0x61b070`), and the core always passes the
+/// arg that gates mode 9's skip as 1 (`0x61ea9c`), so only ANCHOR_PRESERVE keeps the points.
 #[test]
 fn set_owner_defaults_to_anchor_left_and_only_preserve_keeps_the_placement() {
     let mut s = script();
@@ -661,9 +661,10 @@ fn set_owner_stamps_full_alpha_even_with_no_fade_running() {
     .unwrap();
 }
 
-/// `Show` (`ShowThis`, `0x61cff0`) shows only with an owner (`+0x29c`) and a line (`+0x2a4`);
-/// otherwise it hides (`0x61d028`), and the tooltip's hide (`0x61eb20`) is the `SetOwner` core
-/// with a NULL owner, which un-owns. `QuestieTracker.lua`'s OnEnter can call `Show` with no line.
+/// `Show` (the tooltip's show, `0x61cff0`) shows only with an owner (`+0x29c`) and a line
+/// (`+0x2a4`); otherwise it hides (`0x61d028`), and the tooltip's hide (`0x61eb20`) is the
+/// `SetOwner` core with a NULL owner, which un-owns. `QuestieTracker.lua`'s OnEnter can call `Show`
+/// with no line.
 #[test]
 fn show_with_no_lines_self_hides_and_un_owns() {
     let mut s = script();
@@ -750,7 +751,7 @@ fn a_non_string_anchor_is_silently_mode_zero_and_never_raises() {
     );
 }
 
-/// `ANCHOR_CURSOR`, mode 8, clears at `SetOwner` like mode 9; the per-frame `OnLayerUpdate`
+/// `ANCHOR_CURSOR`, mode 8, clears at `SetOwner` like mode 9; the per-frame layer update
 /// (`0x61b2e0`) then pins the plate's BOTTOM to the screen's BOTTOMLEFT at the cursor, over its
 /// effective scale.
 #[test]
@@ -903,11 +904,10 @@ fn get_owner_answers_the_owner_frame_or_nil() {
     .unwrap();
 }
 
-/// A Lua `SetOwner` runs the tooltip's `Hide` first, which clears the shown flag before the
-/// `HideThis` override (`0x48f620` → `0x61eb20`): its clear fires OnTooltipCleared with the old
-/// owner still set and `IsShown` already false, then OnHide fires for a shown plate only. The
-/// core's own clear then fires OnTooltipCleared before the new owner is stored (`0x61ea06` before
-/// `0x61ea7e`).
+/// A Lua `SetOwner` runs the tooltip's `Hide` first, which clears the shown flag before the hide
+/// override (`0x48f620` → `0x61eb20`): its clear fires OnTooltipCleared with the old owner still
+/// set and `IsShown` already false, then OnHide fires for a shown plate only. The core's own clear
+/// then fires OnTooltipCleared before the new owner is stored (`0x61ea06` before `0x61ea7e`).
 #[test]
 fn set_owner_hides_then_clears_before_the_owner_is_stored() {
     let s = script();

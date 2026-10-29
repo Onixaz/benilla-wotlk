@@ -129,7 +129,7 @@ pub(super) fn equip_cursor_item(model: &mut Model, id: u32) -> bool {
 
 /// `CursorCanGoInSlot(id)`, the doll slot's highlight on `CURSOR_UPDATE`
 /// (`PaperDollFrame.lua:609-615`): `equip_slots`, which follows vmangos `Player::FindEquipSlot`,
-/// where the reference's `IsValidForSlot` tests a static slot mask per `InventoryType`.
+/// where the reference's slot test reads a static slot mask per `InventoryType`.
 pub(super) fn cursor_can_go_in_slot(model: &Model, id: u32) -> bool {
     match &model.cursor {
         Some(CursorPayload::Item(item)) => super::bag_verbs::fits_slot(item, id),
@@ -757,7 +757,7 @@ mod tests {
         );
     }
 
-    /// The held-payload test runs first in both seams: the reference in the bag, on the doll.
+    /// The held-payload test runs first in both seams, the bag's and the doll's.
     #[test]
     fn the_armed_item_half_reroutes_bag_and_doll_clicks() {
         let mut s = UiScript::new().unwrap();

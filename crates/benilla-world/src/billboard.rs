@@ -36,7 +36,7 @@ pub struct BillboardCard {
     /// `elapsed − arm_ms`, re-armed per play like the reference's sequence tracks.
     arm_neg_ms: u32,
     /// The global-sequence clock's attach anchor (ms), stamped on the first placement pass and
-    /// never re-armed: the reference snapshots the scene clock once per instance (`CM2Model+0x68`)
+    /// never re-armed: the reference snapshots the scene clock once per instance (model `+0x68`)
     /// and samples at `sceneNow − attach`, so cards attached on different frames breathe apart.
     gseq_attach_ms: Option<u32>,
     /// The bone's armed first-sequence translation loop (a quest marker's bob, Bevy axes), added
@@ -495,7 +495,7 @@ pub(crate) fn face_billboards(
                     return;
                 }
             }
-            // The gseq attach anchor, stamped on the first placement pass (`CM2Model+0x68`). Written
+            // The gseq attach anchor, stamped on the first placement pass (model `+0x68`). Written
             // once: a `get_or_insert` through the `Mut` would mark the card changed every frame.
             let attach_ms = match card.gseq_attach_ms {
                 Some(ms) => ms,

@@ -88,7 +88,7 @@ const MOVEMENT_SILENCE: Duration = Duration::from_millis(90_000);
 pub(crate) enum TutorialEvent {
     /// `TriggerTutorial(id, delayMs)`: the fire-once leg.
     Trigger { id: u32, delay_ms: u32 },
-    /// `SetTutorialFlag(id)`: the acknowledge-and-send leg.
+    /// The reference's flag setter, by id: the acknowledge-and-send leg.
     Acknowledge { id: u32 },
 }
 
@@ -185,8 +185,9 @@ impl Tutorials {
         }
     }
 
-    /// `SetTutorialFlag(id)`: bank B's bit gates, both banks set, the id's timer cancelled, the
-    /// 0-based id sent. The reference dereferences an absent bank B; here it is a no-op.
+    /// The reference's flag setter, by id: bank B's bit gates, both banks set, the id's timer
+    /// cancelled, the 0-based id sent. The reference dereferences an absent bank B; here it is a
+    /// no-op.
     pub(crate) fn acknowledge(&mut self, id: u32) {
         let Some(bank_b) = self.acknowledged.as_mut() else {
             return;
@@ -225,7 +226,7 @@ impl Tutorials {
         self.sends.push(TutorialSend::Reset);
     }
 
-    /// `ProcessTutorialTimers`: every due node publishes as an immediate trigger does.
+    /// The tutorial timer tick: every due node publishes as an immediate trigger does.
     fn tick(&mut self, now: Instant) {
         let mut due = Vec::new();
         self.timers.retain(|&(id, at)| {
@@ -272,7 +273,7 @@ const UNIT_FLAG_PVP_ATTACKABLE: u32 = 0x1000;
 const HEARTHSTONE: u32 = 6948;
 const INVTYPE_RANGED: u32 = 15;
 const CLASS_HUNTER: u8 = 3;
-/// The keyring bag and its slot band (`OnItemPushResult`: bag `0xff`, `slot - 0x56 <= 0x1f`,
+/// The keyring bag and its slot band (the item-push handler: bag `0xff`, `slot - 0x56 <= 0x1f`,
 /// `0x523bf9`).
 const KEYRING_BAG: u8 = 0xff;
 const KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 0x56..=0x75;
@@ -452,8 +453,8 @@ fn on_world_enter(
     }
 }
 
-/// The enter-world cascade the reference's two unconditional triggers, Welcome then Questgivers,
-/// once per world session when the local player exists; and the Movement popup's silence window.
+/// The reference enter-world cascade's two unconditional triggers, Welcome then Questgivers, once
+/// per world session when the local player exists; and the Movement popup's silence window.
 #[derive(Resource, Default)]
 pub(crate) struct WorldEnterCascade {
     armed: bool,

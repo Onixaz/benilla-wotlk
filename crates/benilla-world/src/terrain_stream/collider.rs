@@ -211,8 +211,8 @@ pub(super) fn terrain_collider_data(
 const FENCE_REACH: f32 = 32000.0;
 
 /// A tile's impassable-chunk fences as `(vertices, triangles)`, the reference's emitter reached
-/// from the movement box gather. The flag is `CMapChunk+0xc & 0x40` (set from MCNK header bit 1),
-/// tested once per chunk.
+/// from the movement box gather. The flag is the chunk's `+0xc & 0x40` (set from MCNK header bit
+/// 1), tested once per chunk.
 ///
 /// - Additive: the terrain under a flagged chunk stays walkable; the flag only adds a fence.
 /// - All four sides of every flagged chunk, neighbours unread, so a mover inside the band cannot

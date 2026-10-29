@@ -243,9 +243,9 @@ impl ChannelState {
         self.zone_mask.is_some_and(|mask| mask & zone_bit(id) != 0)
     }
 
-    /// The numeric leg of leave-by-name: a nonzero `SStrToInt` names a confirmed slot, and a hole,
-    /// an out-of-range number or a suspended slot make the whole call a no-op (`None`). Anything
-    /// else is already the wire name.
+    /// The numeric leg of leave-by-name: a nonzero integer parse names a confirmed slot, and a
+    /// hole, an out-of-range number or a suspended slot make the whole call a no-op (`None`).
+    /// Anything else is already the wire name.
     pub(crate) fn leave_target(&self, arg: &str) -> Option<String> {
         match sstr_to_int(arg) {
             0 => Some(arg.to_string()),
@@ -253,9 +253,9 @@ impl ChannelState {
         }
     }
 
-    /// `SendChatMessage`'s channel target: `SStrToInt` straight, with no name leg, so only a number
-    /// naming a confirmed slot sends, and the packet carries that slot's name. Anything else, a
-    /// name included, sends nothing.
+    /// `SendChatMessage`'s channel target: the integer parse straight, with no name leg, so only a
+    /// number naming a confirmed slot sends, and the packet carries that slot's name. Anything
+    /// else, a name included, sends nothing.
     pub(crate) fn send_target(&self, arg: &str) -> Option<String> {
         self.confirmed_slot_name(sstr_to_int(arg))
             .map(str::to_string)

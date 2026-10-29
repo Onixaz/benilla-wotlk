@@ -16,7 +16,7 @@ use super::{BodyQuery, Player};
 ///   ghost (health 1) may toggle;
 /// - a live spline, its flags' bit `0x4` clear (inferred to mark the spline done); ours is
 ///   [`Player::server_riding`] (taxi, charge, knockback);
-/// - `MOVEMENTFLAGS & 0x1200`: `0x1000` is `MOVEFLAG_ROOT` (`SetRoot`), and no 1.12 code sets
+/// - `MOVEMENTFLAGS & 0x1200`: `0x1000` is `MOVEFLAG_ROOT` (set by the root), and no 1.12 code sets
 ///   `0x200` (every wire route masks it out), so root is the whole test;
 /// - stand state 7 (`UNIT_FIELD_BYTES_1` byte 0, `[descr+0x210]`), not tested here.
 pub(super) fn toggle_refused(dead: bool, rooted: bool, on_spline: bool) -> bool {
@@ -39,8 +39,8 @@ pub(super) fn update(
         .and_then(|(.., store, _, _, _, _, _)| store.map(|s| s.0.unit_is_dead()))
         .unwrap_or(false);
     let (rooted, on_spline) = (player.modes.rooted, player.server_riding);
-    // A flip of the current bit, as the reference reads `[unit+0x9e8] & 0x100` for the reference's
-    // event kind; 1.12 has no walk-on or walk-off command.
+    // A flip of the current bit, as the reference's toggle reads `[unit+0x9e8] & 0x100` for the
+    // move event's kind; 1.12 has no walk-on or walk-off command.
     let want = !player.walking;
     if toggle_refused(dead, rooted, on_spline) {
         // Silent, as in the reference; the trace tag ([`super::move_trace::gait`]) records it.

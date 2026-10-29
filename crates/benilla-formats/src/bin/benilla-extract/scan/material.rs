@@ -1855,7 +1855,7 @@ fn entity_corpus(chain: &mut Chain) -> Result<EntityCorpus> {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum UvClock {
     /// Every live loop runs on a global sequence, a free-running clock the reference anchors once
-    /// per instance at attach (`CM2Model+0x68`), so one shared uniform serves it.
+    /// per instance at attach (the model instance's `+0x68`), so one shared uniform serves it.
     Gseq,
     /// Every live loop runs on its sequence band, the host's play head, which no shared uniform
     /// serves.

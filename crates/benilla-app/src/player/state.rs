@@ -11,12 +11,12 @@ pub(super) const RUN_BACK_RATIO: f32 = 4.5 / 7.0;
 /// Walk over run, the stock 2.5 / 7.0, for the same synthetic speed set as [`RUN_BACK_RATIO`].
 pub(super) const WALK_RATIO: f32 = 2.5 / 7.0;
 
-/// Turn rate (rad/s) until the mover's own arrives: the live rate is its sixth speed,
-/// `CMovement+0x9c` (read by `GetYawRate`), which the ctor zeroes, so π is the server's value and
-/// the client keeps no default.
+/// Turn rate (rad/s) until the mover's own arrives: the live rate is its sixth speed, the movement
+/// block's `+0x9c` (read by the yaw-rate getter), which the constructor zeroes, so π is the
+/// server's value and the client keeps no default.
 pub(super) const TURN_RATE: f32 = std::f32::consts::PI;
 
-/// The mouse-look pitch clamp, ±89° (on the camera-to-`SetPitch` path); the ±π/2 clamp belongs to
+/// The mouse-look pitch clamp, ±89° (on the camera-to-pitch-setter path); the ±π/2 clamp belongs to
 /// the pitch-key integrator, whose keys are unbound by default.
 pub(super) const MOUSELOOK_PITCH_CLAMP: f32 = 1.553_343;
 
@@ -32,7 +32,7 @@ pub(super) const STATIONARY_CHASE_RATE: f32 = 8.0;
 
 // ── Character controller ─────────────────────────────────────────────────────────
 
-/// Capsule radius (yd), the `CMovement` ctor's placeholder 1/3. The reference overwrites it per
+/// Capsule radius (yd), the movement constructor's placeholder 1/3. The reference overwrites it per
 /// model from `CreatureModelData` (female 0.20835); not built here.
 pub(crate) const CAPSULE_RADIUS: f32 = 1.0 / 3.0;
 /// Capsule total height (yd), one for every body: the swept shape and the head and feet offsets.
@@ -40,8 +40,8 @@ pub(crate) const CAPSULE_RADIUS: f32 = 1.0 / 3.0;
 /// [`crate::entities::CollisionHeight`] instead.
 pub(crate) const CAPSULE_HEIGHT: f32 = 2.027_777_7;
 
-/// The `CMovement` ctor's collision height, before the reference sets the model's: the depth lines'
-/// fallback for a unit whose display id has no `CreatureModelData` row.
+/// The movement constructor's collision height, before the reference sets the model's: the depth
+/// lines' fallback for a unit whose display id has no `CreatureModelData` row.
 pub(crate) const DEFAULT_COLLISION_HEIGHT: f32 = 2.027_777_7;
 /// Gravity (yd/s²), the reference's and vmangos's `Movement::gravity`; also avian's `Gravity`, and
 /// [`crate::net`] replays relayed jump arcs under it so an observer's arc matches the mover's.
@@ -51,8 +51,9 @@ pub(super) const JUMP_SPEED: f32 = 7.955_547;
 /// Terminal fall speed (yd/s), and vmangos's `terminalVelocity`; [`crate::net`]'s arc replay caps
 /// at it too.
 pub(crate) const TERMINAL_VELOCITY: f32 = 60.148_003;
-/// Terminal fall speed under feather fall (yd/s), the whole of Slow Fall: the reference pick over
-/// while `MOVEFLAG_SAFE_FALL` is set (vmangos's `terminalSavefallVelocity`).
+/// Terminal fall speed under feather fall (yd/s), the whole of Slow Fall: the reference's two fall
+/// integrators pick it over [`TERMINAL_VELOCITY`] while `MOVEFLAG_SAFE_FALL` is set (vmangos's
+/// `terminalSavefallVelocity`).
 pub(crate) const FEATHER_TERMINAL_VELOCITY: f32 = 7.0;
 /// Hover's clearance (yd), the whole of Hover: the walk resolver probes further down and writes the
 /// body's z a yard clear of the floor.
@@ -64,14 +65,15 @@ pub(crate) const HOVER_CLIMB_RATE: f32 = 7.0;
 pub(super) const GROUND_COS: f32 = 0.642_788;
 /// Downward probe distance (yd) to decide whether we're standing on ground.
 pub(super) const GROUND_PROBE: f32 = 0.2;
-/// The snap's slope ratio, (atan ≈ 61.6°): the reference's step-vs-fall election probes
-/// `travel · ratio + slack` below the moved body, plus the rise budget `H` only on a steep support
+/// The snap's slope ratio (atan ≈ 61.6°): the reference's step-vs-fall election probes `travel ·
+/// ratio + slack` below the moved body, plus the rise budget `H` only on a steep support
 /// (`0x4000000`). The foot cone's waist shares it.
 pub(super) const STEP_SLOPE_RATIO: f32 = 1.849_399;
-/// The snap reach's fixed slack (yd),1/36.
+/// The snap reach's fixed slack (yd), 1/36.
 pub(super) const STEP_SNAP_SLACK: f32 = 0.027_777_8;
-/// The step-up rise ceiling (yd), the reference's `H`: the reference returns `CMovement+0xb8`, the
-/// ratio `max(SCALE_X / CreatureModelScale, 1)`, which is 1.0 for the local player.
+/// The step-up rise ceiling (yd), the reference's `H`: its step-up height returns the movement
+/// block's `+0xb8`, the ratio `max(SCALE_X / CreatureModelScale, 1)`, which is 1.0 for the local
+/// player.
 pub(crate) const STEP_UP_HEIGHT: f32 = 1.0;
 /// The rise ceiling of a body the reference does not treat as player-controlled, the reference's
 /// false leg: a creature, a pet, or a charmed, possessed, feared, confused or rooted player.
@@ -145,7 +147,7 @@ pub(crate) struct MoveModes {
     /// [`FEATHER_TERMINAL_VELOCITY`], and nothing else changes.
     pub(crate) feather_fall: bool,
     /// Hover (`SMSG_MOVE_SET_HOVER`): ground contact sits [`HOVER_HEIGHT`] up and the jump is
-    /// refused (the first test in `CMovement::Jump`); the grant itself jumps the body
+    /// refused (the first test in the mover's jump); the grant itself jumps the body
     /// ([`Player::hover_launch`]). With water walking it seems to leave a swimmer no way up, since
     /// swimming turns water walking off and hover refuses the breach: each gate is traced, the sum
     /// is not.
@@ -214,10 +216,11 @@ impl MoveModes {
     }
 }
 
-/// The precondition both movement-input predicates test first, the reference's. Of its five terms,
-/// health ([`MoverInput::dead`]) and the far-sight latch ([`MoverInput::view_is_out`]) are here;
-/// the mover resolving is structural (the controller returns early on `control_lost` and `reseat`),
-/// and the aux gate `[[mover+0x118]+0xa4]` and the Knockdown animation lockout are not built.
+/// The precondition both movement-input predicates test first, the reference's shared one. Of its
+/// five terms, health ([`MoverInput::dead`]) and the far-sight latch ([`MoverInput::view_is_out`])
+/// are here; the mover resolving is structural (the controller returns early on `control_lost` and
+/// `reseat`), and the aux gate `[[mover+0x118]+0xa4]` and the Knockdown animation lockout are not
+/// built.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct MoverInput {
     /// The health term: the driven mover's health is not above 0 (off `[mover+0x110]`). A released
@@ -270,8 +273,8 @@ impl MoverInput {
 }
 
 /// Strip from a freshly built flag word what a gated mover cannot hold: the direction bits while
-/// translation is gated (the allow-list drops the move commands and `SetRoot` masks `0xffe07f00`,
-/// so the anim resolver's sees no motion) and the turn bits while turning is gated. The reference's
+/// translation is gated (the allow-list drops the move commands and the root masks `0xffe07f00`, so
+/// the anim resolver sees no motion) and the turn bits while turning is gated. The reference's
 /// emitters refuse at the source; ours rebuilds the word each frame. Modes and SWIMMING ride on.
 pub(crate) fn incapacitated_flags(flags: u32, translate_gated: bool, turn_gated: bool) -> u32 {
     use crate::creature_anim::move_flags as f;
@@ -312,8 +315,8 @@ pub(crate) struct Player {
     /// standing. The reference zeroes its mover; vmangos neither roots a charmed player nor refuses
     /// its movement, so nothing else holds the body. Unlike a root, it stops turning too.
     pub(crate) control_lost: bool,
-    /// World entries that handed control back, each a silent `InitClientControlState` (`0x513880`)
-    /// for the UI's control flag.
+    /// World entries that handed control back, each a silent control-state init (`0x513880`) for
+    /// the UI's control flag.
     pub(crate) control_inits: u32,
     /// The unit we drive in place of our body (a mind-controlled creature, Eye of Kilrogg), `None`
     /// for our own. Our body must then send nothing: outbound `MSG_MOVE_*` carry no guid, so the
@@ -395,20 +398,21 @@ pub(crate) struct Player {
     /// The feet height the climb in progress began at, the reference's `stepUpStartZ`
     /// ([`super::mover::Support::step_start`]); `None` when not climbing.
     pub(super) step_start: Option<f32>,
-    /// A hover grant owes a jump: the reference's handler calls `CMovement::Jump(0)` before setting
-    /// the flag, and its disable arm calls `StartFalling`. Latched for the take-off site, since our
-    /// mover re-derives ground contact every frame and would cancel a jump committed here.
+    /// A hover grant owes a jump: the reference's handler calls the mover's jump at `force = 0`
+    /// before setting the flag, and its disable arm calls the fall start. Latched for the take-off
+    /// site, since our mover re-derives ground contact every frame and would cancel a jump
+    /// committed here.
     pub(super) hover_launch: bool,
     /// The knockback waiting to be flown, armed by `SMSG_MOVE_KNOCK_BACK` and taken at the take-off
     /// site with the jump and the hover launch.
     pub(super) knockback: Option<PendingKnockback>,
-    /// The arc's take-off vertical speed (yd/s, WoW +Z up), the client's `StartFalling` argument
+    /// The arc's take-off vertical speed (yd/s, WoW +Z up), the client's fall-start argument
     /// (`+0xa0`) and the jump tail's `zspeed`: [`JUMP_SPEED`] for a jump, exactly 0 for a step-off.
     pub(super) jump_zspeed: f32,
     /// The launch vertical speed, recorded before this frame's gravity: [`Self::jump_zspeed`] is
     /// seeded from this, since `vel_y` is already a step down the arc when [`super::arc`] runs.
     pub(super) launch_vz: f32,
-    /// Whether the arc's direction nibble (`[CMovement+0x40] & 0xf`) is set: air control opens only
+    /// Whether the arc's direction nibble (`[movement+0x40] & 0xf`) is set: air control opens only
     /// while it is clear, so a knockback, which plants FORWARD, never steers. Seeded at take-off,
     /// set by the nudge, cleared when the arc ends.
     pub(super) arc_dirs_set: bool,
@@ -421,11 +425,11 @@ pub(crate) struct Player {
     /// The direction bits the current arc launched with: mid-air they are the actual motion, so the
     /// live flags read them instead of the keys; re-seeded by the air nudge, stale while grounded.
     pub(super) airborne_dirs: u32,
-    /// Launch height (Bevy Y), the client's `StartFalling` z snapshot (`+0x7c`): the FALLINGFAR
+    /// Launch height (Bevy Y), the client's fall-start z snapshot (`+0x7c`): the FALLINGFAR
     /// distance leg measures descent below it.
     pub(super) fall_start_y: f32,
     /// `MOVEFLAG_FALLINGFAR` latched for this arc ([`FALL_FAR_DROP`], [`FALL_FAR_TIME`]); only
-    /// landing clears it, as the client's `StopFalling` does.
+    /// landing clears it, as the client's fall stop does.
     pub(super) fall_far: bool,
     /// The facing (Bevy yaw, radians): the aim sent as orientation and the basis WASD move in.
     /// Right-drag and movement sync it to the camera, left-drag does not; the body is `model_yaw`.
@@ -438,8 +442,8 @@ pub(crate) struct Player {
     /// Flying (3.3.5a `MOVEFLAG_FLYING`): taken off under [`MoveModes::can_fly`], ended by the
     /// landing check, a revoke or the water ([`super::flight`]).
     pub(crate) flying: bool,
-    /// When flight last started (`Time::elapsed_secs`), the reference's `s_flightStatusTime`: the
-    /// landing check waits 2 s past it (`0x73aa59`).
+    /// When flight last started (`Time::elapsed_secs`), the reference's flight-status timestamp:
+    /// the landing check waits 2 s past it (`0x73aa59`).
     pub(super) flight_since: f32,
     /// A flight edge owes `CMSG_MOVE_SET_FLY`, which the move stream sends ahead of this frame's
     /// vertical command (`0x6ef860` events 45, 46).
@@ -452,17 +456,17 @@ pub(crate) struct Player {
     /// water corridor reads this a frame late, as the reference's camera reads the tick's cache
     /// through the field accessor; the lag keeps its depth off a band edge.
     pub(crate) liquid_surface: Option<f32>,
-    /// The mover pitch (radians, +up), `CMovement+0x20`, live in every mode: mouse-look sets it
-    /// straight to the camera pitch within ±89° (`SetPitch`, which stores before any swim test),
-    /// and it holds when unsteered; only stop-swim and teleport zero it. Swimming reads it for
-    /// travel, pose and the wire; on land, water walking does.
+    /// The mover pitch (radians, +up), the movement block's `+0x20`, live in every mode: mouse-look
+    /// sets it straight to the camera pitch within ±89° (the pitch setter, which stores before any
+    /// swim test), and it holds when unsteered; only stop-swim and teleport zero it. Swimming reads
+    /// it for travel, pose and the wire; on land, water walking does.
     pub(super) mover_pitch: f32,
     /// The camera pitch the last pitch push carried: the reference pushes only on mouse motion, so
     /// a push here needs the aim to differ, and a still mouse leaves the drunk wobble and the
     /// stop-swim levelling in place.
     pub(super) aim_pitch_seen: f32,
     /// This frame's flag-derived swim speed (yd/s), 0 without swim input: the stroke's playback
-    /// numerator, as the reference divides `GetCurrentSpeed` by the clip's speed. Stale on land.
+    /// numerator, as the reference divides the current speed by the clip's speed. Stale on land.
     pub(super) swim_stroke_speed: f32,
     /// The rendered body heading (Bevy yaw): eased to the strafe offset while strafing
     /// ([`crate::creature_anim::strafe_body_offset`]), snapped to `face_yaw` while otherwise
@@ -547,8 +551,8 @@ impl Player {
         self.face_yaw += radians;
     }
 
-    /// Set the mover pitch, the scripted dive (`capture::probe_pitch`), under `SetPitch`'s ±89°
-    /// clamp but without its 2^-20 deadband; returns the value stored.
+    /// Set the mover pitch, the scripted dive (`capture::probe_pitch`), under the pitch setter's
+    /// ±89° clamp but without its 2^-20 deadband; returns the value stored.
     pub(crate) fn aim_pitch(&mut self, radians: f32) -> f32 {
         self.mover_pitch = radians.clamp(-MOUSELOOK_PITCH_CLAMP, MOUSELOOK_PITCH_CLAMP);
         // Mouse-look pushes on a camera-pitch edge; parking the edge here keeps a still camera
@@ -660,7 +664,7 @@ pub(super) fn autorun_cancelled(
     fwd_down || back_down || both_engaged || lost_mover
 }
 
-/// Whether the reference's `SetStandState` refuses this change, returning before the packet is
+/// Whether the reference's stand-state setter refuses this change, returning before the packet is
 /// built. A body that reads dead is refused either way; otherwise standing up never is, and any
 /// other state is refused while translating or swimming (`0x20000f`), SLEEP also while turning
 /// (which falls through into that test). FALLING is in neither mask. It is the one setter, so the X
@@ -781,7 +785,7 @@ mod stand_state_tests {
         assert_eq!(
             f::TURN_LEFT | f::TURN_RIGHT | f::ANY_MOVE | f::SWIMMING,
             f::ROUTE_COMMITTED_MOVE,
-            "`0x20003f`, byte-verified as well as the reference"
+            "`0x20003f`, byte-verified in the one-shot route and the stand-state setter alike"
         );
         // Standing up from SLEEP is still ungated.
         assert!(!stand_state_refused(false, f::ROUTE_COMMITTED_MOVE, 0));
@@ -1087,7 +1091,7 @@ mod move_mode_tests {
         );
         assert!(
             !m.mouse_may_turn_body(true, 0),
-            "stunned: refused through the reference before the stand state is even read"
+            "stunned: refused through the stun test before the stand state is even read"
         );
         assert!(
             !MoverInput {
@@ -1184,15 +1188,15 @@ mod move_mode_tests {
         assert_eq!(
             driving(true, true),
             (false, false),
-            "MIND VISION — my view is out and the body is mine, so the reference fails and takes the \
-             walk and the turn together, exactly as death does"
+            "MIND VISION — my view is out and the body is mine, so the shared precondition fails \
+             and takes the walk and the turn together, exactly as death does"
         );
         assert_eq!(
             driving(false, true),
             (true, true),
             "MIND CONTROL — the latch is engaged (possession sets the same field), but the mover \
-             is not the active player, so the reference returns the conjunct satisfied and the victim \
-             stays drivable. Dropping the `IsActivePlayer` half freezes it."
+             is not the active player, so the far-sight term returns the conjunct satisfied and \
+             the victim stays drivable. Dropping the active-player half freezes it."
         );
         assert!(
             MoverInput {

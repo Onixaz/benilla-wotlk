@@ -62,8 +62,8 @@ fn spellbook_hover_renders_the_verified_shape() {
     assert!(s.take_errors().is_empty());
 }
 
-/// `SetSpell`'s `bookType` picks the book (forks: the pet's slots); both books hold a different
-/// spell at slot 1.
+/// `SetSpell`'s `bookType` picks the book, forking to the pet's slots or the player's; both books
+/// hold a different spell at slot 1.
 #[test]
 fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
     let mut s = script();
@@ -111,8 +111,8 @@ fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
         assert(TTTextLeft1:GetText() == "Firebolt", "case-insensitive pet")
         tt:SetSpell(1, "book")
         assert(TTTextLeft1:GetText() == "Fireball", "any other string is the player's book")
-        -- A non-string third argument is not "the player's book": the reference bails outright
-        --, leaving whatever was shown.
+        -- A non-string third argument is not "the player's book": the reference bails outright at
+        -- its string test, leaving whatever was shown.
         tt:SetSpell(1, 7)
         assert(TTTextLeft1:GetText() == "Fireball", "a non-string arg shows nothing new")
     "#,
@@ -268,7 +268,7 @@ fn player_buff_hover_is_the_aura_variant() {
     });
     assert!(white, "aura description is white, not gold");
     // The name is gold: the aura builder writes it through the gold wrapper, where the spell
-    // builder uses the plain.
+    // builder uses the plain line add.
     let gold_name = quads.iter().any(|q| {
         matches!(&q.content, QuadContent::Text { text: Some(t), color: Some(c), .. }
             if t == "Arcane Intellect" && (c[1] - 210.0 / 255.0).abs() < 1e-6)
@@ -328,8 +328,8 @@ fn player_buff_hover_names_the_dispel_class_in_gold() {
     assert!(s.take_errors().is_empty());
 }
 
-/// The reference's line order: cast|cooldown, requires-item, requires-form, reagents, description,
-/// each requirement red while unmet.
+/// The reference spell builder's line order: cast|cooldown, requires-item, requires-form, reagents,
+/// description, each requirement red while unmet.
 #[test]
 fn requirement_and_reagent_lines_render_in_law_order() {
     let mut s = script();
@@ -621,7 +621,7 @@ fn action_hover_is_brief_without_uber_tooltips() {
 }
 
 /// A macro slot's hover is the reference's: one line, the macro's name in the normal colour (the
-/// reference holds `0xffffffff`, white); a slot whose macro is gone shows no plate.
+/// reference's normal colour is `0xffffffff`, white); a slot whose macro is gone shows no plate.
 #[test]
 fn action_hover_on_a_macro_slot_shows_its_name_in_white() {
     let mut s = script();
@@ -886,8 +886,8 @@ fn set_trade_skill_item_selects_the_spell_or_the_product() {
     assert!(s.take_errors().is_empty());
 }
 
-/// The reference skips the remaining line on `untilCancelled`, never on whether the aura has a
-/// duration yet.
+/// The reference's aura hover skips the remaining line on `untilCancelled`, never on whether the
+/// aura has a duration yet.
 #[test]
 fn the_remaining_line_is_gated_on_until_cancelled_not_on_the_duration() {
     let mut s = script();

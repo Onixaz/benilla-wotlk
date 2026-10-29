@@ -5,7 +5,7 @@
 //! |---|---|---|---|
 //! | `TargetByName` | 8, creatures and players | 0 | Lua arg 2 |
 //! | `AssistByName` | 0x10, players only | 0 | 0 |
-//! | `FollowByName` | 0x10, players only | 2, `CanAssist` and alive | Lua arg 2 |
+//! | `FollowByName` | 0x10, players only | 2, assistable and alive | Lua arg 2 |
 //!
 //! Filter mode 0 underflows the reference's jump table into accept-all: no range, facing, reaction,
 //! liveness, visibility or self test. A name matches whole-string first, else by the longest common
@@ -103,7 +103,7 @@ fn common_prefix_len(query: &str, name: &str) -> usize {
 /// | check | failure |
 /// |---|---|
 /// | followee is a player (typemask `0x10`) | `0x128` `ERR_INVALID_FOLLOW_TARGET` |
-/// | `CanCooperate` with the followee | `0x128`, the same line |
+/// | the followee passes the cooperation check | `0x128`, the same line |
 /// | we are alive | `0x7e` `ERR_PLAYER_DEAD` |
 /// | we are not stunned (`UNIT_FIELD_FLAGS & 0x40000`) | `0x191` `ERR_GENERIC_STUNNED` |
 /// | we are not casting | `0x134` `ERR_TOOBUSYTOFOLLOW` |
@@ -184,19 +184,20 @@ pub(crate) struct ByNameScan<'w, 's> {
     /// Read-only: a sweep fires no name query, so an uncached name does not match, as in the
     /// reference.
     names: Res<'w, NameCache>,
-    /// The reaction inputs behind `CanAssist`, for [`Filter::AssistableAlive`] and the follow gate.
+    /// The reaction inputs behind the assist check, for [`Filter::AssistableAlive`] and the follow
+    /// gate.
     factions: Option<Res<'w, super::Factions>>,
     reputations: Res<'w, crate::net::Reputations>,
     /// The group, for the reaction's party rung; none without the party plugin.
     group: Option<Res<'w, crate::ui_party::GroupState>>,
 }
 
-/// The per-candidate filter, the mode argument the reference hands.
+/// The per-candidate filter, the mode argument the reference hands its filter.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Filter {
     /// Mode 0, which underflows the jump table's bound into accept-all: `/target`, `/assist`.
     AcceptAll,
-    /// Mode 2, `CanAssist` and `UNIT_FIELD_HEALTH > 0`: `/follow`.
+    /// Mode 2, the assist check and `UNIT_FIELD_HEALTH > 0`: `/follow`.
     AssistableAlive,
 }
 
@@ -210,7 +211,7 @@ impl ByNameScan<'_, '_> {
             .map(|(_, _, tf, _)| tf.translation)
     }
 
-    /// The mode-2 arm: alive, and `CanAssist` as a friendly reaction (4+).
+    /// The mode-2 arm: alive, and the assist check as a friendly reaction (4+).
     fn assistable_alive(&self, store: Option<&ObjectStore>) -> bool {
         if store.is_some_and(|s| s.0.unit_is_dead()) {
             return false;
@@ -225,8 +226,8 @@ impl ByNameScan<'_, '_> {
         ) >= 4
     }
 
-    /// The follow start gate ([`follow_refusal_key`]): the key of the first refusal, for
-    /// `CGGameUI::DisplayError`. `FollowUnit` skips the resolver but not this gate.
+    /// The follow start gate ([`follow_refusal_key`]): the key of the first refusal, for the UI's
+    /// error display. `FollowUnit` skips the resolver but not this gate.
     fn follow_refusal(
         &self,
         followee: u64,
@@ -351,7 +352,7 @@ pub(crate) struct PlayerLookup<'w, 's> {
 }
 
 impl PlayerLookup<'_, '_> {
-    /// The reference with typemask `0x10`, filter mode 0 and no exact-only flag, as
+    /// The reference's resolver with typemask `0x10`, filter mode 0 and no exact-only flag, as
     /// `/assist <name>` calls it: any player in the object list, whole name or longest prefix.
     /// Selects nothing.
     pub(crate) fn find(&self, names: &NameCache, name: &str) -> Option<(Entity, u64)> {
@@ -384,8 +385,9 @@ impl PlayerLookup<'_, '_> {
 /// `/target <name>` and the Lua `TargetByName(name, exactMatch)` through [`scan::commit`], the
 /// stop, select, re-swing path a click takes. `exact` is the Lua second argument, which the
 /// reference reads with default 0 as the resolver's exact-only flag. A miss leaves the target
-/// alone, as neither failure edge calls `SetSelection`, and prints nothing; the reference prints
-/// message `0x127` `ERR_UNIT_NOT_FOUND` there, or `0xb8` `ERR_GENERIC_NO_TARGET` for an empty name.
+/// alone, as neither failure edge reaches the selection set, and prints nothing; the reference
+/// prints message `0x127` `ERR_UNIT_NOT_FOUND` there, or `0xb8` `ERR_GENERIC_NO_TARGET` for an
+/// empty name.
 pub(super) fn target_named(
     scan_params: &ByNameScan,
     commit: &mut SelectCommit,
@@ -529,7 +531,7 @@ pub(super) fn follow_requests(
     }
 }
 
-/// Everything [`scan::commit`], the one `SetSelection` path, needs.
+/// Everything [`scan::commit`], the one selection-set path, needs.
 #[derive(SystemParam)]
 #[allow(clippy::type_complexity)] // one bundled param, the app's convention for big query sets
 pub(crate) struct SelectCommit<'w, 's> {
@@ -580,9 +582,9 @@ impl SelectCommit<'_, '_> {
             return;
         };
         info!("assist ({how}) -> the basis unit's target, guid {guid:#x}");
-        // `engaged` and attackability are read before the selection: `SetSelection` may re-point a
-        // swing we already had, and the reference then skips the send but still runs its tail, a
-        // sheath snap; not yet fighting, the second leg opens a fresh swing.
+        // `engaged` and attackability are read before the selection: the selection set may re-point
+        // a swing we already had, and the swing start then skips the send but still runs its tail,
+        // a sheath snap; not yet fighting, the second leg opens a fresh swing.
         let me = self.me.single().ok();
         let engaged = me.is_some_and(|(_, _, engaged)| engaged);
         let attackable = super::relations::can_attack(
@@ -593,7 +595,7 @@ impl SelectCommit<'_, '_> {
             me.and_then(|(_, store, _)| store),
         );
         self.commit(entity, guid);
-        // The second leg. The reference's attackability test is the caller's here, so a friendly
+        // The second leg. The swing start's attackability test is the caller's here, so a friendly
         // target is selected, not swung at.
         if self.assist_attack.0 && attackable {
             info!("assist ({how}): assistAttack is on -> opening the swing");
@@ -625,8 +627,8 @@ impl SelectCommit<'_, '_> {
     /// Select a resolved guid, the reference's arm 1, through [`scan::commit`].
     pub(super) fn commit(&mut self, entity: Entity, guid: u64) {
         let me = self.me.single().ok();
-        // The re-swing's gate is `StartAttack`'s on the new target: alive, then `CanAttack`, so a
-        // body is switched to and never swung at.
+        // The re-swing's gate is `StartAttack`'s on the new target: alive, then the attack check,
+        // so a body is switched to and never swung at.
         let attackable = scan::attack_target_valid(
             self.stores.get(entity).ok(),
             self.factions.as_deref(),
@@ -709,7 +711,7 @@ mod tests {
             follow_refusal_key(false, true, false, false, false),
             Some("ERR_INVALID_FOLLOW_TARGET")
         );
-        // An enemy player fails CanAssist, and shares the creature's line.
+        // An enemy player fails the assist check, and shares the creature's line.
         assert_eq!(
             follow_refusal_key(true, false, false, false, false),
             Some("ERR_INVALID_FOLLOW_TARGET")

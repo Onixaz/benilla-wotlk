@@ -95,7 +95,7 @@ pub fn spawn_model_entities(
     tint_reg: &mut crate::doodad_anim::TintAnimMaterials,
     anim_table: &mut crate::mat_anim_table::MatAnimTable,
     // A WMO prop hosted on a streamed entity (a transport's cargo): every batch, cards included,
-    // then gets `DoodadDefLit`, as its light is its own `CMapDoodadDef`'s, not its host's. This
+    // then gets `DoodadDefLit`, as its light is its own doodad placement's, not its host's. This
     // is the lane; `card_owner` only says whether the prop has cards to follow.
     entity_hosted: bool,
     // On a streamed entity, the anchor a boneless model's cards follow instead of a baked pivot;

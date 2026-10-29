@@ -9,7 +9,7 @@
 //! ```
 //!
 //! The terrain is the footstep's ([`super::footsteps`]): one cached terrain dword per unit
-//! (`CGUnit+0xc60`), read by `$DTH` and by `$FSD`. `None` (the reference's -1) is silence.
+//! (unit `+0xc60`), read by `$DTH` and by `$FSD`. `None` (the reference's -1) is silence.
 //!
 //! Most indoor floors are silent in the reference too: a WMO surface with no material is
 //! `TerrainType 10 "None"`, `SoundID` 0, which `FootstepTerrainLookup` has a row for and
@@ -152,7 +152,7 @@ fn death_thud_sounds(
             KitRef::Id(kit),
             Some(transform.translation()),
             SoundCategory::Sfx,
-            PlayExtras::default(), // bus 0, uncapped, volume 1.0: the reference's
+            PlayExtras::default(), // bus 0, uncapped, volume 1.0, as in the reference
         ) {
             warn!("death thud (kit {kit}): {e:#}");
         }

@@ -7,9 +7,9 @@
 //! slot, whose weight 1.0 skips the WMO slot outright, so it is taken first.
 //!
 //! The WMO slot's weight is the camera-in-WMO interior crossfade, the number the MFOG fog lerp
-//! rides. Above0.99 a slot replaces the whole celestial pass: stars, sun disc, both moons, gradient
-//! band and cloud dome; below it they draw under the sky. The glare quads draw on their own path,
-//! and the fog, ambient and diffuse are untouched.
+//! rides. Above 0.99 a slot replaces the whole celestial pass: stars, sun disc, both moons,
+//! gradient band and cloud dome; below it they draw under the sky. The glare quads draw on their
+//! own path, and the fog, ambient and diffuse are untouched.
 
 use std::collections::HashSet;
 
@@ -38,7 +38,7 @@ pub struct CameraSkybox(pub Option<String>);
 pub struct SkyboxWeight(pub f32);
 
 impl SkyboxWeight {
-    /// Whether the skybox replaces the whole celestial pass: weight above0.99; below it the sky
+    /// Whether the skybox replaces the whole celestial pass: weight above 0.99; below it the sky
     /// blends over the six elements.
     pub fn replaces_celestial(&self) -> bool {
         self.0 > 0.99
@@ -280,7 +280,7 @@ fn sole_bone(sub: &benilla_formats::RenderSubmesh) -> Option<u16> {
 
 /// Show the wanted skybox at the slot weight and hide every other, the sole `Visibility`, material
 /// and `MeshTag` writer for these entities. As the reference: hidden at weight 0, the weight in
-/// every batch's alpha (`[CM2Model+0x180]`), and below 1 the batch promoted to SRC_ALPHA blending
+/// every batch's alpha (model `[+0x180]`), and below 1 the batch promoted to SRC_ALPHA blending
 /// whatever its mode.
 fn apply_skybox_visibility(
     want: Res<CameraSkybox>,

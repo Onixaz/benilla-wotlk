@@ -3,11 +3,11 @@
 //! is a unit, and the unit leg takes him.
 //!
 //! - The pick ([`pick_admits`]): the reference admits a corpse only with pick flag `0x40`, which
-//!   while targeting only a word in `0x8600` sets, and then only a corpse passes.
+//!   while targeting only a word in `0x8600` sets, and then only a corpse the corpse filter passes.
 //! - The cursor ([`super::SpellTargeting::can_target_corpse`]): the reference's corpse leg, then
 //!   its range tail.
-//! - The click ([`bind_target_corpse`]): `BindTarget`'s corpse arm, then the merge's range test, as
-//!   for a unit.
+//! - The click ([`bind_target_corpse`]): the target bind's corpse arm, then the merge's range test,
+//!   as for a unit.
 //!
 //! All three read two facts of the corpse, [`CorpseFacts`]: bones are never a spell target, and the
 //! reaction gate splits the ally bit from the enemy bit.
@@ -57,9 +57,9 @@ pub(crate) fn corpse_pick_admits(
 }
 
 /// The pick's corpse filter while targeting: a word with the ally bit takes a corpse that is not
-/// bones and that the reference passes; only a word without it tries the enemy bit, on a corpse
-/// that is not bones and that the reference fails. Both bits are inside `0x8600`, so a corpse this
-/// admits was already a candidate.
+/// bones and that the corpse check passes; only a word without it tries the enemy bit, on a corpse
+/// that is not bones and that the corpse check fails. Both bits are inside `0x8600`, so a corpse
+/// this admits was already a candidate.
 fn pick_admits(word: u32, f: CorpseFacts) -> bool {
     if word & WORD_ALLY != 0 {
         !f.bones && f.friendly
@@ -68,8 +68,8 @@ fn pick_admits(word: u32, f: CorpseFacts) -> bool {
     }
 }
 
-/// `BindTarget`'s corpse arm: the ally arm binds a corpse that is not bones and that the reference
-/// passes, then the enemy arm one it fails. Each writes its bit to the wire mask, parks the
+/// The target bind's corpse arm: the ally arm binds a corpse that is not bones and that the corpse
+/// check passes, then the enemy arm one it fails. Each writes its bit to the wire mask, parks the
 /// corpse's guid and clears its bit from the word. `None` binds nothing, silently, and the cursor
 /// stays. The read-only mirror passes exactly the corpses this binds.
 fn bind_arm(word: u32, f: CorpseFacts) -> Option<CorpseTarget> {
@@ -114,7 +114,7 @@ impl super::SpellTargeting {
     }
 }
 
-/// `BindTarget`'s corpse arm for the world click: a corpse no arm binds leaves the cursor up;
+/// The target bind's corpse arm for the world click: a corpse no arm binds leaves the cursor up;
 /// otherwise the merge's range test and the commit, with the corpse's guid and its bit (the
 /// reference writes the guid for any mask bit in `0x8a02`).
 ///
@@ -264,8 +264,8 @@ mod tests {
         }
     }
 
-    /// `BindTarget`'s corpse arm, which the reference's corpse leg mirrors: the ally arm then the
-    /// enemy arm, each on a corpse that is not bones.
+    /// The target bind's corpse arm, which the reference's corpse leg mirrors: the ally arm then
+    /// the enemy arm, each on a corpse that is not bones.
     #[test]
     fn the_bind_takes_the_arm_the_reaction_picks() {
         assert_eq!(bind_arm(0x8000, ALLY), Some(CorpseTarget::Ally));

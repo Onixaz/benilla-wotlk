@@ -42,9 +42,9 @@ impl ItemGlows {
     }
 }
 
-/// The ItemVisuals id an item glows with, the fork of (per weapon slot): the base display's id when
-/// it names a row, which suppresses the enchant's, else the first enchant slot with a nonzero
-/// visual, else 0.
+/// The ItemVisuals id an item glows with, the reference's per-weapon-slot fork: the base display's
+/// id when it names a row, which suppresses the enchant's, else the first enchant slot with a
+/// nonzero visual, else 0.
 pub(in crate::entities) fn effective_visual(
     glows: &ItemGlows,
     enchants: Option<&EnchantCatalog>,
@@ -159,9 +159,9 @@ pub(super) fn attach_item_glows(
             let Some(dm) = glows.models.get(path) else {
                 continue;
             };
-            // A model without this slot's attachment hangs nothing there, as in the reference: the
-            // reference stores the reference's miss as `0xffff`, whose child skip. Common:
-            // Ironfoe's hammer authors only ids 2 to 4.
+            // A model without this slot's attachment hangs nothing there, as in the reference: it
+            // stores the attachment lookup's miss as `0xffff`, whose child every pass skips.
+            // Common: Ironfoe's hammer authors only ids 2 to 4.
             let Some(at) =
                 crate::portrait::attachment_point(&item.skeleton, &item.attachments, slot as u16)
             else {
@@ -229,7 +229,7 @@ pub(super) fn attach_item_glows(
                 // Chained to the item root and through it to the wearer, so it fades in with the
                 // body and dies with the weapon.
                 EffectHost { parent: Some(root) },
-                // Not armed by `PlaySpellVisualKit`: no kit stage, the plain single-clip arm.
+                // Not armed by the kit player: no kit stage, the plain single-clip arm.
                 None,
                 &mut FxMaterials {
                     store: &mut wow_materials,

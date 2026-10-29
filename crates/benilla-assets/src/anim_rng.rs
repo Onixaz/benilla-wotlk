@@ -1,9 +1,8 @@
-//! The client's `rand()` stream, the MSVC CRT LCG (`vc_rand`, `0x88b867`), in this leaf crate
-//! because the engine's placed doodads and the game's creature, GameObject and portrait-booth arms
-//! all draw from it. The reference keeps one cell per thread (`[ptd+0x14]`) and draws every arm's
-//! roll on the main thread; its threaded M2 half (`CM2Model::AnimateMT`, `0x82f0f0`) never draws.
-//! The shared interleaving de-syncs a stand of identical props, so the doodads, GameObjects and
-//! booth keep one stream.
+//! The client's `rand()` stream, the MSVC CRT LCG (`0x88b867`), in this leaf crate because the
+//! engine's placed doodads and the game's creature, GameObject and portrait-booth arms all draw
+//! from it. The reference keeps one cell per thread (`[ptd+0x14]`) and draws every arm's roll on
+//! the main thread; its threaded M2 animate half (`0x82f0f0`) never draws. The shared interleaving
+//! de-syncs a stand of identical props, so the doodads, GameObjects and booth keep one stream.
 //!
 //! Deviation: each unit's animation driver draws its own stream ([`AnimRng::stream`]), seeded from
 //! the session seed and a per-unit key, so the units animate in parallel with the same rolls in

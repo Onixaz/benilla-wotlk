@@ -1,8 +1,8 @@
 //! The item and enchant glow chain. An ItemVisuals id comes from the item's display
 //! (`ItemDisplayInfo` column 22) or its enchant (`SpellItemEnchantment` column 31); its row holds
 //! five `ItemVisualEffects` ids, each naming a glow model, and slot `i` hangs on the item model's
-//! attachment `i` (the reference calls `(glow, item, i)`). The loaders check each table's field
-//! count and record size.
+//! attachment `i` (the reference attaches each as `(glow, item, i)`). The loaders check each
+//! table's field count and record size.
 //!
 //! The reference skips a visual or effect id that is negative, past the table's max id or a null
 //! row, and an empty model path; ItemVisuals row 28 ships two garbage effect ids. The catalog

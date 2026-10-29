@@ -2,10 +2,10 @@
 //! [`super::addons::Source`]; the parse, `<Include>` and `<Script file=>` resolution and chunk
 //! naming are [`super::addons::Addon`]'s.
 //!
-//! The core is the chain's own `FrameXML.toc` ([`core`]), its rows in its order, as `UI_Init`
+//! The core is the chain's own `FrameXML.toc` ([`core`]), its rows in its order, as the UI init
 //! walks it; benilla's layer (`assets/ui/layer.toc`) follows it. An entry with a path separator
-//! comes off the chain, a bare filename is a file we ship ([`is_chain_entry`]). Without client
-//! data the chain files are absent, and the log says so once.
+//! comes off the chain, a bare filename is a file we ship ([`is_chain_entry`]). Without client data
+//! the chain files are absent, and the log says so once.
 
 use std::sync::OnceLock;
 
@@ -27,14 +27,14 @@ pub(super) fn is_chain_entry(entry: &str) -> bool {
     entry.contains('\\') || entry.contains('/')
 }
 
-/// The stock interface's table of contents, which `UI_Init` hands to the `.toc` runner, once per UI
-/// build, `ReloadUI` included.
+/// The stock interface's table of contents, which the UI init hands to the `.toc` runner, once per
+/// UI build, `ReloadUI` included.
 pub(super) const TOC: &str = r"Interface\FrameXML\FrameXML.toc";
 
-/// The stock key-binding commands, which `UI_Init` loads after the [`TOC`] walk.
+/// The stock key-binding commands, which the UI init loads after the [`TOC`] walk.
 pub(super) const BINDINGS: &str = r"Interface\FrameXML\Bindings.xml";
 
-/// The default key set, which `UI_Init` reads.
+/// The default key set, which the UI init reads.
 pub(super) const DEFAULT_BINDINGS: &str = r"WTF\DefaultBindings.wtf";
 
 /// The core interface: the chain's own [`TOC`], patched or not, as an [`Addon`] over the chain, or
@@ -129,8 +129,8 @@ fn read_loose(req: &str) -> Option<Vec<u8>> {
         benilla_formats::wow_data()
             .map(|data| {
                 let install = data.parent().map(std::path::Path::to_path_buf);
-                // `Data\` and its locale alternate, `Data\<locale>\`
-                // (`SFile::SetDataPathAlternate`), where the login screen's agreements are.
+                // `Data\` and its locale alternate, `Data\<locale>\`, where the login screen's
+                // agreements are.
                 let locale = benilla_formats::data_locale(&data)
                     .ok()
                     .map(|l| data.join(l));

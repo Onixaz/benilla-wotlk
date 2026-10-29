@@ -18,8 +18,8 @@ use crate::ui_script::VmMemo;
 use crate::ui_unit::UnitFeed;
 
 /// The book's weapon icons, which `GetSpellInfo` substitutes as `GetSpellTexture` does: the main
-/// hand's for the melee auto-attack (`CGActionBar::GetAttackTexture`) and the ranged weapon's for
-/// a ranged shot (`GetRangedTexture`), `None` without one.
+/// hand's for the melee auto-attack and the ranged weapon's for a ranged shot, as the action bar's
+/// attack and ranged texture reads pick them, `None` without one.
 #[derive(Resource, Clone, Default, PartialEq)]
 pub(crate) struct WeaponActionIcons {
     pub(crate) attack: Option<String>,
@@ -44,7 +44,7 @@ struct Snapshot {
     cast: CastNow,
 }
 
-/// The player's cast state `Spell_C_IsCurrentSpell` (`0x806030`) reads.
+/// The player's cast state the current-spell test (`0x806030`) reads.
 #[derive(Default)]
 struct CastNow {
     /// The pending or running cast, or the queued strike (`0x805f30`).
@@ -72,7 +72,7 @@ const EFFECT_ATTACK: u32 = 78;
 const AURA_SHAPESHIFT: u32 = 36;
 
 impl Source {
-    /// `Spell_C_IsActiveSpell` (`0x802cb0`) for the player: a critter summon while its creature is
+    /// The active-spell test (`0x802cb0`) for the player: a critter summon while its creature is
     /// out, a spell whose own cancelable aura (flag `0x10`) is up, or a mount while any `MOUNTED`
     /// aura rides its creature.
     fn is_active_spell(
@@ -106,7 +106,7 @@ impl Source {
 }
 
 impl SpellInfoSource for Source {
-    /// `Spell_C_IsCurrentSpell` (`0x806030`): no row is nil; the pending cast; the auto-attack
+    /// The current-spell test (`0x806030`): no row is nil; the pending cast; the auto-attack
     /// while attacking; a trade-skill opener while its line's book is open; a critter, mount or
     /// shapeshift by [`Source::is_active_spell`].
     fn is_current_spell(&self, spell_id: u32) -> bool {
@@ -164,8 +164,8 @@ impl SpellInfoSource for Source {
         } else {
             Some(d.icon.clone().unwrap_or_default())
         };
-        // `Spell_C_GetPowerCost` and `Spell_C_GetPowerCostPerSecond` (`0x7ff100`) over the shared
-        // display divisor; a positive per-second cost is the funnel's.
+        // The power-cost and per-second-cost reads (`0x7ff100`) over the shared display divisor; a
+        // positive per-second cost is the funnel's.
         let cost = caster.map_or(d.mana_cost, |c| {
             usable::power_cost_at(d, &c.store.0, c.level, mods)
         });
@@ -194,15 +194,15 @@ impl SpellInfoSource for Source {
         } else {
             (i64::from(per_second), true)
         };
-        // `GetCastTime(spell, pet, 0, 1)` as a dword, 0 for an `Attributes & 0x40` spell.
+        // The cast-time read, `(spell, pet, 0, 1)`, as a dword, 0 for an `Attributes & 0x40` spell.
         let cast_ms = if d.attributes & 0x40 != 0 {
             0
         } else {
             let level = caster.map_or(0, |c| c.level);
             self.spells.cast_time_unclamped_ms(d, level, mods) as u32
         };
-        // The range needs the player and the caster: a melee row is 0, 0; else `GetMinMaxRange`
-        // with no target, and a minimum-range row's floor `5 + min` (`0x7ff400`).
+        // The range needs the player and the caster: a melee row is 0, 0; else the min/max range
+        // read with no target, and a minimum-range row's floor `5 + min` (`0x7ff400`).
         let range = snap.player.as_ref().and(caster).map(|c| {
             let row = self.spells.ranges.get(d.range_index);
             if row.is_some_and(|r| r.is_melee()) {

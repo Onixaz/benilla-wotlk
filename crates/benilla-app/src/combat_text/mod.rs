@@ -90,17 +90,16 @@ struct WorldText {
 pub(crate) struct WorldTexts(Vec<WorldText>);
 
 /// The face of the floating numbers: the Lua global `DAMAGE_TEXT_FONT`, resolved once per world
-/// session. The reference reads its value (the only read) through `FrameScript_GetText` and
-/// `GetGlobalString`, a plain `lua_gettable`. It is called, and after the UI load, so after
-/// `Fonts.xml` and every non-LoadOnDemand addon's `ADDON_LOADED`, where addons assign it. The
-/// handle has one writer and `/reloadui` does not re-run, so a later assignment lands at the next
-/// world entry. `None` draws in the default face; the reference has no fallback face and draws
-/// nothing.
+/// session. The reference reads its value once, through its global-string lookup, a plain
+/// `lua_gettable`. The read runs in the world-entry load after the UI load, so after `Fonts.xml`
+/// and every non-LoadOnDemand addon's `ADDON_LOADED`, where addons assign it. The handle has one
+/// writer and `/reloadui` does not re-run the read, so a later assignment lands at the next world
+/// entry. `None` draws in the default face; the reference has no fallback face and draws nothing.
 #[derive(Resource, Default)]
 pub(crate) struct DamageTextFont(pub(crate) Option<String>);
 
-/// Read `DAMAGE_TEXT_FONT` at the tail of the world-entry UI load. The reference takes a string or
-/// number and leaves `""` otherwise, which the font factory rejects; empty is `None`.
+/// Read `DAMAGE_TEXT_FONT` at the tail of the world-entry UI load. The global-string lookup takes a
+/// string or number and leaves `""` otherwise, which the font factory rejects; empty is `None`.
 pub(crate) fn read_damage_text_font(script: &benilla_ui::script::UiScript) -> DamageTextFont {
     let value: Option<String> = script.lua().globals().get("DAMAGE_TEXT_FONT").ok();
     DamageTextFont(value.filter(|v| !v.is_empty()))
@@ -337,8 +336,8 @@ fn charmer_or_creator(store: &crate::net::ObjectStore) -> Option<u64> {
     set(store.0.unit_charmed_by()).or_else(|| set(store.0.unit_created_by()))
 }
 
-/// `IsOwnedByActivePlayer` (`0x7190a0`), the source class `K`: the player, or a unit whose charmer
-/// or creator, or whose owner's, is the player; `None` floats nothing.
+/// The active-player ownership test (`0x7190a0`), the source class `K`: the player, or a unit whose
+/// charmer or creator, or whose owner's, is the player; `None` floats nothing.
 pub(crate) fn owned_by_active_player<'a>(
     source: u64,
     me: Option<u64>,
@@ -369,7 +368,8 @@ fn melee_impact_text(
 ) {
     let store_of = |g: u64| index.0.get(&g).and_then(|&e| stores.get(e).ok());
     for crate::creature_anim::SwingImpact { swing: s, .. } in impacts.read() {
-        // First: a swing the verdict hides floats nothing; the flinch, blood and sounds still fire.
+        // First of all: a swing the display verdict hides floats nothing; the flinch, blood and
+        // sounds still fire.
         if !s.displayed {
             continue;
         }

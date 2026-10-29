@@ -3,7 +3,7 @@
 //! with the client's `bit` library and base-library helpers ([`lua51`]).
 //!
 //! A frame's Lua value is a table whose `T[0]` lightuserdata holds a `u32` id where the reference
-//! holds the `CScriptObject*`, with an `__index` metatable. A handler is `pcall`ed with
+//! holds the script object's pointer, with an `__index` metatable. A handler is `pcall`ed with
 //! `(self, [event,] ...)` as arguments, `this` and `event` set as globals and restored after
 //! ([`event::script_parameters`]).
 //!
@@ -92,7 +92,7 @@ mod tutorial;
 mod unit_menu;
 pub use unit_menu::{DifficultyState, ReferAFriendState};
 mod worldmap_arrow;
-// `camera_view`: the five camera views and `FlipCameraYaw`, the reference's `UIUtil\Camera.cpp`.
+// `camera_view`: the five camera views and `FlipCameraYaw`, as the reference's UI camera has them.
 mod button;
 mod calendar;
 mod calls;
@@ -591,7 +591,7 @@ pub(crate) const REGION_MAP_METHODS: [&str; 24] = [
 const REG_WRAPPERS: &str = "__benilla_wrappers";
 const REG_SCRIPTS: &str = "__benilla_scripts";
 
-/// The layout handle of the screen root (the client's `CSimpleTop`, not the `UIParent` frame),
+/// The layout handle of the screen root (the client's UI root, not the `UIParent` frame),
 /// which a top-level `SetPoint` without `relativeTo` anchors to; frame ids, from 1, are the rest.
 pub const SCREEN: crate::layout::Handle = 0;
 
@@ -917,7 +917,7 @@ pub fn addon_chunk_name(folder: &str, file: &str) -> String {
 }
 
 /// What both FrameScript states hold: FrameScript's Lua init (the base libraries, `bit` and the
-/// client's base-library helpers) and the registrars the glue manager's `Resume` (`0x4da5f0`)
+/// client's base-library helpers) and the registrars the glue manager's resume (`0x4da5f0`)
 /// shares with the in-game UI's init: the system table `0xad2184` (the clock and `ConsoleExec`),
 /// the frame-script table `0xaf5848` with the widget method tables, and the sound table
 /// `0xb2d928`.
@@ -1089,7 +1089,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
 
 impl UiScript {
     /// The in-game VM: FrameScript's base set and the registrars both states share
-    /// ([`install_framescript`]), then the in-game surface `UI_Init` registers.
+    /// ([`install_framescript`]), then the in-game surface the UI init registers.
     pub fn new() -> mlua::Result<UiScript> {
         let lua = install_framescript(VmKind::InGame)?;
         install_in_game(&lua)?;
@@ -1127,9 +1127,9 @@ impl UiScript {
     /// Which VM this is: a fresh number per [`UiScript::new`], never reused, so anything the host
     /// seeded into a VM is valid only while this still matches.
     ///
-    /// The reference keeps one Lua state, replaced only by the reset: from `UI_Init` as it loads
-    /// FrameXML, `ShutdownGame` and the glue builder, never the UI teardown. GlueXML and FrameXML
-    /// never share a state, so world entry mints its VM at the top of its load.
+    /// The reference keeps one Lua state, replaced only by the reset: from the UI init as it loads
+    /// FrameXML, the game shutdown and the glue builder, never the UI teardown. GlueXML and
+    /// FrameXML never share a state, so world entry mints its VM at the top of its load.
     pub fn session(&self) -> u64 {
         self.session
     }
@@ -1220,8 +1220,8 @@ impl UiScript {
     }
 
     /// Push the player's facing (radians) onto every Minimap's player-arrow `Model`, every frame,
-    /// raw: `CMinimap::SetPlayerFacing` copies it into the field `Model:SetFacing` writes, so the
-    /// arrow's `GetFacing()` reads it.
+    /// raw: the minimap's player-facing set copies it into the field `Model:SetFacing` writes, so
+    /// the arrow's `GetFacing()` reads it.
     pub fn set_minimap_player_facing(&mut self, facing: f32) {
         let mut model = self.model_mut();
         let quiet = model.epoch();
@@ -1250,7 +1250,7 @@ impl UiScript {
         }
     }
 
-    /// Turn `MinimapCompassTexture` to `radians` as `CGMinimapFrame::SetCompassRotation`
+    /// Turn `MinimapCompassTexture` to `radians` as the minimap frame's compass rotation
     /// (`0x57d5b0`) does each frame: its corners only, written when the angle moves.
     pub fn set_minimap_compass_rotation(&mut self, radians: f32) {
         let Ok(mlua::Value::Table(t)) = self
@@ -1795,7 +1795,7 @@ impl UiScript {
     /// [`ERROR_HANDLER_NESTING`] and is dropped unreported, as the reference's pcall pops its
     /// `LUA_ERRERR`. Each caught error starts its own chain, so the next one still reaches the
     /// handler. The call is [`stdlib::protected_call`]'s, so a raising handler costs no `_G`
-    /// search. `debuglocals` answers only inside it, as `s_inErrorHandler` (`0x819730`) gates it.
+    /// search. `debuglocals` answers only inside it, as the in-handler flag (`0x819730`) gates it.
     pub fn dispatch_script_errors_to_handler(&mut self) {
         if self.model_ref().pending_error_dispatch.is_empty() {
             return;

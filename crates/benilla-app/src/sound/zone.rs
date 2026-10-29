@@ -61,7 +61,7 @@ fn phase(clock: &GameClock) -> usize {
 
 /// The selector's two forced beds, ahead of the weather and zone beds: a ghost's, else a submerged
 /// listener's. The kit is 0 when the row was not found, and the selector then returns silence
-/// rather than falling through, as the reference return the global unchecked.
+/// rather than falling through, as the reference returns the global unchecked.
 fn forced_bed(kits: &SoundKits, ghost: bool, submerged: bool) -> Option<u32> {
     if ghost {
         Some(kits.ghost_bed().unwrap_or(0))
@@ -72,7 +72,7 @@ fn forced_bed(kits: &SoundKits, ghost: bool, submerged: bool) -> Option<u32> {
     }
 }
 
-/// The outgoing music fade, the only fade on the music slot: → `(0x40800000 = 4.0f)`.
+/// The outgoing music fade, the only fade on the music slot: 4.0 s (`0x40800000 = 4.0f`).
 const MUSIC_FADE_OUT_MS: u64 = 4000;
 
 /// The Lua `PlayMusic` slot's base volume, set with no fade under the MusicVolume slider (the glue
@@ -84,8 +84,8 @@ const LUA_MUSIC_VOLUME: f32 = 1.0;
 /// nothing playing still pushes out a start that was due.
 const LUA_MUSIC_SCHEDULE_SECS: f64 = 6.0;
 
-/// The ambience crossfade, both legs (out `(0x40a00000 = 5.0f)`, → `(5.0f, kit vol)`);
-/// submerge/emerge is instant instead.
+/// The ambience crossfade, both legs (out over `0x40a00000 = 5.0f`, in over `5.0f` to the kit
+/// volume); submerge/emerge is instant instead.
 const AMBIENCE_TRANSITION_FADE_MS: u64 = 5000;
 
 /// The linear fade-in of a new ambience bed, driven per frame because the per-frame volume feed
@@ -138,8 +138,8 @@ pub(super) struct ZoneAudio {
     /// compared against.
     music_kit: u32,
     music_kit_vol: f32,
-    /// The Lua `PlayMusic` slot, the reference's: a second music stream beside the zone track's,
-    /// driven only by `PlayMusic`/`StopMusic`.
+    /// The Lua `PlayMusic` slot, as in the reference: a second music stream beside the zone
+    /// track's, driven only by `PlayMusic`/`StopMusic`.
     lua_music: Option<StreamingSoundHandle<kira::sound::FromFileError>>,
     /// The file on that slot, kept to reopen it at its natural end: the reference opens it with
     /// `SetLoopCount(-1)`, where this slot restarts it.
@@ -421,8 +421,8 @@ fn apply_music_suppression(zone: &mut ZoneAudio, suppressed: bool, now: f64) {
     }
     zone.music_suppressed = suppressed;
     // A live Lua track is paused and resumed, and nothing else: the reference writes the flag,
-    // finds the slot live, pauses it and returns, so the zone stream is not stopped and the
-    // reference is never rearmed.
+    // finds the slot live, pauses it and returns, so the zone stream is not stopped and the next
+    // zone-track start is never rearmed.
     if zone.lua_slot_live() {
         if let Some(h) = zone.lua_music.as_mut() {
             if suppressed {
@@ -453,10 +453,10 @@ fn zone_music_row(cat: &AreaSoundCatalog, _id: u32) -> Option<&benilla_formats::
     cat.zone_music(_id)
 }
 
-/// When the next track starts after this one ends, the reference's: `now` plus the row's random
-/// per-phase silence interval, or `now` under `SoundZoneMusicNoDelay`. That CVar removes only the
-/// same-zone gap; a zone change is immediate either way. Its `== 0 → now + 6000 ms` arm is not a
-/// cold start: world entry never reaches this function.
+/// When the next track starts after this one ends, as the reference schedules it: `now` plus the
+/// row's random per-phase silence interval, or `now` under `SoundZoneMusicNoDelay`. That CVar
+/// removes only the same-zone gap; a zone change is immediate either way. Its
+/// `== 0 → now + 6000 ms` arm is not a cold start: world entry never reaches this function.
 fn next_track_time(
     zone: &mut ZoneAudio,
     cat: &AreaSoundCatalog,
@@ -600,8 +600,8 @@ fn start_music_stream(
     }
 }
 
-/// The Lua music verb, the reference's: `PlayMusic` calls it with a name and `StopMusic` with NULL,
-/// in this order:
+/// The Lua music verb, as in the reference: `PlayMusic` calls it with a name and `StopMusic` with
+/// NULL, in this order:
 ///
 /// 1. [`take_lua_music_slot`], the shared head and the whole NULL arm;
 /// 2. the branch;
@@ -624,7 +624,7 @@ fn set_lua_music(
     };
     // The reference re-reads its own slot and the zone's.
     if open_lua_music(zone, out, assets, config, path) {
-        // The same `(4.0f)` a zone-music change makes.
+        // The same 4.0 s fade a zone-music change makes.
         if let Some(mut h) = zone.music.take() {
             h.stop(mixer::fade(MUSIC_FADE_OUT_MS));
             info!("zone music: faded out under a Lua PlayMusic");
@@ -662,7 +662,7 @@ fn open_lua_music(
     };
     // The chain, then the addon folder: an addon's own track has an `Interface\AddOns\…` path.
     let Some(bytes) = assets.read_file_or_loose(path) else {
-        // Silent, as the reference's; the name is used verbatim.
+        // Silent, as in the reference; the name is used verbatim.
         debug!("Lua music: {path} — not in the patch chain or the AddOns folder");
         return false;
     };
@@ -1067,8 +1067,8 @@ fn stop_world_soundscape(zone: &mut ZoneAudio, reason: &str) {
     }
 }
 
-/// A sound-system restart stops the music, the Lua track and the bed (`SE2::StopAllSounds
-/// 0x87ded0`); the scheduler starts cold and picks the zone's music and bed again.
+/// A sound-system restart stops the music, the Lua track and the bed (`0x87ded0`); the scheduler
+/// starts cold and picks the zone's music and bed again.
 fn stop_on_restart(
     mut restarts: MessageReader<super::engine::SoundRestart>,
     mut zone: NonSendMut<ZoneAudio>,
@@ -1356,7 +1356,7 @@ mod tests {
         assert_eq!(
             zone.next_track_at,
             Some(100.0),
-            "the +3.000 s resume belongs to the other edge — the reference is never rearmed here"
+            "the +3.000 s resume belongs to the other edge — the zone track is never rearmed here"
         );
         assert!(
             zone.lua_slot_live(),
@@ -1440,8 +1440,8 @@ mod tests {
         );
     }
 
-    /// The reference return the global unchecked, so an unresolved row is silence (kit 0), not the
-    /// next bed in the ranking.
+    /// The reference returns the global unchecked, so an unresolved row is silence (kit 0), not
+    /// the next bed in the ranking.
     #[test]
     fn an_unresolved_forced_bed_is_silence() {
         let kits = SoundKits::new(SoundKitCatalog::named_for_tests(&[(

@@ -3,8 +3,8 @@
 //! columns; this module owns its 16 `EmoteText[]` columns and the strings they point into.
 //!
 //! The composer is the reference's: a 4-bit column selector, a four-rung fallback when the column
-//! has no string for the locale, then one of four `SStrPrintf` sites, performer first. All four
-//! rungs empty means no chat line at all; the emote is then only an animation and a voice.
+//! has no string for the locale, then one of four format calls, performer first. All four rungs
+//! empty means no chat line at all; the emote is then only an animation and a voice.
 
 use std::collections::HashMap;
 
@@ -44,7 +44,7 @@ pub struct EmoteLine<'a> {
     /// The target name as the wire carries it, never round-tripped through a name cache; empty is
     /// untargeted.
     pub target: &'a str,
-    /// Your own name (`GetOwnName`), compared case-insensitively with `target`.
+    /// Your own name, compared case-insensitively with `target`.
     pub your_name: &'a str,
 }
 
@@ -112,8 +112,8 @@ impl EmoteTextCatalog {
     }
 }
 
-/// `SStrPrintf` reduced to the `%s` these templates use. Deviation: a surplus `%s` stays verbatim,
-/// where the reference would print stack garbage; no shipped row has one.
+/// The reference's printf reduced to the `%s` these templates use. Deviation: a surplus `%s` stays
+/// verbatim, where the reference would print stack garbage; no shipped row has one.
 fn fill(template: &str, args: &[&str]) -> String {
     let mut out = String::with_capacity(template.len() + 16);
     let mut rest = template;

@@ -175,7 +175,7 @@ fn the_next_login_is_accepted_after_the_realm_list_closes_or_stands() {
 
     fake::login(&cycles, &realmd.addr);
     assert!(!next_list(&cycles.events).1);
-    // `RealmListDialogCancelled` on the login screen: `CLoginMgr::Cancel`.
+    // `RealmListDialogCancelled` on the login screen: the login manager's cancel.
     cycles.realm.send(RealmRequest::Close).unwrap();
     fake::login(&cycles, &realmd.addr);
     let (realms, failed) = next_list(&cycles.events);
@@ -340,7 +340,7 @@ fn leave_drops_the_world_session_and_keeps_the_logon() {
 /// The character park's requests and the realm list's are met in the order the app made them, on
 /// one channel. Two roster asks and a `Leave` queue while the IO thread is held in an earlier ask's
 /// slow reply: both asks go out on the old link before it leaves, none is dropped, and the leave is
-/// honored after them. The reference sends `CMSG_CHAR_ENUM` at the verb and `ConnectToRealm` only
+/// honored after them. The reference sends `CMSG_CHAR_ENUM` at the verb and its realm connect only
 /// then closes the link.
 #[test]
 fn the_park_serves_its_requests_in_the_order_they_were_made() {
@@ -666,8 +666,8 @@ fn a_refused_login_returns_to_character_select_on_the_same_link() {
     assert_eq!(world.authentications(), 1);
 }
 
-/// `EnterWorld` closes the realmd link (`CLoginMgr::Cancel`); it stays up at character select until
-/// then.
+/// `EnterWorld` closes the realmd link (the login manager's cancel); it stays up at character
+/// select until then.
 #[test]
 fn entering_the_world_closes_the_realmd_link() {
     let (realmd, _world) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);

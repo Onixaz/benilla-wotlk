@@ -54,7 +54,7 @@ impl Loader<'_> {
         }
     }
 
-    /// `<Button>` and `<CheckButton>` (`0x96fed0`, after `CSimpleFrame::LoadXML 0x4932c0`): the
+    /// `<Button>` and `<CheckButton>` (`0x96fed0`, after the frame's XML load, `0x4932c0`): the
     /// label, the state textures with their own layout, `checked`, the per-state fonts and `text=`.
     /// `$parent` in a child's anchors is this button.
     pub(super) fn apply_button(
@@ -118,8 +118,8 @@ impl Loader<'_> {
                 }
             }
         };
-        // `<ButtonText>` is the one label element, an ordinary FontString (`LoadXML_String
-        // 0x815fa0`); 3.3.5a has no `<NormalText>` spelling (`0x96ffe1`).
+        // `<ButtonText>` is the one label element, an ordinary FontString (`0x815fa0`); 3.3.5a has
+        // no `<NormalText>` spelling (`0x96ffe1`).
         for bt in children_named(el, "ButtonText") {
             // `SetText` creates the label even with no text, so its layout lands on a real region;
             // `text=` is a global-string key.
@@ -149,8 +149,8 @@ impl Loader<'_> {
                 // `parentKey` binds the label like any region: stock 3.3.5a reads a quest row's
                 // `.normalText` (`QuestLogFrame.xml:86`, `QuestLogFrame.lua:187`).
                 self.bind_parent_key(bt, wrapper, &region);
-                // Clear, lay out, then the implicit step by the label's own justify
-                // (`PostLoadXML 0x4836d0`), so the button's adopter anchor never fires on it.
+                // Clear, lay out, then the implicit step by the label's own justify (the post-load
+                // step, `0x4836d0`), so the button's adopter anchor never fires on it.
                 self.call_region(&region, "ClearAllPoints", (), dbg);
                 self.apply_region_layout(bt, &region, self_name, dbg);
                 if let Err(e) = crate::script::implicit_creation_anchor_lua(self.lua, &region) {
@@ -176,14 +176,14 @@ impl Loader<'_> {
         if is_check {
             tex("CheckedTexture", "SetCheckedTexture", self);
             tex("DisabledCheckedTexture", "SetDisabledCheckedTexture", self);
-            // `CSimpleCheckbox::LoadXML` (`0x9624c0`) reads it by `StringToBOOL`.
+            // The checkbox's XML load (`0x9624c0`) reads it as a boolean.
             if let Some(checked) = el.attr_bool_opt("checked") {
                 self.call(wrapper, "SetChecked", checked, dbg);
             }
         }
         // The per-state fonts: each element reads `style=` alone and stores the named font object,
-        // no copy (`0x97001d`, `0x970088`, `0x9700ec` → `CSimpleFont::GetFont 0x496f70`). A name
-        // with no font object warns and empties the slot (`0x97005f`, `0x9700c6`, `0x970121`).
+        // no copy (`0x97001d`, `0x970088`, `0x9700ec` → the font lookup, `0x496f70`). A name with
+        // no font object warns and empties the slot (`0x97005f`, `0x9700c6`, `0x970121`).
         for (tag, method, state) in [
             ("NormalFont", "SetNormalFontObject", "NORMAL"),
             ("DisabledFont", "SetDisabledFontObject", "DISABLED"),

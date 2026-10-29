@@ -16,10 +16,10 @@ pub use quest_poi::*;
 /// A [`Frame`]'s widget class; one with modeled behavior carries it in [`Frame::kind_state`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum FrameKind {
-    /// Plain `CSimpleFrame`, the base container.
+    /// A plain `Frame`, the base container.
     Frame,
-    /// `CGWorldFrame`, the singleton the world renders behind: a `Frame` to Lua, in stratum `WORLD`
-    /// below `BACKGROUND`; hovered, it is not over the UI but runs scripts.
+    /// The world frame, the singleton the world renders behind: a `Frame` to Lua, in stratum
+    /// `WORLD` below `BACKGROUND`; hovered, it is not over the UI but runs scripts.
     WorldFrame,
     Button,
     CheckButton,
@@ -28,34 +28,34 @@ pub enum FrameKind {
     Slider,
     ScrollFrame,
     Model,
-    /// `CGCharacterModelBase`: `Model` plus `SetUnit`, `RefreshUnit` and `SetRotation`, which a
+    /// The character model base: `Model` plus `SetUnit`, `RefreshUnit` and `SetRotation`, which a
     /// plain `<Model>` lacks.
     PlayerModel,
-    /// `CGDressUpModelFrame`: `PlayerModel` plus `Undress`, `Dress` and `TryOn`; a try-on is
-    /// composed app-side against live equipment.
+    /// `DressUpModel`: `PlayerModel` plus `Undress`, `Dress` and `TryOn`; a try-on is composed
+    /// app-side against live equipment.
     DressUpModel,
-    /// `TabardModel`: `CGCharacterModelBase` plus ten verbs.
+    /// `TabardModel`: the character model base plus ten verbs.
     TabardModel,
-    /// `CSimpleMessageFrame`, `UIErrorsFrame`'s class: a sibling of the scrolling one.
+    /// `MessageFrame`, `UIErrorsFrame`'s class: a sibling of the scrolling one.
     MessageFrame,
-    /// `CSimpleMessageScrollFrame`, the chat window's ring-buffered class; a sibling of
+    /// `ScrollingMessageFrame`, the chat window's ring-buffered class; a sibling of
     /// [`FrameKind::MessageFrame`] whose offsets do not transfer.
     ScrollingMessageFrame,
     ColorSelect,
     SimpleHtml,
     MovieFrame,
-    /// The `GameTooltip` family, a game-layer factory; its 38 bindings are.
+    /// The `GameTooltip` family, a game-layer factory with 38 bindings.
     GameTooltip,
     /// The `<Minimap>` widget, a game-layer factory the app draws the map into.
     Minimap,
     /// The `Cooldown` widget (factory `0x51a380`): a `Frame` that paints its own sweep.
     Cooldown,
-    /// `CGQuestPOIFrame` (registered at `0x5210c1`): the world map's quest blob layer.
+    /// `QuestPOIFrame` (registered at `0x5210c1`): the world map's quest blob layer.
     QuestPoiFrame,
 }
 
 impl FrameKind {
-    /// A `CSimpleModel` kind, carrying a [`ModelState`].
+    /// A `Model` kind, carrying a [`ModelState`].
     pub fn is_model(self) -> bool {
         matches!(
             self,
@@ -67,7 +67,7 @@ impl FrameKind {
     }
 }
 
-/// The kind of a [`Region`] leaf, the client's `CScriptRegion`-derived non-frame objects.
+/// The kind of a [`Region`] leaf, the client's script-region non-frame objects.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RegionKind {
     /// A `Texture` (BLP quad).
@@ -79,28 +79,27 @@ pub enum RegionKind {
     Title,
 }
 
-/// The state a modeled kind adds over `CSimpleFrame`, carried on the [`Frame`] node.
+/// The state a modeled kind adds over a plain `Frame`, carried on the [`Frame`] node.
 #[derive(Clone, Debug, PartialEq)]
 pub enum KindState {
     /// No modeled per-kind state.
     None,
-    /// `CSimpleStatusBar`: a value filling a bar texture.
+    /// `StatusBar`: a value filling a bar texture.
     StatusBar(StatusBarState),
-    /// `CSimpleButton`/`CSimpleCheckbox`; the checkbox extends the button and uses the `checked`
-    /// members.
+    /// `Button`/`CheckButton`; the checkbox extends the button and uses the `checked` members.
     Button(ButtonState),
-    /// `CSimpleEditBox`: text, cursor, selection, flags and its FontString.
+    /// `EditBox`: text, cursor, selection, flags and its FontString.
     EditBox(EditBoxState),
-    /// `CSimpleMessageScrollFrame`: the line ring, fades and scrollback.
+    /// `ScrollingMessageFrame`: the line ring, fades and scrollback.
     ScrollingMessage(ScrollingMessageState),
-    /// `CSimpleMessageFrame`: lines and `insertMode`, no ring or scrollback.
+    /// `MessageFrame`: lines and `insertMode`, no ring or scrollback.
     Message(MessageFrameState),
-    /// `CSimpleScrollFrame`: the scroll child and offsets. The reference stores an offset
-    /// unclamped; measures the range from the child's subtree.
+    /// `ScrollFrame`: the scroll child and offsets. The reference's setter stores an offset
+    /// unclamped; its range getter measures from the child's subtree.
     Scroll(ScrollFrameState),
-    /// `CSimpleSlider`, every scrollbar included.
+    /// `Slider`, every scrollbar included.
     Slider(SliderState),
-    /// `CSimpleColorSelect`.
+    /// `ColorSelect`.
     ColorSelect(ColorSelectState),
     /// The scene state of every model kind; the pixels are the app's.
     Model(ModelState),
@@ -199,7 +198,7 @@ impl TooltipAnchor {
         }
     }
 
-    /// The mode a name selects, in any case (`SStrCmpI`).
+    /// The mode a name selects, in any case (a case-insensitive compare).
     pub fn from_name(name: &str) -> Option<Self> {
         [
             TooltipAnchor::Left,
@@ -268,7 +267,7 @@ pub struct TooltipState {
     pub world_owned: bool,
     /// Armed for a compare render: the next `SetInventoryItem` prepends "Currently Equipped"
     /// (`[arg+0x18]`, not the compact `[arg+0x14]`), surviving the stock caller's `SetOwner` in
-    /// between (`MerchantFrame.xml:67-72`); the reference's route to the reference is untraced.
+    /// between (`MerchantFrame.xml:67-72`); the reference's route to the item builder is untraced.
     pub equipped_header_armed: bool,
     /// `SetPadding`: extra width past the content (`ItemRef.xml:40` sets 16 for the close button).
     pub padding: f32,
@@ -299,7 +298,7 @@ pub const TOOLTIP_FADE_SECS: f64 = 0.5;
 /// A wrap-flagged line's width, pinned when it is appended; the reference's column is untraced.
 pub const TOOLTIP_WRAP_WIDTH: f32 = 260.0;
 
-/// A model pane's scene: the `CSimpleModel` members every model kind carries, read and written by
+/// A model pane's scene: the `Model` members every model kind carries, read and written by
 /// `Model`'s 23 methods; the render is the app's.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModelState {
@@ -349,10 +348,10 @@ pub struct ModelState {
     pub fog_near: f32,
     /// Fog far (`+0x3b0`), shaped like [`Self::fog_near`]; the ctor's is `1.0`.
     pub fog_far: f32,
-    /// A `ModelFFX`, the glue's `CSimpleModelFFX`. Its vtable differs from `CSimpleModel`'s in two
-    /// slots past the destructor: its OnShow installs the glue glow pass and pins
-    /// `LightParams.glow` to (0.30), and its layer-2 paint callback brackets the model paint with
-    /// the full-screen-effect pass pair.
+    /// A `ModelFFX`, the glue's model class. Its vtable differs from a plain `Model`'s in two slots
+    /// past the destructor: its OnShow installs the glue glow pass and pins `LightParams.glow` to
+    /// (0.30), and its layer-2 paint callback brackets the model paint with the full-screen-effect
+    /// pass pair.
     pub ffx: bool,
     /// `SetGlow(value)`: the model's glow, `None` until a script sets one.
     pub glow: Option<f32>,
@@ -360,9 +359,9 @@ pub struct ModelState {
     /// (`AddLight`, `AddCharacterLight`, `AddPetLight`), each two arrays of up to four,
     /// `ResetLights` clearing all six.
     pub ffx_lights: [[Vec<ModelLight>; 2]; 3],
-    /// The scene's lighting callback is the select screen's (`GenericLightingCallback` `0x4e3a20`,
-    /// installed by `SetCharSelectBackground`); it rides the model instance, so the next `SetModel`
-    /// or `ClearModel` drops it.
+    /// The scene's lighting callback is the select screen's (`0x4e3a20`, installed by
+    /// `SetCharSelectBackground`); it rides the model instance, so the next `SetModel` or
+    /// `ClearModel` drops it.
     pub select_lighting: bool,
     /// The number of the instance the last `SetModel` made: the reference builds a new one on every
     /// call, its scene starting over, even for the file it held. 0 for none.
@@ -387,7 +386,7 @@ impl ModelFog {
     }
 }
 
-/// A model pane's embedded `CGLight` (`+0x324`), its only light: off on a plain `<Model>` until Lua
+/// A model pane's embedded light (`+0x324`), its only light: off on a plain `<Model>` until Lua
 /// enables it, so a lit batch draws black, and on for a `PlayerModel`. Colours are stored times
 /// their intensity.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -417,7 +416,7 @@ impl Default for ModelLight {
     }
 }
 
-/// A fresh pane as the `CSimpleModel` ctor leaves it.
+/// A fresh pane as the `Model` constructor leaves it.
 impl Default for ModelState {
     fn default() -> Self {
         Self {
@@ -679,7 +678,7 @@ pub struct MinimapState {
     pub inside: bool,
     /// `Minimap:SetMaskTexture`'s mask, write-only from Lua; `None` is [`MINIMAP_DEFAULT_MASK`].
     pub mask_texture: Option<String>,
-    /// The player-arrow `Model` (`[Minimap+0x338]`), reached by `SetPlayerFacing`.
+    /// The player-arrow `Model` (`[Minimap+0x338]`), reached by the minimap's player-facing setter.
     pub player_arrow: Option<FrameHandle>,
     /// The player texture's `[width, height]` in frame units (`0x57e280`/`0x57e1c0`), unsized
     /// from the ctor (`0x57dca0`).
@@ -741,8 +740,8 @@ pub const MINIMAP_DEFAULT_ARROW_MODEL: &str = "Interface\\Minimap\\Rotating-Mini
 /// The default `minimapPlayerModel`, applied to engine child 9 alone.
 pub const MINIMAP_DEFAULT_PLAYER_MODEL: &str = "Interface\\Minimap\\MinimapArrow.mdx";
 
-/// A `CSimpleScrollFrame`'s members (`+0x318`/`+0x324`/`+0x328`); the getters measure the ranges
-/// live, and `range` is the pump's cache.
+/// A `ScrollFrame`'s members (`+0x318`/`+0x324`/`+0x328`); the getters measure the ranges live, and
+/// `range` is the pump's cache.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ScrollFrameState {
     /// `SetScrollChild`'s frame, which pans within this frame's rect.
@@ -777,8 +776,8 @@ pub struct ButtonFont {
     pub flags: String,
 }
 
-/// A button's state, `[CSimpleButton+0x328]`: 0 DISABLED, 1 NORMAL, 2 PUSHED, also the index into
-/// its texture array `+0x4b8`. Past the ctor, `SetState` is its only writer.
+/// A button's state, `[button+0x328]`: 0 DISABLED, 1 NORMAL, 2 PUSHED, also the index into its
+/// texture array `+0x4b8`. Past the constructor, the state setter is its only writer.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ButtonVisualState {
     /// `Disable()`: the button fires no clicks and draws from the Disabled slot.
@@ -888,8 +887,8 @@ pub fn mouse_button_bit(button: &str) -> Option<u32> {
     }
 }
 
-/// `MouseButtonStringToBitmask` (`0x96e9c0`): one `RegisterForClicks` name's bits, in any case;
-/// `AnyDown` is every Down bit, `AnyUp` every bit above them, anything else 0.
+/// The click-name parse (`0x96e9c0`): one `RegisterForClicks` name's bits, in any case; `AnyDown`
+/// is every Down bit, `AnyUp` every bit above them, anything else 0.
 pub fn click_mask_of(name: &str) -> u64 {
     let lower = name.to_ascii_lowercase();
     match lower.as_str() {
@@ -921,9 +920,9 @@ impl ButtonState {
         }
     }
 
-    /// `SetState`: entering a state with no texture keeps the shown one. A button is NORMAL before
-    /// `LoadXML` adds its art, so a press or `Disable()` without its own texture keeps the normal
-    /// art.
+    /// The state setter: entering a state with no texture keeps the shown one. A button is NORMAL
+    /// before its XML load adds its art, so a press or `Disable()` without its own texture keeps
+    /// the normal art.
     fn set_state(&mut self, new: ButtonVisualState) {
         if new == self.state {
             return;
@@ -951,11 +950,11 @@ impl ButtonState {
         self.state
     }
 
-    // ── The engine's edges ── Six of the reference's seven call sites, all passing `locked = 0`;
-    // the seventh is Lua's.
+    // ── The engine's edges ── Six of the state setter's seven call sites, all passing `locked =
+    // 0`; the seventh is Lua's.
 
-    /// `SetEnabled`: a no-op if nothing changes, so enabling a pushed button neither un-pushes nor
-    /// unlocks it; returns whether it ran.
+    /// The enable setter: a no-op if nothing changes, so enabling a pushed button neither un-pushes
+    /// nor unlocks it; returns whether it ran.
     pub fn set_enabled(&mut self, on: bool) -> bool {
         if on == self.enabled() {
             return false;
@@ -1065,8 +1064,8 @@ impl StatusBarState {
     }
 }
 
-/// A `CSimpleSlider`'s state. The default orientation is VERTICAL, unlike a StatusBar's: the
-/// stock `UIPanelScrollBarTemplate` declares none and is vertical.
+/// A `Slider`'s state. The default orientation is VERTICAL, unlike a StatusBar's: the stock
+/// `UIPanelScrollBarTemplate` declares none and is vertical.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SliderState {
     /// `SetMinMaxValues` low bound (XML `minValue`); a reversed pair is not swapped.
@@ -1110,8 +1109,8 @@ impl Default for SliderState {
 /// Where a press grabs the thumb: the offset from its leading edge that stays under the cursor,
 /// with distances from the track's leading edge so every UI surface shares it. Off the thumb it is
 /// the center, warping the value under the cursor. Deviation: on the thumb it is the grabbed point,
-/// where `CSimpleSlider` always centers it, because that feels less surprising and a stock-sized
-/// thumb hides the difference.
+/// where the reference's slider always centers it, because that feels less surprising and a
+/// stock-sized thumb hides the difference.
 pub fn slider_grab(cursor: f32, thumb_lead: f32, thumb_extent: f32) -> f32 {
     if cursor >= thumb_lead && cursor <= thumb_lead + thumb_extent {
         cursor - thumb_lead
@@ -1132,11 +1131,11 @@ pub fn slider_fraction(
     (travel > 0.0).then(|| ((cursor - grab) / travel).clamp(0.0, 1.0))
 }
 
-/// `CSimpleSlider::SetValue`'s arithmetic, op for op. The client holds the range as `min` and
-/// `span` (stores `end − start`). Clamp into `[min, span + min]`, a degenerate range pinning to
-/// `span + min`; then, unless `step` is 0, round half away from zero onto the `min + n·step`
-/// lattice. The result is not re-clamped, so an uneven range can overshoot `max` by up to half a
-/// step. The f64 intermediates are the x87 registers, each `as f32` a spill.
+/// `Slider:SetValue`'s arithmetic, op for op. The client holds the range as `min` and `span`
+/// (stores `end − start`). Clamp into `[min, span + min]`, a degenerate range pinning to `span +
+/// min`; then, unless `step` is 0, round half away from zero onto the `min + n·step` lattice. The
+/// result is not re-clamped, so an uneven range can overshoot `max` by up to half a step. The f64
+/// intermediates are the x87 registers, each `as f32` a spill.
 pub fn slider_set_value(v: f32, min: f32, span: f32, step: f32) -> f32 {
     let minv = f64::from(min);
     let vv = f64::from(v);
@@ -1275,7 +1274,7 @@ impl ColorSelectState {
         ((c.to_bits() >> 14) & 0xff) as u8
     }
 
-    /// The reference's unpack: the byte times the `f32` `0x3b808081`, 1/255 rounded up.
+    /// The fill callback's unpack: the byte times the `f32` `0x3b808081`, 1/255 rounded up.
     fn unpack_byte(b: u8) -> f32 {
         let k = f32::from_bits(0x3b80_8081);
         (f64::from(i32::from(b)) * f64::from(k)) as f32

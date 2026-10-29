@@ -334,7 +334,7 @@ pub(super) fn read_random_roll(r: &mut &[u8]) -> io::Result<(u32, u32, u32, u64)
 mod tests {
     use super::*;
 
-    /// A party leader's `/p` arrives as 3.3.5a type `0x33` (`ChatBubbleShow`'s 51), in the default
+    /// A party leader's `/p` arrives as 3.3.5a type `0x33` (the chat bubble's 51), in the default
     /// shape: language, sender, flags, receiver, text, tag. It parses to its own lane.
     #[test]
     fn a_party_leader_line_parses_to_its_own_lane() {

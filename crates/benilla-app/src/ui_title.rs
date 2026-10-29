@@ -1,7 +1,7 @@
 //! The title feed: `CharTitles.dbc` and the player's title fields into the VM, the known-titles
 //! watch's `KNOWN_TITLES_UPDATE`, `SetCurrentTitle`'s `CMSG_SET_TITLE` and `SMSG_TITLE_EARNED`'s
 //! chat line. 12340 registers one watch per known-titles u64 (`0x778`, `0x780`, `0x788`), each
-//! firing the event with `"player"` (`OnUpdatePlayerScriptEvent` `0x6cddd0`).
+//! firing the event with `"player"` (`0x6cddd0`).
 
 use bevy::prelude::*;
 
@@ -128,7 +128,7 @@ fn drain_title_sets(script: Option<NonSendMut<UiScript>>, commands: Res<NetComma
     }
 }
 
-/// `SMSG_TITLE_EARNED` (`CGChat::OnTitleEarned` `0x50c520`): `NEW_TITLE_EARNED` or
+/// `SMSG_TITLE_EARNED` (`0x50c520`): `NEW_TITLE_EARNED` or
 /// `OLD_TITLE_LOST` around the title filled with the player's name, as a system line. Nothing
 /// for a mask no row has or with no player. The earn's spell effect (kind 9) is not built.
 fn on_title_earned(

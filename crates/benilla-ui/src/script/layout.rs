@@ -138,7 +138,7 @@ fn region_node_hash(data: &RegionData) -> u64 {
     node.finish()
 }
 
-/// A texture's content-derived span in FrameXML units. `CSimpleTexture::GetWidth` returns the
+/// A texture's content-derived span in FrameXML units. The texture's width read returns the
 /// authored value unless it is exactly 0.0, else the texel extent through the `<AbsDimension>`
 /// converter, so one texel is one unit; a `<Color>` texture spans 8. `None` when there is nothing
 /// to measure: the axis stays 0, as in the reference with no texture.
@@ -164,7 +164,7 @@ pub(super) fn texel_span(
 /// The edge of the 8×8 surface the colour `SetTexture` makes.
 const SOLID_TEXTURE_TEXELS: f32 = 8.0;
 
-/// The floor under a FontString's derived span: `CSimpleFontString::GetWidth` returns at least one
+/// The floor under a FontString's derived span: the font string's width read returns at least one
 /// FrameXML unit, not one line, so empty text reads back 1, not 0.
 pub(super) const FONTSTRING_MIN_SPAN: f32 = 1.0;
 
@@ -607,9 +607,9 @@ impl PreambleProf {
 }
 
 /// `OnSizeChanged`'s "after": queue `(id, width, height)` for each watched frame whose size moved
-/// by the `ApplyRect` test ([`crate::layout::size_changed`], `ε = _DAT_008029d4`), so a pure move
-/// never fires. A frame with no rect at entry compares against the zero rect `CSimpleFrame`'s ctor
-/// leaves; one that loses its rect had no `ApplyRect` and fires nothing.
+/// by the rect application's test ([`crate::layout::size_changed`], with the reference's `ε`), so a
+/// pure move never fires. A frame with no rect at entry compares against the zero rect the frame
+/// constructor leaves; one that loses its rect had no rect application and fires nothing.
 fn queue_size_changes(
     watched: &[(FrameHandle, Option<Rect>)],
     resolved: &crate::widget::HandleMap<FrameHandle, Rect>,
@@ -698,7 +698,7 @@ impl UiScript {
         // Every call past tier 1 counts, verify's re-walks included: the walk is the cost.
         model.layout_gate_walks = model.layout_gate_walks.wrapping_add(1);
         // ── `OnSizeChanged`'s "before" ─────────────────────────────────────────────────────── The
-        // reference fires it per rect application (`ApplyRect`); our batch fixpoint fires on the
+        // reference fires it per rect application; our batch fixpoint fires on the
         // entry-vs-convergence diff, never on a half-solved round. Only frames with a handler are
         // snapshotted, from `SetScript`'s list.
         let watched: Vec<(FrameHandle, Option<Rect>)> = model
@@ -981,7 +981,7 @@ impl UiScript {
                         width = m.w;
                     }
                 }
-                // Then the floor: `CSimpleFontString::GetWidth` returns at least one unit on both
+                // Then the floor: the font string's width read returns at least one unit on both
                 // legs, past the `jp` that skips the measure, so a FontString's span is never 0 and
                 // a single anchor resolves it.
                 if is_fontstring {

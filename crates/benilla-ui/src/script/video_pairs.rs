@@ -52,7 +52,7 @@ struct Pair {
 }
 
 const PAIRS: [Pair; 5] = [
-    // Usage: no CVar behind either.
+    // A usage string only: no CVar behind either.
     Pair {
         get: "GetWaterDetail",
         set: "SetWaterDetail",
@@ -61,7 +61,7 @@ const PAIRS: [Pair; 5] = [
         write: Write::Nothing,
         default: "0",
     },
-    // The reference over `farclip`, usage.
+    // The reference's pair over `farclip`, with its usage string.
     Pair {
         get: "GetFarclip",
         set: "SetFarclip",
@@ -70,8 +70,8 @@ const PAIRS: [Pair; 5] = [
         write: Write::Float("farclip"),
         default: "350",
     },
-    // The reference over `shadowLevel`, usage: the slider shows `1 − shadowLevel`, so High (1) is
-    // shadow mip 0.
+    // The reference's pair over `shadowLevel`, with its usage string: the slider shows
+    // `1 − shadowLevel`, so High (1) is shadow mip 0.
     Pair {
         get: "GetTerrainMip",
         set: "SetTerrainMip",
@@ -80,7 +80,7 @@ const PAIRS: [Pair; 5] = [
         write: Write::OneMinusTrunc("shadowLevel"),
         default: "1",
     },
-    // The reference over `texLodBias`, usage.
+    // The reference's pair over `texLodBias`, with its usage string.
     Pair {
         get: "GetTexLodBias",
         set: "SetTexLodBias",
@@ -89,7 +89,8 @@ const PAIRS: [Pair; 5] = [
         write: Write::Float("texLodBias"),
         default: "0.0",
     },
-    // The reference over `baseMip`, usage: the slider shows `1 − baseMip`, so High (1) is base mip 0.
+    // The reference's pair over `baseMip`, with its usage string: the slider shows `1 − baseMip`,
+    // so High (1) is base mip 0.
     Pair {
         get: "GetBaseMip",
         set: "SetBaseMip",

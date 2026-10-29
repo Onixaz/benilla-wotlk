@@ -58,7 +58,7 @@ fn item_set_block_counts_and_colors() {
         SetItemByIdForTest(tt, 6303)
         -- The spacer is the reference's own literal — a space and a newline, which is
         -- ONE row carrying one space, not the empty string (an empty AddLine adds no line at all
-        -- in the reference: the reference bails before its `inc [esi+0x31c]`).
+        -- in the reference: its line add bails before its `inc [esi+0x31c]`).
         assert(TTTextLeft3:GetText() == " \n", "blank before the header, got "
                .. string.format("%q", tostring(TTTextLeft3:GetText())))
         assert(TTTextLeft4:GetText() == "[SET_NAME Defias Leather 2/5]", "got " .. tostring(TTTextLeft4:GetText()))
