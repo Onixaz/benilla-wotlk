@@ -698,6 +698,7 @@ fn gravity_collision_height_and_spline_flight_parse_and_ack() {
     ));
     let info = MovementInfo {
         flags: 0,
+        flags2: 0,
         timestamp: 1,
         position: Vector3d {
             x: 0.0,
