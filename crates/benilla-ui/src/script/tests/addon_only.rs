@@ -221,10 +221,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "VoiceGetCurrentOutputDevice",
     "VoicePushToTalkStart",
     "VoicePushToTalkStop",
-    "debughook",
-    "difftime",
-    "hooksecurefunc",
-    "issecurevariable",
 ];
 
 /// `reference/3.3.5a-globals.tsv`'s `engine` names.
