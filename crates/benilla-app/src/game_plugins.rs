@@ -882,7 +882,12 @@ pub(crate) mod schedule_tests {
     ///   entering or exiting passenger's rig on a free anchor just before `ride_seats`, and shares
     ///   the same unordered `RigPose`, `NetEntity`, `GlobalTransform` and `Commands` pairs on the
     ///   same frame-late terms.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_954;
+    /// - The vehicle camera (#632) adds 14: `vehicle::camera::feed_vehicle_camera` reads the
+    ///   focus's `Transform` just before `publish_view_subject`, against the same portrait-booth,
+    ///   tile, marker and self-ride writers that publish already pairs with, a frame late at worst;
+    ///   and `ZoomLimit`'s max against `ui_barber::drain_barber`, which writes only the barber
+    ///   floor.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_968;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

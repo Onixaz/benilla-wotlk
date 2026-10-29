@@ -197,8 +197,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "UnitIsTrivial",
     "UpdateAddOnCPUUsage",
     "UploadSettings",
-    "VehicleCameraZoomIn",
-    "VehicleCameraZoomOut",
     "VoiceGetCurrentCaptureDevice",
     "VoiceGetCurrentOutputDevice",
     "VoicePushToTalkStart",

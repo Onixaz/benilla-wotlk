@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 mod aim;
+mod camera;
 mod control;
 mod override_bar;
 mod passenger;
@@ -137,6 +138,11 @@ impl Plugin for VehiclePlugin {
                     drive_vehicle_aim
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(send_vehicle_requests),
+                    // Before the camera reads its subject and zoom.
+                    camera::feed_vehicle_camera
+                        .after(passenger::advance_transits)
+                        .in_set(benilla_world::schedule::WorldStage::Input)
+                        .before(crate::player::ViewSubjectPublish),
                     // After the passenger events, as the mover's claim follows the seat.
                     control::on_mover_change
                         .in_set(crate::ui_unit::UnitFeed)

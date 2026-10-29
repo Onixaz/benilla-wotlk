@@ -8,10 +8,10 @@ use super::camera::CameraControl;
 /// The zoom floor, yd (`ds:0x8089a8` = 0.0): at 0 the eye sits at the framing pivot, inside the
 /// head, and the avatar fades out. Deviation: the starting zoom, [`CAM_DIST_DEFAULT`], is 15 yd
 /// where the reference's `cameraDistance` is 5.55 (`0x84f488`), for a wider view.
-pub(super) const CAM_DIST_MIN: f32 = 0.0;
+pub(crate) const CAM_DIST_MIN: f32 = 0.0;
 /// The zoom ceiling, yd (`ds:0x8089a4` = 50.0): the cap on [`ZoomLimit`] (`0x511309`) and the top
 /// of the distance validator `0x50b310`; also the clamp for a distance read back off disk.
-pub(super) const CAM_DIST_MAX: f32 = 50.0;
+pub(crate) const CAM_DIST_MAX: f32 = 50.0;
 pub(super) const CAM_DIST_DEFAULT: f32 = 15.0;
 /// `cameraDistanceMax`'s registered default, "15.0" (`0x84fbd0`).
 const CAM_DISTANCE_MAX_DEFAULT: f32 = 15.0;
@@ -39,6 +39,29 @@ pub(crate) struct ZoomLimit {
     pub(crate) barber_floor: Option<f32>,
     distance_max: f32,
     factor: f32,
+}
+
+/// A vehicle seat's zoom: its range (`SetVehicleSeatZoomMin/MaxDistance`), each bound `None` for
+/// its default, and its change for the rig to make (`0x74c0e0`'s `ZoomToDistance`), with a count
+/// the rig keys its last applied one on.
+#[derive(Resource, Default)]
+pub(crate) struct VehicleSeatZoom {
+    pub(crate) range: Option<(Option<f32>, Option<f32>)>,
+    pub(crate) ask: Option<(u32, VehicleZoom)>,
+}
+
+/// A zoom a vehicle seat asks of the rig.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum VehicleZoom {
+    /// Entering a seat: its preferred distance, raised to (`raise`) or lowered to (`lower`), then
+    /// held within its range; the distance before is kept for the exit.
+    Enter {
+        preferred: Option<f32>,
+        raise: bool,
+        lower: bool,
+    },
+    /// Leaving: back to the distance kept at the enter.
+    Leave,
 }
 
 impl Default for ZoomLimit {
@@ -70,6 +93,15 @@ impl ZoomLimit {
         self.factor = factor;
         self.max = orbit_limit(self.distance_max, self.factor);
         bevy::log::debug!("camera: zoom limit {} at factor {factor}", self.max);
+    }
+
+    /// The orbit's bounds, a vehicle seat's range over the defaults.
+    pub(crate) fn bounds(&self, seat: &VehicleSeatZoom) -> (f32, f32) {
+        let (min, max) = seat.range.unwrap_or_default();
+        (
+            min.map_or(CAM_DIST_MIN, |m| m.max(CAM_DIST_MIN)),
+            max.map_or(self.max, |m| m.min(CAM_DIST_MAX)),
+        )
     }
 
     #[cfg(test)]
@@ -107,12 +139,12 @@ pub(super) fn apply_zoom_scroll(
     scroll: f32,
     dt: f32,
     rig: &mut CameraControl,
-    max: f32,
+    (seat_min, max): (f32, f32),
     floor: Option<f32>,
 ) {
     let (min, step) = match floor {
         Some(f) => (f, CAM_ZOOM_STEP * 0.2),
-        None => (CAM_DIST_MIN, CAM_ZOOM_STEP),
+        None => (seat_min, CAM_ZOOM_STEP),
     };
     if scroll != 0.0 {
         rig.target_distance = (rig.target_distance - scroll * step).max(min).min(max);
@@ -189,10 +221,10 @@ mod tests {
             distance: 10.0,
             ..default()
         };
-        apply_zoom_scroll(-1.0, 0.1, &mut rig, z.max, None);
+        apply_zoom_scroll(-1.0, 0.1, &mut rig, (CAM_DIST_MIN, z.max), None);
         assert_eq!(rig.target_distance, 11.0);
         // Even a NaN bound handed straight in bounds nothing and panics nowhere.
-        apply_zoom_scroll(-1.0, 0.1, &mut rig, f32::NAN, None);
+        apply_zoom_scroll(-1.0, 0.1, &mut rig, (CAM_DIST_MIN, f32::NAN), None);
         assert_eq!(rig.target_distance, 12.0);
     }
 
@@ -203,16 +235,16 @@ mod tests {
             distance: 2.0,
             ..default()
         };
-        apply_zoom_scroll(1.0, 0.1, &mut rig, 15.0, Some(1.5));
+        apply_zoom_scroll(1.0, 0.1, &mut rig, (CAM_DIST_MIN, 15.0), Some(1.5));
         assert!(
             (rig.target_distance - 1.8).abs() < 1e-6,
             "a fifth of a notch"
         );
-        apply_zoom_scroll(10.0, 0.1, &mut rig, 15.0, Some(1.5));
+        apply_zoom_scroll(10.0, 0.1, &mut rig, (CAM_DIST_MIN, 15.0), Some(1.5));
         assert_eq!(rig.target_distance, 1.5, "held at the body's radius");
         // A target under the floor when the chair opens is pushed out to it.
         rig.target_distance = 0.0;
-        apply_zoom_scroll(0.0, 0.1, &mut rig, 15.0, Some(1.5));
+        apply_zoom_scroll(0.0, 0.1, &mut rig, (CAM_DIST_MIN, 15.0), Some(1.5));
         assert_eq!(rig.target_distance, 1.5);
     }
 
@@ -222,9 +254,9 @@ mod tests {
             target_distance: 44.5,
             ..default()
         };
-        apply_zoom_scroll(-1.0, 0.1, &mut rig, limit(15.0, 3.0), None);
+        apply_zoom_scroll(-1.0, 0.1, &mut rig, (CAM_DIST_MIN, limit(15.0, 3.0)), None);
         assert_eq!(rig.target_distance, 45.0);
-        apply_zoom_scroll(1000.0, 0.1, &mut rig, 45.0, None);
+        apply_zoom_scroll(1000.0, 0.1, &mut rig, (CAM_DIST_MIN, 45.0), None);
         assert_eq!(rig.target_distance, CAM_DIST_MIN);
     }
 }

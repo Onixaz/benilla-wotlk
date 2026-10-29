@@ -571,9 +571,56 @@ pub(crate) struct CameraControl {
     /// `[cam+0x90] & 0x30000`, written only by the solver `0x50e570`, [`SmartPivot`]'s sixth
     /// conjunct; the look session reads it a frame later, as `0x50fee0` (from `0x514446`) does.
     pub(super) clipped: bool,
+    /// The vehicle seat zoom last applied, by its count.
+    pub(super) vehicle_zoom_seen: u32,
+    /// The distance before a seat's zoom, which its exit restores (`m_vehicleExitZoomDistance`).
+    pub(super) vehicle_exit_zoom: Option<f32>,
 }
 
 impl CameraControl {
+    /// A vehicle seat's zoom (`0x74c0e0`): on the enter the preferred distance, raised or lowered
+    /// as the seat allows, held within `(min, max)`, the distance before kept; on the exit that
+    /// distance back. Each request is applied once.
+    pub(super) fn apply_vehicle_zoom(
+        &mut self,
+        (count, zoom): (u32, super::camera_zoom::VehicleZoom),
+        (min, max): (f32, f32),
+    ) {
+        use super::camera_zoom::VehicleZoom;
+        if count == self.vehicle_zoom_seen {
+            return;
+        }
+        self.vehicle_zoom_seen = count;
+        match zoom {
+            VehicleZoom::Enter {
+                preferred,
+                raise,
+                lower,
+            } => {
+                let current = self.target_distance;
+                let mut target = current;
+                if let Some(p) = preferred {
+                    if p > current && raise {
+                        target = p;
+                    }
+                    if p < target && lower {
+                        target = p;
+                    }
+                }
+                let target = target.max(min).min(max);
+                if (target - current).abs() > 0.001 {
+                    self.vehicle_exit_zoom.get_or_insert(current);
+                    self.target_distance = target;
+                }
+            }
+            VehicleZoom::Leave => {
+                if let Some(d) = self.vehicle_exit_zoom.take() {
+                    self.target_distance = d;
+                }
+            }
+        }
+    }
+
     /// Park the orbit distance at `d`, both the live value and the wheel target, or the glide
     /// drifts back; for the scripted camera park (`capture::probe_cam`).
     pub(crate) fn park_distance(&mut self, d: f32) {
