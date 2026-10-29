@@ -842,7 +842,10 @@ pub(crate) mod schedule_tests {
     ///   `drain_social` and `drain_chat_input`. They only read membership, so a frame on either
     ///   side of a roster change gives the same colour a frame late, and nothing else they touch is
     ///   written by those drains.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_889;
+    /// - The zone PvP answer (#689) adds 6: `area::feed_zone_events` reads the character
+    ///   `Roster` for the realm's PvP type against its six writers in `char_select` and
+    ///   `drive_glue_mgr`, which change it only at character select, where no zone feeds.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_895;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

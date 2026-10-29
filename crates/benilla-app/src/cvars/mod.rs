@@ -1224,20 +1224,17 @@ mod tests {
         );
         assert_eq!(d["blockTrades"], 0.0, "an unset blockTrades allows trades");
         let names = NameConfig::default();
-        assert_eq!(d["UnitNamePlayer"] != 0.0, names.player);
-        assert_eq!(d["UnitNameNPC"] != 0.0, names.npc);
-        assert_eq!(d["UnitNameOwn"] != 0.0, names.own);
-        assert_eq!(d["UnitNamePlayerGuild"] != 0.0, names.player_guild);
-        assert_eq!(d["UnitNamePlayerPVPTitle"] != 0.0, names.player_pvp_title);
-        assert!(
-            names.player
-                && !names.npc
-                && !names.own
-                && names.player_guild
-                && names.player_pvp_title,
-            "the binary registers UnitNamePlayer \"1\", NPC \"0\", Own \"0\", \
-             PlayerGuild \"1\", PlayerPVPTitle \"1\""
-        );
+        for (cvar, bit) in crate::nameplates::NAME_CVARS {
+            let row = registered_rows()
+                .find(|r| r.name.eq_ignore_ascii_case(cvar))
+                .unwrap_or_else(|| panic!("{cvar} has a row"));
+            assert_eq!(
+                d[row.name] != 0.0,
+                names.has(bit),
+                "{cvar}'s bit boots at its row's default"
+            );
+        }
+        assert_eq!(names.0, 0x1bc, "the name registrar's \"1\" rows");
         let camera_opts = crate::player::camera_dynamics::CameraOptions::default();
         assert_eq!(d["cameraPivot"] != 0.0, camera_opts.pivot);
         assert!(camera_opts.pivot, "the binary registers cameraPivot \"1\"");
@@ -1529,12 +1526,15 @@ mod tests {
         assert!(res::<crate::ui_guild::GuildMemberNotify>(&app).0);
         apply(&mut app, "blockTrades", "1");
         assert!(res::<crate::ui_trade::BlockTrades>(&app).0);
-        apply(&mut app, "UnitNameNPC", "0");
-        assert!(!res::<NameConfig>(&app).npc);
+        use crate::nameplates::name_bit;
+        apply(&mut app, "UnitNameNPC", "1");
+        assert!(res::<NameConfig>(&app).has(name_bit::NPC));
         apply(&mut app, "unitnameown", "1");
-        assert!(res::<NameConfig>(&app).own);
+        assert!(res::<NameConfig>(&app).has(name_bit::OWN));
         apply(&mut app, "unitnameplayerpvptitle", "0");
-        assert!(!res::<NameConfig>(&app).player_pvp_title);
+        assert!(!res::<NameConfig>(&app).has(name_bit::PLAYER_PVP_TITLE));
+        apply(&mut app, "UnitNameFriendlyGuardianName", "1");
+        assert!(res::<NameConfig>(&app).has(name_bit::FRIENDLY_GUARDIAN));
         apply(&mut app, "ChatBubbles", "0");
         assert!(!res::<BubbleConfig>(&app).all);
         apply(&mut app, "chatbubblesparty", "0");
