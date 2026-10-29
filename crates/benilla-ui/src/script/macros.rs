@@ -1,19 +1,27 @@
-//! Player macros. 1.12 keeps them client-side with no opcode (`macros-cache.txt`), and
+//! Player macros. The reference keeps them client-side with no opcode (`macros-cache.txt`), and
 //! `CreateMacro` must return the new index at once, so the table lives here: the app seeds it
 //! ([`UiScript::set_macros`]), saves it when [`UiScript::take_macros_dirty`] says, and pushes the
 //! icon list ([`UiScript::set_macro_icons`]).
 //!
-//! Indices 1..=18 are the account macros and 19..=36 the character macros, each list dense from
-//! its base (`MacroFrame.macroBase`). A macro's bound spell (`0x4e5a50`'s macro arm returns
-//! `[rec+0x564]`) is the app's to derive: it needs the spell catalog and the player's book.
+//! Indices 1..=36 are the account macros and 37..=54 the character macros, each list dense from
+//! its base (`MacroFrame.macroBase`): 12340 sorts each set into 36 slots (`m_sortedMacros`, read
+//! at `36 * set + i`), the account set holding 36 and the character set 18 (`s_maxMacros`). A
+//! macro's bound spell (`0x4e5a50`'s macro arm returns `[rec+0x564]`) is the app's to derive: it
+//! needs the spell catalog and the player's book.
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::cursor::{queue_cursor_update, CursorMacro, CursorPayload};
 use super::Model;
 
-/// Macros per tab (`Blizzard_MacroUI.lua:1`), and so the character tab's base.
-pub const MAX_MACROS: usize = 18;
+/// Account macros (`MAX_ACCOUNT_MACROS`, `s_maxMacros[0]`), and so the character set's base.
+pub const MAX_ACCOUNT_MACROS: usize = 36;
+
+/// Character macros (`MAX_CHARACTER_MACROS`, `s_maxMacros[1]`).
+pub const MAX_CHARACTER_MACROS: usize = 18;
+
+/// The highest macro index, the character set's last.
+pub const MAX_MACRO_INDEX: usize = MAX_ACCOUNT_MACROS + MAX_CHARACTER_MACROS;
 
 /// The name cap, `MacroPopupEditBox`'s `letters="16"`.
 pub const MAX_MACRO_NAME: usize = 16;
@@ -30,10 +38,6 @@ pub struct MacroView {
     pub texture: Option<String>,
     /// The macro's lines, `\n`-separated.
     pub body: String,
-    /// `isLocal` and the `local` argument, carried but not saved here. The 1.12 client saves these
-    /// to `macros-local.txt` beside `macros-cache.txt` (`0x45de74`, `0x45de88`); the stock UI never
-    /// sets it.
-    pub local_only: bool,
 }
 
 /// A macro record's cached cast, the reference's `([rec+0x564], [rec+0x568])` pair (`0x4efe00`):
@@ -49,39 +53,45 @@ pub struct MacroBinding {
 /// The macro table: the account and character lists.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct MacroState {
-    /// Indices 1..=18.
+    /// Indices 1..=36.
     pub account: Vec<MacroView>,
-    /// Indices 19..=36.
+    /// Indices 37..=54.
     pub character: Vec<MacroView>,
 }
 
 /// A 1-based Lua macro index split into its list and 0-based position.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct MacroIndex {
-    /// True for 19..=36.
+    /// True for 37..=54.
     per_character: bool,
     pos: usize,
 }
 
 impl MacroIndex {
-    /// `None` outside 1..=36; not checked against the lists, which [`MacroState::get`] does.
+    /// `None` outside 1..=54; not checked against the lists, which [`MacroState::get`] does.
     fn split(index: usize) -> Option<Self> {
         let zero = index.checked_sub(1)?;
         match zero {
-            0..MAX_MACROS => Some(Self {
+            0..MAX_ACCOUNT_MACROS => Some(Self {
                 per_character: false,
                 pos: zero,
             }),
-            _ if zero < MAX_MACROS * 2 => Some(Self {
+            _ if zero < MAX_MACRO_INDEX => Some(Self {
                 per_character: true,
-                pos: zero - MAX_MACROS,
+                pos: zero - MAX_ACCOUNT_MACROS,
             }),
             _ => None,
         }
     }
 
     fn lua_index(self) -> usize {
-        self.pos + 1 + if self.per_character { MAX_MACROS } else { 0 }
+        self.pos
+            + 1
+            + if self.per_character {
+                MAX_ACCOUNT_MACROS
+            } else {
+                0
+            }
     }
 }
 
@@ -184,7 +194,6 @@ fn create_macro(
     name: &str,
     texture: Option<String>,
     body: &str,
-    local_only: bool,
     per_character: bool,
 ) -> Option<usize> {
     let name = clamp_chars(name.trim(), MAX_MACRO_NAME);
@@ -193,9 +202,15 @@ fn create_macro(
         return None;
     }
     let list = model.macros.list_mut(per_character);
-    if list.len() >= MAX_MACROS {
+    let cap = if per_character {
+        MAX_CHARACTER_MACROS
+    } else {
+        MAX_ACCOUNT_MACROS
+    };
+    if list.len() >= cap {
+        // The message names 36 for either set (`Script_CreateMacro`).
         model.record_warning(format!(
-            "CreateMacro() failed, already have {MAX_MACROS} macros"
+            "CreateMacro() failed, already have {MAX_ACCOUNT_MACROS} macros"
         ));
         return None;
     }
@@ -203,7 +218,6 @@ fn create_macro(
         name,
         texture,
         body: clamp_chars(body, MAX_MACRO_BODY),
-        local_only,
     });
     let pos = list.len() - 1;
     model.macros_dirty = true;
@@ -211,7 +225,7 @@ fn create_macro(
     Some(MacroIndex { per_character, pos }.lua_index())
 }
 
-/// `EditMacro(index, name, icon, body, local)`: an omitted argument leaves its field alone, since
+/// `EditMacro(index, name, icon, body)` (`0x566fa0`): an omitted argument leaves its field alone, since
 /// the stock UI calls it with disjoint halves, `(sel, name, icon)` from the rename popup and
 /// `(sel, nil, nil, text)` from `MacroFrame_SaveMacro`.
 fn edit_macro(
@@ -220,7 +234,6 @@ fn edit_macro(
     name: Option<String>,
     texture: Option<Option<String>>,
     body: Option<String>,
-    local_only: Option<bool>,
 ) -> Option<usize> {
     let at = MacroIndex::split(index)?;
     let entry = model.macros.list_mut(at.per_character).get_mut(at.pos)?;
@@ -236,9 +249,6 @@ fn edit_macro(
     }
     if let Some(body) = body {
         entry.body = clamp_chars(&body, MAX_MACRO_BODY);
-    }
-    if let Some(local_only) = local_only {
-        entry.local_only = local_only;
     }
     model.macros_dirty = true;
     model.macros_generation += 1;
@@ -317,8 +327,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
+            // `0x566eb0`: name, texture and body, or nothing for no macro.
             let Some(m) = model.macros.get(index) else {
-                return Ok(MultiValue::from_vec(vec![Value::Nil]));
+                return Ok(MultiValue::new());
             };
             let texture = match &m.texture {
                 Some(t) => Value::String(lua.create_string(t)?),
@@ -328,11 +339,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Value::String(lua.create_string(&m.name)?),
                 texture,
                 Value::String(lua.create_string(&m.body)?),
-                if m.local_only {
-                    Value::Integer(1)
-                } else {
-                    Value::Nil
-                },
             ]))
         })?,
     )?;
@@ -377,7 +383,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // CreateMacro stores `iconIndex`, an index into the chooser list, as its path.
+    // CreateMacro(name, iconIndex, body, perCharacter) (`0x568160`) stores `iconIndex`, an index
+    // into the chooser list, as its path.
     g.set(
         "CreateMacro",
         lua.create_function(|lua, args: MultiValue| {
@@ -386,9 +393,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             let texture = icon_path(&model, a.get(1));
             let body = opt_string(a.get(2)).unwrap_or_default();
-            let (local_only, per_character) = (flag(a.get(3)), flag(a.get(4)));
+            let per_character = flag(a.get(3));
             Ok(
-                match create_macro(&mut model, &name, texture, &body, local_only, per_character) {
+                match create_macro(&mut model, &name, texture, &body, per_character) {
                     Some(i) => Value::Integer(i as i64),
                     None => Value::Nil,
                 },
@@ -411,16 +418,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let name = opt_string(a.get(1));
             let body = opt_string(a.get(3));
-            let local_only = match a.get(4) {
-                None | Some(Value::Nil) => None,
-                other => Some(flag(other)),
-            };
-            Ok(
-                match edit_macro(&mut model, index, name, texture, body, local_only) {
-                    Some(i) => Value::Integer(i as i64),
-                    None => Value::Nil,
-                },
-            )
+            Ok(match edit_macro(&mut model, index, name, texture, body) {
+                Some(i) => Value::Integer(i as i64),
+                None => Value::Nil,
+            })
         })?,
     )?;
 
@@ -481,29 +482,29 @@ mod tests {
         );
 
         let i = s
-            .eval::<i64>(r#"return CreateMacro("Ambush", 1, "/cast Ambush", nil, nil)"#)
+            .eval::<i64>(r#"return CreateMacro("Ambush", 1, "/cast Ambush")"#)
             .unwrap();
         assert_eq!(i, 1);
         let j = s
-            .eval::<i64>(r#"return CreateMacro("Bolt", 3, "/cast Fireball", nil, true)"#)
+            .eval::<i64>(r#"return CreateMacro("Bolt", 3, "/cast Fireball", true)"#)
             .unwrap();
-        assert_eq!(j, 19, "the character tab starts at MAX_MACROS + 1");
+        assert_eq!(j, 37, "the character tab starts at MAX_ACCOUNT_MACROS + 1");
         assert_eq!(
             s.eval::<(i64, i64)>("local a, c = GetNumMacros() return a, c")
                 .unwrap(),
             (1, 1)
         );
 
-        let (name, tex, body, is_local) = s
-            .eval::<(String, String, String, Value)>(
-                "local n, t, b, l = GetMacroInfo(1) return n, t, b, l",
+        let (name, tex, body, count) = s
+            .eval::<(String, String, String, i64)>(
+                "local n, t, b = GetMacroInfo(1) return n, t, b, select('#', GetMacroInfo(1))",
             )
             .unwrap();
         assert_eq!(
             (name.as_str(), tex.as_str(), body.as_str()),
             ("Ambush", "Interface\\Icons\\Ability_Ambush", "/cast Ambush")
         );
-        assert_eq!(is_local, Value::Nil);
+        assert_eq!(count, 3, "name, texture and body (`0x566eb0`), no isLocal");
 
         assert_eq!(
             s.eval::<i64>(r#"return GetMacroIndexByName("ambush")"#)
@@ -513,7 +514,7 @@ mod tests {
         assert_eq!(
             s.eval::<i64>(r#"return GetMacroIndexByName("bolt")"#)
                 .unwrap(),
-            19
+            37
         );
         assert_eq!(
             s.eval::<i64>(r#"return GetMacroIndexByName("nope")"#)
@@ -529,7 +530,7 @@ mod tests {
             (0, 1)
         );
         assert!(s.eval::<bool>("return GetMacroInfo(1) == nil").unwrap());
-        assert_eq!(s.eval::<String>("return GetMacroInfo(19)").unwrap(), "Bolt");
+        assert_eq!(s.eval::<String>("return GetMacroInfo(37)").unwrap(), "Bolt");
     }
 
     #[test]
@@ -573,7 +574,7 @@ mod tests {
             .eval::<bool>(r#"return CreateMacro("   ", 1, "x") == nil"#)
             .unwrap());
 
-        for i in 1..=MAX_MACROS {
+        for i in 1..=MAX_ACCOUNT_MACROS {
             let made = s
                 .eval::<i64>(&format!(r#"return CreateMacro("m{i}", 1, "")"#))
                 .unwrap();
@@ -582,13 +583,13 @@ mod tests {
         assert!(
             s.eval::<bool>(r#"return CreateMacro("one too many", 1, "") == nil"#)
                 .unwrap(),
-            "the 19th account macro is refused"
+            "the 37th account macro is refused"
         );
-        // The character tab is a separate 18.
+        // The character set is a separate 18, from index 37.
         assert_eq!(
-            s.eval::<i64>(r#"return CreateMacro("c", 1, "", nil, 1)"#)
+            s.eval::<i64>(r#"return CreateMacro("c", 1, "", 1)"#)
                 .unwrap(),
-            19
+            37
         );
 
         let s = seeded();
