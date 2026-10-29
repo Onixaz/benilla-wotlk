@@ -309,31 +309,37 @@ fn update_shadows(
         });
     }
     // The projections, the pass's whole cost, are independent: each reads the shared surfaces and
-    // writes only its own record, so the few that moved this frame spread over the pool.
-    jobs.par_chunk_map_mut(bevy::tasks::ComputeTaskPool::get(), 1, |_, chunk| {
-        for job in chunk {
-            let frame = &job.frame;
-            let span_v = frame.max_y - frame.min_y;
-            let alpha = job.next.alpha;
+    // writes only its own record, so several that moved this frame spread over the pool; one or two
+    // run here, as a pool dispatch costs more than they do.
+    let project = |job: &mut ShadowJob| {
+        let frame = &job.frame;
+        let span_v = frame.max_y - frame.min_y;
+        let alpha = job.next.alpha;
+        job.verts.0.clear();
+        let projected = span_v > 0.0
+            && decals.project(
+                &mut job.verts.0,
+                frame,
+                |p| {
+                    // The reference's second-stage ramp (`0x6d81a0`), run vertically: inferred
+                    // from the asymmetric vertical reach, its combine being untraced.
+                    alpha * shadow_ramp((p.y - frame.min_y) / span_v)
+                },
+                |x, z| frame.rect_uv(x, z),
+            );
+        *job.key = job.next;
+        job.key.shown = projected;
+        if !projected {
             job.verts.0.clear();
-            let projected = span_v > 0.0
-                && decals.project(
-                    &mut job.verts.0,
-                    frame,
-                    |p| {
-                        // The reference's second-stage ramp (`0x6d81a0`), run vertically: inferred
-                        // from the asymmetric vertical reach, its combine being untraced.
-                        alpha * shadow_ramp((p.y - frame.min_y) / span_v)
-                    },
-                    |x, z| frame.rect_uv(x, z),
-                );
-            *job.key = job.next;
-            job.key.shown = projected;
-            if !projected {
-                job.verts.0.clear();
-            }
         }
-    });
+    };
+    if jobs.len() <= INLINE_PROJECTIONS {
+        jobs.iter_mut().for_each(project);
+    } else {
+        jobs.par_chunk_map_mut(bevy::tasks::ComputeTaskPool::get(), 1, |_, chunk| {
+            chunk.iter_mut().for_each(project);
+        });
+    }
     for job in &jobs {
         if job.key.shown {
             n_shown += 1;
@@ -472,6 +478,9 @@ fn push_shadows(
         batch.tris();
     }
 }
+
+/// Up to this many re-projections run on the calling thread rather than the pool.
+const INLINE_PROJECTIONS: usize = 2;
 
 /// One shadow to re-project this frame, with what its record becomes.
 struct ShadowJob<'a> {
