@@ -46,26 +46,13 @@ pub(super) fn shipped_manifest_files() -> Vec<String> {
         .collect()
 }
 
-/// Runs `UIParent_ManageFramePositions` after the interface has loaded, then the buff pass below.
+/// Runs `UIParent_ManageFramePositions` after the interface has loaded.
 fn bootstrap_positions(script: &UiScript) -> Vec<String> {
     if let Err(e) = script.run("UIParent_ManageFramePositions()") {
         error!("ui_script: managed-positions bootstrap: {e}");
         return vec![format!("managed-positions bootstrap: {e}")];
     }
-    if let Err(e) = apply_buff_durations(script) {
-        error!("ui_script: buff-duration layout: {e}");
-        return vec![format!("buff-duration layout: {e}")];
-    }
     Vec::new()
-}
-
-/// Runs `BuffButtons_UpdatePositions` at load, which `BuffFrame_OnLoad` never calls: until the
-/// stock `UIOptionsFrame.lua`'s `VARIABLES_LOADED` arm runs it (l.206), the second buff row and
-/// the debuff row keep `BuffFrame.xml`'s anchors whatever `SHOW_BUFF_DURATIONS` says.
-pub(super) fn apply_buff_durations(script: &UiScript) -> Result<(), String> {
-    script
-        .run("if BuffButtons_UpdatePositions then BuffButtons_UpdatePositions() end")
-        .map_err(|e| e.to_string())
 }
 
 /// What a screen-size change re-runs, from `extract::tick_script`'s resize arm: anchors follow the

@@ -496,6 +496,14 @@ impl GroupState {
         }
     }
 
+    /// The party-or-raid member test (`0x512a30`) past the player's own pet: a member, or a
+    /// member's pet by its stats block.
+    pub fn is_member_or_pet(&self, guid: u64) -> bool {
+        guid != 0
+            && (self.members.iter().any(|m| m.guid == guid)
+                || self.stats.values().any(|s| s.pet_guid == Some(guid)))
+    }
+
     /// A unit's mark on the Lua `GetRaidTargetIndex` scale, 1 to 8, or 0 when unmarked.
     pub fn raid_target_index(&self, guid: u64) -> u8 {
         if guid == 0 {
