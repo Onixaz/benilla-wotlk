@@ -24,7 +24,7 @@ pub(super) fn register(app: &mut App) {
 fn on_set_collision_height(
     In(ev): In<SessionEvent>,
     self_guid: Res<SelfGuid>,
-    player: Res<Player>,
+    player: Option<Res<Player>>,
     mut body: Query<&mut CollisionHeight, With<SelfPlayer>>,
     commands: Res<NetCommands>,
 ) {
@@ -36,9 +36,10 @@ fn on_set_collision_height(
     else {
         return;
     };
-    if self_guid.0 != Some(guid) {
+    // A build with no mover has no body to resize.
+    let Some(player) = player.filter(|_| self_guid.0 == Some(guid)) else {
         return;
-    }
+    };
     if let Ok(mut h) = body.single_mut() {
         h.0 = height;
     }
