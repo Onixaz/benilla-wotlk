@@ -281,6 +281,7 @@ fn cull_dump_env() -> bool {
 
 /// Recompute each resident WMO's per-group visible set from the camera; a portal-less prop stays
 /// all-visible.
+#[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn compute_wmo_pvs(
     wmos: Res<Assets<WmoModel>>,
     cam: Query<(&GlobalTransform, &Projection), With<WorldCamera>>,
