@@ -1,13 +1,12 @@
 //! What the active keyboard layout names each letter, digit and punctuation key, which 1.12 binds
-//! by. The Windows client names a key from the virtual-key code the layout produced: the
-//! translator `0x42d800` keeps `VK_0`-`VK_9` as themselves (`0x42d81c`) and sends every other key
-//! outside its fixed table, `VK_A`-`VK_Z` and `VK_OEM_*` among them, to
-//! `MapVirtualKeyA(vk, MAPVK_VK_TO_CHAR)` (`0x42da39`), which returns `VK_A`-`VK_Z`'s own letter
-//! whatever the layout types there. The Mac client fills its letter and punctuation keys from the
-//! live layout, `KeyTranslate` (`0x8a3c3`) on the current `KCHR` (re-read when it changes,
-//! `0x8a345`), and fixes its digits by position (`0x5bf320`). Bevy's `KeyboardInput` carries the
-//! physical key and a `logical_key` with Shift applied, so each platform's name is read off the
-//! raw winit key messages here, before any `Update` reader.
+//! by. The Windows client names a key from the virtual-key code the layout produced: the translator
+//! keeps `VK_0`-`VK_9` as themselves and sends every other key outside its fixed table,
+//! `VK_A`-`VK_Z` and `VK_OEM_*` among them, to `MapVirtualKeyA(vk, MAPVK_VK_TO_CHAR)`, which
+//! returns `VK_A`-`VK_Z`'s own letter whatever the layout types there. The Mac client fills its
+//! letter and punctuation keys from the live layout, `KeyTranslate` (`0x8a3c3`) on the current
+//! `KCHR` (re-read when it changes, `0x8a345`), and fixes its digits by position. Bevy's
+//! `KeyboardInput` carries the physical key and a `logical_key` with Shift applied, so each
+//! platform's name is read off the raw winit key messages here, before any `Update` reader.
 
 use std::collections::HashMap;
 
@@ -34,11 +33,10 @@ impl Position {
 
 /// The keys a layout names: the letters, the digits, the punctuation, the ISO and JIS extras and
 /// the keypad comma. Windows sends `VK_OEM_102`, `VK_ABNT_C2` and `VK_SEPARATOR` to the layout arm
-/// like any `VK_OEM_*` key, and the Mac table leaves the ISO key `0x0A` and the keypad comma
-/// `0x5F` to `KeyTranslate` (`-1` at `0x5bf320`). winit 0.30 cannot deliver those on a Mac, as on
-/// main: it reports `0x0A` as `Backquote` (whose scancode it gives back as `0x32`) and leaves
-/// `0x5E` and `0x5F` unidentified, so the `IntlBackslash`, `IntlRo` and `NumpadComma` arms never
-/// fire there.
+/// like any `VK_OEM_*` key, and the Mac table leaves the ISO key `0x0A` and the keypad comma `0x5F`
+/// to `KeyTranslate` (`-1`). winit 0.30 cannot deliver those on a Mac, as on main: it reports
+/// `0x0A` as `Backquote` (whose scancode it gives back as `0x32`) and leaves `0x5E` and `0x5F`
+/// unidentified, so the `IntlBackslash`, `IntlRo` and `NumpadComma` arms never fire there.
 pub(crate) fn position(k: KeyCode) -> Option<Position> {
     use KeyCode::*;
     use Position::{Digit, Letter, Punctuation};
@@ -99,7 +97,7 @@ pub(crate) fn position(k: KeyCode) -> Option<Position> {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum LayoutName {
     Char(char),
-    /// None: `MapVirtualKeyA` returned 0 and the reference drops the key's message (`0x42da49`).
+    /// None: `MapVirtualKeyA` returned 0 and the reference drops the key's message.
     Dropped,
 }
 
@@ -211,21 +209,21 @@ fn one_char(key: &winit::keyboard::Key) -> Option<char> {
 }
 
 /// The reference's name for the virtual key `vk`, given `MapVirtualKeyExW(vk, MAPVK_VK_TO_CHAR)`;
-/// `None` for a key `0x42d800`'s fixed table names.
+/// `None` for a key the reference's fixed table names.
 ///
 /// Deviation: a character above U+00FF names the key by itself. The reference's `MapVirtualKeyA`
-/// returns an ANSI code-page byte, which `0x42da4b` drops past `0xff` and the namer's UTF-8
-/// encoder (`0x41abb0`) otherwise reads as Latin-1, so such a key is mislabelled or dropped; named
-/// by what it types, it stays bindable and readable.
+/// returns an ANSI code-page byte, which the reference drops past `0xff` and the namer's UTF-8
+/// encoder otherwise reads as Latin-1, so such a key is mislabelled or dropped; named by what it
+/// types, it stays bindable and readable.
 #[cfg(any(target_os = "windows", test))]
 fn windows_name(vk: u32, to_char: u32) -> Option<LayoutName> {
     match vk {
         // `VK_A`-`VK_Z`, named by their letter, and `VK_0`-`VK_9`, kept as themselves.
         0x41..=0x5a | 0x30..=0x39 => Some(LayoutName::Char(char::from(vk as u8))),
         _ if fixed_vk(vk) => None,
-        // The dynamic arm: `and eax,0xffff` (`0x42da42`) drops the dead-key bit, and 0 drops the
-        // key (`0x42da49`). U+F000-U+F002 are a layout table's `WCH_NONE`, `WCH_DEAD` and
-        // `WCH_LGTR` markers, no character, should the call ever return one.
+        // The dynamic arm: `and eax,0xffff` drops the dead-key bit, and 0 drops the key.
+        // U+F000-U+F002 are a layout table's `WCH_NONE`, `WCH_DEAD` and `WCH_LGTR` markers, no
+        // character, should the call ever return one.
         _ => Some(match char::from_u32(to_char & 0xffff) {
             Some(c)
                 if !c.is_control()
@@ -239,8 +237,8 @@ fn windows_name(vk: u32, to_char: u32) -> Option<LayoutName> {
     }
 }
 
-/// `0x42d800`'s fixed table, read from its byte remap at `0x42dafc` and jump table at `0x42da60`:
-/// the keys it names itself, never by character. F1-F12 take their own arm (`0x42d800`).
+/// The reference's fixed table, read from its byte remap and jump table: the keys it names itself,
+/// never by character. F1-F12 take their own arm.
 #[cfg(any(target_os = "windows", test))]
 fn fixed_vk(vk: u32) -> bool {
     matches!(
@@ -520,8 +518,7 @@ mod tests {
             names.set(key, windows_name(vk, to_char));
             assert_eq!(named(&names, key), Some(expected), "{what}");
         }
-        // `MapVirtualKeyA` returning 0 drops the key (`0x42da49`): Japanese 106's
-        // `VK_OEM_AUTO` on Backquote.
+        // `MapVirtualKeyA` returning 0 drops the key: Japanese 106's `VK_OEM_AUTO` on Backquote.
         assert_eq!(windows_name(0xf3, 0), Some(LayoutName::Dropped));
         names.set(KeyCode::Backquote, windows_name(0xf3, 0));
         assert_eq!(names.name(KeyCode::Backquote), Some(LayoutName::Dropped));
@@ -539,7 +536,7 @@ mod tests {
         }
     }
 
-    /// The fixed table is `0x42d800`'s, decoded from its remap bytes: the 60 entries less the
+    /// The fixed table is the reference's, decoded from its remap bytes: the 60 entries less the
     /// digits and F1-F12, which take their own arms.
     #[test]
     fn the_fixed_virtual_keys_are_the_translators_table() {

@@ -1,7 +1,6 @@
 //! The Blackrock lava bubble keys all its animation in file sequence slot 1, a 50% variation of
 //! animation id 0: both sequences are id 0 at frequencies 16384 and 16383, re-rolled every play
-//! window (`0x6951b0`). Slot 0 holds still; slot 1 swells the bubbles to 2.785 and flips the V
-//! offset by 0.605.
+//! window. Slot 0 holds still; slot 1 swells the bubbles to 2.785 and flips the V offset by 0.605.
 
 use benilla_formats::{open_chain, parse_m2_animations, parse_m2_render_submeshes};
 

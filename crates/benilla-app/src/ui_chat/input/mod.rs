@@ -1,8 +1,8 @@
 //! The submitted-line side of the chat: [`drain_chat_input`] executes what [`parse`] resolved and
 //! the verbs the stock `ChatFrame.lua` handlers queue in the VM; the addon drains send
-//! `SendChatMessage` and `SendAddonMessage`. The emote arm is `DoEmote` (`0x5ef560`): the
-//! eligibility gate, the asleep gate, the stow, the posture, then `CMSG_TEXT_EMOTE`. Own sends are
-//! never echoed locally; the server echoes them.
+//! `SendChatMessage` and `SendAddonMessage`. The emote arm is `DoEmote`: the eligibility gate, the
+//! asleep gate, the stow, the posture, then `CMSG_TEXT_EMOTE`. Own sends are never echoed locally;
+//! the server echoes them.
 
 use bevy::prelude::*;
 
@@ -43,12 +43,11 @@ fn target_player_name(
     names.resolve(guid, commands).map(str::to_string)
 }
 
-/// The target guid a `CMSG_TEXT_EMOTE` carries (`DoEmote`'s caller, `0x49fdb1`): the selection,
-/// unless the argument is a non-empty word not starting with `%`, which names a player through
-/// `named` (the `0x493aa0` player search) and sends guid 0 on a miss. Either way an emote at
-/// yourself goes out untargeted (`0x5ef611`), so 1.12 has no self-emote sentence. Compared by
-/// entity, which agrees with the guid: [`Selection`]'s one writer sets both from one streamed
-/// entity.
+/// The target guid a `CMSG_TEXT_EMOTE` carries (`DoEmote`'s caller): the selection, unless the
+/// argument is a non-empty word not starting with `%`, which names a player through `named` and
+/// sends guid 0 on a miss. Either way an emote at yourself goes out untargeted, so 1.12 has no
+/// self-emote sentence. Compared by entity, which agrees with the guid: [`Selection`]'s one writer
+/// sets both from one streamed entity.
 pub(super) fn emote_target(
     arg: Option<&str>,
     selection: &Selection,
@@ -102,7 +101,7 @@ pub(super) struct ChatOut<'w, 's> {
     console: Commands<'w, 's>,
     stand: MessageWriter<'w, crate::player::StandStateRequest>,
     sheath: MessageWriter<'w, crate::creature_anim::SheathRequest>,
-    /// `DoEmote`'s local play (`0x5ef660`).
+    /// `DoEmote`'s local play.
     anim: MessageWriter<'w, crate::creature_anim::EmoteAnim>,
     target: MessageWriter<'w, crate::target::TargetByNameRequest>,
     assist: MessageWriter<'w, crate::target::AssistRequest>,
@@ -144,9 +143,8 @@ fn engine_verbs(
         out.push((String::new(), ParsedChat::Random { min, max }));
     }
     for line in script.take_console_lines() {
-        // `ConsoleExec` already applied a valued CVar line; what reaches here is a console
-        // command (`detailDoodadAlpha`, registered by `0x63f9e0`, never persists) or a bare CVar
-        // name to print.
+        // `ConsoleExec` already applied a valued CVar line; what reaches here is a console command
+        // (`detailDoodadAlpha`, never persists) or a bare CVar name to print.
         out.push((line.clone(), ParsedChat::Console { line }));
     }
     for cmd in script.take_channel_commands() {
@@ -155,9 +153,9 @@ fn engine_verbs(
     out
 }
 
-/// A manual join or leave of `GuildRecruitment` turns its auto-join option off: `0x49ed3d` (join)
-/// and `0x49ef8f` (leave) call `0x49ea70(0)` when the `ChatChannels.dbc` row has `flags & 0x20000`
-/// and the caller passes its flag, which the Lua bindings do and the cascade's own calls do not.
+/// A manual join or leave of `GuildRecruitment` turns its auto-join option off: (join) and (leave)
+/// call when the `ChatChannels.dbc` row has `flags & 0x20000` and the caller passes its flag, which
+/// the Lua bindings do and the cascade's own calls do not.
 fn manual_join_or_leave(
     channels: &super::edit::ChannelState,
     script: &mut benilla_ui::script::UiScript,
@@ -175,8 +173,8 @@ fn manual_join_or_leave(
 pub(super) fn drain_chat_input(
     script: Option<NonSendMut<benilla_ui::script::UiScript>>,
     mut chat_log: ResMut<super::feed::ChatLog>,
-    // Mutable because an explicit leave clears the channel's `ZONECHANNELS` bit (`0x49f10a` in
-    // leave-by-name `0x49ee70`); the zone walk's own leave does not.
+    // Mutable because an explicit leave clears the channel's `ZONECHANNELS` bit; the zone walk's
+    // own leave does not.
     mut channels: ResMut<super::edit::ChannelState>,
     commands: Res<NetCommands>,
     emotes: Option<Res<crate::sound::EmoteSounds>>,
@@ -328,8 +326,7 @@ pub(super) fn drain_chat_input(
                             None => "no WMO interior claim".into(),
                         }
                     ),
-                    // The camera eye has its own claim (`[0xc7b748]`), and it decides the
-                    // underwater filter.
+                    // The camera eye has its own claim, and it decides the underwater filter.
                     format!("liquid: EYE claim {eye:?}"),
                     match verdict {
                         Some(h) => format!(
@@ -443,8 +440,8 @@ pub(super) fn drain_chat_input(
                 })()
                 .unwrap_or_else(|| "at-war not evaluated (no catalog, store or template)".into());
                 lines.push(format!("reaction: {war}"));
-                // The world cursor's two predicates in `0x482200`'s order: `CanInteract` picks the
-                // service ladder, then `CanAttack` the sword. Neither is a reaction threshold.
+                // The world cursor's two predicates's order: `CanInteract` picks the service
+                // ladder, then `CanAttack` the sword. Neither is a reaction threshold.
                 let interactable = crate::target::can_interact(
                     target_store,
                     factions.as_deref(),
@@ -628,9 +625,9 @@ pub(super) fn drain_chat_input(
             ParsedChat::Forfeit => {
                 script.queue_duel_request(benilla_ui::script::DuelRequest::Cancel);
             }
-            // `crate::target`'s resolver (the reference's `0x493aa0`) commits through the one
-            // SetSelection path. A bare `/target` takes `GetSlashCmdTarget`'s fallback: a no-op
-            // re-select of a player target, nothing for a creature.
+            // `crate::target`'s resolver commits through the one SetSelection path. A bare
+            // `/target` takes `GetSlashCmdTarget`'s fallback: a no-op re-select of a player target,
+            // nothing for a creature.
             ParsedChat::Target { name } => {
                 if let Some(name) =
                     name.or_else(|| target_player_name(&selection, &names, &commands))
@@ -694,7 +691,7 @@ pub(super) fn drain_chat_input(
                     }
                 }
             }
-            // `DoEmote` (`0x5ef560`): the gates in the client's order, then posture and packet.
+            // `DoEmote`: the gates in the client's order, then posture and packet.
             ParsedChat::TextEmote { text_id, arg } => {
                 let (stand_state, flags) = self_player
                     .single()
@@ -702,9 +699,9 @@ pub(super) fn drain_chat_input(
                 let swimming = flags & move_flags::SWIMMING != 0;
                 let emote_id = emotes.as_deref().and_then(|e| e.text_emote(text_id));
                 let posture = emote_id.and_then(|id| emotes.as_deref()?.posture_state(id));
-                // `DoEmote`'s gates (`0x5ef57e`-`0x5ef5c3`): a possessed unit, then the `Emotes.dbc`
-                // row, then `CheckEmoteEligible` (`0x47db40`); only its `0x4000` arm refuses out
-                // loud. A chat-only text emote (`EmoteID` 0) reads row 0.
+                // `DoEmote`'s gates: a possessed unit, then the `Emotes.dbc` row, then
+                // `CheckEmoteEligible`; only its `0x4000` arm refuses out loud. A chat-only text
+                // emote (`EmoteID` 0) reads row 0.
                 let self_unit_flags = self_store.single().map_or(0, |s| s.0.unit_flags());
                 let gate = match emotes.as_deref() {
                     Some(e) => emote_gate(
@@ -716,8 +713,8 @@ pub(super) fn drain_chat_input(
                     ),
                     None => EmoteGate::Send,
                 };
-                // `DoEmote`'s half of the `0x4000` arm (`0x5ef5d0`): the red line only while
-                // self-controlled, so a feared or confused player emotes normally.
+                // `DoEmote`'s half of the `0x4000` arm: the red line only while self-controlled, so
+                // a feared or confused player emotes normally.
                 if gate == EmoteGate::Moving {
                     let controlled = self_store
                         .single()
@@ -732,8 +729,8 @@ pub(super) fn drain_chat_input(
                     }
                 }
                 let eligible = gate != EmoteGate::Suppressed;
-                // Gate B (`0x5ef5f3`): asleep, only a posture emote gets through, so `/stand` ends
-                // `/sleep` and a `/wave` in bed does nothing.
+                // Gate B: asleep, only a posture emote gets through, so `/stand` ends `/sleep` and
+                // a `/wave` in bed does nothing.
                 let awake_or_posture = stand_state != 3 || posture.is_some();
                 if !eligible || !awake_or_posture {
                     // `DoEmote` returns before the packet: no send, no anim.
@@ -743,8 +740,8 @@ pub(super) fn drain_chat_input(
                     );
                     continue;
                 }
-                // The stow (`0x5ef630`), unconditional here: every emote past the gates sheathes
-                // instantly, mid-fight too.
+                // The stow, unconditional here: every emote past the gates sheathes instantly,
+                // mid-fight too.
                 if let Ok((entity, _, _)) = self_player.single() {
                     chat_out.sheath.write(crate::creature_anim::SheathRequest {
                         entity,
@@ -760,9 +757,9 @@ pub(super) fn drain_chat_input(
                         .stand
                         .write(crate::player::StandStateRequest { state: state as u8 });
                 }
-                // The play (`0x5ef660`, `0x5fe2f0` at `0x5ef66f`) is the posture branch's else: a posture emote plays no clip,
-                // and the rest play here only while moving. Its `SMSG_EMOTE` echo then finds the
-                // id armed and is skipped (`0x5fcd56`).
+                // The play is the posture branch's else: a posture emote plays no clip, and the
+                // rest play here only while moving. Its `SMSG_EMOTE` echo then finds the id armed
+                // and is skipped.
                 else if let (Some(anim), Ok((entity, m, _)), Ok(store)) = (
                     emote_id.and_then(|id| emotes.as_deref()?.anim(id)),
                     self_player.single(),
@@ -904,9 +901,8 @@ pub(super) fn drain_chat_input(
                         channels.join_command(name, password, false, voice)
                     }
                     C::Leave { name } => {
-                        // `LeaveChannelByName` (`0x4a0000` → `0x49ee70`): a number names a
-                        // confirmed slot or the call does nothing. Only this path clears the zone
-                        // mask and the custom re-join list.
+                        // `LeaveChannelByName`: a number names a confirmed slot or the call does
+                        // nothing. Only this path clears the zone mask and the custom re-join list.
                         let Some(name) = channels.leave_target(&name) else {
                             continue;
                         };
@@ -1051,61 +1047,60 @@ fn chattest_battery(log: &mut super::feed::ChatLog) {
     info!("chattest: battery queued");
 }
 
-/// What `CheckEmoteEligible` (`0x47db40`) decides about one emote.
+/// What `CheckEmoteEligible` decides about one emote.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum EmoteGate {
     /// Send it: packet, posture, animation.
     Send,
     /// Dropped silently: no packet, no animation, no line. A seated `/bow` is this.
     Suppressed,
-    /// The `0x4000` "requires standing still" arm tripped. `DoEmote` (`0x5ef5d0`) raises
-    /// `ERR_NOEMOTEWHILERUNNING` and aborts only when `IsSelfControlled` (`0x5fa550`), false while
+    /// The `0x4000` "requires standing still" arm tripped. `DoEmote` raises
+    /// `ERR_NOEMOTEWHILERUNNING` and aborts only when `IsSelfControlled`, false while
     /// `UNIT_FIELD_FLAGS & 0xc00004`, so a feared player emotes; that test is the caller's.
     Moving,
 }
 
-/// `CheckEmoteEligible` (`0x47db40`), the only reader of `Emotes.dbc` `EmoteFlags`, in the
-/// client's order; `DoEmote` (`0x5ef560`) calls it before building `CMSG_TEXT_EMOTE`. The `0x4000`
-/// arm tests movement, not `SWIMMING`, so it is no water gate.
+/// `CheckEmoteEligible`, the only reader of `Emotes.dbc` `EmoteFlags`, in the client's order;
+/// `DoEmote` calls it before building `CMSG_TEXT_EMOTE`. The `0x4000` arm tests movement, not
+/// `SWIMMING`, so it is no water gate.
 pub(super) fn emote_send_eligible(
     emote_flags: u32,
     stand_state: u8,
     swimming: bool,
     move_flags: u32,
 ) -> EmoteGate {
-    // `0x0400`: unconditional suppress (client `0x47db58`).
+    // `0x0400`: unconditional suppress.
     if emote_flags & 0x0400 != 0 {
         return EmoteGate::Suppressed;
     }
-    // `0x0001` + non-zero stand-state: "requires STAND" (client `0x47db65`..`0x47db74`).
+    // `0x0001` + non-zero stand-state: "requires STAND".
     if emote_flags & 0x0001 != 0 && stand_state != 0 {
         return EmoteGate::Suppressed;
     }
-    // `0x0080` while swimming (client `0x47db76`..`0x47db7d`).
+    // `0x0080` while swimming.
     if emote_flags & 0x0080 != 0 && swimming {
         return EmoteGate::Suppressed;
     }
-    // `0x0200` ABSENT at SLEEP(3)/DEAD(7): the bit means "allowed while asleep/dead" (client
-    // `0x47db8e`..`0x47db9f`).
+    // `0x0200` ABSENT at SLEEP(3)/DEAD(7): the bit means "allowed while asleep/dead".
     if emote_flags & 0x0200 == 0 && matches!(stand_state, 3 | 7) {
         return EmoteGate::Suppressed;
     }
-    // `0x4000` "requires standing still" (client `0x47dbab`), against the live movement word's
-    // `0x20ff` at `0x47dbb3` (direction, turn and pitch bits and FALLING), which is
-    // [`crate::creature_anim::move_flags::INTEGRATED`]. It only reports; `DoEmote` decides.
+    // `0x4000` "requires standing still", against the live movement word's `0x20ff` (direction,
+    // turn and pitch bits and FALLING), which is [`crate::creature_anim::move_flags::INTEGRATED`].
+    // It only reports; `DoEmote` decides.
     if emote_flags & 0x4000 != 0 && move_flags & crate::creature_anim::move_flags::INTEGRATED != 0 {
         return EmoteGate::Moving;
     }
     EmoteGate::Send
 }
 
-/// `UNIT_FLAG_POSSESSED`, `UNIT_FIELD_FLAGS` bit 24: `DoEmote` returns silently for a unit that
-/// has it (`0x5ef57e`, `descriptor+0xa3 & 1`).
+/// `UNIT_FLAG_POSSESSED`, `UNIT_FIELD_FLAGS` bit 24: `DoEmote` returns silently for a unit that has
+/// it (`descriptor+0xa3 & 1`).
 const UNIT_FLAG_POSSESSED: u32 = 0x0100_0000;
 
-/// `DoEmote`'s entry gates (`0x5ef560`) in the client's order: the unit's own `UNIT_FIELD_FLAGS`
-/// (`0x5ef57e`), the `Emotes.dbc` row by `EmoteID` (`0x5ef59c`-`0x5ef5b3`; `None` is a missing
-/// row, which returns), then `CheckEmoteEligible` over the row's flags.
+/// `DoEmote`'s entry gates in the client's order: the unit's own `UNIT_FIELD_FLAGS`, the
+/// `Emotes.dbc` row by `EmoteID` (`None` is a missing row, which returns), then
+/// `CheckEmoteEligible` over the row's flags.
 pub(super) fn emote_gate(
     row_flags: Option<u32>,
     unit_flags: u32,
@@ -1121,9 +1116,9 @@ pub(super) fn emote_gate(
     }
 }
 
-/// `PLAYER_FLAGS_DND` (`0x4`) off our live descriptor. Live, not mirrored, as in the reference
-/// (`0x49f3f0`): AFK keeps an optimistic global and DND nothing, so a second `/dnd` before the
-/// server's update re-marks where a second `/afk` clears.
+/// `PLAYER_FLAGS_DND` (`0x4`) off our live descriptor. Live, not mirrored, as in the reference: AFK
+/// keeps an optimistic global and DND nothing, so a second `/dnd` before the server's update
+/// re-marks where a second `/afk` clears.
 fn is_dnd(self_q: &Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>) -> bool {
     self_q
         .iter()
@@ -1131,8 +1126,8 @@ fn is_dnd(self_q: &Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>
         .is_some_and(|s| s.0.player_flags() & 0x4 != 0)
 }
 
-/// `autoClearAFK`, registered default `"1"` (`0x5e24d4`). Off, the clear is a total no-op: no
-/// echo, no mirror write, no packet (`0x5eb84b`).
+/// `autoClearAFK`, registered default `"1"`. Off, the clear is a total no-op: no echo, no mirror
+/// write, no packet.
 fn auto_clear_afk(cvars: &crate::cvars::Cvars) -> bool {
     cvars.flag("autoClearAFK").unwrap_or(true)
 }
@@ -1145,7 +1140,7 @@ pub(super) fn drain_addon_chat_sends(
     commands: Res<NetCommands>,
     mut chat_log: ResMut<super::feed::ChatLog>,
     mut tutorials: Option<MessageWriter<crate::tutorial::TutorialEvent>>,
-    // The optimistic AFK mirror (`[0xb6e5cc]`) the `/afk` toggle reads and writes.
+    // The optimistic AFK mirror the `/afk` toggle reads and writes.
     mut mirror: ResMut<super::away::AfkMirror>,
     cvars: Res<crate::cvars::Cvars>,
     // Our descriptor, for the DND arm's live `PLAYER_FLAGS & 0x4`.
@@ -1169,12 +1164,12 @@ pub(super) fn drain_addon_chat_sends(
             continue;
         };
         // An empty line of any type but AFK and DND ends the call here, after the type check and
-        // ahead of the target checks, the AFK clear and the tutorial acknowledge (`0x49f2a1`).
+        // ahead of the target checks, the AFK clear and the tutorial acknowledge.
         if send.ends_at_empty_line() {
             continue;
         }
         // A channel target is a slot number, sent as that slot's name; with no such slot the call
-        // ends here (`0x49f4ea`), ahead of the AFK clear and the tutorial acknowledge.
+        // ends here, ahead of the AFK clear and the tutorial acknowledge.
         if kind == super::edit::SendType::Channel {
             let name = send.target.as_deref().and_then(|t| channels.send_target(t));
             if name.is_none() {
@@ -1186,8 +1181,8 @@ pub(super) fn drain_addon_chat_sends(
             }
             send.target = name;
         }
-        // `SendChatMessage`'s tutorial acknowledge (`0x49f5fc`) covers the twelve social types,
-        // not say, yell or emote.
+        // `SendChatMessage`'s tutorial acknowledge covers the twelve social types, not say, yell or
+        // emote.
         if !matches!(
             kind,
             super::edit::SendType::Say | super::edit::SendType::Yell | super::edit::SendType::Emote
@@ -1200,9 +1195,9 @@ pub(super) fn drain_addon_chat_sends(
         }
         // ── The away commands, and the AFK clear the other sends carry ───────────────────────
         //
-        // `SendChatMessage` (`0x49f1e0`): every type but AFK (`0x14`) first clears a standing AFK
-        // (`0x49f4f6 jne 0x49f3c7`), `/dnd` included; then AFK and DND each have an arm ahead of
-        // the generic send. The system lines, the default text and the mirror are `super::away`'s.
+        // `SendChatMessage`: every type but AFK (`0x14`) first clears a standing AFK, `/dnd`
+        // included; then AFK and DND each have an arm ahead of the generic send. The system lines,
+        // the default text and the mirror are `super::away`'s.
         let strings = |key: &str| crate::ui_chat::combat::global_string(&script, key);
         let wire = kind.wire();
         if !matches!(wire, crate::net::ChatKind::Afk) {
@@ -1232,7 +1227,7 @@ pub(super) fn drain_addon_chat_sends(
                 out.body
             }
             crate::net::ChatKind::Dnd => {
-                // DND has no mirror (`0x49f3f0`): the live descriptor bit.
+                // DND has no mirror: the live descriptor bit.
                 let out = super::away::dnd_line(&send.text, is_dnd(&self_q), &strings);
                 if let Some(line) = out.line {
                     super::away::push_system(&mut chat_log, line);
@@ -1245,8 +1240,8 @@ pub(super) fn drain_addon_chat_sends(
             kind: wire,
             target: send.target,
             text,
-            // Every type but AFK carries the language the binding resolved (`0x49f6f9`); the AFK
-            // arm's own builder, `SetAFK` (`0x5eb740`), never reads the argument.
+            // Every type but AFK carries the language the binding resolved; the AFK arm's own
+            // builder, `SetAFK`, never reads the argument.
             language: match wire {
                 crate::net::ChatKind::Afk => None,
                 _ => send.language,
@@ -1258,10 +1253,10 @@ pub(super) fn drain_addon_chat_sends(
     }
 }
 
-/// Turn `SendAddonMessage` calls into sends. The binding has already applied the reference's
-/// rules (`0x49f920`: the four distributions, `prefix` TAB `message`, the downgrade outside a
-/// raid), so nothing is refused here. This writes the outbound half of the `addon` trace tag and
-/// `ui_chat::net` the inbound: `WOW_MOVE_TRACE=<path> WOW_MOVE_TRACE_TAGS=addon` logs both.
+/// Turn `SendAddonMessage` calls into sends. The binding has already applied the reference's rules
+/// (`prefix` TAB `message`, the downgrade outside a raid), so nothing is refused here. This writes
+/// the outbound half of the `addon` trace tag and `ui_chat::net` the inbound:
+/// `WOW_MOVE_TRACE=<path> WOW_MOVE_TRACE_TAGS=addon` logs both.
 pub(super) fn drain_addon_message_sends(
     script: Option<NonSendMut<benilla_ui::script::UiScript>>,
     commands: Res<NetCommands>,

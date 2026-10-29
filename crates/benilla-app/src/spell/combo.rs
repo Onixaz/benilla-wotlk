@@ -1,5 +1,5 @@
 //! Combo points, which 3.3.5a keeps off the descriptor: `SMSG_UPDATE_COMBO_POINTS` banks ours on
-//! one unit (`CGGameUI::UpdateComboPoints` `0x519780`), `SMSG_PET_UPDATE_COMBO_POINTS` the pet's
+//! one unit (`CGGameUI::UpdateComboPoints`), `SMSG_PET_UPDATE_COMBO_POINTS` the pet's
 //! (`CGPetInfo::SetComboPoints` `0x5d34b0`). Every packet fires `UNIT_COMBO_POINTS`, changed or
 //! not; the UI feed reads the epochs.
 

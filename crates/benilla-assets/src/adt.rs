@@ -73,10 +73,10 @@ impl Default for ChunkShading {
     }
 }
 
-/// One drawn MCNK chunk's mesh in Bevy space and absolute world coords; `None` for a chunk the
-/// hole mask emptied. The reference's exterior cull tests one AABB per 33.333 yd chunk
-/// (`0x683bf0`). The mesh is `RENDER_WORLD` only, so the caller takes its `Aabb` first
-/// (`Mesh::compute_aabb`): the exterior cull fails open without one.
+/// One drawn MCNK chunk's mesh in Bevy space and absolute world coords; `None` for a chunk the hole
+/// mask emptied. The reference's exterior cull tests one AABB per 33.333 yd chunk. The mesh is
+/// `RENDER_WORLD` only, so the caller takes its `Aabb` first (`Mesh::compute_aabb`): the exterior
+/// cull fails open without one.
 pub fn chunk_to_mesh(chunk: &ChunkMesh, shading: &ChunkShading) -> Option<Mesh> {
     chunks_to_mesh(&[(chunk, shading)])
 }

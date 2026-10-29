@@ -1,33 +1,33 @@
 //! The crowd-control exemption each of the cast validator's six crowd-control arms checks before
 //! refusing: does the spell being cast grant immunity to the aura blocking it (Ice Block while
-//! stunned)? The scan is `0x6e9ca0`, the matcher `0x6e9d70`, whose first gate, `AttributesEx` bit
-//! 15 on the cast, is clear on almost every spell, so the scan mostly picks the refusal's message.
+//! stunned)? The scan, the matcher, whose first gate, `AttributesEx` bit 15 on the cast, is clear
+//! on almost every spell, so the scan mostly picks the refusal's message.
 
 use super::SpellDisplay;
 
-/// The only effect kind the matcher's loop considers (`0x6e9da0`).
+/// The only effect kind the matcher's loop considers.
 const SPELL_EFFECT_APPLY_AURA: u32 = 6;
 
-/// `AttributesEx` bit 15, which the cast must carry for any immunity to count (`0x6e9d81`);
-/// inferred as `SPELL_ATTR_EX_DISPEL_AURAS_ON_IMMUNITY`.
+/// `AttributesEx` bit 15, which the cast must carry for any immunity to count; inferred as
+/// `SPELL_ATTR_EX_DISPEL_AURAS_ON_IMMUNITY`.
 const ATTR_EX_DISPELS_ON_IMMUNITY: u32 = 0x0000_8000;
 
-/// `Attributes` bit 29, which the blocking aura must not carry (`0x6e9d89`); inferred as
+/// `Attributes` bit 29, which the blocking aura must not carry; inferred as
 /// `SPELL_ATTR_UNAFFECTED_BY_INVULNERABILITY`.
 const ATTR_UNAFFECTED_BY_INVULNERABILITY: u32 = 0x2000_0000;
 
-/// `AttributesEx2` bit 26 on the blocking aura vetoes the school arm (`0x6e9dcd`).
+/// `AttributesEx2` bit 26 on the blocking aura vetoes the school arm.
 const ATTR_EX2_NO_SCHOOL_IMMUNITY: u32 = 0x0400_0000;
 
-/// The four immunity aura types the matcher switches on, read off the cast's own effects
-/// (`0x6e9dac`); any other value moves on to the next effect.
+/// The four immunity aura types the matcher switches on, read off the cast's own effects; any other
+/// value moves on to the next effect.
 const AURA_STATE_IMMUNITY: u32 = 38;
 const AURA_SCHOOL_IMMUNITY: u32 = 39;
 const AURA_DISPEL_IMMUNITY: u32 = 41;
 const AURA_MECHANIC_IMMUNITY: u32 = 77;
 
-/// The matcher (`0x6e9d70`): does `cast` grant immunity to effect `aura_effect` of `aura`? The
-/// school arm intersects two masks: 3.3.5a's `SchoolMask` and `EffectMiscValue`.
+/// The matcher: does `cast` grant immunity to effect `aura_effect` of `aura`? The school arm
+/// intersects two masks: 3.3.5a's `SchoolMask` and `EffectMiscValue`.
 pub fn grants_immunity(cast: &SpellDisplay, aura: &SpellDisplay, aura_effect: usize) -> bool {
     if cast.attributes_ex & ATTR_EX_DISPELS_ON_IMMUNITY == 0 {
         return false;
@@ -67,10 +67,10 @@ pub struct CcExemption {
     pub mechanic: u32,
 }
 
-/// The scanner (`0x6e9ca0`): asks [`grants_immunity`] about each `wanted_aura_type` effect on the
-/// caster's auras and stops at the first rejection, whose mechanic names the refusal (`0x8d`,
-/// `PREVENTED_BY_MECHANIC`). `aura_ids` are the raw `UNIT_FIELD_AURA` slots: the reference reads
-/// no aura flags, duration, stacks or caster, so any nonzero known id counts.
+/// The scanner: asks [`grants_immunity`] about each `wanted_aura_type` effect on the caster's auras
+/// and stops at the first rejection, whose mechanic names the refusal (`0x8d`,
+/// `PREVENTED_BY_MECHANIC`). `aura_ids` are the raw `UNIT_FIELD_AURA` slots: the reference reads no
+/// aura flags, duration, stacks or caster, so any nonzero known id counts.
 pub fn cc_exemption<'a>(
     cast: &SpellDisplay,
     aura_ids: impl IntoIterator<Item = u32>,

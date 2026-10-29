@@ -1,7 +1,7 @@
 //! A widget name argument (`SetPoint`'s `relativeTo`, `SetAllPoints`, `SetParent`,
-//! `SetScrollChild`) is a Lua global, so an alias resolves too: the binder `0x701bd0` publishes
-//! `_G[name]` without overwriting, and the resolvers `0x76c760` (rawget, type 5, `vtbl+0x10` tag)
-//! and `0x76c700` (`_G[name]`, `t[0]`, `IsA`) read `_G` and nothing else.
+//! `SetScrollChild`) is a Lua global, so an alias resolves too: the binder publishes `_G[name]`
+//! without overwriting, and the resolvers (rawget, type 5, `vtbl+0x10` tag) and (`_G[name]`,
+//! `t[0]`, `IsA`) read `_G` and nothing else.
 
 use super::common::script;
 
@@ -92,7 +92,7 @@ fn setpoint_relative_to_resolves_a_region_alias_global() {
     assert_eq!(bottom, 20.0);
 }
 
-/// The type-5 and tag check reject it, and the unresolved-name leg raises (`0x87ccd4`).
+/// The type-5 and tag check reject it, and the unresolved-name leg raises.
 #[test]
 fn setpoint_relative_to_ignores_a_non_widget_global() {
     let mut s = script();
@@ -120,9 +120,9 @@ fn setpoint_relative_to_ignores_a_non_widget_global() {
     assert_eq!(n, 0, "the raise leaves no anchor behind");
 }
 
-/// The expander `0x76c5b0` is called only from `SetName` (`0x76c691`) and the layout resolver
-/// (`0x76c71c` in `0x76c700`), so anchors expand `$parent` against the first named ancestor
-/// (`"Top"` if none); `SetParent` and `SetScrollChild` call `0x76c760` directly and do not.
+/// The expander is called only from `SetName` and the layout resolver, so anchors expand `$parent`
+/// against the first named ancestor (`"Top"` if none); `SetParent` and `SetScrollChild` call
+/// directly and do not.
 #[test]
 fn setpoint_relative_to_expands_parent_against_the_first_named_ancestor() {
     let mut s = script();
@@ -176,7 +176,7 @@ fn setparent_does_not_expand_parent() {
     );
 }
 
-/// `SetParent`'s name path (`0x7a1550`) resolves through `0x76c760` too.
+/// `SetParent`'s name path resolves through the reference too.
 #[test]
 fn setparent_resolves_an_alias_global() {
     let s = script();
@@ -220,8 +220,8 @@ fn setallpoints_resolves_an_alias_global() {
     assert_eq!((l, b, w, h), (30.0, 40.0, 120.0, 60.0));
 }
 
-/// `CreateFrame 0x7060b0`, `CreateTexture 0x773a20` and `CreateFontString 0x773c30` read their
-/// `name=` back through `CScriptRegion::SetName 0x76c650`, which calls the expander `0x76c5b0`.
+/// `CreateFrame`, `CreateTexture` and `CreateFontString` read their `name=` back through
+/// `CScriptRegion::SetName`, which calls the expander.
 #[test]
 fn a_constructor_name_expands_parent() {
     let s = script();

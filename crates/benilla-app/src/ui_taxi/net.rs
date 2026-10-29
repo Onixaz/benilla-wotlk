@@ -64,9 +64,9 @@ fn taxi_nodes_shown(
 }
 
 /// `SMSG_TAXINODE_STATUS`, the answer to `CMSG_TAXINODE_STATUS_QUERY` and the second half of a
-/// first-visit learn: upsert [`super::FlightMasterStatus`], so the green icon follows `known`.
-/// The reference's handler (`0x5ecdd0`) also requires the flight-master NPC flag (bit 3); only
-/// flight masters are queried or answered, so it is not tested here.
+/// first-visit learn: upsert [`super::FlightMasterStatus`], so the green icon follows `known`. The
+/// reference's handler also requires the flight-master NPC flag (bit 3); only flight masters are
+/// queried or answered, so it is not tested here.
 fn taxi_node_status(guid: u64, known: bool, commands: &mut Commands, index: &GuidIndex) {
     debug!("net: taxi node status — {guid:#x} known={known}");
     if let Some(&e) = index.0.get(&guid) {

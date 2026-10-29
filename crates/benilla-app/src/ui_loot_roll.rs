@@ -2,21 +2,20 @@
 //! `SMSG_LOOT_ALL_PASSED` become the stock `GroupLootFrame`'s events and the roll chat lines, and
 //! its `RollOnLoot` votes go back out as `CMSG_LOOT_ROLL`.
 //!
-//! A fresh roll's `START_LOOT_ROLL` waits for its item template, as in the reference: `0x61b310`
-//! ends in the cache lookup `0x55ba30`, whose hit fires the event at once (`0x61b430`) and whose
-//! miss fires it from the arrival callback `0x61b460`. `GroupLootFrame` paints once, from `OnShow`,
-//! so an event ahead of the template paints a blank frame. Deviation: a negative answer, or none
-//! within [`TEMPLATE_HOLD_MAX_MS`], opens the frame unresolved, because a frame that never opens
-//! cannot even be passed on; the reference's callback fires on success only.
+//! A fresh roll's `START_LOOT_ROLL` waits for its item template, as in the reference: the reference
+//! ends in the cache lookup, whose hit fires the event at once and whose miss fires it from the
+//! arrival callback. `GroupLootFrame` paints once, from `OnShow`, so an event ahead of the template
+//! paints a blank frame. Deviation: a negative answer, or none within [`TEMPLATE_HOLD_MAX_MS`],
+//! opens the frame unresolved, because a frame that never opens cannot even be passed on; the
+//! reference's callback fires on success only.
 //!
-//! A held roll's `arg2` is still the wire's countdown (`0x61b430` pushes `node+0x3c`); only the bar
-//! is short, as `GetLootRollTimeLeft` counts from the packet's arrival.
+//! A held roll's `arg2` is still the wire's countdown (the reference pushes `node+0x3c`); only the
+//! bar is short, as `GetLootRollTimeLeft` counts from the packet's arrival.
 //!
 //! `rollID` is a client-local serial; the wire addresses a roll by `(lootedTarget, itemSlot)`. Our
-//! own vote closes our frame at once, as `RollOnLoot` (`0x61bdf0`) sends the CMSG and fires
-//! `CANCEL_LOOT_ROLL` in one call. On a bind-on-pickup roll, Need or Greed only raises
-//! `CONFIRM_LOOT_ROLL` and `ConfirmLootRoll` sends, the reference's C `RollOnLoot` gate; Pass is
-//! never gated.
+//! own vote closes our frame at once, as `RollOnLoot` sends the CMSG and fires `CANCEL_LOOT_ROLL`
+//! in one call. On a bind-on-pickup roll, Need or Greed only raises `CONFIRM_LOOT_ROLL` and
+//! `ConfirmLootRoll` sends, the reference's C `RollOnLoot` gate; Pass is never gated.
 
 use benilla_protocol::messages::{roll_vote, LootAllPassed, LootRoll, LootRollWon, LootStartRoll};
 use bevy::prelude::*;
@@ -48,8 +47,8 @@ struct ActiveRoll {
     looted_target: u64,
     item_slot: u32,
     item_id: u32,
-    /// The drop's random-suffix roll: the reference's `SetLootRollItem` (`0x5364a0`) copies it
-    /// into the tooltip's `+0x424` with no item object, so it is the hover's only enchant source.
+    /// The drop's random-suffix roll: the reference's `SetLootRollItem` copies it into the
+    /// tooltip's `+0x424` with no item object, so it is the hover's only enchant source.
     random_property_id: u32,
     /// The wire's `countdownTime`, kept whole: `START_LOOT_ROLL`'s `arg2` and the bar's maximum.
     countdown_ms: u32,
@@ -143,7 +142,7 @@ impl LootRolls {
     }
 
     /// Drop the roll if we still hold it and queue its `CANCEL_LOOT_ROLL`, announced or not: the
-    /// reference's `0x61b9e0` and `0x61b640` check only the node's closed byte `+0x3a`.
+    /// reference's check only the node's closed byte `+0x3a`.
     fn close(&mut self, looted_target: u64, item_slot: u32) {
         if let Some(i) = self
             .active
@@ -264,12 +263,11 @@ impl Plugin for UiLootRollPlugin {
 /// Pick and fill an announcement: the enUS strings of `GlobalStrings.lua:2614-2633`, inlined where
 /// the reference reads the install's. It branches on `roll_number` first: a Greed vote is
 /// `(128, 2)`, a Greed dice roll `(1..=100, 2)`. The dice line has no self form: the reference's
-/// shared tail (`0x61c320`) picks `ROLLED_GREED` for rollType 2, else `ROLLED_NEED`, with no self
-/// test.
+/// shared tail picks `ROLLED_GREED` for rollType 2, else `ROLLED_NEED`, with no self test.
 ///
-/// `detailed` is `showLootSpam` (`0xb4e2bc`). At 0, vote and dice lines drop (`0x61c0b0`, `None`
-/// here) and the won line (`0x61b9e0`) takes `*_NO_SPAM_NEED`/`_GREED` with the roll number, Need
-/// on `rollType == 1`; all-passed is never gated (`0x61b640`).
+/// `detailed` is `showLootSpam`. At 0, vote and dice lines drop (`None` here) and the won line
+/// takes `*_NO_SPAM_NEED`/`_GREED` with the roll number, Need on `rollType == 1`; all-passed is
+/// never gated.
 fn format_line(
     line: &RollLine,
     name: Option<&str>,
@@ -279,7 +277,7 @@ fn format_line(
 ) -> Option<String> {
     if !detailed {
         if let RollLine::Announce(_) = line {
-            // `0x61c0b9`: the composer frees the node and returns.
+            // The composer frees the node and returns.
             return None;
         }
     }
@@ -445,8 +443,8 @@ fn snapshot(
                 roll_id: r.roll_id,
                 name: t.map(|t| catalogs.name(&t.name, r.random_property_id)),
                 texture,
-                // The reference's `GetLootRollItemInfo` returns a literal 1 (`0x4c3160`); the
-                // packet carries no count.
+                // The reference's `GetLootRollItemInfo` returns a literal 1; the packet carries no
+                // count.
                 quantity: 1,
                 quality: t.map(|t| t.quality),
                 bind_on_pickup: t.is_some_and(|t| t.bonding == BIND_WHEN_PICKED_UP),
@@ -484,8 +482,7 @@ fn feed_loot_rolls(
     mut last: Local<crate::ui_script::VmMemo<LootRollsState>>,
     props: Option<Res<crate::items::RandomProperties>>,
     enchants: Option<Res<crate::items::Enchants>>,
-    // `showLootSpam`, read as each line is composed, as the reference's composers read it
-    // (`0x61ba3a`, `0x61bafe`, `0x61c0b9`).
+    // `showLootSpam`, read as each line is composed, as the reference's composers read it.
     loot: Res<crate::ui_loot::LootConfig>,
 ) {
     rolls.tick(time.delta().as_millis() as u32);
@@ -770,7 +767,7 @@ mod tests {
         );
     }
 
-    /// `showLootSpam` 0 (the CVar `0xb4e2bc`).
+    /// `showLootSpam` 0.
     #[test]
     fn detail_off_suppresses_the_roll_lines_and_reshapes_the_winner() {
         for p in [
@@ -818,7 +815,7 @@ mod tests {
             .unwrap()
             .contains("(Greed - 84)"));
 
-        // All-passed is never gated: `0x61b640` does not read the CVar.
+        // All-passed is never gated: the reference does not read the CVar.
         let passed = LootAllPassed {
             looted_target: 0xAA,
             item_slot: 0,
@@ -1014,9 +1011,9 @@ mod tests {
         rx.try_iter().collect()
     }
 
-    /// `0x61b310` ends in `0x55ba30(node+0x1c, node+0x10, callback 0x61b460, node, 0)`: a hit fires
-    /// at once (`0x61b430`), a miss asks and fires on arrival. The negative answer releases the
-    /// roll too, the module doc's deviation.
+    /// The reference ends in `(node+0x1c, node+0x10, callback , node, 0)`: a hit fires at once, a
+    /// miss asks and fires on arrival. The negative answer releases the roll too, the module doc's
+    /// deviation.
     #[test]
     fn the_roll_waits_for_its_item_template() {
         for (answer, painted) in [
@@ -1055,7 +1052,7 @@ mod tests {
         }
     }
 
-    /// `0x61b310`'s hit path: the roll announces on the pass the packet lands.
+    /// The reference's hit path: the roll announces on the pass the packet lands.
     #[test]
     fn a_cached_template_announces_the_same_pass() {
         let (mut app, _rx) = hold_app();
@@ -1097,7 +1094,7 @@ mod tests {
         assert_eq!(starts(&mut app).len(), 1, "and only once");
     }
 
-    /// A held roll's `CANCEL_LOOT_ROLL` still goes out, as `0x61b9e0` checks only the node's
+    /// A held roll's `CANCEL_LOOT_ROLL` still goes out, as the reference checks only the node's
     /// closed byte; the stock Lua matches no frame to it.
     #[test]
     fn a_roll_resolved_while_held_never_announces() {

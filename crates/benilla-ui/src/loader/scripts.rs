@@ -5,8 +5,8 @@ use crate::framexml::Element;
 use super::{children_named, Loader};
 
 impl Loader<'_> {
-    /// `<Scripts>` (`0x769ef0`): `SetScript` for each handler. Returns the `OnLoad`, which the
-    /// caller fires bottom-up.
+    /// `<Scripts>`: `SetScript` for each handler. Returns the `OnLoad`, which the caller fires
+    /// bottom-up.
     pub(super) fn apply_scripts(
         &mut self,
         el: &Element,
@@ -15,7 +15,7 @@ impl Loader<'_> {
     ) -> Option<Function> {
         let mut onload = None;
         // A handler's chunk name is `"<GetName()>:<Handler>"` off the wrapper, `<unnamed>` for a
-        // nameless frame (`0x7025fd`-`0x70263c`), never the loader's `dbg`.
+        // nameless frame, never the loader's `dbg`.
         for scripts in children_named(el, "Scripts") {
             let owner = wrapper
                 .call_method::<Option<String>>("GetName", ())
@@ -25,9 +25,9 @@ impl Loader<'_> {
             for handler in &scripts.children {
                 let name = handler.tag.clone();
                 // An empty body clears the handler to nil, but a whitespace one is an empty
-                // function: `SetScript` (`0x7025c0`) tests only NULL and the first byte
-                // (`0x7025f8`), and nothing trims the body (`0x6f29d0`). The stock blanks
-                // (`BuffFrame.xml:101`) are whitespace, so their `GetScript` answers a function.
+                // function: `SetScript` tests only NULL and the first byte, and nothing trims the
+                // body. The stock blanks (`BuffFrame.xml:101`) are whitespace, so their `GetScript`
+                // answers a function.
                 let cleared = handler.body.is_empty();
                 let func = if let Some(global) = self.function_attribute(handler) {
                     self.named_handler(&global, &name, &owner)
@@ -47,10 +47,9 @@ impl Loader<'_> {
                     );
                     continue;
                 }
-                // After each `SetScript` the XML walker enables the handler's input kind
-                // (`0x769ef0` → `0x76af00`): these five arm the mouse (`OnDragStop` and
-                // `OnReceiveDrag` do not), `OnMouseWheel` the wheel (kind 3). The Lua `SetScript`
-                // never does (`0x7748d0`).
+                // After each `SetScript` the XML walker enables the handler's input kind: these
+                // five arm the mouse (`OnDragStop` and `OnReceiveDrag` do not), `OnMouseWheel` the
+                // wheel (kind 3). The Lua `SetScript` never does.
                 const MOUSE_KIND: [&str; 5] = [
                     "OnEnter",
                     "OnLeave",
@@ -144,8 +143,8 @@ impl Loader<'_> {
         }
     }
 
-    /// Fire a captured `OnLoad` under the event path's convention, `this` set and restored
-    /// (`0x704d50`); an error is recorded, never propagated.
+    /// Fire a captured `OnLoad` under the event path's convention, `this` set and restored; an
+    /// error is recorded, never propagated.
     pub(super) fn fire_onload(&mut self, wrapper: &Table, func: &Function, dbg: &str) {
         if let Err(e) = self.invoke_handler(wrapper, func) {
             self.report.errors.push(format!("{dbg}: OnLoad: {e}"));

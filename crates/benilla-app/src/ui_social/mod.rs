@@ -1,6 +1,6 @@
-//! The social session: the friend, ignore and mute lists, `/who`, and the system lines they
-//! print. The reference's `FriendList` (`0xc28168`) holds guids, not names: a row's name comes from
-//! the name cache when it is read, and each list's selection is a guid too.
+//! The social session: the friend, ignore and mute lists, `/who`, and the system lines they print.
+//! The reference's `FriendList` holds guids, not names: a row's name comes from the name cache when
+//! it is read, and each list's selection is a guid too.
 //!
 //! Every friend, ignore and mute result prints to the chat frame through `DisplayError`, the line
 //! `HandleStatus` (`0x6b73a0`) picks per result code.
@@ -177,8 +177,8 @@ impl SocialState {
                 self.friends.retain(|f| f.guid != update.guid);
                 self.friends_dirty = true;
             }
-            // `GetFriendIndexByGuid` (`0x6b3c10`) seats an unlisted guid: an add, and also the
-            // already-listed refusal.
+            // `GetFriendIndexByGuid` seats an unlisted guid: an add, and also the already-listed
+            // refusal.
             R::ADDED_ONLINE | R::ADDED_OFFLINE | R::ALREADY => {
                 let friend = self.seat_friend(update.guid);
                 if let Some(friend) = friend {
@@ -519,7 +519,7 @@ mod tests {
         social.apply_friend_status(status(friend_result::REMOVED, 7));
         assert!(social.friends.is_empty());
 
-        // `ALREADY` seats a guid the client did not hold (`GetFriendIndexByGuid` `0x6b3c10`).
+        // `ALREADY` seats a guid the client did not hold (`GetFriendIndexByGuid`).
         social.apply_friend_status(status(friend_result::ALREADY, 8));
         assert_eq!(social.friends.len(), 1);
     }

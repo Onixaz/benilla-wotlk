@@ -14,8 +14,8 @@
 //! - `ERR_LEARN_COMPANION_S` with the creature's name, then `COMPANION_LEARNED`, on a live learn
 //!   once its record is cached (`0x5427be`, `0x53ebc0`); `COMPANION_UNLEARNED` on an unlearn
 //!   (`0x53fad0`);
-//! - `COMPANION_UPDATE "CRITTER"` on a `UNIT_FIELD_CRITTER` change (`0x6cf6c0`), `"MOUNT"` on a
-//!   `MOUNTED` aura's arrival or removal (`0x724820`, `0x71e930`).
+//! - `COMPANION_UPDATE "CRITTER"` on a `UNIT_FIELD_CRITTER` change, `"MOUNT"` on a `MOUNTED` aura's
+//!   arrival or removal (`0x724820`, `0x71e930`).
 //!
 //! Not modelled: the vehicle arm of the active test (`0x802cf3`), and the learn's tutorials
 //! (`0x33`, `0x34`).

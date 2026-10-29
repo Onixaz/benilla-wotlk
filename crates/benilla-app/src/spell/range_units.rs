@@ -1,6 +1,6 @@
-//! The units `GetMinMaxRange` (`0x6e3480`) reads, built from the world: the caster, a target unit,
-//! and the caster's auto-attack target, each as its combat reach, player bit, motion and whether
-//! the caster can assist it ([`benilla_formats::RangeUnit`]).
+//! The units `GetMinMaxRange` reads, built from the world: the caster, a target unit, and the
+//! caster's auto-attack target, each as its combat reach, player bit, motion and whether the caster
+//! can assist it ([`benilla_formats::RangeUnit`]).
 
 use benilla_formats::{RangeUnit, UnitMotion};
 use benilla_protocol::messages::ObjectType;
@@ -20,12 +20,11 @@ use crate::target::{can_assist, Factions};
 /// The descriptor's default combat reach, before a unit's store streams.
 pub(crate) const DEFAULT_REACH: f32 = 1.5;
 
-/// One unit's motion as `0x7c4c90` and the moving test read it (`0x5fc350`, `0x6e364c`): `flags`
-/// is the movement word (`[[unit+0x118]+0x40]`), and the current speed is 0 with no direction bit
-/// (`0x7c4c99`), then the live server spline's speed, its length over its duration (`0x7c4caa`),
-/// then the swim, walk, run or run-back speed the flags pick ([`current_speed`]). A unit with no
-/// speeds streamed reads no current speed here, so it is not running; every unit's create block
-/// applies its speeds, so none is seen that way.
+/// One unit's motion as the reference and the moving test read it: `flags` is the movement word
+/// (`[[unit+0x118]+0x40]`), and the current speed is 0 with no direction bit, then the live server
+/// spline's speed, its length over its duration, then the swim, walk, run or run-back speed the
+/// flags pick ([`current_speed`]). A unit with no speeds streamed reads no current speed here, so
+/// it is not running; every unit's create block applies its speeds, so none is seen that way.
 pub(crate) fn unit_motion(
     flags: u32,
     speeds: Option<&MoveSpeeds>,
@@ -133,8 +132,8 @@ impl RangeUnits<'_, '_> {
     }
 
     /// The auto-attack target of `entity`, the unit `GetMinMaxRange` looks up itself for its melee
-    /// arm (`0x6e3552`-`0x6e3584`). `None` with no target engaged or before it streams, where the
-    /// arm reads the caster's own reach (`0x6e3594`).
+    /// arm. `None` with no target engaged or before it streams, where the arm reads the caster's
+    /// own reach.
     pub(crate) fn attack_target(&self, entity: Entity) -> Option<RangeUnit> {
         let guid = self.engaged.get(entity).ok()?.0;
         let target = *self.index.as_ref()?.0.get(&guid)?;
@@ -177,8 +176,8 @@ mod tests {
         }
     }
 
-    /// `0x7c4c90` for a forward runner answers the run speed, and `0x5fc350` finds it above twice
-    /// the walk speed.
+    /// The reference for a forward runner answers the run speed, and the reference finds it above
+    /// twice the walk speed.
     #[test]
     fn a_forward_runner_is_running() {
         let m = unit_motion(f::FORWARD, Some(&speeds()), None);
@@ -206,9 +205,9 @@ mod tests {
         assert!(unit_motion(f::FORWARD | f::SWIMMING, Some(&fast), None).moves_at_run_speed());
     }
 
-    /// A live spline is the current speed (`0x7c4caa`), whatever the flags pick: a mob fleeing at
-    /// 8 yd/s runs, and one wandering at 2.5 does not though its flags are a runner's (a creature's
-    /// spline sets forward and no walk mode, [`unify`]); with no direction bit it is 0.
+    /// A live spline is the current speed, whatever the flags pick: a mob fleeing at 8 yd/s runs,
+    /// and one wandering at 2.5 does not though its flags are a runner's (a creature's spline sets
+    /// forward and no walk mode, [`unify`]); with no direction bit it is 0.
     #[test]
     fn a_spline_is_its_own_speed() {
         let s = speeds();

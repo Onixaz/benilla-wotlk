@@ -41,8 +41,7 @@ const ATTR_EX4_NOT_IN_SPELLBOOK: u32 = 0x8000;
 
 /// One spell's `Spell.dbc` row, as the display, tooltip and cast gates read it.
 pub struct SpellDisplay {
-    /// `ID` (column 0): the row's own id, which `GetEffectPoints` hands the level lookup
-    /// `0x6e3130` (`0x6e384b`).
+    /// `ID` (column 0): the row's own id, which `GetEffectPoints` hands the level lookup.
     pub id: u32,
     pub name: String,
     /// `SpellNameSubtext` enUS (column 153): "Rank N", even "Rank 1", or a word such as "Racial".
@@ -68,7 +67,7 @@ pub struct SpellDisplay {
     /// `AttributesEx2` (column 6).
     pub attributes_ex2: u32,
     /// `AttributesEx3` (column 7). Bits `0x400` and `0x1000000` limit the equipped-item search to
-    /// the main or the off hand (`0x5f0c50`).
+    /// the main or the off hand.
     pub attributes_ex3: u32,
     /// `AttributesEx4` (column 8, `+0x20`).
     pub attributes_ex4: u32,
@@ -89,26 +88,26 @@ pub struct SpellDisplay {
     /// summed cell per set bit over all 96 (`0x7fd970`); bits 96 and up are always clear.
     pub spell_family_flags: u128,
     /// `PreventionType` (column 214): 1 silence, 2 pacify, 0 neither; the crowd control that
-    /// refuses the spell locally (`0x6094f0`, from `TryCast` `0x6e4b60`). A stun refuses all.
+    /// refuses the spell locally (from `TryCast`). A stun refuses all.
     pub prevention_type: u32,
-    /// `modalNextSpell` (column 48): cast by the client itself (`0x6e74aa`), at no target, when
-    /// `SMSG_CAST_RESULT` for this in-flight spell arrives, success or failure (`0x6e7330`); if
-    /// it is the running auto-repeat, that is only re-armed (`0x6e745d`). Every hunter shot
-    /// names 75, Auto Shot: that is how shooting starts.
+    /// `modalNextSpell` (column 48): cast by the client itself, at no target, when
+    /// `SMSG_CAST_RESULT` for this in-flight spell arrives, success or failure; if it is the
+    /// running auto-repeat, that is only re-armed. Every hunter shot names 75, Auto Shot: that is
+    /// how shooting starts.
     pub modal_next_spell: u32,
     /// `Attributes & 0x40`, `SPELL_ATTR_PASSIVE`: the spellbook grays it.
     pub passive: bool,
     /// `castUI`, a 1.12.1 column 12340 dropped: nonzero keeps the spell out of the spellbook; 0 on
     /// every 3.3.5a spell.
     pub cast_ui: u32,
-    /// `Effect[3]` (columns 71-73); the trainer's icon scans all three (`0x4d8fed`).
+    /// `Effect[3]` (columns 71-73); the trainer's icon scans all three.
     pub effects: [u32; 3],
     /// The `SPELL_EFFECT_OPEN_LOCK` effect the GameObject interact-cast matches against a lock.
     pub open_lock: Option<OpenLock>,
     /// `baseLevel` (column 38, not `spellLevel`): the level effect values are quoted at, read by
-    /// the effect-value walk (`0x6e3854`) and the cast-time scaling (`0x6e3340`).
+    /// the effect-value walk and the cast-time scaling.
     pub base_level: u32,
-    /// `maxLevel` (column 37): caps an opener's skill at `maxLevel × 5`, unless 0 (`0x5ea6e3`).
+    /// `maxLevel` (column 37): caps an opener's skill at `maxLevel × 5`, unless 0.
     pub max_level: u32,
     /// `spellLevel` (column 39), read only by the Beast Training rank comparator.
     pub spell_level: u32,
@@ -117,14 +116,14 @@ pub struct SpellDisplay {
     /// `Category` (column 1): the shared-cooldown category; 0 is none.
     pub category: u32,
     /// The category's `SpellCategory.dbc` flags carry `0x2`, matching every cooldown query
-    /// (`GetCooldownInfo` `0x6e13e0`); true only for wand Shoot's 351, whose swing sweeps the bar.
+    /// (`GetCooldownInfo`); true only for wand Shoot's 351, whose swing sweeps the bar.
     pub category_wildcard: bool,
     /// `RecoveryTime` (column 29): the spell's own cooldown in ms.
     pub recovery_ms: u32,
     /// `InterruptFlags` (column 31): what breaks the cast; `0xf` on timed casts, `0x1` movement.
     pub interrupt_flags: u32,
     /// `AuraInterruptFlags` (column 32): what breaks the applied aura, such as food's sit-still
-    /// bits. The cast-start moving gate reads its `0x18`, moving or turning (`0x609de3`).
+    /// bits. The cast-start moving gate reads its `0x18`, moving or turning.
     pub aura_interrupt_flags: u32,
     /// `ChannelInterruptFlags` (column 33): what breaks the channel, in aura-interrupt bits.
     pub channel_interrupt_flags: u32,
@@ -143,7 +142,7 @@ pub struct SpellDisplay {
     pub rune_cost_id: u32,
     /// `ManaCostPercentage` (column 204): percent of base mana added to the flat cost.
     pub mana_cost_pct: u32,
-    /// `manaCostPerlevel` (column 43): the per-level cost term of `GetPowerCost` (`0x6e31b0`).
+    /// `manaCostPerlevel` (column 43): the per-level cost term of `GetPowerCost`.
     pub mana_cost_per_level: u32,
     /// `manaPerSecond` (column 44): the tooltip's "plus N per sec".
     pub mana_per_second: u32,
@@ -172,7 +171,7 @@ pub struct SpellDisplay {
     /// `CasterAuraState` (column 20): state n needs bit `1 << (n - 1)` of the caster's
     /// `UNIT_FIELD_AURASTATE`; 0 is none.
     pub caster_aura_state: u32,
-    /// `TargetAuraState` (column 21): the current target's required aura state (`0x6e3f58`).
+    /// `TargetAuraState` (column 21): the current target's required aura state.
     pub target_aura_state: u32,
     /// `Totem[2]` (columns 50-51): tools that must be carried, not consumed, such as a hammer.
     pub totems: [u32; 2],
@@ -183,19 +182,19 @@ pub struct SpellDisplay {
     /// `EquippedItemSubClassMask` (column 69): the allowed subclasses, `1 << subclass` each.
     pub equipped_item_subclass_mask: u32,
     /// `EquippedItemInventoryTypeMask` (column 70): `1 << InventoryType` each; the item-target
-    /// gate's last leg (`0x495d60`), whose mismatch is the local "Invalid target" (`0x0a`).
+    /// gate's last leg, whose mismatch is the local "Invalid target" (`0x0a`).
     pub equipped_item_inventory_type_mask: u32,
     /// `RequiresSpellFocus` (column 18): the `SpellFocusObject.dbc` object needed nearby.
     pub requires_spell_focus: u32,
     /// The `SpellShapeshiftForm.dbc` form: the first `SPELL_AURA_MOD_SHAPESHIFT` effect's
-    /// `EffectMiscValue`, which the stance bar keys on (`0x4b2810`, `0x4b475c`).
+    /// `EffectMiscValue`, which the stance bar keys on.
     pub shapeshift_form: Option<u32>,
     /// `StanceBarOrder` (column 215, signed): the stance bar's sort key, negative last.
     pub stance_bar_order: i32,
     /// `ActiveIconID`'s texture, shown on the stance button while the form is active.
     pub active_icon: Option<String>,
-    /// `ActiveIconID` (column 134) as stored: nonzero makes a second press cancel the spell's
-    /// live aura. The client tests the id, not the texture (`0x4e55f0`, `0x4b36f0`).
+    /// `ActiveIconID` (column 134) as stored: nonzero makes a second press cancel the spell's live
+    /// aura. The client tests the id, not the texture.
     pub active_icon_id: u32,
     /// `Description` enUS (column 170): the tooltip body, its `$` tokens unsubstituted.
     pub description: Option<String>,
@@ -215,11 +214,11 @@ pub struct SpellDisplay {
     pub proc_chance: u32,
     /// `ProcCharges` (column 36): the description expander's `$n` value before op 4.
     pub proc_charges: u32,
-    /// `StackAmount` (column 49): the description expander's `$u` (`507ef1`).
+    /// `StackAmount` (column 49): the description expander's `$u`.
     pub stack_amount: u32,
-    /// `MaxTargetLevel` (column 207): the description expander's `$v` (`507f4f`).
+    /// `MaxTargetLevel` (column 207): the description expander's `$v`.
     pub max_target_level: u32,
-    /// `MaxAffectedTargets` (column 212): the description expander's `$i` (`507fc3`).
+    /// `MaxAffectedTargets` (column 212): the description expander's `$i`.
     pub max_affected_targets: u32,
     /// `RequiredAuraVision` (column 221, `SpellRec+0x274`): an aura vision bit, 1-based, that
     /// [`Self::aura_vision_mask`] folds in; 0 for none.
@@ -245,11 +244,11 @@ pub struct SpellDisplay {
     pub effect_chain_targets: [u32; 3],
     /// `EffectMultipleValue[3]` (columns 101-103, float): the chain or multi-target falloff.
     pub effect_multiple_value: [f32; 3],
-    /// `DmgMultiplier[3]` (columns 216-218, float): `$f`/`$F` print it scaled (`507ff7`, `508025`).
+    /// `DmgMultiplier[3]` (columns 216-218, float): `$f`/`$F` print it scaled (`508025`).
     pub damage_multiplier: [f32; 3],
     /// `EffectBonusMultiplier[3]` (columns 229-231, float): the expression operands `bc1`..`bc3`.
     pub effect_bonus_multiplier: [f32; 3],
-    /// `EffectPointsPerComboPoint[3]` (columns 119-121, float): `$b` prints it chopped (`507ed4`).
+    /// `EffectPointsPerComboPoint[3]` (columns 119-121, float): `$b` prints it chopped.
     pub effect_points_per_combo_point: [f32; 3],
     /// `EffectTriggerSpell[3]` (columns 116-118): each effect's triggered spell, 0 for none.
     pub effect_trigger_spell: [u32; 3],
@@ -261,8 +260,8 @@ pub struct SpellDisplay {
     pub effect_misc_value_b: [i32; 3],
     /// The integer per-level dice term, 0 on every 12340 row, which dropped `EffectDicePerLevel`.
     pub effect_dice_per_level: [i32; 3],
-    /// `EffectRealPointsPerLevel[3]` (columns 77-79): the float per-level term (`0x6e3889`); 5.0
-    /// on Pick Lock, Mining and Herb Gathering, so the skill they provide tracks the player's.
+    /// `EffectRealPointsPerLevel[3]` (columns 77-79): the float per-level term; 5.0 on Pick Lock,
+    /// Mining and Herb Gathering, so the skill they provide tracks the player's.
     pub effect_real_points_per_level: [f32; 3],
 }
 
@@ -372,9 +371,9 @@ impl Default for SpellDisplay {
 }
 
 impl SpellDisplay {
-    /// The level the effect values, cast time, cost and duration scale by for a caster whose
-    /// skill in this spell's line is `skill_value` (`0x6e3130`): the skill capped at
-    /// `maxLevel × 5` unless `maxLevel` is 0 (`0x5ea6dc`-`0x5ea6ea`), over 5 (`0x6e3195`).
+    /// The level the effect values, cast time, cost and duration scale by for a caster whose skill
+    /// in this spell's line is `skill_value`: the skill capped at `maxLevel × 5` unless `maxLevel`
+    /// is 0, over 5.
     pub fn skill_level(&self, skill_value: u32) -> u32 {
         let capped = if self.max_level > 0 {
             skill_value.min(self.max_level.saturating_mul(5))
@@ -389,13 +388,12 @@ impl SpellDisplay {
         self.open_lock.map(|o| o.lock_type)
     }
 
-    /// The lock skill this spell provides (`0x5f850f`), from the player's skill in its line:
-    /// the effect value (`0x6e3800`) with its caller's rounding (`0x6e3760`). Its level term is
-    /// that skill with its bonuses (`0x5ea690`), not the caster's level; a skill of 0 leaves only
-    /// the flat terms.
+    /// The lock skill this spell provides, from the player's skill in its line: the effect value
+    /// with its caller's rounding. Its level term is that skill with its bonuses, not the caster's
+    /// level; a skill of 0 leaves only the flat terms.
     pub fn open_lock_skill(&self, skill_value: u32) -> Option<i32> {
         let e = self.open_lock?.effect;
-        // Less baseLevel floored at 0 (read at `0x6e3854`, subtracted at `0x6e385b`-`0x6e385f`).
+        // Less baseLevel floored at 0.
         let delta = self
             .skill_level(skill_value)
             .saturating_sub(self.base_level) as f32;
@@ -403,8 +401,8 @@ impl SpellDisplay {
             + self.effect_base_dice[e] as f32
             + self.effect_dice_per_level[e] as f32 * delta
             + self.effect_real_points_per_level[e] * delta;
-        // `0x6e3760`'s rounding verbatim: double, bias away from zero by a half, round-to-nearest
-        // (x87 `fistp`), then arithmetic-halve.
+        // The reference's rounding verbatim: double, bias away from zero by a half,
+        // round-to-nearest (x87 `fistp`), then arithmetic-halve.
         let doubled = if v >= 0.0 {
             v * 2.0 - 0.5
         } else {
@@ -466,8 +464,8 @@ impl SpellDisplay {
         self.attributes & ATTR_TARGET_MAIN_HAND_ITEM != 0
     }
 
-    /// `AttributesEx2 & 0x20` alone: the cast send sets the client's auto-repeat state from it
-    /// (`0x6e593b`), which drives the shooter's Load/Hold idle. Throw is ranged, not auto-repeat.
+    /// `AttributesEx2 & 0x20` alone: the cast send sets the client's auto-repeat state from it,
+    /// which drives the shooter's Load/Hold idle. Throw is ranged, not auto-repeat.
     pub fn auto_repeat(&self) -> bool {
         self.attributes_ex2 & ATTR_EX2_AUTO_REPEAT != 0
     }
@@ -479,19 +477,19 @@ impl SpellDisplay {
     }
 
     /// `AttributesEx3 & 0x400000`: a running auto-repeat with this bit ends when any new cast
-    /// begins (`0x60959e`). Only wand Shoot 5019 has it; Auto Shot survives, so hunters weave.
+    /// begins. Only wand Shoot 5019 has it; Auto Shot survives, so hunters weave.
     pub fn casting_cancels_autorepeat(&self) -> bool {
         self.attributes_ex3 & 0x0040_0000 != 0
     }
 
     /// `Attributes & 0x2` alone: a ranged-slot spell with no `SpellVisual` borrows the ranged
-    /// weapon's `ItemDisplayInfo` visual (`0x60d46a`), which is how Throw and the shots animate.
+    /// weapon's `ItemDisplayInfo` visual, which is how Throw and the shots animate.
     pub fn ranged_slot(&self) -> bool {
         self.attributes & ATTR_RANGED != 0
     }
 
-    /// `AttributesEx3 & 0x8000`: damage floats melee white, not spell gold (`0x6128b0`); set on
-    /// the basic ranged shots (Auto Shot, Shoot Bow, Throw, wand Shoot).
+    /// `AttributesEx3 & 0x8000`: damage floats melee white, not spell gold; set on the basic ranged
+    /// shots (Auto Shot, Shoot Bow, Throw, wand Shoot).
     pub fn melee_white_damage(&self) -> bool {
         self.attributes_ex3 & ATTR_EX3_NORMAL_RANGED_ATTACK != 0
     }
@@ -529,7 +527,7 @@ impl SpellDisplay {
     }
 
     /// `Attributes & 0x2` without `AttributesEx2 & 0x20000`: the caster's `SMSG_SPELL_GO` adds
-    /// `UNIT_FIELD_RANGEDATTACKTIME` to its category cooldown locally (`0x6e2b60`).
+    /// `UNIT_FIELD_RANGEDATTACKTIME` to its category cooldown locally.
     pub fn ranged_speed_cooldown(&self) -> bool {
         self.attributes & ATTR_RANGED != 0
             && self.attributes_ex2 & ATTR_EX2_DO_NOT_RESET_COMBAT_TIMERS == 0
@@ -550,8 +548,8 @@ impl SpellDisplay {
         self.attributes & (ATTR_DO_NOT_DISPLAY | SPELL_ATTR_IS_TRADESKILL) == 0
     }
 
-    /// The pet book's add gate (`0x4b2f90`) tests only `Attributes & 0x80`, as the sign of its
-    /// low byte (`0x4b2fad`); it has none of [`Self::in_spellbook`]'s other two legs.
+    /// The pet book's add gate tests only `Attributes & 0x80`, as the sign of its low byte; it has
+    /// none of [`Self::in_spellbook`]'s other two legs.
     pub fn in_pet_book(&self) -> bool {
         self.attributes & ATTR_DO_NOT_DISPLAY == 0
     }
@@ -562,8 +560,8 @@ impl SpellDisplay {
         self.effects[0] == SPELL_EFFECT_ATTACK
     }
 
-    /// The tooltip skips its cast-time and cooldown line for a passive or `Effect[0]` 47 or 78
-    /// (`0x52eb15`-`0x52eb45`); [`Self::passive`] must keep reading the attribute alone.
+    /// The tooltip skips its cast-time and cooldown line for a passive or `Effect[0]` 47 or 78;
+    /// [`Self::passive`] must keep reading the attribute alone.
     pub fn tooltip_omits_cast_line(&self) -> bool {
         self.passive
             || matches!(
@@ -572,14 +570,14 @@ impl SpellDisplay {
             )
     }
 
-    /// No tooltip range cell: tested before `GetMinMaxRange` (`0x6e3480`), an on-next-swing spell
-    /// (`0x52e9a5`) or `AttributesEx3` bit 30 (`0x52e9b2`); after it, a max of 0 (`0x52e9ed`).
+    /// No tooltip range cell: tested before `GetMinMaxRange`, an on-next-swing spell or
+    /// `AttributesEx3` bit 30; after it, a max of 0.
     pub fn tooltip_omits_range_line(&self) -> bool {
         self.on_next_swing() || self.attributes_ex3 & 0x4000_0000 != 0
     }
 
-    /// `GetCooldownInfo` (`0x6e13e0`) reports no cooldown for `Effect[0]` 78 (attack) or 47
-    /// (trade skill): those buttons never show one and are never refused by one.
+    /// `GetCooldownInfo` reports no cooldown for `Effect[0]` 78 (attack) or 47 (trade skill): those
+    /// buttons never show one and are never refused by one.
     pub fn cooldown_query_excluded(&self) -> bool {
         matches!(
             self.effects[0],
@@ -587,8 +585,8 @@ impl SpellDisplay {
         )
     }
 
-    /// The ranged icon substitution needs `Attributes & 0x2` and `AttributesEx2 & 0x20` both
-    /// (`0x4b3f99`, `0x4e5a2e`): Auto Shot and wand Shoot show the weapon's icon, Throw its own.
+    /// The ranged icon substitution needs `Attributes & 0x2` and `AttributesEx2 & 0x20` both: Auto
+    /// Shot and wand Shoot show the weapon's icon, Throw its own.
     pub fn ranged_icon_substitution(&self) -> bool {
         self.attributes & ATTR_RANGED != 0 && self.attributes_ex2 & ATTR_EX2_AUTO_REPEAT != 0
     }
@@ -608,12 +606,12 @@ impl SpellDisplay {
         self.attributes & ATTR_ON_NEXT_SWING != 0
     }
 
-    /// The tooltip's "Attack speed" arm: `Attributes & 0x2` alone (`0x52ec1c`), so Throw too.
+    /// The tooltip's "Attack speed" arm: `Attributes & 0x2` alone, so Throw too.
     pub fn tooltip_on_next_ranged(&self) -> bool {
         self.attributes & ATTR_RANGED != 0
     }
 
-    /// The tooltip cast cell's "Channeled" arm: `AttributesEx & 0x44` (`0x52ec27`).
+    /// The tooltip cast cell's "Channeled" arm: `AttributesEx & 0x44`.
     pub fn tooltip_channeled(&self) -> bool {
         self.attributes_ex & ATTR_EX_CHANNELED != 0
     }
@@ -803,8 +801,8 @@ impl SpellDisplay {
         u32::try_from(self.effect_misc_value[0]).unwrap_or(0)
     }
 
-    /// The name and rank as the client composes them, `"%s (%s)"` (`0x8468b0`), or the bare name
-    /// when the rank is empty; the trainer (`0x4d96e0`) and the learn line (`0x4b2982`) use it.
+    /// The name and rank as the client composes them, `"%s (%s)"`, or the bare name when the rank
+    /// is empty; the trainer and the learn line use it.
     pub fn ranked_name(&self) -> String {
         match self.rank.as_deref() {
             Some(rank) if !rank.is_empty() => format!("{} ({})", self.name, rank),
@@ -813,20 +811,19 @@ impl SpellDisplay {
     }
 
     /// Whether removing this spell prints "You have unlearned %s." (`0x14a`) with the bare name:
-    /// `RemoveSpell` (`0x5e9fe0`) is silent for `IS_TRADESKILL` (`0x5ea170`), a nonzero `castUI`
-    /// (`0x5ea17a`) or `DO_NOT_DISPLAY` (`0x5ea29b`). The learn line ignores `castUI`. The
-    /// caller's suppress flag is clear for `SMSG_REMOVED_SPELL` (`0x5e43e3`), set on a rank-up
-    /// (`0x5e6392`).
+    /// `RemoveSpell` is silent for `IS_TRADESKILL`, a nonzero `castUI` or `DO_NOT_DISPLAY`. The
+    /// learn line ignores `castUI`. The caller's suppress flag is clear for `SMSG_REMOVED_SPELL`,
+    /// set on a rank-up.
     pub fn announces_unlearn(&self) -> bool {
         self.attributes & SPELL_ATTR_IS_TRADESKILL == 0
             && self.cast_ui == 0
             && self.attributes & ATTR_DO_NOT_DISPLAY == 0
     }
 
-    /// The chat line a learn prints, off `Attributes` alone (`0x4b2909`): none for `0x80`, the
-    /// recipe line for `0x20`, else ability for `0x10` or spell; passive is not read. The block
-    /// runs only on a live learn: the `SMSG_INITIAL_SPELLS` replay leaves its flag clear
-    /// (`0x5deaa4`); `SMSG_LEARNED_SPELL` (`0x5e61c0`) and a rank-up (`0x4b2f61`) set it.
+    /// The chat line a learn prints, off `Attributes` alone: none for `0x80`, the recipe line for
+    /// `0x20`, else ability for `0x10` or spell; passive is not read. The block runs only on a live
+    /// learn: the `SMSG_INITIAL_SPELLS` replay leaves its flag clear; `SMSG_LEARNED_SPELL` and a
+    /// rank-up set it.
     pub fn learn_announcement(&self) -> Option<LearnAnnouncement> {
         if self.attributes & ATTR_DO_NOT_DISPLAY != 0 {
             return None;
@@ -975,7 +972,7 @@ mod tests {
         assert_eq!(
             d.learn_announcement(),
             None,
-            "…and the sign test at 0x4b290f runs before the tradeskill test at 0x4b2917"
+            "…and the sign test runs before the tradeskill test"
         );
         d.attributes = 0x40;
         assert_eq!(
@@ -999,15 +996,15 @@ mod tests {
         d.attributes = 0x20;
         assert!(
             !d.announces_unlearn(),
-            "IS_TRADESKILL: 0x5ea170 zeroes the flag"
+            "IS_TRADESKILL: the reference zeroes the flag"
         );
         d.attributes = 0x80;
-        assert!(!d.announces_unlearn(), "DO_NOT_DISPLAY: 0x5ea29b");
+        assert!(!d.announces_unlearn(), "DO_NOT_DISPLAY:");
         d.attributes = 0;
         d.cast_ui = 1;
         assert!(
             !d.announces_unlearn(),
-            "castUI > 0 never reaches 0x5ea292 — its single entry is 0x5ea17a jle"
+            "castUI > 0 never reaches — its single entry is jle"
         );
         assert_eq!(
             d.learn_announcement(),
@@ -1016,7 +1013,7 @@ mod tests {
         );
     }
 
-    /// The reference tests the subtext's first byte (`0x4b2963`), so an empty rank is no rank.
+    /// The reference tests the subtext's first byte, so an empty rank is no rank.
     #[test]
     fn ranked_name_appends_the_subtext_only_when_there_is_one() {
         let mut d = SpellDisplay {

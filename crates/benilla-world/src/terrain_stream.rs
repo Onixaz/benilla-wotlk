@@ -110,8 +110,8 @@ pub struct TerrainStreamer {
     off_grid_reported: Option<(i32, i32)>,
 }
 
-/// The map-global WMO's placement id: a WMO-only map has no ADT uniqueIds to collide with, and
-/// this is the file's own dead `uniqueId` (the reference overwrites it from a counter, `0xc9a320`).
+/// The map-global WMO's placement id: a WMO-only map has no ADT uniqueIds to collide with, and this
+/// is the file's own dead `uniqueId` (the reference overwrites it from a counter).
 const GLOBAL_WMO_UID: u32 = u32::MAX;
 
 impl TerrainStreamer {
@@ -462,7 +462,7 @@ impl Plugin for TerrainPlugin {
             .add_systems(
                 Update,
                 // After the interior claim: the reference resolves leaf, indoor and names from one
-                // node state in one pass (`0x67e510`).
+                // node state in one pass.
                 update_current_area
                     .after(crate::wmo_portal::WmoPvsSet)
                     .in_set(AreaAuthoritySet),
@@ -558,8 +558,8 @@ fn stream_terrain(
     }
 
     // A WMO-only map is one building, registered like any ADT WMO, as the reference's WDT branch
-    // hands its global MODF entry to the MCRF walk's consumer (`0x695650`). Registered once per
-    // map, released on map change.
+    // hands its global MODF entry to the MCRF walk's consumer. Registered once per map, released on
+    // map change.
     if let Some(g) = wdt_index.and_then(|w| w.global_wmo()) {
         if !state.global_wmo {
             info!(
@@ -617,8 +617,8 @@ fn stream_terrain(
         );
     }
 
-    // Every tile the outer window touches on the 64×64 grid, less those the WDT's `MAIN` bit 0
-    // says do not exist, as the reference tests (`0x69863c`).
+    // Every tile the outer window touches on the 64×64 grid, less those the WDT's `MAIN` bit 0 says
+    // do not exist, as the reference tests.
     let mut desired = window.wanted_tiles();
     if let Some(w) = wdt_index {
         desired.retain(|&(tx, ty)| w.has_tile(tx as u32, ty as u32));
@@ -644,11 +644,11 @@ fn stream_terrain(
         state.off_grid_reported = None;
     }
 
-    // Unload stale tiles, at most `unload_budget` per frame and farthest first, since a whole
-    // row's free wave is a frame spike; a cross-map swap is not budgeted, as the cover hides it.
+    // Unload stale tiles, at most `unload_budget` per frame and farthest first, since a whole row's
+    // free wave is a frame spike; a cross-map swap is not budgeted, as the cover hides it.
     // Deviation: a tile is released only one chunk past the outer window (`StreamWindow::keeps`),
-    // where the reference releases by window membership (`0x6984f0`), because our reload is a
-    // re-decode and re-spawn, not a cheap async read.
+    // where the reference releases by window membership, because our reload is a re-decode and
+    // re-spawn, not a cheap async read.
     let unload_budget = cfg.as_ref().map(|c| c.unload_budget).unwrap_or(1);
     let mut stale: Vec<(i32, i32)> = if tile_drop_disabled() {
         Vec::new()
@@ -1301,9 +1301,8 @@ fn release_placement(
 }
 
 /// The terrain base material, backface-culled so the ground is see-through from below, as in the
-/// reference: its terrain pass (`0x684510`/`0x6beb50`) never sets `EGxRs 0x14` and keeps the
-/// device baseline cull on (`0x593bf0`); only the liquid passes and the WDL mesh clear it
-/// (`0x6bd780`, at `0x6bd79d`). Front faces point up only while the winding tests
+/// reference: its terrain pass never sets `EGxRs 0x14` and keeps the device baseline cull on; only
+/// the liquid passes and the WDL mesh clear it. Front faces point up only while the winding tests
 /// `terrain_fans_wind_ccw_seen_from_above` and `transform_is_a_proper_rotation` hold.
 fn terrain_base_material() -> StandardMaterial {
     StandardMaterial {

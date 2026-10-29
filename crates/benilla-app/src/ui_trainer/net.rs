@@ -23,7 +23,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Disconnected, on_session_end);
 }
 
-/// `SMSG_SET_FLAT/PCT_SPELL_MODIFIER`, the two talent triggers (`0x6e999f`/`0x6e99bb`).
+/// `SMSG_SET_FLAT/PCT_SPELL_MODIFIER`, the two talent triggers.
 fn on_spell_modifier(In(ev): In<SessionEvent>, mut trainer_open: ResMut<TrainerOpen>) {
     if matches!(ev, SessionEvent::SpellModifier { .. }) {
         trainer_open.trigger_re_derive();

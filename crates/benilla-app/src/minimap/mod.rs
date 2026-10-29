@@ -4,9 +4,9 @@
 //!
 //! - Tiles: one 256² BLP per ADT tile (533.33 yd), `map<X>_<Y>.blp` resolved through
 //!   `md5translate.trs` ([`benilla_formats::MinimapTranslate`]), indexed in ADT order.
-//! - Zoom to radius (`0x6da9b0`): two zoom indices, picked by WMO containment, each persisted
-//!   (`minimapZoom`, `minimapInsideZoom`); outdoors a chunk-count half-extent, indoors
-//!   [`INTERIOR_ZOOM_RADIUS`] yards.
+//! - Zoom to radius: two zoom indices, picked by WMO containment, each persisted (`minimapZoom`,
+//!   `minimapInsideZoom`); outdoors a chunk-count half-extent, indoors [`INTERIOR_ZOOM_RADIUS`]
+//!   yards.
 //! - North up: screen up is world +X, screen left world +Y. With `rotateMinimap` the whole map,
 //!   its blips and the ping turn clockwise by the player's facing so it points up
 //!   (`CGMinimapFrame::Render` `0x581e80`), the player arrow stays still (`UpdateRotation`
@@ -49,17 +49,16 @@ use benilla_world::world_map::CurrentMap;
 const TILE_YARDS: f32 = 533.333_3;
 const CHUNK_YARDS: f32 = TILE_YARDS / 16.0;
 
-/// The outdoor zoom table (`0x8116d0`): view diameter in chunks per zoom index; half-extent =
-/// `chunks · 0.5 · 33.333` yd (`0x6da9b0`).
+/// The outdoor zoom table: view diameter in chunks per zoom index; half-extent =
+/// `chunks · 0.5 · 33.333` yd.
 const ZOOM_CHUNKS: [f32; 6] = [14.0, 12.0, 10.0, 8.0, 6.0, 4.0];
 
-/// The indoor view radius in yards per indoor zoom index: table `0x8116e8`, indexed by `0x86f69c`
-/// (`minimapInsideZoom`). The on-screen radius is exactly this (the composite at `1.5·c`,
-/// `0x4ec090`, blits its middle two-thirds, `0x4ec440`), and the same `c` sizes the selection box
-/// (`0x6d96b6`).
+/// The indoor view radius in yards per indoor zoom index: table, indexed by (`minimapInsideZoom`).
+/// The on-screen radius is exactly this (the composite at `1.5·c`, blits its middle two-thirds),
+/// and the same `c` sizes the selection box.
 ///
-/// Not a constant: the `10.0f` at `0x4ed9eb` is only the field's static initializer, and
-/// `0x6d98f5` writes `radiusTable[indoorZoom]` into it whenever the zoom or indoor state changes.
+/// Not a constant: the `10.0f` is only the field's static initializer, and the reference writes
+/// `radiusTable[indoorZoom]` into it whenever the zoom or indoor state changes.
 const INTERIOR_ZOOM_RADIUS: [f32; 6] = [150.0, 120.0, 90.0, 60.0, 40.0, 25.0];
 
 /// How far the map reaches, in yards; both branches of [`emit_minimap`] and the ping read it here.
@@ -73,7 +72,7 @@ fn view_radius_yd(zoom: u8, inside_zoom: u8, inside: bool) -> f32 {
 }
 
 /// The outer-edge bleed: a tile on its group grid's boundary grows 1 yd on that side, so groups
-/// whose bboxes touch overlap by 2 yd (`0x6a549e`…`0x6a54db`, `0xca8098` = `0.5 + 0.5`).
+/// whose bboxes touch overlap by 2 yd (… = `0.5 + 0.5`).
 const EDGE_BLEED_YD: f32 = 1.0;
 
 /// The reference's half-texel UV inset as a quad scale: a tile of `extent` yd baked at
@@ -89,7 +88,7 @@ fn texel_stretch(extent_yd: f32) -> f32 {
 }
 
 /// The interior tile draw's alpha-test reference, the reference's `GL_GEQUAL` 224/255. EGxBlend 1
-/// (blending off) leaves it to `SetRenderState`'s cascade, `.data 0x85ad20[1] = 224` times the f32
+/// (blending off) leaves it to `SetRenderState`'s cascade, `.data [1] = 224` times the f32
 /// reciprocal of 255: one ULP above 224/255, and fragments are compared against those exact bits.
 pub(crate) const INTERIOR_TILE_ALPHA_REF: f32 = f32::from_bits(0x3F60_E0E2);
 
@@ -97,8 +96,8 @@ pub(crate) const INTERIOR_TILE_ALPHA_REF: f32 = f32::from_bits(0x3F60_E0E2);
 /// minimap); an estimate, the reference's in-range corpse blip size being untraced.
 const CORPSE_BLIP_FRACTION: f32 = 0.11;
 
-/// The day-night tint the reference modulates outdoor tiles by (tile draw `0x4eccdd`–`0x4ecd69`),
-/// from `color_a`, the Direct band (`LightIntBand` 0), and `color_b`, the Ambient band (1):
+/// The day-night tint the reference modulates outdoor tiles, from `color_a`, the Direct band
+/// (`LightIntBand` 0), and `color_b`, the Ambient band (1):
 ///
 /// ```text
 ///   L  = luma601(color_b)                # (r·77 + g·151 + b·28) >> 8, on 0..255 bytes
@@ -163,13 +162,13 @@ fn probe_minimap_widget(mut widget: ResMut<MinimapWidget>, windows: Query<&Windo
 pub(crate) struct MinimapWidget(pub(crate) Option<MinimapSlot>);
 
 /// The player's WMO containment this frame, [`feed_minimap_inside`]'s verdict; the reference keeps
-/// one flag (`0xceaa60`) for the draw and the zoom buttons.
+/// one flag for the draw and the zoom buttons.
 #[derive(Resource, Default)]
 pub(crate) struct MinimapInside(pub(crate) bool);
 
-/// The persisted zoom, CVars `minimapZoom` and `minimapInsideZoom` (default `"3"`, `0x63db90`):
-/// read once to seed a fresh widget, written on every `Minimap:SetZoom`, as the reference's
-/// `set_zoom` writes both the live index and the CVar.
+/// The persisted zoom, CVars `minimapZoom` and `minimapInsideZoom` (default `"3"`): read once to
+/// seed a fresh widget, written on every `Minimap:SetZoom`, as the reference's `set_zoom` writes
+/// both the live index and the CVar.
 #[derive(Resource)]
 pub(crate) struct MinimapZoom {
     /// `minimapZoom`, the outdoor index.
@@ -194,7 +193,7 @@ impl MinimapRotate {
 }
 
 /// The zoom CVars' change callback: each lands on its own field, clamped at 5 like the reference's
-/// `set_zoom` (`0x6daa10`); `rotateMinimap` is a flag.
+/// `set_zoom`; `rotateMinimap` is a flag.
 pub(crate) fn on_cvar(
     ev: On<crate::cvars::CvarChanged>,
     mut zoom: ResMut<MinimapZoom>,
@@ -329,15 +328,15 @@ fn setup_minimap(
     }
 }
 
-/// The minimap's one containment verdict: the placement, model, tile stem and seed group of the
-/// WMO the player is in, or `None` for terrain. Indoors the reference draws the building's own
-/// tiles and no terrain, and the same flag (`0xceaa60`) picks the zoom index.
+/// The minimap's one containment verdict: the placement, model, tile stem and seed group of the WMO
+/// the player is in, or `None` for terrain. Indoors the reference draws the building's own tiles
+/// and no terrain, and the same flag picks the zoom index.
 ///
-/// The gate is the reference's indoor byte (`0xbc8300`), the CGLight node's down-ray bit
-/// `[node+0x90] & 1` (`0x670547`): the nearest face within 1000 yd straight down, terrain racing
-/// and the WMO winning ties, belongs to a group without MOGP `0x8`. That is the zone-text claim
-/// `CurrentAreaInterior`, read through `world.area_interior()`; [`down_ray_seeds`] only supplies
-/// the flood seed once the gate says indoors.
+/// The gate is the reference's indoor byte, the CGLight node's down-ray bit `[node+0x90] & 1`: the
+/// nearest face within 1000 yd straight down, terrain racing and the WMO winning ties, belongs to a
+/// group without MOGP `0x8`. That is the zone-text claim `CurrentAreaInterior`, read through
+/// `world.area_interior()`; [`down_ray_seeds`] only supplies the flood seed once the gate says
+/// indoors.
 fn minimap_interior<'a>(
     player: &Player,
     instances: &Query<&WmoPortalInstance>,
@@ -472,7 +471,7 @@ fn emit_minimap(
     if let Some((world_from_local, model, stem, in_group)) = interior {
         // Interior: the WMO's own per-group tiles, drawn white. They are baked in the model frame
         // (north = model +X), so each sits at its model-space centre through the placement and the
-        // whole set turns by one placement yaw (`0x6da180`).
+        // whole set turns by one placement yaw.
         if cache.interior_stem.as_deref() != Some(stem.as_str()) {
             cache.interior.clear();
             cache.interior_stem = Some(stem.clone());
@@ -500,12 +499,12 @@ fn emit_minimap(
         let rt_half = composite::RT_SIZE as f32 * 0.5;
         composite.active = true;
 
-        // The portal flood-fill from the player's group (`0x6a5020`). Its query box uses the draw
-        // radius (`0x6d96b6`), so zooming in also tightens the box's Z extent.
+        // The portal flood-fill from the player's group. Its query box uses the draw radius, so
+        // zooming in also tightens the box's Z extent.
         let drawable =
             interior_group_selection(model, &world_from_local, player.pos, radius, in_group);
-        // Draw order (`0x4ebeb0`, keyed at `0x6d9e30`): ascending by `Zmidpoint − playerZ`, the
-        // player's own group keyed `FLT_MAX`, so it draws last and no storey covers the room.
+        // Draw order: ascending by `Zmidpoint − playerZ`, the player's own group keyed `FLT_MAX`,
+        // so it draws last and no storey covers the room.
         let player_z = bevy_to_wow(world_from_local.inverse().transform_point3(player.pos))[2];
         let sort_key = |gi: usize| -> f32 {
             if gi == in_group {
@@ -527,10 +526,9 @@ fn emit_minimap(
             for col in 0..nx {
                 for row in 0..ny {
                     // The grid cell plus the outer-edge bleed: a boundary cell grows 1 yd on its
-                    // outer side (`0x6a549e`/`0x6a54ae`/`0x6a54be`/`0x6a54d1`, each an `fsub` or
-                    // `fadd` of `0xca8098`). The bleed matters: `GEQUAL 224/255` on a linear-
-                    // filtered edge reaches only 0.122 texel past the last opaque texel centre, so
-                    // merely abutting groups would show the black clear along the wall.
+                    // outer side (each an `fsub` or `fadd`). The bleed matters: `GEQUAL 224/255` on
+                    // a linear- filtered edge reaches only 0.122 texel past the last opaque texel
+                    // centre, so merely abutting groups would show the black clear along the wall.
                     let x0 = gn.bbox_min[0] + col as f32 * tw_x
                         - if col == 0 { EDGE_BLEED_YD } else { 0.0 };
                     let x1 = gn.bbox_min[0]
@@ -583,8 +581,8 @@ fn emit_minimap(
             );
         }
 
-        // The blit: the target's middle two-thirds (`0x4ec440`, EGxBlend 2), masked to the circle
-        // here and not on the tiles, as the reference does. The opaque target is also the backing.
+        // The blit: the target's middle two-thirds (EGxBlend 2), masked to the circle here and not
+        // on the tiles, as the reference does. The opaque target is also the backing.
         let lo = 0.5 - composite::RT_BLIT_FRACTION * 0.5;
         let hi = 0.5 + composite::RT_BLIT_FRACTION * 0.5;
         quads.overlays.push(UiQuad {
@@ -736,8 +734,7 @@ fn emit_minimap(
                 &mut quads,
                 &mut hover,
             );
-            // The party and corpse rim arrows (the out-of-range half of `0x6dad10`), before the
-            // player arrow, in the reference's order.
+            // The party and corpse rim arrows, before the player arrow, in the reference's order.
             let corpse = death_net
                 .corpse
                 .filter(|cp| cp.display_map == map.0 as i32)
@@ -858,8 +855,8 @@ fn emit_minimap(
     *blip_hover = hover;
 
     // The corpse blip in range: the POIIcons skull, the reference's world-map corpse art (its
-    // in-range minimap art is untraced). Out of range it is the rim arrow above, the fifth slot
-    // of `0x6dad10`. Same map only: a dungeon corpse's display coords are the entrance.
+    // in-range minimap art is untraced). Out of range it is the rim arrow above, the fifth slot.
+    // Same map only: a dungeon corpse's display coords are the entrance.
     if let (Some(poi), Some(cp)) = (&assets.poi, death_net.corpse) {
         if cp.display_map == map.0 as i32 && blip_px_per_yd > 0.0 {
             let off = turn_offset(
@@ -924,11 +921,11 @@ impl IndoorMemo {
     }
 }
 
-/// Push the player's WMO containment onto the Minimap widget (`0xceaa60`), so the zoom buttons
-/// drive the indoor index indoors and the outdoor one outside; the verdict is [`emit_minimap`]'s,
-/// as the reference keeps one flag. Pushed on the edge and whenever the VM's Minimap-creation
-/// count moves, so a widget built later is still told. The edge also fires `MINIMAP_UPDATE_ZOOM`,
-/// on which the stock `Minimap_OnEvent` re-syncs the +/- buttons to the other index's level.
+/// Push the player's WMO containment onto the Minimap widget, so the zoom buttons drive the indoor
+/// index indoors and the outdoor one outside; the verdict is [`emit_minimap`]'s, as the reference
+/// keeps one flag. Pushed on the edge and whenever the VM's Minimap-creation count moves, so a
+/// widget built later is still told. The edge also fires `MINIMAP_UPDATE_ZOOM`, on which the stock
+/// `Minimap_OnEvent` re-syncs the +/- buttons to the other index's level.
 fn feed_minimap_inside(
     script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
     world: benilla_world::world_point::WorldPoint,
@@ -986,9 +983,9 @@ fn feed_minimap_mask(
 }
 
 /// Push the player's facing onto the Minimap's player-arrow `Model` every frame, as the reference's
-/// per-frame `CMinimap::SetPlayerFacing` (`0x4eb8e0`) writes `[+0x39c]`, what `Model:GetFacing()`
-/// reads. `player.facing()` is an unbounded accumulator, so it is normalized to `[0, 2π)`, the
-/// wire value vmangos's `VerifyMovementInfo` requires.
+/// per-frame `CMinimap::SetPlayerFacing` writes `[+0x39c]`, what `Model:GetFacing()` reads.
+/// `player.facing()` is an unbounded accumulator, so it is normalized to `[0, 2π)`, the wire value
+/// vmangos's `VerifyMovementInfo` requires.
 fn feed_minimap_player_facing(
     script: Option<bevy::ecs::system::NonSendMut<benilla_ui::script::UiScript>>,
     player: Res<Player>,
@@ -1031,8 +1028,7 @@ fn feed_game_time(
 }
 
 /// The app half of the `<Minimap>` widget. The zone label feed is `crate::area`'s: the reference
-/// fires `MINIMAP_ZONE_CHANGED` from the same area-update pass as the `ZONE_CHANGED` family
-/// (`0x494970` beside `0x494780`).
+/// fires `MINIMAP_ZONE_CHANGED` from the same area-update pass as the `ZONE_CHANGED` family.
 pub(crate) struct MinimapPlugin;
 
 impl Plugin for MinimapPlugin {

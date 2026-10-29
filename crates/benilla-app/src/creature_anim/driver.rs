@@ -51,7 +51,7 @@ use wound::{wound_evict, wound_trigger, wound_upkeep, WoundEdge};
 const ONESHOT_OVERLAY_WEIGHT: f32 = 8.0;
 
 /// The key-bone fade-to-rest: a finished one-shot's held final frame fades back to bone 0 over a
-/// fixed 150 ms (`0x5fcacb` → op4 `param_3 = -1`), not the clip's own blendTime.
+/// fixed 150 ms (op4 `param_3 = -1`), not the clip's own blendTime.
 const ONESHOT_RELEASE_FADE: f32 = 0.150;
 
 /// Launch vertical speed (yd/s, up) above which an airborne arc is a jump (the 37/38 bracket), not
@@ -66,7 +66,7 @@ enum OneShotReq {
     Emote(u16, bool),
 }
 
-/// The live one-shot the combat fast path tests: the key bone's clip, else bone 0's (`0x5fe422`).
+/// The live one-shot the combat fast path tests: the key bone's clip, else bone 0's.
 fn live_oneshot(
     drv: &AnimDriver,
     player: &AnimationPlayer,
@@ -87,10 +87,10 @@ fn live_oneshot(
     None
 }
 
-/// The id armed on the unit, as `0x5fdb50` reads it: the key bone's while one runs, else bone 0's.
-/// It is the REQUESTED id, not the fallback clip that plays: op4 stores its raw argument at
-/// `+0xf8` (`0x71252f`) and the getter returns it (`0x7120d3`). A clip that has finished counts as
-/// gone: its completion callback re-arms the base.
+/// The id armed on the unit, as the reference reads it: the key bone's while one runs, else bone
+/// 0's. It is the REQUESTED id, not the fallback clip that plays: op4 stores its raw argument at
+/// `+0xf8` and the getter returns it. A clip that has finished counts as gone: its completion
+/// callback re-arms the base.
 fn armed_id(
     drv: &AnimDriver,
     player: &AnimationPlayer,
@@ -113,7 +113,7 @@ fn armed_id(
 }
 
 /// Whether a one-shot is live on the unit; the missile queue polls it to launch a missile whose
-/// release keyframe never fired when the cast ends (the reference's `0x5fc920` → `0x60c9b0`).
+/// release keyframe never fired when the cast ends.
 pub(crate) fn oneshot_is_live(
     drv: &AnimDriver,
     player: &AnimationPlayer,
@@ -125,8 +125,8 @@ pub(crate) fn oneshot_is_live(
 }
 
 /// Retire the key-bone clip into its cross-fade over `total` seconds: op4 snapshots the outgoing
-/// pose into the secondary (`+0x98 → +0xc4`). A fade still above λ = 0.5 (`0x7ffa24`) is not
-/// re-seeded (`0x7125d4` arm, `0x7123a2` release); the superseded node is dropped.
+/// pose into the secondary (`+0x98 → +0xc4`). A fade still above λ = 0.5 is not re-seeded; the
+/// superseded node is dropped.
 fn retire_overlay(drv: &mut AnimDriver, player: &mut AnimationPlayer, total: f32) {
     let out = drv.overlay.take().map(|ov| ov.node);
     if drv.overlay_fade.is_some_and(|f| fade_lambda(&f) > 0.5) {
@@ -150,9 +150,9 @@ fn fade_lambda(f: &OverlayFade) -> f32 {
     select::blend_lambda(if f.total > 0.0 { f.left / f.total } else { 0.0 })
 }
 
-/// The key-bone cross-fade's advance (λ decay `0x714880`–`0x714923`, release `0x7147b9`). A
-/// release fades the old node alone against the base, `w = W·λ / (1 + W·(1−λ))`; a re-arm splits
-/// the share by λ as `primary + (secondary − primary)·λ` does, `W·λ` out and `W·(1−λ)` in.
+/// The key-bone cross-fade's advance. A release fades the old node alone against the base,
+/// `w = W·λ / (1 + W·(1−λ))`; a re-arm splits the share by λ as `primary + (secondary − primary)·λ`
+/// does, `W·λ` out and `W·(1−λ)` in.
 fn overlay_fade_upkeep(drv: &mut AnimDriver, player: &mut AnimationPlayer, dt: f32) {
     let Some(mut f) = drv.overlay_fade else {
         return;
@@ -184,11 +184,11 @@ fn overlay_fade_upkeep(drv: &mut AnimDriver, player: &mut AnimationPlayer, dt: f
     }
 }
 
-/// The transplant (`0x5fe919`): a locomotion request while bone 0 plays a live cast or combat
-/// one-shot moves that clip, at its id, rate and elapsed position, onto the key bone with
-/// `blendFlag = 0`, so the torso finishes the cast while the legs take the request. A no-op when
-/// the key bone is armed (`0x5fe912` → `0x5fe930`). The moved clip repeats `Never`, dropping any
-/// replay budget; every clip this fires for is authored `(0, 0)`, so `R = 1`.
+/// The transplant: a locomotion request while bone 0 plays a live cast or combat one-shot moves
+/// that clip, at its id, rate and elapsed position, onto the key bone with `blendFlag = 0`, so the
+/// torso finishes the cast while the legs take the request. A no-op when the key bone is armed. The
+/// moved clip repeats `Never`, dropping any replay budget; every clip this fires for is authored
+/// `(0, 0)`, so `R = 1`.
 fn transplant_up(
     drv: &mut AnimDriver,
     player: &mut AnimationPlayer,
@@ -266,7 +266,7 @@ type UnitData = (
         &'static Transform,
         // Server-granted movement modes, folded by `unify` into the selector's flags word.
         Option<&'static crate::net::UnitMoveModes>,
-        // A proc-11 rate node here (the freeze auras', `0x6201d0`) refuses the wound flinch.
+        // A proc-11 rate node here (the freeze auras') refuses the wound flinch.
         Option<&'static crate::aura_visual::AuraNodes>,
         &'static mut UnitAnimRng,
     ),
@@ -281,7 +281,7 @@ type HostData = (
     Option<&'static FacingStep>,
     Has<crate::net::CreatureSwimming>,
     Option<&'static crate::net::UnitMoveModes>,
-    // The rider's scale: the mount renders at the rider's scale times its own (`0x613ef0`).
+    // The rider's scale: the mount renders at the rider's scale times its own.
     &'static Transform,
     // Read only by the debug trace.
     Has<SelfPlayer>,
@@ -319,10 +319,10 @@ pub(super) fn drive_animations(
         // Read for `DO_NOT_PLAY_WOUND_ANIM`; a missing cache reads as an unreceived template.
         Option<Res<crate::names::NameCache>>,
         MessageReader<BaseAnimRecompute>,
-        // A rider's mount child, where a mount-set request goes (`0x5fe7c1`).
+        // A rider's mount child, where a mount-set request goes.
         Query<(&ObjectStore, &crate::entities::mount::MountChild)>,
-        // The open NPC session's unit (`[0xb4e2d0]`): its state emote is passed over when the
-        // row's `EmoteFlags` carry `0x2000` (`0x5fd7e2`-`0x5fd7fd`).
+        // The open NPC session's unit: its state emote is passed over when the row's `EmoteFlags`
+        // carry `0x2000`.
         Option<Res<crate::ui_session::InteractNpc>>,
         // The units' sheath-swap messages, written after the parallel pass.
         Local<bevy::utils::Parallel<Vec<SheathSwapMessage>>>,
@@ -372,7 +372,7 @@ pub(super) fn drive_animations(
     for d in defenses.read() {
         pending_defense.insert(d.victim, d.victim_state);
     }
-    // Whiff slow-downs (`0x712910`): the attacker's in-flight swing drops to half speed.
+    // Whiff slow-downs: the attacker's in-flight swing drops to half speed.
     let mut pending_slow: bevy::ecs::entity::EntityHashSet = default();
     for s in slows.read() {
         pending_slow.insert(s.0);
@@ -383,9 +383,9 @@ pub(super) fn drive_animations(
             .or_default()
             .push((OneShotReq::Emote(e.anim_id, e.via_player), e.seq));
     }
-    // A mounted rider's mount-set emotes go to the mount model (`0x5fe7c1`); the rider keeps the
-    // request for its own CLASS_A and nowhere routes. The emote player's armed test (`0x5fcd56`)
-    // runs once, on the rider, ahead of that routing, so the forwarded copy carries none.
+    // A mounted rider's mount-set emotes go to the mount model; the rider keeps the request for its
+    // own CLASS_A and nowhere routes. The emote player's armed test runs once, on the rider, ahead
+    // of that routing, so the forwarded copy carries none.
     let mut to_mount: Vec<(Entity, (OneShotReq, u64))> = Vec::new();
     for (rider, reqs) in pending.iter() {
         let Ok((store, child)) = riders.get(*rider) else {
@@ -583,16 +583,15 @@ fn drive_unit(
             false,
         ),
     };
-    // The `0x5fe2f0` rate divisor's `|modelScale|`: a mount child's display column composes
-    // under the rider's scale.
+    // The rate divisor's `|modelScale|`: a mount child's display column composes under the rider's
+    // scale.
     let model_scale = transform.scale.x * host_scale;
     let traced = is_self || ridden_by_self;
     let subject = if mount_body.is_some() { "mount " } else { "" };
     let walk = speeds.map_or(DEFAULT_WALK_SPEED, |s| s.0.walk);
-    // Dead is zero health or `UNIT_DYNFLAG_DEAD` (`0x605f90`): the flag's watcher `0x600440`
-    // plays Death (`0x60ea30`) and `0x5fcff0` holds it, the pair the death handler `0x625190`
-    // runs, so a feign lies down and stands when the flag clears.
-    // Absent health reads as zero: a create block omits zero fields, so a corpse streams in
+    // Dead is zero health or `UNIT_DYNFLAG_DEAD`: the flag's watcher plays Death and the reference
+    // holds it, the pair the death handler runs, so a feign lies down and stands when the flag
+    // clears. Absent health reads as zero: a create block omits zero fields, so a corpse streams in
     // with no HEALTH.
     let dead = store.is_some_and(|s| s.0.unit_reads_dead());
     // `UNIT_FIELD_MOUNTDISPLAYID` is the one mounted signal; a mount child has no store, so it
@@ -610,8 +609,7 @@ fn drive_unit(
     if movement.is_none() {
         mv.stand_state = store.map_or(0, |s| s.0.unit_stand_state());
     }
-    // No sit/sleep/kneel pose holds in the saddle (the standState leg's `[+0xdc]==0` gate,
-    // `0x5fd550`).
+    // No sit/sleep/kneel pose holds in the saddle (the standState leg's `[+0xdc]==0` gate).
     if mounted {
         mv.stand_state = 0;
     }
@@ -619,9 +617,8 @@ fn drive_unit(
     // predicted: the crouch lands with the server's aura.
     mv.stealthed = store.is_some_and(|s| s.0.unit_is_stealthed());
     let moving = mv.flags & move_flags::ANY_MOVE != 0;
-    // An arc's launch vertical speed splits a jump (the JumpStart/Jump bracket; jump
-    // `0x60e480`, land `0x602c60`) from a step-off fall, which has no bracket and keeps the
-    // gait frozen while `airborne_frozen` holds.
+    // An arc's launch vertical speed splits a jump (the JumpStart/Jump bracket) from a step-off
+    // fall, which has no bracket and keeps the gait frozen while `airborne_frozen` holds.
     let falling = mv.flags & move_flags::FALLING != 0;
     let was_falling = std::mem::replace(&mut drv.was_falling, falling);
     // The arc starts at the launch, not only at FALLING's rising edge: on broken ground a jump
@@ -655,14 +652,14 @@ fn drive_unit(
     if falling && (!was_falling || launched) {
         drv.jump_arc = mv.vertical_speed > JUMP_ARC_MIN_UP;
     }
-    // The airborne freeze (`0x5fd8e8`): keep the current clip iff
-    // `FALLING && (FALLINGFAR || vz ≠ 0)`; a walk-off's first vz == 0 substep may re-pick. It
-    // also gates the deferred-cache consumer: a parked clip never plays mid-air.
+    // The airborne freeze: keep the current clip iff `FALLING && (FALLINGFAR || vz ≠ 0)`; a
+    // walk-off's first vz == 0 substep may re-pick. It also gates the deferred-cache consumer: a
+    // parked clip never plays mid-air.
     let airborne_frozen =
         falling && (mv.flags & move_flags::FALLING_FAR != 0 || mv.vertical_speed != 0.0);
-    // A stationary unit easing its yaw reads as turning (`0x607ed0`), so it shuffles, and each
-    // return to Stand re-rolls the fidget. Gated like `0x5fce30`: no combat or cast. A positive
-    // step is counterclockwise, turning left.
+    // A stationary unit easing its yaw reads as turning, so it shuffles, and each return to Stand
+    // re-rolls the fidget. Gated like the reference: no combat or cast. A positive step is
+    // counterclockwise, turning left.
     if let Some(step) = facing_step.filter(|_| !moving && !engaged && cast_hold.is_none()) {
         mv.flags |= if step.0 > 0.0 {
             move_flags::TURN_LEFT
@@ -718,26 +715,24 @@ fn drive_unit(
         return;
     }
 
-    // The mount transition arms bone 0's primary through op4 `0x7121a0`: the build `0x607b44`
-    // plays 91 Mount with a cross-fade, the teardown `0x607ce0` plays 0 Stand without one.
-    // Last writer wins, so it displaces a full-body one-shot mid-clip (the mount summon's
-    // SpellCastOmni, armed while still unmounted). The key-bone overlay rides it untouched;
-    // while mounted `0x5fe803`–`0x5fe816` re-pins 91 on every play, rendered by the gait pin.
+    // The mount transition arms bone 0's primary through op4: the build plays 91 Mount with a
+    // cross-fade, the teardown plays 0 Stand without one. Last writer wins, so it displaces a
+    // full-body one-shot mid-clip (the mount summon's SpellCastOmni, armed while still unmounted).
+    // The key-bone overlay rides it untouched; while mounted re-pins 91 on every play, rendered by
+    // the gait pin.
     if mount_edge {
         if matches!(drv.mode, Mode::Swing { .. }) {
             drv.mode = Mode::Gait;
         }
         if mounted {
-            // Only the build blends (`0x607b35 push 0x1`), and a blended arm snapshots into the
-            // secondary (`0x7125d9`), evicting a full-body wound; the teardown skips that copy
-            // (`0x71253e`–`0x712543`).
+            // Only the build blends, and a blended arm snapshots into the secondary, evicting a
+            // full-body wound; the teardown skips that copy.
             if let Some(wd) = drv.wound.take_if(|wd| !wd.masked) {
                 player.stop(wd.node);
             }
         } else {
-            // The teardown cuts to Stand: `0x607d1a`–`0x607d2b` pushes crossFade 0 where the
-            // build pushes 1. The gait re-pick that follows, `RecomputeBaseAnim(−1)` at
-            // `0x607d30` (`0x5fd9e0` → `0x5fd8b0`), blends normally, from Stand.
+            // The teardown cuts to Stand: the reference pushes crossFade 0 where the build pushes 1.
+            // The gait re-pick that follows, `RecomputeBaseAnim(−1)`, blends normally, from Stand.
             play::cut_loop(
                 &mut tr,
                 &mut player,
@@ -751,13 +746,13 @@ fn drive_unit(
         // Force a fresh pick even for an unchanged id: bone 0 may still hold the displaced
         // one-shot's node.
         drv.gait = None;
-        drv.deferred = None; // a normal arm clears the fast-path cache (`0x5fe48e`)
+        drv.deferred = None; // a normal arm clears the fast-path cache
     }
 
-    // The loot kneel: self reads `LootKneel`, the open-session latch (`0x6126b0`) folded with
-    // the target-class filter (`0x612710`, which refuses a fishing bobber); a remote reads
-    // `UNIT_FLAG_LOOTING` (0x400) set with `0x10000000` clear. Never mounted (`[+0xdc]==0`);
-    // any direction bit (`[9e8]&0xf`) outranks it, so a stationary swimmer kneels mid-tread.
+    // The loot kneel: self reads `LootKneel`, the open-session latch folded with the target-class
+    // filter (which refuses a fishing bobber); a remote reads `UNIT_FLAG_LOOTING` (0x400) set with
+    // `0x10000000` clear. Never mounted (`[+0xdc]==0`); any direction bit (`[9e8]&0xf`) outranks
+    // it, so a stationary swimmer kneels mid-tread.
     let looting = !mounted
         && mv.flags & move_flags::ANY_MOVE == 0
         && if is_self {
@@ -775,13 +770,13 @@ fn drive_unit(
     } else {
         current_special(&mv, drv.jump_arc)
     };
-    // The `0x5fd8b0` chain calls loot before standState, after the airborne freeze: a looting
-    // unit kneels rather than sits, but still jumps.
+    // The chain calls loot before standState, after the airborne freeze: a looting unit kneels
+    // rather than sits, but still jumps.
     let special = special.filter(|s| !(looting && matches!(s, select::Special::Pose(_))));
 
-    // ── Sheath state: the committed cache (`[+0xd40]`), not the descriptor byte, adopting the
-    // byte whenever it changes (`0x604c70`). Every SetSheatheState (`0x611cf0`) snaps except
-    // the manual toggle's ceremony, which carries the draw/stow sound.
+    // ── Sheath state: the committed cache (`[+0xd40]`), not the descriptor byte, adopting the byte
+    // whenever it changes. Every SetSheatheState snaps except the manual toggle's ceremony, which
+    // carries the draw/stow sound.
     let sheath_frame_start = drv.sheath_cur;
     let sheath_byte = store.and_then(|s| s.0.unit_sheath_state()).unwrap_or(0);
     if drv.sheath_cur.is_none() || drv.sheath_byte != Some(sheath_byte) {
@@ -789,12 +784,12 @@ fn drive_unit(
         drv.sheath_byte = Some(sheath_byte);
     }
     // The setter: a no-op when unchanged (`newState == CUR`), else commit, volunteer
-    // `CMSG_SETSHEATHED` for the local player, and for the manual toggle play the ceremony,
-    // per-arm masked overlays (`0x60b770`) by each item's stow family (hip 90, back 89).
+    // `CMSG_SETSHEATHED` for the local player, and for the manual toggle play the ceremony, per-arm
+    // masked overlays by each item's stow family (hip 90, back 89).
     if let Some(req) = pending_sheath.get(&entity) {
         let cur = drv.sheath_cur.unwrap_or(0);
-        // Deviation: a mounted draw is refused at the setter, because our rider track never
-        // replays the reference's per-play force-stow (`0x5fdf80`); the result is the same.
+        // Deviation: a mounted draw is refused at the setter, because our rider track never replays
+        // the reference's per-play force-stow; the result is the same.
         if req.state != cur && !(mounted && req.state != 0) {
             debug!(
                 "sheath: unit {entity} {cur} -> {} (request, ceremony {})",
@@ -821,8 +816,8 @@ fn drive_unit(
             }
         }
     }
-    // Ceremony upkeep: each arm's weapon moves at its clip's `$SHL`/`$SHR` event, and a
-    // finished stow runs phase 2, the on-finish draw (`0x5fc920` at `0x5fca8c`/`0x5fcaa1`).
+    // Ceremony upkeep: each arm's weapon moves at its clip's `$SHL`/`$SHR` event, and a finished
+    // stow runs phase 2, the on-finish draw.
     let sheath_now = drv.sheath_cur.unwrap_or(0);
     advance_sheath_ceremony(
         commands,
@@ -839,33 +834,31 @@ fn drive_unit(
     // ── This frame's one-shots, each routed per play from live state (`route_oneshot`): masked
     // onto the SpineLow overlay beside `mode`, or full-body on the base track. A wound is a
     // per-bone secondary that a blended arm on the same bone overwrites (op4 copies over
-    // `+0xc4..`), so plays are tracked per bone; a play on the other bone leaves it
-    // (`0x714260`).
+    // `+0xc4..`), so plays are tracked per bone; a play on the other bone leaves it.
     //
-    // The base-animation lock releases on the finished id before anything re-picks the base
-    // (`0x5fc9c6`), so completion and pre-emption both release it.
+    // The base-animation lock releases on the finished id before anything re-picks the base, so
+    // completion and pre-emption both release it.
     drv.base_lock.release_finished(&player, anims, catalog);
 
     let pre_state = (drv.mode, drv.gait);
     let mut base_played = false;
     let mut masked_played = false;
     let mut played_oneshot: Option<u16> = None;
-    // `DO_NOT_PLAY_WOUND_ANIM` (`type_flags` 0x8, `0x6125f0`) on the template keyed by
-    // `OBJECT_FIELD_ENTRY` (`0x60b160`); false when not received. Read by the parry
-    // (`0x60ec1f`) and the flinch (`0x60ea9f`).
+    // `DO_NOT_PLAY_WOUND_ANIM` (`type_flags` 0x8) on the template keyed by `OBJECT_FIELD_ENTRY`;
+    // false when not received. Read by the parry and the flinch.
     let no_wound_anim = store
         .and_then(|s| s.0.object_entry())
         .zip(names)
         .and_then(|(entry, n)| n.creature_record(entry))
         .is_some_and(|r| r.type_flags & DO_NOT_PLAY_WOUND_ANIM != 0);
-    // Defense plays after a same-frame own swing or emote: the `$CPP` arm is the later call.
-    // Gated alive (`0x60ec00` checks IsDead and stand-state 7).
+    // Defense plays after a same-frame own swing or emote: the `$CPP` arm is the later call. Gated
+    // alive.
     let defense = pending_defense.get(&entity).and_then(|&vs| {
         if dead {
             return None;
         }
-        // The flag refuses only the parry (victimState 3, `0x60ec1f`); dodge (30) and block
-        // (24) play straight from `0x624a90`/`0x624a74`, ungated.
+        // The flag refuses only the parry (victimState 3); dodge (30) and block (24) play straight,
+        // ungated.
         if vs == 3 && no_wound_anim {
             return None;
         }
@@ -886,7 +879,7 @@ fn drive_unit(
                 .map(|&(req, _)| match req {
                     OneShotReq::Swing(hit_info) => {
                         let w = wielded.copied().unwrap_or_default();
-                        // `0x6246a0` calls `GetWeapon(slot, 0)`: a disarmed attacker swings
+                        // The reference calls `GetWeapon(slot, 0)`: a disarmed attacker swings
                         // AttackUnarmed(16) / AttackUnarmedOff(117), weapon still in hand.
                         let id = if hit_info & 0x4 != 0 {
                             swing_anim_off(w.armed_off())
@@ -904,17 +897,17 @@ fn drive_unit(
         })
         .unwrap_or_default();
     requests.extend(defense.map(|id| (id, None)));
-    // At the play seam (`0x5fe2f0`), Special1H/2H with both hands empty becomes
-    // SpecialUnarmed(118), for every request.
+    // At the play seam, Special1H/2H with both hands empty becomes SpecialUnarmed(118), for every
+    // request.
     {
         let w = wielded.copied().unwrap_or_default();
         for (id, _) in &mut requests {
             *id = select::unarmed_special(*id, w.armed_main(), w.armed_off());
         }
     }
-    // The deferred cache (`+0xd60`): once no one-shot is live, the parked combat clip plays.
-    // Fresh requests supersede it (`0x5fe48e`/`0x5fe480`). Never mid-air: the read
-    // (`0x5fd392`, in `0x5fd360`) is past the airborne freeze, so the landing play clears it.
+    // The deferred cache (`+0xd60`): once no one-shot is live, the parked combat clip plays. Fresh
+    // requests supersede it. Never mid-air: the read is past the airborne freeze, so the landing
+    // play clears it.
     if requests.is_empty()
         && drv.deferred.is_some()
         && !airborne_frozen
@@ -923,8 +916,8 @@ fn drive_unit(
         requests.extend(drv.deferred.take().map(|id| (id, None)));
     }
     for (id, armed_test) in requests {
-        // The emote player's own test first (`0x5fcd56`): an id already armed on the key bone
-        // or bone 0 plays nothing, ahead of the lock and the fast path in `0x5fe2f0`.
+        // The emote player's own test first: an id already armed on the key bone or bone 0 plays
+        // nothing, ahead of the lock and the fast path.
         if let Some(raw) = armed_test {
             if armed_id(&drv, &player, &tr, anims) == Some(raw) {
                 if benilla_assets::trace::enabled() {
@@ -936,14 +929,13 @@ fn drive_unit(
                 continue;
             }
         }
-        // The lock first: `0x5fe2f0`'s head guard returns before routing, the fast path and
-        // the dedup, so a locked unit gets no arm and no deferral.
+        // The lock first: the reference's head guard returns before routing, the fast path and the
+        // dedup, so a locked unit gets no arm and no deferral.
         if drv.base_lock.refuses() {
             continue;
         }
-        // The combat fast path (`0x5fe43c`–`0x5fe48b`): a combat clip over a live combat clip
-        // is not armed; the current clip's rate doubles (op6 2.0) and the request parks in
-        // `+0xd60`.
+        // The combat fast path: a combat clip over a live combat clip is not armed; the current
+        // clip's rate doubles (op6 2.0) and the request parks in `+0xd60`.
         if let Some((cur, node)) = live_oneshot(&drv, &player, &tr, anims, catalog) {
             if select::is_combat_anim(cur) && select::is_combat_anim(id) {
                 if let Some(active) = player.animation_mut(node) {
@@ -961,10 +953,10 @@ fn drive_unit(
                 continue;
             }
         }
-        // A normal arm clears the cache (`0x5fe48e` writes −1).
+        // A normal arm clears the cache.
         drv.deferred = None;
-        // Same-id dedup (`0x5fdba0`): an id still playing in its slot is not re-armed, so an
-        // eat/drink loop free-runs across the server's ~5 s kit resends.
+        // Same-id dedup: an id still playing in its slot is not re-armed, so an eat/drink loop
+        // free-runs across the server's ~5 s kit resends.
         let overlay_live = drv.overlay.is_some_and(|ov| {
             ov.id == id && player.animation(ov.node).is_some_and(|a| !a.is_finished())
         });
@@ -981,8 +973,8 @@ fn drive_unit(
             }
             continue;
         }
-        // A mounted rider plays only its CLASS_A ids, on the key bone, and nothing else
-        // (`0x5fe7b5`); a mount child plays the clip on its own bone 0 (`0x5fe7c1`).
+        // A mounted rider plays only its CLASS_A ids, on the key bone, and nothing else; a mount
+        // child plays the clip on its own bone 0.
         let masked = if mounted {
             if !route_mounted(id).rider_upper {
                 continue;
@@ -995,7 +987,7 @@ fn drive_unit(
         // Resolve to a clip this model has, roll its variation and its replay budget (a clamp
         // one-shot authored `(min,max)` plays R times).
         let picked = find_resolved(anims, id, catalog).map(|h| roll_oneshot(anims, h, rng));
-        // No split bone (`[+0xd5c] == -1`): a key-bone play arms nothing (`0x5fdcc4`).
+        // No split bone (`[+0xd5c] == -1`): a key-bone play arms nothing.
         if masked
             && match picked {
                 Some((c, _)) => c.upper_node.is_none(),
@@ -1008,9 +1000,9 @@ fn drive_unit(
             .then(|| picked.and_then(|(c, r)| c.upper_node.map(|n| (n, r))))
             .flatten();
         if let Some((node, repeat)) = upper {
-            // Masked: a blended key-bone re-arm (op4 `blendFlag = 1`) over the incoming clip's
-            // own blendTime (`0x7125f2`, `M2Sequence+0x20`). The full-body route below leaves
-            // the key bone as it is (`0x5fe930`).
+            // Masked: a blended key-bone re-arm (op4 `blendFlag = 1`) over the incoming clip's own
+            // blendTime (`M2Sequence+0x20`). The full-body route below leaves the key bone as it
+            // is.
             retire_overlay(
                 &mut drv,
                 &mut player,
@@ -1029,9 +1021,8 @@ fn drive_unit(
             masked_played = true;
             played_oneshot = Some(id);
         } else {
-            // Full-body: the clip
-            // replaces the base on bone 0 even over a Special, last writer wins (`0x5fe6c8`).
-            // An airborne arc's own clip freezes first, op4's pose-snapshot decay.
+            // Full-body: the clip replaces the base on bone 0 even over a Special, last writer
+            // wins. An airborne arc's own clip freezes first, op4's pose-snapshot decay.
             if let Some(sp) =
                 special.filter(|sp| matches!(sp, select::Special::Jump | select::Special::Fall))
             {
@@ -1061,10 +1052,10 @@ fn drive_unit(
         }
     }
 
-    // The whiff slow-down (`0x712910`): a miss, dodge or evade plays the rest of the swing at
-    // 0.5. Deviation: the reference writes bone 0's rate blindly; we scope it to the swing's
-    // own node, because a moving attacker's gait would otherwise slow too. The id is
-    // re-checked, as `Mode::Swing` also holds non-swing one-shots.
+    // The whiff slow-down: a miss, dodge or evade plays the rest of the swing at 0.5. Deviation:
+    // the reference writes bone 0's rate blindly; we scope it to the swing's own node, because a
+    // moving attacker's gait would otherwise slow too. The id is re-checked, as `Mode::Swing` also
+    // holds non-swing one-shots.
     if pending_slow.contains(&entity) {
         let node = match drv.overlay {
             Some(ov) if is_swing_id(ov.id) => Some(ov.node),
@@ -1078,19 +1069,18 @@ fn drive_unit(
         }
     }
 
-    // A Special edge is a normal play, so it clears the deferred cache (`0x5fe48e`); the level
-    // does not, as the airborne freeze issues no plays mid-arc.
+    // A Special edge is a normal play, so it clears the deferred cache; the level does not, as the
+    // airborne freeze issues no plays mid-arc.
     let special_edge = special != drv.last_special;
     drv.last_special = special;
     if special_edge {
         drv.deferred = None;
     }
-    // Looping-variation advance (`0x719370`, the unit's `model+0x70` callback): when the main
-    // node completes its `R` passes, a fresh weighted pick with a fresh window follows (a
-    // gryphon's flap/glide, a multi-part /dance). In the gait slot the callback is
-    // `RecomputeBaseAnim(−1)` (`0x5fc3f0` row `0x5fc844` → `0x5fd9e0`), a re-selection:
-    // clearing the target lets `mode::run` re-pick, which is what ends a turn-shuffle. A
-    // Special loop re-arms its id.
+    // Looping-variation advance (the unit's `model+0x70` callback): when the main node completes
+    // its `R` passes, a fresh weighted pick with a fresh window follows (a gryphon's flap/glide, a
+    // multi-part /dance). In the gait slot the callback is `RecomputeBaseAnim(−1)`, a re-selection:
+    // clearing the target lets `mode::run` re-pick, which is what ends a turn-shuffle. A Special
+    // loop re-arms its id.
     if let Some((node, budget)) = drv.loop_window {
         if tr.get_main_animation() == Some(node)
             && player
@@ -1099,7 +1089,7 @@ fn drive_unit(
         {
             if drv.mode == Mode::Gait {
                 drv.gait = None;
-                drv.interact_hold = false; // the window's end is a re-pick (`0x5fc45a`)
+                drv.interact_hold = false; // the window's end is a re-pick
             } else {
                 let head = anims
                     .clips
@@ -1122,11 +1112,11 @@ fn drive_unit(
             }
         }
     }
-    // ── Stage-2 base recompute (`0x60f389`–`0x60f399`): a state kit's id that differs from
-    // the one playing (`0x5fdb50`: key bone, else bone 0) runs `0x5fd9e0(unit, -1)`; it never
-    // plays the id. It must run after this frame's one-shot arms, so the state kit cuts the
-    // impact kit (Charge 22911: Knockdown 121, then Stun 14). A unit inside a Special is left
-    // alone: the recompute would land in the same state, and forcing Gait replays its entry.
+    // ── Stage-2 base recompute: a state kit's id that differs from the one playing (else bone 0)
+    // runs `(unit, -1)`; it never plays the id. It must run after this frame's one-shot arms, so
+    // the state kit cuts the impact kit (Charge 22911: Knockdown 121, then Stun 14). A unit inside
+    // a Special is left alone: the recompute would land in the same state, and forcing Gait replays
+    // its entry.
     if let Some(&want) = pending_recompute.get(&entity) {
         let armed = drv.overlay.map(|ov| ov.id).or_else(|| {
             tr.get_main_animation()
@@ -1134,17 +1124,16 @@ fn drive_unit(
                 .map(|c| c.anim_id)
         });
         if armed != Some(want) && matches!(drv.mode, Mode::Swing { .. } | Mode::Gait) {
-            drv.deferred = None; // a normal arm clears the cache (`0x5fe48e`)
+            drv.deferred = None; // a normal arm clears the cache
             drv.mode = Mode::Gait;
             drv.gait = None; // recompute a fresh gait next frame
         }
     }
 
-    // `SetInteractNPC` re-picks the base at once on open and on clear (`0x5fd9e0(-1)`, sites
-    // `0x493198` and `0x493219`), over a live one-shot as any base arm; in Gait the per-frame
-    // pick already follows. A player's open and clear skip it (`0x493159`, `0x493203`), a pose
-    // under the one-shot re-picks to its own id and an airborne unit to the freeze
-    // (`0x5fd8e8`), which cut nothing.
+    // `SetInteractNPC` re-picks the base at once on open and on clear, over a live one-shot as any
+    // base arm; in Gait the per-frame pick already follows. A player's open and clear skip it, a
+    // pose under the one-shot re-picks to its own id and an airborne unit to the freeze, which cut
+    // nothing.
     let target = interact.as_ref().filter(|i| i.0 == Some(entity));
     let interacting = target.is_some();
     if let Some(guid) = target.and_then(|i| i.1) {
@@ -1197,13 +1186,13 @@ fn drive_unit(
         rng,
     );
 
-    // ── The base slot's playback rate, written over whatever the mode machine settled on: the
-    // rate write sits outside the selector (`0x5fe2f0`). JumpLandRun 187 resolves to Run 5 on
-    // creature models, so a mount's landing is rate-scaled like any locomotion.
+    // ── The base slot's playback rate, written over whatever the mode machine settled on: the rate
+    // write sits outside the selector. JumpLandRun 187 resolves to Run 5 on creature models, so a
+    // mount's landing is rate-scaled like any locomotion.
     play::sync_base_rate(&mut drv, &tr, &mut player, anims, mv.speed, model_scale);
 
-    // ── Masked one-shot completion: a finished overlay is not stopped but faded to rest, its
-    // held final frame cross-fading onto the base over 150 ms (`0x719370` → `0x5fc920`).
+    // ── Masked one-shot completion: a finished overlay is not stopped but faded to rest, its held
+    // final frame cross-fading onto the base over 150 ms.
     if let Some(ov) = drv.overlay {
         let done = if ov.looping {
             false // a cast-hold loop: the hold block below owns its release
@@ -1216,7 +1205,7 @@ fn drive_unit(
             player.animation(ov.node).is_none_or(|a| a.is_finished())
         };
         if done {
-            // Freeze on the final frame: the snapshot clamps to `seq.end` (`0x7123af`).
+            // Freeze on the final frame: the snapshot clamps to `seq.end`.
             if let Some(a) = player.animation_mut(ov.node) {
                 a.set_speed(0.0);
             }
@@ -1225,9 +1214,9 @@ fn drive_unit(
     }
 
     // ── The moving cast hold: a caster that translates or swims (`[9e8] & 0x20000f`) loops the
-    // hold clip on its torso; a merely turning one stays pinned in the gait slot. A masked
-    // one-shot wins while it plays. A jump does not cancel it: `0x5fe912` sends locomotion to
-    // bone 0 while the key bone is armed.
+    // hold clip on its torso; a merely turning one stays pinned in the gait slot. A masked one-shot
+    // wins while it plays. A jump does not cancel it: the reference sends locomotion to bone 0
+    // while the key bone is armed.
     let mut hold_played: Option<u16> = None;
     let masked_hold = cast_hold
         .filter(|_| mv.flags & move_flags::CAST_PIN_MOVE != 0)
@@ -1301,20 +1290,19 @@ fn drive_unit(
     // lock, where the machine walks its brackets with every play refused.
     let base_played =
         base_played || ((drv.mode, drv.gait) != pre_state && !drv.base_lock.refuses());
-    // The weapon-trail latch's edge: `0x5fe2f0` is the single animation entry point, so any
+    // The weapon-trail latch's edge: the reference is the single animation entry point, so any
     // start counts. Written every pass, so it is this frame's alone.
     drv.started_anim = masked_played || base_played;
     wound_evict(entity, &mut drv, &mut player, masked_played, base_played);
 
     if let Some(&edge) = pending_wound.get(&entity) {
-        // The id by severity and engagement (`0x60ea70`); a spell edge is severity 0.
+        // The id by severity and engagement; a spell edge is severity 0.
         let id = match edge {
             WoundEdge::Melee(hit_info) => select::wound_anim(hit_info, engaged),
             WoundEdge::Spell => select::wound_anim(0, engaged),
         };
-        // The entry gates in `0x60ea70`'s order: `DO_NOT_PLAY_WOUND_ANIM` (`0x60ea9f`), which
-        // gates the animation only (the blood spurt, `0x624530` → `0x625010`, still plays);
-        // then any CharProc-11 rate node (`0x60eaac`–`0x60eac8`), by presence, not rate.
+        // The entry gates's order: `DO_NOT_PLAY_WOUND_ANIM`, which gates the animation only (the
+        // blood spurt, still plays); then any CharProc-11 rate node, by presence, not rate.
         let refusal = if no_wound_anim {
             Some("the template carries DO_NOT_PLAY_WOUND_ANIM")
         } else if aura_nodes.is_some_and(|n| n.head_anim_rate().is_some()) {
@@ -1344,15 +1332,14 @@ fn drive_unit(
         }
     }
 
-    // ── The sheath reconcile (`0x5fdf80`, inside every PlayAnimation): the played clip's
-    // `AnimationData.dbc` WeaponFlags and engagement force a snap, and a remote unit with no
-    // force returns to the server byte; the local player volunteers `CMSG_SETSHEATHED`.
-    // It tests the requested id, not the model's substitute: the arm descriptor that
-    // `0x5fdb50` reads carries the id asked for (`0x5fde80`, stored at `+0xf8` by `0x71252f`),
-    // so a model lacking the clip still stows by the requested row.
-    // It runs on plays only, this frame's one-shot first: re-running it on a silent frame
-    // would undo a masked stow against the base gait. A mounted unit still drawn (the byte
-    // adopt bypasses the setter) forces once, as our rider track never plays.
+    // ── The sheath reconcile (inside every PlayAnimation): the played clip's `AnimationData.dbc`
+    // WeaponFlags and engagement force a snap, and a remote unit with no force returns to the
+    // server byte; the local player volunteers `CMSG_SETSHEATHED`. It tests the requested id, not
+    // the model's substitute: the arm descriptor that the reference reads carries the id asked for
+    // (stored at `+0xf8`), so a model lacking the clip still stows by the requested row. It runs on
+    // plays only, this frame's one-shot first: re-running it on a silent frame would undo a masked
+    // stow against the base gait. A mounted unit still drawn (the byte adopt bypasses the setter)
+    // forces once, as our rider track never plays.
     if played_oneshot.is_some()
         || hold_played.is_some()
         || base_played
@@ -1367,11 +1354,10 @@ fn drive_unit(
         if let Some(forced) =
             select::reconcile_sheath(cur, anim, flags, engaged, is_self, sheath_byte, mounted)
         {
-            // The reference brackets every ranged kit play with ranged snaps (`0x60f34c`
-            // before, `SetSheatheState(2,1,1)` after), so ReadyThrown 108's stow (outside the
-            // `0x5fe180` exempt set) never renders; a live ranged hold resolves a stow to 2.
-            // That call order implies a remote thrower's wind-up reads 0 until its GO, which
-            // is untraced; every caster here stays at 2.
+            // The reference brackets every ranged kit play with ranged snaps
+            // (`SetSheatheState(2,1,1)` after), so ReadyThrown 108's stow never renders; a live
+            // ranged hold resolves a stow to 2. That call order implies a remote thrower's wind-up
+            // reads 0 until its GO, which is untraced; every caster here stays at 2.
             let forced = if forced != 2 && cast_hold.is_some_and(|h| h.ranged) {
                 2
             } else {
@@ -1391,17 +1377,17 @@ fn drive_unit(
             }
         }
     }
-    // Leaving sheath state 2 by any path un-nocks and drops the ammo (`0x60fc72`, gated
-    // `[+0xd40] != 2`) until the next `SMSG_SPELL_START`.
+    // Leaving sheath state 2 by any path un-nocks and drops the ammo (gated `[+0xd40] != 2`) until
+    // the next `SMSG_SPELL_START`.
     if sheath_frame_start == Some(2) && drv.sheath_cur != Some(2) {
         commands
             .entity(entity)
             .remove::<(super::NockedAmmo, super::NockLatch)>();
     }
-    // Translating or swimming un-nocks too, keeping the ammo and the draw: `0x60e480` arm 0
-    // (`0x60e4ac call 0x60f530`) runs on MSG_MOVE_START_{FORWARD, BACKWARD, STRAFE_LEFT,
-    // STRAFE_RIGHT, SWIM} (181/182/184/185/202); turning and stopping do not. A level test
-    // matches the start edge, since only the Load clips' `$BWP` re-latches.
+    // Translating or swimming un-nocks too, keeping the ammo and the draw: the reference arm 0 runs
+    // on MSG_MOVE_START_{FORWARD, BACKWARD, STRAFE_LEFT, STRAFE_RIGHT, SWIM} (181/182/184/185/202);
+    // turning and stopping do not. A level test matches the start edge, since only the Load clips'
+    // `$BWP` re-latches.
     if mv.flags & (move_flags::ANY_MOVE | move_flags::SWIMMING) != 0 && nock_latched {
         commands.entity(entity).remove::<super::NockLatch>();
     }

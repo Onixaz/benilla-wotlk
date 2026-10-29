@@ -1,9 +1,9 @@
 //! Each WMO group's MOCV bake per batch, up-facing vertices apart from the rest, with its MOGP
 //! flags, batch class and the bake after the doorway fade. The reference lights an interior surface
 //! only from the bake: an INT batch draws `tex × MOCV` and a TRANS batch lerps to it by `MOCV.a`,
-//! and `FixColorVertexAlpha` (`0x6c43d0`) brightens interior vertices toward white within 6.67 yd
-//! of a portal to an exterior group. A model-space `x,y,z` keeps only the groups whose box holds
-//! it; `--survey` prints only the fade per group. Output is Blizzard data: never commit it.
+//! and `FixColorVertexAlpha` brightens interior vertices toward white within 6.67 yd of a portal to
+//! an exterior group. A model-space `x,y,z` keeps only the groups whose box holds it; `--survey`
+//! prints only the fade per group. Output is Blizzard data: never commit it.
 //! `cargo run -p benilla-formats --example wmo_mocv -- <wmo-path-or-substring> [gN | x,y,z]`
 
 use benilla_wmo::{parse_wmo, ParsedWmo};

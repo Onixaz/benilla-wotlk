@@ -5,16 +5,16 @@
 //! re-projects them live at draw. One matrix enters at two inverse sites:
 //!
 //! ```text
-//! A = translate(transport.pos) · Rz(transport.facing)    // 0x630ac0, NULL when not riding
-//! BIRTH  0x7b5160:  rt+0x1fc = srcMx · A⁻¹      (A ≠ 0 and 0x100 clear; else verbatim)
-//! DRAW   0x7b3d20:  0xcf5b68 = A · T · S        (0x100 clear, [ebp+8] ≠ 0; else T·S)
-//! EDGE   0x7187f0:  on A changing NULL↔non-NULL, re-express every live particle's
-//!                   position and velocity (0x7b5e60) and every ribbon's (0x7b7bc0)
+//! A = translate(transport.pos) · Rz(transport.facing)    //, NULL when not riding
+//! BIRTH:  rt+0x1fc = srcMx · A⁻¹      (A ≠ 0 and 0x100 clear; else verbatim)
+//! DRAW: = A · T · S        (0x100 clear, [ebp+8] ≠ 0; else T·S)
+//! EDGE:  on A changing NULL↔non-NULL, re-express every live particle's
+//!                   position and velocity and every ribbon's
 //! ```
 //!
 //! `A` lives on the model, not the bone or emitter, and the reference copies the parent's pointer
-//! to every child model each frame (`0x7142c1`, in the animate kernel `0x714260`), so
-//! [`RideFrames`] walks the [`crate::model_fade::ParentModel`] chain.
+//! to every child model each frame, so [`RideFrames`] walks the [`crate::model_fade::ParentModel`]
+//! chain.
 
 use bevy::ecs::system::SystemParam;
 use bevy::math::Affine3A;
@@ -28,7 +28,7 @@ use crate::model_fade::{ParentModel, MAX_MODEL_CHAIN};
 pub struct RideFrame(pub Entity);
 
 /// `A = translate(pos) · Rz(facing)` from a transport's live pose: position and Z-facing only, all
-/// `0x630ac0` builds it from (vtable `+0x14`, `+0x18`). Yaw-only, it leaves gravity frame-free.
+/// builds it from (vtable `+0x14`, `+0x18`). Yaw-only, it leaves gravity frame-free.
 pub fn ride_matrix(gt: &GlobalTransform) -> Affine3A {
     let (_, rot, translation) = gt.to_scale_rotation_translation();
     let yaw = rot.to_euler(EulerRot::YXZ).0;
@@ -36,7 +36,7 @@ pub fn ride_matrix(gt: &GlobalTransform) -> Affine3A {
 }
 
 /// A model instance's ride frame, looked up along its [`ParentModel`] chain: the reference's
-/// per-frame copy of `[model+0x17c]` down the child list (`0x7142c1`).
+/// per-frame copy of `[model+0x17c]` down the child list.
 #[derive(SystemParam)]
 pub struct RideFrames<'w, 's> {
     chain: Query<'w, 's, (Option<&'static RideFrame>, Option<&'static ParentModel>)>,
@@ -70,8 +70,8 @@ impl RideFrames<'_, '_> {
 }
 
 /// The frame an emitter's committed content is stored in, and the edge detector behind the
-/// reference's `0x7187f0` re-expression. The entity says whether the frame changed; the last
-/// matrix outlives a despawned transport, since leaving re-expresses through it.
+/// reference's re-expression. The entity says whether the frame changed; the last matrix outlives a
+/// despawned transport, since leaving re-expresses through it.
 #[derive(Clone, Copy, Default)]
 pub struct StoredFrame(Option<(Entity, Affine3A)>);
 
@@ -96,7 +96,7 @@ impl StoredFrame {
         self.0.map(|(_, a)| a)
     }
 
-    /// `stored → world`: the draw fold (`0xcf5b68 = A · T · S`).
+    /// `stored → world`: the draw fold (`= A · T · S`).
     pub fn to_world(&self, p: Vec3) -> Vec3 {
         self.0.map_or(p, |(_, a)| a.transform_point3(p))
     }

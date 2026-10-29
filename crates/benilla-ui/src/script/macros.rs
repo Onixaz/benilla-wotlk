@@ -3,11 +3,11 @@
 //! ([`UiScript::set_macros`]), saves it when [`UiScript::take_macros_dirty`] says, and pushes the
 //! icon list ([`UiScript::set_macro_icons`]).
 //!
-//! Indices 1..=36 are the account macros and 37..=54 the character macros, each list dense from
-//! its base (`MacroFrame.macroBase`): 12340 sorts each set into 36 slots (`m_sortedMacros`, read
-//! at `36 * set + i`), the account set holding 36 and the character set 18 (`s_maxMacros`). A
-//! macro's bound spell (`0x4e5a50`'s macro arm returns `[rec+0x564]`) is the app's to derive: it
-//! needs the spell catalog and the player's book.
+//! Indices 1..=36 are the account macros and 37..=54 the character macros, each list dense from its
+//! base (`MacroFrame.macroBase`): 12340 sorts each set into 36 slots (`m_sortedMacros`, read at
+//! `36 * set + i`), the account set holding 36 and the character set 18 (`s_maxMacros`). A macro's
+//! bound spell (the reference's macro arm returns `[rec+0x564]`) is the app's to derive: it needs
+//! the spell catalog and the player's book.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -34,19 +34,19 @@ pub const MAX_MACRO_BODY: usize = 255;
 pub struct MacroView {
     pub name: String,
     /// The icon's texture path, kept by name because the reference saves the icon by name
-    /// (`MACRO %d "%s" %s`, `0x44cb60`).
+    /// (`MACRO %d "%s" %s`).
     pub texture: Option<String>,
     /// The macro's lines, `\n`-separated.
     pub body: String,
 }
 
-/// A macro record's cached cast, the reference's `([rec+0x564], [rec+0x568])` pair (`0x4efe00`):
-/// the bound spell and the book it resolved from, which the app derives.
+/// A macro record's cached cast, the reference's `([rec+0x564], [rec+0x568])` pair: the bound spell
+/// and the book it resolved from, which the app derives.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct MacroBinding {
     /// The bound spell id; 0 for none, -1 for a `/cast` that did not resolve.
     pub spell: i32,
-    /// The spell came from the pet's book (`0x4b3b51` writes 1), not the player's.
+    /// The spell came from the pet's book, not the player's.
     pub pet_book: bool,
 }
 
@@ -161,7 +161,7 @@ impl super::UiScript {
     }
 
     /// Whether a script changed the table since the last call; the app then saves it and fires
-    /// `UPDATE_MACROS` (`0x452460`).
+    /// `UPDATE_MACROS`.
     pub fn take_macros_dirty(&mut self) -> bool {
         drain_field!(self, macros_dirty)
     }
@@ -186,9 +186,8 @@ impl super::UiScript {
     }
 }
 
-/// `CreateMacro(name, iconIndex, body, local, perCharacter)` (usage string `0x44cb74`): the new
-/// 1-based index, or `None` on the two failures the client logs (`0x44cbb4`, `0x44cbdc`), an empty
-/// name and a full tab.
+/// `CreateMacro(name, iconIndex, body, local, perCharacter)`: the new 1-based index, or `None` on
+/// the two failures the client logs, an empty name and a full tab.
 fn create_macro(
     model: &mut Model,
     name: &str,
@@ -271,9 +270,9 @@ fn delete_macro(model: &mut Model, index: usize) -> bool {
     true
 }
 
-/// `PickupMacro(index)`: the macro payload (cursor mode 8, `[0xb4e2fc]`), which `PlaceAction`
-/// (`0x4e62e0`) packs as `macroId | 0x40000000`. Refused while the cursor holds anything; the
-/// reference's setter (`0x494f80`) clears the cursor first instead.
+/// `PickupMacro(index)`: the macro payload (cursor mode 8), which `PlaceAction` packs as
+/// `macroId | 0x40000000`. Refused while the cursor holds anything; the reference's setter clears
+/// the cursor first instead.
 fn pickup_macro(model: &mut Model, index: usize) -> bool {
     if model.cursor.is_some() {
         return false;
@@ -298,8 +297,8 @@ fn opt_string(v: Option<&Value>) -> Option<String> {
 }
 
 /// The `local` and `perCharacter` flags: `nil`, `false` and `0` are false, as in `UseAction`. The
-/// reference reads them with `GetBoolOrDefault` (`0x6f1c10`), which also takes `"0"` and any
-/// number that truncates to 0 as false; the stock popup passes a Lua boolean and never `local`.
+/// reference reads them with `GetBoolOrDefault`, which also takes `"0"` and any number that
+/// truncates to 0 as false; the stock popup passes a Lua boolean and never `local`.
 fn flag(v: Option<&Value>) -> bool {
     v.is_some_and(super::action::truthy_nonzero)
 }

@@ -43,8 +43,7 @@ use feed::{
 
 /// The backpack's capacity (`PLAYER_FIELD_PACK_SLOT_1..`).
 pub(super) const PACK_SLOTS: u8 = 16;
-/// Worn equipment, `INV_SLOT` 0..18 (head through tabard): the first region of the walker
-/// `0x622420`.
+/// Worn equipment, `INV_SLOT` 0..18 (head through tabard): the first region of the walker.
 pub(super) const EQUIPMENT_SLOTS: u8 = 19;
 /// The first equipped-bag inventory slot (`INV_SLOT` 19..22 hold bags 1..4).
 pub(super) const BAG_SLOT_FIRST: u8 = 19;
@@ -184,8 +183,8 @@ pub(crate) fn slot_guid_count(
 
 /// An item template's icon path: its `DisplayInfoID` joined through `ItemDisplayInfo.dbc`. The
 /// reference has no shared icon resolver (five registered getters and a C-side setter, each with
-/// its own law), but every arm that ends at an item ends at this join, `ItemTemplate+0x18` →
-/// `0x5d88b0` → `rec+0x14`; each window keeps its own law above it.
+/// its own law), but every arm that ends at an item ends at this join, `ItemTemplate+0x18` → →
+/// `rec+0x14`; each window keeps its own law above it.
 pub(crate) fn item_icon(
     icons: Option<&crate::entities::ItemDisplays>,
     display_info_id: u32,
@@ -195,7 +194,7 @@ pub(crate) fn item_icon(
         .and_then(|d| d.icon.clone())
 }
 
-/// The walker's section mask (`0x622420`'s `ebx`) over the player's 113-guid slot array. A
+/// The walker's section mask (the reference's `ebx`) over the player's 113-guid slot array. A
 /// container in an enabled section is always recursed into: sections gate only at the player's
 /// root, and no caller sets the recursion bit `0x10`. Buyback (74-85) has no bit and is never
 /// walked.
@@ -214,8 +213,8 @@ pub(crate) struct InventoryScope {
 }
 
 impl InventoryScope {
-    /// `0x47`, what mask 0 becomes: `0x622420` ORs it in at the local player's root
-    /// (`0x622434`-`0x622439`; the `CGPlayer_C` ctor sets that flag, `0x5dd44d`). No bank.
+    /// `0x47`, what mask 0 becomes: ORs it in at the local player's root (the `CGPlayer_C` ctor
+    /// sets that flag). No bank.
     pub(crate) const DEFAULT: Self = Self {
         equipment: true,
         bags: true,
@@ -223,7 +222,7 @@ impl InventoryScope {
         bank: false,
         keyring: true,
     };
-    /// `0x01`: the equip-vs-use fork's first stage, "is a copy already worn?" (`0x4e5fe7`).
+    /// `0x01`: the equip-vs-use fork's first stage, "is a copy already worn?".
     pub(crate) const EQUIPMENT_ONLY: Self = Self {
         equipment: true,
         bags: false,
@@ -231,9 +230,9 @@ impl InventoryScope {
         bank: false,
         keyring: false,
     };
-    /// `0x4F`: [`Self::DEFAULT`] plus the bank, what mask `8` becomes. The quest surfaces pass it
-    /// to `0x622130`: `GetQuestLogLeaderBoard` (`0x4e0579`, `0x4e0592`), the ADD_ITEM toast
-    /// (`0x5dd0f5`), the turn-in predicate (`0x4df778`) and `GetAbandonQuestItems` (`0x4dfc8a`).
+    /// `0x4F`: [`Self::DEFAULT`] plus the bank, what mask `8` becomes. The quest surfaces pass it:
+    /// `GetQuestLogLeaderBoard`, the ADD_ITEM toast, the turn-in predicate and
+    /// `GetAbandonQuestItems`.
     pub(crate) const QUEST_ITEMS: Self = Self {
         bank: true,
         ..Self::DEFAULT
@@ -257,13 +256,12 @@ impl InventoryScope {
     };
 }
 
-/// The reference's inventory walk (`0x622420`): one ascending pass over the player's slot array,
-/// recursing into each container as it is passed, `scope` gating the sections. `visit` gets the
-/// wire `(bag_index, slot)` and the guid, and returns `Some` to stop. The order is the reference's
-/// and load-bearing: equipment 0-18, each bag slot 19-22 then its contents, backpack 23-38, bank
-/// 39-66, each bank bag 67-73 then its contents, keyring.
-/// The first carried item (the backpack and the bags' contents) `pick` accepts, by guid: the
-/// arena charter turn-in's scan (`0x6dd680`).
+/// The reference's inventory walk: one ascending pass over the player's slot array, recursing into
+/// each container as it is passed, `scope` gating the sections. `visit` gets the wire
+/// `(bag_index, slot)` and the guid, and returns `Some` to stop. The order is the reference's and
+/// load-bearing: equipment 0-18, each bag slot 19-22 then its contents, backpack 23-38, bank 39-66,
+/// each bank bag 67-73 then its contents, keyring. The first carried item (the backpack and the
+/// bags' contents) `pick` accepts, by guid: the arena charter turn-in's scan (`0x6dd680`).
 pub(crate) fn find_carried(
     store: &ObjectFields,
     objects: &Objects,
@@ -386,10 +384,9 @@ fn walk_inventory<T>(
 }
 
 /// How many of `entry` the player holds within `scope`, summing each copy's
-/// `ITEM_FIELD_STACK_COUNT`: the reference's `0x622130(itemId, mask)`, whose per-item predicate
-/// `0x622160` tests `OBJECT_FIELD_ENTRY` (`0x622166`) and adds `[+0x20]` (`0x622177`). A quest
-/// objective counts banked copies ([`InventoryScope::QUEST_ITEMS`]); an action-button or reagent
-/// count does not.
+/// `ITEM_FIELD_STACK_COUNT`: the reference's `(itemId, mask)`, whose per-item predicate tests
+/// `OBJECT_FIELD_ENTRY` and adds `[+0x20]`. A quest objective counts banked copies
+/// ([`InventoryScope::QUEST_ITEMS`]); an action-button or reagent count does not.
 pub(crate) fn count_of(
     store: &ObjectFields,
     objects: &Objects,
@@ -448,11 +445,10 @@ pub(crate) fn tool_categories(
 }
 
 /// How far [`find_item`] looks and which copies count: the two mode bits the reference's callers
-/// pass the walker `0x622420`.
+/// pass the walker.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct ItemSearch {
-    /// Mode `1` alone: equipment slots 0-18 only, the equip-vs-use fork's "already worn?" stage
-    /// (`0x4e5fe7`).
+    /// Mode `1` alone: equipment slots 0-18 only, the equip-vs-use fork's "already worn?" stage.
     pub(crate) equipment_only: bool,
     /// Mode bit `0x20`: skip a copy whose live `ITEM_FIELD_SPELL_CHARGES[0]` is 0, set by the use
     /// leg for a template with finite charges. Containers are never skipped.
@@ -503,10 +499,9 @@ pub(crate) fn collect_inventory(
     out
 }
 
-/// The reference's `HasKey()` (`0x48ae90`), the gate on the keyring's existence in the UI: the
-/// walker (`0x6223a0` → `0x622420`) with predicate `0x6223d0`, `BagFamily == 9` (`template+0x1d0`),
-/// at mode `0x4f`, so a key in the bank counts. A slot whose template is still in flight reads as
-/// no key until the answer lands.
+/// The reference's `HasKey()`, the gate on the keyring's existence in the UI: the walker with
+/// predicate, `BagFamily == 9` (`template+0x1d0`), at mode `0x4f`, so a key in the bank counts. A
+/// slot whose template is still in flight reads as no key until the answer lands.
 pub(crate) fn has_key(
     store: &ObjectFields,
     objects: &Objects,
@@ -607,7 +602,7 @@ pub(crate) struct ItemUse {
     /// The template entry: the cooldown store keys item records on `(use_spell, entry)` (the
     /// client's `[eax+8]==spellId && [eax+0xc]==itemID`).
     pub(crate) entry: u32,
-    /// The ON_USE spell, `0x5d8c80`'s answer: the first block with `SpellId != 0` and
+    /// The ON_USE spell, the reference's answer: the first block with `SpellId != 0` and
     /// `SpellTrigger == 0`.
     pub(crate) use_spell: Option<u32>,
     /// The GameObject a key is used on, `CGItem::Use`'s target argument.
@@ -616,40 +611,39 @@ pub(crate) struct ItemUse {
     pub(crate) is_charter: bool,
 }
 
-/// What using an item sends: the reference's `CGItem::Use` (`0x5d8d00`), the one fork behind the
-/// bag click (`0x4fa430`), the doll click (`0x4c7af0`) and the action bar (`0x4e607b`).
+/// What using an item sends: the reference's `CGItem::Use`, the one fork behind the bag click, the
+/// doll click and the action bar.
 ///
-/// A non-zero `StartQuest` sends `CMSG_QUESTGIVER_QUERY_QUEST` with the item's own guid (`0x5d8dcc`
-/// → `0x5eab80`), and the server answers with the quest details, the item as giver. Never
-/// `CMSG_USE_ITEM`: vmangos `HandleUseItemOpcode` refuses an item with no on-use spell as
-/// `EQUIP_ERR_ITEM_NOT_FOUND`, and no quest starter has one.
+/// A non-zero `StartQuest` sends `CMSG_QUESTGIVER_QUERY_QUEST` with the item's own guid, and the
+/// server answers with the quest details, the item as giver. Never `CMSG_USE_ITEM`: vmangos
+/// `HandleUseItemOpcode` refuses an item with no on-use spell as `EQUIP_ERR_ITEM_NOT_FOUND`, and no
+/// quest starter has one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ItemUseRoute {
-    /// Rung 3 (`0x5d8dd2`): offer the quest and return, before the cast tail (`0x5d9249`).
+    /// Rung 3: offer the quest and return, before the cast tail.
     QuestOffer { npc: u64, quest: u32 },
-    /// The toggle-cancel arm (`0x5d9234`-`0x5d9246`): the ON_USE spell is live as a cancelable
-    /// active-icon aura, so the click sends `CMSG_CANCEL_AURA` and casts nothing; a mount item
-    /// clicked while mounted dismounts.
+    /// The toggle-cancel arm: the ON_USE spell is live as a cancelable active-icon aura, so the
+    /// click sends `CMSG_CANCEL_AURA` and casts nothing; a mount item clicked while mounted
+    /// dismounts.
     ToggleCancel(u32),
-    /// The cast tail (`0x5d9249`-`0x5d9258` → `0x6e5a90` → `TryCast`): the whole ladder.
+    /// The cast tail (`TryCast`): the whole ladder.
     Cast(u32),
-    /// No ON_USE block: `TryCast` gets spell id 0, whose record (`[0xc0d788 + 0]`) is null, and
-    /// bails at `0x6e4bac` with nothing sent.
+    /// No ON_USE block: `TryCast` gets spell id 0, whose record is null, and bails with nothing
+    /// sent.
     Nothing,
-    /// The charter arm, rung 9 (`0x5d8f95`, template `Flags & 0x2000`): `0x5eef40`, whose sole
-    /// caller is `0x5d8fa6`, sends `CMSG_PETITION_SHOW_SIGNATURES` (`0x1BE`), one `u64` guid,
-    /// instead of `CMSG_USE_ITEM`. It comes after the readable and `CMSG_OPEN_ITEM` rungs.
+    /// The charter arm, rung 9 (template `Flags & 0x2000`), whose sole caller, sends
+    /// `CMSG_PETITION_SHOW_SIGNATURES` (`0x1BE`), one `u64` guid, instead of `CMSG_USE_ITEM`. It
+    /// comes after the readable and `CMSG_OPEN_ITEM` rungs.
     ShowPetition { item: u64 },
-    /// Rung 15 of 20: using the weapon a disarm took raises `ERR_CANT_USE_DISARMED` (`0x16b`,
-    /// `0x5d926d`) locally and sends nothing. Only the worn hand the disarm hides (slot 15 or 16)
-    /// is refused, and the rung sits above the bind confirm (`0x5d91d6`) and the cast tail.
+    /// Rung 15 of 20: using the weapon a disarm took raises `ERR_CANT_USE_DISARMED` (`0x16b`)
+    /// locally and sends nothing. Only the worn hand the disarm hides (slot 15 or 16) is refused,
+    /// and the rung sits above the bind confirm and the cast tail.
     CantUseDisarmed,
 }
 
-/// [`ItemUseRoute`]'s decision, in the reference's order: quest offer (`0x5d8dcc`), charter
-/// (`0x5d8f95`), disarmed refusal, toggle scan (`0x5d9157`), cast tail (`0x5d9249`). The toggle
-/// predicate and the disarmed hand are caster state, passed in; a `None` guid cannot address a
-/// questgiver, so it falls through to the ordinary path.
+/// [`ItemUseRoute`]'s decision, in the reference's order: quest offer, charter, disarmed refusal,
+/// toggle scan, cast tail. The toggle predicate and the disarmed hand are caster state, passed in;
+/// a `None` guid cannot address a questgiver, so it falls through to the ordinary path.
 pub(crate) fn item_use_route(
     it: ItemUse,
     aura_cancels: impl Fn(u32) -> bool,
@@ -661,7 +655,8 @@ pub(crate) fn item_use_route(
             quest: it.start_quest,
         };
     }
-    // A charter with no resolved instance falls through: `0x5eef40` sends nothing on a zero guid.
+    // A charter with no resolved instance falls through: the reference sends nothing on a zero
+    // guid.
     if let Some(item) = it.guid.filter(|_| it.is_charter) {
         return ItemUseRoute::ShowPetition { item };
     }
@@ -678,12 +673,10 @@ pub(crate) fn item_use_route(
 }
 
 /// Send what [`item_use_route`] decides; the only place a `CMSG_USE_ITEM` leaves benilla. The
-/// reference's cast tail calls `0x6e5a90`, whose body is `call 0x6e4b60`, `TryCast`: the function
-/// the spellbook, `/cast` and the action bar run, with the item as an argument no gate skips for
-/// (it reaches the requirement validator `0x6094f0`), and `SendCast` (`0x6e54f0`) picks the opcode
-/// from it (`0x6e57d8`). So an item use takes the whole cast ladder,
-/// [`crate::spell::CastLadder::send`]. The toggle-cancel scan above the tail
-/// (`0x5d9157`-`0x5d9246`, `CancelAura` `0x6e7040`) is the action button's `0x4e55f0` predicate,
+/// reference's cast tail calls, whose body, `TryCast`: the function the spellbook, `/cast` and the
+/// action bar run, with the item as an argument no gate skips for, and `SendCast` picks the opcode
+/// from it. So an item use takes the whole cast ladder, [`crate::spell::CastLadder::send`]. The
+/// toggle-cancel scan above the tail (`CancelAura`) is the action button's predicate,
 /// [`crate::ui_action::toggle::active_action_toggle`], applied to the item's spell.
 ///
 /// Returns whether anything left for the server.
@@ -746,10 +739,10 @@ pub(crate) fn send_item_use(
                 .send(crate::net::ClientCommand::PetitionShowSignatures { item });
             true
         }
-        // The bind-on-use deferral (`0x5d91d3`-`0x5d91f2`), the last rung of `0x5d8d00`: every
-        // arm above has claimed the click first, so re-pressing a bind-on-use trinket to cancel
-        // its aura never asks. It covers `Nothing` too: four of `0x5d91d3`'s five predecessors
-        // are on-use spell lookup failures, so the reference asks with no usable on-use spell.
+        // The bind-on-use deferral, the last rung: every arm above has claimed the click first, so
+        // re-pressing a bind-on-use trinket to cancel its aura never asks. It covers `Nothing` too:
+        // four of the reference's five predecessors are on-use spell lookup failures, so the
+        // reference asks with no usable on-use spell.
         ItemUseRoute::Nothing | ItemUseRoute::Cast(_)
             if !suppress
                 && it.guid.is_some_and(|g| {
@@ -783,9 +776,8 @@ pub(crate) fn send_item_use(
     }
 }
 
-/// The client's quality colour escape for an item link: `0x52ad90` indexes the seven-entry table
-/// at `0x854124` (literals at `0x8546dc`) and clamps anything `>= 7` to index 1, white, which is
-/// the catch-all arm.
+/// The client's quality colour escape for an item link: the reference indexes the seven-entry table
+/// and clamps anything `>= 7` to index 1, white, which is the catch-all arm.
 pub(super) fn quality_color(quality: u32) -> &'static str {
     match quality {
         0 => "ff9d9d9d",
@@ -798,9 +790,9 @@ pub(super) fn quality_color(quality: u32) -> &'static str {
     }
 }
 
-/// One item hyperlink, as the client's `0x52adb0` builds every one it shows: `SStrPrintf` over
-/// `"%s|Hitem:%d:%d:%d:%d|h[%s]|h%s"` (`0x8549c8`), the colour escape, item id, enchant id,
-/// random-property id, suffix factor, name, then the `|r` reset (`0x844538`).
+/// One item hyperlink, as the client's builds every one it shows: `SStrPrintf` over
+/// `"%s|Hitem:%d:%d:%d:%d|h[%s]|h%s"`, the colour escape, item id, enchant id, random-property id,
+/// suffix factor, name, then the `|r` reset.
 pub(crate) fn item_link_full(
     item_id: u32,
     enchant_id: u32,
@@ -816,7 +808,7 @@ pub(crate) fn item_link_full(
 }
 
 /// [`item_link_full`] with zero enchant, random-property and suffix ids, for a caller with no roll
-/// in hand; a rolled item's link carries the roll and its suffixed name (`0x5d8b00`).
+/// in hand; a rolled item's link carries the roll and its suffixed name.
 pub(crate) fn item_link(item_id: u32, name: &str, quality: u32) -> String {
     item_link_full(item_id, 0, 0, 0, name, quality)
 }
@@ -824,14 +816,13 @@ pub(crate) fn item_link(item_id: u32, name: &str, quality: u32) -> String {
 /// `INVTYPE_AMMO`: loaded with `CMSG_SET_AMMO`, not the equip swap.
 pub(super) const INVTYPE_AMMO: u32 = 24;
 
-/// The `InventoryType` → live-API equip slots map (wire `EQUIPMENT_SLOT_*` + 1, bag icons
-/// 20..23; empty is not equippable), from vmangos `ItemPrototype::GetAllowedEquipSlots`
+/// The `InventoryType` → live-API equip slots map (wire `EQUIPMENT_SLOT_*` + 1, bag icons 20..23;
+/// empty is not equippable), from vmangos `ItemPrototype::GetAllowedEquipSlots`
 /// (`Objects/Item.cpp:577-696`), which `Player::FindEquipSlot` (`Objects/Player.cpp:8440`) walks.
-/// The client's own check, `IsValidForSlot` (`0x5da1d0`), is a fixed slot mask per
-/// `InventoryType` that answers 1 for every 0-based slot from 23 (`0x5da215`), plus the RANGED
-/// leg below; it has no dual-wield input. `INVTYPE_WEAPON` offers both hands here, where vmangos
-/// offers the off hand only to a dual wielder and refuses the equip otherwise
-/// (`EQUIP_ERR_CANT_DUAL_WIELD`, `Player.cpp:9915`).
+/// The client's own check, `IsValidForSlot`, is a fixed slot mask per `InventoryType` that answers
+/// 1 for every 0-based slot from 23, plus the RANGED leg below; it has no dual-wield input.
+/// `INVTYPE_WEAPON` offers both hands here, where vmangos offers the off hand only to a dual
+/// wielder and refuses the equip otherwise (`EQUIP_ERR_CANT_DUAL_WIELD`, `Player.cpp:9915`).
 pub(super) fn find_equip_slot(inventory_type: u32, has_relic_slot: bool) -> Vec<u8> {
     // Live-API ids: wire `EQUIPMENT_SLOT_*` + 1. `AmmoSlot` is 0 (`GetInventorySlotInfo`), loaded
     // by entry with `CMSG_SET_AMMO`.
@@ -1196,7 +1187,7 @@ mod tests {
             ItemUseRoute::Cast(SUMMON_HORSE),
             "not mounted: the very same click casts",
         );
-        // Order: the quest offer forks at `0x5d8dcc`, above the toggle scan at `0x5d9157`.
+        // Order: the quest offer forks, above the toggle scan.
         assert_eq!(
             item_use_route(it(373, Some(SUMMON_HORSE)), mounted, None),
             ItemUseRoute::QuestOffer {
@@ -1260,8 +1251,8 @@ mod tests {
         }
     }
 
-    /// `IsValidForSlot`'s slot `0x11` leg (`0x5da1d0`) is an equality: a relic class is offered the
-    /// slot for a relic and never for a ranged weapon, everyone else the reverse.
+    /// `IsValidForSlot`'s slot `0x11` leg is an equality: a relic class is offered the slot for a
+    /// relic and never for a ranged weapon, everyone else the reverse.
     #[test]
     fn the_ranged_slot_takes_a_relic_or_a_weapon_never_both() {
         const RANGED: u8 = 18;
@@ -1492,7 +1483,7 @@ mod find_item_tests {
         );
     }
 
-    /// `HasKey()` (`0x48ae90`) at mode `0x4f`: a key counts anywhere, the bank included.
+    /// `HasKey()` at mode `0x4f`: a key counts anywhere, the bank included.
     #[test]
     fn has_key_finds_a_key_anywhere_the_reference_looks() {
         use super::{has_key, BAG_FAMILY_KEYS};
@@ -1620,7 +1611,7 @@ mod count_of_tests {
         objects.spawn_container(guid, ObjectFields::from_pairs(&pairs));
     }
 
-    /// Mask `8` is the bit that adds the bank (`0x622420`).
+    /// Mask `8` is the bit that adds the bank.
     #[test]
     fn a_quest_objective_counts_banked_copies_and_nothing_else_does() {
         let store = player(&[(23, 0xA1), (39, 0xB1)]); // one stack in the backpack, one in the bank

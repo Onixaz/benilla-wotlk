@@ -1,8 +1,8 @@
 //! World collision: the layers and traces the body and the camera query. The reference's walking
-//! box query (leaf `0x6bca50`) drops MOPY DETAIL faces (`0x04`) and its camera/LOS segment query
-//! (leaf `0x6bc700`) drops NOCAMCOLLIDE faces (`0x02`), so the camera hits a low beam the body
-//! walks under. avian cannot filter one trimesh per face, so each WMO bakes one collider per
-//! audience; terrain, doodads and GameObjects sit on the default layer, which both see.
+//! box query drops MOPY DETAIL faces (`0x04`) and its camera/LOS segment query drops NOCAMCOLLIDE
+//! faces (`0x02`), so the camera hits a low beam the body walks under. avian cannot filter one
+//! trimesh per face, so each WMO bakes one collider per audience; terrain, doodads and GameObjects
+//! sit on the default layer, which both see.
 
 use avian3d::character_controller::move_and_slide::{
     MoveAndSlide, MoveAndSlideConfig, MoveAndSlideHitData, MoveAndSlideHitResponse,
@@ -30,14 +30,14 @@ pub(crate) enum CollisionLayer {
     Camera,
     /// Liquid surfaces, every MCLQ layer's and WMO pool's wet cells, hit only by a query that asks.
     /// `cameraWaterCollision` ORs `0xf0000` into the trace mask the camera solver hands its three
-    /// collision queries (`0x50e5ec`), and `0x69cc13` reads that nibble to gate the chunk's four
-    /// MCLQ slots (`0x10000` river/lake, `0x20000` ocean, `0x40000` magma, `0x80000` slime).
+    /// collision queries, and the reference reads that nibble to gate the chunk's four MCLQ slots
+    /// (`0x10000` river/lake, `0x20000` ocean, `0x40000` magma, `0x80000` slime).
     Liquid,
 }
 
-/// The camera probe's radius (yd) against the solid world. Deviation: the reference's camera
-/// trace is a bare ray (`0x672170`); the sphere keeps the near plane out of a wall. Nothing may
-/// hardcode it: a fixture sweeping another radius tests another client.
+/// The camera probe's radius (yd) against the solid world. Deviation: the reference's camera trace
+/// is a bare ray; the sphere keeps the near plane out of a wall. Nothing may hardcode it: a fixture
+/// sweeping another radius tests another client.
 pub const CAMERA_PROBE_RADIUS: f32 = 0.3;
 
 /// `CollisionLayers` for a WMO's walking collider, which the camera query never hits.
@@ -87,20 +87,20 @@ pub(crate) fn track_collider_removals(
 }
 
 /// Marks a static trimesh that receives ground decals (the selection ring). The reference collects
-/// only terrain and WMO group faces (`0x6ad2c0` calls only `0x6ad330`/`0x6ad4e0`; draw flags
-/// `0x200122`, liquid off), so the ring draws under a barrel, not onto it, and filters WMO faces
-/// by MOPY class mask `0x88` alone, so it drapes down step faces. The mark rides the WMO walk
-/// collider (every face but DETAIL `0x04`); a `0x88` face set of its own is not built.
+/// only terrain and WMO group faces (draw flags `0x200122`, liquid off), so the ring draws under a
+/// barrel, not onto it, and filters WMO faces by MOPY class mask `0x88` alone, so it drapes down
+/// step faces. The mark rides the WMO walk collider (every face but DETAIL `0x04`); a `0x88` face
+/// set of its own is not built.
 #[derive(Component)]
 pub struct GroundDecalSurface;
 
-/// Marks a static collider that occludes the mouse pick: `CGWorldFrame::HitTest` (`0x4f9930`)
-/// traces the world with flags `0x1000124` and drops the object hit when the world hit is strictly
-/// nearer, so a unit behind a wall is not hoverable. Occluders are terrain and WMO group faces.
-/// Doodads occlude by their drawn batches ([`crate::interact::DoodadOccluders`]), never by a hull.
-/// Deviation: the WMO term is the walk collider (every face but DETAIL `0x04`), where the trace's
-/// ignore mask (`CMapObj::CreateWmoIgnoreFlags` `0x7ae140` → `0x188`) drops MOPY `0x88` faces and
-/// blended materials (`0x7c6c30`); a third face set per WMO costs its build and memory.
+/// Marks a static collider that occludes the mouse pick: `CGWorldFrame::HitTest` traces the world
+/// with flags `0x1000124` and drops the object hit when the world hit is strictly nearer, so a unit
+/// behind a wall is not hoverable. Occluders are terrain and WMO group faces. Doodads occlude by
+/// their drawn batches ([`crate::interact::DoodadOccluders`]), never by a hull. Deviation: the WMO
+/// term is the walk collider (every face but DETAIL `0x04`), where the trace's ignore mask
+/// (`CMapObj::CreateWmoIgnoreFlags` `0x7ae140` → `0x188`) drops MOPY `0x88` faces and blended
+/// materials (`0x7c6c30`); a third face set per WMO costs its build and memory.
 #[derive(Component)]
 pub struct PickOccluder;
 
@@ -137,10 +137,10 @@ impl WorldCollision<'_, '_> {
     }
 
     /// The waterline leg of the camera trace, a ray: `cameraWaterCollision` ORs `0xf0000` into the
-    /// solver's trace mask (`0x50e5ec`), and that trace is a segment with no radius (`0x672170`,
-    /// Möller–Trumbore at `0x7c2c40`). The swim corridor's `surface + 2/9` yd clearance is sized
-    /// for that ray: a [`CAMERA_PROBE_RADIUS`] sphere on the corridor floor starts 78 mm through
-    /// the plane. Two-sided, like the solid sweep.
+    /// solver's trace mask, and that trace is a segment with no radius (Möller–Trumbore). The swim
+    /// corridor's `surface + 2/9` yd clearance is sized for that ray: a [`CAMERA_PROBE_RADIUS`]
+    /// sphere on the corridor floor starts 78 mm through the plane. Two-sided, like the solid
+    /// sweep.
     fn waterline_ray(&self, from: Vec3, movement: Vec3) -> Option<f32> {
         let Ok(dir) = Dir3::new(movement) else {
             return None;
@@ -254,10 +254,10 @@ impl WorldCollision<'_, '_> {
     }
 
     /// [`cast_body`](Self::cast_body) with this frame's [`MoverTraceExclusions`]. In the reference
-    /// the mover's trace mask gains `0x8000` when it drives a player in ghost form (`0x631658`),
-    /// and the GameObject candidacy virtual `0x5f85f0` then drops every DOOR (type 0) from the
-    /// gather: a ghost walks through closed doors. Only the mover's own sweeps take it; the
-    /// shared [`body_filter`](Self::body_filter) keeps its doors.
+    /// the mover's trace mask gains `0x8000` when it drives a player in ghost form, and the
+    /// GameObject candidacy virtual then drops every DOOR (type 0) from the gather: a ghost walks
+    /// through closed doors. Only the mover's own sweeps take it; the shared
+    /// [`body_filter`](Self::body_filter) keeps its doors.
     pub fn cast_mover(
         &self,
         shape: &Collider,
@@ -449,8 +449,8 @@ mod moved_position_sync {
     }
 }
 
-/// `cameraWaterCollision` is a trace mask (`0x50e5ec`): the waterline stops the camera boom only
-/// with it set, and never the walking body.
+/// `cameraWaterCollision` is a trace mask: the waterline stops the camera boom only with it set,
+/// and never the walking body.
 #[cfg(test)]
 mod liquid_trace_mask {
     use super::*;

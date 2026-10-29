@@ -62,8 +62,8 @@ fn spellbook_hover_renders_the_verified_shape() {
     assert!(s.take_errors().is_empty());
 }
 
-/// `SetSpell`'s `bookType` picks the book (`0x532d10` forks at `0x532e1c`, `0x532e2a`: the pet's
-/// slots at `0xb6f098`, the player's at `0xb700f0`); both books hold a different spell at slot 1.
+/// `SetSpell`'s `bookType` picks the book (forks: the pet's slots); both books hold a different
+/// spell at slot 1.
 #[test]
 fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
     let mut s = script();
@@ -105,14 +105,14 @@ fn a_pet_book_hover_reads_the_pets_book_not_the_players() {
         -- The same slot id in the other book is the OTHER spell.
         tt:SetSpell(1, "spell")
         assert(TTTextLeft1:GetText() == "Fireball", "player slot 1, got " .. TTTextLeft1:GetText())
-        -- The compare is case-insensitive against "pet" ALONE (0x532e13's SStrCmpI), so every
+        -- The compare is case-insensitive against "pet" ALONE, so every
         -- other string is the player's book — including a mis-cased one being the pet's.
         tt:SetSpell(1, "PeT")
         assert(TTTextLeft1:GetText() == "Firebolt", "case-insensitive pet")
         tt:SetSpell(1, "book")
         assert(TTTextLeft1:GetText() == "Fireball", "any other string is the player's book")
         -- A non-string third argument is not "the player's book": the reference bails outright
-        -- (0x532dc0's isstring test), leaving whatever was shown.
+        --, leaving whatever was shown.
         tt:SetSpell(1, 7)
         assert(TTTextLeft1:GetText() == "Fireball", "a non-string arg shows nothing new")
     "#,
@@ -267,8 +267,8 @@ fn player_buff_hover_is_the_aura_variant() {
             if t.starts_with("Intellect increased") && *c == [1.0, 1.0, 1.0, 1.0])
     });
     assert!(white, "aura description is white, not gold");
-    // The name is gold: the aura builder `0x52f880` writes it through the gold wrapper
-    // `0x530380`, where the spell builder uses the plain `0x530270`.
+    // The name is gold: the aura builder writes it through the gold wrapper, where the spell
+    // builder uses the plain.
     let gold_name = quads.iter().any(|q| {
         matches!(&q.content, QuadContent::Text { text: Some(t), color: Some(c), .. }
             if t == "Arcane Intellect" && (c[1] - 210.0 / 255.0).abs() < 1e-6)
@@ -283,8 +283,8 @@ fn player_buff_hover_is_the_aura_variant() {
     assert!(s.take_errors().is_empty());
 }
 
-/// The buff builder's (`0x52f880`) right column is the dispel class, gold through the aura name's
-/// wrapper, where the spell hover puts a gray rank; a `rank` on the view must not displace it.
+/// The buff builder's right column is the dispel class, gold through the aura name's wrapper, where
+/// the spell hover puts a gray rank; a `rank` on the view must not displace it.
 #[test]
 fn player_buff_hover_names_the_dispel_class_in_gold() {
     let mut s = script();
@@ -328,7 +328,7 @@ fn player_buff_hover_names_the_dispel_class_in_gold() {
     assert!(s.take_errors().is_empty());
 }
 
-/// `0x52e610`'s line order: cast|cooldown, requires-item, requires-form, reagents, description,
+/// The reference's line order: cast|cooldown, requires-item, requires-form, reagents, description,
 /// each requirement red while unmet.
 #[test]
 fn requirement_and_reagent_lines_render_in_law_order() {
@@ -620,8 +620,8 @@ fn action_hover_is_brief_without_uber_tooltips() {
     assert!(s.take_errors().is_empty());
 }
 
-/// A macro slot's hover is the reference's `0x52b040`: one line, the macro's name in the normal
-/// colour (`0xc0cf60` holds `0xffffffff`, white); a slot whose macro is gone shows no plate.
+/// A macro slot's hover is the reference's: one line, the macro's name in the normal colour (the
+/// reference holds `0xffffffff`, white); a slot whose macro is gone shows no plate.
 #[test]
 fn action_hover_on_a_macro_slot_shows_its_name_in_white() {
     let mut s = script();
@@ -886,8 +886,8 @@ fn set_trade_skill_item_selects_the_spell_or_the_product() {
     assert!(s.take_errors().is_empty());
 }
 
-/// `0x532b00` skips the remaining line on `untilCancelled` (`0x532bda`, `0x532bdf`), never on
-/// whether the aura has a duration yet.
+/// The reference skips the remaining line on `untilCancelled`, never on whether the aura has a
+/// duration yet.
 #[test]
 fn the_remaining_line_is_gated_on_until_cancelled_not_on_the_duration() {
     let mut s = script();
@@ -1212,9 +1212,9 @@ fn the_spell_subjects_are_what_the_setters_read_from_the_vm() {
     assert_eq!(pet_subjects, vec![3110, 6307]);
 }
 
-/// The builder's unit selector picks the view built against the pet: `SetPetAction` passes it
-/// (`0x532888`, `0x5328d0`), `SetSpell` on the pet book (`0x532e23`) and a pet-learn
-/// `SetTrainerService` (`0x533a7f`); the player's book, a class service and a recipe pass 0.
+/// The builder's unit selector picks the view built against the pet: `SetPetAction` passes it,
+/// `SetSpell` on the pet book and a pet-learn `SetTrainerService`; the player's book, a class
+/// service and a recipe pass 0.
 #[test]
 fn the_unit_selector_setters_read_the_pet_view() {
     let mut s = script();

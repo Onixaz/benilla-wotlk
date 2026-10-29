@@ -70,7 +70,7 @@ struct TerrainVsOut {
 }
 
 // Terrain's point-light candidacy half-width (yd): `w + 10`, `w` being the chunk's bounding-sphere
-// radius `sqrt(2·16.666666² + (zExtent/2)²)`, 23.570166 on flat ground (constant at `0x68dfac`).
+// radius `sqrt(2·16.666666² + (zExtent/2)²)`, 23.570166 on flat ground.
 // This takes the flat `w` everywhere, so steep chunks gather slightly narrower than the reference;
 // the lights that differ are 33 yd out or more, where att ≈ 0.02.
 const TERRAIN_REACH: f32 = 33.570166;
@@ -102,8 +102,8 @@ fn half_map(tex: texture_2d_array<f32>, uv: vec2<f32>, layer: i32) -> vec4<f32> 
 // nearest by squared distance to the receiving unit, into GL slots 1-3; terrain's unit is the MCNK
 // chunk, so `anchor` is its cell centre. Candidacy is a 20-yd spatial-hash sweep over
 // `[floor((c - w - 10)/20), floor((c + w + 10)/20)]`, a Chebyshev box (`w` is `chunk+0x68`,
-// copied at `0x71bc47`) of half-width `w + 10`, at least `TERRAIN_REACH`. A committed light is
-// diffuse only (the ambient and specular slots are zeroed at `0x71c7e3`), falls off as
+// copied) of half-width `w + 10`, at least `TERRAIN_REACH`. A committed light is
+// diffuse only (the ambient and specular slots are zeroed), falls off as
 // `1/(0.7·d + 0.03·d²)` on the vertex normal, and has no distance cutoff. The M2 lane in
 // wow_model.wgsl uses the packed per-light range: the lanes differ on purpose.
 fn point_light_sum(P: vec3<f32>, N: vec3<f32>, anchor: vec3<f32>) -> vec3<f32> {
@@ -115,7 +115,7 @@ fn point_light_sum(P: vec3<f32>, N: vec3<f32>, anchor: vec3<f32>) -> vec3<f32> {
         let dv = pos_range.xyz - anchor;
         let d2 = dot(dv, dv);
         // The hash sweep is horizontal (the grid keys on WoW x/y = Bevy z/x) and has no vertical
-        // bound; ranking below is the full 3-D distance, as `0x71bf90` does.
+        // bound; ranking below is the full 3-D distance, as the reference does.
         if (max(abs(dv.x), abs(dv.z)) > TERRAIN_REACH) {
             continue;
         }
@@ -146,7 +146,7 @@ fn point_light_sum(P: vec3<f32>, N: vec3<f32>, anchor: vec3<f32>) -> vec3<f32> {
 }
 
 // The MCNK chunk cell centre under a world point: the reference's light anchor, the chunk's world
-// AABB centre `CMapChunk+0x5c..0x64` (written by `0x6b0e50`). The grid is fixed world-wide (chunk
+// AABB centre `CMapChunk+0x5c..0x64`. The grid is fixed world-wide (chunk
 // 533.33333/16 yd, half-extent 32 tiles) and symmetric, and WoW x/y are Bevy −z/−x, so snapping
 // Bevy x/z lands on the same cells; wow_model.wgsl mirrors it for clutter.
 // The anchor height is the vertex's own y, not the chunk's mid-height `(minH + maxH)/2`, so on

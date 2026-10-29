@@ -14,10 +14,9 @@ impl super::UiScript {
     }
 
     /// Start this VM's `GetTime()` clock at `secs`, so a rebuilt VM (a relog, a `ReloadUI`) keeps
-    /// the process's clock. The reference's `GetTime` (`0x515ea0`, through `0x42c010` and
-    /// `0x42b790`) is `GetTickCount` scaled by 0.001, an OS clock that never restarts, which stock
-    /// `Cooldown.lua` relies on (`start > 0`). Set once, at construction; after that only
-    /// [`Self::tick`] moves it.
+    /// the process's clock. The reference's `GetTime` is `GetTickCount` scaled by 0.001, an OS
+    /// clock that never restarts, which stock `Cooldown.lua` relies on (`start > 0`). Set once, at
+    /// construction; after that only [`Self::tick`] moves it.
     pub fn set_now(&mut self, secs: f64) {
         set_field!(self, now, secs);
     }
@@ -38,12 +37,12 @@ pub(crate) fn now(lua: &Lua) -> f64 {
 /// Register `GetTime` and `GetGameTime`.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
-    // GetTime() (`0x515ea0`): one number, `GetTickCount` times the f64 0.001 at `0x801608`. Ours is
-    // the session clock the tick advances, so `GetTime()` deltas and the `elapsed` handed to
-    // OnUpdate agree; reference FrameXML (CastingBarFrame and kin) anchors cast windows on it.
+    // GetTime(): one number, `GetTickCount` times the f64 0.001. Ours is the session clock the tick
+    // advances, so `GetTime()` deltas and the `elapsed` handed to OnUpdate agree; reference
+    // FrameXML (CastingBarFrame and kin) anchors cast windows on it.
     g.set("GetTime", lua.create_function(|lua, ()| Ok(now(lua)))?)?;
-    // GetGameTime() (`0x515ee0`): two numbers, the hour `[0xce853c]` then the minute `[0xce8538]`,
-    // the clock `SMSG_LOGIN_SETTIMESPEED` seeds; minute resolution, no seconds.
+    // GetGameTime(): two numbers, the hour then the minute, the clock `SMSG_LOGIN_SETTIMESPEED`
+    // seeds; minute resolution, no seconds.
     g.set(
         "GetGameTime",
         lua.create_function(|lua, ()| {

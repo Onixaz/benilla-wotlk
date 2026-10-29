@@ -24,9 +24,9 @@ pub(super) fn setup_sun(
     mut world_assets: Option<ResMut<WorldAssets>>,
 ) {
     let mesh = meshes.add(quad_mesh());
-    // Discs take `0x6d1960`'s horizon clip and fade, keeping their colour's alpha `a_disc` above
-    // the band; glares add gamma bytes (`0x7e5a16`) with no clip. The follow systems rewrite every
-    // tint each frame, so `base_color` here is only the first frame's.
+    // Discs take the reference's horizon clip and fade, keeping their colour's alpha `a_disc` above
+    // the band; glares add gamma bytes with no clip. The follow systems rewrite every tint each
+    // frame, so `base_color` here is only the first frame's.
     let clip = |base: StandardMaterial, a_disc: f32| CelestialMaterial {
         base,
         extension: CelestialExt {
@@ -56,7 +56,7 @@ pub(super) fn setup_sun(
             depth_bias: sky_order::SUN_DISC_BIAS, // second sky draw, under the moons and clouds
             ..default()
         },
-        1.0, // colour alpha 0xFF, the per-frame diffuse broadcast (0x6d2914)
+        1.0, // colour alpha 0xFF, the per-frame diffuse broadcast
     ));
     // The sun glare, `sunGlare.blp`: dark texels on a huge quad keep the added light gentle.
     let glare_tex = world_assets
@@ -103,7 +103,7 @@ pub(super) fn setup_sun(
             depth_bias: sky_order::WHITE_MOON_BIAS, // third sky draw, over the sun where they cross
             ..default()
         },
-        1.0, // colour alpha 0xFF, the per-frame diffuse broadcast (0x6d2914)
+        1.0, // colour alpha 0xFF, the per-frame diffuse broadcast
     ));
     commands.spawn((
         Mesh3d(mesh.clone()),
@@ -113,16 +113,15 @@ pub(super) fn setup_sun(
             part: MoonPart::Disc,
         },
     ));
-    // moon02, `moon02.blp`: its colour dword (`[0xce98a4]`) has no writer, so above the horizon
-    // band the reference draws it every frame at alpha 0; only the band's ramp and the weather
-    // seed ever show it.
+    // moon02, `moon02.blp`: its colour dword has no writer, so above the horizon band the reference
+    // draws it every frame at alpha 0; only the band's ramp and the weather seed ever show it.
     let moon02_tex = world_assets
         .as_mut()
         .and_then(|a| a.sprite_texture("textures\\moon02.blp", &mut images))
         .unwrap_or_else(|| images.add(radial_sprite(128, 0.7, 0.97)));
     let moon02 = disc_mats.add(clip(
         StandardMaterial {
-            base_color: Color::BLACK, // the unwritten [0xce98a4], BSS zero
+            base_color: Color::BLACK, // the unwritten, BSS zero
             base_color_texture: Some(moon02_tex),
             unlit: true,
             cull_mode: None,
@@ -130,7 +129,7 @@ pub(super) fn setup_sun(
             depth_bias: sky_order::MOON02_BIAS, // fourth sky draw, the last disc
             ..default()
         },
-        0.0, // its colour's alpha is unwritten too (`0xce98a4`)
+        0.0, // its colour's alpha is unwritten too
     ));
     commands.spawn((
         Mesh3d(mesh.clone()),

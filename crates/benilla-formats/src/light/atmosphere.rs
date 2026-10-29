@@ -8,13 +8,13 @@ pub(super) const IB_AMBIENT: u32 = 1;
 pub(super) const IB_SKY0: u32 = 2;
 pub(super) const IB_FOG_COLOR: u32 = 7;
 pub(super) const IB_SUN_COLOR: u32 = 9;
-/// The cloud palette rows, sun-glow tint, gradient slope and gradient base: gathered by `0x6d64d0`
-/// into `0xce9c30/34/38` for the cloud dome builder `0x6cfb00`.
+/// The cloud palette rows, sun-glow tint, gradient slope and gradient base: gathered by the
+/// reference for the cloud dome builder.
 pub(super) const IB_CLOUD_SUN: u32 = 10;
 pub(super) const IB_CLOUD_SLOPE: u32 = 11;
 pub(super) const IB_CLOUD_GBASE: u32 = 12;
 /// The water-surface tint rows, ocean 14/15 and river/lake 16/17 (shallow, deep): the reference's
-/// swatch builder `0x68a830` lerps them raw (`gWorldLight+0xe0..+0xec`), not the sky gradient.
+/// swatch builder lerps them raw (`gWorldLight+0xe0..+0xec`), not the sky gradient.
 pub(super) const IB_OCEAN_SHALLOW: u32 = 14;
 pub(super) const IB_OCEAN_DEEP: u32 = 15;
 pub(super) const IB_RIVER_SHALLOW: u32 = 16;
@@ -22,8 +22,7 @@ pub(super) const IB_RIVER_DEEP: u32 = 17;
 /// `LightFloatBand` row indices, within a param's 6 rows.
 pub(super) const FB_FOG_END: u32 = 0;
 pub(super) const FB_FOG_START_MULT: u32 = 1;
-/// Cloud density `C`, gathered by `0x6d64d0` into `[0xce9c64]`: the coverage threshold is
-/// `T = trunc((1 − C)·255)`.
+/// Cloud density `C`, gathered: the coverage threshold is `T = trunc((1 − C)·255)`.
 pub(super) const FB_CLOUD_DENSITY: u32 = 3;
 
 /// `LightParams.dbc` field of the glow, the bloom composite weight: the reference reads record byte
@@ -31,38 +30,37 @@ pub(super) const FB_CLOUD_DENSITY: u32 = 3;
 pub(super) const LP_GLOW: usize = 4;
 
 /// `LightParams.dbc` field of the highlightSky flag, record byte `+0x04`: an int 0/1 the sky-dome
-/// fold `0x6d0f50` reads to gate the dawn/dusk azimuthal warp. Stored as 0.0/1.0.
+/// fold reads to gate the dawn/dusk azimuthal warp. Stored as 0.0/1.0.
 pub(super) const LP_HIGHLIGHT: usize = 1;
 
 /// `LightParams.dbc` field of lightSkyboxID, record byte `+0x08`: the `LightSkybox.dbc` model that
-/// replaces the celestial pass. The reference fills `[0xce9bb4]` (`0x6d2260` at `0x6d26cb`) only
-/// while `0x6d4620` has set the ghost override `[0xce9bb0]`, where 5875's 5 non-zero rows were all
-/// `DeathClouds.mdx`; 12340 sets it on 158 rows.
+/// replaces the celestial pass. The reference fills only while the reference has set the ghost
+/// override, where 5875's 5 non-zero rows were all `DeathClouds.mdx`; 12340 sets it on 158 rows.
 pub(super) const LP_SKYBOX: usize = 2;
 
 /// `LightParams.dbc` fields 5 to 8, after the glow: the water-blend alphas, the depth-alpha
-/// endpoints of the swatch (`swatch.a = lerp(shallow, deep, V)`, read by `0x6b6b60`).
+/// endpoints of the swatch (`swatch.a = lerp(shallow, deep, V)`).
 pub(super) const LP_WATER_SHALLOW_ALPHA: usize = 5;
 pub(super) const LP_WATER_DEEP_ALPHA: usize = 6;
 pub(super) const LP_OCEAN_SHALLOW_ALPHA: usize = 7;
 pub(super) const LP_OCEAN_DEEP_ALPHA: usize = 8;
 
 /// A band row with no keyframes (973 of the 7668 `LightIntBand` rows) commits opaque black: the
-/// reference's colour evaluator `0x6d62e0` stores the immediate `0xff000000` at `0x6d62f6` before
-/// reading any key, and the copy into the colour table (`0x6d6643`) is unconditional.
+/// reference's colour evaluator stores the immediate `0xff000000` before reading any key, and the
+/// copy into the colour table is unconditional.
 pub const ZERO_KEY_COLOR: [f32; 3] = [0.0, 0.0, 0.0];
 
-/// A keyless `LightFloatBand` row commits `+0.0f` (`0x6d6489`, `fld [0x7ffd74]`).
+/// A keyless `LightFloatBand` row commits `+0.0f`.
 pub const ZERO_KEY_SCALAR: f32 = 0.0;
 
 /// The sampled atmosphere at a position and time of day: distances in yards, colours sRGB 0..1.
 #[derive(Clone, Copy, Debug)]
 pub struct Atmosphere {
-    /// Fog end in yards, FloatBand sub 0 divided by 36 once at load (`0x6d6090`). The consumer
-    /// pushes `min(fog_end, farclip)` (`0x6cee30`); blends lerp it raw (`0x6d69d8`).
+    /// Fog end in yards, FloatBand sub 0 divided by 36 once at load. The consumer pushes
+    /// `min(fog_end, farclip)`; blends lerp it raw.
     pub fog_end: f32,
-    /// Fog start as a fraction of the pushed end, FloatBand sub 1, unclamped (`0x6cee6d`), so a
-    /// storm's negative value puts fog at the eye; lerped raw (`0x6d69ed`).
+    /// Fog start as a fraction of the pushed end, FloatBand sub 1, unclamped, so a storm's negative
+    /// value puts fog at the eye; lerped raw.
     pub fog_start_frac: f32,
     pub fog_color: [f32; 3],
     /// Global diffuse, the sun's direct tint.
@@ -72,7 +70,7 @@ pub struct Atmosphere {
     pub ambient: [f32; 3],
     /// The five sky-dome gradient stops, zenith to horizon (`SkyColor0..4`); all five are used.
     pub sky: [[f32; 3]; 5],
-    /// River/lake tint `[shallow, deep]`, IntBand rows 16/17 raw, lerped by depth (`0x68a830`).
+    /// River/lake tint `[shallow, deep]`, IntBand rows 16/17 raw, lerped by depth.
     pub water_river: [[f32; 3]; 2],
     /// Ocean tint `[shallow, deep]`, IntBand rows 14/15 raw, from the same builder.
     pub water_ocean: [[f32; 3]; 2],
@@ -83,18 +81,18 @@ pub struct Atmosphere {
     /// The FFXGlow composite weight, `LightParams.glow`, raw 0..1: the composite is
     /// `scene + glow·bloom²`, and the reference quantises glow to `floor(glow·255)/255`.
     pub glow: f32,
-    /// `LightParams.highlightSky` as 0.0/1.0, scaling the dawn/dusk dome warp (`0x6d0f50`).
+    /// `LightParams.highlightSky` as 0.0/1.0, scaling the dawn/dusk dome warp.
     pub highlight_sky: f32,
     /// Cloud density `C`, FloatBand sub 3: the coverage threshold is `T = trunc((1 − C)·255)`.
     pub cloud_density: f32,
     /// Cloud palette `[sun-glow, slope, gbase]`, IntBand sub 10/11/12: per texel
-    /// `RGB = slope·p + gbase` plus the sun-aligned glow (`0x6cfb00`).
+    /// `RGB = slope·p + gbase` plus the sun-aligned glow.
     pub cloud_colors: [[f32; 3]; 3],
 }
 
 impl Atmosphere {
     /// A daytime fallback for no lighting data, unreachable from a shipped install (a keyless row
-    /// takes [`ZERO_KEY_COLOR`]); the reference's pre-load table is white (`0x6d22ce`).
+    /// takes [`ZERO_KEY_COLOR`]); the reference's pre-load table is white.
     pub const DEFAULT: Atmosphere = Atmosphere {
         fog_end: 1000.0,
         fog_start_frac: 0.4,
@@ -115,7 +113,7 @@ impl Atmosphere {
         water_ocean_alpha: [0.75, 1.0],
         glow: 0.5,          // the binary's "no active world-light" fallback
         highlight_sky: 0.0, // no dawn/dusk dome warp unless a zone sets the flag
-        // The reference's no-light-record fallback zeroes `C` (`0x6d22ec`).
+        // The reference's no-light-record fallback zeroes `C`.
         cloud_density: 0.0,
         cloud_colors: [[1.0, 0.98, 0.9], [0.35, 0.38, 0.42], [0.75, 0.78, 0.82]],
     };

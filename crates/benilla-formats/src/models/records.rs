@@ -21,16 +21,16 @@ pub struct M2Light {
     pub attenuation_start: f32,
     pub attenuation_end: f32,
     /// The light bone's +Z axis in model space at the track origin, a directional light's basis:
-    /// `0x718a76` reads row 2 of the bone's pose matrix, never the def position.
+    /// the reference reads row 2 of the bone's pose matrix, never the def position.
     pub bone_z: [f32; 3],
     /// Both runtime gate bytes load as 1 and the animate loop rewrites the visibility byte only
-    /// when the track has keys (`0x716413`), so a light is dark only when its first visibility key
-    /// is 0. The values are bytes (`0x71646d`: `+0xec = visibilityValue[k0]`).
+    /// when the track has keys, so a light is dark only when its first visibility key is 0. The
+    /// values are bytes (: `+0xec = visibilityValue[k0]`).
     pub visibility_off: bool,
 }
 
 impl M2Light {
-    /// A point light; type 0 feeds the ambient accumulator, not a GL light (`0x71bc70`).
+    /// A point light; type 0 feeds the ambient accumulator, not a GL light.
     pub fn is_point(&self) -> bool {
         self.light_type == 1
     }
@@ -42,8 +42,8 @@ impl M2Light {
 }
 
 /// A WMO MOLT light (`SMOLight`, stride `0x30`), in WMO model space. The 1.12 client commits them
-/// to the scene's dynamic lights every frame for every visible WMO (`0x695c00`, `0x71b650`), as
-/// `colour × intensity` point lights at the fixed 0/0.7/0.03 falloff over the baked MOCV.
+/// to the scene's dynamic lights every frame for every visible WMO, as `colour × intensity` point
+/// lights at the fixed 0/0.7/0.03 falloff over the baked MOCV.
 #[derive(Debug, Clone, Copy)]
 pub struct WmoLight {
     pub light_type: u8,
@@ -136,12 +136,12 @@ pub fn parse_m2_lights(model: &M2Model) -> Vec<M2Light> {
 }
 
 /// The model's portrait camera, which the 1.12 client renders every unit-frame portrait through:
-/// the bake at `0x524f60` takes camera `cameraLookup[0]` and builds `lookAt(position, target,
-/// up-from-roll)` with the diagonal-FOV perspective (`0x5c3cc0`, half-angle `(fov/2)/√(aspect²+1)`)
-/// at a fixed 4:3, a vertical half-angle of `0.3·fov`, with nothing on top. Model space, radians.
+/// the bake takes camera `cameraLookup[0]` and builds `lookAt(position, target, up-from-roll)` with
+/// the diagonal-FOV perspective (half-angle `(fov/2)/√(aspect²+1)`) at a fixed 4:3, a vertical
+/// half-angle of `0.3·fov`, with nothing on top. Model space, radians.
 #[derive(Debug, Clone, Copy)]
 pub struct M2PortraitCamera {
-    /// The diagonal opening angle, not fovy (`0x70ebd0` to `0x5c3cc0`).
+    /// The diagonal opening angle, not fovy.
     pub fov: f32,
     pub far_clip: f32,
     pub near_clip: f32,
@@ -273,8 +273,8 @@ mod tests {
 }
 
 /// One camera table record by raw index, what `Model:SetCamera(n)` selects on a `<Model>` widget:
-/// `0x76cec0` reads the count off `MD20+0x124` and the record at `[model+0x3c4] + idx·0x84 + 0x80`
-/// without consulting `cameraLookup` (only `0x713500`/`0x713540` do, for the portrait bake), so
+/// the reference reads the count off `MD20+0x124` and the record at
+/// `[model+0x3c4] + idx·0x84 + 0x80` without consulting `cameraLookup` (for the portrait bake), so
 /// the index decides and [`Self::camera_type`] never does. Every shipped character, creature and
 /// interface camera is its [`Self::still`] rig, each track one key of zero; [`Self::at`] samples
 /// the `Cameras\*.m2` fly-bys.
@@ -289,8 +289,8 @@ pub struct M2PaneCamera {
     pub tracks: Option<Box<M2CameraTracks>>,
 }
 
-/// A moving camera's tracks and bases, the publish pass's inputs (`0x718960`,
-/// `[0x718b60, 0x718c3a)`): `eye = position_base + positions(t)`, likewise the target.
+/// A moving camera's tracks and bases, the publish pass's inputs:
+/// `eye = position_base + positions(t)`, likewise the target.
 #[derive(Debug, Clone)]
 pub struct M2CameraTracks {
     pub positions: benilla_m2::M2Vec3SplineTrack,

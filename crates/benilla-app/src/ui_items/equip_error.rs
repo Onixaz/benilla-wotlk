@@ -2,14 +2,13 @@
 //!
 //! Reason 59 (`EQUIP_ERR_NONE`) only clears a pending lock (`ItemHandler.cpp:865`, `:963`), and
 //! after a failed item use rides beside the real refusal (`SpellHandler.cpp:130`). The reference
-//! maps it like any reason (handler `0x5e3991`, table `0x622794`, registry `0xb4b498`,
-//! `DisplayError` `0x496720`) to a key with no 1.12 string, which the sink's empty-string guard
-//! (`0x4945b4`) drops. Reason 0, the one coded suppression (`0x5e39a9`), is dropped earlier, by
+//! maps it like any reason (`DisplayError`) to a key with no 1.12 string, which the sink's
+//! empty-string guard drops. Reason 0, the one coded suppression, is dropped earlier, by
 //! `benilla_protocol::events`.
 
-/// A refusal reason's key, total like the reference's errorId table (`0x622794`). Positions are
-/// vmangos `ItemDefines.h` with every band up to 5875 (stunned 37, dead 38, inventory full 50).
-/// Reason 1's string carries a `%d` for the required level.
+/// A refusal reason's key, total like the reference's errorId table. Positions are vmangos
+/// `ItemDefines.h` with every band up to 5875 (stunned 37, dead 38, inventory full 50). Reason 1's
+/// string carries a `%d` for the required level.
 pub(crate) fn equip_error_key(reason: u8) -> &'static str {
     match reason {
         1 => "ERR_CANT_EQUIP_LEVEL_I",
@@ -60,8 +59,8 @@ pub(crate) fn equip_error_key(reason: u8) -> &'static str {
         48 => "ERR_CANT_WRAP_BAGS",
         49 => "ERR_LOOT_GONE",
         50 => "ERR_INV_FULL",
-        // EQUIP_ERR_BANK_FULL: the reference sets errorId 1 (`0x622661`), `ERR_BANK_FULL` (init
-        // `0x484cda`, key `0x842180`), though vmangos tags it `ERR_BAG_FULL`.
+        // EQUIP_ERR_BANK_FULL: the reference sets errorId 1, `ERR_BANK_FULL`, though vmangos tags
+        // it `ERR_BAG_FULL`.
         51 => "ERR_BANK_FULL",
         52 | 57 => "ERR_VENDOR_SOLD_OUT",
         58 => "ERR_OBJECT_IS_BUSY",
@@ -73,7 +72,7 @@ pub(crate) fn equip_error_key(reason: u8) -> &'static str {
         64 => "ERR_CANT_EQUIP_REPUTATION",
         65 => "ERR_TOO_MANY_SPECIAL_BAGS",
         66 => "ERR_LOOT_CANT_LOOT_THAT_NOW",
-        // The reference's default past 66 (`0x62278d`): errorId 9, `ERR_BAG_FULL`.
+        // The reference's default past 66: errorId 9, `ERR_BAG_FULL`.
         _ => "ERR_BAG_FULL",
     }
 }
@@ -140,7 +139,7 @@ mod tests {
             let key = equip_error_key(reason);
             let text = g(key).unwrap_or_default();
             if reason == 59 {
-                // Empty, which the drain's `is_empty()` skip drops as `0x4945b4`'s guard does.
+                // Empty, which the drain's `is_empty()` skip drops as the reference's guard does.
                 assert!(
                     text.is_empty(),
                     "reason 59's {key} resolved to {text:?} — the duplicate line is back"

@@ -1,7 +1,7 @@
-//! The addon index space that `GetNumAddOns` and every verb's index form address: an array, not
-//! the registry, rebuilt only by `SMSG_ADDON_INFO` (`AddOn_ReadAddonInfoReply 0x51da70`,
-//! `[0x51dc30, 0x51dcdf)`). It is `## Title`-sorted with `SStrCmpI` (`qsort 0x73f727`, comparator
-//! `0x51deb0`), filtered by `[rec+0x29]`, and empty before the reply.
+//! The addon index space that `GetNumAddOns` and every verb's index form address: an array, not the
+//! registry, rebuilt only by `SMSG_ADDON_INFO` (`AddOn_ReadAddonInfoReply`). It is
+//! `## Title`-sorted with `SStrCmpI` (`qsort`), filtered by `[rec+0x29]`, and empty before the
+//! reply.
 
 use crate::script::{AddOnInfo, UiScript};
 
@@ -35,8 +35,8 @@ fn by_index(s: &UiScript) -> Vec<String> {
     .unwrap()
 }
 
-/// Comparator `0x51deb0` compares `AddOn_GetTitle` (`0x51df20`) with `SStrCmpI` (`0x64a4c0`,
-/// `_strnicmp 0x414310`), folding ASCII only; a byte-wise sort would put `"Middle"` first.
+/// Comparator compares `AddOn_GetTitle` with `SStrCmpI` (`_strnicmp`), folding ASCII only; a
+/// byte-wise sort would put `"Middle"` first.
 #[test]
 fn the_index_space_is_title_sorted_case_insensitively_and_not_registry_order() {
     let mut s = seeded();
@@ -44,8 +44,7 @@ fn the_index_space_is_title_sorted_case_insensitively_and_not_registry_order() {
     assert_eq!(by_index(&s), vec!["Zulu", "Mike", "Alpha"]);
 }
 
-/// The comparator's fallback: `AddOn_GetTitle` misses (`0x51e046`) and `0x51ded0`/`0x51ded6`
-/// substitute the folder name.
+/// The comparator's fallback: `AddOn_GetTitle` misses and the reference substitute the folder name.
 #[test]
 fn a_titleless_addon_sorts_under_its_folder_name() {
     let mut s = UiScript::new().unwrap();
@@ -73,8 +72,8 @@ fn a_titleless_addon_sorts_under_its_folder_name() {
     assert_eq!(by_index(&s), vec!["bravo", "Yankee"]);
 }
 
-/// The count `[0xbe1b90]` is zeroed by the registry reset (`0x51fad1`) and written only by the
-/// reply's rebuild, so before it an index raises the ordinary range error against 0.
+/// The count is zeroed by the registry reset and written only by the reply's rebuild, so before it
+/// an index raises the ordinary range error against 0.
 #[test]
 fn there_is_no_index_space_until_the_server_answers() {
     let s = seeded();
@@ -89,15 +88,15 @@ fn there_is_no_index_space_until_the_server_answers() {
         raised.contains("AddOn index must be in the range of 1 to 0"),
         "{raised}"
     );
-    // The name form probes the registry hash (`0x51df20`), not the array.
+    // The name form probes the registry hash, not the array.
     assert_eq!(
         s.eval::<String>("return (GetAddOnInfo('Alpha'))").ok(),
         Some("Alpha".into())
     );
 }
 
-/// `status = 2` sets `[rec+0x29]` (`0x51db84`) and the rebuild drops it (`0x51dc4f`/`0x51dc54`);
-/// a stock install hides the twelve `Blizzard_*` addons this way, and they still load by name.
+/// `status = 2` sets `[rec+0x29]` and the rebuild drops it; a stock install hides the twelve
+/// `Blizzard_*` addons this way, and they still load by name.
 #[test]
 fn a_hidden_addon_leaves_the_index_space_but_still_answers_by_name() {
     let mut s = seeded();
@@ -160,8 +159,8 @@ fn enabled(s: &UiScript, name: &str) -> bool {
     .unwrap()
 }
 
-/// `DisableAllAddOns` (`0x48e7f0`) loops `0x51df00` up to `0x51def0`, the array a hidden record
-/// never enters (`0x51dc4f`), so an addon manager's disable-all leaves the auction house loadable.
+/// `DisableAllAddOns` loops up, the array a hidden record never enters, so an addon manager's
+/// disable-all leaves the auction house loadable.
 #[test]
 fn disable_all_leaves_a_hidden_addon_enabled_and_loadable() {
     let s = with_hidden_blizzard(true);
@@ -179,9 +178,9 @@ fn disable_all_leaves_a_hidden_addon_enabled_and_loadable() {
     assert_eq!(s.eval::<i64>("return AuctionLoaded").ok(), Some(1));
 }
 
-/// `EnableAllAddOns` (`0x48e720`) walks the same array, so a hidden addon keeps its own row, and
-/// `AddOn_CanLoad` check 3 (`0x51e81d`) still reads that row: no check of the gate reads
-/// `[rec+0x29]`, so a hidden addon disabled by name stays `DISABLED`.
+/// `EnableAllAddOns` walks the same array, so a hidden addon keeps its own row, and `AddOn_CanLoad`
+/// check 3 still reads that row: no check of the gate reads `[rec+0x29]`, so a hidden addon
+/// disabled by name stays `DISABLED`.
 #[test]
 fn enable_all_touches_the_visible_addons_only() {
     let s = with_hidden_blizzard(false);
@@ -198,7 +197,7 @@ fn enable_all_touches_the_visible_addons_only() {
     );
 }
 
-/// Before `SMSG_ADDON_INFO` the count `[0xbe1b90]` is 0, so both loops run no iteration.
+/// Before `SMSG_ADDON_INFO` the count is 0, so both loops run no iteration.
 #[test]
 fn the_all_verbs_do_nothing_before_the_server_answers() {
     let s = seeded();
@@ -206,8 +205,8 @@ fn the_all_verbs_do_nothing_before_the_server_answers() {
     assert!(enabled(&s, "Alpha") && enabled(&s, "Mike") && enabled(&s, "Zulu"));
 }
 
-/// What a disable-all leaves for the shutdown writer (`0x51ef20`): the setter's one new row per
-/// visible addon, and none for the hidden one, whose row it never set.
+/// What a disable-all leaves for the shutdown writer: the setter's one new row per visible addon,
+/// and none for the hidden one, whose row it never set.
 #[test]
 fn disable_all_writes_rows_for_the_visible_addons_only() {
     let s = with_hidden_blizzard(true);

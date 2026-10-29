@@ -1,27 +1,27 @@
 //! The 1.12 inline text markup (`|cAARRGGBB`, `|r`, `|H…|h…|h`, `|n`, `||`) and the edit box's
 //! cursor law over it, one grammar for the renderer and the edit box. It transcribes the token
-//! decoder `0x5c2810` ([`token_at`]: a byte remap at `0x5c2b10` into the jump table at `0x5c2af4`)
-//! and the edit box's per-byte class array `E+0x330`, rebuilt by `0x77ba90` after every edit, with
-//! the primitives that read it ([`ClassMap`]).
+//! decoder ([`token_at`]: a byte remap into the jump table) and the edit box's per-byte class array
+//! `E+0x330`, rebuilt by the reference after every edit, with the primitives that read it
+//! ([`ClassMap`]).
 //!
 //! 1.12 has no `|T…|t` texture escape: the remap claims only `c`, `h`, `n`, `r` in either case and
 //! `|`, so `|TInterface\Icons\Foo:16:16|t` draws literally.
 //!
 //! The decoder's flags word can disable classes, but no code in the 1.12 client sets the bits for
-//! `|c`, `|r`, `|H`, `|h` or `||` (`0x44d670` builds it from a font string's flags). Only `|n` can
-//! be switched off, on a single-line edit box (`SetMultiLine`, `0x77a5e2`), and the class map
-//! parses it regardless (`0x77ba90` passes 0), so that gate belongs to the renderer's line breaker.
+//! `|c`, `|r`, `|H`, `|h` or `||` (the reference builds it from a font string's flags). Only `|n`
+//! can be switched off, on a single-line edit box (`SetMultiLine`), and the class map parses it
+//! regardless, so that gate belongs to the renderer's line breaker.
 //!
 //! A cursor stands only on a token boundary with the adjacent zero-width escapes absorbed: after
-//! any trailing `|r`/`|h`, before any leading `|c`/`|H` (`0x77bb30`). Every index here is a byte
-//! offset on a UTF-8 character boundary.
+//! any trailing `|r`/`|h`, before any leading `|c`/`|H`. Every index here is a byte offset on a
+//! UTF-8 character boundary.
 
 use std::ops::Range;
 
 // ── The colour a `|c` token carries ──────────────────────────────────────────────────────────
 
-/// A `|cAARRGGBB` colour as the decoder packs it, `0xFFRRGGBB` (`0x5c2ab2..0x5c2ace`): the `AA` is
-/// parsed and discarded, so `|c00ff0000` and `|cffff0000` are the same red.
+/// A `|cAARRGGBB` colour as the decoder packs it, `0xFFRRGGBB`: the `AA` is parsed and discarded,
+/// so `|c00ff0000` and `|cffff0000` are the same red.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct Rgba(u32);
 
@@ -51,7 +51,7 @@ impl Rgba {
     }
 
     /// `[r, g, b, alpha]` in 0..1: the emitter patches the font string's own alpha over the decoded
-    /// `0xff` (`0x5cceb0`, `0x5cceb6`), so a `|c` span fades with its string.
+    /// `0xff`, so a `|c` span fades with its string.
     pub fn to_f32_at(self, alpha: f32) -> [f32; 4] {
         [
             self.r() as f32 / 255.0,
@@ -62,9 +62,9 @@ impl Rgba {
     }
 }
 
-// ── Layer 1: the token decoder (`0x5c2810`) ──────────────────────────────────────────────────
+// ── Layer 1: the token decoder ──────────────────────────────────────────────────
 
-/// The token class as `0x5c2810` numbers it, and as a class-map entry stores it (bits 16..23).
+/// The token class as the reference numbers it, and as a class-map entry stores it (bits 16..23).
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum TokenClass {
@@ -88,10 +88,10 @@ pub enum TokenClass {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TokenKind<'a> {
     Color(Rgba),
-    /// Back to the string's base colour (`0x5cce99` restores `FontString+0x2c`).
+    /// Back to the string's base colour (restores `FontString+0x2c`).
     ColorReset,
     LineBreak,
-    /// Draws one `|` (`0x5ccec3` looks up the glyph).
+    /// Draws one `|` (looks up the glyph).
     EscapedPipe,
     LinkOpen {
         /// The text between `|H` and `|h`, such as `item:12345:0:0:0`.
@@ -115,7 +115,7 @@ impl TokenKind<'_> {
     }
 }
 
-/// One decoded token and its byte length, which `0x5c2810` returns beside the class (`*ioLen`).
+/// One decoded token and its byte length, which the reference returns beside the class (`*ioLen`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Token<'a> {
     pub kind: TokenKind<'a>,
@@ -129,8 +129,8 @@ impl Token<'_> {
     }
 }
 
-/// Decode the token at byte offset `at`, a character boundary: `0x5c2810`. A `|` that opens
-/// nothing well-formed is an ordinary character of length 1, as the remap's fall-through makes it.
+/// Decode the token at byte offset `at`, a character boundary. A `|` that opens nothing well-formed
+/// is an ordinary character of length 1, as the remap's fall-through makes it.
 pub fn token_at(text: &str, at: usize) -> Option<Token<'_>> {
     let rest = &text[at..];
     let b = rest.as_bytes();
@@ -152,7 +152,7 @@ pub fn token_at(text: &str, at: usize) -> Option<Token<'_>> {
     }
 
     if first == b'|' {
-        // A lone `|`, or one leading anything the remap (`0x5c2b10`) does not claim.
+        // A lone `|`, or one leading anything the remap does not claim.
         let literal_pipe = Token {
             kind: TokenKind::Char('|'),
             byte_len: 1,
@@ -213,9 +213,9 @@ fn parse_color(b: &[u8]) -> Option<Rgba> {
 }
 
 /// The payload after `|H` and the length of the whole `|H<payload>|h` prefix; `None`, a literal
-/// `|`, when no `|h` follows, when the payload is empty (`0x5c2972`) or when the visible text is
-/// empty (`0x5c2992`). The delimiter scan is a plain byte search that does not skip `||`, inferred
-/// from the emitter's own scan (`0x5ccdc8`, for the literal at `0x84453c`).
+/// `|`, when no `|h` follows, when the payload is empty or when the visible text is empty. The
+/// delimiter scan is a plain byte search that does not skip `||`, inferred from the emitter's own
+/// scan.
 fn parse_link_open(rest: &str) -> Option<(&str, usize)> {
     let b = rest.as_bytes();
     let delim = (2..b.len().saturating_sub(1)).find(|&i| b[i] == b'|' && b[i + 1] == b'h')?;
@@ -252,14 +252,14 @@ impl<'a> Iterator for Tokens<'a> {
     }
 }
 
-// ── Layer 2: the per-byte class map (`E+0x330`, built by `0x77ba90`) ─────────────────────────
+// ── Layer 2: the per-byte class map (`E+0x330`) ─────────────────────────
 
 /// One class-map entry, the client's dword unpacked: byte length in bits 0..15, class in 16..23,
-/// "inside a hyperlink" in bit 31. Only a token's first byte is stored (`0x77bb0f`); continuation
-/// bytes and the terminator are zero, so they read as no class and not in a link.
+/// "inside a hyperlink" in bit 31. Only a token's first byte is stored; continuation bytes and the
+/// terminator are zero, so they read as no class and not in a link.
 ///
-/// Deviation: the length keeps every bit, where the client masks it to 16 (`0x77baf3`), because a
-/// wrapped length would put the cursor inside an `|H` span of 64 KiB or more.
+/// Deviation: the length keeps every bit, where the client masks it to 16, because a wrapped length
+/// would put the cursor inside an `|H` span of 64 KiB or more.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Entry {
     byte_len: u32,
@@ -293,21 +293,20 @@ impl Entry {
     }
 }
 
-/// The edit box's per-byte class array (`E+0x330`) and the cursor primitives over it: one entry
-/// per byte plus a zero terminator (`0x77c670`). It holds no text; the edit box rebuilds it after
-/// every edit, as the client calls `0x77ba90` at the end of each insert (`0x77c022`).
+/// The edit box's per-byte class array (`E+0x330`) and the cursor primitives over it: one entry per
+/// byte plus a zero terminator. It holds no text; the edit box rebuilds it after every edit, as the
+/// client calls at the end of each insert.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct ClassMap {
     entries: Vec<Entry>,
 }
 
 impl ClassMap {
-    /// `0x77ba90`, which parses every class, `|n` included, whatever the font string's flags
-    /// (`K = 0` at `0x77bad9`).
+    /// Which parses every class, `|n` included, whatever the font string's flags (`K = 0`).
     pub fn new(text: &str) -> ClassMap {
         let mut entries = vec![Entry::CONTINUATION; text.len() + 1];
-        // The link bit rises before the store on an open (`0x77baec`) and falls after it on a
-        // close (`0x77bb1e`), so the closing `|h` is tagged and the byte after it is not.
+        // The link bit rises before the store on an open and falls after it on a close, so the
+        // closing `|h` is tagged and the byte after it is not.
         let mut in_link = false;
         for (at, token) in tokens(text) {
             let class = token.class();
@@ -335,13 +334,13 @@ impl ClassMap {
         self.entries[at]
     }
 
-    /// The next token's start, `0x77bd10`: a fixed point where the length is 0, as the client's
-    /// unguarded add is, so a forward walk must test `at < text_len()`.
+    /// The next token's start: a fixed point where the length is 0, as the client's unguarded add
+    /// is, so a forward walk must test `at < text_len()`.
     pub fn next_token(&self, at: usize) -> usize {
         at + self.entry(at).byte_len()
     }
 
-    /// The previous token's start, `0x77bd30`; `None`, the client's `-1`, at offset 0.
+    /// The previous token's start; `None`, the client's `-1`, at offset 0.
     pub fn prev_token(&self, at: usize) -> Option<usize> {
         let mut i = at.checked_sub(1)?;
         while !self.entry(i).is_token_start() {
@@ -350,9 +349,9 @@ impl ClassMap {
         Some(i)
     }
 
-    /// The letters in `byte_count` bytes from `start`, `0x77bc80`, a per-byte scan that counts
-    /// only classes 2, 3 and 6 (`0x77bcb0`): `GetNumLetters` and `SetMaxLetters` see a 48-byte
-    /// item link as its 14 visible letters. A token starting inside the budget counts whole.
+    /// The letters in `byte_count` bytes from `start`, a per-byte scan that counts only classes 2,
+    /// 3 and 6: `GetNumLetters` and `SetMaxLetters` see a 48-byte item link as its 14 visible
+    /// letters. A token starting inside the budget counts whole.
     pub fn letters(&self, start: usize, byte_count: usize) -> usize {
         let end = start.saturating_add(byte_count).min(self.text_len());
         let mut at = start;
@@ -376,14 +375,13 @@ impl ClassMap {
         self.letters(0, self.text_len())
     }
 
-    /// The byte offset `steps` token steps from `from`, backward when negative: `0x77bb30`, whose
-    /// caller `0x77c6b0` signs its result. `atomic_links` is the keyboard's walk (arrows, word
-    /// jumps, HOME/END, BACKSPACE, DELETE), crossing a whole `|H…|h[text]|h` in one step; click,
-    /// drag, UP/DOWN, the scroll-window sizing and the IME span stop on each visible character.
+    /// The byte offset `steps` token steps from `from`, backward when negative, whose caller signs
+    /// its result. `atomic_links` is the keyboard's walk (arrows, word jumps, HOME/END, BACKSPACE,
+    /// DELETE), crossing a whole `|H…|h[text]|h` in one step; click, drag, UP/DOWN, the
+    /// scroll-window sizing and the IME span stop on each visible character.
     ///
     /// Deviation: a step that runs out of buffer while skipping lands on the far end, because the
-    /// client spins forever there (its skip loop re-enters at `0x77bb60`, past the zero check at
-    /// `0x77bb56`), so `SetText("|cffffffff")` and one RIGHT hang 1.12.
+    /// client spins forever there, so `SetText("|cffffffff")` and one RIGHT hang 1.12.
     pub fn advance(&self, from: usize, steps: isize, atomic_links: bool) -> usize {
         let mut at = from;
         for _ in 0..steps.unsigned_abs() {
@@ -396,7 +394,7 @@ impl ClassMap {
         at
     }
 
-    /// One step forward: the skip loop at `0x77bb60`, then the absorb at `0x77bb98`.
+    /// One step forward: the skip loop, then the absorb.
     fn step_forward(&self, from: usize, atomic_links: bool) -> usize {
         let end = self.text_len();
         let mut at = from;
@@ -404,7 +402,7 @@ impl ClassMap {
             let entry = self.entry(at);
             let Some(class) = entry.class() else { break };
             at += entry.byte_len();
-            // `|c` and `|H…|h` are skipped at either atomicity (`0x77bb84`, `0x77bb86`).
+            // `|c` and `|H…|h` are skipped at either atomicity.
             if matches!(class, TokenClass::Color | TokenClass::LinkOpen) {
                 continue;
             }
@@ -431,7 +429,7 @@ impl ClassMap {
         at
     }
 
-    /// One step backward, the mirror (`0x77bc13`, `0x77bc1d`, `0x77bc59`).
+    /// One step backward, the mirror.
     fn step_back(&self, from: usize, atomic_links: bool) -> usize {
         let mut at = from;
         // Trailing `|r` and `|h` first.
@@ -459,11 +457,11 @@ impl ClassMap {
         at
     }
 
-    /// Widen a deletion range so it never cuts a hyperlink: `0x77c510`, for BACKSPACE and DELETE
-    /// (`0x77c280`), delete-selection (`0x77cd70`) and Clear (`0x77c500`). Touching any byte of a
-    /// link removes the whole `|c…|H…|h[text]|h|r` unit. The endpoint tests read the entries at
-    /// `start` and `end` (`0x77c543`, `0x77c59d`), so an end that only abuts a link's `|H` still
-    /// widens, and the backward walk also stops on a `|c` inside the link text (`0x77c550`).
+    /// Widen a deletion range so it never cuts a hyperlink, for BACKSPACE and DELETE,
+    /// delete-selection and Clear. Touching any byte of a link removes the whole
+    /// `|c…|H…|h[text]|h|r` unit. The endpoint tests read the entries at `start` and `end`, so an
+    /// end that only abuts a link's `|H` still widens, and the backward walk also stops on a `|c`
+    /// inside the link text.
     pub fn snap_delete_range(&self, range: Range<usize>) -> Range<usize> {
         let Range {
             start: mut lo,
@@ -505,10 +503,9 @@ impl ClassMap {
         lo..hi
     }
 
-    /// The opening guard of `0x77bee0`: refused when the entry at the cursor and the previous
-    /// token's both carry bit 31 (`0x77befb`, `0x77bf0d`), so a link's leading edge still accepts.
-    /// Only the mouse (`0x77d0d0`) reaches a cursor inside a link, and the client then drops the
-    /// typing (inferred from the guard).
+    /// The opening guard: refused when the entry at the cursor and the previous token's both carry
+    /// bit 31, so a link's leading edge still accepts. Only the mouse reaches a cursor inside a
+    /// link, and the client then drops the typing (inferred from the guard).
     pub fn insert_allowed(&self, at: usize) -> bool {
         if !self.entry(at).in_link() {
             return true;
@@ -525,7 +522,7 @@ impl ClassMap {
 mod tests {
     use super::*;
 
-    /// An epic item link as `0x52adb0` formats one.
+    /// An epic item link as the reference formats one.
     ///
     /// ```text
     ///  0        10                  30            44  46
@@ -597,7 +594,7 @@ mod tests {
 
     #[test]
     fn a_pipe_leading_anything_unclaimed_is_an_ordinary_character() {
-        // The remap table at 0x5c2b10 claims only C/H/N/R and their lowercase siblings.
+        // The remap table claims only C/H/N/R and their lowercase siblings.
         for text in ["|x", "|", "| ", "|1"] {
             let t = token_at(text, 0).expect("a token");
             assert_eq!(t.kind, TokenKind::Char('|'), "{text:?}");
@@ -642,7 +639,7 @@ mod tests {
         };
         assert_eq!(rgba.a(), 0xff);
         assert_eq!(rgba.packed(), 0xffff_0000);
-        // The string's alpha reaches the vertex, never the escape's (`0x5cceb0`).
+        // The string's alpha reaches the vertex, never the escape's.
         assert_eq!(rgba.to_f32_at(1.0), [1.0, 0.0, 0.0, 1.0]);
         assert_eq!(rgba.to_f32_at(0.5), [1.0, 0.0, 0.0, 0.5]);
     }
@@ -657,9 +654,9 @@ mod tests {
         // 1. No closing `|h` anywhere after it.
         degraded("|Hitem:12345:0:0:0[Chipped Claw]");
         degraded("|H");
-        // 2. An empty payload (0x5c2972).
+        // 2. An empty payload.
         degraded("|H|h[Chipped Claw]|h");
-        // 3. Empty visible text: another `|h` follows at once (0x5c2992).
+        // 3. Empty visible text: another `|h` follows at once.
         degraded("|Hitem:12345:0:0:0|h|h");
 
         // Near misses still open: one visible character is enough, and the stateless decoder
@@ -777,9 +774,9 @@ mod tests {
 
     // ── The cursor law ───────────────────────────────────────────────────────────────────────
 
-    /// The reachable sets the reference's `0x77bb30` produced, executed on this buffer: 30, between
-    /// `|h` and `[`, is reachable in neither mode, and after the name the stop is 43 in both, the
-    /// trailing `|h|r` absorbing forward.
+    /// The reachable sets the reference's produced, executed on this buffer: 30, between `|h` and
+    /// `[`, is reachable in neither mode, and after the name the stop is 43 in both, the trailing
+    /// `|h|r` absorbing forward.
     #[test]
     fn the_reachable_sets_match_the_emulation_oracle() {
         // `[` at 30, `]` at 38, the `d` of the typed text at 43; 51 bytes.
@@ -865,8 +862,8 @@ mod tests {
         assert_eq!(map.advance(50, -1, true), 2, "back over the whole unit");
     }
 
-    /// The mouse path (`0x77d2f6`): every visible character is a stop, and no index inside
-    /// `|cffa335ee`, `|Hitem:…|h`, `|h` or `|r` ever is.
+    /// The mouse path: every visible character is a stop, and no index inside `|cffa335ee`,
+    /// `|Hitem:…|h`, `|h` or `|r` ever is.
     #[test]
     fn a_non_atomic_walk_stops_on_each_visible_character_and_never_inside_an_escape() {
         let map = ClassMap::new(LINK);
@@ -907,7 +904,7 @@ mod tests {
         }
     }
 
-    /// The reachable set (`0x77bb30`): boundaries not before a `|r`/`|h` nor after a `|c`/`|H`.
+    /// The reachable set: boundaries not before a `|r`/`|h` nor after a `|c`/`|H`.
     fn reachable_set(text: &str) -> Vec<usize> {
         let map = ClassMap::new(text);
         (0..=map.text_len())
@@ -1012,7 +1009,7 @@ mod tests {
         assert_eq!(map.snap_delete_range(35..52), 2..52);
     }
 
-    /// An exclusive end on the link's first tagged byte still widens (`0x77c59d`).
+    /// An exclusive end on the link's first tagged byte still widens.
     #[test]
     fn a_deletion_ending_on_the_links_open_still_takes_the_link() {
         let map = ClassMap::new(AROUND);

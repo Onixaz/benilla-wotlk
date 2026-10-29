@@ -118,7 +118,7 @@ fn backward_is_walkbackwards() {
 
 #[test]
 fn swimming_back_forward_strafe_and_idle() {
-    // The swim row (`0x5fd137`): forward 42, back 45, turn 41, strafe SwimLeft 43 / SwimRight 44.
+    // The swim row: forward 42, back 45, turn 41, strafe SwimLeft 43 / SwimRight 44.
     let back = MovementState {
         speed: 4.0,
         flags: move_flags::SWIMMING | move_flags::BACKWARD,
@@ -143,7 +143,7 @@ fn swimming_back_forward_strafe_and_idle() {
         ..Default::default()
     };
     assert_eq!(gait_candidates(&right, 2.5, None, None), &[44, 42, 41, 0]);
-    // The `0x5fd100` cascade is turn, strafe, backward, forward: a strafe diagonal side-strokes.
+    // The cascade is turn, strafe, backward, forward: a strafe diagonal side-strokes.
     let diag = MovementState {
         speed: 4.0,
         flags: move_flags::SWIMMING | move_flags::FORWARD | move_flags::STRAFE_LEFT,
@@ -185,8 +185,8 @@ fn swimming_back_forward_strafe_and_idle() {
 
 #[test]
 fn airborne_splits_jump_fall_and_gait_freeze() {
-    // A jump arc plays the 37/38 bracket, a FALLINGFAR latch the Fall (40) loop (`0x602c40`), and a
-    // step-off fall before the latch no special: the gait holds through it.
+    // A jump arc plays the 37/38 bracket, a FALLINGFAR latch the Fall (40) loop, and a step-off
+    // fall before the latch no special: the gait holds through it.
     let s = MovementState {
         flags: move_flags::FORWARD | move_flags::FALLING,
         ..Default::default()
@@ -219,15 +219,15 @@ fn a_pose_yields_to_movement_but_a_jump_landing_plays_out() {
 
 #[test]
 fn jump_sequence_ids() {
-    // JumpStart 37 (`0x60e480`) → Jump 38 → the landing pick.
+    // JumpStart 37 → Jump 38 → the landing pick.
     assert_eq!(Special::Jump.enter(), 37);
     assert_eq!(Special::Jump.loop_id(), 38);
 }
 
 #[test]
 fn jump_land_pick_is_the_0x602c60_rule() {
-    // `0x602c60`: stopped JumpEnd 39, forward or strafing JumpLandRun 187; backpedaling, walking
-    // or swimming no clip, the gait taking over at touchdown.
+    // Stopped JumpEnd 39, forward or strafing JumpLandRun 187; backpedaling, walking or swimming no
+    // clip, the gait taking over at touchdown.
     use move_flags::*;
     assert_eq!(jump_land_pick(0), Some(39));
     assert_eq!(jump_land_pick(FORWARD), Some(187));
@@ -239,7 +239,7 @@ fn jump_land_pick_is_the_0x602c60_rule() {
     assert_eq!(jump_land_pick(SWIMMING), None);
     assert_eq!(jump_land_pick(FORWARD | SWIMMING), None);
     // Rooted, no clip: a root caught mid-air ends the fall there, and the reference sends no land
-    // packet (`0x602df3`), the one this dispatcher runs on.
+    // packet, the one this dispatcher runs on.
     assert_eq!(jump_land_pick(ROOT), None);
     assert_eq!(jump_land_pick(ROOT | FORWARD), None);
 }
@@ -309,7 +309,7 @@ fn sheath_clip_is_the_0x88_test() {
 
 #[test]
 fn swing_ids_by_weapon_class() {
-    // The `0x6246a0` mainhand table.
+    // The mainhand table.
     assert_eq!(swing_anim_main(Some((2, 7))), 17); // 1H sword
     assert_eq!(swing_anim_main(Some((2, 5))), 18); // 2H mace
     assert_eq!(swing_anim_main(Some((2, 0xa))), 19); // staff
@@ -328,7 +328,7 @@ fn swing_ids_by_weapon_class() {
 
 #[test]
 fn ready_ids_bucket_differently_from_swings() {
-    // Fist and dagger ready as 1H (`0x5fcdc0`), though they swing 16 and 85.
+    // Fist and dagger ready as 1H, though they swing 16 and 85.
     assert_eq!(ready_anim(Some((2, 0xd))), 26);
     assert_eq!(ready_anim(Some((2, 0xf))), 26);
     assert_eq!(ready_anim(Some((2, 8))), 27); // 2H sword
@@ -368,8 +368,8 @@ fn reconcile_priority_is_stow_over_draw() {
 
 #[test]
 fn reconcile_mounted_is_a_persistent_draw_block() {
-    // Mounted stows on every recompute (`0x5fdfd9`), over the engaged draw, the `& 0x20` draw and
-    // a remote's server byte.
+    // Mounted stows on every recompute, over the engaged draw, the `& 0x20` draw and a remote's
+    // server byte.
     assert_eq!(reconcile_sheath(1, 0, 0, true, true, 1, true), Some(0));
     assert_eq!(
         reconcile_sheath(1, 133, 0x20, false, true, 1, true),
@@ -382,7 +382,7 @@ fn reconcile_mounted_is_a_persistent_draw_block() {
 
 #[test]
 fn reconcile_ranged_exemption_and_remote_pull_through() {
-    // Ranged-drawn, `0x5fe180`'s nine Load/Hold/Attack ids are exempt from the `& 0x10` stow…
+    // Ranged-drawn, the reference's nine Load/Hold/Attack ids are exempt from the `& 0x10` stow…
     for anim in [46, 49, 105, 106, 107, 109, 110, 111, 112] {
         assert_eq!(reconcile_sheath(2, anim, 0x10, false, true, 2, false), None);
     }
@@ -418,7 +418,7 @@ fn non_locomotion_clips_play_at_unit_rate() {
     assert_eq!(playback_rate(&clip(60, 2.0), 9.0, 1.0), 1.0); // an id outside the scaled set
 }
 
-/// The `0x5fe2f0` divisor is `moveSpeed · |modelScale|`, not `moveSpeed` alone.
+/// The divisor is `moveSpeed · |modelScale|`, not `moveSpeed` alone.
 #[test]
 fn a_big_model_cycles_its_legs_slower_for_the_same_ground_speed() {
     // The Gordok Ogre-Mage (creature 11443, display 12472): `CreatureModelScale` 2.2, walking at
@@ -451,7 +451,7 @@ fn an_authored_backwards_gait_is_not_rate_scaled_but_its_fallback_is() {
 
 #[test]
 fn ranged_load_idle_selects_by_weapon_and_ranks_below_ready() {
-    // The `0x5fd530` LUT: ranged-slot subclass → the Load/Hold clip.
+    // The LUT: ranged-slot subclass → the Load/Hold clip.
     assert_eq!(ranged_load_anim(Some((2, 2))), 105); // Bow → LoadBow
     assert_eq!(ranged_load_anim(Some((2, 3))), 106); // Gun → LoadRifle
     assert_eq!(ranged_load_anim(Some((2, 18))), 106); // Crossbow → LoadRifle
@@ -473,16 +473,16 @@ fn ranged_load_idle_selects_by_weapon_and_ranks_below_ready() {
         gait_candidates(&moving_forward(3.0), 2.5, None, Some(105))[0],
         4
     );
-    // It outranks the state-emote resolver (`0x5fd460` runs before `0x5fd770`).
+    // It outranks the state-emote resolver.
     assert_eq!(
         base_candidates(&standing, 2.5, None, Some(105), Some(234)).as_slice(),
         &[105, 25, 0]
     );
 }
 
-/// `0x5fd460` claims the drawn ranged idle ([`ranged_idle_gate`]) on the ranged sheath
+/// The reference claims the drawn ranged idle ([`ranged_idle_gate`]) on the ranged sheath
 /// (`cmp [+0xd40],2`) and the local auto-repeat bit `0x200` (`test ah,0x2`) alone. The any-caster
-/// hold `0x400` is tested only by `0x5fc3f0`'s Hold sustain: one Serpent Sting sets it and no
+/// hold `0x400` is tested only by the reference's Hold sustain: one Serpent Sting sets it and no
 /// volley end clears it, so admitting it would leave a shooter aiming.
 #[test]
 fn the_ranged_idle_is_entered_by_the_auto_repeat_bit_and_the_ranged_sheath_alone() {
@@ -498,7 +498,7 @@ fn the_ranged_idle_is_entered_by_the_auto_repeat_bit_and_the_ranged_sheath_alone
 
 /// The completion dispatch promotes each ranged Load to its family's Hold (slots 11, 12 and 15),
 /// the cycle's one looping clip. A fire clip recomputes the base like any one-shot, through the
-/// dispatcher's deferred fire site (`0x7075af`).
+/// dispatcher's deferred fire site.
 #[test]
 fn each_ranged_load_promotes_to_its_weapon_familys_hold() {
     assert_eq!(ranged_hold_anim(105), 109); // LoadBow → HoldBow
@@ -509,9 +509,9 @@ fn each_ranged_load_promotes_to_its_weapon_familys_hold() {
     assert_eq!(ranged_hold_anim(46), 46); // a fire id is no Load and maps onto no hold
 }
 
-/// The state-emote resolver (`0x5fd770`) runs right after the chair loops and before the idle
-/// fallback (`0x5fd830`, `0x5fd9a1`): a set state outranks the swim idle, the prowl idle and
-/// Stand, and everything ahead of it outranks the state.
+/// The state-emote resolver runs right after the chair loops and before the idle fallback: a set
+/// state outranks the swim idle, the prowl idle and Stand, and everything ahead of it outranks the
+/// state.
 #[test]
 fn a_set_state_outranks_the_idle_fallbacks_and_nothing_before_them() {
     let claimed = |state: &MovementState, ready, ranged, anim| {
@@ -538,7 +538,7 @@ fn a_set_state_outranks_the_idle_fallbacks_and_nothing_before_them() {
     assert_eq!(claimed(&prowling, None, None, None), [STEALTH_STAND, STAND]);
     assert_eq!(claimed(&prowling, None, None, Some(234)), [234, STAND]);
 
-    // Ahead of it: locomotion (`0x5fd100`), swimming included, runs on the move bits alone.
+    // Ahead of it: locomotion, swimming included, runs on the move bits alone.
     let swim_forward = MovementState {
         flags: move_flags::SWIMMING | move_flags::FORWARD,
         ..Default::default()
@@ -555,14 +555,14 @@ fn a_set_state_outranks_the_idle_fallbacks_and_nothing_before_them() {
     assert_eq!(claimed(&still, Some(26), None, Some(234)), [26, 25, 0]);
     assert_eq!(claimed(&swimming, Some(26), None, Some(234)), [41, 0]);
     assert_eq!(claimed(&still, None, Some(105), Some(234)), [105, 25, 0]);
-    // `0x5fd460` has no swim gate: a swimmer takes it too.
+    // The reference has no swim gate: a swimmer takes it too.
     assert_eq!(claimed(&swimming, None, Some(105), Some(234)), [105, 25, 0]);
     let chair = MovementState {
         stand_state: 4,
         ..Default::default()
     };
     assert_eq!(claimed(&chair, None, None, Some(234)), [102, 0]);
-    // A turning swimmer is no shuffle (`0x5fce30` refuses `SWIMMING`) and no mover: the state.
+    // A turning swimmer is no shuffle (the reference refuses `SWIMMING`) and no mover: the state.
     let swim_turning = MovementState {
         flags: move_flags::SWIMMING | move_flags::TURN_LEFT,
         ..Default::default()
@@ -571,8 +571,8 @@ fn a_set_state_outranks_the_idle_fallbacks_and_nothing_before_them() {
     assert_eq!(claimed(&swim_turning, None, None, None), [41, 0]);
 }
 
-/// The resolver's verdict: a row's `AnimID` is taken as it is, 0 included (`0x5fd816`); a missing
-/// row or no state passes over; the interact NPC passes over a row with `0x2000`.
+/// The resolver's verdict: a row's `AnimID` is taken as it is, 0 included; a missing row or no
+/// state passes over; the interact NPC passes over a row with `0x2000`.
 #[test]
 fn the_state_resolver_claims_a_row_even_when_its_anim_is_stand() {
     assert_eq!(state_emote_anim(26, Some(0), Some(0), false), Some(0));
@@ -590,9 +590,8 @@ fn the_state_resolver_claims_a_row_even_when_its_anim_is_stand() {
     );
 }
 
-// ── The per-play one-shot route ──
-// `esi` is the reference's route flag (`0x5fe6c8`). Ids: Attack1H 17 (a combat swing),
-// EmoteApplaud 80 and EmoteBow 66 (waist-up emotes), EmoteCheer 68 (a full-body emote);
+// ── The per-play one-shot route ── `esi` is the reference's route flag. Ids: Attack1H 17 (a combat
+// swing), EmoteApplaud 80 and EmoteBow 66 (waist-up emotes), EmoteCheer 68 (a full-body emote);
 // `stand_state` 1 is seated.
 use OneShotRoute::{FullBody, Masked};
 
@@ -651,7 +650,7 @@ fn route_row7_seated_cheer_is_masked() {
 
 #[test]
 fn route_land_row8_picks_land_clip_from_touchdown_input() {
-    // Row 8 is `drive_animations`'s `Mode::Land`; its ids are the `0x602c60` pick.
+    // Row 8 is `drive_animations`'s `Mode::Land`; its ids are the pick.
     assert_eq!(jump_land_pick(0), Some(39));
     assert_eq!(jump_land_pick(move_flags::FORWARD), Some(187));
     assert_eq!(jump_land_pick(move_flags::BACKWARD), None);
@@ -661,7 +660,7 @@ fn route_land_row8_picks_land_clip_from_touchdown_input() {
 
 #[test]
 fn route_classifier_memberships_are_the_decoded_bytes() {
-    // COMBAT (`0x5fcc10`) is every swing, no emote; CLASS_A (`0x5fed90`) has 17, 66, 68 and 80.
+    // COMBAT is every swing, no emote; CLASS_A has 17, 66, 68 and 80.
     assert!(is_combat(17));
     for id in [66, 68, 80] {
         assert!(!is_combat(id), "emote {id} must not be COMBAT");
@@ -669,7 +668,7 @@ fn route_classifier_memberships_are_the_decoded_bytes() {
     for id in [16, 17, 18, 19, 85, 87, 88, 117] {
         assert!(is_combat(id) && is_class_a(id), "swing {id}");
     }
-    // The whole table, member and non-member alike, from the decoded bytes of `0x5fed90`.
+    // The whole table, member and non-member alike, from the decoded bytes.
     let class_a: Vec<u16> = [2, 8, 9, 10, 14, 15]
         .into_iter()
         .chain(16..=36)
@@ -688,7 +687,7 @@ fn route_classifier_memberships_are_the_decoded_bytes() {
     for id in 0..=300u16 {
         assert_eq!(is_class_a(id), class_a.contains(&id), "CLASS_A {id}");
     }
-    // The mount-set, `0x5fec80`.
+    // The mount-set.
     let mount: Vec<u16> = [0, 1]
         .into_iter()
         .chain(3..=6)
@@ -797,7 +796,7 @@ fn strafe_flip_always_swings_around_the_front() {
 
 #[test]
 fn base_arm_head_force_is_the_combat_carveout() {
-    // The `0x5fdba0` re-zero gate: a relaxed arm rolls (-1)…
+    // The re-zero gate: a relaxed arm rolls (-1)…
     assert!(!arm_forces_head(false, false, 0), "Stand → Stand re-arm");
     assert!(
         !arm_forces_head(false, false, 11),
@@ -834,8 +833,8 @@ fn wound_route_full_body_on_ready_stance_or_stationary_standwound() {
     // armed record alone.
     assert!(wound_full_body(9, 26, 0, false));
     assert!(wound_full_body(10, 29, FORWARD, false));
-    // StandWound stationary: the client's `0x20200f` mask has no turn bits, so turning in place
-    // still routes full-body.
+    // StandWound stationary: the client's mask has no turn bits, so turning in place still routes
+    // full-body.
     assert!(wound_full_body(8, 0, 0, false));
     assert!(wound_full_body(8, 0, TURN_LEFT, false));
     assert!(!wound_full_body(8, 0, FORWARD, false));
@@ -864,8 +863,8 @@ fn wound_weight_decays_smoothstep_to_zero() {
 
 #[test]
 fn defense_anim_matches_the_byte_lut() {
-    // The `0x60ec98` LUT: dagger parries 1H (unlike its swing), fist unarmed (unlike its Ready),
-    // ranged or none bails; dodge, deflect and block are fixed.
+    // The LUT: dagger parries 1H (unlike its swing), fist unarmed (unlike its Ready), ranged or
+    // none bails; dodge, deflect and block are fixed.
     assert_eq!(defense_anim(2, None), Some(30)); // dodge needs no weapon
     assert_eq!(defense_anim(8, Some((2, 7))), Some(30)); // deflect → Dodge too
     assert_eq!(defense_anim(5, None), Some(24)); // block → ShieldBlock
@@ -920,8 +919,8 @@ fn a_flyer_strokes_and_idles_as_a_swimmer() {
 
 #[test]
 fn a_flying_spline_is_fly_before_backward_and_speed() {
-    // `0x5fd19c`: the fly branch sits between swim and backward, so a 32 yd/s taxi plays Fly 135,
-    // never Sprint 143 or WalkBackwards.
+    // The fly branch sits between swim and backward, so a 32 yd/s taxi plays Fly 135, never Sprint
+    // 143 or WalkBackwards.
     let fly = MovementState {
         flying: true,
         ..moving_forward(32.0)
@@ -962,10 +961,9 @@ fn unify_stamps_flying_from_the_live_spline_on_every_leg() {
     assert!(v.flying && v.flags & move_flags::FORWARD != 0 && v.speed > 0.0);
 }
 
-/// Server-granted modes are bits of the `CMovement+0x40` word the selector tests, and the
-/// reference re-selects when a grant lands (`0x6014ec push edi; call 0x60e480`, then
-/// `push -1; call 0x5fd9e0`). Our own mover is exempt: its modes are the ack'd family's, already
-/// in its `MovementState`.
+/// Server-granted modes are bits of the `CMovement+0x40` word the selector tests, and the reference
+/// re-selects when a grant lands. Our own mover is exempt: its modes are the ack'd family's,
+/// already in its `MovementState`.
 #[test]
 fn the_granted_modes_fold_into_the_flags_word_on_every_leg_but_our_own() {
     use crate::net::UnitMoveModes;
@@ -1022,8 +1020,7 @@ fn the_granted_modes_fold_into_the_flags_word_on_every_leg_but_our_own() {
     );
 }
 
-/// The creep (`0x5fd1d3`) precedes the whole speed tail (`0x5fd202`): a stealthed mover plays 119
-/// at any speed.
+/// The creep precedes the whole speed tail: a stealthed mover plays 119 at any speed.
 #[test]
 fn the_prowl_creeps_at_every_speed() {
     for speed in [0.5, 3.0, 7.0, 32.0] {
@@ -1084,8 +1081,8 @@ fn swim_fly_and_backpedal_all_outrank_the_prowl() {
     );
 }
 
-/// The prowl idle is the chain's last resolver (`0x5fd830`): every other idle outranks it, and the
-/// state-emote idle may still fill its slot.
+/// The prowl idle is the chain's last resolver: every other idle outranks it, and the state-emote
+/// idle may still fill its slot.
 #[test]
 fn the_prowl_idle_is_the_lowest_priority_stand() {
     let idle = MovementState {
@@ -1118,7 +1115,7 @@ fn the_prowl_idle_is_the_lowest_priority_stand() {
     );
 }
 
-/// The creep is not in the rate-scaled set (`0x5fee80`), so it plays at 1× at any speed.
+/// The creep is not in the rate-scaled set, so it plays at 1× at any speed.
 #[test]
 fn the_prowl_creep_is_not_rate_scaled() {
     assert_eq!(playback_rate(&clip(STEALTH_WALK, 2.5), 7.0, 1.0), 1.0);

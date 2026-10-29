@@ -1,7 +1,6 @@
-//! The synchronous text measure: the host's font engine installed into the VM, so
-//! `GetStringWidth` answers inside the Lua call that asked, as the reference's does (`0x79e510`
-//! calls its font engine, `0x772890`). UI code measures in the tick it sets text
-//! (`MoneyFrame.lua:202`). With no measurer installed, metrics stay 0 until the
+//! The synchronous text measure: the host's font engine installed into the VM, so `GetStringWidth`
+//! answers inside the Lua call that asked, as the reference's does. UI code measures in the tick it
+//! sets text (`MoneyFrame.lua:202`). With no measurer installed, metrics stay 0 until the
 //! [`MeasureRequest`](super::MeasureRequest) round-trip fills them a frame later.
 
 use mlua::Lua;
@@ -18,11 +17,10 @@ pub trait TextMeasure {
     fn measure(&mut self, req: &MeasureRequest) -> (f32, f32, f32);
 
     /// An EditBox's advance table, answered inline as
-    /// [`UiScript::set_editbox_advances`](super::UiScript::set_editbox_advances) answers it a
-    /// frame later: the cumulative widths, the wrapped-row starts and the row pitch, as the draw
-    /// measures them. The box's flush reads it for `OnCursorChanged`, whose position the caret
-    /// leg measures in the call (`0x77da80` → `0x772ae0`). `None`, the default, leaves the table
-    /// to the host.
+    /// [`UiScript::set_editbox_advances`](super::UiScript::set_editbox_advances) answers it a frame
+    /// later: the cumulative widths, the wrapped-row starts and the row pitch, as the draw measures
+    /// them. The box's flush reads it for `OnCursorChanged`, whose position the caret leg measures
+    /// in the call. `None`, the default, leaves the table to the host.
     fn editbox_advances(
         &mut self,
         req: &super::EditBoxAdvanceRequest,

@@ -1,6 +1,6 @@
-//! A pet bar spell press and the pet's global cooldown: the spell arm of `0x4bd1d0` starts it
-//! (`0x4bd367`-`0x4bd36e`), whole client headless, with the press applied as the script call it is.
-//! The rig is shared with `flush_tests`, whose packets reach the same list.
+//! A pet bar spell press and the pet's global cooldown: the spell arm of the reference starts it,
+//! whole client headless, with the press applied as the script call it is. The rig is shared with
+//! `flush_tests`, whose packets reach the same list.
 
 use std::collections::HashMap;
 use std::time::Instant;
@@ -87,7 +87,7 @@ pub(super) fn cower() -> SpellDisplay {
 }
 
 /// Our own pet as vmangos fills it, `SUMMONEDBY` and `CREATEDBY` us (`Pet.cpp:264`, `:287`), no
-/// flags: the predicate's owner test reads `SUMMONEDBY` (`0x4bd054`).
+/// flags: the predicate's owner test reads `SUMMONEDBY`.
 pub(super) fn owned_pet() -> ObjectStore {
     owned_pet_with(&[])
 }
@@ -161,7 +161,7 @@ pub(super) fn rig(
     app.insert_resource(NetCommands(tx));
     let world = app.world_mut();
     world.resource_mut::<SelfGuid>().0 = Some(ME);
-    // Our own object, which a spell press needs to resolve (`0x4bd31a`).
+    // Our own object, which a spell press needs to resolve.
     let me = world
         .spawn((Guid(ME), SelfPlayer, Transform::default(), player()))
         .id();
@@ -280,8 +280,8 @@ pub(super) fn pet_actions(sent: &[ClientCommand]) -> usize {
         .count()
 }
 
-/// `0x4bd367`: the press starts the GCD on the pet's list before it sends, and every slot on the
-/// bar sharing the category reads it through `GetPetActionCooldown`.
+/// The press starts the GCD on the pet's list before it sends, and every slot on the bar sharing
+/// the category reads it through `GetPetActionCooldown`.
 #[test]
 fn a_spell_press_starts_the_pets_gcd_for_every_slot_sharing_its_category() {
     let mut rig = rig(
@@ -308,7 +308,7 @@ fn a_spell_press_starts_the_pets_gcd_for_every_slot_sharing_its_category() {
     );
     assert!(rig.player_list_untouched(), "list 1 is the pet's, not ours");
 
-    // `0x6e2e77`, `0x6e2e8e`: the flush, in the reference's order, and no bar update with it.
+    // The flush, in the reference's order, and no bar update with it.
     assert_eq!(
         rig.frame(),
         [
@@ -327,7 +327,7 @@ fn a_spell_press_starts_the_pets_gcd_for_every_slot_sharing_its_category() {
     assert_eq!(rig.cooldown(3), (0.0, 0.0, 1), "Growl shows no sweep");
 }
 
-/// `0x6e2e0f`-`0x6e2e21`: a spell with neither `StartRecovery*` field starts nothing.
+/// A spell with neither `StartRecovery*` field starts nothing.
 #[test]
 fn a_spell_without_a_gcd_pair_starts_none() {
     let free = || SpellDisplay {
@@ -345,8 +345,8 @@ fn a_spell_without_a_gcd_pair_starts_none() {
     assert!(rig.frame().is_empty(), "no cooldown edge either");
 }
 
-/// `0x4bd35e`-`0x4bd365`: a possessed unit's press returns into the generic cast entry
-/// (`0x6e4b60`), which starts its own GCD at its send (`0x6e58fb`), so this arm starts none.
+/// A possessed unit's press returns into the generic cast entry, which starts its own GCD at its
+/// send, so this arm starts none.
 #[test]
 fn a_possessed_units_press_starts_no_pet_gcd() {
     let charmed = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
@@ -362,7 +362,7 @@ fn a_possessed_units_press_starts_no_pet_gcd() {
     assert!(rig.frame().is_empty());
 }
 
-/// `0x4bd355`: `AttributesEx4 & 0x20` takes the same route out of the arm.
+/// `AttributesEx4 & 0x20` takes the same route out of the arm.
 #[test]
 fn a_client_targeted_spell_press_starts_no_pet_gcd() {
     let ground = || SpellDisplay {
@@ -377,7 +377,7 @@ fn a_client_targeted_spell_press_starts_no_pet_gcd() {
     assert!(rig.frame().is_empty());
 }
 
-/// `0x4bd24f`: a press on a running aura cancels it and returns before the arm.
+/// A press on a running aura cancels it and returns before the arm.
 #[test]
 fn an_aura_cancel_press_starts_no_pet_gcd() {
     let mut rig = rig(vec![(COWER, cower())], &[COWER], Some(owned_pet_with(&[])));
@@ -418,9 +418,8 @@ pub(super) fn assert_press_refused(rig: &mut Rig, before: (u32, u32, bool)) {
     assert!(rig.frame().is_empty(), "no event");
 }
 
-/// `0x4bd1f2`: the dispatcher leaves for the epilogue, before the arm, its GCD and its send, when
-/// the pet's object does not resolve, as it is while the pet is out of view and the bar stands on
-/// its guid.
+/// The dispatcher leaves for the epilogue, before the arm, its GCD and its send, when the pet's
+/// object does not resolve, as it is while the pet is out of view and the bar stands on its guid.
 #[test]
 fn a_spell_press_with_no_pet_object_sends_nothing_and_arms_nothing() {
     let mut rig = rig(vec![(CLAW, claw())], &[CLAW], None);
@@ -431,8 +430,8 @@ fn a_spell_press_with_no_pet_object_sends_nothing_and_arms_nothing() {
     assert_press_refused(&mut rig, before);
 }
 
-/// `0x4bd2e7`-`0x4bd2fe`: an id past the `Spell.dbc` table's maximum, or one inside it with no
-/// record, leaves the arm the same way; so does the unused slot's spell 0, which has none.
+/// An id past the `Spell.dbc` table's maximum, or one inside it with no record, leaves the arm the
+/// same way; so does the unused slot's spell 0, which has none.
 #[test]
 fn a_spell_press_with_no_catalog_row_sends_nothing() {
     // Slots 1-3: a row the catalog lacks, the unused slot's spell 0, and the top of the id range.
@@ -453,7 +452,7 @@ fn a_spell_press_with_no_catalog_row_sends_nothing() {
     assert_eq!(pet_actions(&rig.sent()), 1, "the control sends");
 }
 
-/// `0x4bd1f2`: the predicate also needs the active player's object (`0x4bcf92`).
+/// The predicate also needs the active player's object.
 #[test]
 fn a_spell_press_with_no_player_object_sends_nothing() {
     let mut rig = rig(vec![(CLAW, claw())], &[CLAW], Some(owned_pet()));
@@ -471,8 +470,8 @@ fn a_spell_press_with_no_player_object_sends_nothing() {
     assert_press_refused(&mut rig, before);
 }
 
-/// `0x4bd1f2`: the aura leg (`0x4bd240`) sits behind the predicate, so with the active player
-/// unresolved a running aura is not cancelled either.
+/// The aura leg sits behind the predicate, so with the active player unresolved a running aura is
+/// not cancelled either.
 #[test]
 fn an_aura_cancel_press_with_no_player_object_sends_nothing() {
     let mut rig = rig(vec![(COWER, cower())], &[COWER], Some(owned_pet_with(&[])));
@@ -490,8 +489,8 @@ fn an_aura_cancel_press_with_no_player_object_sends_nothing() {
     assert_press_refused(&mut rig, before);
 }
 
-/// `0x4bd1f2`: a reaction and the Follow and Stay commands have no exit of their own (`0x4bd391`,
-/// `0x4bd3a3`), only the predicate's, so with the pet's object unresolved none latches or sends.
+/// A reaction and the Follow and Stay commands have no exit of their own, only the predicate's, so
+/// with the pet's object unresolved none latches or sends.
 #[test]
 fn a_command_or_reaction_press_with_no_pet_object_sends_nothing() {
     let word = |kind: u8, action: u32| action | (u32::from(kind) << 24);
@@ -511,8 +510,7 @@ fn a_command_or_reaction_press_with_no_pet_object_sends_nothing() {
     }
 }
 
-/// Op 21 applies to `StartRecoveryTime` first (`0x6e2e2c`), the player's table for a pet's
-/// spell as for ours.
+/// Op 21 applies to `StartRecoveryTime` first, the player's table for a pet's spell as for ours.
 #[test]
 fn the_pets_gcd_takes_the_players_op_21() {
     let shaved = || SpellDisplay {
@@ -535,10 +533,9 @@ fn the_pets_gcd_takes_the_players_op_21() {
     assert_eq!(rig.pet_reads(CLAW, &shaved()).1, 1000);
 }
 
-/// `0x4bd1f2`: the Attack command's own null-pet branch (`0x4bd403`-`0x4bd405`) repeats the lookup
-/// the predicate made (`0x4bd034`) on the same guid and typemask, so it never runs: with the pet's
-/// object unresolved the press leaves at the gate and sends nothing, at the selection or any
-/// other target.
+/// The Attack command's own null-pet branch repeats the lookup the predicate made on the same guid
+/// and typemask, so it never runs: with the pet's object unresolved the press leaves at the gate
+/// and sends nothing, at the selection or any other target.
 #[test]
 fn an_attack_press_with_no_pet_object_sends_nothing() {
     const FOE: u64 = 0x77;

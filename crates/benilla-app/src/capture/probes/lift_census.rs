@@ -90,8 +90,8 @@ fn fire_lift_census(
     for (guid, net, t, store, transport, anchor, seed, vis, inherited, kids, attached) in &entities
     {
         let go_type = store.0.gameobject_type_id();
-        // The GO types the reference's per-frame tick `0x630970` fires, plus anything carrying a
-        // transport component, so a misread type field still lists.
+        // The GO types the reference's per-frame tick fires, plus anything carrying a transport
+        // component, so a misread type field still lists.
         if !(net.kind == EntityKind::GameObject && matches!(go_type, 11 | 15)
             || transport.is_some()
             || anchor.is_some()

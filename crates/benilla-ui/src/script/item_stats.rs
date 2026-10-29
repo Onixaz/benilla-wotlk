@@ -1,5 +1,5 @@
 //! The shared item-template store every item tooltip renders through, as the reference's one
-//! renderer (`0x52b650`, behind 8 of the 9 `Set*Item` bindings) reads one template cache.
+//! renderer (behind 8 of the 9 `Set*Item` bindings) reads one template cache.
 //!
 //! The app pushes each template as it lands; a read of an unknown id records an ask that the app
 //! turns into `CMSG_ITEM_QUERY`, the reference's uncached-item early-out. The app resolves every
@@ -18,13 +18,13 @@ pub struct ItemTemplateView {
     pub class: u32,
     pub subclass: u32,
     pub inventory_type: u32,
-    /// `GetItemInfo`'s `itemType`, the `ItemClass.dbc` name (`0x48e070`); `None` answers `""`.
+    /// `GetItemInfo`'s `itemType`, the `ItemClass.dbc` name; `None` answers `""`.
     pub item_type: Option<String>,
     /// `GetItemInfo`'s `itemSubType`, "One-Handed Swords": `ItemSubClass.dbc`'s VerboseName
-    /// (`+0x4c`), or its DisplayName (`+0x28`) when that is empty (`0x48e311`).
+    /// (`+0x4c`), or its DisplayName (`+0x28`) when that is empty.
     pub item_sub_type: Option<String>,
     /// The tooltip's type cell and the bag line's `CONTAINER_SLOTS` name: `ItemSubClass.dbc`'s
-    /// DisplayName alone (`+0x28`, off the `0xc0db90` row cache), the singular "Sword".
+    /// DisplayName alone (`+0x28`, off the row cache), the singular "Sword".
     pub sub_class_display: Option<String>,
     /// The alternate subclass whose proficiency also permits use: `ItemSubClass.dbc`'s
     /// prerequisite, or its postrequisite when the prerequisite is -1. A weapon with only the
@@ -38,7 +38,7 @@ pub struct ItemTemplateView {
     pub bonding: u32,
     /// `MaxCount`: 1 prints "Unique", N > 1 "Unique (N)"; not the stack size.
     pub max_count: u32,
-    /// `Stackable`, `GetItemInfo`'s `itemStackCount` (`+0x60`, `0x48e28b`); `MaxCount` is `+0x5c`.
+    /// `Stackable`, `GetItemInfo`'s `itemStackCount` (`+0x60`); `MaxCount` is `+0x5c`.
     pub stackable: u32,
     pub start_quest: u32,
     pub container_slots: u32,
@@ -52,7 +52,7 @@ pub struct ItemTemplateView {
     /// Holy to Arcane.
     pub resistances: [i32; 6],
     pub max_durability: u32,
-    /// "Requires Level N", printed only for N > 1 (`0x52d2cf`).
+    /// "Requires Level N", printed only for N > 1.
     pub required_level: u32,
     /// The template's item level, the `ITEM_LEVEL` line `showItemLevel` adds (`0x62b1e3`).
     pub item_level: u32,
@@ -65,7 +65,7 @@ pub struct ItemTemplateView {
     pub required_skill_name: Option<String>,
     pub required_spell: u32,
     pub required_spell_name: Option<String>,
-    /// No tooltip line in 1.12; only the usable gate (`0x5ea930`) reads it.
+    /// No tooltip line in 1.12; only the usable gate reads it.
     pub required_honor_rank: u32,
     /// Usable gate only; nonzero always fails, as the `PVP_MEDALS` bits it tests are never set.
     pub required_city_rank: u32,
@@ -77,19 +77,19 @@ pub struct ItemTemplateView {
     /// 1 "Equip:", 2 "Chance on hit:", 6 a taught spell (no line, only the "Already known" red).
     pub spell_triggers: Vec<(u32, u32, String)>,
     pub lock_id: u32,
-    /// "N Charge(s)" for the first spell slot past the builder's gate (`0x52db51`: 0 and -1
-    /// print nothing, else the absolute value); 0 prints no line.
+    /// "N Charge(s)" for the first spell slot past the builder's gate (else the absolute value); 0
+    /// prints no line.
     pub charges: i32,
     pub description: String,
     pub page_text: u32,
     /// Copper: the merchant money row, or `ITEM_UNSELLABLE` when 0 in a sell context.
     pub sell_price: u32,
     pub item_set: u32,
-    /// `GetItemInfo`'s `itemTexture`, the `Interface\Icons\…` path through `ItemDisplayInfo.dbc`
-    /// (`0x48e2dd`); `None` for a display row with no icon.
+    /// `GetItemInfo`'s `itemTexture`, the `Interface\Icons\…` path through `ItemDisplayInfo.dbc`;
+    /// `None` for a display row with no icon.
     pub icon: Option<String>,
     /// `RandomProperty` (template `+0x1b8`): the item can roll a suffix, so a template tooltip
-    /// prints `<Random enchantment>` (`0x52cc33`).
+    /// prints `<Random enchantment>`.
     pub random_property: u32,
     /// The item a recipe teaches to make: a learn-spell (36) trigger whose taught spell creates
     /// (24) an item; 0 for none. `IsDressableItem` dresses a pattern as its product.
@@ -106,20 +106,20 @@ pub struct PlayerReqState {
     pub race_id: u32,
     /// SkillLine id → value plus permanent bonus, what the gates compare.
     pub skills: HashMap<u32, u32>,
-    /// Item class → `SMSG_SET_PROFICIENCY` subclass mask (`0xc4d4a0[class]`); a class with no
-    /// entry never reds.
+    /// Item class → `SMSG_SET_PROFICIENCY` subclass mask (`[class]`); a class with no entry never
+    /// reds.
     pub proficiency: HashMap<u32, u32>,
     /// Faction id → reputation rank, 0 hated … 7 exalted.
     pub rep_ranks: HashMap<u32, u8>,
-    /// Whether the spellbook holds a `SPELL_EFFECT_DUAL_WIELD` (40) spell, the client's
-    /// `0xc4d770` (read at `0x5eab70`); without it an off-hand weapon reds its slot cell.
+    /// Whether the spellbook holds a `SPELL_EFFECT_DUAL_WIELD` (40) spell, the client's; without it
+    /// an off-hand weapon reds its slot cell.
     pub can_dual_wield: bool,
     /// The highest lifetime honor rank (`PLAYER_FIELD_BYTES` byte 3).
     pub honor_rank: u8,
 }
 
 /// [`item_usable`] by item entry: entry 0 and a template not yet answered are usable, as the
-/// merchant getter skips an uncached record (`0x4fb298`).
+/// merchant getter skips an uncached record.
 pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
     item_id == 0
         || model.item_templates.get(&item_id).is_none_or(|v| {
@@ -128,12 +128,11 @@ pub(super) fn item_usable_by_id(model: &super::Model, item_id: u32) -> bool {
             })
         })
 }
-/// The client's item-usable predicate `0x5ea930`, whose answer the merchant getters push as
-/// `isUsable` (`0x4fb2a3`, `0x4fb4f7`), its legs in the reference's order. Proficiency tests the
-/// item's own subclass bit, with no alternate walk. A nonzero city rank always fails: it tests
-/// `PLAYER_FIELD_PVP_MEDALS`, which is never written. Reputation compares ranks, equivalent to the
-/// reference's standing threshold (`0x4d6370`, table `0x80928c`); an unknown faction is rank 0. An
-/// unpushed state (level 0) declines to judge, answering usable.
+/// The client's item-usable predicate, whose answer the merchant getters push as `isUsable`, its
+/// legs in the reference's order. Proficiency tests the item's own subclass bit, with no alternate
+/// walk. A nonzero city rank always fails: it tests `PLAYER_FIELD_PVP_MEDALS`, which is never
+/// written. Reputation compares ranks, equivalent to the reference's standing threshold; an unknown
+/// faction is rank 0. An unpushed state (level 0) declines to judge, answering usable.
 pub fn item_usable(
     v: &ItemTemplateView,
     req: &PlayerReqState,
@@ -188,15 +187,15 @@ pub fn item_usable(
     true
 }
 
-/// An item set's tooltip block (`0x854b1c`), app-resolved from `ItemSet.dbc`: member names from
-/// the template cache and the bonuses' substituted text. The engine counts the equipped members.
+/// An item set's tooltip block, app-resolved from `ItemSet.dbc`: member names from the template
+/// cache and the bonuses' substituted text. The engine counts the equipped members.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ItemSetView {
     pub name: String,
     /// `(item id, name)` per member in DBC order; `None` while its template is uncached.
     pub members: Vec<(u32, Option<String>)>,
     /// `(required equipped count, bonus text)` in DBC slot order; the renderer sorts by count, as
-    /// the builder's qsort does (`0x52e5c0`).
+    /// the builder's qsort does.
     pub bonuses: Vec<(u32, String)>,
     /// The set's "Requires <skill> (N)"; 0 prints no line.
     pub required_skill: u32,
@@ -262,9 +261,8 @@ impl super::UiScript {
     }
 }
 
-/// The 1.12 item-quality palette: the ARGB literals the static init `0x5291d0` writes to the BGRA
-/// array `0xc0d3c8`, and the escape strings at `0x854124`. `GetItemQualityColor` (`0x48dfb0`)
-/// answers each channel times 1/255.
+/// The 1.12 item-quality palette: the ARGB literals the static init writes to the BGRA array, and
+/// the escape strings. `GetItemQualityColor` answers each channel times 1/255.
 const QUALITY_COLORS: [(u8, u8, u8, &str); 7] = [
     (0x9d, 0x9d, 0x9d, "|cff9d9d9d"), // 0 Poor
     (0xff, 0xff, 0xff, "|cffffffff"), // 1 Common
@@ -275,9 +273,9 @@ const QUALITY_COLORS: [(u8, u8, u8, &str); 7] = [
     (0xe6, 0xcc, 0x80, "|cffe6cc80"), // 6 Artifact
 ];
 
-/// The client's item-link builder `0x52adb0` as the trade-skill link verbs call it:
-/// `|c<rrggbb>|Hitem:<id>:0:0:0|h[<name>]|h|r`. A quality of 7 or more selects index 1, white,
-/// by `0x52ad90`'s unsigned `cmp ecx,7; jb`.
+/// The client's item-link builder as the trade-skill link verbs call it:
+/// `|c<rrggbb>|Hitem:<id>:0:0:0|h[<name>]|h|r`. A quality of 7 or more selects index 1, white, by
+/// the reference's unsigned `cmp ecx,7; jb`.
 pub(super) fn item_link(item_id: u32, name: &str, quality: u32) -> String {
     let hex = QUALITY_COLORS
         .get(quality as usize)
@@ -286,9 +284,9 @@ pub(super) fn item_link(item_id: u32, name: &str, quality: u32) -> String {
     format!("{hex}|Hitem:{item_id}:0:0:0|h[{name}]|h|r")
 }
 
-/// `InventoryType` → `GetItemInfo`'s `itemEquipLoc`, the reference's 30-pointer table at
-/// `0x83ddb0` (`0x48e29b`): slots 0 and 29 are the shared `""` (`0x882748`), not nil, and four
-/// tokens (`AMMO`, `THROWN`, `RANGEDRIGHT`, `QUIVER`) have no `GlobalStrings.lua` entry.
+/// `InventoryType` → `GetItemInfo`'s `itemEquipLoc`, the reference's 30-pointer table: slots 0 and
+/// 29 are the shared `""`, not nil, and four tokens (`AMMO`, `THROWN`, `RANGEDRIGHT`, `QUIVER`)
+/// have no `GlobalStrings.lua` entry.
 fn equip_loc_token(inventory_type: u32) -> &'static str {
     const TOKENS: [&str; 29] = [
         "",
@@ -325,9 +323,9 @@ fn equip_loc_token(inventory_type: u32) -> &'static str {
     TOKENS.get(inventory_type as usize).copied().unwrap_or("")
 }
 
-/// The reference's `SStrToInt` (`0x64ac60`) over an `item:` field: an optional `-`, then digits up
-/// to the first non-digit, with no whitespace skip and no `+`. Deviation: an overflow saturates at
-/// `u32::MAX` where the reference wraps, because only a script can overflow it.
+/// The reference's `SStrToInt` over an `item:` field: an optional `-`, then digits up to the first
+/// non-digit, with no whitespace skip and no `+`. Deviation: an overflow saturates at `u32::MAX`
+/// where the reference wraps, because only a script can overflow it.
 fn reference_atoi(s: &str) -> i64 {
     let b = s.as_bytes();
     let (neg, mut i) = match b.first() {
@@ -352,10 +350,10 @@ fn reference_atoi(s: &str) -> i64 {
     }
 }
 
-/// `GetItemInfo`'s argument as the reference parses it (`0x48e0a3`-`0x48e16d`): a number, or a
-/// string `lua_isnumber` (`0x6f34d0`) coerces, is the id alone; another string (`0x6f3510`) must
-/// pass `strnicmp(s, "item:", 5)` (`0x64a4c0`) for its four fields, else it is id 0, so a name or
-/// a hyperlink finds nothing; anything else raises the usage error (`0x842d24`, via `0x6f4940`).
+/// `GetItemInfo`'s argument as the reference parses it: a number, or a string `lua_isnumber`
+/// coerces, is the id alone; another string must pass `strnicmp(s, "item:", 5)` for its four
+/// fields, else it is id 0, so a name or a hyperlink finds nothing; anything else raises the usage
+/// error.
 fn parse_item_arg(v: &Value) -> mlua::Result<(i64, u32, u32, u32)> {
     let as_number = match v {
         Value::Integer(i) => Some(*i as f64),
@@ -432,9 +430,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetItemQualityColor(quality) → r, g, b, escapeString (`0x48dfb0`). 7 and up, or a negative
-    // quality, answer Common (`0x52ad70`/`0x52ad90`: an unsigned `cmp ecx,7; jb`), so
-    // `ITEM_QUALITY_COLORS[-1]` is white, the colour of an uncached loot row (`0x4c2435`).
+    // GetItemQualityColor(quality) → r, g, b, escapeString. 7 and up, or a negative quality, answer
+    // Common (: an unsigned `cmp ecx,7; jb`), so `ITEM_QUALITY_COLORS[-1]` is white, the colour of
+    // an uncached loot row.
     lua.globals().set(
         "GetItemQualityColor",
         lua.create_function(|lua, quality: i64| {
@@ -455,12 +453,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // GetItemInfo(itemID | "item:id:enchant:randomProperty:suffix") → itemName, itemLink,
     // itemQuality, itemMinLevel, itemType, itemSubType, itemStackCount, itemEquipLoc, itemTexture:
-    // nine values (`0x48e070` ends `mov eax,0x9`); later clients insert `itemLevel` at 4. The name
-    // is the bare template name, where the reference appends the random suffix (`0x5d8b00`); the
-    // link is the item string (`0x48e1c9`, literal `0x842d4c`), not a hyperlink; the level is the
-    // required one (`[record+0x3c]`; `ItemLevel` at `+0x38` is never pushed). An uncached
-    // template answers no values and records the ask, as the reference's lookup (`0x55ba30`)
-    // queries and returns null, sending the binding to `xor eax,eax; ret`.
+    // nine values (the reference ends `mov eax,0x9`); later clients insert `itemLevel` at 4. The
+    // name is the bare template name, where the reference appends the random suffix; the link is
+    // the item string, not a hyperlink; the level is the required one (`[record+0x3c]`; `ItemLevel`
+    // at `+0x38` is never pushed). An uncached template answers no values and records the ask, as
+    // the reference's lookup queries and returns null, sending the binding to `xor eax,eax; ret`.
     lua.globals().set(
         "GetItemInfo",
         lua.create_function(|lua, arg: Value| {
@@ -642,7 +639,7 @@ mod get_item_info_tests {
             subclass: 7,
             inventory_type: 21,
             item_type: Some("Weapon".into()),
-            // VerboseName, not the tooltip cell's "Sword" (`0x48e311`).
+            // VerboseName, not the tooltip cell's "Sword".
             item_sub_type: Some("One-Handed Swords".into()),
             // Required level 1 against item level 2 makes position 4 falsifiable.
             required_level: 1,
@@ -662,7 +659,7 @@ mod get_item_info_tests {
         assert_eq!(
             s.arity("GetItemInfo(25)").unwrap(),
             9,
-            "1.12 returns nine values (`mov eax,0x9` at 0x48e303) — a tenth means the modern shape"
+            "1.12 returns nine values (`mov eax,0x9`) — a tenth means the modern shape"
         );
 
         let (name, link, quality, min_level, ty, sub_ty, stack, equip, texture): (
@@ -679,7 +676,7 @@ mod get_item_info_tests {
             .eval("local a,b,c,d,e,f,g,h,i = GetItemInfo(25) return a,b,c,d,e,f,g,h,i")
             .unwrap();
         assert_eq!(name, "Worn Shortsword");
-        // The item string (`0x842d4c`); a number argument leaves the other fields 0.
+        // The item string; a number argument leaves the other fields 0.
         assert_eq!(link, "item:25:0:0:0");
         assert_eq!(quality, 1);
         assert_eq!(min_level, 1);
@@ -830,7 +827,7 @@ mod get_item_info_tests {
         }
         assert!(s.take_item_stat_asks().is_empty());
 
-        // Neither a number nor a string raises the usage error (`0x842d24`).
+        // Neither a number nor a string raises the usage error.
         let err = s
             .eval::<mlua::Value>("return GetItemInfo(nil)")
             .unwrap_err()
@@ -903,7 +900,7 @@ mod quality_color_tests {
             .unwrap();
         assert!((r - 163.0 / 255.0).abs() < 1e-9, "epic red was {r}");
 
-        // 7 and up answer Common (`0x52ad70`).
+        // 7 and up answer Common.
         assert_eq!(hex(7), "|cffffffff");
         assert_eq!(hex(99), "|cffffffff");
         // The compare is unsigned, so a negative answers Common too.

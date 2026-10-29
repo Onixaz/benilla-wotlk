@@ -218,7 +218,7 @@ fn guild_query_response_always_carries_ten_rank_names() {
 }
 
 /// "No such guild" is a complete `SMSG_GUILD_QUERY_RESPONSE` with an empty name: the reference
-/// branches on it (`0x5552ae`) and still consumes the whole record.
+/// branches on it and still consumes the whole record.
 #[test]
 fn guild_query_response_reports_no_such_guild_as_an_empty_name() {
     let mut body = Vec::new();
@@ -240,8 +240,8 @@ fn guild_query_response_reports_no_such_guild_as_an_empty_name() {
     }
 }
 
-/// `SMSG_GUILD_EVENT`'s trailing guid rides on the event id: the reference (`0x5e7180`) reads it
-/// only for 0x0c and 0x0d, though vmangos also writes one for `GE_JOINED` and `GE_LEFT`
+/// `SMSG_GUILD_EVENT`'s trailing guid rides on the event id: the reference reads it only for 0x0c
+/// and 0x0d, though vmangos also writes one for `GE_JOINED` and `GE_LEFT`
 /// (`Handlers/GuildHandler.cpp:218`, `:405`).
 #[test]
 fn guild_event_trailing_guid_rides_on_the_event_id() {

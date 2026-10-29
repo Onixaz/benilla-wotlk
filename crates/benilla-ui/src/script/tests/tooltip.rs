@@ -110,8 +110,8 @@ fn empty_line_is_a_one_unit_row_and_the_chain_stays_inside_the_plate() {
             ("PvP", 24.0, 12.0),
         ],
     );
-    // Rows 14 + 1 + 12 + 12 with 3 slot gaps ⇒ totalh 45, height 65; maxw 90 ⇒ width 110.
-    // The reference's `AddLine("")` returns without adding a line (`0x530270`); ours adds this row.
+    // Rows 14 + 1 + 12 + 12 with 3 slot gaps ⇒ totalh 45, height 65; maxw 90 ⇒ width 110. The
+    // reference's `AddLine("")` returns without adding a line; ours adds this row.
     s.run(
         r#"
         assert(TTE:GetWidth() == 110, "auto width, got " .. tostring(TTE:GetWidth()))
@@ -380,8 +380,8 @@ fn fadeout_ramps_then_hides() {
     assert!(s.take_errors().is_empty());
 }
 
-/// Every GameTooltip clamps to the screen (the geometry-flags bit 4 clamp, `assemble 0x767a20`), so
-/// the zone text's `ANCHOR_LEFT` (`Minimap.lua:39`) hangs down from the screen top, not above it.
+/// Every GameTooltip clamps to the screen (the geometry-flags bit 4 clamp, `assemble`), so the zone
+/// text's `ANCHOR_LEFT` (`Minimap.lua:39`) hangs down from the screen top, not above it.
 #[test]
 fn owner_anchored_tooltip_clamps_to_screen() {
     let mut s = script();
@@ -432,7 +432,7 @@ fn owner_anchored_tooltip_clamps_to_screen() {
     assert!(s.take_errors().is_empty());
 }
 
-/// `0x52fa50`'s duration ladder over stand-in templates: the arm edges, the ceiling on every arm
+/// The reference's duration ladder over stand-in templates: the arm edges, the ceiling on every arm
 /// but seconds, and the `_P1` plural pick.
 #[test]
 fn the_duration_ladder_ceils_every_arm_but_seconds() {
@@ -946,9 +946,8 @@ fn set_owner_hides_then_clears_before_the_owner_is_stored() {
     assert!(s.eval::<bool>("return Tip:IsOwned(SeqA)").unwrap());
 }
 
-/// The binding hides before it checks the owner, then raises the reference's errors in order,
-/// each naming the tooltip (`0x61ee6e`, `0x61ebc9`, `0x61ec1c`, `0x61ec4a`), `<unnamed>` without a
-/// name (`0x9ea280`).
+/// The binding hides before it checks the owner, then raises the reference's errors in order, each
+/// naming the tooltip (`0x61ee6e`, `0x61ebc9`, `0x61ec1c`, `0x61ec4a`), `<unnamed>` without a name.
 #[test]
 fn set_owner_raises_the_reference_errors_after_hiding() {
     let s = script();

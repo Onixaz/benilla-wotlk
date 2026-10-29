@@ -1,11 +1,11 @@
 //! The CVar table: the reference's store of case-insensitively named string settings with
 //! registered defaults, behind `GetCVar`/`SetCVar`/`GetCVarDefault`/`RegisterCVar`.
 //!
-//! The host registers the vars it backs and drains Lua's writes from a change queue; its own
-//! writes do not queue. The table dies with the VM, where the reference's outlives every
-//! `ReloadUI`, so the host seeds each new VM with the saved values before anything registers.
-//! An unknown name warns once and is ignored (`GetCVar` answers nil), where the reference's
-//! `GetCVar`, `SetCVar` and `GetCVarDefault` raise `Couldn't find CVar named '%s'` (`0x842310`).
+//! The host registers the vars it backs and drains Lua's writes from a change queue; its own writes
+//! do not queue. The table dies with the VM, where the reference's outlives every `ReloadUI`, so
+//! the host seeds each new VM with the saved values before anything registers. An unknown name
+//! warns once and is ignored (`GetCVar` answers nil), where the reference's `GetCVar`, `SetCVar`
+//! and `GetCVarDefault` raise `Couldn't find CVar named '%s'`.
 
 use mlua::{Lua, Value};
 
@@ -21,8 +21,8 @@ pub(crate) struct CvarSlot {
     pub value: String,
     pub default: String,
     /// The reference's flag bit1 (`rec+0x1c & 0x2`): a write goes to [`Self::pending`] and
-    /// `GetCVar` answers the applied value until the host commits it (`CVar::Update 0x63e060`).
-    /// Host-seeded only; a VM-registered row is never latched, like a console-created one.
+    /// `GetCVar` answers the applied value until the host commits it (`CVar::Update`). Host-seeded
+    /// only; a VM-registered row is never latched, like a console-created one.
     pub latched: bool,
     /// A latched row's staged value, reported to the host through the change queue when written.
     pub pending: Option<String>,
@@ -38,9 +38,8 @@ pub struct SeededCvar {
     pub latched: bool,
 }
 
-/// One multisample format the device supports, the reference's triple (`[0xb4b444]`, count
-/// `[0xb4b440]`, built by `0x48c3e0`). `samples == 1` means no multisampling, as both reference
-/// enumerators normalise it (D3D `0x58b8b1`, GL `0x58d5fa`) and the device paths test `> 1`.
+/// One multisample format the device supports, the reference's triple. `samples == 1` means no
+/// multisampling, as both reference enumerators normalise it and the device paths test `> 1`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MultisampleFormat {
     pub color_bits: u32,
@@ -58,9 +57,9 @@ pub struct ScreenResolution {
 }
 
 impl ScreenResolution {
-    /// Pixel area first, the reference's whole comparator (`0x58be40`), then width, then height.
-    /// Deviation: the tie-break is ours, because area alone with the reference's adjacent-only
-    /// dedupe can leave a duplicate `"WxH"` when two modes share an area (1280x960, 1600x768).
+    /// Pixel area first, the reference's whole comparator, then width, then height. Deviation: the
+    /// tie-break is ours, because area alone with the reference's adjacent-only dedupe can leave a
+    /// duplicate `"WxH"` when two modes share an area (1280x960, 1600x768).
     pub(crate) fn sort_key(&self) -> (u64, u32, u32) {
         (
             u64::from(self.width) * u64::from(self.height),
@@ -93,8 +92,8 @@ pub struct VideoCaps {
     pub pixel_shaders: bool,
     pub vertex_shaders: bool,
     pub trilinear: bool,
-    /// A backend constant, not a device capability: 1 under Direct3D, 0 under OpenGL
-    /// (`caps+0x20`, read only by `GetVideoCaps 0x48db40`). False here, pushed as the number 0.
+    /// A backend constant, not a device capability: 1 under Direct3D, 0 under OpenGL (`caps+0x20`,
+    /// read only by `GetVideoCaps`). False here, pushed as the number 0.
     pub triple_buffering: bool,
     /// The raw maximum: `OptionsFrame.lua:122-127` makes a value in `ANISOTROPIC_VALUES` the
     /// slider's ceiling as its index, and any other number the ceiling as is. Pushed as nil when 0.
@@ -214,10 +213,9 @@ impl super::UiScript {
         drain_field!(self, cvar_registrations)
     }
 
-    /// Flag a CVar read-only to Lua, or clear it: `CVar::SetReadOnly` (`0x63e030`). A flagged name
-    /// makes `SetCVar` raise `"%s" is read-only` (`0x488c67`-`0x488c78`); host and engine writes,
-    /// and `ConsoleExec`, still land, as the reference's `CVar::Set` (`0x63df50`) never tests the
-    /// flag. The name need not be registered yet.
+    /// Flag a CVar read-only to Lua, or clear it: `CVar::SetReadOnly`. A flagged name makes
+    /// `SetCVar` raise `"%s" is read-only`; host and engine writes, and `ConsoleExec`, still land,
+    /// as the reference's `CVar::Set` never tests the flag. The name need not be registered yet.
     pub fn set_cvar_read_only(&mut self, name: &str, read_only: bool) {
         let key = name.to_ascii_lowercase();
         let mut model = self.model_mut();
@@ -235,8 +233,8 @@ impl super::UiScript {
     }
 
     /// Publish the multisample formats this run's device accepts, in dropdown order. The
-    /// reference's `0x48c3e0` sweeps its candidate table `0x85a83c` (D3D) or every pixel format
-    /// (GL); here the host asks wgpu.
+    /// reference's sweeps its candidate table (D3D) or every pixel format (GL); here the host asks
+    /// wgpu.
     pub fn set_multisample_formats(&mut self, formats: Vec<MultisampleFormat>) {
         set_field!(self, multisample_formats, formats);
     }
@@ -310,15 +308,15 @@ impl super::UiScript {
 }
 
 /// An engine-side write, for a value the engine owns: queued like a Lua `SetCVar` so the config
-/// file is dirtied, as the reference's minimap `set_zoom` (`0x6da8e0`) also `CVar::Set`s
+/// file is dirtied, as the reference's minimap `set_zoom` also `CVar::Set`s
 /// `minimapZoom`/`minimapInsideZoom`. An unregistered name is a silent no-op (a bare VM).
 pub(super) fn set_from_engine(model: &mut Model, name: &str, value: String) {
     store(model, &name.to_ascii_lowercase(), value);
 }
 
-/// The one store every write goes through; returns the registered spelling when the value moved
-/// and the change was queued. A latched slot stages the write, as the reference's `Set 0x63df50`
-/// stores `latchedValue` and skips `InternalSet`; writing back the applied value unstages it.
+/// The one store every write goes through; returns the registered spelling when the value moved and
+/// the change was queued. A latched slot stages the write, as the reference's `Set` stores
+/// `latchedValue` and skips `InternalSet`; writing back the applied value unstages it.
 fn store(model: &mut Model, key: &str, value: String) -> Option<String> {
     let slot = model.cvars.get_mut(key)?;
     if slot.latched {
@@ -383,10 +381,10 @@ fn warn_unknown(model: &mut Model, name: &str) {
     }
 }
 
-/// An argument as the CVar bindings read it, `lua_tostring` (`0x6f3690`): a string as it is, a
-/// number as Lua's `%.14g` text (`luaV_tostring` `0x6f7c80`), so the stock Sound slider's
-/// single-precision 0.4 stores `"0.40000000596046"`. `None` for anything `lua_isstring`
-/// (`0x6f3510`) refuses: nil, an absent argument, a boolean, a table or a function.
+/// An argument as the CVar bindings read it, `lua_tostring`: a string as it is, a number as Lua's
+/// `%.14g` text (`luaV_tostring`), so the stock Sound slider's single-precision 0.4 stores
+/// `"0.40000000596046"`. `None` for anything `lua_isstring` refuses: nil, an absent argument, a
+/// boolean, a table or a function.
 fn cvar_arg(v: Option<&Value>) -> Option<String> {
     match v? {
         // Lossy: the reference takes bytes, and invalid UTF-8 must not read as absent.
@@ -397,19 +395,17 @@ fn cvar_arg(v: Option<&Value>) -> Option<String> {
     }
 }
 
-/// A value as the video setters print it, `SStrPrintf(buf, 0x10, "%f", v)` (`0x64a7f0` with the
-/// format at `0x835160`): six decimals in a 16-byte buffer, so the stored string is cut at 15
-/// characters.
+/// A value as the video setters print it, `SStrPrintf(buf, 0x10, "%f", v)`: six decimals in a
+/// 16-byte buffer, so the stored string is cut at 15 characters.
 pub(super) fn format_f(v: f64) -> String {
     let mut written = format!("{v:.6}");
     written.truncate(15);
     written
 }
 
-/// Storm's `SStrToInt` (`0x64ac60`), how a CVar record's integer (`rec+0x28`) is parsed from its
-/// value and how a change callback reads it: an optional `-`, then decimal digits up to the first
-/// other byte, with no whitespace skip, no `+` and no overflow check (`10·n + d` wraps); no digit
-/// is 0.
+/// Storm's `SStrToInt`, how a CVar record's integer (`rec+0x28`) is parsed from its value and how a
+/// change callback reads it: an optional `-`, then decimal digits up to the first other byte, with
+/// no whitespace skip, no `+` and no overflow check (`10·n + d` wraps); no digit is 0.
 pub fn sstr_to_int(s: &str) -> i32 {
     let (neg, digits) = match s.strip_prefix('-') {
         Some(rest) => (true, rest),
@@ -440,37 +436,35 @@ fn cvar_truth(value: &str) -> bool {
     }
 }
 
-/// What `SetCVar` and `RegisterCVar` store for a value with no string form (`0x82e570`, loaded
-/// at `0x488c98` and `0x488b6f`).
+/// What `SetCVar` and `RegisterCVar` store for a value with no string form.
 const NO_STRING_FORM: &str = "0";
 
-/// `0x84235c`, verbatim, the unbalanced parenthesis included.
+/// Verbatim, the unbalanced parenthesis included.
 const USAGE_SET_CVAR: &str = "Usage: SetCVar(\"cvar\", value [, \"scriptCvar\")";
 
 /// 3.3.5a `0x9f5758`, verbatim.
 const USAGE_GET_CVAR_BOOL: &str = "Usage: GetCVarBool(\"cvar\")";
 
-/// `0x8422e8`, verbatim.
+/// Verbatim.
 const USAGE_REGISTER_CVAR: &str = "Usage: RegisterCVar(\"cvar\" [, default])";
 
 /// The CVars `CGGameUI::InitializeGame` flags read-only for the whole world session, the table
-/// at `0x83de4c` walked by `0x48f566`-`0x48f584`; `ShutdownGame` clears them again
-/// (`0x491240`-`0x49125d`). The host flags them on each in-game VM before its UI loads, as
-/// `InitializeGame` does before `UI_Init`.
+/// walked; `ShutdownGame` clears them again. The host flags them on each in-game VM before its UI
+/// loads, as `InitializeGame` does before `UI_Init`.
 pub const IN_WORLD_READ_ONLY_CVARS: [&str; 3] = ["realmList", "realmName", "scriptMemory"];
 
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
-    // `RegisterCVar(name, value)` (`0x488b00`) declares a CVar the client does not ship, which is
-    // how an addon persists a setting. Re-declaring a live name is a no-op: the reference never
-    // resets a live value on re-registration (`0x488b7d`).
+    // `RegisterCVar(name, value)` declares a CVar the client does not ship, which is how an addon
+    // persists a setting. Re-declaring a live name is a no-op: the reference never resets a live
+    // value on re-registration.
     lua.globals().set(
         "RegisterCVar",
         lua.create_function(|lua, args: mlua::MultiValue| {
-            // `lua_isstring(1)` (`0x488b09`): a string or a number names it.
+            // `lua_isstring(1)`: a string or a number names it.
             let Some(name) = cvar_arg(args.front()) else {
                 return Err(mlua::Error::runtime(USAGE_REGISTER_CVAR));
             };
-            // The default only when `lua_isstring(2)` passes (`0x488b56`), else "0".
+            // The default only when `lua_isstring(2)` passes, else "0".
             let value = cvar_arg(args.get(1)).unwrap_or_else(|| NO_STRING_FORM.to_string());
             let mut model = crate::script::model_mut_of(lua);
             let key = name.to_ascii_lowercase();
@@ -577,21 +571,20 @@ pub(super) fn install_cvar_verbs(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
-    // `SetCVar(name, value [, token])` (`0x488c10`).
+    // `SetCVar(name, value [, token])`.
     lua.globals().set(
         "SetCVar",
         lua.create_function(|lua, args: mlua::MultiValue| {
-            // `lua_isstring(1)` (`0x488c1a`): a string or a number names it.
+            // `lua_isstring(1)`: a string or a number names it.
             let Some(name) = cvar_arg(args.front()) else {
                 return Err(mlua::Error::runtime(USAGE_SET_CVAR));
             };
-            // A value with no string form stores "0" (`0x488c8d`-`0x488c98`): an unchecked
-            // CheckButton's `GetChecked()` is nil, and `SoundOptionsCheckButton_OnClick` writes
-            // it as is.
+            // A value with no string form stores "0": an unchecked CheckButton's `GetChecked()` is
+            // nil, and `SoundOptionsCheckButton_OnClick` writes it as is.
             let value = cvar_arg(args.get(1)).unwrap_or_else(|| NO_STRING_FORM.to_string());
             {
                 let mut model = crate::script::model_mut_of(lua);
-                // Flag bit2 (`0x488c67`), tested before anything is written.
+                // Flag bit2, tested before anything is written.
                 if model.cvars_read_only.contains(&name.to_ascii_lowercase()) {
                     return Err(mlua::Error::runtime(format!("\"{name}\" is read-only")));
                 }
@@ -600,10 +593,10 @@ pub(super) fn install_cvar_verbs(lua: &Lua) -> mlua::Result<()> {
                 }
             }
             // A third argument that passes `lua_isstring` is the `CVAR_UPDATE` token, arg1, with
-            // the value as arg2 (`0x488cad`-`0x488cd5`), fired on every such call, changed or not,
-            // and inside it: `SignalEvent2` (`0x703f50`) walks the listeners in place. The 1.12
-            // options panels pass their CheckButtons key, such as "STATUS_BAR_TEXT"
-            // (`UIOptionsFrame.lua` l.335), which is how `UIOptionsFrame_OnEvent` finds its row.
+            // the value as arg2, fired on every such call, changed or not, and inside it:
+            // `SignalEvent2` walks the listeners in place. The 1.12 options panels pass their
+            // CheckButtons key, such as "STATUS_BAR_TEXT" (`UIOptionsFrame.lua` l.335), which is
+            // how `UIOptionsFrame_OnEvent` finds its row.
             if let Some(token) = cvar_arg(args.get(2)) {
                 super::tick::fire_event_into(
                     lua,
@@ -617,9 +610,9 @@ pub(super) fn install_cvar_verbs(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The video options table both states register (`CGVideoOptions::RegisterScriptFunctions`,
-/// `0x54ec00`, table `0xacd320`; the glue manager's `Resume` `0x4da5f0` calls it too), with
-/// `RestartGx`, which both states' own tables carry.
+/// The video options table both states register (`CGVideoOptions::RegisterScriptFunctions`, table
+/// `0xacd320`; the glue manager's `Resume` `0x4da5f0` calls it too), with `RestartGx`, which both
+/// states' own tables carry.
 pub(super) fn install_video_options(lua: &Lua) -> mlua::Result<()> {
     // ── The Video options Multisampling dropdown ──────────────────────────────────────────────
     // `VideoOptionsResolutionPanelMultiSampleDropDown_OnLoad` seeds the selection from
@@ -754,8 +747,7 @@ fn restore_defaults(model: &mut Model, names: &[&str]) {
 /// Ten names must stay nil so their slider rows fall back to `GetCVar`/`SetCVar`
 /// (`OptionsFrame_Load:110` tries `getglobal("Get"..value.func)`): `Getuiscale`, `Getfarclip`,
 /// `Getanisotropic`, `GetspellEffectLevel`, `GetweatherDensity` and their setters.
-/// `GetFarclip`/`SetFarclip` (`0x488f00`/`0x488f30`, in [`super::video_pairs`]) do exist;
-/// `getglobal` is case-sensitive.
+/// `GetFarclip`/`SetFarclip` (in [`super::video_pairs`]) do exist; `getglobal` is case-sensitive.
 fn install_video_verbs(lua: &Lua) -> mlua::Result<()> {
     // `GetTerrainMip`/`SetTerrainMip` (`0x54eb10`/`0x54eb40`): the terrain detail slider over
     // `shadowLevel`, inverted (`1 - shadowLevel`); the setter takes a number or raises its usage.
@@ -888,10 +880,10 @@ fn install_video_verbs(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     // ── GetVideoCaps ─────────────────────────────────────────────────────────────────────────
-    // Seven values in `OptionsFrame.lua:59`'s order, never a boolean (`0x48db40`): slots 1-4 and
-    // 7 are nil or the number 1, slot 5 is always a number, slot 6 is nil iff 0. Slot 5 is 0
-    // under OpenGL and 1 under Direct3D; 0 is truthy, so `OptionsFrame_Load`'s two
-    // `not hasTripleBuffering` tests never fire in the reference, and a nil would revive them.
+    // Seven values in `OptionsFrame.lua:59`'s order, never a boolean: slots 1-4 and 7 are nil or
+    // the number 1, slot 5 is always a number, slot 6 is nil iff 0. Slot 5 is 0 under OpenGL and 1
+    // under Direct3D; 0 is truthy, so `OptionsFrame_Load`'s two `not hasTripleBuffering` tests
+    // never fire in the reference, and a nil would revive them.
     lua.globals().set(
         "GetVideoCaps",
         lua.create_function(|lua, ()| {
@@ -905,7 +897,7 @@ fn install_video_verbs(lua: &Lua) -> mlua::Result<()> {
             out.push_back(flag(caps.pixel_shaders));
             out.push_back(flag(caps.vertex_shaders));
             out.push_back(flag(caps.trilinear));
-            // Slot 5: always a number, a straight-line `fild` (`0x48dbcb`).
+            // Slot 5: always a number, a straight-line `fild`.
             out.push_back(Value::Number(if caps.triple_buffering { 1.0 } else { 0.0 }));
             // Slot 6: nil iff 0; the reference's is seeded to 1 (`caps+0xac`), so never nil there.
             out.push_back(if caps.max_anisotropy == 0 {
@@ -932,11 +924,11 @@ fn install_video_verbs(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     // ── GetGamma / SetGamma ──────────────────────────────────────────────────────────────────
-    // `GetGamma 0x4891c0` and `SetGamma 0x4891f0` work in the slider's offset, not the CVar's
-    // unit: `0x4891d0` is FSUBR over the f64 1.0 at `[0x8015b8]`, so `GetGamma()` answers
-    // `1.0 - gamma` and `SetGamma(v)` writes `gamma = 1.0 - v`; the registered `"1.0"` reads as
-    // 0.0, the slider's centre. The reference clamps nowhere (`SetGamma(5)` writes
-    // `"-4.000000"`); the clamp is the consumer's (`ui_gamma::GAMMA_RANGE`).
+    // `GetGamma` and `SetGamma` work in the slider's offset, not the CVar's unit: the reference is
+    // FSUBR over the f64 1.0, so `GetGamma()` answers `1.0 - gamma` and `SetGamma(v)` writes
+    // `gamma = 1.0 - v`; the registered `"1.0"` reads as 0.0, the slider's centre. The reference
+    // clamps nowhere (`SetGamma(5)` writes `"-4.000000"`); the clamp is the consumer's
+    // (`ui_gamma::GAMMA_RANGE`).
     lua.globals().set(
         "GetGamma",
         // Any argument is ignored (the getter never calls `lua_gettop`); one number comes back.
@@ -949,7 +941,7 @@ fn install_video_verbs(lua: &Lua) -> mlua::Result<()> {
                 .get(&CVAR_GAMMA.to_ascii_lowercase())
                 .and_then(|slot| slot.value.parse::<f64>().ok())
                 // A bare VM with no `gamma` row answers as if the default stood; the reference
-                // always finds its record (`0x63de30`).
+                // always finds its record.
                 .unwrap_or(1.0);
             Ok(1.0 - gamma)
         })?,
@@ -957,8 +949,7 @@ fn install_video_verbs(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetGamma",
         lua.create_function(|lua, value: Value| {
-            // `lua_isnumber` (`0x4891fe`): a number or a numeric string; anything else raises
-            // (`0x6f4940`).
+            // `lua_isnumber`: a number or a numeric string; anything else raises.
             let v = match &value {
                 Value::Integer(i) => *i as f64,
                 Value::Number(n) => *n,
@@ -979,11 +970,10 @@ fn install_video_verbs(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The reference's display-gamma CVar: registered at `0x402d70` as `"1.0"`, flags 0, name
-/// string `0x82e924`.
+/// The reference's display-gamma CVar: registered as `"1.0"`, flags 0, name string.
 pub const CVAR_GAMMA: &str = "gamma";
 
-/// `0x8424cc`, verbatim.
+/// Verbatim.
 const USAGE_SET_GAMMA: &str = "Usage: SetGamma(value)";
 
 #[cfg(test)]
@@ -1021,8 +1011,8 @@ mod tests {
         assert!(s.take_cvar_changes().is_empty());
     }
 
-    /// The reference's `Set 0x63df50` on flag bit1: `GetCVar` (`rec+0x20`) answers the old value
-    /// until `CVar::Update 0x63e060` commits, which here arrives as a host write.
+    /// The reference's `Set` on flag bit1: `GetCVar` (`rec+0x20`) answers the old value until
+    /// `CVar::Update` commits, which here arrives as a host write.
     #[test]
     fn a_latched_row_stages_the_write_until_the_host_commits_it() {
         let mut s = UiScript::new().unwrap();
@@ -1098,8 +1088,8 @@ mod tests {
         );
     }
 
-    /// The reference prints `CVar "%s" is "%s"` for a bare name (`0x63dde0`); that printing is the
-    /// host's, while a valued write lands here at once.
+    /// The reference prints `CVar "%s" is "%s"` for a bare name; that printing is the host's, while
+    /// a valued write lands here at once.
     #[test]
     fn console_exec_writes_a_valued_cvar_and_hands_a_bare_name_to_the_host() {
         let mut s = script_with_volume();
@@ -1235,7 +1225,7 @@ mod tests {
             1.0
         );
 
-        // Pick 4x, the third row: all three CVars move together, as `0x48c640` writes them.
+        // Pick 4x, the third row: all three CVars move together, as the reference writes them.
         s.eval::<()>("SetMultisampleFormat(3)").unwrap();
         assert_eq!(
             s.eval::<String>(r#"return GetCVar("gxMultisample")"#)
@@ -1273,7 +1263,7 @@ mod tests {
         );
     }
 
-    /// `realmName` is a real 1.12 CVar (`0x83f2d0`) and must be a string: every Ace addon runs
+    /// `realmName` is a real 1.12 CVar and must be a string: every Ace addon runs
     /// `ace.trim(GetCVar("realmName"))` at `PLAYER_ENTERING_WORLD` (`Ace/AceState.lua:28`). Set
     /// through `set_realm_name`, the seam `GetRealmName()` also reads.
     #[test]

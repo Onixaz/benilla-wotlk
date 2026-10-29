@@ -1,11 +1,11 @@
 //! The glue screens' FrameScript state, which [`UiScript::new_glue`] builds: what the glue
 //! manager gives Lua where the in-game UI's init gives it the world's surface.
 //!
-//! The glue manager's `Resume` (`0x4da5f0`) flushes the Lua state (`FrameScript_Flush`
-//! `0x81ac70`), registers the system, frame-script, glue, character select, character create,
-//! realm list, sound, account message and video options tables, and hands the FrameScript event
-//! registry the 41-event table below in place of the in-game one. The frame types are a
-//! process-wide registry instead ([`super::object::registered_frame_kind`]).
+//! The glue manager's `Resume` (`0x4da5f0`) flushes the Lua state (`FrameScript_Flush`), registers
+//! the system, frame-script, glue, character select, character create, realm list, sound, account
+//! message and video options tables, and hands the FrameScript event registry the 41-event table
+//! below in place of the in-game one. The frame types are a process-wide registry instead
+//! ([`super::object::registered_frame_kind`]).
 //!
 //! [`UiScript::new_glue`]: super::UiScript::new_glue
 
@@ -95,11 +95,11 @@ impl VmKind {
     }
 }
 
-/// The glue core's screen verbs (registrar `0x4dd580`, table `0xac3e00`): the screen root's size
-/// and the cursor in it, 768 units tall and `768·a` wide for the aspect `a`. The glue has no
-/// `UIParent` and so no UI scale: `GetScreenWidth` (`0x4dcc20`) and `GetScreenHeight`
-/// (`0x4dcc70`) are the in-game pair (`0x51aef0`, `0x51af50`) without its division by the scale
-/// (`[0xbd0778]+0x7c`), and `GetCursorPosition` (`0x4dcb60`) computes the in-game `0x510a10`'s.
+/// The glue core's screen verbs (table `0xac3e00`): the screen root's size and the cursor in it,
+/// 768 units tall and `768·a` wide for the aspect `a`. The glue has no `UIParent` and so no UI
+/// scale: `GetScreenWidth` (`0x4dcc20`) and `GetScreenHeight` (`0x4dcc70`) are the in-game pair
+/// (`0x51aef0`, `0x51af50`) without its division by the scale, and `GetCursorPosition` (`0x4dcb60`)
+/// computes the in-game `0x510a10`'s.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
     g.set(

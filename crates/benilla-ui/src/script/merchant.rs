@@ -67,7 +67,7 @@ pub struct CostItem {
 
 /// An item template's tooltip stat head, resolved per row by the app, which `SetMerchantItem` and
 /// `SetBuybackItem` draw while the VM's template is in flight. The reference reads the template in
-/// C++ (`0x534080`); no 1.12 Lua API carries these.
+/// C++; no 1.12 Lua API carries these.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ItemStatsHead {
     /// 0 poor to 6 artifact; colours the tooltip's name line.
@@ -175,7 +175,7 @@ impl super::UiScript {
     }
 
     /// Leave repair mode, as `HideRepairCursor` does, for the world's right mouse-down, which
-    /// resets the Repair base mode to Point (`0x492c68`).
+    /// resets the Repair base mode to Point.
     pub fn end_repair_mode(&mut self) {
         set_field!(self, repair_mode, false);
     }
@@ -399,15 +399,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
             // The sell fork comes first, before the argument is read. Its clear is the sale's, not
             // `ClearCursor`: `CURSOR_UPDATE` fires and the source slot stays greyed until the
-            // server's inventory update (`0x494b60`).
+            // server's inventory update.
             if let Some(item) = crate::script::cursor::take_cursor_item_for_sale(&mut model) {
                 model.merchant_cursor_sells.push((item.bag, item.slot));
                 return Ok(());
             }
 
-            // Every other leg clears with the real `ClearCursor(1,1)` (`0x4fb82d`/`0x4fb83f` on a
-            // refusal, `0x49510b` in the grab), not a bare drop: a held spell fires `CURSOR_UPDATE`
-            // and hides the bar grid, and an armed gift wrap is cancelled (`0x5edf10`).
+            // Every other leg clears with the real `ClearCursor(1,1)`, not a bare drop: a held
+            // spell fires `CURSOR_UPDATE` and hides the bar grid, and an armed gift wrap is
+            // cancelled.
             let held = match &model.cursor {
                 Some(CursorPayload::Merchant(m)) => Some(m.row),
                 _ => None,
@@ -439,8 +439,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 row: row0,
                 texture: item.texture.clone(),
             });
-            // The grab's `SignalEvent(CURSOR_UPDATE)` (`0x495159`); mode 5 skips the mode-7
-            // `ACTIONBAR_SHOWGRID` branch.
+            // The grab's `SignalEvent(CURSOR_UPDATE)`; mode 5 skips the mode-7 `ACTIONBAR_SHOWGRID`
+            // branch.
             model.cursor = Some(payload);
             crate::script::cursor::queue_cursor_update(&mut model);
             Ok(())
@@ -647,7 +647,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 /// greyed UnableBuy(23); no price leaves the cursor untouched.
 fn arm_vendor_cursor(lua: &Lua, price_of: impl FnOnce(&MerchantState) -> Option<u32>) {
     let mut model = crate::script::model_mut_of(lua);
-    // The family bails on `IsTargeting` first (`0x6e48a0`): an armed spell keeps its cursor.
+    // The family bails on `IsTargeting` first: an armed spell keeps its cursor.
     if model.spell_targeting {
         return;
     }
@@ -1086,8 +1086,8 @@ mod tests {
         assert_eq!(s.take_repair_all(), None, "a vendor that does not repair");
     }
 
-    /// `RepairAllItems(guildBank)` reads its flag through `GetBoolOrDefault` (`0x815500`), as the
-    /// stock guild-bank button's `RepairAllItems(1)` passes it.
+    /// `RepairAllItems(guildBank)` reads its flag through `GetBoolOrDefault`, as the stock
+    /// guild-bank button's `RepairAllItems(1)` passes it.
     #[test]
     fn repair_all_carries_the_guild_bank_flag() {
         let mut s = UiScript::new().unwrap();
@@ -1201,9 +1201,9 @@ mod tests {
         assert!(s.take_container_moves().is_empty());
     }
 
-    /// The targeting arm writes the Cast base mode over Repair (`0x6e50b0`) and its end restores
-    /// Point (`0x6e49f5`, `0x6e554c`), so arming ends repair mode for good. The idle feed pushes
-    /// false every frame, which must leave repair mode standing.
+    /// The targeting arm writes the Cast base mode over Repair and its end restores Point, so
+    /// arming ends repair mode for good. The idle feed pushes false every frame, which must leave
+    /// repair mode standing.
     #[test]
     fn arming_spell_targeting_ends_repair_mode_and_disarming_does_not_restore_it() {
         let mut s = UiScript::new().unwrap();
@@ -1283,7 +1283,7 @@ mod tests {
         );
         assert!(s.eval::<bool>("return not CursorHasSpell()").unwrap());
 
-        // Yet it is held: a second call toggles it off (`0x4fb818`), a third re-grabs.
+        // Yet it is held: a second call toggles it off, a third re-grabs.
         s.run("PickupMerchantItem(1)").unwrap();
         s.run("PickupMerchantItem(1)").unwrap();
         assert!(s.take_merchant_slot_buys().is_empty(), "no drop yet");
@@ -1422,9 +1422,9 @@ mod tests {
         (n("updates"), n("shows"), n("hides"))
     }
 
-    /// The grab goes through the cursor setter (`0x4950f0`): its `ClearCursor(1,1)` (`0x495112`)
-    /// signals `CURSOR_UPDATE` from the clear's tail, the set signals it again (`0x495159`), and no
-    /// `ACTIONBAR_SHOWGRID` since mode 5 is not mode 7.
+    /// The grab goes through the cursor setter: its `ClearCursor(1,1)` signals `CURSOR_UPDATE` from
+    /// the clear's tail, the set signals it again, and no `ACTIONBAR_SHOWGRID` since mode 5 is not
+    /// mode 7.
     #[test]
     fn a_vendor_grab_fires_cursor_update_but_not_the_bar_grid() {
         let mut s = UiScript::new().unwrap();
@@ -1466,8 +1466,7 @@ mod tests {
         );
     }
 
-    /// `ClearCursor 0x495190` opens with the gift-wrap cancel (`0x5edf10`), and the grab opens
-    /// with that clear (`0x49510b`).
+    /// `ClearCursor` opens with the gift-wrap cancel, and the grab opens with that clear.
     #[test]
     fn a_vendor_grab_cancels_an_armed_gift_wrap() {
         let mut s = UiScript::new().unwrap();

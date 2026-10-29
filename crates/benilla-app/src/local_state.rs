@@ -156,8 +156,8 @@ pub(crate) fn character_dir(account: &str, realm: &str, character: &str) -> Opti
 }
 
 /// The logged-in account, upper-cased as the reference keeps it (`CGlueMgr::LoginServerLogin`
-/// `0x4d8a30` upper-cases `m_accountName` before the logon; `s_addOnAccountName` `0xc24418`): the
-/// `<ACCOUNT>` of every `WTF\Account` path the UI's files take.
+/// upper-cases `m_accountName` before the logon; `s_addOnAccountName` `0xc24418`): the `<ACCOUNT>`
+/// of every `WTF\Account` path the UI's files take.
 static ACCOUNT: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
 
 /// Name the logged-in account, at the world server's accept.
@@ -198,7 +198,7 @@ pub(crate) fn saved_variables_character_path(realm: &str, character: &str) -> Op
 }
 
 /// `WTF\Account\<ACCOUNT>\<Realm>\<Character>\AddOns.txt` (`0xa1da48`): the character's AddOn
-/// enable state, `<AddOnName>: enabled|disabled` a line, written at the UI shutdown (`0x5f76a0`).
+/// enable state, `<AddOnName>: enabled|disabled` a line, written at the UI shutdown.
 pub(crate) fn addons_state_path(realm: &str, character: &str) -> Option<PathBuf> {
     Some(character_dir(&account()?, realm, character)?.join("AddOns.txt"))
 }

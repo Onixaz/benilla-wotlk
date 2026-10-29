@@ -101,10 +101,10 @@ impl Addon {
         }
     }
 
-    /// The chunk name, which addons parse: `"@%s"` (`0x8716e0`) over the resolved install path,
-    /// built by `0x704bc0` for every `.lua`, as for `<Script file=>`. Ace2 libraries find their
-    /// addon by splitting a `debugstack` frame on `\AddOns\` (`AceDB-2.0.lua:742`). The shipped
-    /// flat tree keeps [`benilla_ui::script::addon_chunk_name`].
+    /// The chunk name, which addons parse: `"@%s"` over the resolved install path, built by the
+    /// reference for every `.lua`, as for `<Script file=>`. Ace2 libraries find their addon by
+    /// splitting a `debugstack` frame on `\AddOns\` (`AceDB-2.0.lua:742`). The shipped flat tree
+    /// keeps [`benilla_ui::script::addon_chunk_name`].
     fn chunk_name(&self, file: &str, path: &str) -> String {
         match &self.source {
             Source::Builtin => benilla_ui::script::addon_chunk_name(&self.name, file),
@@ -124,11 +124,11 @@ impl Addon {
         self.load_files_into(script, files, &mut Status::default())
     }
 
-    /// [`Addon::load`] over an explicit slice. A manifest lists both kinds of file (the
-    /// reference's `FrameXML.toc` opens with `GlobalStrings.lua`): a `.lua` runs as a chunk in the
-    /// shared state, anything else is parsed as FrameXML and materialized. What the reference's
-    /// `.toc` runner (`0x6edb90`) reports goes into `toc`: a file that did not open or parse, and
-    /// each document's own record under its banner.
+    /// [`Addon::load`] over an explicit slice. A manifest lists both kinds of file (the reference's
+    /// `FrameXML.toc` opens with `GlobalStrings.lua`): a `.lua` runs as a chunk in the shared
+    /// state, anything else is parsed as FrameXML and materialized. What the reference's `.toc`
+    /// runner reports goes into `toc`: a file that did not open or parse, and each document's own
+    /// record under its banner.
     pub(super) fn load_files_into(
         &self,
         script: &UiScript,
@@ -158,8 +158,8 @@ impl Addon {
                 continue;
             };
             if is_lua(file) {
-                // What `<Script file=>` gets: one chunk in the one global state, in manifest
-                // order, as `AddOn_Load 0x51f240` hands every listed file to `0x6edb90`.
+                // What `<Script file=>` gets: one chunk in the one global state, in manifest order,
+                // as `AddOn_Load` hands every listed file.
                 match script.run_chunk_named(&bytes, &self.chunk_name(file, &path)) {
                     Ok(()) => info!("ui_script: {}/{file} ran", self.name),
                     Err(e) => {
@@ -192,8 +192,8 @@ impl Addon {
                 script.framexml_debug(),
                 status::file_banner(&path),
             );
-            // `FrameXML_Debug` traces go to the log only: the reference files them at severity 0
-            // (`0x6ee2bc`) in a per-document record whose surface is untraced.
+            // `FrameXML_Debug` traces go to the log only: the reference files them at severity 0 in
+            // a per-document record whose surface is untraced.
             for t in &report.traces {
                 info!("ui_script({}/{file}): {t}", self.name);
             }
@@ -255,8 +255,8 @@ fn read_under(root: &Path, rel: &str) -> Option<Vec<u8>> {
     std::fs::read(root.join(rel)).ok()
 }
 
-/// The one file namespace, install-relative, as in the reference: `0x647e60` answers a name from
-/// the install tree's hash index, then the archive chain, after `0x6ede10` collapses `..`. So an
+/// The one file namespace, install-relative, as in the reference: the reference answers a name from
+/// the install tree's hash index, then the archive chain, after the reference collapses `..`. So an
 /// addon's `..\Blizzard_AuctionUI\…` reaches the archive behind a `.pub`-only folder. Only a path
 /// under `Interface/AddOns/` touches the filesystem, and never above the AddOns root.
 pub(crate) fn read_addon_file(root: &Path, req: &str) -> Option<Vec<u8>> {
@@ -331,11 +331,10 @@ fn chain_addons() -> Vec<Addon> {
 }
 
 /// Every registered addon in registration order, the archive pass before the loose folders and a
-/// name's first registration winning: `AddOn_ScanAddOnDir 0x51c760` walks each archive's
-/// `(listfile)` in line order (`0x401470`, `0x648fb0`) before the `FindFirstFileW` walk
-/// (`0x42ad10`), and `0x51c9b0` returns on a name-hash hit (`0x51ca10`) and tail-inserts
-/// (`0x521ad0`). That order is the Lua index space, and in the one shared Lua state (`0x7040d0`)
-/// it decides whose copy of a global wins.
+/// name's first registration winning: `AddOn_ScanAddOnDir` walks each archive's `(listfile)` in
+/// line order before the `FindFirstFileW` walk, and the reference returns on a name-hash hit and
+/// tail-inserts. That order is the Lua index space, and in the one shared Lua state it decides
+/// whose copy of a global wins.
 fn discover() -> Vec<Addon> {
     // The archive pass, in `BLIZZARD_ADDONS` order: the shipped `patch.MPQ` listfile's too.
     let mut found = chain_addons();
@@ -349,12 +348,12 @@ fn discover() -> Vec<Addon> {
     found
 }
 
-/// Sort folder names into NTFS directory order. The reference's loose pass (`0x42ad10`,
-/// `FindFirstFileW`) sorts nothing, so its order is the host filesystem's, and the addon corpus was
-/// written against NTFS: a directory's `$I30` index is ordered by `COLLATION_FILE_NAME`, UTF-16
-/// units compared through `$UpCase`, a tie broken by the raw units. With every addon in one Lua
-/// state (`0x7040d0`), this order decides which copy of a shared library wins. Sorted on every
-/// host, Windows included, so a capture and the addon harness are deterministic.
+/// Sort folder names into NTFS directory order. The reference's loose pass (`FindFirstFileW`) sorts
+/// nothing, so its order is the host filesystem's, and the addon corpus was written against NTFS: a
+/// directory's `$I30` index is ordered by `COLLATION_FILE_NAME`, UTF-16 units compared through
+/// `$UpCase`, a tie broken by the raw units. With every addon in one Lua state, this order decides
+/// which copy of a shared library wins. Sorted on every host, Windows included, so a capture and
+/// the addon harness are deterministic.
 pub(crate) fn sort_by_directory_order(names: &mut [String]) {
     names.sort_by_cached_key(|n| collation_key(n));
 }
@@ -481,7 +480,7 @@ fn parse_enable_state(text: &str) -> Vec<(String, bool)> {
         .collect()
 }
 
-/// The file as `SaveAddOnEnableState` (`0x5f76a0`) writes it, `"%s: %s\r\n"` a row (`0xa1d8e8`).
+/// The file as `SaveAddOnEnableState` writes it, `"%s: %s\r\n"` a row (`0xa1d8e8`).
 fn render_enable_state(states: &[(String, bool)]) -> String {
     let mut out = String::new();
     for (name, enabled) in states {
@@ -503,10 +502,10 @@ pub(crate) fn enable_state_path(identity: Option<&(String, String)>) -> Option<P
 
 // ── The enable store: the reference's `ADDONSTATELIST` ──
 
-/// The reference's `ADDONSTATELIST` (`0xbe1bd0`): a node per character in `SMSG_CHAR_ENUM` order,
-/// rebuilt whole (`0x51f0b0` clears it, then callback `0x472300` fills a node per record through
-/// `AddOnList_LoadCharacter 0x51ebe0`), each holding that character's enable hash. A character
-/// with no file is an empty node, whose enable bit is answered from the others.
+/// The reference's `ADDONSTATELIST`: a node per character in `SMSG_CHAR_ENUM` order, rebuilt whole
+/// (then callback fills a node per record through `AddOnList_LoadCharacter`), each holding that
+/// character's enable hash. A character with no file is an empty node, whose enable bit is answered
+/// from the others.
 #[derive(Default)]
 pub(crate) struct EnableStore {
     /// The realm half of every node's file.
@@ -544,9 +543,9 @@ impl EnableStore {
         }
     }
 
-    /// `0x51e470(addon, NULL, useDefault = 0)`, the explicit-only aggregate over the nodes with a
-    /// row (`0x51e5df je 0x51e60a`): `Some(v)` when all say `v` (the reference's 2 or 0), `None`
-    /// when they are mixed or there are none.
+    /// `(addon, NULL, useDefault = 0)`, the explicit-only aggregate over the nodes with a row:
+    /// `Some(v)` when all say `v` (the reference's 2 or 0), `None` when they are mixed or there are
+    /// none.
     fn aggregate(&self, addon: &str) -> Option<bool> {
         let mut total = 0usize;
         let mut on = 0usize;
@@ -564,13 +563,13 @@ impl EnableStore {
         }
     }
 
-    /// The bit a character gets, `0x51e470(addon, character, useDefault = 1)` (0 or 2 as a bool):
+    /// The bit a character gets, `(addon, character, useDefault = 1)` (0 or 2 as a bool):
     /// * an explicit row in their hash wins;
-    /// * a node with no row takes [`Self::aggregate`] (`0x51e5f0`'s self-recursion), then
-    ///   `## DefaultState` where that is undecided;
-    /// * no node at all, or no character, takes `## DefaultState`: the walk passes each
-    ///   mismatching node (`0x51e55a jne 0x51e611`) and ends with `total == 0`. From our callers a
-    ///   named character always has a node ([`store_nodes`]).
+    /// * a node with no row takes [`Self::aggregate`], then `## DefaultState` where that is
+    ///   undecided;
+    /// * no node at all, or no character, takes `## DefaultState`: the walk passes each mismatching
+    ///   node and ends with `total == 0`. From our callers a named character always has a node
+    ///   ([`store_nodes`]).
     pub(crate) fn enabled_for(
         &self,
         addon: &str,
@@ -586,8 +585,8 @@ impl EnableStore {
         }
     }
 
-    /// The setter `0x51ea20`: `None` is every node (the glue's All), a name its one node; a name
-    /// with no node is a no-op, as the setter never creates one.
+    /// The setter: `None` is every node (the glue's All), a name its one node; a name with no node
+    /// is a no-op, as the setter never creates one.
     pub(crate) fn set(&mut self, addon: &str, character: Option<&str>, on: bool) {
         for (name, hash) in &mut self.nodes {
             if character.is_none_or(|c| name.eq_ignore_ascii_case(c)) {
@@ -596,8 +595,8 @@ impl EnableStore {
         }
     }
 
-    /// The writer `0x51ef20`, glue `SaveAddOns` (`0x46d990`): each dirty node's file, rewritten
-    /// from its hash; a clean node is skipped (`0x51ef59`) and its file left as it is.
+    /// The writer, glue `SaveAddOns`: each dirty node's file, rewritten from its hash; a clean node
+    /// is skipped and its file left as it is.
     pub(crate) fn save(&mut self) {
         for (name, hash) in &mut self.nodes {
             if let Some(rows) = hash.take_dirty() {
@@ -626,9 +625,9 @@ fn store_nodes(identity: Option<&(String, String)>, roster: &[String]) -> Vec<St
     names
 }
 
-/// Write one character's enable hash as its whole file, a line per entry (`0x853968`), as the
-/// writer `0x51ef20` creates it afresh (`CREATE_ALWAYS`). The hash holds every row the file had,
-/// so an uninstalled addon's row survives and a name keeps its spelling.
+/// Write one character's enable hash as its whole file, a line per entry, as the writer creates it
+/// afresh (`CREATE_ALWAYS`). The hash holds every row the file had, so an uninstalled addon's row
+/// survives and a name keeps its spelling.
 pub(crate) fn write_enable_state(identity: Option<&(String, String)>, rows: &[(String, bool)]) {
     let Some(path) = enable_state_path(identity) else {
         return; // no character picked, or no state folder
@@ -639,8 +638,8 @@ pub(crate) fn write_enable_state(identity: Option<&(String, String)>, rows: &[(S
     }
 }
 
-/// Write the current character's enable hash at shutdown, the reference's last step (`0x490c88`,
-/// after the saved-variables files), only when a verb changed it this session.
+/// Write the current character's enable hash at shutdown, the reference's last step (after the
+/// saved-variables files), only when a verb changed it this session.
 pub(super) fn save_enable_state(script: &UiScript, identity: Option<&(String, String)>) {
     if let Some(rows) = script.take_addon_enable_rows() {
         write_enable_state(identity, &rows);
@@ -755,9 +754,9 @@ pub(super) fn save_glue_addons(
     store.save();
 }
 
-/// Load every discovered third-party addon at world entry (`UI_Init 0x48fbf0` → `0x51f600`),
-/// returning every load error tagged by addon. `&mut` because each `ADDON_LOADED` fires
-/// ([`UiScript::fire_event`]) before the next addon's files run, as in the reference.
+/// Load every discovered third-party addon at world entry (`UI_Init`), returning every load error
+/// tagged by addon. `&mut` because each `ADDON_LOADED` fires ([`UiScript::fire_event`]) before the
+/// next addon's files run, as in the reference.
 pub(super) fn load_third_party(
     script: &mut UiScript,
     identity: Option<&(String, String)>,
@@ -817,7 +816,7 @@ pub(super) fn load_third_party(
         ..Walk::default()
     };
     for addon in &addons {
-        // `## LoadOnDemand: 1` waits for `LoadAddOn`: `0x51f600` loads only records whose
+        // `## LoadOnDemand: 1` waits for `LoadAddOn`: the reference loads only records whose
         // LoadOnDemand byte is 0.
         if addon.toc.load_on_demand() {
             info!(
@@ -861,11 +860,11 @@ struct Walk {
 
 impl Walk {
     /// Load one addon by name; `Err` means it did not load, which a hard dependent propagates. The
-    /// order is `AddOn_Load 0x51f240`'s: optional dependencies (failures ignored), required ones (a
-    /// failure aborts only this addon), the `.toc` files in order (`0x51f3fa`), `Bindings.xml`
-    /// (`0x51f400`), the account then per-character saved variables (`0x51f4b5`, `0x51f53b`), then
-    /// `ADDON_LOADED` (event 429, `0x51f5ad`), whose handlers see the restored values. The
-    /// reference then loads the addons whose `## LoadWith` names this one; this walk does not.
+    /// order is `AddOn_Load`'s: optional dependencies (failures ignored), required ones (a failure
+    /// aborts only this addon), the `.toc` files in order, `Bindings.xml`, the account then
+    /// per-character saved variables, then `ADDON_LOADED` (event 429), whose handlers see the
+    /// restored values. The reference then loads the addons whose `## LoadWith` names this one;
+    /// this walk does not.
     fn load(&mut self, script: &mut UiScript, all: &[Addon], name: &str) -> Result<(), ()> {
         // Key on the addon's own spelling: a `.toc` may name a dependency in any case, and keying
         // on the caller's would load the same addon twice.
@@ -939,8 +938,8 @@ impl Walk {
             return Err(());
         }
 
-        // The add-on's record: its `.toc`'s under that banner (`0x6eddc8`), then its own banner
-        // (`0x51f464`), merged into the UI load's.
+        // The add-on's record: its `.toc`'s under that banner, then its own banner, merged into the
+        // UI load's.
         let debug = script.framexml_debug();
         let mut toc = Status::default();
         self.failures.extend(addon.load(script, &mut toc));
@@ -950,8 +949,8 @@ impl Walk {
         let mut block = Status::default();
         own.close_into(&mut block, debug, status::addon_banner(&addon.name));
         script.report_load_status(block);
-        // `Bindings.xml` (`0x51f400`), after the files whose functions a binding calls, through
-        // the addon's own sandboxed reader; absent is normal.
+        // `Bindings.xml`, after the files whose functions a binding calls, through the addon's own
+        // sandboxed reader; absent is normal.
         let bindings_xml = benilla_ui::loader::join_ref(&addon.prefix(), "Bindings.xml");
         if let Some(bytes) = addon.read(&bindings_xml) {
             let text = benilla_ui::source::decode(&bytes);
@@ -969,14 +968,14 @@ impl Walk {
                 }
             }
         }
-        // The saved variables, account then per-character (`0x51f4b5`, `0x51f53b`): after the
-        // files set their defaults, before `ADDON_LOADED`.
+        // The saved variables, account then per-character: after the files set their defaults,
+        // before `ADDON_LOADED`.
         script.load_addon_saved_variables(&addon.name);
         self.loaded.insert(addon.name.clone());
         script.mark_addon_loaded(&addon.name);
         // `arg1` is the addon's own folder name, whatever case a dependent used. Marked loaded
-        // first: the reference sets `[rec+0x18]` before `0x51f5ad`, so a handler's
-        // `IsAddOnLoaded` about itself is true.
+        // first: the reference sets `[rec+0x18]`, so a handler's `IsAddOnLoaded` about itself is
+        // true.
         script.fire_event("ADDON_LOADED", vec![ScriptValue::Str(addon.name.clone())]);
         Ok(())
     }
@@ -1048,8 +1047,8 @@ mod tests {
         assert_eq!(upcase_unit('é'), 'É');
     }
 
-    /// `AddOn_ScanAddOnDir 0x51c760` scans the archives (`0x51c777`) before the loose folders
-    /// (`0x51c78f`), and `0x51c9b0` returns on a name already registered (`0x51ca10`).
+    /// `AddOn_ScanAddOnDir` scans the archives before the loose folders, and the reference returns
+    /// on a name already registered.
     #[test]
     fn the_archive_pass_registers_first_and_wins_a_duplicate() {
         let _data = benilla_formats::wow_data_or_skip!();
@@ -1242,7 +1241,7 @@ mod tests {
     }
 
     /// A `.toc`-listed `Bindings.xml` is walked as FrameXML, each `<Binding>` an unknown frame
-    /// type, which the reference logs and carries on from (`0x6ee356`).
+    /// type, which the reference logs and carries on.
     #[test]
     fn a_toc_listed_bindings_xml_is_not_a_script_error() {
         let tmp =
@@ -1279,7 +1278,7 @@ mod tests {
     }
 
     /// A `.toc` line resolves against the addon folder, `<Script file=X>` against
-    /// `dirname(referrer)` (`0x6ee07b`), and both chunks are `"@%s"` of the path (`0x704bc0`).
+    /// `dirname(referrer)`, and both chunks are `"@%s"` of the path.
     #[test]
     fn an_xml_referenced_lua_is_named_like_a_toc_listed_one() {
         let tmp =
@@ -1647,7 +1646,7 @@ mod tests {
             event_log(&script),
             vec!["files-ran", "ADDON_LOADED:EventProbe"],
             "the addon's own files run first, THEN ADDON_LOADED with its own folder name as arg1 \
-             (`AddOn_Load 0x51f240`: files 0x51f3fa, event 0x51f5ad)"
+             (`AddOn_Load`: files)"
         );
     }
 
@@ -1695,9 +1694,8 @@ mod tests {
         );
     }
 
-    /// `UI_Init 0x48fbf0` loads the addons at `0x4900a3` (each `ADDON_LOADED` at `0x51f5ad`) and
-    /// fires `VARIABLES_LOADED` at `0x4900b2`; `PLAYER_LOGIN` comes after, on a fresh login from
-    /// the player's create (`0x5deb60` → `0x4908c0`), on a `/reload` from `0x490168`.
+    /// `UI_Init` loads the addons (each `ADDON_LOADED`) and fires `VARIABLES_LOADED`;
+    /// `PLAYER_LOGIN` comes after, on a fresh login from the player's create, on a `/reload`.
     #[test]
     fn the_ui_init_events_fire_in_the_reference_order() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -1952,8 +1950,9 @@ mod tests {
         script.note_addon_info_reply(&hidden);
     }
 
-    /// The in-game `GetAddOnInfo` (`0x48e390`) answers seven values, `name, title, notes, enabled,
-    /// loadable, reason, security`; glue's (`0x46d460`) answers eight, with `url` at slot 4.
+    /// The in-game `GetAddOnInfo` answers seven values,
+    /// `name, title, notes, enabled, loadable, reason, security`; glue's answers eight, with `url`
+    /// at slot 4.
     #[test]
     fn get_addon_info_returns_the_manifests_own_title_and_notes() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2171,9 +2170,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
-    /// A runtime `LoadAddOn`'s misses are one block appended to `Logs\FrameXML.log`
-    /// (`0x46aac0`): the add-on's banner, its toc's, then each document by its own record, an
-    /// included miss under its includer's banner (`0x6ee21c`).
+    /// A runtime `LoadAddOn`'s misses are one block appended to `Logs\FrameXML.log`: the add-on's
+    /// banner, its toc's, then each document by its own record, an included miss under its
+    /// includer's banner.
     #[test]
     fn a_load_addon_appends_its_misses_as_one_block() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2269,7 +2268,7 @@ mod tests {
     }
 
     /// A demand load treats a `.toc` line naming a missing file as the startup walk does: the
-    /// reference logs `Couldn't open %s` and carries on (`0x6edaa0`).
+    /// reference logs `Couldn't open %s` and carries on.
     #[test]
     fn a_missing_manifest_file_does_not_fail_a_demand_load() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2367,8 +2366,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
-    /// `AddOn_CanLoad` check 3 is `0x51e470(name, character, useDefault = 1)`. `Contested` is the
-    /// control: the roster disagrees about it, so the newcomer gets its `## DefaultState`.
+    /// `AddOn_CanLoad` check 3 is `(name, character, useDefault = 1)`. `Contested` is the control:
+    /// the roster disagrees about it, so the newcomer gets its `## DefaultState`.
     #[test]
     fn a_character_with_no_file_inherits_the_rosters_unanimous_disable() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2423,8 +2422,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
-    /// A name on no node passes every node (`0x51e55a jne 0x51e611`) and takes the
-    /// `DefaultState ? 2 : 0` epilogue; `Known`, with a node and no row, is the control.
+    /// A name on no node passes every node and takes the `DefaultState ? 2 : 0` epilogue; `Known`,
+    /// with a node and no row, is the control.
     #[test]
     fn an_unknown_character_takes_the_manifest_default_not_the_aggregate() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2493,7 +2492,7 @@ mod tests {
                 .unwrap();
         assert_eq!(
             written, "Drop: disabled\r\n",
-            "one line per hash entry (`0x51f006`), and the hash holds only the toggled addon: no \
+            "one line per hash entry, and the hash holds only the toggled addon: no \
              `Keep`, no `Blizzard_*` row"
         );
 
@@ -2508,9 +2507,9 @@ mod tests {
     }
 
     /// A session whose verbs changed nothing leaves the node clean, and the writer skips a clean
-    /// node (`0x51ef59`): no file is created, and one that exists keeps its bytes, even through
-    /// a verb that sets a row to the value it already has and a toggle `ResetDisabledAddOns`
-    /// reverts (`0x48e830` reloads the hash clean, `0x51ec59`).
+    /// node: no file is created, and one that exists keeps its bytes, even through a verb that sets
+    /// a row to the value it already has and a toggle `ResetDisabledAddOns` reverts (reloads the
+    /// hash clean).
     #[test]
     fn a_session_that_toggles_nothing_writes_nothing() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2554,9 +2553,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
-    /// The issue's example end to end, through the logout writer and the query `0x51e470`: Alice
-    /// and Bob have both played with `Shared` installed, then Bob turns it off. Alice, with no
-    /// row of her own, and a character created afterwards both follow Bob.
+    /// The issue's example end to end, through the logout writer and the query: Alice and Bob have
+    /// both played with `Shared` installed, then Bob turns it off. Alice, with no row of her own,
+    /// and a character created afterwards both follow Bob.
     #[test]
     fn a_character_that_never_chose_follows_the_realms_other_characters() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2597,8 +2596,8 @@ mod tests {
 
     // ───────────────────────────── saved variables ─────────────────────────────
 
-    /// The account file, then the per-character one (`0x51f4b5`, `0x51f53b`), then `ADDON_LOADED`
-    /// (`0x51f5ad`): the file-scope default is set, overwritten, then read by the handler.
+    /// The account file, then the per-character one, then `ADDON_LOADED`: the file-scope default is
+    /// set, overwritten, then read by the handler.
     #[test]
     fn an_addons_saved_variables_survive_the_session() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2718,8 +2717,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
-    /// `PLAYER_LOGOUT` fires before the writes (`0x490c2a` before `0x490c7e`/`0x490c83`), so a
-    /// value its handler sets reaches the file.
+    /// `PLAYER_LOGOUT` fires before the writes, so a value its handler sets reaches the file.
     #[test]
     fn player_logout_fires_before_the_write() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2850,8 +2848,8 @@ mod tests {
         );
     }
 
-    /// The writer `0x51ef20` emits the enable hash the reader `0x51ebe0` built from the file, an
-    /// entry per line as written: a row survives an uninstall, and a name keeps its spelling.
+    /// The writer emits the enable hash the reader built from the file, an entry per line as
+    /// written: a row survives an uninstall, and a name keeps its spelling.
     #[test]
     fn the_logout_write_keeps_rows_it_did_not_put_there() {
         let _l = crate::local_state::test_env::ENV_LOCK
@@ -2899,11 +2897,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(home.parent().unwrap());
     }
 
-    /// `AddOn_Load 0x51f240` has no re-entrancy guard (the visiting byte `[UIADDON+0x2d]` lives in
+    /// `AddOn_Load` has no re-entrancy guard (the visiting byte `[UIADDON+0x2d]` lives in
     /// `AddOn_CanLoad 0x5f7e90`) but stamps the loaded byte before the dependency loops
-    /// (`0x51f313 mov byte [rec+0x18],1`), so the re-entered frame exits at `0x51f2d6`/`0x51f2db`
-    /// with 1. A cycle loads both with no reason token, `ADDON_LOADED` fires B then A, and
-    /// `IsAddOnLoaded('Ping')` is 1 while Pong's files run.
+    /// (`mov byte [rec+0x18],1`), so the re-entered frame exits with 1. A cycle loads both with no
+    /// reason token, `ADDON_LOADED` fires B then A, and `IsAddOnLoaded('Ping')` is 1 while Pong's
+    /// files run.
     #[test]
     fn a_load_on_demand_dependency_cycle_loads_both_sides() {
         let _l = crate::local_state::test_env::ENV_LOCK

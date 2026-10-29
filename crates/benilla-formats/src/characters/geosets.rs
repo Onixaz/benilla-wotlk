@@ -52,7 +52,7 @@ pub struct CharacterGeosets {
     helmet_vis: HashMap<u32, [u32; 7]>,
 }
 
-/// What the equipment branches of `0x477520` read: each bodyslot 2–9's three `geosetGroup`s
+/// What the equipment branches of the reference read: each bodyslot 2–9's three `geosetGroup`s
 /// (shirt, chest, belt, pants, boots, wrist, gloves, tabard), the cloak's first, and the helm's
 /// `HelmetGeosetVisData` rows (`[male, female]`, ItemDisplayInfo cols 12/13). Default is naked.
 #[derive(Default, Clone, Copy)]
@@ -63,14 +63,14 @@ pub struct EquipGeosets {
     /// Branch B3's gate: something other than the shirt dresses the forearm (`cc+0x26c..cc+0x280`,
     /// ArmLower cells 1–6); fill it from [`forearm_dressed`](crate::forearm_dressed).
     pub forearm_dressed: bool,
-    /// Branch B6's gate `[cc+0xc]`: the tabard designer is open (setter `0x5e07fb`), so the body
-    /// wears a previewable tabard over an empty tabard slot.
+    /// Branch B6's gate `[cc+0xc]`: the tabard designer is open, so the body wears a previewable
+    /// tabard over an empty tabard slot.
     pub tabard_preview: bool,
 }
 
 impl CharacterGeosets {
     /// The geosets (`skinSectionId`s) this appearance draws, sorted and deduplicated: the naked
-    /// set, then the eight equipment branches B1–B8 of `0x477520`. `eye_glow` is
+    /// set, then the eight equipment branches B1–B8. `eye_glow` is
     /// [`CharSections::eye_glow`](crate::CharSections::eye_glow). Use [`VisibleGeosets::contains`]
     /// to retain unmanaged IDs above [`SELECTED_THROUGH`].
     pub fn visible_geosets(
@@ -85,7 +85,8 @@ impl CharacterGeosets {
         // The naked set: the region bases and geoset 0, the body.
         let mut set = REGION_BASES.to_vec();
         set.push(0);
-        // Hair: `0x478540` returns `max(1, geosetId)`, so a bald style shows geoset 1, the scalp.
+        // Hair: the reference returns `max(1, geosetId)`, so a bald style shows geoset 1, the
+        // scalp.
         if let Some(&g) = self.hair.get(&(race, sex, hair_style)) {
             set[0] = g.max(1) as u16;
         }
@@ -134,22 +135,22 @@ impl CharacterGeosets {
         let disable = |set: &mut Vec<u16>, lo: u16, hi: u16| set.retain(|id| *id < lo || *id > hi);
         // The robe bit (chest or pants geosetGroup[2]) gates B4, B5 and B6; B7 reads the chest's.
         let robe = g(1, 2).or_else(|| g(3, 2));
-        // B1/B2 (`0x477564`): gloves replace the glove group, else the chest's sleeves show.
+        // B1/B2: gloves replace the glove group, else the chest's sleeves show.
         if let Some(v) = g(6, 0) {
             disable(&mut set, 401, 499);
             set.push(401 + v as u16);
         } else if let Some(v) = g(1, 0) {
             set.push(801 + v as u16);
         }
-        // B3 (`0x4775bd`): the shirt's cuff, unless something else dresses the forearm.
+        // B3: the shirt's cuff, unless something else dresses the forearm.
         if !equip.forearm_dressed {
             if let Some(v) = g(0, 0) {
                 set.push(801 + v as u16);
             }
         }
-        // B4 (`0x4775fb`): a robe hides the leg groups and shows its skirt, else boots replace the
-        // boot group, else the pants' kneepads. The bare 901 enables are the reference's own
-        // (`0x477648`, `0x477685`), redundant with the bases.
+        // B4: a robe hides the leg groups and shows its skirt, else boots replace the boot group,
+        // else the pants' kneepads. The bare 901 enables are the reference's own, redundant with
+        // the bases.
         if let Some(v) = robe {
             disable(&mut set, 501, 599);
             disable(&mut set, 902, 999);
@@ -157,8 +158,8 @@ impl CharacterGeosets {
             disable(&mut set, 1300, 1399);
             set.push(1301 + v as u16);
         } else if let Some(v) = g(4, 0) {
-            // `0x477639` disables the whole boot group first: the bare foot, 501, is a real submesh
-            // on 11 of the 18 character models.
+            // The reference disables the whole boot group first: the bare foot, 501, is a real
+            // submesh on 11 of the 18 character models.
             disable(&mut set, 501, 599);
             set.push(901);
             set.push(501 + v as u16);
@@ -167,22 +168,22 @@ impl CharacterGeosets {
         } else {
             set.push(901);
         }
-        // B5 (`0x477706`): the tabard flap, hidden by a robe.
+        // B5: the tabard flap, hidden by a robe.
         if robe.is_none() {
             if let Some(v) = g(7, 0) {
                 set.push(1201 + v as u16);
             }
         }
-        // B6 (`0x477752`): the designer preview wears 1201, the group's empty base, and without a
-        // robe 1202, the flap.
+        // B6: the designer preview wears 1201, the group's empty base, and without a robe 1202, the
+        // flap.
         if equip.tabard_preview {
             set.push(1201); // redundant with the bases; the reference enables it too
             if robe.is_none() {
                 set.push(1202);
             }
         }
-        // B7 (`0x477799`): the shirt's doublet and the pants' legs (base 1102, not 1101); skipped
-        // under a chest robe (`0x4777a4`, not a legs robe) or a tabard (`0x4777b8`).
+        // B7: the shirt's doublet and the pants' legs (base 1102, not 1101); skipped under a chest
+        // robe (not a legs robe) or a tabard.
         if g(1, 2).is_none() && g(7, 0).is_none() {
             if let Some(v) = g(0, 1) {
                 set.push(1001 + v as u16);
@@ -196,20 +197,20 @@ impl CharacterGeosets {
             disable(&mut set, 1800, 1899);
             set.push(1801 + v as u16);
         }
-        // B8 (`0x47780a`): a cloak replaces the cloak group.
+        // B8: a cloak replaces the cloak group.
         if let Some(v) = equip.cloak.filter(|v| *v != 0) {
             disable(&mut set, 1500, 1599);
             set.push(1501 + v as u16);
         }
-        // The client sets a flag per submesh (`0x7110d0`), so a repeated enable is a no-op there.
+        // The client sets a flag per submesh, so a repeated enable is a no-op there.
         set.sort_unstable();
         set.dedup();
         VisibleGeosets { selected: set }
     }
 
     /// Load the customization DBCs from the patch chain. A repeated `(race, sex, variation)` key
-    /// takes its first row, as the client's linear scans (`0x478540`, `0x478740`) do: the shipped
-    /// CharHairGeosets lists goblin male variation 0 four times (geosets 1, 2, 1, 2).
+    /// takes its first row, as the client's linear scans do: the shipped CharHairGeosets lists
+    /// goblin male variation 0 four times (geosets 1, 2, 1, 2).
     pub fn load(chain: &mut Chain) -> Result<Self> {
         let hair = {
             let bytes = chain
@@ -420,7 +421,7 @@ mod tests {
         let set = cg.visible_geosets(1, 0, 0, 0, false, &eq);
         assert!(set.contains(&402) && !set.contains(&401));
 
-        // Boots take the bare foot, 501, off (`0x477639`).
+        // Boots take the bare foot, 501, off.
         let mut eq = EquipGeosets::default();
         eq.bodyslots[4] = Some([2, 0, 0]);
         let set = cg.visible_geosets(1, 0, 0, 0, false, &eq);
@@ -450,7 +451,7 @@ mod tests {
         assert!(set.contains(&1505) && !set.contains(&1501));
     }
 
-    /// Branch B3 (`0x4775bd`) keys the shirt's cuff on the forearm tile, not the chest slot.
+    /// Branch B3 keys the shirt's cuff on the forearm tile, not the chest slot.
     #[test]
     fn b3_shirt_sleeve_follows_the_forearm_tile_not_the_chest_slot() {
         let cg = CharacterGeosets {
@@ -482,7 +483,7 @@ mod tests {
         );
     }
 
-    /// Branch B6 (`0x477752`): the open designer wears the flap over an empty slot, unless robed.
+    /// Branch B6: the open designer wears the flap over an empty slot, unless robed.
     #[test]
     fn b6_tabard_preview_wears_the_flap_with_an_empty_slot() {
         let cg = CharacterGeosets {
@@ -509,7 +510,7 @@ mod tests {
         }
     }
 
-    /// Branch B7 is off under a chest robe or a tabard (`0x4777a4`, `0x4777b8`), not a legs robe.
+    /// Branch B7 is off under a chest robe or a tabard, not a legs robe.
     #[test]
     fn b7_is_gated_by_the_chest_robe_and_the_tabard() {
         let cg = CharacterGeosets {
@@ -565,7 +566,7 @@ mod tests {
         );
     }
 
-    /// The helm vis row (`0x4799a0`) is picked by sex, and a race bit forces the group bases.
+    /// The helm vis row is picked by sex, and a race bit forces the group bases.
     #[test]
     fn helm_vis_forces_group_bases_by_race() {
         let mut hair = HashMap::new();

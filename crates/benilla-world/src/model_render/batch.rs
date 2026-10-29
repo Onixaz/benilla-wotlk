@@ -30,7 +30,7 @@ pub struct BatchVariants {
     pub interior_bake_blend: Handle<WowModelMaterial>,
     /// The `AlphaMode::Blend` twin every feather rides; [`Self::steady`] if that already blends.
     pub fade_blend: Handle<WowModelMaterial>,
-    /// The depth-prime twin (`0x707f7d`); `None` for a multiply batch or depth write/test off.
+    /// The depth-prime twin; `None` for a multiply batch or depth write/test off.
     pub zfill: Option<Handle<WowModelMaterial>>,
 }
 
@@ -49,7 +49,7 @@ pub struct EntityUvLane<'a> {
 pub struct SkyboxBatch {
     /// Slot weight 1.0: the authored blend mode.
     pub steady: Handle<WowModelMaterial>,
-    /// The blend-promotion twin for `0 < weight < 1` (`0x70c190`).
+    /// The blend-promotion twin for `0 < weight < 1`.
     pub fade_blend: Handle<WowModelMaterial>,
 }
 
@@ -100,9 +100,8 @@ impl M2BatchMaterials<'_> {
     /// it draws at the reverse-Z far value ([`crate::sky_order`]), never writes depth, and always
     /// tests it, overriding M2 flag `0x08`, which the reference uses only to order the sky inside
     /// its own depth slice `[0.975, 0.98]` (ported as [`super::skybox_sort_bias`]). The slot weight
-    /// (`[CM2Model+0x180]`, from the interior crossfade `[0xce9bdc]`) scales every batch's alpha,
-    /// and `0 < A < 1` promotes a batch to SRC_ALPHA blending (`0x70c190`): `fade_blend` is that
-    /// twin, or `steady` when the batch already blends.
+    /// (`[CM2Model+0x180]`) scales every batch's alpha, and `0 < A < 1` promotes a batch to
+    /// SRC_ALPHA blending: `fade_blend` is that twin, or `steady` when the batch already blends.
     pub fn skybox(
         &mut self,
         sub: &benilla_formats::RenderSubmesh,
@@ -171,8 +170,8 @@ impl M2BatchMaterials<'_> {
     }
 
     /// The variant set of any entity part, all lit with one indoor pair: the reference gives every
-    /// entity M2 the same entity-node fill (`0x672a20`). Registers each variant's UV loop on `uv`
-    /// in the same step; the depth-prime twin, drawn only mid-feather, is not registered.
+    /// entity M2 the same entity-node fill. Registers each variant's UV loop on `uv` in the same
+    /// step; the depth-prime twin, drawn only mid-feather, is not registered.
     pub fn entity_variants(
         &mut self,
         sub: &ModelSubmesh,
@@ -417,8 +416,8 @@ impl M2BatchMaterials<'_> {
 }
 
 /// A WMO group batch shades through the FFP N·L path, so its `sun_scale` is unread. Every other
-/// batch is lit on the entity 2.5/0.5 lane (`0x69e280`); the dynamic half, the MCSH sample at the
-/// entity's feet, rides the per-instance `MeshTag` shade byte.
+/// batch is lit on the entity 2.5/0.5 lane; the dynamic half, the MCSH sample at the entity's feet,
+/// rides the per-instance `MeshTag` shade byte.
 fn shade_for(sub: &ModelSubmesh) -> ShadeSel {
     if sub.wmo_batch.is_some() {
         ShadeSel::Matte

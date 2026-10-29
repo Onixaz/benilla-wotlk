@@ -159,17 +159,17 @@ fn arm_sequence_clock(
     go_state_machine: bool,
 ) {
     // Every GameObject gets the loader-idle seed, which the reference arms the moment the M2 goes
-    // live (`0x70ebd0`); a door's object-layer arm (`0x5f3930`) lands after it. Seeding first
-    // spares a state GO a bind-pose first frame, and playing the seed through the transitions
-    // lets the first arm fade out of it rather than leave two clips live.
+    // live; a door's object-layer arm lands after it. Seeding first spares a state GO a bind-pose
+    // first frame, and playing the seed through the transitions lets the first arm fade out of it
+    // rather than leave two clips live.
     let mut player = AnimationPlayer::default();
     let mut transitions = AnimationTransitions::new();
     if kind == EntityKind::GameObject {
         // `idle_clip`, not `first_seq`: a GameObject whose sequences pose no bone has no
         // `first_seq`, but its emitters still read the clock.
         if let Some(clip) = anims.idle_clip() {
-            // Loop iff `M2Sequence.flags` bit 0 is clear; a set bit plays the window once and
-            // holds at its end (`0x714585`).
+            // Loop iff `M2Sequence.flags` bit 0 is clear; a set bit plays the window once and holds
+            // at its end.
             let active = transitions.play(&mut player, clip.node, std::time::Duration::ZERO);
             if clip.looping {
                 active.repeat();
@@ -239,7 +239,7 @@ pub(super) fn attach_entity_visuals(
             Has<super::live_display::ShownRebuild>,
             Option<&super::mirror_image::MirrorLookOf>,
         ),
-        // A torn-down unit gets no model: the reference frees it at once (`0x464920`).
+        // A torn-down unit gets no model: the reference frees it at once.
         (
             Without<VisualAttached>,
             Without<benilla_world::model_fade::DespawnFade>,
@@ -316,8 +316,8 @@ pub(super) fn attach_entity_visuals(
             continue;
         }
         // A corpse's model follows `CORPSE_FLAG_BONES`, the creature chain or the
-        // `<Race><Sex>DeathSkeleton` props (`0x5d6700`), through `corpse_model`, which the display
-        // build reads too.
+        // `<Race><Sex>DeathSkeleton` props, through `corpse_model`, which the display build reads
+        // too.
         let dm = match net.kind {
             EntityKind::Corpse => match super::corpse::corpse_model(net, stores.get(entity).ok()) {
                 Some(super::corpse::CorpseModel::Bones(race, sex)) => bones.0.get(&(race, sex)),
@@ -356,9 +356,9 @@ pub(super) fn attach_entity_visuals(
             model.and_then(|_| resolve_char_look(net, dm, entity, &stores, mirror, equipment));
         // A body whose composite is still running is not built: nothing of it draws, its mount
         // included, until it can draw dressed, as the reference's ShouldRender answers the
-        // composite driver's 0 (`0x607e7c` → `0x481749`). Retried each frame, with the look of
-        // that frame. A display swap waits the same way, a fresh component in the reference
-        // (`0x607da0` → `0x5fb200`); a body benilla rebuilds while it was drawn does not.
+        // composite driver's 0. Retried each frame, with the look of that frame. A display swap
+        // waits the same way, a fresh component in the reference; a body benilla rebuilds while it
+        // was drawn does not.
         let body_tex = match look.as_ref() {
             Some(l) => {
                 let key = skin_key(l, equip, worn.emblem, worn.tabard_preview);
@@ -390,8 +390,8 @@ pub(super) fn attach_entity_visuals(
         };
 
         // Invisible GameObjects and trigger creatures hide by transparent or empty M2s, never by a
-        // flag: the reference draws any loaded model and culls zero-alpha batches (`0x707b3a`),
-        // so their `parts` are empty and `named_a_model` keeps the cube off them.
+        // flag: the reference draws any loaded model and culls zero-alpha batches, so their `parts`
+        // are empty and `named_a_model` keeps the cube off them.
         if let Some(parts) = model {
             // A mounted unit is two skeletons: the mount is a child entity this system builds like
             // any beast, and the rider's rig roots at its attachment-0 seat. The unit waits for
@@ -418,8 +418,8 @@ pub(super) fn attach_entity_visuals(
                 ) {
                     super::mount::Seat::Wait => continue,
                     super::mount::Seat::Frame(anchor) => rider_root = anchor,
-                    // The reference leaves the body at the unit matrix (`0x60ce70`'s present-test
-                    // miss).
+                    // The reference leaves the body at the unit matrix (the reference's
+                    // present-test miss).
                     super::mount::Seat::UnitMatrix => {}
                 }
             } else if let Some(&super::mount::MountChild(child)) = mount_child {
@@ -443,13 +443,12 @@ pub(super) fn attach_entity_visuals(
                 .entity(entity)
                 .insert_if_new(benilla_world::entity_shade::GroundShade::default());
             // Held items share the body's interior verdict (the reference aliases the wearer's
-            // collector into each item, `0x718960`), so they fold at the body's centre.
+            // collector into each item), so they fold at the body's centre.
             commands
                 .entity(entity)
                 .insert(benilla_world::interior::BodyBakeCenter(bake_center));
-            // The light node's attach mode (`[node+0x90]` bit 13, set from the TYPEMASK at
-            // `0x613e10`/`0x670db0`, dispatched at `0x6a86d0`): a GameObject by containment at its
-            // bounds centre (`0x6a8c10`), a unit by down-ray at its position (`0x6a8a20`).
+            // The light node's attach mode (`[node+0x90]` bit 13): a GameObject by containment at
+            // its bounds centre, a unit by down-ray at its position.
             match net.kind {
                 EntityKind::GameObject => {
                     commands
@@ -468,8 +467,8 @@ pub(super) fn attach_entity_visuals(
                 id: net.display_id.unwrap_or(0),
                 detail: format!("emitters: {}", emitters.len()),
             };
-            // Whether a GameObject runs the open/close state machine (the type dispatch at
-            // `0x5f76cc`); read once, so the rig and the clock's driver agree.
+            // Whether a GameObject runs the open/close state machine; read once, so the rig and the
+            // clock's driver agree.
             let go_state_machine = net.kind == EntityKind::GameObject
                 && stores
                     .get(entity)
@@ -484,7 +483,7 @@ pub(super) fn attach_entity_visuals(
                 {
                     // Terrain conform: a flagged model's root bones sit under a node
                     // `conform_units` rotates. A mounted rider never gets one: the reference
-                    // dispatches on the mount's model (`0x7106c0`) and tilts through its node.
+                    // dispatches on the mount's model and tilts through its node.
                     let mut joints_root = rider_root;
                     if d.terrain_tilt != 0 && rider_root == entity {
                         let node = commands
@@ -520,10 +519,10 @@ pub(super) fn attach_entity_visuals(
                 }
                 // An animated GameObject skins like a creature. A door, button or chest
                 // (`go_animates`) runs the `GAMEOBJECT_STATE` machine; any other (a mailbox's
-                // flags, a windmill) plays the loader idle the reference arms on every M2 instance
-                // (`0x70ebd0`), which `ModelAnimations::idle_clip` picks: id 0 through the playable
-                // lookup, else the first clip. One whose idle holds its rest pose with no global
-                // sequence (`DoodadAnimTier::Static`) keeps the static mesh.
+                // flags, a windmill) plays the loader idle the reference arms on every M2 instance,
+                // which `ModelAnimations::idle_clip` picks: id 0 through the playable lookup, else
+                // the first clip. One whose idle holds its rest pose with no global sequence
+                // (`DoodadAnimTier::Static`) keeps the static mesh.
                 (EntityKind::GameObject, Some(d))
                     if !d.skeleton.joints.is_empty() && d.animations.is_some() =>
                 {
@@ -563,8 +562,8 @@ pub(super) fn attach_entity_visuals(
             }
             // The attachment points and event markers that held items and other riders hang from.
             if let (Some(_), Some(d)) = (&skin, dm) {
-                // The first marker of an ident wins, as the reference's scan (`0x7130e0`) returns
-                // it: character models carry six `$CSD` records.
+                // The first marker of an ident wins, as the reference's scan returns it: character
+                // models carry six `$CSD` records.
                 let mut markers = std::collections::HashMap::new();
                 for m in &d.markers {
                     markers.entry(m.ident).or_insert((m.bone, m.offset));
@@ -591,7 +590,7 @@ pub(super) fn attach_entity_visuals(
                         .insert(crate::creature_anim::BodyTwist::new(spine, head));
                 }
             }
-            // The worn geoset selectors, the helm's hide-mask rows included (`0x4799a0`).
+            // The worn geoset selectors, the helm's hide-mask rows included.
             let equip_geosets = equip_geosets(
                 displays.as_deref(),
                 &equip,
@@ -726,9 +725,9 @@ pub(super) fn attach_entity_visuals(
                     .entity(entity)
                     .remove::<benilla_world::model_fade::UnitAppearFade>();
             }
-            // Size is `OBJECT_FIELD_SCALE_X` alone: the server already folds the DBC scale into
-            // it (vmangos `Unit::GetScaleForDisplayId`, `Unit.cpp:9579`), and the reference
-            // renders at the field (`0x613ef0`).
+            // Size is `OBJECT_FIELD_SCALE_X` alone: the server already folds the DBC scale into it
+            // (vmangos `Unit::GetScaleForDisplayId`, `Unit.cpp:9579`), and the reference renders at
+            // the field.
             let placement = if let Ok(mut t) = transforms.get_mut(entity) {
                 t.scale = Vec3::splat(net.scale);
                 *t
@@ -744,11 +743,11 @@ pub(super) fn attach_entity_visuals(
             // The camera's framing pivot, model-local, before scale.
             commands.entity(entity).insert(CameraPivot {
                 height_local: dm.map(|d| d.pivot_height_local).unwrap_or(0.0),
-                // The pivot's drop while swimming, the reference's third preset `cam+0x124`
-                // (`0x50ccf6`); 0 without a Swim sequence.
+                // The pivot's drop while swimming, the reference's third preset `cam+0x124`; 0
+                // without a Swim sequence.
                 swim_drop_local: dm.map(|d| d.swim_pivot_drop_local).unwrap_or(0.0),
             });
-            // The overhead fallback for a model with no PlayerName attachment (`0x608640`).
+            // The overhead fallback for a model with no PlayerName attachment.
             commands.entity(entity).insert(super::OverheadFallback(
                 dm.map(|d| d.bbox_z_local).unwrap_or(0.0),
             ));
@@ -851,8 +850,8 @@ pub(super) fn attach_entity_visuals(
         } else {
             // A debug cube (a player cyan, an NPC red, lifted onto the ground) for a display that
             // named no model, a gap of ours. One that named a model draws what it built, maybe
-            // nothing: every type reaches the same batch loop through `0x613e10`, and its trip
-            // count is the view's texUnit count (`0x707a72`).
+            // nothing: every type reaches the same batch loop, and its trip count is the view's
+            // texUnit count.
             let fallback = match net.kind {
                 _ if named_a_model => None,
                 EntityKind::Player => {
@@ -866,8 +865,8 @@ pub(super) fn attach_entity_visuals(
                     );
                     None
                 }
-                // A model-less corpse draws nothing, as the reference's null-row legs do
-                // (`0x5d6700` returns 0); a DynamicObject's look is its spell's area effect.
+                // A model-less corpse draws nothing, as the reference's null-row legs do; a
+                // DynamicObject's look is its spell's area effect.
                 EntityKind::Corpse => {
                     debug!(
                         "corpse (display {:?}) has no usable model — not rendering",
@@ -1024,7 +1023,7 @@ mod tests {
             *app.world_mut() = world;
         }
     }
-    /// A unit torn down before its visual built gets none: `0x464920` frees it at once, so the
+    /// A unit torn down before its visual built gets none: the reference frees it at once, so the
     /// build would run commands on an entity `apply_despawn_fade` has despawned by the time they
     /// apply.
     #[test]

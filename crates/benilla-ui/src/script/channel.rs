@@ -1,7 +1,7 @@
 //! The chat-channel globals: the joined-channel lookups, the join, leave and management verbs the
-//! app sends, and the guild-recruitment auto-join latch. `GetChannelName` (`0x4a05e0`) looks up by
-//! 1-based slot or by name and returns three values: the slot (`CHAT_MSG_*` arg8), the name and
-//! `instanceID` (arg10).
+//! app sends, and the guild-recruitment auto-join latch. `GetChannelName` looks up by 1-based slot
+//! or by name and returns three values: the slot (`CHAT_MSG_*` arg8), the name and `instanceID`
+//! (arg10).
 
 use mlua::{IntoLuaMulti, Lua, MultiValue, Value};
 
@@ -93,7 +93,7 @@ pub enum ChannelCommand {
     ToggleAnnouncements {
         name: String,
     },
-    /// The channel pane's new selection (`0x504490`): `CMSG_SET_CHANNEL_WATCH`.
+    /// The channel pane's new selection: `CMSG_SET_CHANNEL_WATCH`.
     Watch {
         name: String,
     },
@@ -145,9 +145,9 @@ impl super::UiScript {
         true
     }
 
-    /// A manual join or leave of `GuildRecruitment` forces the latch to 0 (`0x49ed3d`, `0x49ef8f`)
-    /// and, as a player gesture, arms the save; mode 0 has no cascade, and the cascade's own join
-    /// passes a flag that skips this reset. Returns whether the latch moved.
+    /// A manual join or leave of `GuildRecruitment` forces the latch to 0 and, as a player gesture,
+    /// arms the save; mode 0 has no cascade, and the cascade's own join passes a flag that skips
+    /// this reset. Returns whether the latch moved.
     pub fn reset_guild_recruitment_mode(&mut self) -> bool {
         let mut model = self.model_mut();
         if model.guild_recruitment_mode == 0 {
@@ -177,8 +177,8 @@ fn slot_of(model: &Model, name: &str) -> Option<usize> {
 }
 
 /// The name in slot `n` (1-based), `None` out of range or for a freed slot: the reference's lookup
-/// `0x49bf30` requires the entry's own number to equal `n`, which a leave zeroes (`0x49bbd0`), so a
-/// left channel's number answers "not joined" while every channel above it keeps its own.
+/// requires the entry's own number to equal `n`, which a leave zeroes, so a left channel's number
+/// answers "not joined" while every channel above it keeps its own.
 fn name_at(model: &Model, n: usize) -> Option<&str> {
     model.joined_channels.get(n.checked_sub(1)?)?.as_deref()
 }
@@ -193,8 +193,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
             let slot = match &key {
-                // The reference bounds-checks `1 <= n <= count` (`0x49bf30`) and answers only a
-                // confirmed slot; `joined` holds only those, so the bound is the whole check.
+                // The reference bounds-checks `1 <= n <= count` and answers only a confirmed slot;
+                // `joined` holds only those, so the bound is the whole check.
                 Value::Integer(_) | Value::Number(_) => {
                     let n = match &key {
                         Value::Integer(i) => *i,
@@ -219,8 +219,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
 
             let Some(slot) = slot else {
-                // Three values on every path, the name `lua_pushstring(NULL)`, which is nil
-                // (`0x4a0659`); an unconfirmed channel answers the same, as `joined` models.
+                // Three values on every path, the name `lua_pushstring(NULL)`, which is nil; an
+                // unconfirmed channel answers the same, as `joined` models.
                 return Ok(MultiValue::from_vec(vec![
                     Value::Integer(0),
                     Value::Nil,
@@ -237,7 +237,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetChannelList() (`0x4a02d0`): a flat vararg of slot, name pairs in join order, as
+    // GetChannelList(): a flat vararg of slot, name pairs in join order, as
     // `FCFDropDown_LoadChannels` steps it (`FloatingChatFrame.lua:445`); none joined is zero
     // returns. The slots must match `slot_of`'s, so it agrees with `GetChannelName`.
     g.set(
@@ -259,15 +259,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The three joins (`0x50d900`): `JoinTemporaryChannel` and `JoinChannelByName` are one binding
-    // (`0x50daa0`), `JoinPermanentChannel` (`0x50dac0`) the same with the permanent flag, each
-    // `(name [, password [, frameId [, hasVoice]]])`. A DBC row answers `(ChannelID,
-    // resolvedName)` and a custom channel `(0, nil)`, both sending; a `frameId` that truncates to
-    // 1..=10 registers the channel in that window's list, deduplicated by name. A non-string
-    // name raises the usage; a space, a row whose zone text is empty, or a name or password of 128
-    // bytes or more, answers nothing. A matched row's password is dropped (`0x507bdd`).
-    // Deviation: the profanity refusal (`0x509a50`, `ERR_PROFANE_CHAT_NAME`) is not built, and the
-    // permanent flag, which only marks the channel for the client's own re-join, is not kept.
+    // The three joins: `JoinTemporaryChannel` and `JoinChannelByName` are one binding (`0x50daa0`),
+    // `JoinPermanentChannel` (`0x50dac0`) the same with the permanent flag, each
+    // `(name [, password [, frameId [, hasVoice]]])`. A DBC row answers `(ChannelID, resolvedName)`
+    // and a custom channel `(0, nil)`, both sending; a `frameId` that truncates to 1..=10 registers
+    // the channel in that window's list, deduplicated by name. A non-string name raises the usage;
+    // a space, a row whose zone text is empty, or a name or password of 128 bytes or more, answers
+    // nothing. A matched row's password is dropped. Deviation: the profanity refusal
+    // (`ERR_PROFANE_CHAT_NAME`) is not built, and the permanent flag, which only marks the channel
+    // for the client's own re-join, is not kept.
     for verb in [
         "JoinChannelByName",
         "JoinTemporaryChannel",
@@ -302,9 +302,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // EnumerateServerChannels() (`0x4a1790`): the `ChatChannels.dbc` Shortcuts in row order, never
-    // the composed names, a `flags & 0x10` row only in a city (`AreaTable.Flags & 0x8`); zero
-    // values while the zone is unresolved.
+    // EnumerateServerChannels(): the `ChatChannels.dbc` Shortcuts in row order, never the composed
+    // names, a `flags & 0x10` row only in a city (`AreaTable.Flags & 0x8`); zero values while the
+    // zone is unresolved.
     g.set(
         "EnumerateServerChannels",
         lua.create_function(|lua, _ignored: MultiValue| {
@@ -319,14 +319,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // LeaveChannelByName(name) (`0x4a0000` → `0x49ee70`) returns nothing and raises `Usage:` on a
-    // non-string, non-number. A key whose `SStrToInt` is non-zero is a joined slot, resolved
-    // app-side and never a window entry; a Shortcut leaves the name composed for this zone (a
-    // no-op with no zone text) and strips by Shortcut; anything else is a custom channel.
-    // Deviation: the reference composes the Shortcut with `GetRealZoneText` alone (`0x49efe8`), so
-    // in a capital `/leave Trade` sends `Trade - Stormwind City` and leaves nothing; ours uses the
-    // join's city-aware name, because the reference's form cannot leave the channel it joined.
-    // The slot is freed app-side when the server's `YOU_LEFT` arrives.
+    // LeaveChannelByName(name) returns nothing and raises `Usage:` on a non-string, non-number. A
+    // key whose `SStrToInt` is non-zero is a joined slot, resolved app-side and never a window
+    // entry; a Shortcut leaves the name composed for this zone (a no-op with no zone text) and
+    // strips by Shortcut; anything else is a custom channel. Deviation: the reference composes the
+    // Shortcut with `GetRealZoneText` alone, so in a capital `/leave Trade` sends
+    // `Trade - Stormwind City` and leaves nothing; ours uses the join's city-aware name, because
+    // the reference's form cannot leave the channel it joined. The slot is freed app-side when the
+    // server's `YOU_LEFT` arrives.
     g.set(
         "LeaveChannelByName",
         lua.create_function(|lua, name: Option<Value>| {
@@ -513,7 +513,7 @@ fn join_by_name(
             ..
         }) => (id, resolved, shortcut),
     };
-    // `0x49ff6b edi = -1` / `0x49ff8a dec edi`; `0x49ec27 cmp esi,0xa; jae` skips.
+    // The reference skips.
     let window = match frame {
         Value::Integer(n) => Some(n as f64),
         Value::Number(n) => Some(n),
@@ -615,8 +615,8 @@ mod command_tests {
         );
     }
 
-    /// `frameId - 1` indexes the ten window records (`0x49ec24`); a missing, non-numeric or
-    /// out-of-range frame skips the registration and nothing else.
+    /// `frameId - 1` indexes the ten window records; a missing, non-numeric or out-of-range frame
+    /// skips the registration and nothing else.
     #[test]
     fn join_channel_by_name_registers_the_channel_in_the_named_window() {
         let mut s = UiScript::new().unwrap();
@@ -655,8 +655,8 @@ mod command_tests {
         assert_eq!(s.take_channel_commands().len(), 5);
     }
 
-    /// `LeaveChannelByName`'s four legs and its raise (`0x4a0000` → `0x49ee70`); a Shortcut strips
-    /// its entry from every window.
+    /// `LeaveChannelByName`'s four legs and its raise; a Shortcut strips its entry from every
+    /// window.
     #[test]
     fn leave_channel_by_name_composes_strips_and_raises_the_way_the_reference_does() {
         let mut s = UiScript::new().unwrap();

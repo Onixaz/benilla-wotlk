@@ -1,15 +1,15 @@
 //! The three unit-relationship predicates the reference shares across systems, may I attack,
 //! interact with or help this unit, as the store-only entry points every consumer calls:
 //!
-//! - `CanAttack 0x606980` forwards to [`super::ring::can_attack_from_player`],
-//! - `CanInteract 0x6067f0` forwards to [`super::ring::can_interact_from_player`],
+//! - `CanAttack` forwards to [`super::ring::can_attack_from_player`],
+//! - `CanInteract` forwards to [`super::ring::can_interact_from_player`],
 //! - `CanAssist 0x7293d0` is derived here, in either direction ([`Assist`]).
 //!
 //! The first two live in [`super::ring`] beside the reaction directions they turn on:
-//! `0x6061e0(this = player)` answers a reputation faction with the at-war bit,
-//! `0x6061e0(this = unit)` with the standing, and the two often disagree.
+//! `(this = player)` answers a reputation faction with the at-war bit, `(this = unit)` with the
+//! standing, and the two often disagree.
 //!
-//! A corpse has its own reaction gate, `0x6067d0` ([`corpse_friendly`]).
+//! A corpse has its own reaction gate, ([`corpse_friendly`]).
 
 use benilla_protocol::messages::{ObjectType, OwnerFallback};
 
@@ -18,8 +18,8 @@ use crate::ui_party::GroupState;
 
 use super::{ring_reaction, Factions, GroupMembers};
 
-/// `OBJECT_FIELD_TYPE` bit 4, the reference's own player test (`0x606984` in `CanAttack`,
-/// `0x6067fc` in `CanInteract`), read off the store the rest of the predicate walks.
+/// `OBJECT_FIELD_TYPE` bit 4, the reference's own player test (in `CanAttack`, in `CanInteract`),
+/// read off the store the rest of the predicate walks.
 ///
 /// Relies on the create block carrying field 2: vmangos sends every non-zero field, and a player's
 /// is `0x19`. A miss only skips `CanAttack`'s ghost refusal, which the both-player-controlled arm
@@ -28,11 +28,10 @@ fn is_player_object(store: Option<&ObjectStore>) -> bool {
     store.and_then(|s| s.0.object_type()) == Some(ObjectType::Player)
 }
 
-/// `CanAttack 0x606980`, the one attackability question of the world cursor's sword
-/// (`0x48269a`), the combat flash, the TAB scan's filter 3, `UnitCanAttack` and hostile spell
-/// targeting. Its mixed arm is `UnitReaction(player → target) < 4`, which answers a reputation
-/// faction with the at-war bit, never the standing, so a not-at-war neutral faction (Cenarion
-/// Circle) is not attackable.
+/// `CanAttack`, the one attackability question of the world cursor's sword, the combat flash, the
+/// TAB scan's filter 3, `UnitCanAttack` and hostile spell targeting. Its mixed arm is
+/// `UnitReaction(player → target) < 4`, which answers a reputation faction with the at-war bit,
+/// never the standing, so a not-at-war neutral faction (Cenarion Circle) is not attackable.
 pub(crate) fn can_attack(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
@@ -50,9 +49,8 @@ pub(crate) fn can_attack(
     )
 }
 
-/// `CanInteract 0x6067f0`, may I take a service from this unit: the world-cursor classifier runs it
-/// at `0x482310` (through `CanInteractNow 0x606880`) to choose between the NPC service ladder and
-/// the loot, skin and attack block.
+/// `CanInteract`, may I take a service from this unit: the world-cursor classifier runs it (through
+/// `CanInteractNow`) to choose between the NPC service ladder and the loot, skin and attack block.
 pub(crate) fn can_interact(
     store: Option<&ObjectStore>,
     factions: Option<&Factions>,
@@ -67,17 +65,17 @@ pub(crate) fn can_interact(
 /// and one of `CanAttack`'s.
 const UNIT_FLAG_NOT_SELECTABLE: u32 = 1 << 25;
 
-/// `IsSelectable`, CGUnit_C's vtable slot 21 (`0x60be60`): `UNIT_FLAG_NOT_SELECTABLE` clear, or the
-/// unit's `UNIT_FIELD_CREATEDBY` is the active player, so your own flagged totems and traps stay
-/// selectable. Every vtable but CGUnit_C's and CGPlayer_C's has the `xor eax,eax` stub
-/// (`0x469fe0`) there, so a GameObject, item or corpse never becomes the selection.
+/// `IsSelectable`, CGUnit_C's vtable slot 21: `UNIT_FLAG_NOT_SELECTABLE` clear, or the unit's
+/// `UNIT_FIELD_CREATEDBY` is the active player, so your own flagged totems and traps stay
+/// selectable. Every vtable but CGUnit_C's and CGPlayer_C's has the `xor eax,eax` stub there, so a
+/// GameObject, item or corpse never becomes the selection.
 ///
-/// `None` passes: `SetSelection 0x493540` makes the call (`0x4935ee`) only on an object the
-/// manager resolved (`0x4935c8`), which keeps an out-of-range party member selectable. A store
-/// whose `OBJECT_FIELD_TYPE` has not streamed passes the same way.
+/// `None` passes: `SetSelection` makes the call only on an object the manager resolved, which keeps
+/// an out-of-range party member selectable. A store whose `OBJECT_FIELD_TYPE` has not streamed
+/// passes the same way.
 pub(crate) fn is_selectable(store: Option<&ObjectStore>, self_guid: Option<u64>) -> bool {
     let Some(store) = store else {
-        return true; // no resolved object: the reference skips the call (`0x4935c8`)
+        return true; // no resolved object: the reference skips the call
     };
     // Only CGUnit_C and CGPlayer_C override slot 21.
     if !matches!(
@@ -96,9 +94,8 @@ pub(crate) const UNIT_FLAG_POSSESSED: u32 = 0x0100_0000;
 
 /// Whether the active player possesses this unit (Mind Control, an Eye of Kilrogg, Eyes of the
 /// Beast): `UNIT_FLAG_POSSESSED` set and `UNIT_FIELD_CHARMEDBY`, else `UNIT_FIELD_CREATEDBY`, the
-/// active player's guid. The own-pet resolver `0x5ee5a0` (`0x5ee626`, `0x5ee62f`) and the world
-/// pick's filter `0x480610` (`0x48064f`-`0x480674`) read this same clause. No store, no owner or
-/// no active player is no possession.
+/// active player's guid. The own-pet resolver and the world pick's filter read this same clause. No
+/// store, no owner or no active player is no possession.
 pub(crate) fn is_possessed_by(store: Option<&ObjectStore>, self_guid: Option<u64>) -> bool {
     let (Some(store), Some(me)) = (store, self_guid) else {
         return false;
@@ -107,11 +104,11 @@ pub(crate) fn is_possessed_by(store: Option<&ObjectStore>, self_guid: Option<u64
         && store.0.unit_owner(OwnerFallback::CreatedBy) == Some(me)
 }
 
-/// `0x6067d0(player, corpse)`, the corpse's reaction gate: `0x6064c0` compares the player's
-/// template (`UNIT_FIELD_FACTIONTEMPLATE`) toward the dead player's race's (`0x5d7120`: the race
-/// byte of `CORPSE_FIELD_BYTES_1`, then `ChrRaces.dbc` column 2) with the template comparator
-/// `0x606640` alone, no reputation, and passes at friendly (`setge` 4). A missing row on either
-/// side is neutral (`0x60651b`), so it fails, as does a missing catalog or player.
+/// `(player, corpse)`, the corpse's reaction gate: the reference compares the player's template
+/// (`UNIT_FIELD_FACTIONTEMPLATE`) toward the dead player's race's (: the race byte of
+/// `CORPSE_FIELD_BYTES_1`, then `ChrRaces.dbc` column 2) with the template comparator alone, no
+/// reputation, and passes at friendly (`setge` 4). A missing row on either side is neutral, so it
+/// fails, as does a missing catalog or player.
 pub(crate) fn corpse_friendly(
     corpse: &ObjectStore,
     factions: Option<&Factions>,
@@ -1025,8 +1022,8 @@ mod tests {
         );
     }
 
-    /// `0x6067d0`: the caster's template toward the corpse's race's, friendly or better; every gap
-    /// is neutral (`0x60651b`) and fails.
+    /// The caster's template toward the corpse's race's, friendly or better; every gap is neutral
+    /// and fails.
     #[test]
     fn the_corpse_gate_reads_the_race_template() {
         let factions = fx::factions();
@@ -1072,8 +1069,8 @@ mod tests {
         assert!(!gate(0) && !gate(10), "a race with no row");
     }
 
-    /// `0x480658`-`0x480667`: the flag, then the charmer if there is one, else the creator; an
-    /// unset owner or an unknown active player is no possession.
+    /// The flag, then the charmer if there is one, else the creator; an unset owner or an unknown
+    /// active player is no possession.
     #[test]
     fn possession_is_the_flag_and_the_charmer_else_the_creator() {
         let store = |flags: u32, charmed_by: u32, created_by: u32| {

@@ -1,18 +1,17 @@
-//! Which WMO water arm each shipped liquid group takes. The reference's dispatch `0x6b62e0` splits
-//! water (nibbles 0/4/8) on the owning group's `MOGP.flags & 0x48`: set runs the exterior kernel
-//! `0x6b6630`, a 9-float vertex with an up normal, binding `MapObjExtWater0.bls` at `0x6b6654`;
-//! clear runs the interior kernel `0x6b6420`, a 6-float vertex with no normal, coloured from the
-//! map object's lights (`CMapObj+0x1d8`). Magma and slime (nibbles 2/3/6/7) take `0x6b68f0`
-//! whatever the flags, and neither arm is the ADT path (`0x6851b0`, `0x685010`, `ocean0_s.bls`).
-//! Output is Blizzard data: never commit it.
+//! Which WMO water arm each shipped liquid group takes. The reference's dispatch splits water
+//! (nibbles 0/4/8) on the owning group's `MOGP.flags & 0x48`: set runs the exterior kernel, a
+//! 9-float vertex with an up normal, binding `MapObjExtWater0.bls`; clear runs the interior kernel,
+//! a 6-float vertex with no normal, coloured from the map object's lights (`CMapObj+0x1d8`). Magma
+//! and slime (nibbles 2/3/6/7) take whatever the flags, and neither arm is the ADT path
+//! (`ocean0_s.bls`). Output is Blizzard data: never commit it.
 //! `cargo run -p benilla-formats --example wmo_liquid_arms`
 
 use std::collections::BTreeMap;
 
 use benilla_formats::{wmo_group_header, wmo_group_liquid_mesh, Chain};
 
-/// The reference's interior test, zero meaning interior (`0x6b3f90`; the liquid dispatch
-/// `0x6b62e0` tests `[owner+0x10] & 0x48`).
+/// The reference's interior test, zero meaning interior (the liquid dispatch tests
+/// `[owner+0x10] & 0x48`).
 const EXTERIOR_MASK: u32 = 0x48;
 
 #[derive(Default, Clone, Copy)]
@@ -90,7 +89,7 @@ fn main() -> anyhow::Result<()> {
     );
     let (mut int_g, mut ext_g, mut int_t, mut ext_t) = (0, 0, 0, 0);
     for ((interior, kind), t) in &by_arm {
-        // Only category 0 splits on the flag; the fullbright kinds share `0x6b68f0` either way.
+        // Only category 0 splits on the flag; the fullbright kinds share either way.
         let water = !matches!(kind.as_str(), "Magma" | "Slime");
         println!(
             "{:<10} {:<8} {:>8} {:>11}  {}",
@@ -99,9 +98,9 @@ fn main() -> anyhow::Result<()> {
             t.groups,
             t.wet_tiles,
             match (water, interior) {
-                (true, true) => "0x6b6420  (interior water)",
-                (true, false) => "0x6b6630  (exterior water, MapObjExtWater0.bls)",
-                (false, _) => "0x6b68f0  (magma/slime — arm-blind)",
+                (true, true) => "(interior water)",
+                (true, false) => "(exterior water, MapObjExtWater0.bls)",
+                (false, _) => "(magma/slime — arm-blind)",
             }
         );
         if !water {

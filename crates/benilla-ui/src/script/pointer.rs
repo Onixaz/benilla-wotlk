@@ -3,9 +3,8 @@
 //! gesture state; this file dispatches.
 //!
 //! A frame captures the cursor when it is mouse-enabled and effective-visible and its rect and
-//! effective ScrollFrame clip hold the point (the reference's probe `0x76b020`), taking the first
-//! in the order of the hover walk (`0x7661cd` in `0x7660d0`), which [`crate::order::hit_test`]
-//! implements.
+//! effective ScrollFrame clip hold the point, taking the first in the order of the hover walk,
+//! which [`crate::order::hit_test`] implements.
 
 use mlua::Value;
 
@@ -16,10 +15,9 @@ use crate::widget::{ButtonState, FrameHandle};
 use super::clip::{effective_clip, scroll_clip_sources};
 use super::{button, cursor, editbox, event, Model, UiScript};
 
-/// The double-click interval, 300 ms, a constant in the Button mouse-up dispatcher `0x7792d0`
-/// (`0x77937b cmp ecx, 0x12c` on the `0x42c010` millisecond clock). It is not the OS double-click
-/// time (`GetDoubleClickTime` is not imported) and not a CVar, and there is no distance limit:
-/// each release only has to hit the frame.
+/// The double-click interval, 300 ms, a constant in the Button mouse-up dispatcher. It is not the
+/// OS double-click time (`GetDoubleClickTime` is not imported) and not a CVar, and there is no
+/// distance limit: each release only has to hit the frame.
 pub(super) const DOUBLE_CLICK_SECS: f64 = 0.300;
 
 /// Install `GetCursorPosition()` and `GetMouseFocus()`. The cursor is in UI units, as 1.12
@@ -35,8 +33,8 @@ pub(super) fn install(lua: &mlua::Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `GetMouseFocus()` (`0x48df40`): the hover frame `[root+0x7c]`, a disabled Button included, as
-    // its frame object (not its name), or nil.
+    // `GetMouseFocus()`: the hover frame `[root+0x7c]`, a disabled Button included, as its frame
+    // object (not its name), or nil.
     lua.globals().set(
         "GetMouseFocus",
         lua.create_function(|lua, ()| {
@@ -158,12 +156,12 @@ impl UiScript {
         order::hit_test(&sorted, |fh| {
             // Mouse-enabled, or over one of the frame's hyperlink spans. The chat frame takes no
             // mouse (`[+0xcc] = 0`); the reference gives each span a mouse-enabled
-            // `CSimpleHyperlinkButton` child (`0x7a3240`) that routes its scripts to the parent, so
-            // a chat window hits only over a link and drags by its tab, not its body.
+            // `CSimpleHyperlinkButton` child that routes its scripts to the parent, so a chat
+            // window hits only over a link and drags by its tab, not its body.
             (model.arena.is_mouse_enabled(fh) || link_span_hit(&model, fh, x, y))
-                // The nameplate's `+0x3c` veto (`0x7cba30`), not its mouse-enabled bit: while a
-                // ground-targeted spell is armed a plate refuses the hit before its rect is
-                // tested, so the reticle is placed through it.
+                // The nameplate's `+0x3c` veto, not its mouse-enabled bit: while a ground-targeted
+                // spell is armed a plate refuses the hit before its rect is tested, so the reticle
+                // is placed through it.
                 && !model.nameplates.vetoes(fh)
                 && model.resolved.get(&fh).is_some_and(|r| {
                     point_in_rect(inset_rect(*r, model.arena.hit_rect_insets(fh)), x, y)
@@ -211,7 +209,7 @@ impl UiScript {
     /// hover but fires neither ([`button::hover_notify_runs`]). Drags and frame moves advance
     /// first. Returns the hovered frame id.
     pub fn mouse_move(&mut self, x: f32, y: f32) -> Option<u32> {
-        // A drag-active EditBox extends its selection on every move (`0x77a860`).
+        // A drag-active EditBox extends its selection on every move.
         editbox::drag_update(&self.lua, x, y);
         let new_id = self.hit_test(x, y);
         #[allow(clippy::type_complexity)]
@@ -247,10 +245,10 @@ impl UiScript {
                 let old_handle = model.mouseover;
                 model.mouseover = new_handle;
                 // Crossing a button's boundary changes no button state: the enter/leave notifies
-                // (`0x779490`/`0x7794e0`) read `[+0x328]` only as a disabled guard, so a press
-                // walked off a button stays pushed until the drag start (`0x7793f0`) un-presses a
-                // drag-registered one. A disabled Button runs neither script, on either side, and
-                // is still the hover: the reference moves `[root+0x7c]` before either notify.
+                // read `[+0x328]` only as a disabled guard, so a press walked off a button stays
+                // pushed until the drag start un-presses a drag-registered one. A disabled Button
+                // runs neither script, on either side, and is still the hover: the reference moves
+                // `[root+0x7c]` before either notify.
                 let old_id = old_id.filter(|_| button::hover_notify_runs(&model, old_handle));
                 let enter_id = new_id.filter(|_| button::hover_notify_runs(&model, new_handle));
                 (old_id, drag_start, enter_id, slider_change, color_change)
@@ -302,7 +300,7 @@ impl UiScript {
     }
 
     /// Whether `(x, y)` is inside the frame's title region. A new title region has no anchors and
-    /// hits nothing until `SetPoint`/`SetAllPoints` (`CreateTitleRegion 0x773910`).
+    /// hits nothing until `SetPoint`/`SetAllPoints` (`CreateTitleRegion`).
     fn title_region_hit(&self, h: crate::widget::FrameHandle, x: f32, y: f32) -> bool {
         let model = self.model_ref();
         model
@@ -316,8 +314,8 @@ impl UiScript {
     /// A mouse button press or release at `(x, y)`; `button` is the WoW name (`"LeftButton"`, …).
     /// `OnClick` follows the `RegisterForClicks` mask ([`button::wants_click`], default
     /// `LeftButtonUp`): a press fires it on the button's Down bit, a release on the pressed frame
-    /// on its Up bit. Its `down` argument is not 1.12, whose firer (`0x779540`) passes only
-    /// the button name. Returns whether the UI consumed the event.
+    /// on its Up bit. Its `down` argument is not 1.12, whose firer passes only the button name.
+    /// Returns whether the UI consumed the event.
     pub fn mouse_button(&mut self, x: f32, y: f32, button: &str, down: bool) -> bool {
         let hit_id = self.hit_test(x, y);
         {
@@ -331,11 +329,10 @@ impl UiScript {
         }
         // ── The raise, first ────────────────────────────────────────────────────────────────────
         //
-        // The press handler `0x7662c0` raises the capture (`root+0x80`) else the hover frame
-        // (`root+0x7c`) through `0x76a5b0`, called unguarded at `0x766392` (the toplevel walk is
-        // inside `0x7650f0`), before the title-region test: a click on a child or a title bar
-        // brings its window forward, and a chorded press raises the window being dragged. The
-        // release handler `0x766420` never raises.
+        // The press handler raises the capture (`root+0x80`) else the hover frame (`root+0x7c`),
+        // called unguarded, before the title-region test: a click on a child or a title bar brings
+        // its window forward, and a chorded press raises the window being dragged. The release
+        // handler never raises.
         if down {
             let target = self.model_ref().mouse_capture;
             if let Some(t) = target.or_else(|| self.hit_test_frame(x, y)) {
@@ -345,9 +342,9 @@ impl UiScript {
         }
         // ── The title region swallows the press ─────────────────────────────────────────────────
         //
-        // A press inside the title region starts a mode-2 move and ends there: `0x7662c0` tests
-        // the region first and only a miss reaches `0x7663e6`, the capture and `OnMouseDown`. So
-        // no `OnMouseDown`, drag arm, `OnClick` or double-click stamp, and the event is consumed.
+        // A press inside the title region starts a mode-2 move and ends there: the reference tests
+        // the region first and only a miss reaches, the capture and `OnMouseDown`. So no
+        // `OnMouseDown`, drag arm, `OnClick` or double-click stamp, and the event is consumed.
         if down {
             if let Some(h) = self.hit_test_frame(x, y) {
                 if self.title_region_hit(h, x, y) {
@@ -359,9 +356,9 @@ impl UiScript {
         }
         // ── The release ends a title move ───────────────────────────────────────────────────────
         //
-        // `0x766420` cancels move modes 1 (modifier drag) and 2 (title region) on release and
-        // leaves mode 3 (`StartMoving`) to the addon's `StopMovingOrSizing`;
-        // `FrameMove::auto_stop` is that distinction.
+        // The reference cancels move modes 1 (modifier drag) and 2 (title region) on release and
+        // leaves mode 3 (`StartMoving`) to the addon's `StopMovingOrSizing`; `FrameMove::auto_stop`
+        // is that distinction.
         if !down
             && self
                 .model_ref()
@@ -426,8 +423,8 @@ impl UiScript {
                 if let Some(h) = displaced {
                     button::edge(&mut model, h, ButtonState::on_mouse_up);
                 }
-                // `0x7663e6` sets the capture `root+0x80` only when none is held: a second button
-                // pressed elsewhere does not displace it.
+                // The reference sets the capture `root+0x80` only when none is held: a second
+                // button pressed elsewhere does not displace it.
                 model.mouse_capture = model.mouse_capture.or(hit_handle);
                 // A press replaces any in-flight gesture; a started one gets its `OnDragStop`
                 // below, outside this borrow.
@@ -441,7 +438,7 @@ impl UiScript {
                     None
                 };
                 // A left press in a ColorSelect's wheel or value strip also jumps the colour to the
-                // click point: its press handler calls its cursor handler (`0x78bf70`).
+                // click point: its press handler calls its cursor handler.
                 let color_jump = if button == "LeftButton" {
                     super::colorselect::begin_drag(&mut model, hit_handle, x, y)
                 } else {
@@ -453,7 +450,7 @@ impl UiScript {
                 (click, None, false, jump, None, abandoned, color_jump)
             } else {
                 let pressed = model.mouse_down_on.remove(button);
-                // `0x7664bb` clears the capture only when no button is still held, so a chorded
+                // The reference clears the capture only when no button is still held, so a chorded
                 // release keeps it.
                 if model.mouse_down_on.is_empty() {
                     model.mouse_capture = None;
@@ -468,14 +465,13 @@ impl UiScript {
                 );
                 let release = cursor::take_drag(&mut model, button);
                 let started = release.as_ref().is_some_and(|r| r.started);
-                // The release edge, `SetButtonState(NORMAL)` (`0x7793de`), on the pressed frame
-                // wherever the cursor is, skipped after a started drag (`0x7792df` tests
-                // `0x76c040`), which already un-pressed it.
+                // The release edge, `SetButtonState(NORMAL)`, on the pressed frame wherever the
+                // cursor is, skipped after a started drag, which already un-pressed it.
                 if let (Some(h), false) = (pressed, started) {
                     button::edge(&mut model, h, ButtonState::on_mouse_up);
                 }
                 // The world drop: a completed left click on the world, never a drag release, which
-                // keeps carrying (`0x495300` runs on the WorldFrame click release). The world is
+                // keeps carrying (the reference runs on the WorldFrame click release). The world is
                 // `over_world`, not "no frame": the stock `WorldFrame` covers the screen.
                 let dropped = button == "LeftButton"
                     && !started
@@ -489,11 +485,10 @@ impl UiScript {
                         .filter(|&h| same_frame && button::wants_click(&model, h, button, true))
                         .and(hit_id)
                 };
-                // The double click, on the release that qualified as a click: `0x77938d` in the
-                // mouse-up dispatcher `0x7792d0` fires `OnDoubleClick` instead of the second
-                // `OnClick` (`0x77939d jmp 0x7793b5` skips the single leg), only for a frame with
-                // an `OnDoubleClick` script (`[+0x4d4] != 0`). What suppresses the click
-                // suppresses it too.
+                // The double click, on the release that qualified as a click: the reference in the
+                // mouse-up dispatcher fires `OnDoubleClick` instead of the second `OnClick`, only
+                // for a frame with an `OnDoubleClick` script (`[+0x4d4] != 0`). What suppresses the
+                // click suppresses it too.
                 let target = click.and(hit_handle);
                 let double = target.filter(|&h| {
                     model
@@ -506,12 +501,11 @@ impl UiScript {
                             .is_some_and(|&t| now - t <= DOUBLE_CLICK_SECS)
                 });
                 if let Some(h) = double {
-                    // A double clears the stamp (`0x779393`), so clicks pair: four fast clicks are
-                    // click, double, click, double.
+                    // A double clears the stamp, so clicks pair: four fast clicks are click,
+                    // double, click, double.
                     model.last_click.remove(&h);
                 } else if let Some(h) = target {
-                    // A single stamps the detector (`0x7793af`) whether or not an `OnClick` script
-                    // is bound.
+                    // A single stamps the detector whether or not an `OnClick` script is bound.
                     model.last_click.insert(h, now);
                 }
                 let double_id = double.and_then(|h| model.frame_to_id.get(&h).copied());
@@ -537,10 +531,10 @@ impl UiScript {
         }
         // ── `OnMouseUp` goes to the capture ─────────────────────────────────────────────────────
         //
-        // The release handler `0x766420` reads only the capture `[mgr+0x80]` (`0x76642b`), never
-        // the hover frame, so a press on A released over B fires `OnMouseUp` on A, and a press
-        // that captured nothing fires nothing (`0x766498`). A resize grip dragged out from under
-        // the cursor still gets its `OnMouseUp`, so its resize ends.
+        // The release handler reads only the capture `[mgr+0x80]`, never the hover frame, so a
+        // press on A released over B fires `OnMouseUp` on A, and a press that captured nothing
+        // fires nothing. A resize grip dragged out from under the cursor still gets its
+        // `OnMouseUp`, so its resize ends.
         let script = if down { "OnMouseDown" } else { "OnMouseUp" };
         if let Some(id) = if down { hit_id } else { captured_id } {
             if let Err(e) = event::fire_widget_handler(&self.lua, id, script, vec![btn.clone()]) {
@@ -593,7 +587,7 @@ impl UiScript {
             }
         }
         // A left press in an EditBox places the cursor, starts a selection drag and focuses it
-        // whatever its `autoFocus`, before any `OnClick` (`0x77b800`).
+        // whatever its `autoFocus`, before any `OnClick`.
         if button == "LeftButton" {
             if down {
                 if let Some(id) = hit_id {
@@ -623,17 +617,16 @@ impl UiScript {
             // before `OnClick` fires.
             button::click_button(&self.lua, id, button, down);
         }
-        // `OnDoubleClick(self, button)` in place of `OnClick` (`0x77938d call [edx+0x98]`), with
-        // the same click sound: its firer `0x779650` is the twin of `OnClick`'s `0x779540` and
-        // passes only the button name of the completing release.
+        // `OnDoubleClick(self, button)` in place of `OnClick`, with the same click sound: its firer
+        // is the twin of `OnClick`'s and passes only the button name of the completing release.
         if let Some(id) = double_id {
             if let Err(e) = event::fire_widget_handler(&self.lua, id, "OnDoubleClick", vec![btn]) {
                 self.push_error(e);
             }
         }
-        // A world-frame hit is not the UI consuming the event: the reference runs its
-        // `OnMouseDown` without consuming (`0x483c40`), then the `BUTTON1`/`BUTTON2` binding, the
-        // world click. Only a world drop counts.
+        // A world-frame hit is not the UI consuming the event: the reference runs its `OnMouseDown`
+        // without consuming, then the `BUTTON1`/`BUTTON2` binding, the world click. Only a world
+        // drop counts.
         hit_id.is_some_and(|id| !self.is_world_frame(id)) || world_dropped
     }
 
@@ -658,12 +651,12 @@ impl UiScript {
 
     /// A wheel spin at `(x, y)`: fires `OnMouseWheel(self, delta)` on the hit frame, or on its
     /// nearest ancestor with the script when it has none; the reference instead lets its wheel
-    /// sweep continue past a frame with no script (`0x76c180`). `delta` passes through as given;
-    /// the reference passes only its sign, `+1` or `-1` (`0x76c1a2`).
+    /// sweep continue past a frame with no script. `delta` passes through as given; the reference
+    /// passes only its sign, `+1` or `-1`.
     pub fn mouse_wheel(&mut self, x: f32, y: f32, delta: f32) {
         let target: Option<u32> = {
-            // The wheel flag, not the mouse bit: the reference's wheel dispatcher `0x7664f0` walks
-            // its own index and ignores hover, capture and `EnableMouse`.
+            // The wheel flag, not the mouse bit: the reference's wheel dispatcher walks its own
+            // index and ignores hover, capture and `EnableMouse`.
             let hit = self.hit_test_wheel(x, y);
             let model = self.model_ref();
             hit.and_then(|id| {
@@ -694,8 +687,8 @@ impl UiScript {
     }
 }
 
-/// Point-in-rect in UI space (y-up), inclusive on all four edges, as the reference's probe
-/// `0x76b020` tests it.
+/// Point-in-rect in UI space (y-up), inclusive on all four edges, as the reference's probe tests
+/// it.
 pub(super) fn point_in_rect(r: Rect, x: f32, y: f32) -> bool {
     x >= r.left && x <= r.right && y >= r.bottom && y <= r.top
 }

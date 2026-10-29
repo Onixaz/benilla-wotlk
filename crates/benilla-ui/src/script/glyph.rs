@@ -104,10 +104,10 @@ impl GlyphCatalogView {
     }
 }
 
-/// The verdict for `socket` (0-based, below 6), `None` without a targeting cast: the socket must
-/// be unlocked (`0x80c454`); then the first effect 74 whose glyph and socket both have rows
-/// decides, a type mismatch (`0x80c53f`) or a glyph already in the fields (`0x80c557`) failing it;
-/// no such effect fails it as invalid (`0x80c510`).
+/// The verdict for `socket` (0-based, below 6), `None` without a targeting cast: the socket must be
+/// unlocked; then the first effect 74 whose glyph and socket both have rows decides, a type
+/// mismatch (`0x80c53f`) or a glyph already in the fields (`0x80c557`) failing it; no such effect
+/// fails it as invalid (`0x80c510`).
 pub(crate) fn placement(model: &Model, socket: usize) -> Option<GlyphPlacement> {
     let targeting = model.glyph_targeting?;
     let sockets = &model.glyph_sockets;

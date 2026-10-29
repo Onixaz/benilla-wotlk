@@ -45,26 +45,26 @@ pub(crate) fn spawn_item(
 }
 
 /// `ITEM_FIELD_ENCHANTMENT`'s 21 dwords, three per slot; the reference's seven deadline cells at
-/// `obj + 0x324 + slot*4` (`0x5d9d00`) end where the next member begins, at `+0x340`.
+/// `obj + 0x324 + slot*4` end where the next member begins, at `+0x340`.
 pub(crate) const ENCHANT_SLOTS: usize = 7;
 
 /// An item's countdowns, the reference's deadline cells on `CGItem_C`: its lifetime at `+0x320`
 /// (fed only by `SMSG_ITEM_TIME_UPDATE`) and one temporary-enchant deadline per slot at `+0x324`
 /// (fed only by `SMSG_ITEM_ENCHANT_TIME_UPDATE`; the enchantment field's duration is never read).
-/// Absolute deadlines, recomputed on every read and never ticked (`0x5d9c60`, `0x5d9d00`).
+/// Absolute deadlines, recomputed on every read and never ticked.
 #[derive(Component, Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Countdowns {
     lifetime: Option<Instant>,
     enchants: [Option<Instant>; ENCHANT_SLOTS],
 }
 
-/// The setters' store rule (`0x5d9c00`, `0x5d9cc0`): a signed `<= 0` (`jle`) clears the cell, so a
-/// top-bit value is absence, not a 68-year deadline; anything else parks `now + seconds`.
+/// The setters' store rule: a signed `<= 0` (`jle`) clears the cell, so a top-bit value is absence,
+/// not a 68-year deadline; anything else parks `now + seconds`.
 fn deadline(seconds: u32) -> Option<Instant> {
     ((seconds as i32) > 0).then(|| Instant::now() + Duration::from_secs(u64::from(seconds)))
 }
 
-/// A cell's time left: `None` when unset, `Some(0)` once elapsed (`0x5d9d00`'s `max(0, …)`).
+/// A cell's time left: `None` when unset, `Some(0)` once elapsed (the reference's `max(0, …)`).
 fn left(cell: Option<Instant>) -> Option<Duration> {
     cell.map(|at| at.saturating_duration_since(Instant::now()))
 }
@@ -77,8 +77,8 @@ fn remaining_ms(cell: Option<Instant>) -> Option<u64> {
 }
 
 impl Countdowns {
-    /// `SMSG_ITEM_ENCHANT_TIME_UPDATE`'s setter `0x5d9cc0`. A slot past the seventh is refused
-    /// (`false`), where the reference indexes unchecked and overruns into the next member.
+    /// `SMSG_ITEM_ENCHANT_TIME_UPDATE`'s setter. A slot past the seventh is refused (`false`),
+    /// where the reference indexes unchecked and overruns into the next member.
     pub(crate) fn set_enchant(&mut self, slot: u32, seconds: u32) -> bool {
         let Some(cell) = self.enchants.get_mut(slot as usize) else {
             return false;
@@ -87,7 +87,7 @@ impl Countdowns {
         true
     }
 
-    /// `SMSG_ITEM_TIME_UPDATE`'s setter `0x5d9c00`.
+    /// `SMSG_ITEM_TIME_UPDATE`'s setter.
     pub(crate) fn set_lifetime(&mut self, seconds: u32) {
         self.lifetime = deadline(seconds);
     }
@@ -108,8 +108,8 @@ impl Countdowns {
     }
 
     /// The deadline read without the expired-is-absent collapse: `Some(0)` once run out, `None`
-    /// only when never set. `GetWeaponEnchantInfo` returns `max(0, deadline - now)` (`0x5d9d00`),
-    /// so an elapsed enchant answers 0 and `BuffFrame_Enchant_OnUpdate` draws "0 s".
+    /// only when never set. `GetWeaponEnchantInfo` returns `max(0, deadline - now)`, so an elapsed
+    /// enchant answers 0 and `BuffFrame_Enchant_OnUpdate` draws "0 s".
     pub(crate) fn enchant_deadline_ms(&self, slot: u32) -> Option<u64> {
         left(self.enchant(slot)).map(|l| l.as_millis() as u64)
     }
@@ -200,13 +200,13 @@ pub(crate) struct HeldTemplate {
 pub(crate) struct Enchants(pub(crate) benilla_formats::EnchantCatalog);
 
 /// One enchant slot: `(slot index, id, charges, remaining ms)`. The id is signed: the sign picks
-/// the line's colour only, and `abs(id)` names the DBC row (`0x52c9f9`).
+/// the line's colour only, and `abs(id)` names the DBC row.
 pub(crate) type EnchantSlot = (u8, i32, u32, Option<u64>);
 
 /// The tooltip lines an item's enchant slots contribute; every tooltip surface feeds through here.
-/// The reference's per-slot gate (`0x52c9f9` to `0x52ca23`): `id != 0` and `abs(id)` names a
-/// `SpellItemEnchantment` row, else nothing. Our own items carry all seven slots; another
-/// player's descriptor carries only the permanent and temporary ones (vmangos).
+/// The reference's per-slot gate: `id != 0` and `abs(id)` names a `SpellItemEnchantment` row, else
+/// nothing. Our own items carry all seven slots; another player's descriptor carries only the
+/// permanent and temporary ones (vmangos).
 pub(crate) fn enchant_lines(
     slots: impl IntoIterator<Item = EnchantSlot>,
     enchants: Option<&Enchants>,
@@ -221,10 +221,10 @@ pub(crate) fn enchant_lines(
     lines
 }
 
-/// `0x5da2c0`: already bound when `ITEM_FIELD_FLAGS & 1` is set or a live enchant slot names a
-/// binding `SpellItemEnchantment` row (`0x5da300` to `0x5da320`). The enchant cursor's bind
-/// question (gate `0x495d60`) and the tooltip's Soulbound line both read it. It reads the raw
-/// descriptor, not [`enchant_lines`]: Firestone and Orb of Fire both bind and print no line.
+/// Already bound when `ITEM_FIELD_FLAGS & 1` is set or a live enchant slot names a binding
+/// `SpellItemEnchantment` row. The enchant cursor's bind question and the tooltip's Soulbound line
+/// both read it. It reads the raw descriptor, not [`enchant_lines`]: Firestone and Orb of Fire both
+/// bind and print no line.
 pub(crate) fn already_bound(fields: &ObjectFields, cat: Option<&Enchants>) -> bool {
     fields.item_flags().is_some_and(|f| f & 0x1 != 0)
         || (0..7).any(|slot| live_enchant(fields, slot, cat).is_some_and(|id| binds(id, cat)))
@@ -241,8 +241,8 @@ pub(crate) fn gems(fields: &ObjectFields, cat: Option<&Enchants>) -> [u32; 3] {
     })
 }
 
-/// One enchant slot as the bind checks read it (`0x495eec`): the raw id must be positive (`jl` at
-/// `0x495ef4`, `0x5da306`) and name a row, where the tooltip line uses `abs(id)`.
+/// One enchant slot as the bind checks read it: the raw id must be positive (`jl`) and name a row,
+/// where the tooltip line uses `abs(id)`.
 pub(crate) fn live_enchant(fields: &ObjectFields, slot: u8, cat: Option<&Enchants>) -> Option<u32> {
     let id = u32::try_from(fields.item_enchant(slot)?).ok()?;
     cat.is_some_and(|c| c.0.has_row(id)).then_some(id)
@@ -266,8 +266,7 @@ fn enchant_lines_quiet(
         .into_iter()
         .filter(|&(_, id, _, _)| id != 0)
         // `SpellItemEnchantment.Flags & 0x2`: no line; both reference printers return before
-        // reading the name (`0x6290e4`, `0x62923e`). Twelve rows: the totem weapon imbues,
-        // Firestone, Orb of Fire.
+        // reading the name. Twelve rows: the totem weapon imbues, Firestone, Orb of Fire.
         .filter(|&(_, id, _, _)| !enchants.0.tooltip_hides_name(id.unsigned_abs()))
         .filter_map(|(slot, id, charges, remaining_ms)| {
             let name = enchants.0.name(id.unsigned_abs())?.to_string();
@@ -284,11 +283,11 @@ fn enchant_lines_quiet(
 }
 
 /// `ItemRandomProperties.dbc`, the random-suffix roll: a name suffix and tooltip enchant slots
-/// 2..6 (`0x52b7e0`). Optional: absent, names stay unsuffixed.
+/// 2..6. Optional: absent, names stay unsuffixed.
 #[derive(Resource)]
 pub(crate) struct RandomProperties(pub(crate) benilla_formats::RandomPropertyCatalog);
 
-/// The item's display name, the reference's one formatter `0x5d8b00(entry, randomPropertyId)`:
+/// The item's display name, the reference's one formatter `(entry, randomPropertyId)`:
 /// `ITEM_SUFFIX_TEMPLATE` (`"%s %s"`) with the roll's suffix, or the plain name when the id names
 /// no suffixed row. Every surface that shows an item name goes through here.
 pub(crate) fn item_display_name(
@@ -302,8 +301,8 @@ pub(crate) fn item_display_name(
     }
 }
 
-/// The tooltip lines of a roll, for a source with no item object: the reference (`0x52b7bf` to
-/// `0x52b7fb`) copies the row's five enchant ids into slots 2..6 and prints them as its own.
+/// The tooltip lines of a roll, for a source with no item object: the reference copies the row's
+/// five enchant ids into slots 2..6 and prints them as its own.
 pub(crate) fn random_property_lines(
     row: &benilla_formats::RandomProperty,
     enchants: Option<&Enchants>,
@@ -377,10 +376,10 @@ pub(crate) struct Items {
     templates: QueryCache<u32, ItemInfo>,
     /// Landed since the last [`Self::take_fresh`]; pushed to the UI unprompted.
     fresh: Vec<u32>,
-    /// The reference's `PlayerPendingItemExpiration` list (`0x5ebd40`, at `CGPlayer_C + 0x1cc8`):
-    /// `(guid, slot, seconds)` enchant updates for an item not yet held. `0x5ebde0` applies them
-    /// when the item is set up (`0x5d8440`), counting seconds from then; they live as long as the
-    /// player, here the session. `SMSG_ITEM_TIME_UPDATE` has no such list.
+    /// The reference's `PlayerPendingItemExpiration` list (at `CGPlayer_C + 0x1cc8`):
+    /// `(guid, slot, seconds)` enchant updates for an item not yet held. The reference applies them
+    /// when the item is set up, counting seconds from then; they live as long as the player, here
+    /// the session. `SMSG_ITEM_TIME_UPDATE` has no such list.
     pending_enchant_times: Vec<(u64, u32, u32)>,
 }
 
@@ -392,7 +391,7 @@ impl Items {
         self.pending_enchant_times.push((guid, slot, seconds));
     }
 
-    /// The item `guid` arrived: its queued enchant updates in arrival order, unlinked (`0x5ebde0`).
+    /// The item `guid` arrived: its queued enchant updates in arrival order, unlinked.
     pub(crate) fn take_enchant_times(&mut self, guid: u64) -> Vec<(u32, u32)> {
         let mut taken = Vec::new();
         self.pending_enchant_times.retain(|&(g, slot, seconds)| {
@@ -453,7 +452,7 @@ impl Items {
     }
 
     /// Bumped by every landed answer, for consumers besides the drain; the stand-in for the
-    /// reference's `DBCACHECALLBACK` redisplay (`0x6e29b0`).
+    /// reference's `DBCACHECALLBACK` redisplay.
     pub(crate) fn template_epoch(&self) -> u64 {
         self.templates.generation()
     }
@@ -595,9 +594,8 @@ pub(crate) fn is_disarmed(store: &ObjectStore) -> bool {
 }
 
 /// The equipment slot this character's disarm hides ([`crate::creature_anim::disarmed_hand`] over
-/// the raw inventory), for the action bar's equipped-item requirement (`0x5f0c50`) and the
-/// item-use refusal (`CGItem::Use` rung 15). `None` while the flag is down or neither hand holds
-/// a weapon.
+/// the raw inventory), for the action bar's equipped-item requirement and the item-use refusal
+/// (`CGItem::Use` rung 15). `None` while the flag is down or neither hand holds a weapon.
 pub(crate) fn disarmed_equipment_slot(
     store: &ObjectStore,
     objects: &Objects,
@@ -977,7 +975,7 @@ mod tests {
         ));
     }
 
-    /// `abs(id)` names the row and the sign only travels (`0x52c9f9`).
+    /// `abs(id)` names the row and the sign only travels.
     #[test]
     fn enchant_lines_join_named_ids_in_slot_order() {
         let cat = Enchants(benilla_formats::EnchantCatalog::from_rows(
@@ -1029,8 +1027,8 @@ mod tests {
         ObjectFields::from_pairs(&[(21, flags), (22, slot0)])
     }
 
-    /// `0x5da2c0`: the Firestone shape binds and prints no line, so a predicate read off
-    /// [`enchant_lines`] would call it unbound.
+    /// The Firestone shape binds and prints no line, so a predicate read off [`enchant_lines`]
+    /// would call it unbound.
     #[test]
     fn the_bind_predicate_reads_the_descriptor_not_the_rendered_lines() {
         let cat = catalog();

@@ -35,10 +35,10 @@ pub struct Material {
     /// glow at night.
     pub sidn_rgb: [u8; 3],
     /// MOMT+0x1C `diffColor` (BGRA on disk, RGB here), read only as an interior liquid's body
-    /// colour: the reference's interior water kernel `0x6b6420` runs unlit with no pixel shader,
-    /// its RGB this dword raw, `Cf = MOMT[MLIQ.materialId].diffColor`, combined with the animated
-    /// sheet as `clamp(Cf + Ct)`. Its alpha at `+0x1f` is discarded; opacity comes per vertex.
-    /// Stride 0x40, base `[CMapObj+0x1d8]` (`0x6c3ace`, `0x6c3ad7 shr edx,6`).
+    /// colour: the reference's interior water kernel runs unlit with no pixel shader, its RGB this
+    /// dword raw, `Cf = MOMT[MLIQ.materialId].diffColor`, combined with the animated sheet as
+    /// `clamp(Cf + Ct)`. Its alpha at `+0x1f` is discarded; opacity comes per vertex. Stride 0x40,
+    /// base `[CMapObj+0x1d8]`.
     pub diff_color: [u8; 3],
     /// MOMT+0x20: the surface's `TerrainType.dbc` id, what a footstep on it sounds like. The
     /// client's down-ray takes the nearer of the terrain and WMO probes, so a building's floor
@@ -96,8 +96,7 @@ pub struct MopyEntry {
 
 /// A WMO group's MLIQ liquid grid: `xverts × yverts` heights over `xtiles × ytiles` cells in WMO
 /// model space (WoW axes, yards). A tile flag's low nibble is `0xf` for a hole, else the liquid
-/// type indexing the reference's texture table (dispatch `0x6b62e0`, water `0x6b6420` and
-/// `0x6b6630`, magma and slime `0x6b68f0`).
+/// type indexing the reference's texture table.
 pub struct WmoLiquid {
     /// Vertex-grid dimensions (`xtiles = xverts - 1`, `ytiles = yverts - 1`).
     pub xverts: u32,
@@ -114,14 +113,13 @@ pub struct WmoLiquid {
     pub heights: Vec<f32>,
     /// Per-vertex opacity index, a water vertex's byte 0, row-major beside [`Self::heights`]. WMO
     /// liquid has no depth, so this byte is the authored opacity: the reference indexes a 256-entry
-    /// alpha ramp with it (`[0xca7f10]`, rebuilt per frame from the zone's river shallow and deep
-    /// alphas) and binds no depth-ramp texture (no reference to the ADT ramp globals `0xc7fbc0`,
-    /// `0xc81768`, `0xc7fcd8` in `[0x6b0000, 0x6c4000)`). On magma and slime the four bytes are an
-    /// `int16` `(s, t)` UV pair instead; the consumer picks by liquid type.
+    /// alpha ramp with it (rebuilt per frame from the zone's river shallow and deep alphas) and
+    /// binds no depth-ramp texture (no reference to the ADT ramp globals). On magma and slime the
+    /// four bytes are an `int16` `(s, t)` UV pair instead; the consumer picks by liquid type.
     pub opacity: Vec<u8>,
     /// Per-tile flags, row-major `j·xtiles + i`: the low nibble the liquid type (`0xf` a hole),
     /// `0x80` shared (the strip-builder gate). `0x40` (fishable) is unread: the reference's reader
-    /// `0x6b9e50` is reachable only from the uncalled `0x69b5d0`, and the server decides fishing.
+    /// is reachable only from the uncalled, and the server decides fishing.
     pub tile_flags: Vec<u8>,
 }
 
@@ -129,8 +127,8 @@ pub struct WmoLiquid {
 pub struct WmoGroup {
     /// MOGP group flags (bit test `& 0x48` selects exterior vs interior).
     pub flags: u32,
-    /// MOGP `groupLiquid` at header `0x34`: other than `0xf` it overrides every tile's liquid type
-    /// (`0x6b9f10`); `0xf`, also the value for a header too short to carry it, defers to the tiles.
+    /// MOGP `groupLiquid` at header `0x34`: other than `0xf` it overrides every tile's liquid type;
+    /// `0xf`, also the value for a header too short to carry it, defers to the tiles.
     pub group_liquid: u32,
     pub vertex_positions: Vec<Vec3>,
     pub vertex_normals: Vec<Vec3>,

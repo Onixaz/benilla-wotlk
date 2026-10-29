@@ -1,10 +1,10 @@
 //! A macro body's runnable lines, and the spell it binds for the action bar.
 //!
 //! A macro slot shows the macro's icon but the cooldown, usability, range and checked state of its
-//! bound spell, the record's `[rec+0x564]`, which the slot resolver `0x4e5a50` returns for a
-//! macro. `0x4efe00` derives it from the first line that is a `/cast` alias or holds
-//! `CastSpellByName(`, through the resolver the `CastSpellByName` binding (`0x4b4ab0`) uses
-//! (`0x4b3950` → `0x4b3a10`), so a bare name binds the highest known rank.
+//! bound spell, the record's `[rec+0x564]`, which the slot resolver returns for a macro. The
+//! reference derives it from the first line that is a `/cast` alias or holds `CastSpellByName(`,
+//! through the resolver the `CastSpellByName` binding uses, so a bare name binds the highest known
+//! rank.
 //!
 //! `[rec+0x568]` is the book the spell resolved from, 0 the player's and 1 the pet's. benilla
 //! resolves against the player's book only, so a macro that casts a pet spell binds nothing.
@@ -13,48 +13,47 @@ use benilla_ui::script::{resolve_spell_by_name, SpellBookState};
 
 use crate::ui_chat::commands::{Command, SlashCommands, SlashIndex};
 
-/// Arm B's literal (`0x84cab0`), searched case-sensitively anywhere in the line (`0x4efed5`).
+/// Arm B's literal, searched case-sensitively anywhere in the line.
 const CAST_BY_NAME_CALL: &str = "CastSpellByName(";
 
-/// Which of `0x4efe00`'s arms matched: an unresolved name stores -1 from arm A (`0x4eff48`) and
-/// 0 from arm B (`0x4eff81`).
+/// Which of the reference's arms matched: an unresolved name stores -1 from arm A and 0 from arm B.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CastArm {
-    /// A `/cast`-alias line (`SLASH_CAST%d`, read as Lua globals at `0x703bf0`).
+    /// A `/cast`-alias line (`SLASH_CAST%d`).
     Slash,
     /// A `CastSpellByName("…")` call anywhere in the line.
     ByName,
 }
 
-/// A macro record's cached bound spell, the reference's `[rec+0x564]` (written by `0x4efe00`).
+/// A macro record's cached bound spell, the reference's `[rec+0x564]`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum BoundSpell {
     /// `0`: no cast line, or an unresolved `CastSpellByName(`: a usable macro with no spell state.
     #[default]
     None,
-    /// `-1`: an unresolved `/cast`; the bar greys the slot (`0x4e5050` refuses it at `0x4e518b`).
+    /// `-1`: an unresolved `/cast`; the bar greys the slot.
     Unresolved,
     /// A spell id: the slot shows that spell's state.
     Spell(u32),
 }
 
-/// A macro body's runnable lines: the reference's tokenizer (`0x64ae50`) splits on either `\r` or
-/// `\n` and skips empty tokens. Deviation: each line is trimmed, because the reference sends an
-/// indented `" /say hi"` as plain chat, never as the command meant. A whitespace-only line is fired
-/// there and dropped by `ChatEdit_SendText`, the same observable.
+/// A macro body's runnable lines: the reference's tokenizer splits on either `\r` or `\n` and skips
+/// empty tokens. Deviation: each line is trimmed, because the reference sends an indented
+/// `" /say hi"` as plain chat, never as the command meant. A whitespace-only line is fired there
+/// and dropped by `ChatEdit_SendText`, the same observable.
 pub(crate) fn macro_lines(body: &str) -> impl Iterator<Item = &str> {
     body.split(['\r', '\n'])
         .map(str::trim)
         .filter(|l| !l.is_empty())
 }
 
-/// The spell name a macro body casts (`0x4efe00`): the first `/cast`-alias line, or line holding
+/// The spell name a macro body casts: the first `/cast`-alias line, or line holding
 /// `CastSpellByName(` with a quoted argument. Deviation: the `/cast` argument is trimmed, because
 /// the reference binds `/cast  Fireball` (two spaces) to a name that never resolves.
 pub(crate) fn cast_name(table: &SlashCommands, body: &str) -> Option<(CastArm, String)> {
     for line in macro_lines(body) {
-        // Arm A: the alias folds ASCII case (`_strnicmp`, `0x414310`, as `SlashCommands::lookup`
-        // does), and the next byte must be a space (`0x4efe96`), so a tab or a bare `/cast` misses.
+        // Arm A: the alias folds ASCII case (`_strnicmp`, as `SlashCommands::lookup` does), and the
+        // next byte must be a space, so a tab or a bare `/cast` misses.
         if let Some(rest) = line.strip_prefix('/') {
             let (cmd, args) = rest.split_once(' ').unwrap_or((rest, ""));
             if table.lookup(cmd) == Some(Command::Slash(SlashIndex::Cast)) {
@@ -66,7 +65,7 @@ pub(crate) fn cast_name(table: &SlashCommands, body: &str) -> Option<(CastArm, S
                 continue;
             }
         }
-        // Arm B, second, on the same line (`0x4efed5`).
+        // Arm B, second, on the same line.
         if let Some(name) = quoted_call_argument(line) {
             return Some((CastArm::ByName, name));
         }
@@ -75,8 +74,8 @@ pub(crate) fn cast_name(table: &SlashCommands, body: &str) -> Option<(CastArm, S
 }
 
 /// `… CastSpellByName("Fireball" …) …` gives `Fireball`: only a non-empty, double-quoted first
-/// argument is read. The reference reads from the first quote anywhere after the call (`0x4efef0`)
-/// and binds even an empty name, which ends its walk on that line.
+/// argument is read. The reference reads from the first quote anywhere after the call and binds
+/// even an empty name, which ends its walk on that line.
 fn quoted_call_argument(line: &str) -> Option<String> {
     let after = line.find(CAST_BY_NAME_CALL)? + CAST_BY_NAME_CALL.len();
     let rest = line.get(after..)?.trim_start();
@@ -229,8 +228,8 @@ mod tests {
         );
     }
 
-    /// An unknown `/cast` is -1 (`0x4eff48`), which the bar greys; no cast line, or an unknown
-    /// `CastSpellByName(`, is 0 (`0x4eff81`).
+    /// An unknown `/cast` is -1, which the bar greys; no cast line, or an unknown
+    /// `CastSpellByName(`, is 0.
     #[test]
     fn an_unresolved_cast_is_arm_dependent() {
         let book = SpellBookState::default();

@@ -29,8 +29,8 @@ const BIND_CONFIRM_MIN_QUALITY: u32 = 2;
 /// gets a copy, so taking it costs nobody else the drop.
 const ITEM_FLAG_MULTI_DROP: u32 = 0x800;
 
-/// The coin row's quality, 0, so its text is grey: `0x4c23a0`'s coin guard returns 0 at
-/// `0x4c23de`, and `LootFrame_Update` has no coin case (`LootFrame.lua:81-85`).
+/// The coin row's quality, 0, so its text is grey: the reference's coin guard returns 0, and
+/// `LootFrame_Update` has no coin case (`LootFrame.lua:81-85`).
 const COIN_QUALITY: u32 = 0;
 /// 1.12's `GOLD`, `SILVER` and `COPPER` (`GlobalStrings.lua:2025`, `:3465`, `:865`).
 const GOLD_WORD: &str = "Gold";
@@ -41,8 +41,8 @@ const RECEIVE_MAX_TRIES: u16 = 120;
 /// The slots `OnItemPushResult` treats as the keyring: `slot - 0x56 <= 0x1f` (`0x523a36`).
 const PUSH_KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 86..=117;
 
-/// A push waiting on its item template. `OnItemPush 0x491a60` defers both of its outputs the same
-/// way: on a cache miss (`0x491a93`) it re-enters from the cache callback `0x491ee0`.
+/// A push waiting on its item template. `OnItemPush` defers both of its outputs the same way: on a
+/// cache miss it re-enters from the cache callback.
 struct PendingReceive {
     /// Crafted or conjured: "You create: …".
     created: bool,
@@ -51,16 +51,16 @@ struct PendingReceive {
     from_npc: bool,
     random_property_id: u32,
     suffix_factor: u32,
-    /// `showInChat` gates the line only: `ITEM_PUSH` fires (`0x491be8`) before the chat test
-    /// (`0x491bf3`), so a silent push still animates.
+    /// `showInChat` gates the line only: `ITEM_PUSH` fires before the chat test, so a silent push
+    /// still animates.
     in_chat: bool,
     container: i64,
     tries: u16,
 }
 
-/// `ITEM_PUSH`'s `arg1`, the reference's selector at `0x491bb5`-`0x491bd6`: a wire bag other than
-/// 255 gives `bag + 1` (20..=23 for an equipped bag, the ids its bar buttons carry), a keyring slot
-/// gives [`KEYRING_CONTAINER`], and anything else 0, the backpack.
+/// `ITEM_PUSH`'s `arg1`, the reference's selector: a wire bag other than 255 gives `bag + 1`
+/// (20..=23 for an equipped bag, the ids its bar buttons carry), a keyring slot gives
+/// [`KEYRING_CONTAINER`], and anything else 0, the backpack.
 fn push_container(bag: u8, slot: u32) -> i64 {
     if bag != BAG_PLAYER_INVENTORY {
         return i64::from(bag) + 1;
@@ -88,8 +88,8 @@ pub(crate) struct LootState {
     taken: Vec<u8>,
     receives: Vec<PendingReceive>,
     /// A removal just emptied the window, so the client releases it, as the reference does on the
-    /// last slot (`0x4c2a70` → `0x48f200`); vmangos does not. Never set at open: an empty window
-    /// stays up (`LOOTWINDOWOPENEMPTY`).
+    /// last slot; vmangos does not. Never set at open: an empty window stays up
+    /// (`LOOTWINDOWOPENEMPTY`).
     auto_release: bool,
     /// Wire `loot_type` 3, for `IsFishingLoot()`: `LootFrame_OnShow`'s reel-in sound and icon.
     fishing: bool,
@@ -121,9 +121,9 @@ pub(crate) struct LootState {
     generation: u64,
 }
 
-/// The client's candidate array: 40 slots at `0xc4dc38`, bound-checked by the getter `0x61c660`.
+/// The client's candidate array: 40 slots, bound-checked by the getter.
 const MASTER_LOOT_CANDIDATE_SLOTS: usize = 40;
-/// A raid subgroup's block within it (`0x61c609`).
+/// A raid subgroup's block within it.
 const MEMBERS_PER_RAID_GROUP: usize = 5;
 
 /// A clicked row resolved: the coin pile, or an item at its wire loot slot.
@@ -157,7 +157,7 @@ impl LootState {
         self.items = items;
         self.taken.clear();
         self.auto_release = false; // an empty window at open stays open
-        self.pending_bind_confirm = None; // `0x4c1df5`: the copier resets the stash
+        self.pending_bind_confirm = None; //: the copier resets the stash
         self.loot_type = loot_type;
         self.fishing = loot_type == benilla_protocol::messages::loot_type::FISHING;
         self.master_candidates = std::mem::take(&mut self.pending_master_candidates);
@@ -342,7 +342,7 @@ impl LootState {
         self.source
     }
 
-    /// Nothing lootable left: the reference's empty check `0x4c2a70`.
+    /// Nothing lootable left: the reference's empty check.
     fn is_empty(&self) -> bool {
         !self.has_coin() && self.items.iter().all(|it| self.taken.contains(&it.slot))
     }
@@ -365,10 +365,10 @@ impl LootState {
         })
     }
 
-    /// The candidate slots as `0x61c550` lays them out: wire order in a party (`0x61c5b9`); in a
-    /// raid, each guid in the first free slot of its subgroup's block of five
-    /// (`0x61c5c9`-`0x61c637`), holes kept for `GroupLootDropDown_Initialize`'s "Group N" submenus
-    /// (`LootFrame.lua:197-213`). The feed and the drain share it, so an index means one candidate.
+    /// The candidate slots as the reference lays them out: wire order in a party; in a raid, each
+    /// guid in the first free slot of its subgroup's block of five, holes kept for
+    /// `GroupLootDropDown_Initialize`'s "Group N" submenus (`LootFrame.lua:197-213`). The feed and
+    /// the drain share it, so an index means one candidate.
     fn placed_candidates(&self, group: &GroupState) -> Vec<Option<u64>> {
         if group.group_type != GROUPTYPE_RAID {
             return self.master_candidates.iter().copied().map(Some).collect();
@@ -455,15 +455,14 @@ impl Default for LootConfig {
 #[derive(Resource, Default)]
 pub(crate) struct LootLatch(pub(crate) Option<u64>);
 
-/// Whether the character kneels at the latched object, the reference's predicate B `0x612710`:
-/// yes for a corpse or any GameObject but a fishing bobber, no for a live unit, an item or an
-/// unresolved guid. Recomputed each frame between the net drain and the anim driver, as the
-/// reference force-plays the pose at the arm itself (`0x5ed619`).
+/// Whether the character kneels at the latched object, the reference's predicate B: yes for a
+/// corpse or any GameObject but a fishing bobber, no for a live unit, an item or an unresolved
+/// guid. Recomputed each frame between the net drain and the anim driver, as the reference
+/// force-plays the pose at the arm itself.
 #[derive(Resource, Default)]
 pub(crate) struct LootKneel(pub(crate) bool);
 
-/// `GAMEOBJECT_TYPE_ID` 17, `FISHINGNODE`: the one GameObject type that does not kneel
-/// (`0x612772`).
+/// `GAMEOBJECT_TYPE_ID` 17, `FISHINGNODE`: the one GameObject type that does not kneel.
 const GO_TYPE_FISHINGNODE: i32 = 17;
 
 /// Recomputes [`LootKneel`]; `pub(crate)` so [`crate::creature_anim`]'s driver can order after it.
@@ -478,16 +477,16 @@ pub(crate) fn resolve_loot_kneel(
         .and_then(|guid| index.0.get(&guid).copied())
         .and_then(|e| objects.get(e).ok())
         .is_some_and(|(net_entity, store)| match net_entity.kind {
-            // `0x612764`: a GameObject kneels unless it is the bobber.
+            // A GameObject kneels unless it is the bobber.
             benilla_protocol::EntityKind::GameObject => {
                 store.0.gameobject_type_id() != GO_TYPE_FISHINGNODE
             }
-            // `0x61278c`: a unit kneels once its health reads 0 off the descriptor, where an
-            // unsent field is 0 too; not `unit_is_dead`, whose `max_health` guard it lacks.
+            // A unit kneels once its health reads 0 off the descriptor, where an unsent field is 0
+            // too; not `unit_is_dead`, whose `max_health` guard it lacks.
             benilla_protocol::EntityKind::Unit | benilla_protocol::EntityKind::Player => {
                 store.0.unit_health().unwrap_or(0) == 0
             }
-            // An item never kneels (`0x612797`); we stream none, so a lockbox latch never resolves.
+            // An item never kneels; we stream none, so a lockbox latch never resolves.
             _ => false,
         });
     if kneel.0 != allowed {
@@ -504,11 +503,10 @@ impl LootLatch {
     }
 }
 
-/// A movement start that closes the loot: the reference's guard `0x60e990`, called by every
-/// movement-start emitter, turning included, but not by mouse-look facing. No loot target reaches
-/// the range gate `0x493230`, so there is no distance leash. vmangos also releases on movement
-/// (`MovementHandler.cpp:1104`), but the close is the client's. A loot response that lands while
-/// we move sets it too (`0x5ebc3a`).
+/// A movement start that closes the loot: the reference's guard, called by every movement-start
+/// emitter, turning included, but not by mouse-look facing. No loot target reaches the range gate,
+/// so there is no distance leash. vmangos also releases on movement (`MovementHandler.cpp:1104`),
+/// but the close is the client's. A loot response that lands while we move sets it too.
 #[derive(Resource, Default)]
 pub(crate) struct LootMoveStart(pub(crate) bool);
 
@@ -553,8 +551,7 @@ impl Plugin for UiLootPlugin {
 }
 
 /// The coin row's name: each nonzero denomination as "<n> <Word>", joined by spaces. The
-/// reference's composer `0x6c6260` emits the same "%d %s" parts but separates them with a newline
-/// (`0x835144`).
+/// reference's composer emits the same "%d %s" parts but separates them with a newline.
 fn format_money(copper: u32) -> String {
     let (g, s, c) = (copper / 10000, (copper % 10000) / 100, copper % 100);
     let mut parts: Vec<String> = Vec::new();
@@ -570,8 +567,8 @@ fn format_money(copper: u32) -> String {
     parts.join(" ")
 }
 
-/// The coin row's icon: the reference's six-step ladder (`0x4c2460` → `0x6c62d0`), shared with
-/// `GetCoinIcon` and the money cursor.
+/// The coin row's icon: the reference's six-step ladder, shared with `GetCoinIcon` and the money
+/// cursor.
 fn coin_icon(copper: u32) -> &'static str {
     benilla_ui::script::coin_icon(i64::from(copper))
 }
@@ -587,7 +584,7 @@ fn resolve_item(
 ) -> LootRow {
     let (name, quality, link) = match items.template(item.item_id, 0, commands) {
         Some(t) => {
-            // The rolled name: the reference composes every display of it through `0x5d8b00`.
+            // The rolled name: the reference composes every display of it.
             let name = rolls.name(&t.name, item.random_property_id);
             (
                 Some(name.clone()),
@@ -615,17 +612,17 @@ fn resolve_item(
         is_coin: false,
         item_id: item.item_id,
         link,
-        // The raw id, as the client's loot record keeps it; the tooltip resolves it (`0x52b7bf`).
+        // The raw id, as the client's loot record keeps it; the tooltip resolves it.
         random_property_id: item.random_property_id,
         // `GetLootSlotInfo`'s fifth return reads the slot type (`0x588570`).
         locked: item.slot_type == slot_type::LOCKED,
     }
 }
 
-/// Whether a row still waits on its item template: the reference's pending-query counter
-/// `[0xb71b44]`. Deviation: a negative answer releases the row, where the reference's callback
-/// `0x4c2ac0` returns on a failed query and the window never opens, because an entry the server
-/// cannot describe would otherwise keep the loot shut for good.
+/// Whether a row still waits on its item template: the reference's pending-query counter.
+/// Deviation: a negative answer releases the row, where the reference's callback returns on a
+/// failed query and the window never opens, because an entry the server cannot describe would
+/// otherwise keep the loot shut for good.
 fn templates_outstanding(items: &Items, snap: &LootSnapshot) -> bool {
     snap.rows.iter().flatten().any(|r| {
         !r.is_coin
@@ -650,7 +647,7 @@ fn snapshot(
         rows.push(loot.has_coin().then(|| LootRow {
             name: Some(format_money(loot.gold)),
             texture: Some(coin_icon(loot.gold).into()),
-            // 0: `0x4c22e0`'s coin guard returns before the record read (`0x4c22fd`).
+            // 0: the reference's coin guard returns before the record read.
             quantity: 0,
             quality: Some(COIN_QUALITY),
             is_coin: true,
@@ -685,9 +682,9 @@ struct Candidates<'a> {
 }
 
 impl Candidates<'_> {
-    /// The candidate slots as names, an empty slot and an unresolved name both `None`: the
-    /// binding `0x4c2f10` pushes nil on a name-cache miss (`0x4c2f91`), and the cache callback
-    /// `0x4c2fb0` fires `UPDATE_MASTER_LOOT_LIST` when the name lands.
+    /// The candidate slots as names, an empty slot and an unresolved name both `None`: the binding
+    /// pushes nil on a name-cache miss, and the cache callback fires `UPDATE_MASTER_LOOT_LIST` when
+    /// the name lands.
     fn names_for(&self, loot: &LootState) -> Vec<Option<String>> {
         loot.placed_candidates(self.group)
             .into_iter()
@@ -706,9 +703,9 @@ impl Candidates<'_> {
     }
 }
 
-/// `OnItemPush`'s self line (`0x491bfb`): its `%s` is an item link (`0x52adb0`, at `0x491c43`),
-/// so a count after it takes the line's own colour. The strings are `GlobalStrings.lua:2599-2605`,
-/// with no space before `x%d`; created wins over received (`0x491c04`-`0x491c1b`).
+/// `OnItemPush`'s self line: its `%s` is an item link, so a count after it takes the line's own
+/// colour. The strings are `GlobalStrings.lua:2599-2605`, with no space before `x%d`; created wins
+/// over received.
 fn receive_line(r: &PendingReceive, name: &str, quality: u32) -> String {
     let verb = if r.created {
         "You create"
@@ -732,10 +729,10 @@ fn receive_line(r: &PendingReceive, name: &str, quality: u32) -> String {
     }
 }
 
-/// Emits each push whose template has landed, in `OnItemPush`'s order: `ITEM_PUSH` first
-/// (`0x491be8`), then the chat line if the wire asked for it. Deviation: a push is dropped after
-/// [`RECEIVE_MAX_TRIES`] frames, where the reference waits on the item-cache callback with no
-/// timeout, because an entry the server never describes would otherwise stay queued.
+/// Emits each push whose template has landed, in `OnItemPush`'s order: `ITEM_PUSH` first, then the
+/// chat line if the wire asked for it. Deviation: a push is dropped after [`RECEIVE_MAX_TRIES`]
+/// frames, where the reference waits on the item-cache callback with no timeout, because an entry
+/// the server never describes would otherwise stay queued.
 fn drain_receives(
     loot: &mut LootState,
     items: &Items,
@@ -754,7 +751,7 @@ fn drain_receives(
         match resolved {
             Some((name, quality, display_id)) => {
                 // Ungated by `in_chat`. `arg2` is the icon path the reference builds from the
-                // display record (`0x491baa`).
+                // display record.
                 let icon = icons
                     .and_then(|i| i.catalog.get(display_id))
                     .and_then(|d| d.icon.clone());
@@ -787,8 +784,8 @@ fn drain_receives(
 }
 
 /// Emits the queued pushes, then pushes the loot snapshot and fires the loot events on a change.
-/// The object manager as `SetLootPortrait` asks it (`0x468460`, typemask 8): whether the loot
-/// source is a unit object we hold.
+/// The object manager as `SetLootPortrait` asks it (typemask 8): whether the loot source is a unit
+/// object we hold.
 #[derive(bevy::ecs::system::SystemParam)]
 struct LootSourceObjects<'w, 's> {
     index: Option<Res<'w, crate::net::GuidIndex>>,
@@ -998,10 +995,10 @@ pub(crate) fn dead_unit_source(objects: &crate::net::Objects, guid: u64) -> bool
     })
 }
 
-/// `CloseInteraction`'s last step (`0x48f34f`–`0x48f369`): a closed source that is a unit, a
-/// player included, with `UNIT_FIELD_HEALTH` at or below 0 is deselected if it is still the
-/// selection (`0x493910(guid, 1)`). It reads the health, never the loot type, so a skinned corpse
-/// loses the selection and a live pickpocket target keeps it; an unstreamed source is left alone.
+/// `CloseInteraction`'s last step: a closed source that is a unit, a player included, with
+/// `UNIT_FIELD_HEALTH` at or below 0 is deselected if it is still the selection (`(guid, 1)`). It
+/// reads the health, never the loot type, so a skinned corpse loses the selection and a live
+/// pickpocket target keeps it; an unstreamed source is left alone.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct DeadUnitDeselect<'w, 's> {
     index: Res<'w, crate::net::GuidIndex>,
@@ -1030,7 +1027,7 @@ impl DeadUnitDeselect<'_, '_> {
                 matches!(
                     net_entity.kind,
                     benilla_protocol::EntityKind::Unit | benilla_protocol::EntityKind::Player
-                ) && (store.0.unit_health().unwrap_or(0) as i32) <= 0 // signed, `jg` at `0x48f360`
+                ) && (store.0.unit_health().unwrap_or(0) as i32) <= 0 // signed, `jg`
             });
         if dead_unit {
             self.asks.write(crate::target::DeselectGuid(source));
@@ -1217,7 +1214,7 @@ fn drain_loot_script(
             debug!("ui_loot: GiveMasterLoot({index}, {candidate}) unresolvable — ignored");
             continue;
         };
-        // Only a master row: the sender `0x4c2940` re-reads the slot type and bails unless it is 2.
+        // Only a master row: the sender re-reads the slot type and bails unless it is 2.
         if slot_type != slot_type::MASTER {
             debug!("ui_loot: GiveMasterLoot({index}) is not a master row — ignored");
             continue;
@@ -1309,15 +1306,15 @@ mod tests {
             EntityKind::GameObject,
             &[(F_GO_TYPE_ID, 25)]
         ))));
-        // `0x612772`: type 17, `FISHINGNODE`.
+        // Type 17, `FISHINGNODE`.
         assert!(!kneels_at(Some((
             EntityKind::GameObject,
             &[(F_GO_TYPE_ID, 17)]
         ))));
-        // `0x61278c`: a corpse kneels, a live (pickpocketed) target does not.
+        // A corpse kneels, a live (pickpocketed) target does not.
         assert!(kneels_at(Some((EntityKind::Unit, &[(F_UNIT_HEALTH, 0)]))));
         assert!(!kneels_at(Some((EntityKind::Unit, &[(F_UNIT_HEALTH, 1)]))));
-        // `0x612732`: an unresolved guid, which an item latch is for us.
+        // An unresolved guid, which an item latch is for us.
         assert!(!kneels_at(None));
     }
 
@@ -1416,8 +1413,8 @@ mod tests {
         (app, rx)
     }
 
-    /// `SetLootPortrait` answers 1 only while the loot source is a unit object we hold
-    /// (`0x4c2bd1`-`0x4c2be9`): a creature's corpse, never a chest or a source out of view.
+    /// `SetLootPortrait` answers 1 only while the loot source is a unit object we hold: a
+    /// creature's corpse, never a chest or a source out of view.
     #[test]
     fn the_loot_portrait_follows_a_unit_source_only() {
         use benilla_protocol::ObjectFields;
@@ -1474,7 +1471,8 @@ mod tests {
         }
     }
 
-    /// `0x4c2ac0` fires `LOOT_OPENED` once, at the last answer; here a negative one opens it too.
+    /// The reference fires `LOOT_OPENED` once, at the last answer; here a negative one opens it
+    /// too.
     #[test]
     fn the_window_waits_for_every_item_template() {
         for answer in [
@@ -1757,7 +1755,7 @@ mod tests {
         );
     }
 
-    /// `0x4c1df5`: the response copier resets the stash.
+    /// The response copier resets the stash.
     #[test]
     fn a_pending_confirm_does_not_survive_the_window() {
         let (mut app, _rx) = drain_with(0, vec![item(0, FELSTRIKER, 1)], &[1], "");
@@ -1908,7 +1906,7 @@ mod tests {
         );
     }
 
-    /// `0x61c550`'s raid placement: each guid in the first free slot of its subgroup's block.
+    /// The reference's raid placement: each guid in the first free slot of its subgroup's block.
     #[test]
     fn raid_candidates_file_into_their_own_subgroup_block() {
         let member = |guid: u64, name: &str, subgroup: u8| GroupMemberEntry {
@@ -2210,7 +2208,7 @@ mod tests {
         );
     }
 
-    /// `|Hitem:id:0:randomPropertyId:suffixFactor|h`, `0x52adb0`'s argument order.
+    /// `|Hitem:id:0:randomPropertyId:suffixFactor|h`, the reference's argument order.
     #[test]
     fn receive_line_carries_the_wire_random_property_fields() {
         let mut loot = LootState::default();
@@ -2226,7 +2224,7 @@ mod tests {
         );
     }
 
-    /// `0x5d8b00` joins the suffix by `ITEM_SUFFIX_TEMPLATE`, for the row (`0x4c2550`) and tooltip.
+    /// The reference joins the suffix by `ITEM_SUFFIX_TEMPLATE`, for the row and tooltip.
     #[test]
     fn a_rolled_drop_reads_its_suffix_in_the_row_the_link_and_the_lines() {
         use benilla_formats::{RandomProperty, RandomPropertyCatalog};
@@ -2270,7 +2268,7 @@ mod tests {
         assert!(rolls.lines(0).is_empty(), "no roll, no lines");
     }
 
-    /// `0x52ad90` clamps a quality outside the table to 1, white.
+    /// The reference clamps a quality outside the table to 1, white.
     #[test]
     fn receive_line_clamps_an_out_of_range_quality_to_white() {
         assert_eq!(
@@ -2279,7 +2277,7 @@ mod tests {
         );
     }
 
-    /// [`push_container`] against the selector at `0x491bb5`-`0x491bd6`, arm by arm.
+    /// [`push_container`] against the selector, arm by arm.
     #[test]
     fn push_container_maps_the_wire_destination_onto_a_bag_bar_button() {
         // An equipped bag: wire 19..22 give `bag + 1`, 20..23, the ids its buttons carry.
@@ -2309,7 +2307,7 @@ mod tests {
         assert_eq!(format_money(10_000), "1 Gold");
     }
 
-    /// The reference's six-step ladder (`0x6c6307`-`0x6c6386`), both sides of every boundary.
+    /// The reference's six-step ladder, both sides of every boundary.
     #[test]
     fn coin_icon_walks_the_references_six_step_ladder() {
         let icon = |n: u32| coin_icon(n).rsplit('\\').next().unwrap().to_string();

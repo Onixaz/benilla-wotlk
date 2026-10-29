@@ -333,7 +333,7 @@ fn watch_glue_music(
         );
     }
     // The Music slider rescales the playing theme in place (the `MusicVolume` re-apply walker
-    // `0x7a6660(ecx=2)` matches the glue stream), except while the stop-fade runs.
+    // matches the glue stream), except while the stop-fade runs.
     if !music.fading {
         if let Some(h) = music.handle.as_mut() {
             h.set_volume(

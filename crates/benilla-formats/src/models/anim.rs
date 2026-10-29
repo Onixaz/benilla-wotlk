@@ -29,8 +29,8 @@ pub struct Skeleton {
 
 impl Skeleton {
     /// The nearest bone at or above `bone` with a billboard arm. Its rows become the camera basis
-    /// and children multiply onto it (`0x7151f9`), so every descendant is camera-dependent, emitter
-    /// positions too (`0x7190a9`); a nearer host discards what an outer one wrote.
+    /// and children multiply onto it, so every descendant is camera-dependent, emitter positions
+    /// too; a nearer host discards what an outer one wrote.
     pub fn billboard_host(&self, bone: u16) -> Option<usize> {
         let mut i = usize::from(bone);
         // Bounded by the bone count: the guard against a malformed parent cycle.
@@ -960,9 +960,9 @@ mod doodad_sound_tests {
         assert!(ev.time.abs() < 1e-6, "keyed at t = 0");
     }
 
-    /// `bellows.m2` keys two `$DSL` at t = 0 and 1.1 on one 2 s loop. Each loops (`0x7a54d0`),
-    /// but a doodad holds one registration (`[CMapDoodadDef+0x168]`) and a marker with another id
-    /// releases it first (`0x69521d` → `0x461f80`), so the pair alternates (`sound::anim_events`).
+    /// `bellows.m2` keys two `$DSL` at t = 0 and 1.1 on one 2 s loop. Each loops, but a doodad
+    /// holds one registration (`[CMapDoodadDef+0x168]`) and a marker with another id releases it
+    /// first, so the pair alternates (`sound::anim_events`).
     #[test]
     fn a_dsl_pair_on_one_cycle_alternates_through_one_slot() {
         let data = crate::wow_data_or_skip!();

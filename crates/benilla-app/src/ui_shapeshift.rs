@@ -1,16 +1,14 @@
-//! The stance bar's feed and drain behind `GetNumShapeshiftForms` (`0x4b4590`),
-//! `GetShapeshiftFormInfo` (`0x4b45c0`), `CastShapeshiftForm` (`0x4b4810`) and
-//! `GetShapeshiftFormCooldown` (`0x4b49a0`). A known spell joins the bar (`0x4b25b0`) unless
+//! The stance bar's feed and drain behind `GetNumShapeshiftForms`, `GetShapeshiftFormInfo`,
+//! `CastShapeshiftForm` and `GetShapeshiftFormCooldown`. A known spell joins the bar unless
 //! `AttributesEx2 & 0x2`, when it has a `SPELL_AURA_MOD_SHAPESHIFT` effect or
-//! `AttributesEx2 & 0x10`; the bar sorts by `StanceBarOrder`, negative last, then spell id
-//! (`0x4b2bb0`).
+//! `AttributesEx2 & 0x10`; the bar sorts by `StanceBarOrder`, negative last, then spell id.
 //!
 //! Only a change of membership or order fires `UPDATE_SHAPESHIFT_FORMS`, the reference's
-//! learn/unlearn edge (`0x4b28ff`, `0x4b2e43`), because the stock `ShapeshiftBar_Update` rebuilds
-//! the shelf on every fire. A castability change fires `SPELL_UPDATE_USABLE`, as `0x4b31c0` does.
-//! Active form, texture and cooldown push silently and repaint on `PLAYER_AURAS_CHANGED` (a form's
-//! aura holds a slot, warrior stances included) and `SPELL_UPDATE_COOLDOWN`, so the feed runs
-//! before both; a cooldown's expiry fires nothing.
+//! learn/unlearn edge, because the stock `ShapeshiftBar_Update` rebuilds the shelf on every fire. A
+//! castability change fires `SPELL_UPDATE_USABLE`, as the reference does. Active form, texture and
+//! cooldown push silently and repaint on `PLAYER_AURAS_CHANGED` (a form's aura holds a slot,
+//! warrior stances included) and `SPELL_UPDATE_COOLDOWN`, so the feed runs before both; a
+//! cooldown's expiry fires nothing.
 
 use std::time::Instant;
 
@@ -33,10 +31,9 @@ const ATTR_EX2_STANCE_BAR_EXCLUDE: u32 = 0x2;
 /// Ironweave Battlesuit 27733.
 const ATTR_EX2_STANCE_BAR_FORCE: u32 = 0x10;
 
-/// `isActive` (`0x4b45c0`), forked on the form id (the first `MOD_SHAPESHIFT` misc value, else 0).
-/// A form spell matches the form byte (`4b46a0`). A force-admitted one with `ActiveIconID != 0`
-/// (`4b46f2`) needs its own aura live with the cancelable bit (`4b4739`), the action bar toggle's
-/// scan (`0x4e55f0`); a paladin aura lights only this way.
+/// `isActive`, forked on the form id (the first `MOD_SHAPESHIFT` misc value, else 0). A form spell
+/// matches the form byte. A force-admitted one with `ActiveIconID != 0` needs its own aura live
+/// with the cancelable bit, the action bar toggle's scan; a paladin aura lights only this way.
 fn form_active(
     spell_id: u32,
     d: &benilla_formats::SpellDisplay,
@@ -50,9 +47,8 @@ fn form_active(
 }
 
 /// `SpellIconID`, or `ActiveIconID` when active and nonzero, under either arm of [`form_active`]:
-/// both reach the one block that elects the icon (`4b4754`), so a lit paladin aura wears its
-/// `ActiveIconID`. A form spell with the column at 0 is active yet keeps `SpellIconID`
-/// (`4b4763 je`).
+/// both reach the one block that elects the icon, so a lit paladin aura wears its `ActiveIconID`. A
+/// form spell with the column at 0 is active yet keeps `SpellIconID`.
 fn form_texture(d: &benilla_formats::SpellDisplay, active: bool) -> Option<String> {
     if active {
         d.active_icon.clone().or_else(|| d.icon.clone())
@@ -247,7 +243,7 @@ fn feed_shapeshift_bar(
         .into_iter()
         .map(|(id, d)| {
             let active = form_active(id, d, form_byte, self_auras.iter().next());
-            // `isCastable`: true for the active form, else the `0x6e3d60` walk the action bar's
+            // `isCastable`: true for the active form, else the walk the action bar's
             // `IsUsableAction` runs.
             let castable = active
                 || store.is_none_or(|s| {
@@ -298,10 +294,10 @@ fn feed_shapeshift_bar(
     }
 }
 
-/// `CastShapeshiftForm` (`0x4b4810`), forked on the form id like the info call: the active form
-/// cancels unless `SpellShapeshiftForm.dbc` `flags1 & 0x2` makes it a silent no-op (`0x4b4963`,
-/// warrior stances); a force-admitted spell whose aura is up cancels, with no DBC guard since it
-/// has no form id. Anything else casts.
+/// `CastShapeshiftForm`, forked on the form id like the info call: the active form cancels unless
+/// `SpellShapeshiftForm.dbc` `flags1 & 0x2` makes it a silent no-op (warrior stances); a
+/// force-admitted spell whose aura is up cancels, with no DBC guard since it has no form id.
+/// Anything else casts.
 pub(crate) fn cast_form(cast: &mut crate::spell::ScriptCast, spell_id: u32) {
     let crate::spell::ScriptCast {
         targeting, ladder, ..
@@ -309,7 +305,7 @@ pub(crate) fn cast_form(cast: &mut crate::spell::ScriptCast, spell_id: u32) {
     let store = targeting.self_store.iter().next();
     let form_byte = store.map(|s| s.0.unit_shapeshift_form()).unwrap_or(0);
     let d = ladder.spells.as_ref().and_then(|s| s.catalog.get(spell_id));
-    // The active form's row, for the `0x4b4963` guard (shared with `crate::ui_action::toggle`).
+    // The active form's row, for the guard (shared with `crate::ui_action::toggle`).
     let row = ladder
         .spells
         .as_ref()
@@ -389,7 +385,7 @@ mod tests {
             "no player object, no latch"
         );
 
-        // `ActiveIconID == 0` closes the arm (`4b46f2`).
+        // `ActiveIconID == 0` closes the arm.
         let iconless = SpellDisplay {
             active_icon_id: 0,
             ..devotion_aura()
@@ -397,8 +393,8 @@ mod tests {
         assert!(!form_active(465, &iconless, 0, Some(&up)));
     }
 
-    /// Both arms reach the block that elects `ActiveIconID` (`0x4b45c0`); the zero fallback
-    /// (`4b4763 je`) is reachable only on the form arm.
+    /// Both arms reach the block that elects `ActiveIconID`; the zero fallback is reachable only on
+    /// the form arm.
     #[test]
     fn the_active_icon_swap_reaches_both_arms() {
         let shield = Some("Interface\\Icons\\Spell_Holy_DevotionAura".to_string());
@@ -415,7 +411,7 @@ mod tests {
         assert_eq!(form_texture(&cat, true), swirl);
         assert_eq!(form_texture(&cat, false), shield);
 
-        // A paladin aura, the force-admit arm, elects the same column (`4b4754`).
+        // A paladin aura, the force-admit arm, elects the same column.
         let devotion = SpellDisplay {
             active_icon: swirl.clone(),
             icon: shield.clone(),
@@ -428,8 +424,8 @@ mod tests {
         );
         assert_eq!(form_texture(&devotion, false), shield);
 
-        // `4b475c` sets `isActive` before `4b4763` tests the column: a warrior stance is active
-        // yet keeps `SpellIconID`.
+        // The reference sets `isActive` before the reference tests the column: a warrior stance is
+        // active yet keeps `SpellIconID`.
         let stance = SpellDisplay {
             shapeshift_form: Some(17),
             active_icon_id: 0,

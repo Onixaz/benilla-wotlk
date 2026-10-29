@@ -1,8 +1,7 @@
 //! `PetPersonality.dbc`, behind a hunter pet's happiness readout. `GetPetHappiness` buckets on its
-//! own (5875's `0x4be947`-`0x4be9c3`), counting the row's thresholds the happiness power
-//! (`UNIT_FIELD_POWER5`) meets. 12340's row is `ID`, the name over sixteen locales and a mask, then
-//! the threshold and damage triples; 3.0 dropped pet loyalty, so the loyalty-rate triple and
-//! `PetLoyalty.dbc` are gone from the install.
+//! own, counting the row's thresholds the happiness power (`UNIT_FIELD_POWER5`) meets. 12340's row
+//! is `ID`, the name over sixteen locales and a mask, then the threshold and damage triples; 3.0
+//! dropped pet loyalty, so the loyalty-rate triple and `PetLoyalty.dbc` are gone from the install.
 
 use std::collections::HashMap;
 
@@ -22,8 +21,8 @@ const NAME_FIELD: usize = 1;
 const THRESHOLD_FIELD: usize = 18;
 const DAMAGE_FIELD: usize = 21;
 
-/// The personality the client falls back to when the id is out of range or its row is missing
-/// (`0x4be96c`), "Personality: Standard".
+/// The personality the client falls back to when the id is out of range or its row is missing,
+/// "Personality: Standard".
 pub const FALLBACK_PERSONALITY: u32 = 1;
 
 /// One `PetPersonality` row's triples, read 1-based: bucket 1 reads slot 0, bucket 0 reads none.
@@ -41,15 +40,15 @@ pub struct PetHappiness {
     /// `0..=3`. `0` is a number, not the failure case: the client pushes `0` with the failure's
     /// tail, and `PetFrame.lua`, with no branch for it, keeps the icon's old texcoords.
     pub bucket: u32,
-    /// The damage percentage, times the client's `100.0f` (`[0x806b10]`); `100.0` for bucket 0.
+    /// The damage percentage, times the client's `100.0f`; `100.0` for bucket 0.
     pub damage_percentage: f32,
 }
 
 impl PetPersonality {
-    /// Bucket a raw happiness power and pick the row's damage figure (`0x4be981`).
+    /// Bucket a raw happiness power and pick the row's damage figure.
     pub fn happiness(&self, raw: u32) -> PetHappiness {
         let bucket = self.thresholds.iter().take_while(|&&t| raw >= t).count();
-        // Bucket 0 takes the gate-failure tail (`0x4be9a8 je 0x4be9e9`) instead of indexing.
+        // Bucket 0 takes the gate-failure tail instead of indexing.
         let Some(i) = bucket.checked_sub(1) else {
             return PetHappiness {
                 bucket: 0,
@@ -67,9 +66,9 @@ impl PetPersonality {
 pub struct PetPersonalities(HashMap<u32, PetPersonality>);
 
 impl PetPersonalities {
-    /// The row for personality `id`, or the client's fallback row. The reference keys this table
-    /// by `[[pet+0xb30]+0x24]` (`0x605600`), a field of the cached creature-query record whose
-    /// wire source is untraced, so callers pass `None` and get row 1.
+    /// The row for personality `id`, or the client's fallback row. The reference keys this table by
+    /// `[[pet+0xb30]+0x24]`, a field of the cached creature-query record whose wire source is
+    /// untraced, so callers pass `None` and get row 1.
     pub fn for_pet(&self, id: Option<u32>) -> Option<&PetPersonality> {
         id.and_then(|i| self.0.get(&i))
             .or_else(|| self.0.get(&FALLBACK_PERSONALITY))

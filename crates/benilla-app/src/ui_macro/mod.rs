@@ -24,9 +24,9 @@ pub(crate) struct MacroFiles {
     dirty: bool,
 }
 
-/// Macro index to its bound spell, the reference's `[rec+0x564]` (read by `0x4e5ba0`), which an
-/// action-bar macro slot's state reads through. A missing entry names no macro, which `0x4e5030`
-/// greys, unlike a macro that casts nothing.
+/// Macro index to its bound spell, the reference's `[rec+0x564]`, which an action-bar macro slot's
+/// state reads through. A missing entry names no macro, which the reference greys, unlike a macro
+/// that casts nothing.
 #[derive(Resource, Default)]
 pub(crate) struct MacroBoundSpells(pub(crate) std::collections::HashMap<u32, BoundSpell>);
 
@@ -171,7 +171,7 @@ fn load_macros(
         state.character.len()
     );
     script.set_macros(state);
-    // `UPDATE_MACROS` (string at `0x852460`): the macro frame redraws on it, as after an edit.
+    // `UPDATE_MACROS`: the macro frame redraws on it, as after an edit.
     script.fire_event("UPDATE_MACROS", vec![]);
 }
 
@@ -277,14 +277,14 @@ fn rebind_macro_spells(
     }
 }
 
-/// The event each macro line is fired as: id `0x188`, whose registry slot `0xbe17b8` is written
-/// once, at `0x51b4ff`, with the string at `0x852470`.
+/// The event each macro line is fired as: id `0x188`, whose registry slot is written once, with the
+/// string.
 const EXECUTE_CHAT_LINE: &str = "EXECUTE_CHAT_LINE";
 
 /// Run a macro by its 1-based index; returns whether anything ran. Like the reference's runner
-/// (`0x4f14e0`, reached only from `UseAction` at `0x4e6098`), it fires `EXECUTE_CHAT_LINE` per
-/// non-empty line and nothing else: the stock `ChatFrame1` sends each through its edit box
-/// (`ChatFrame.lua:1343`), and an addon registered for the event sees every macro line.
+/// (reached only from `UseAction`), it fires `EXECUTE_CHAT_LINE` per non-empty line and nothing
+/// else: the stock `ChatFrame1` sends each through its edit box (`ChatFrame.lua:1343`), and an
+/// addon registered for the event sees every macro line.
 pub(crate) fn run_macro(script: &mut UiScript, index: u32) -> bool {
     let Some(body) = script.macros().get(index as usize).map(|m| m.body.clone()) else {
         return false;

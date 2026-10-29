@@ -40,8 +40,8 @@ struct Edge {
 }
 
 /// One frame's gravity rise for an edge, world +Z yards: the reference's
-/// `gravity · ((age + age) + dt) · dt` (`0x7b7e60`, `0x7b8007`..`0x7b800f`), then `age += dt`. It
-/// telescopes to `gravity · t²`, upward for a positive gravity (two `fadd`s, no `fchs`).
+/// `gravity · ((age + age) + dt) · dt`, then `age += dt`. It telescopes to `gravity · t²`, upward
+/// for a positive gravity (two `fadd`s, no `fchs`).
 fn gravity_step(gravity: f32, age: f32, dt: f32) -> f32 {
     gravity * ((age + age) + dt) * dt
 }
@@ -53,13 +53,13 @@ pub struct RibbonTrail {
     /// The emission origin in the owner's frame (`position − bone_pivot` for a joint owner).
     local_offset: Vec3,
     /// The node source; `None` once the owner is gone and the trail drains. The reference frees a
-    /// model's emitters at its dtor (`0x70e313`) and keeps an ending effect's model while its
-    /// particles drain (`HasLiveParticles` `0x7b5f60`); whether its ribbons drain too is untraced.
+    /// model's emitters at its dtor and keeps an ending effect's model while its particles drain
+    /// (`HasLiveParticles`); whether its ribbons drain too is untraced.
     owner: Option<Entity>,
     /// The clock the `+0xc0` enable gate is sampled against every frame.
     seq: RibbonSeq,
     /// The model whose [`crate::model_fade::ModelAlpha`] gates the draw (`None` always draws): the
-    /// reference's ribbon leg drops the draw below a render-alpha threshold (`0x707680`, alpha
+    /// reference's ribbon leg drops the draw below a render-alpha threshold (alpha
     /// `block+0x3c × Model+0x19c`). Whether that alpha also scales the strip is untraced.
     alpha_src: Option<Entity>,
     /// The placed model's [`crate::particles::EmitterFade`]: the reference ticks and draws a
@@ -69,8 +69,7 @@ pub struct RibbonTrail {
     fade: Option<crate::particles::EmitterFade>,
     /// The frame the committed edges are stored in: world on the ground, the deck while the owning
     /// model rides a transport ([`crate::ride_frame`]). The reference stores and re-projects them
-    /// (birth `0x718dd8` → `0x7b76c0`, draw `0x70d87d` → `0x7b80c0`) with no `0x100` gate: a
-    /// trail is always ride-framed, a particle cloud only in world mode.
+    /// with no `0x100` gate: a trail is always ride-framed, a particle cloud only in world mode.
     ride: crate::ride_frame::StoredFrame,
     /// Committed edges, newest last; the live head is added only at draw.
     edges: VecDeque<Edge>,
@@ -115,7 +114,7 @@ impl RibbonTrail {
 }
 
 /// What decides a trail's `+0xc0` enable gate: the reference's per-ribbon `block+0xbc` byte,
-/// re-read every frame (`0x717660`).
+/// re-read every frame.
 #[derive(Clone, Copy)]
 pub enum RibbonSeq {
     /// The sequence this entity plays, re-read each frame, since a trap springs or a door opens.
@@ -247,8 +246,8 @@ pub(crate) fn simulate_ribbons(
         }
         let head = owner.and_then(|o| transforms.get(o).ok()).map(|owner_gt| {
             let node = owner_gt.transform_point(*local_offset);
-            // The cross-section axis is the live bone's local +Y: `0x7b76c0` captures the basis
-            // each frame, and `0x7b6990` spans `±heightAbove/Below` along that row alone.
+            // The cross-section axis is the live bone's local +Y: the reference captures the basis
+            // each frame, and the reference spans `±heightAbove/Below` along that row alone.
             let axis = (owner_gt.rotation() * wow_to_bevy([0.0, 1.0, 0.0])).normalize_or(Vec3::Y);
             (node, axis)
         });
@@ -269,8 +268,8 @@ pub(crate) fn simulate_ribbons(
                     .ok()
                     .map(|gt| (t, crate::ride_frame::ride_matrix(gt)))
             });
-        // Boarding and leaving re-express the stored edges (the reference's `0x7187f0` →
-        // `0x7b7bc0`); a moving deck folds nothing, since the draw's live `A` carries the strip.
+        // Boarding and leaving re-express the stored edges; a moving deck folds nothing, since the
+        // draw's live `A` carries the strip.
         if let Some(fold) = ride.retarget(deck) {
             for e in edges.iter_mut() {
                 e.top = fold.transform_point3(e.top);
@@ -327,10 +326,9 @@ pub(crate) fn simulate_ribbons(
         let h_below = def.height_below.sample_ms(ms).max(0.0);
 
         // The `+0xc0` enable gate, sampled live against the host's sequence. The per-ribbon byte
-        // `block+0xbc` is the sampled `visibilityTrack`: 0 from the ctor (`0x71b34c`), 1 from the
-        // loader (`0x70f80e`), then each frame `values[k0]` in `0x714260` (`0x7176ee` step arm,
-        // `0x717714` non-step arm); nothing else writes it and `0x718960` only reads it. A clear
-        // byte skips the ribbon's whole draw (`0x7080c2` jumps to `0x708263`), not just commits.
+        // `block+0xbc` is the sampled `visibilityTrack`: 0 from the ctor, 1 from the loader, then
+        // each frame `values[k0]`; nothing else writes it and the reference only reads it. A clear
+        // byte skips the ribbon's whole draw, not just commits.
         let lit = def.visible.as_ref().is_none_or(|vis| match *seq {
             RibbonSeq::Fixed(a) => vis.at(a, 0.0),
             RibbonSeq::Host(h) => match hosts.get(h) {
@@ -344,7 +342,7 @@ pub(crate) fn simulate_ribbons(
                     vis.at(anim, t)
                 }
                 // No clock yet: the host is still being built. The reference arms a sequence as the
-                // M2 goes live (`0x70ebd0`), so this holds dark rather than invent a lit frame.
+                // M2 goes live, so this holds dark rather than invent a lit frame.
                 Err(_) => false,
             },
         });
@@ -356,9 +354,9 @@ pub(crate) fn simulate_ribbons(
         {
             edges.pop_front();
         }
-        // Gravity (`0x7b7e60`, loop `0x7b7fe7..0x7b807a`): both vertices of every live edge rise
-        // by `gravity_step`, with no velocity and no other scale. The axis is world up in either
-        // store, which is why `crate::ride_frame::ride_matrix` is yaw only.
+        // Gravity: both vertices of every live edge rise by `gravity_step`, with no velocity and no
+        // other scale. The axis is world up in either store, which is why
+        // `crate::ride_frame::ride_matrix` is yaw only.
         for e in edges.iter_mut() {
             let term = gravity_step(def.gravity, e.age, dt);
             e.top.y += term;
@@ -366,7 +364,7 @@ pub(crate) fn simulate_ribbons(
             e.age += dt;
         }
         // Emission: the reference commits `floor(dt·eps + phase)` edges a frame, carries the
-        // fraction as the phase and backdates each inside the frame (`0x7b7f60`).
+        // fraction as the phase and backdates each inside the frame.
         if let Some((node, axis)) = head {
             // Birth fold: the live world node and axis into the store's frame.
             let (node, axis) = match to_deck {
@@ -393,8 +391,8 @@ pub(crate) fn simulate_ribbons(
         if !images.contains(&*texture) {
             continue;
         }
-        // The gate on the draw (`0x7080c2`): a gated-off ribbon shows nothing, while its edges
-        // still age as `0x7b7e60` ages them, so it resumes mid-strip.
+        // The gate on the draw: a gated-off ribbon shows nothing, while its edges still age as the
+        // reference ages them, so it resumes mid-strip.
         if !lit {
             continue;
         }
@@ -420,7 +418,7 @@ pub(crate) fn simulate_ribbons(
         let rgb = def.color.sample_ms(ms);
         let rgba = [rgb[0], rgb[1], rgb[2], def.alpha.sample_ms(ms).max(0.0)];
         // The sort anchor: the live head, or a draining trail's newest edge. The draw fold maps
-        // stored to world (`0xcf5b68 = A · T · S`); the head is already world.
+        // stored to world (`= A · T · S`); the head is already world.
         let out = |p: Vec3| to_world.map_or(p, |a| a.transform_point3(p));
         let anchor = head.map(|(node, _)| node).unwrap_or_else(|| {
             let e = edges.back().expect("n >= 2 ⇒ edges exist while draining");
@@ -466,16 +464,16 @@ pub(crate) fn simulate_ribbons(
                 cam,
                 texture: texture.id(),
                 blend: def.blend.into(),
-                // The M2 batch state's per-blend fog colour (`0x70baf0`): additive trails fog
-                // toward black, the rest toward the scene colour. No ribbon has the unfogged flag.
+                // The M2 batch state's per-blend fog colour: additive trails fog toward black, the
+                // rest toward the scene colour. No ribbon has the unfogged flag.
                 fog: EffectFog::for_blend(0, def.blend),
                 // Unlit: the ribbon record has no flag word for the particles' unlit bit, and the
                 // reference's ribbon batch lighting is untraced.
                 lighting: crate::particles::buffer::EffectLighting::None,
                 anchor,
-                // The owner rung, dropped under the water pass when the model's bound, radius
-                // slack included, is on the eye's far side of its water plane (`0x7081f1`); with
-                // no model matrix, the head's side decides.
+                // The owner rung, dropped under the water pass when the model's bound, radius slack
+                // included, is on the eye's far side of its water plane; with no model matrix, the
+                // head's side decides.
                 bias: *bias
                     + if crate::particles::model_far_side(
                         &interleave,

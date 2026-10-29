@@ -5,8 +5,8 @@
 //! `0x816f30`: a string first argument is replaced by the global of that name; the call then runs
 //! under `lua_pcall` with the error handler (`geterrorhandler()`'s reference) as its message
 //! handler. On success it returns the function's results; on an error the handler has seen the
-//! message and `securecall` returns nothing. The taint save and restore around the call
-//! (`[0xd4139c]`) has nothing to act on: benilla runs every chunk alike.
+//! message and `securecall` returns nothing. The taint save and restore around the call has nothing
+//! to act on: benilla runs every chunk alike.
 
 use mlua::Lua;
 
@@ -93,9 +93,9 @@ function forceinsecure() end
 
 /// Install `securecall` on a target whose base library has it.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
-    // `issecure()` (`0x816da0`): 1 while the taint global `[0xd4139c]` is clear, else nil.
-    // benilla taints nothing, so it is always clear, as for the stock FrameXML in the reference;
-    // an addon's code, which the reference runs tainted, reads 1 here too.
+    // `issecure()` (`0x816da0`): 1 while the taint global is clear, else nil. benilla taints
+    // nothing, so it is always clear, as for the stock FrameXML in the reference; an addon's code,
+    // which the reference runs tainted, reads 1 here too.
     lua.globals()
         .set("issecure", lua.create_function(|_, ()| Ok(1i64))?)?;
     lua.load(SECURECALL).set_name("=securecall").exec()

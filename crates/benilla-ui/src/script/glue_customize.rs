@@ -135,7 +135,7 @@ impl<'a> Customizer<'a> {
     }
 
     /// The `n`th admitted slot: a colour of variation `fixed`, or with `by_var` a variation at
-    /// colour `fixed` (`0x4e7e90`, `0x4e7f20`, `0x4e7fb0`, `0x4e8050`); -1 past the last.
+    /// colour `fixed` (`0x4e7e90`, `0x4e7f20`, `0x4e8050`); -1 past the last.
     fn nth(&self, ty: usize, fixed: i32, by_var: bool, n: i32) -> i32 {
         let count = if by_var {
             self.num_variations(ty)

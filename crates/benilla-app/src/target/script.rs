@@ -15,7 +15,7 @@ pub(crate) struct ScriptSelect<'w, 's> {
     /// ([`benilla_ui::script::parse_unit_token`]), so `TargetUnit("party1target")` and
     /// `CheckInteractDistance("party1target", …)` name the same unit.
     tokens: crate::ui_unit::UnitTokens<'w, 's>,
-    /// `TargetLastEnemy`'s memory (`[0xb4e2e8]`), stamped by `scan::remember_last_enemy`.
+    /// `TargetLastEnemy`'s memory, stamped by `scan::remember_last_enemy`.
     last_enemy: Res<'w, scan::LastEnemy>,
     /// The SetSelection tail shared with the world click, `/target` and `/assist`, classification
     /// included.
@@ -28,10 +28,10 @@ pub(crate) struct ScriptSelect<'w, 's> {
 }
 
 impl ScriptSelect<'_, '_> {
-    /// `TargetUnit` (`0x4899d0`), `AssistUnit` (`0x489b80`) and `TargetLastEnemy` share the
-    /// reference's helper `0x489a40`: a resolved unit or a roster member is committed, anything
-    /// else is a no-op, never a deselect. Here a token must name a streamed unit, so an
-    /// out-of-range roster member is a no-op (the guid-only selection is not built).
+    /// `TargetUnit`, `AssistUnit` and `TargetLastEnemy` share the reference's helper: a resolved
+    /// unit or a roster member is committed, anything else is a no-op, never a deselect. Here a
+    /// token must name a streamed unit, so an out-of-range roster member is a no-op (the guid-only
+    /// selection is not built).
     pub(crate) fn select(&mut self, request: SelectionRequest) {
         match request {
             SelectionRequest::Unit(token) => {
@@ -39,20 +39,19 @@ impl ScriptSelect<'_, '_> {
                     self.commit.commit(entity, guid);
                 }
             }
-            // `0x489ba9 call 0x515940(token)`, then the shared tail. An unresolvable token is
-            // silent here; the reference shows message `0xb8` `ERR_GENERIC_NO_TARGET` (`0x489c0e`).
+            // `call (token)`, then the shared tail. An unresolvable token is silent here; the
+            // reference shows message `0xb8` `ERR_GENERIC_NO_TARGET`.
             SelectionRequest::Assist(token) => {
                 match self.tokens.resolve(&token, &self.commit.selection) {
                     Some((basis, _)) => self.commit.assist(basis, "AssistUnit"),
                     None => info!("assist (AssistUnit): \"{token}\" names nothing; silent no-op"),
                 }
             }
-            // `0x489c40`, `/assist <name>`: a player name, prefix-matched by the app's name scan.
+            // `/assist <name>`: a player name, prefix-matched by the app's name scan.
             SelectionRequest::AssistByName(name) => {
                 by_name::assist_named(&self.by_name, &mut self.commit, Some(&name), "AssistByName");
             }
-            // `0x489b45` → `0x489a40`. Empty memory is a no-op (the shim `0x489b40` tests nothing),
-            // unlike `TargetLastTarget 0x489b00`, which reaches `0x493540(0,0)` and deselects.
+            // . Empty memory is a no-op, unlike `TargetLastTarget`, which reaches and deselects.
             SelectionRequest::LastEnemy => {
                 let Some(guid) = self.last_enemy.0 else {
                     info!("TargetLastEnemy: nothing hostile has been targeted yet; no-op");
@@ -69,13 +68,12 @@ impl ScriptSelect<'_, '_> {
         }
     }
 
-    /// `TargetByName(name, exactMatch)` (`0x489d60`), the stock `/target`.
+    /// `TargetByName(name, exactMatch)`, the stock `/target`.
     pub(crate) fn target_by_name(&mut self, name: &str, exact: bool) {
         by_name::target_named(&self.by_name, &mut self.commit, name, exact);
     }
 
-    /// `TargetNearest*([reverse])` (`0x489a80`/`0x489aa0`/`0x489ac0`/`0x489ae0` →
-    /// `0x493f60(reverse, mode)`), one cycle of the cycler the TAB key runs.
+    /// `TargetNearest*([reverse])` (`(reverse, mode)`), one cycle of the cycler the TAB key runs.
     pub(crate) fn target_nearest(&mut self, mode: benilla_ui::script::NearestMode, reverse: bool) {
         let engaged = self.commit.engaged();
         scan::cycle(
@@ -90,10 +88,10 @@ impl ScriptSelect<'_, '_> {
         );
     }
 
-    /// `TargetLastTarget()` (`0x489b00`): a held last-target pair goes to `0x489a40` as a stack
-    /// copy, so a streamed unit is committed (which stamps the outgoing target, swapping the two)
-    /// and an unstreamed one is a no-op (the roster fallback is not built, as for
-    /// `TargetLastEnemy`); an empty pair deselects through `0x493540(0,0)` (`0x489b2d`).
+    /// `TargetLastTarget()`: a held last-target pair goes to the reference as a stack copy, so a
+    /// streamed unit is committed (which stamps the outgoing target, swapping the two) and an
+    /// unstreamed one is a no-op (the roster fallback is not built, as for `TargetLastEnemy`); an
+    /// empty pair deselects.
     pub(crate) fn target_last_target(&mut self) {
         match self.commit.selection.last {
             Some(guid) => match self.tokens.held(guid) {
@@ -104,7 +102,7 @@ impl ScriptSelect<'_, '_> {
         }
     }
 
-    /// `ClearTarget()` (`0x489ff0`): deselect whatever the calls before it left selected.
+    /// `ClearTarget()`: deselect whatever the calls before it left selected.
     pub(crate) fn clear_target(&mut self) {
         self.commit.clear();
     }
@@ -142,7 +140,7 @@ mod tests {
 
     /// The selection calls from Lua, through the binding bodies of ASSISTTARGET (`AssistUnit`) and
     /// TARGETLASTHOSTILE (`TargetLastEnemy`): an empty basis, a garbage token and a stale memory
-    /// are each a no-op (`0x489a40`'s bare `ret`), never a deselect or a panic.
+    /// are each a no-op (the reference's bare `ret`), never a deselect or a panic.
     #[test]
     fn the_selection_calls_run_assist_and_last_enemy_without_ever_deselecting() {
         use crate::net::{Guid, ObjectStore, SelfPlayer};
@@ -221,8 +219,8 @@ mod tests {
     }
 
     /// `TargetUnit("partypet1")`, the TARGETPARTYPET1 binding and the pet half of
-    /// TARGETPARTYMEMBER1, commits the pet the member's descriptor names (`0x515970` to `0x4e81d0`);
-    /// a slot with no member, or one whose pet is not held, is a no-op, never a deselect.
+    /// TARGETPARTYMEMBER1, commits the pet the member's descriptor names; a slot with no member, or
+    /// one whose pet is not held, is a no-op, never a deselect.
     #[test]
     fn target_unit_selects_a_party_pet() {
         use crate::net::{Guid, ObjectStore, SelfPlayer};
@@ -307,10 +305,10 @@ mod tests {
         assert_eq!(run(&mut world, r#"TargetUnit("partypet1")"#), Some(MEMBER));
     }
 
-    /// `TargetUnit` and `AssistUnit` take the tokens the reference's resolver takes (`0x515970`,
-    /// from `0x489a08` and `0x489ba9`): a base then a hop off each held unit's target, so
-    /// `party1target` names the unit party1 targets and `AssistUnit("party1target")` its target's.
-    /// A chain that breaks, and text that is not a hop, is a no-op, never a deselect.
+    /// `TargetUnit` and `AssistUnit` take the tokens the reference's resolver takes: a base then a
+    /// hop off each held unit's target, so `party1target` names the unit party1 targets and
+    /// `AssistUnit("party1target")` its target's. A chain that breaks, and text that is not a hop,
+    /// is a no-op, never a deselect.
     #[test]
     fn target_and_assist_unit_follow_a_target_chain() {
         use crate::net::{Guid, ObjectStore, SelfPlayer};
@@ -446,10 +444,10 @@ mod tests {
         );
     }
 
-    /// `TargetUnit("npc")` and `AssistUnit("npc")` name the interaction NPC, `[0xb4e2d0]`, which
-    /// `0x515970` reads on a whole-token `npc` compare (`0x515bec`-`0x515c00`): the vendor whose
-    /// window is open, and for an assist the unit it targets. With no window open, or the NPC no
-    /// longer held, `npc` names nobody and the selection stays.
+    /// `TargetUnit("npc")` and `AssistUnit("npc")` name the interaction NPC, which the reference
+    /// reads on a whole-token `npc` compare: the vendor whose window is open, and for an assist the
+    /// unit it targets. With no window open, or the NPC no longer held, `npc` names nobody and the
+    /// selection stays.
     #[test]
     fn target_and_assist_unit_name_the_interaction_npc() {
         use crate::net::{Guid, ObjectStore, SelfPlayer};

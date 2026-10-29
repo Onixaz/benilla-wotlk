@@ -13,30 +13,29 @@ use std::collections::HashMap;
 /// reach, whether it is held and whom it targets. A zero guid is nobody.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UnitGuids {
-    /// The local player's guid; 0 without the player object, when `player` and `pet` answer nil
-    /// (`0x5159c9`, `0x515a58`).
+    /// The local player's guid; 0 without the player object, when `player` and `pet` answer nil.
     pub player: u64,
-    /// The pet: `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON` (`0x515a64`).
+    /// The pet: `UNIT_FIELD_CHARM`, else `UNIT_FIELD_SUMMON`.
     pub pet: u64,
-    /// The target global `[0xb4e2d8]`.
+    /// The target global.
     pub target: u64,
-    /// The mouseover global `[0xb4e2c8]`, read only while it is a held unit (`0x515bd2`).
+    /// The mouseover global, read only while it is a held unit.
     pub mouseover: u64,
-    /// The interaction NPC `[0xb4e2d0]`.
+    /// The interaction NPC.
     pub npc: u64,
     /// The focus `[0xbd07d0]`, which `FocusUnit` sets in the VM; a push keeps the VM's.
     pub focus: u64,
-    /// `partyN`'s guid, index N-1 (`0x4e81a0`).
+    /// `partyN`'s guid, index N-1.
     pub party: [u64; 4],
-    /// `partypetN`'s guid, index N-1 (`0x4e81d0`).
+    /// `partypetN`'s guid, index N-1.
     pub party_pets: [u64; 4],
-    /// `raidN`'s guid, one per roster row; a row past the end is nobody (`0x491940`).
+    /// `raidN`'s guid, one per roster row; a row past the end is nobody.
     pub raid: Vec<u64>,
-    /// `raidpetN`'s guid, row for row with [`Self::raid`] (`0x491960`).
+    /// `raidpetN`'s guid, row for row with [`Self::raid`].
     pub raid_pets: Vec<u64>,
     /// Each held unit a token can reach, to its `UNIT_FIELD_TARGET` (0 for none): the object
-    /// manager's lookup with the unit typemask (`0x468460`, `ecx = 8`) and the descriptor read a
-    /// `target` hop makes (`0x515a0f`-`0x515a25`). A guid missing here is not held.
+    /// manager's lookup with the unit typemask (`ecx = 8`) and the descriptor read a `target` hop
+    /// makes. A guid missing here is not held.
     pub held: HashMap<u64, u64>,
 }
 
@@ -111,16 +110,16 @@ pub enum UnitBase {
     Commentator(u32),
 }
 
-/// What `0x515970` makes of a token's text, before it reads any state.
+/// What makes of a token's text, before it reads any state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnitTokenParse {
-    /// None of the compares match: the reference raises `Unknown unit name` (`0x515c14`).
+    /// None of the compares match: the reference raises `Unknown unit name`.
     Unknown,
-    /// Recognised, and names nobody whatever the state: the empty token (`0x51599d`), or text
-    /// after the base, and after each hop, that is not `target` (`0x515c2d`).
+    /// Recognised, and names nobody whatever the state: the empty token, or text after the base,
+    /// and after each hop, that is not `target`.
     Nobody,
-    /// A base and the `target` hops after it, each off the current unit's `UNIT_FIELD_TARGET`
-    /// (`0x515a1c`-`0x515a25`); the loop has no depth limit.
+    /// A base and the `target` hops after it, each off the current unit's `UNIT_FIELD_TARGET`; the
+    /// loop has no depth limit.
     Unit { base: UnitBase, hops: usize },
 }
 
@@ -138,8 +137,8 @@ fn base_of(token: &[u8]) -> Option<(Base, usize)> {
 }
 
 /// The inline base-10 parse after `party`, `partypet`, `raid` and `raidpet`, then `dec` to a
-/// 0-based index (`0x515ab1`-`0x515acc`): digits accumulate with 32-bit wrap, and a missing
-/// number leaves 0, whose index `0xffffffff` every bound rejects.
+/// 0-based index: digits accumulate with 32-bit wrap, and a missing number leaves 0, whose index
+/// `0xffffffff` every bound rejects.
 fn index_of(s: &[u8]) -> (u32, usize) {
     let digits = s.iter().take_while(|b| b.is_ascii_digit()).count();
     let n = s[..digits].iter().fold(0u32, |acc, &b| {
@@ -148,7 +147,7 @@ fn index_of(s: &[u8]) -> (u32, usize) {
     (n.wrapping_sub(1), digits)
 }
 
-/// Read `token`'s text as `0x515970` does, before any state: the base by the compares in their
+/// Read `token`'s text as the reference does, before any state: the base by the compares in their
 /// order, a numbered base's row, then `target` hops to the end of the text. `"party1target"` is
 /// party1 and one hop, `"targettarget"` the target and one, and `"npctarget"` is none of the
 /// compares, as `npc` is one full-string compare.
@@ -231,9 +230,8 @@ impl UnitGuids {
             && *held == other.held
     }
 
-    /// The guid `token` names, or `None` for nobody; `Err` for a token none of the compares
-    /// match, where the reference raises `Unknown unit name: %s` (`0x515c14`). An empty token is
-    /// nobody (`0x51599d`).
+    /// The guid `token` names, or `None` for nobody; `Err` for a token none of the compares match,
+    /// where the reference raises `Unknown unit name: %s`. An empty token is nobody.
     pub(crate) fn resolve(&self, token: &str) -> Result<Option<u64>, ()> {
         match parse_unit_token(token) {
             UnitTokenParse::Unknown => Err(()),
@@ -258,12 +256,12 @@ impl UnitGuids {
             UnitBase::Pet => self.pet,
             UnitBase::Target => self.target,
             UnitBase::Npc => self.npc,
-            // Deviation: `0x4e81d0` has no bound and reads past its four-entry table, which is
+            // Deviation: the reference has no bound and reads past its four-entry table, which is
             // stale memory, not a mechanism; past it, nobody.
             UnitBase::PartyPet(row) => at(&self.party_pets, row),
-            // Capped at 4 (`0x4e81b0`).
+            // Capped at 4.
             UnitBase::Party(row) => at(&self.party, row),
-            // Capped at the roster count (`0x491940`, `0x491960`).
+            // Capped at the roster count.
             UnitBase::RaidPet(row) => at(&self.raid_pets, row),
             UnitBase::Raid(row) => at(&self.raid, row),
             UnitBase::Mouseover if !self.held.contains_key(&self.mouseover) => return None,
@@ -339,8 +337,8 @@ impl UnitGuids {
         out
     }
 
-    /// The `target` loop (`0x5159d3`-`0x515a2c`): nobody stays nobody, and each hop goes to the held
-    /// unit's `UNIT_FIELD_TARGET`; a hop off a unit not held is a quiet nobody (`0x515a16`).
+    /// The `target` loop: nobody stays nobody, and each hop goes to the held unit's
+    /// `UNIT_FIELD_TARGET`; a hop off a unit not held is a quiet nobody.
     fn follow(&self, mut guid: u64, hops: usize) -> Option<u64> {
         for _ in 0..hops {
             if guid == 0 {
@@ -447,7 +445,7 @@ mod tests {
         assert_eq!(at("raid2target"), Some(ME));
         assert_eq!(at("raid2targettarget"), Some(MOB));
         assert_eq!(at("mouseovertarget"), Some(P1));
-        // A hop to nobody ends the chain (`0x515a2e`), as does a hop off a unit not held.
+        // A hop to nobody ends the chain, as does a hop off a unit not held.
         assert_eq!(at("pettarget"), None);
         assert_eq!(at("party2target"), None);
         assert!(guids().resolve("npctarget").is_err());

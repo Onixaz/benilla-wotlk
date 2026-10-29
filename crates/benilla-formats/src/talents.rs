@@ -112,7 +112,7 @@ pub struct TalentCatalog {
 }
 
 impl TalentCatalog {
-    /// A race and class's tabs (unit bytes, 1-based) in file order, as `0x4f2e50` filters them.
+    /// A race and class's tabs (unit bytes, 1-based) in file order, as the reference filters them.
     pub fn tabs_for_class(&self, race: u8, class: u8) -> Vec<&TalentTabInfo> {
         if !(1..=32).contains(&class) || !(1..=32).contains(&race) {
             return Vec::new();

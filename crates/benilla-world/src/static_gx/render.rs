@@ -102,7 +102,7 @@ pub(crate) enum GxDoodadVis {
 pub(crate) struct GxSel {
     /// Drawn this frame: PVS ∧ frustum ∧ farclip ∧ the exterior window gate.
     pub drawn: Vec<bool>,
-    /// On the interior fog lane: the client's per-group `[0xca7f00]`, from the portal flood
+    /// On the interior fog lane: the client's per-group, from the portal flood
     /// ([`crate::wmo_portal::GroupPvs::interior_fog`]).
     pub fog: Vec<bool>,
 }
@@ -483,8 +483,8 @@ fn prepare_static_gx(
         gpu.killed_applied = draw.killed_rev;
     }
 
-    // The interior-fog sync: the client's per-group `[0xca7f00]` picks a WMO group's and its
-    // props' fog triple per frame; rewritten only when the verdict moves, runs untouched.
+    // The interior-fog sync: the client's per-group picks a WMO group's and its props' fog triple
+    // per frame; rewritten only when the verdict moves, runs untouched.
     let sync_fog = |gpu: &mut GxCellGpu, draw: &GxCellDraw, sel: &GxSel| {
         if gpu.fog_applied == sel.fog {
             return;

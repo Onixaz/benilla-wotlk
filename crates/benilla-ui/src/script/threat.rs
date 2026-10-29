@@ -118,9 +118,9 @@ impl super::UiScript {
     }
 }
 
-/// The unit tooltip's threat line for `mob` (`0x529fe0`'s tail): with the warning on and the
-/// player on its list with a highest, `THREAT_TOOLTIP` filled with `trunc(percent - 0.5)`, and the
-/// colour of the status, 1 for one past the table.
+/// The unit tooltip's threat line for `mob`: with the warning on and the player on its list with a
+/// highest, `THREAT_TOOLTIP` filled with `trunc(percent - 0.5)`, and the colour of the status, 1
+/// for one past the table.
 pub(super) fn tooltip_line(model: &super::Model, mob: u64) -> Option<(i64, u8)> {
     let me = model.unit_guids.player;
     if me == 0 || !super::instance::threat_warning_enabled(model) {

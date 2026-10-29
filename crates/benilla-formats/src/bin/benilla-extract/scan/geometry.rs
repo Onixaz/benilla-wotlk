@@ -6,8 +6,8 @@ use anyhow::Result;
 use benilla_formats::Chain;
 
 /// Classify every billboard batch by facing: a billboard bone turns the model's +X toward the
-/// viewer (the spherical arm, `0x71547c`), so a single-sided batch (no material `0x04`) whose
-/// winding faces −X is culled by the reference from every angle.
+/// viewer (the spherical arm), so a single-sided batch (no material `0x04`) whose winding faces −X
+/// is culled by the reference from every angle.
 pub fn bbfacescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let names = super::m2_names(chain, prefix)?;
     let (mut scanned, mut cards) = (0u32, 0u32);
@@ -113,12 +113,12 @@ fn scale_spread<T>(keys: &[(T, [f32; 3])]) -> f32 {
         .fold(1.0f32, f32::max)
 }
 
-/// Per model with billboard bones, the vertices riding each arm directly (the card path) or
-/// through a descendant (the palette path), and three populations: `fx[…]`, emitters and ribbons
-/// on a billboard chain, whose position the reference folds through the replaced palette matrix
-/// (`0x7190a9`–`0x71910c`); `SEAM[…]`, bones the card split refuses; `NONUNIF[…]`,
-/// `bone:arm×ratio` for non-uniform animated scale, which the reference keeps under the camera
-/// basis (`T·R_cam·S`), so the card stretches along one axis (`G_HolyLightWell.m2` bone 0, ×4.26).
+/// Per model with billboard bones, the vertices riding each arm directly (the card path) or through
+/// a descendant (the palette path), and three populations: `fx[…]`, emitters and ribbons on a
+/// billboard chain, whose position the reference folds through the replaced palette matrix;
+/// `SEAM[…]`, bones the card split refuses; `NONUNIF[…]`, `bone:arm×ratio` for non-uniform animated
+/// scale, which the reference keeps under the camera basis (`T·R_cam·S`), so the card stretches
+/// along one axis (`G_HolyLightWell.m2` bone 0, ×4.26).
 pub fn bbscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let names = super::m2_names(chain, prefix)?;
     let arm = |k: benilla_formats::BillboardKind| match k {
@@ -316,10 +316,10 @@ pub fn bbscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// List the models whose batches trip any of three signals, read through the renderer's own
-/// batch resolution: `MULTI-GEOSET`, more than one `skinSectionId` (the reference builds every
-/// geoset visible, `0x70ebd0`, and only the character compositor hides any); `UNTEX`, no texture
-/// and no character or creature-skin slot to fill one; `TINY`, at most two faces.
+/// List the models whose batches trip any of three signals, read through the renderer's own batch
+/// resolution: `MULTI-GEOSET`, more than one `skinSectionId` (the reference builds every geoset
+/// visible, and only the character compositor hides any); `UNTEX`, no texture and no character or
+/// creature-skin slot to fill one; `TINY`, at most two faces.
 pub fn geosetscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let names = super::m2_names(chain, prefix)?;
     let (mut scanned, mut hits) = (0u32, 0u32);

@@ -50,11 +50,11 @@ pub struct PetActionView {
     /// `(start_ms on the GetTime clock, duration_ms, enabled)`, as [`super::action::ActionState`].
     pub cooldown: Option<(i64, u32, bool)>,
     /// The slot's packed word, verbatim, for the drag ([`super::cursor::pet`]): the reference
-    /// compares occupants under `& 0x3FFFFFFF` and writes the source word through unchanged
-    /// (`0x4bc9a0`, `0x4bce00`). `0` is the empty slot.
+    /// compares occupants under `& 0x3FFFFFFF` and writes the source word through unchanged. `0` is
+    /// the empty slot.
     pub packed: u32,
     /// `SPELL_ATTR_PASSIVE` (`Attributes & 0x40`) on a spell slot: the drop silently refuses a
-    /// passive source (`0x4bc9f8`-`0x4bca2e`).
+    /// passive source.
     pub passive: bool,
     /// `GetPetActionSlotUsable` (`0x5d3fd0`): the slot is usable now, which undims its icon.
     pub slot_usable: bool,
@@ -67,10 +67,10 @@ pub(crate) struct StoredPetAction {
     pub(crate) cooldown: Option<(f64, f64, bool)>,
 }
 
-/// The pet stat block: the four hunter stat bindings and `HasPetUI`'s second return
-/// (`0x4be670`), plus the family word, icon and diet. The stats share one hunter-pet gate
-/// (`0x6116e0`) and fail their own ways: loyalty to nil, the pairs to `(0, 0)`, happiness to
-/// `(nil, 100.0)`. The family word has no gate (`0x51a310`); the diet shares the stats'.
+/// The pet stat block: the four hunter stat bindings and `HasPetUI`'s second return, plus the
+/// family word, icon and diet. The stats share one hunter-pet gate and fail their own ways: loyalty
+/// to nil, the pairs to `(0, 0)`, happiness to `(nil, 100.0)`. The family word has no gate; the
+/// diet shares the stats'.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PetStats {
     /// `HasPetUI`'s second return; false makes every gated binding answer its failure form.
@@ -86,16 +86,16 @@ pub struct PetStats {
     /// `GetPetExperience`: `(currXP, nextXP)`.
     pub experience: (u32, u32),
     /// `UnitCreatureFamily("pet")`: the localized `CreatureFamily.dbc` word off the cached creature
-    /// record (`0x51a310`). `None` is nil: no record yet, id 0, or an id with no row (10, 13, 14,
-    /// 18 and 22 have none). `PetPaperDollFrame.lua:68-70` guards its level line on it.
+    /// record. `None` is nil: no record yet, id 0, or an id with no row (10, 13, 14, 18 and 22 have
+    /// none). `PetPaperDollFrame.lua:68-70` guards its level line on it.
     pub family: Option<String>,
     /// `GetPetIcon()`: the family row's `CreatureFamily.dbc` icon, `None` on the family word's
-    /// misses. Ungated like the family word; whether the reference gates it (`0x4beb10`) is
-    /// untraced, and no warlock reaches its stock callers (`PetStable.lua:51`, `161-162`).
+    /// misses. Ungated like the family word; whether the reference gates it is untraced, and no
+    /// warlock reaches its stock callers (`PetStable.lua:51`, `161-162`).
     pub icon: Option<String>,
-    /// `GetPetFoodTypes()`: the diet names the family's food mask selects, in record order
-    /// (`0x4bea10`: bit `1 << (id - 1)` of `CreatureFamily` column 7, names from `ItemPetFood`).
-    /// Empty for a zero mask (every warlock minion) or a failed hunter gate, which the app applies.
+    /// `GetPetFoodTypes()`: the diet names the family's food mask selects, in record order (: bit
+    /// `1 << (id - 1)` of `CreatureFamily` column 7, names from `ItemPetFood`). Empty for a zero
+    /// mask (every warlock minion) or a failed hunter gate, which the app applies.
     pub food_types: Vec<String>,
     /// `GetPetTalentTree()` (`0x5d3d80`): the name of the first `TalentTab.dbc` row the family's
     /// talent type admits, for a pet that can gain experience (`CGUnit_C::CanGainXP`,
@@ -108,19 +108,18 @@ pub struct PetStats {
 pub(crate) struct PetBarState {
     /// `PetHasActionBar()`: there is a bar, even one of ten empty slots.
     pub(crate) has_bar: bool,
-    /// `GetPetActionsUsable()` (`0x4bcf70`): false desaturates the whole bar, and refuses the
-    /// drag's bar writes with it (`0x4bc9d0`).
+    /// `GetPetActionsUsable()`: false desaturates the whole bar, and refuses the drag's bar writes
+    /// with it.
     pub(crate) actions_usable: bool,
     pub(crate) slots: Vec<StoredPetAction>,
-    /// `HasPetUI`'s first return: a pet with a nonzero `UNIT_FIELD_PETNUMBER` (`0x4be697`). Not
-    /// `has_bar`, whose gate is the cached guid alone.
+    /// `HasPetUI`'s first return: a pet with a nonzero `UNIT_FIELD_PETNUMBER`. Not `has_bar`, whose
+    /// gate is the cached guid alone.
     pub(crate) has_ui: bool,
     pub(crate) stats: PetStats,
-    /// `PickupPetAction`'s gate: the pet's object resolves (`0x4be1f7`) and `UNIT_FLAG_POSSESSED`
-    /// is clear (`0x4be20a`), which blocks the drop as well as the pick-up. Not `actions_usable`:
-    /// possession does not grey the bar, and the pick-up itself does not ask it. The writes at
-    /// both ends do (`0x4bc9d0`), so a greyed bar with its pet in view still lifts an action onto
-    /// the cursor and then writes nothing.
+    /// `PickupPetAction`'s gate: the pet's object resolves and `UNIT_FLAG_POSSESSED` is clear,
+    /// which blocks the drop as well as the pick-up. Not `actions_usable`: possession does not grey
+    /// the bar, and the pick-up itself does not ask it. The writes at both ends do, so a greyed bar
+    /// with its pet in view still lifts an action onto the cursor and then writes nothing.
     pub(crate) pickup_allowed: bool,
     /// `PetCanBeAbandoned()`: a kept pet rather than a summon. It forks the pet menu: paperdoll,
     /// rename and abandon show when true, dismiss only when false (`UnitPopup.lua:796-810`).
@@ -130,8 +129,8 @@ pub(crate) struct PetBarState {
     /// `PetCanBeDismissed()` answering nil: our summon whose `SummonProperties` row bars it
     /// (`0x5d3820`). Kept negated, since with no pet it answers 1.
     pub(crate) cannot_be_dismissed: bool,
-    /// The charm or possess expiry `[0xb714a8]` on the `GetTime` clock, in seconds: the last
-    /// `SMSG_PET_SPELLS` duration past its arrival, `None` for a packet whose duration is 0.
+    /// The charm or possess expiry on the `GetTime` clock, in seconds: the last `SMSG_PET_SPELLS`
+    /// duration past its arrival, `None` for a packet whose duration is 0.
     pub(crate) expiry: Option<f64>,
     /// The possess spell `[0xc234e0]`, resolved; `None` while no spell is held.
     pub(crate) possess: Option<PossessView>,
@@ -194,8 +193,8 @@ impl super::UiScript {
         bar.stats = stats;
     }
 
-    /// Push the pet's expiry on the `GetTime` clock, `None` for none: `SetPet` (`0x4bc7e0`)
-    /// stores `OsTick() + duration` for each `SMSG_PET_SPELLS` whose duration is not 0, else 0.
+    /// Push the pet's expiry on the `GetTime` clock, `None` for none: `SetPet` stores
+    /// `OsTick() + duration` for each `SMSG_PET_SPELLS` whose duration is not 0, else 0.
     pub fn set_pet_expiry(&mut self, expiry: Option<f64>) {
         set_field!(self, pet_bar.expiry, expiry);
     }
@@ -301,10 +300,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     let flag = |b: bool| if b { Value::Integer(1) } else { Value::Nil };
 
-    // GetPetTimeRemaining() (`0x4be600`): nil with no expiry, else the milliseconds to it as an
-    // unsigned 32-bit tick difference (`fild qword` over a zero high dword), so one past its
-    // expiry wraps to about 4.29e9 until the next packet. The stock caller is commented out
-    // (`PetFrame.lua:91-97`).
+    // GetPetTimeRemaining(): nil with no expiry, else the milliseconds to it as an unsigned 32-bit
+    // tick difference (`fild qword` over a zero high dword), so one past its expiry wraps to about
+    // 4.29e9 until the next packet. The stock caller is commented out (`PetFrame.lua:91-97`).
     g.set(
         "GetPetTimeRemaining",
         lua.create_function(|lua, ()| {
@@ -474,7 +472,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The one pet binding that answers a real boolean (`0x6f39f0`), `false` even out of range.
+    // The one pet binding that answers a real boolean, `false` even out of range.
     g.set(
         "IsPetAttackActive",
         lua.create_function(move |lua, i: u32| {
@@ -486,8 +484,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // An empty slot, whose button shows only under show-grid, queues nothing; the reference sends
-    // its zero word (`0x4bd230` falls to the send at `0x4bd444`), which vmangos ignores
-    // (`PetHandler.cpp:178`).
+    // its zero word, which vmangos ignores (`PetHandler.cpp:178`).
     g.set(
         "CastPetAction",
         lua.create_function(|lua, i: u32| {
@@ -511,7 +508,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // Two returns on every path (`0x4be670`), `(nil, nil)` with no pet UI.
+    // Two returns on every path, `(nil, nil)` with no pet UI.
     g.set(
         "HasPetUI",
         lua.create_function(move |lua, ()| {
@@ -584,10 +581,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // One return on every path, with no class gate (`0x51a310`). Answers the `"pet"` token only:
-    // the reference resolves any unit off its cached creature record (`[[unit+0xb30]+0x1c]`), so
-    // a wild boar's `"target"` answers "Boar" there and nil here. The pet page is the only stock
-    // caller.
+    // One return on every path, with no class gate. Answers the `"pet"` token only: the reference
+    // resolves any unit off its cached creature record (`[[unit+0xb30]+0x1c]`), so a wild boar's
+    // `"target"` answers "Boar" there and nil here. The pet page is the only stock caller.
     g.set(
         "UnitCreatureFamily",
         lua.create_function(move |lua, token: Option<String>| {
@@ -632,7 +628,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // One return per diet and never a nil (`0x4bea10`): an empty diet is zero values, for which
+    // One return per diet and never a nil: an empty diet is zero values, for which
     // `BuildListString` answers nil (`PetPaperDollFrame.xml:269`).
     g.set(
         "GetPetFoodTypes",
@@ -651,9 +647,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The six one-shot orders (`0x4be450`..`0x4be4a0`) each write the slot word the bar's own
-    // reaction or command slot carries and re-enter `0x4bd1d0`, as a `CastPetAction` press does;
-    // PetAttack takes the current selection. With no pet bar the order is silently dropped.
+    // The six one-shot orders each write the slot word the bar's own reaction or command slot
+    // carries and re-enter, as a `CastPetAction` press does; PetAttack takes the current selection.
+    // With no pet bar the order is silently dropped.
     for (name, packed) in [
         ("PetPassiveMode", order(PET_ACT_REACTION, PET_REACT_PASSIVE)),
         (
@@ -765,8 +761,8 @@ mod tests {
     use super::{PetActionView, PetStats};
     use crate::script::UiScript;
 
-    /// A charmed or possessed unit's time left in ms, nil for none, and the unsigned wrap once
-    /// the expiry has passed (`0x4be634`).
+    /// A charmed or possessed unit's time left in ms, nil for none, and the unsigned wrap once the
+    /// expiry has passed.
     #[test]
     fn pet_time_remaining_counts_down_to_the_expiry() {
         let mut s = UiScript::new().unwrap();

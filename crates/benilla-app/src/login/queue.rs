@@ -2,13 +2,12 @@
 //! `SMSG_AUTH_RESPONSE(AUTH_WAIT_QUEUE)` carries a position, is re-sent as the line moves, and
 //! ends with `AUTH_OK`; it is a wait, not a refusal.
 //!
-//! The arithmetic is the reference's (`CGlueMgr::UpdateQueuePosition`, `0x46ae50`), including
-//! its divide-before-multiply truncation. Three reference defects are not reproduced: the 32-bit
+//! The arithmetic is the reference's (`CGlueMgr::UpdateQueuePosition`), including its
+//! divide-before-multiply truncation. Three reference defects are not reproduced: the 32-bit
 //! overflow, the leading blank line and the stale-position redisplay on a truncated packet
 //! ([`benilla_protocol`]'s parser).
 
-/// The reference's ring of `(tick, position)` samples (`0xb41cf8..0xb41d14` ticks,
-/// `0xb41d18..0xb41d34` positions).
+/// The reference's ring of `(tick, position)` samples.
 const SAMPLES: usize = 8;
 
 const MINUTE_MS: i64 = 60_000;
@@ -38,9 +37,10 @@ impl QueueEstimate {
         (self.tick_ms[0] != 0).then_some(self.position[0])
     }
 
-    /// The estimated wait in ms: `floor((now - oldest_tick) / (oldest_pos - newest_pos)) *
-    /// newest_pos`, dividing first (`idiv` at `0x46aed3` before `imul` at `0x46aed5`). None
-    /// until the ring is full and the queue has moved forward, as in the reference.
+    /// The estimated wait in ms:
+    /// `floor((now - oldest_tick) / (oldest_pos - newest_pos)) * newest_pos`, dividing first
+    /// (`idiv` before `imul`). None until the ring is full and the queue has moved forward, as in
+    /// the reference.
     ///
     /// Computed in `i64`: the reference's 32-bit multiply overflows unguarded, which on a long
     /// queue shows an absurd countdown.

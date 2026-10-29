@@ -9,20 +9,18 @@ use crate::script::Model;
 
 use super::{queue_cursor_update, queue_lock_changed, CursorItem, CursorPayload, EQUIPMENT_BAG};
 
-/// `PickupInventoryItem(id)` (`0x4c7300`), the doll slot's click, on the bag click's model: a
-/// fitting whole item moves in and the cursor clears, with no hop; a split or a misfit stays
-/// held. Returns whether to repaint.
+/// `PickupInventoryItem(id)`, the doll slot's click, on the bag click's model: a fitting whole item
+/// moves in and the cursor clears, with no hop; a split or a misfit stays held. Returns whether to
+/// repaint.
 pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
     // Head 1 to Tabard 19, the bag slots 20-23, and the bank bag slots, which only `PutItemInBag`
-    // reaches (`0x4c7c00` calls `0x4c7300`). Ammo (0) is refused; its leg is not built.
+    // reaches. Ammo (0) is refused; its leg is not built.
     if !(1..=23).contains(&id) && !super::bag_verbs::BANK_BAG_INV_SLOTS.contains(&id) {
         return false;
     }
-    // Only a held item (`0x4c769a`) or vendor row (`0x4c76a5`) takes the click first. Past them
-    // an empty slot or a locked item does nothing (`0x4c76af`, `0x4c76d2`), an item-targeting
-    // spell binds the item, so a worn weapon can be poisoned (`0x4c76df`: `0x6e48a0` IsTargeting,
-    // `0x6e6330` TargetingWantsItem, `0x495d60` bind), and repair mode repairs a worn item
-    // (`0x4c7714`), any other payload staying held.
+    // Only a held item or vendor row takes the click first. Past them an empty slot or a locked
+    // item does nothing, an item-targeting spell binds the item, so a worn weapon can be poisoned,
+    // and repair mode repairs a worn item, any other payload staying held.
     let placing = matches!(
         model.cursor,
         Some(CursorPayload::Item(_) | CursorPayload::Merchant(_))
@@ -86,9 +84,9 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
             queue_lock_changed(model, held.bag, held.slot);
             true
         }
-        // Mode 5, a buy into this slot: `0x4c78fd` sends `CMSG_BUY_ITEM_IN_SLOT` (`0x1a3`) and the
-        // server equips or refuses. A stale row buys nothing: of the reference's three drop sites
-        // only this one checks it; the other two (`0x4f9f35`, `0x4c7ea5`) dereference it.
+        // Mode 5, a buy into this slot: the reference sends `CMSG_BUY_ITEM_IN_SLOT` (`0x1a3`) and
+        // the server equips or refuses. A stale row buys nothing: of the reference's three drop
+        // sites only this one checks it; the other two dereference it.
         Some(CursorPayload::Merchant(held)) => {
             let row = model
                 .merchant
@@ -111,8 +109,8 @@ pub(super) fn pickup_inventory_item(model: &mut Model, id: u32) -> bool {
             // Mode 10: a stabled pet stays held for the stable window.
             | CursorPayload::StablePet(_)
             // Mode 2: coins stay held for a money frame's drop. On an occupied slot the reference
-            // picks the item up over either, as it tests only for a held item (`0x4c769a`) or a
-            // preview row (`0x4c76a5`) before the pickup (`0x4c7838`).
+            // picks the item up over either, as it tests only for a held item or a preview row
+            // before the pickup.
             | CursorPayload::Money(_)
             // Modes 11 and 12, from the guild bank, stay held for its own buttons.
             | CursorPayload::GuildBankItem(_)
@@ -131,8 +129,7 @@ pub(super) fn equip_cursor_item(model: &mut Model, id: u32) -> bool {
 
 /// `CursorCanGoInSlot(id)`, the doll slot's highlight on `CURSOR_UPDATE`
 /// (`PaperDollFrame.lua:609-615`): `equip_slots`, which follows vmangos `Player::FindEquipSlot`,
-/// where the reference's `IsValidForSlot` (`0x5da1d0`) tests a static slot mask per
-/// `InventoryType`.
+/// where the reference's `IsValidForSlot` tests a static slot mask per `InventoryType`.
 pub(super) fn cursor_can_go_in_slot(model: &Model, id: u32) -> bool {
     match &model.cursor {
         Some(CursorPayload::Item(item)) => super::bag_verbs::fits_slot(item, id),
@@ -160,9 +157,9 @@ pub(super) fn auto_equip_cursor_item(model: &mut Model) -> bool {
 }
 
 /// `UseInventoryItem(id)`, the doll slot's right-click (`PaperDollFrame.lua:658-659`): the cursor
-/// clears before the slot is read (`0x4c79a9`), so a held payload goes back, never placed; then
-/// the app sends `CMSG_USE_ITEM` with bag 255 and the 0-based slot, dropping an empty slot unsent,
-/// or in repair mode a worn item is repaired, locked or not (`0x4c79c4`).
+/// clears before the slot is read, so a held payload goes back, never placed; then the app sends
+/// `CMSG_USE_ITEM` with bag 255 and the 0-based slot, dropping an empty slot unsent, or in repair
+/// mode a worn item is repaired, locked or not.
 pub(super) fn use_inventory_item(model: &mut Model, id: u32) {
     super::clear_cursor(model);
     if !model.repair_mode {
@@ -630,8 +627,8 @@ mod tests {
         assert!(s.take_inventory_uses().is_empty(), "drained");
     }
 
-    /// A right-click clears the cursor before it reads the slot (`0x4c79a9`): a held item goes
-    /// back, and the worn item is still used.
+    /// A right-click clears the cursor before it reads the slot: a held item goes back, and the
+    /// worn item is still used.
     #[test]
     fn right_click_puts_a_held_item_back_then_uses_the_worn_one() {
         let mut s = UiScript::new().unwrap();
@@ -682,7 +679,7 @@ mod tests {
         s.run("PickupInventoryItem(1)").unwrap();
         assert!(
             s.take_inventory_repairs().is_empty(),
-            "a locked item does nothing (`0x4c76d2`)"
+            "a locked item does nothing"
         );
         let coins = CursorPayload::Money(CursorMoney { copper: 50 });
         s.model_mut().cursor = Some(coins.clone());
@@ -694,7 +691,7 @@ mod tests {
         );
         assert_eq!(s.cursor_payload(), Some(coins), "and stay held");
 
-        // A held item takes the click first (`0x4c769a`): the ring goes back, nothing repairs.
+        // A held item takes the click first: the ring goes back, nothing repairs.
         s.model_mut().cursor = None;
         s.model_mut().repair_mode = false;
         s.run("PickupInventoryItem(11)").unwrap();
@@ -713,10 +710,7 @@ mod tests {
         s.model_mut().repair_mode = true;
 
         s.run("UseInventoryItem(19)").unwrap();
-        assert!(
-            s.cursor_payload().is_none(),
-            "the ring went back (`0x4c79a9`)"
-        );
+        assert!(s.cursor_payload().is_none(), "the ring went back");
         assert!(s.take_container_moves().is_empty(), "never placed");
         assert_eq!(s.take_inventory_repairs(), vec![19]);
         assert!(s.take_inventory_uses().is_empty(), "no use either");
@@ -763,8 +757,7 @@ mod tests {
         );
     }
 
-    /// The held-payload test runs first in both seams: `0x4f9c38` before `0x4f9c54` in the bag,
-    /// `0x4c73af` before `0x4c76df` on the doll.
+    /// The held-payload test runs first in both seams: the reference in the bag, on the doll.
     #[test]
     fn the_armed_item_half_reroutes_bag_and_doll_clicks() {
         let mut s = UiScript::new().unwrap();

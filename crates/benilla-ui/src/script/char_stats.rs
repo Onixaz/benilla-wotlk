@@ -5,10 +5,10 @@
 //! (`PetPaperDollFrame.lua:75-81`). Any other token, or a snapshot not yet pushed, serves the
 //! absent shape: zeros, `percent` 1.0. A pet has no PLAYER block, so its buff splits read 0.
 //!
-//! For a third unit, zeros are right for `UnitStat` (`0x518600`): `UNIT_FIELD_STAT*` is PRIVATE +
-//! OWNER_ONLY, so the reference holds zeros too. Not built: vmangos also sends a beast's
-//! `UNIT_FIELD_RESISTANCES` to the caster of its Beast Lore (`Object.cpp:1065-1067`,
-//! `Player.cpp:2603-2610`), and the reference's `UnitResistance` and `UnitArmor` then answer them.
+//! For a third unit, zeros are right for `UnitStat`: `UNIT_FIELD_STAT*` is PRIVATE + OWNER_ONLY, so
+//! the reference holds zeros too. Not built: vmangos also sends a beast's `UNIT_FIELD_RESISTANCES`
+//! to the caster of its Beast Lore (`Object.cpp:1065-1067`, `Player.cpp:2603-2610`), and the
+//! reference's `UnitResistance` and `UnitArmor` then answer them.
 //!
 //! vmangos narrows the four buff-split arrays with `uint32(float)` (`Object.cpp:759-763`), so a
 //! negative delta arrives as 0 from an arm64 server and intact from x86.
@@ -101,12 +101,12 @@ pub struct UnitCombatStats {
     pub ranged_min_damage: f32,
     pub ranged_max_damage: f32,
     /// The main hand's skill line (picked by [`weapon_subclass_skill`]) as `(value + perm, temp)`,
-    /// the split the reference's skill reader `0x5ea460` makes for all four skill pairs.
+    /// the split the reference's skill reader makes for all four skill pairs.
     pub main_weapon_skill: (i32, i32),
     /// The off hand's pair, read the same way; an empty or non-weapon off hand is Unarmed.
     pub offhand_weapon_skill: (i32, i32),
-    /// The ranged weapon's pair, the same split. Player only: `UnitRangedAttack` (`0x518b90`)
-    /// has no creature fallback, so a pet answers `(0, 0)` where `UnitDefense` answers level * 5.
+    /// The ranged weapon's pair, the same split. Player only: `UnitRangedAttack` has no creature
+    /// fallback, so a pet answers `(0, 0)` where `UnitDefense` answers level * 5.
     pub ranged_weapon_skill: (i32, i32),
     /// The [`SKILL_DEFENSE`] pair, the same split. The player's only: `UnitDefense` gives a
     /// non-player level * 5 instead (`cgunit_skill`), so the pet feed leaves it unset.
@@ -238,9 +238,9 @@ pub struct InvSlotView {
     pub icon: Option<String>,
     /// `ITEM_FIELD_STACK_COUNT`, or for the ammo slot the bag-summed carried total.
     pub count: u32,
-    /// For a container (`TYPEMASK_CONTAINER`, `0x4c87a6`), what `GetInventoryItemCount` pushes:
-    /// its contents' summed stacks when its `ItemSubClass.dbc` row has `DisplayFlags & 0x4` (Soul
-    /// Bag and quivers, `0x4c881a`), else 0; past 0-based slot `0x16` the binding answers 0 first.
+    /// For a container (`TYPEMASK_CONTAINER`), what `GetInventoryItemCount` pushes: its contents'
+    /// summed stacks when its `ItemSubClass.dbc` row has `DisplayFlags & 0x4` (Soul Bag and
+    /// quivers), else 0; past 0-based slot `0x16` the binding answers 0 first.
     pub contents_count: Option<u32>,
     /// Item quality 0..6 (`GetInventoryItemQuality`).
     pub quality: i32,
@@ -251,8 +251,8 @@ pub struct InvSlotView {
     /// `ITEM_FIELD_FLAGS`; the alert recompute `0x5e8fe0` reads two bits: `0x10` force-red
     /// (status 2) and `0x08` wrapped (no durability alert).
     pub flags: u32,
-    /// Bound at runtime (`0x5da2c0`): `ITEM_FIELD_FLAGS & 1`, or an enchant whose
-    /// `SpellItemEnchantment` row binds. The tooltip's bind line then says Soulbound.
+    /// Bound at runtime: `ITEM_FIELD_FLAGS & 1`, or an enchant whose `SpellItemEnchantment` row
+    /// binds. The tooltip's bind line then says Soulbound.
     pub already_bound: bool,
     /// An `|Hitem:…|h[Name]|h` link once the name is known.
     pub link: Option<String>,
@@ -491,16 +491,16 @@ fn with_unit_stats<T>(
     f(pushed.unwrap_or(&absent))
 }
 
-/// The clamp `UnitDefense` (`0x519298`) and each hand of `UnitAttackBothHands` (`0x5188a7`) apply:
-/// a modifier below `-base` becomes `-base`, so the total never reads negative.
+/// The clamp `UnitDefense` and each hand of `UnitAttackBothHands` apply: a modifier below `-base`
+/// becomes `-base`, so the total never reads negative.
 fn skill_clamped((base, modifier): (i32, i32)) -> (i64, i64) {
     let base = i64::from(base);
     let modifier = i64::from(modifier);
     (base, if modifier + base < 0 { -base } else { modifier })
 }
 
-/// A non-player's `UnitDefense` and `UnitAttackBothHands` answer: `CGUnit_C`'s vtable bodies
-/// (`0x613680`, `0x6136b0`) return level * 5 with a 0 modifier; a creature has no skill block.
+/// A non-player's `UnitDefense` and `UnitAttackBothHands` answer: `CGUnit_C`'s vtable bodies return
+/// level * 5 with a 0 modifier; a creature has no skill block.
 fn cgunit_skill(model: &Model, token: &str) -> i64 {
     model.unit(token).map_or(0, |u| i64::from(u.level)) * 5
 }
@@ -635,13 +635,13 @@ impl InvSlotView {
     }
 }
 
-/// The reference's verbatim index-arm strings, pushed at `0x5187d6` (`0x85117c`) and `0x5185cb`
-/// (`0x85112c`): no `Usage:` prefix, the index not interpolated. The pool interleaves the two
-/// bindings' strings, so each is fixed by its `push`, never by adjacency.
+/// The reference's verbatim index-arm strings, pushed: no `Usage:` prefix, the index not
+/// interpolated. The pool interleaves the two bindings' strings, so each is fixed by its `push`,
+/// never by adjacency.
 const STAT_INDEX_ERROR: &str = "Invalid stat index in UnitStat";
 const RESISTANCE_INDEX_ERROR: &str = "Invalid resistance index in UnitResistance";
-/// The argument-type arm, pushed at `0x5187ed` (`0x851158`) and `0x5185e2` (`0x8510fc`), for a
-/// value neither a number nor a numeric string ([`binding_abi`]).
+/// The argument-type arm, pushed, for a value neither a number nor a numeric string
+/// ([`binding_abi`]).
 const STAT_USAGE: &str = "Usage: UnitStat(\"unit\", statIndex)";
 const RESISTANCE_USAGE: &str = "Usage: UnitResistance(\"unit\", resistanceIndex)";
 
@@ -649,10 +649,10 @@ const RESISTANCE_USAGE: &str = "Usage: UnitResistance(\"unit\", resistanceIndex)
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // UnitStat(unit, 1..=5) → (stat, effectiveStat, posBuff, negBuff): `UNIT_FIELD_STAT0+i` raw
-    // (`0x518689`), then clamped at zero (`0x5186a3`-`0x5186b7`), then `POSSTAT0+i` and
-    // `NEGSTAT0+i` behind a SELF gate (`0x518712`, `0x518772`). Unlike `UnitResistance` it is not
-    // decomposed: stock subtracts the buffs itself (`PaperDollFrame.lua:152`). A bad index raises.
+    // UnitStat(unit, 1..=5) → (stat, effectiveStat, posBuff, negBuff): `UNIT_FIELD_STAT0+i` raw,
+    // then clamped at zero, then `POSSTAT0+i` and `NEGSTAT0+i` behind a SELF gate. Unlike
+    // `UnitResistance` it is not decomposed: stock subtracts the buffs itself
+    // (`PaperDollFrame.lua:152`). A bad index raises.
     g.set(
         "UnitStat",
         lua.create_function(|lua, (token, i): (Value, Value)| {
@@ -674,8 +674,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitResistance(unit, 0..=6) → (base, resistance, positive, negative) through `0x5efcd0`,
-    // school 0 armor: `base = raw - pos - neg` before the clamp, `resistance = max(raw, 0)`.
+    // UnitResistance(unit, 0..=6) → (base, resistance, positive, negative), school 0 armor:
+    // `base = raw - pos - neg` before the clamp, `resistance = max(raw, 0)`.
     g.set(
         "UnitResistance",
         lua.create_function(|lua, (token, school): (Value, Value)| {
@@ -701,8 +701,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitArmor(unit) → (base, effectiveArmor, armor, posBuff, negBuff): school 0 through
-    // `0x5efcd0`, effectiveArmor and armor both its clamped total.
+    // UnitArmor(unit) → (base, effectiveArmor, armor, posBuff, negBuff): school 0, effectiveArmor
+    // and armor both its clamped total.
     g.set(
         "UnitArmor",
         lua.create_function(|lua, token: Option<String>| {
@@ -782,10 +782,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitAttackBothHands(unit) → (mainBase, mainMod, offBase, offMod): `0x518810` calls
+    // UnitAttackBothHands(unit) → (mainBase, mainMod, offBase, offMod): the reference calls
     // `[vtbl+0xb0]` for hand 0 then hand 1. Stock reads only the first pair
-    // (`PaperDollFrame.lua:398-399`). A pet's `CGUnit_C` body (`0x6136b0`) ignores the hand, so
-    // both pairs are `(level * 5, 0)`.
+    // (`PaperDollFrame.lua:398-399`). A pet's `CGUnit_C` body ignores the hand, so both pairs are
+    // `(level * 5, 0)`.
     g.set(
         "UnitAttackBothHands",
         lua.create_function(|lua, token: Option<String>| {
@@ -825,8 +825,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // UnitDefense(unit) → (base, modifier); stock splits the modifier's sign itself
     // (`PaperDollFrame.lua:259-271`). The gate is SELF or `UNIT_FIELD_SUMMONEDBY` = us, then
-    // `[vtbl+0xac]`: `CGPlayer_C` `0x5eda20` reads the Defense skill (`0x6de040`), `CGUnit_C`
-    // `0x613680` answers level * 5 and 0. Any other token gets the gate's zeros.
+    // `[vtbl+0xac]`: `CGPlayer_C` reads the Defense skill, `CGUnit_C` answers level * 5 and 0. Any
+    // other token gets the gate's zeros.
     g.set(
         "UnitDefense",
         lua.create_function(|lua, token: Option<String>| {
@@ -844,8 +844,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetDodgeChance(), GetParryChance(), GetBlockChance() → one number each, no unit argument
-    // (`0x516f00`, `0x516fc0`, `0x516f60`); 0 before the field streams.
+    // GetDodgeChance(), GetParryChance(), GetBlockChance() → one number each, no unit argument; 0
+    // before the field streams.
     for (name, pick) in [
         ("GetDodgeChance", 0usize),
         ("GetParryChance", 1),
@@ -926,14 +926,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The reference's verbatim strings: `0x8489b4` when arg 1 is neither number nor string
-    // (`0x6f3510`), `0x848984` when arg 2 is not a number or not a whitelisted slot.
+    // The reference's verbatim strings: the reference when arg 1 is neither number nor string, when
+    // arg 2 is not a number or not a whitelisted slot.
     const USAGE_GET_INVENTORY_ITEM_COUNT: &str = "Usage: GetInventoryItemCount(unit, slot)";
     const INVALID_SLOT_GET_INVENTORY_ITEM_COUNT: &str =
         "Invalid inventory slot in GetInventoryItemCount";
-    // GetInventoryItemCount(unit, slot) (`0x4c8680`): an empty slot pushes 1 (`0x4c8797`), a
-    // non-container its stack count, a container past 0-based slot `0x16` 0 before any lookup
-    // (`0x4c87af`, so a bank bag shows no digit), and an equipped bag its `contents_count`.
+    // GetInventoryItemCount(unit, slot): an empty slot pushes 1, a non-container its stack count, a
+    // container past 0-based slot `0x16` 0 before any lookup (so a bank bag shows no digit), and an
+    // equipped bag its `contents_count`.
     g.set(
         "GetInventoryItemCount",
         lua.create_function(|lua, (unit, slot): (Value, Value)| {
@@ -1042,27 +1042,27 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetInventorySlotInfo",
         lua.create_function(|lua, name: String| {
-            // A full-string ASCII case-insensitive match: `0x4c8215` calls `_strnicmp` (`0x64a4c0`
-            // -> `0x414310`) with no length limit. The 36 names stay distinct after folding.
+            // A full-string ASCII case-insensitive match: the reference calls `_strnicmp` with no
+            // length limit. The 36 names stay distinct after folding.
             let Some((_, id, art)) = SLOT_INFO
                 .iter()
                 .find(|(n, _, _)| n.eq_ignore_ascii_case(&name))
             else {
-                // An unknown name raises, never nil; the string is `0x848894`'s, verbatim.
+                // An unknown name raises, never nil; the string is the reference's, verbatim.
                 return Err(mlua::Error::runtime(
                     "Invalid inventory slot in GetInventorySlotInfo",
                 ));
             };
             Ok((
                 *id,
-                // The DBC's bytes verbatim, unnormalised (`0x4c825b`): a lowercase directory and
-                // the `.blp` extension, visible to any Lua that compares the string.
+                // The DBC's bytes verbatim, unnormalised: a lowercase directory and the `.blp`
+                // extension, visible to any Lua that compares the string.
                 Value::String(
                     lua.create_string(format!(
                         "interface\\paperdoll\\UI-PaperDoll-Slot-{art}.blp"
                     ))?,
                 ),
-                // `checkRelic`: the number 1 for `RangedSlot` only (`0x4c8263`), not a boolean.
+                // `checkRelic`: the number 1 for `RangedSlot` only, not a boolean.
                 if *id == 18 {
                     Value::Integer(1)
                 } else {
@@ -1223,8 +1223,8 @@ mod tests {
         );
     }
 
-    /// The index truncates toward zero (`_ftol`) ahead of the range test (`0x51865a`,
-    /// `0x518663`): 1.9 is stat 1, while 0.5 and any negative raise.
+    /// The index truncates toward zero (`_ftol`) ahead of the range test: 1.9 is stat 1, while 0.5
+    /// and any negative raise.
     #[test]
     fn an_out_of_range_stat_index_raises_the_references_own_string() {
         let mut s = UiScript::new().unwrap();
@@ -1263,7 +1263,7 @@ mod tests {
                 "UnitStat(\"player\", {arg}) must take the Usage arm, got {msg:?}"
             );
         }
-        // A missing unit fails the same way: `0x6f3510` sees neither number nor string.
+        // A missing unit fails the same way: the reference sees neither number nor string.
         assert!(format!(
             "{}",
             s.eval::<i64>(r#"return UnitStat(nil, 1)"#).unwrap_err()
@@ -1403,9 +1403,8 @@ mod tests {
         );
     }
 
-    /// `UnitDefense` (`0x519200`) and `UnitAttackBothHands` (`0x518810`) fork through the unit's
-    /// vtable to a creature body; `UnitRangedAttack` (`0x518b90`) is a direct call gated on the
-    /// PLAYER typemask (`0x612b40`, `0x5edae0`, `0x5ea460` are in no vtable), so a pet gets zeros.
+    /// `UnitDefense` and `UnitAttackBothHands` fork through the unit's vtable to a creature body;
+    /// `UnitRangedAttack` is a direct call gated on the PLAYER typemask, so a pet gets zeros.
     #[test]
     fn ranged_attack_gives_a_pet_zeros_where_defense_gives_it_level_times_five() {
         let mut s = UiScript::new().unwrap();
@@ -1439,7 +1438,7 @@ mod tests {
         );
     }
 
-    /// `0x518810` pushes `(base0, mod0, base1, mod1)`, one pair per hand.
+    /// The reference pushes `(base0, mod0, base1, mod1)`, one pair per hand.
     #[test]
     fn attack_both_hands_answers_a_pair_per_hand() {
         let mut s = UiScript::new().unwrap();
@@ -1454,7 +1453,7 @@ mod tests {
             (300, 5, 275, -12),
             "each hand's own skill line, in hand order"
         );
-        // The per-hand clamp (`0x5188a7`), which `UnitDefense` shares.
+        // The per-hand clamp, which `UnitDefense` shares.
         s.set_player_combat_stats(Some(UnitCombatStats {
             main_weapon_skill: (40, -100),
             offhand_weapon_skill: (40, -40),
@@ -1571,8 +1570,8 @@ mod tests {
         );
     }
 
-    /// The vtable fork (`0x5eda20`, `0x613680`): the player's skill pair, a pet's level * 5 with a
-    /// 0 modifier; `UnitAttackBothHands` takes the same fork.
+    /// The vtable fork: the player's skill pair, a pet's level * 5 with a 0 modifier;
+    /// `UnitAttackBothHands` takes the same fork.
     #[test]
     fn unit_defense_forks_the_player_skill_from_a_pets_level_times_five() {
         let mut s = UiScript::new().unwrap();
@@ -1650,7 +1649,7 @@ mod tests {
         assert!(s.eval::<bool>("return HasWandEquipped()").unwrap());
     }
 
-    /// `0x4c8680`'s container fork: an equipped quiver counts its arrows, a plain bag 0, and any
+    /// The reference's container fork: an equipped quiver counts its arrows, a plain bag 0, and any
     /// container in a bank bag slot 0 before the DBC is read.
     #[test]
     fn get_inventory_item_count_forks_on_the_container_bit_and_the_slot() {
@@ -1781,7 +1780,7 @@ mod tests {
                 .unwrap(),
             200
         );
-        // An empty slot: nil id, texture and quality, and count 1 (`0x4c8797`).
+        // An empty slot: nil id, texture and quality, and count 1.
         assert!(s
             .eval::<bool>(r#"return GetInventoryItemLink("player", 5) == nil"#)
             .unwrap());

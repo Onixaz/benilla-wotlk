@@ -12,23 +12,23 @@ use mlua::{Lua, MultiValue, Value};
 
 use super::binding_abi::flag;
 
-/// The quality `GetLootSlotInfo` answers on an item-cache miss: the reference's -1 (`0x4c23a0`),
-/// never nil. Stock `UIParent.lua:66` builds `ITEM_QUALITY_COLORS` from -1, and `LootFrame_Update`
-/// indexes it unguarded (`LootFrame.lua:82`), so a nil would raise on a cold cache.
+/// The quality `GetLootSlotInfo` answers on an item-cache miss: the reference's -1, never nil.
+/// Stock `UIParent.lua:66` builds `ITEM_QUALITY_COLORS` from -1, and `LootFrame_Update` indexes it
+/// unguarded (`LootFrame.lua:82`), so a nil would raise on a cold cache.
 const CACHE_MISS_QUALITY: i64 = -1;
 
-/// The row text on that miss: `0x5d8b00` leaves its buffer empty with no cache record
-/// (`0x5d8b25`), and the binding pushes that empty string.
+/// The row text on that miss: the reference leaves its buffer empty with no cache record, and the
+/// binding pushes that empty string.
 const CACHE_MISS_NAME: &str = "";
 
-/// The icon for a row with an item but no display icon: `INV_Misc_QuestionMark` (`0x847fe4`,
-/// `0x4c252b`). A slot with no item gets nil instead: `0x4c2460` returns NULL on its three guards
-/// (`0x4c2470`, `0x4c24a6`, `0x4c24b7`), which `lua_pushstring 0x6f3890` pushes as nil.
+/// The icon for a row with an item but no display icon: `INV_Misc_QuestionMark`. A slot with no
+/// item gets nil instead: the reference returns NULL on its three guards, which `lua_pushstring`
+/// pushes as nil.
 const MISSING_ICON: &str = "Interface\\Icons\\INV_Misc_QuestionMark";
 
-/// The quality of a slot with no item (past the end, slot 0, no window): `0x4c23a0`'s guards
-/// return 0. A cleared slot takes -1 instead: its itemId is 0, which `0x55ba30` turns into a NULL
-/// record (`0x55ba3d`/`0x55ba42`), the cache-miss arm at `0x4c2435`.
+/// The quality of a slot with no item (past the end, slot 0, no window): the reference's guards
+/// return 0. A cleared slot takes -1 instead: its itemId is 0, which the reference turns into a
+/// NULL record, the cache-miss arm.
 const NO_SLOT_QUALITY: i64 = 0;
 
 /// One loot-window row, resolved by the app; its 1-based slot is its place in [`LootState::rows`].
@@ -53,7 +53,7 @@ pub struct LootRow {
     pub link: Option<String>,
     /// The drop's random-suffix roll (`randomPropertyId`, 0 unrolled), resolved by the tooltip
     /// against [`super::Model::random_properties`]. A loot slot is no item object, so this is its
-    /// only enchant source (`SetLootItem 0x533470` copies it from the loot record's `+0x14`).
+    /// only enchant source (`SetLootItem` copies it from the loot record's `+0x14`).
     pub random_property_id: u32,
 }
 
@@ -71,9 +71,8 @@ pub struct LootState {
     /// dropdown labels "Group N" (`LootFrame.lua:197-213`). A `None` (an empty slot, or a name not
     /// yet resolved) answers nil.
     pub master_candidates: Vec<Option<String>>,
-    /// The loot source (`[0xb71b48]`) resolves as a unit object (`0x468460`, typemask 8): a
-    /// corpse, not a chest, a bobber or an item. `SetLootPortrait` bakes it under the token
-    /// [`LOOT_PORTRAIT_UNIT`].
+    /// The loot source resolves as a unit object (typemask 8): a corpse, not a chest, a bobber or
+    /// an item. `SetLootPortrait` bakes it under the token [`LOOT_PORTRAIT_UNIT`].
     pub source_unit: bool,
 }
 
@@ -122,10 +121,10 @@ fn loot_slot_arg(slot: f64) -> Option<u32> {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // SetLootPortrait(texture) (`0x4c2b40`): the loot source's 3D portrait, the unit-frame bake
-    // (`0x524f60`), and the number 1; a source that is no unit object, or no loot, clears the
-    // texture (`0x4c2c0d`) and answers nil. A non-Texture raises the member prologue's errors. No
-    // stock caller: `LootFrame.lua` paints its own portrait art.
+    // SetLootPortrait(texture): the loot source's 3D portrait, the unit-frame bake, and the number
+    // 1; a source that is no unit object, or no loot, clears the texture and answers nil. A
+    // non-Texture raises the member prologue's errors. No stock caller: `LootFrame.lua` paints its
+    // own portrait art.
     g.set(
         "SetLootPortrait",
         lua.create_function(|lua, texture: Value| {
@@ -354,8 +353,8 @@ mod tests {
         (data.portrait_unit.clone(), data.texture.clone())
     }
 
-    /// `SetLootPortrait` (`0x4c2b40`): a unit source binds the loot portrait and answers 1;
-    /// anything else clears the texture and answers nil.
+    /// `SetLootPortrait`: a unit source binds the loot portrait and answers 1; anything else clears
+    /// the texture and answers nil.
     #[test]
     fn loot_portrait_binds_a_unit_source_and_clears_otherwise() {
         let mut s = UiScript::new().unwrap();

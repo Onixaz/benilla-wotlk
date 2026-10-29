@@ -1,9 +1,9 @@
-//! The world-enter sends wait for our own player's create, as the reference's do (`0x5dea50`):
-//! none goes out on the login edge alone, which fires before the server seats the player; the
-//! create sends `CMSG_SET_ACTIVE_MOVER`, then the cascade's `CMSG_QUERY_TIME`,
-//! `MSG_QUERY_NEXT_MAIL_TIME`, `CMSG_BATTLEFIELD_STATUS` and the dungeon finder's
-//! `CMSG_LFG_GET_STATUS` and `CMSG_LFG_PLAYER_LOCK_INFO_REQUEST` (`0x557240`); a worldport's
-//! fresh create sends them all again.
+//! The world-enter sends wait for our own player's create, as the reference's do: none goes out on
+//! the login edge alone, which fires before the server seats the player; the create sends
+//! `CMSG_SET_ACTIVE_MOVER`, then the cascade's `CMSG_QUERY_TIME`, `MSG_QUERY_NEXT_MAIL_TIME`,
+//! `CMSG_BATTLEFIELD_STATUS` and the dungeon finder's `CMSG_LFG_GET_STATUS` and
+//! `CMSG_LFG_PLAYER_LOCK_INFO_REQUEST` (`0x557240`); a worldport's fresh create sends them all
+//! again.
 
 use bevy::prelude::*;
 use crossbeam_channel::Receiver;
@@ -110,8 +110,8 @@ fn the_self_create_sends_them_in_the_reference_order() {
     assert_eq!(sent(&rx), Vec::<String>::new());
 }
 
-/// A cross-map worldport purges the streamed world and the server creates us afresh
-/// (`0x401bc0` rebuilds the object manager; the create takes the login's route).
+/// A cross-map worldport purges the streamed world and the server creates us afresh (rebuilds the
+/// object manager; the create takes the login's route).
 #[test]
 fn a_worldport_create_sends_them_again() {
     let (mut app, rx) = app();
@@ -131,7 +131,7 @@ fn a_worldport_create_sends_them_again() {
 /// The production schedule: the self-create edge, then the time, mail, battlefield and dungeon
 /// finder sends (`CGGameUI::EnterWorld 0x528010` calls `CGLookingForGroup::EnterWorld` after the
 /// battlefield's); and a `/reload` frame's sweep drops the stone's text before its cascade resets
-/// it (`0x490c20`, then `0x490168`).
+/// it.
 #[test]
 fn the_client_schedules_the_sends_in_the_reference_order() {
     use crate::test_support::runs_before;

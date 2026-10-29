@@ -8,42 +8,40 @@ use mlua::Lua;
 use super::{NearestMode, ScriptCall};
 
 /// A selection ask from Lua, queued in call order for the app to resolve and commit. The reference
-/// routes `TargetUnit`, `AssistUnit` and `TargetLastEnemy` through one helper (`0x489a40`: commit,
-/// else the group roster, else a silent return), and a macro can observe their order.
+/// routes `TargetUnit`, `AssistUnit` and `TargetLastEnemy` through one helper (else the group
+/// roster, else a silent return), and a macro can observe their order.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SelectionRequest {
-    /// `TargetUnit(unit)` (`0x4899d0`): the unit the token names.
+    /// `TargetUnit(unit)`: the unit the token names.
     Unit(String),
-    /// `AssistUnit(unit)` (`0x489b80`): the token's own `UNIT_FIELD_TARGET`; a token with no
-    /// target is a silent no-op that sends nothing.
+    /// `AssistUnit(unit)`: the token's own `UNIT_FIELD_TARGET`; a token with no target is a silent
+    /// no-op that sends nothing.
     Assist(String),
-    /// `AssistByName(name)` (`0x489c40`), the `/assist <name>` verb: what the named player
-    /// targets, resolved by name rather than by token.
+    /// `AssistByName(name)`, the `/assist <name>` verb: what the named player targets, resolved by
+    /// name rather than by token.
     AssistByName(String),
     /// `TargetLastEnemy()`: the last attackable unit committed.
     LastEnemy,
 }
 
-/// The reference's local player record (`0xc27d80`): a copy of the chosen `SMSG_CHAR_ENUM` row,
-/// written once at the Enter World commit (`0x5abd9e`) before FrameXML loads, and never cleared.
-/// `UnitName` (`0x517020`), `UnitRace` (`0x518200`), `UnitClass` (`0x518350`) and `UnitSex`
-/// (`0x517e90`) answer `"player"`, matched whole in any case, from it and never from the
-/// descriptor, so they answer before the player object exists. `UnitLevel` reads the descriptor:
-/// the record's level accessor (`0x5abe00`) has no caller. Race and class are held resolved, as
-/// this crate has no DBC.
+/// The reference's local player record: a copy of the chosen `SMSG_CHAR_ENUM` row, written once at
+/// the Enter World commit before FrameXML loads, and never cleared. `UnitName`, `UnitRace`,
+/// `UnitClass` and `UnitSex` answer `"player"`, matched whole in any case, from it and never from
+/// the descriptor, so they answer before the player object exists. `UnitLevel` reads the
+/// descriptor: the record's level accessor has no caller. Race and class are held resolved, as this
+/// crate has no DBC.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlayerRecord {
-    /// `+0x08`, the name; empty is the unset record, whose `UnitName("player")` is nil
-    /// (`0x517095`).
+    /// `+0x08`, the name; empty is the unset record, whose `UnitName("player")` is nil.
     pub name: String,
     /// `+0x100` as `UnitRace`'s (localized, file token) pair; `None` is race 0, which has no
     /// `ChrRaces` row and answers `nil, nil`.
     pub race: Option<(String, String)>,
     /// `+0x101` as `UnitClass`'s (localized, uppercase token) pair; `None` answers `nil, nil`.
     pub class: Option<(String, String)>,
-    /// `+0x102` on `UnitSex`'s scale (2 male, 3 female), not the wire's 0/1. The unset 0 answers
-    /// 2, as the reference's all-zero record does: `0x517ef9` indexes `{2,3,1,6}` (`0x808be4`)
-    /// with no bounds check.
+    /// `+0x102` on `UnitSex`'s scale (2 male, 3 female), not the wire's 0/1. The unset 0 answers 2,
+    /// as the reference's all-zero record does: the reference indexes `{2,3,1,6}` with no bounds
+    /// check.
     pub sex: u8,
 }
 
@@ -53,23 +51,22 @@ pub struct PlayerRecord {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct UnitState {
     /// `UnitExists`, true for an out-of-range party member through the roster fallback. The
-    /// reference (`0x515fb0`) also requires a held object to be selectable before that fallback
-    /// (`0x60be60`: `UNIT_FIELD_FLAGS & 0x02000000` clear, or created by us); that is not built.
+    /// reference also requires a held object to be selectable before that fallback (:
+    /// `UNIT_FIELD_FLAGS & 0x02000000` clear, or created by us); that is not built.
     pub exists: bool,
-    /// `UnitIsVisible` (`0x516030`): the client holds an object for this token, and nothing more;
-    /// the range test is the server's, which drops out-of-range objects. Not [`Self::exists`]: an
-    /// out-of-range party member exists without an object.
+    /// `UnitIsVisible`: the client holds an object for this token, and nothing more; the range test
+    /// is the server's, which drops out-of-range objects. Not [`Self::exists`]: an out-of-range
+    /// party member exists without an object.
     pub has_object: bool,
-    /// `UnitIsTapped` (`0x519c90`): `UNIT_DYNAMIC_FLAGS` (field 143) bit `0x4`, someone holds the
-    /// kill credit. Set only from a live descriptor, which supplies the reference's
-    /// object-presence check.
+    /// `UnitIsTapped`: `UNIT_DYNAMIC_FLAGS` (field 143) bit `0x4`, someone holds the kill credit.
+    /// Set only from a live descriptor, which supplies the reference's object-presence check.
     pub tapped: bool,
-    /// `UnitIsPartyLeader`'s first leg: `PLAYER_FLAGS & 0x1` on a player's own descriptor, true
-    /// for a stranger leading their own party. The reference (`0x516210`) ORs it with a compare
-    /// against our group leader's guid.
+    /// `UnitIsPartyLeader`'s first leg: `PLAYER_FLAGS & 0x1` on a player's own descriptor, true for
+    /// a stranger leading their own party. The reference ORs it with a compare against our group
+    /// leader's guid.
     pub group_leader: bool,
-    /// `UnitIsTappedByPlayer` (`0x519d00`): the same field's bit `0x8`. Tapped without it is
-    /// someone else's kill, the grey unit frame.
+    /// `UnitIsTappedByPlayer`: the same field's bit `0x8`. Tapped without it is someone else's
+    /// kill, the grey unit frame.
     pub tapped_by_player: bool,
     /// `UnitName`'s name; `None` until the name query answers, which reads as [`unknownobject`].
     pub name: Option<String>,
@@ -94,14 +91,14 @@ pub struct UnitState {
     pub shown_max_powers: [u32; 7],
     /// `UnitIsDead`; a released ghost is not dead by it, as its health is 1.
     pub dead: bool,
-    /// `UnitIsCharmed` (`0x516cf0`): `UNIT_FIELD_CHARMEDBY` (fields 10-11) is non-zero.
-    /// `UNIT_FIELD_CHARM` is never read, so a charmer answers nil, as does a summoned pet.
+    /// `UnitIsCharmed`: `UNIT_FIELD_CHARMEDBY` (fields 10-11) is non-zero. `UNIT_FIELD_CHARM` is
+    /// never read, so a charmer answers nil, as does a summoned pet.
     pub charmed: bool,
     /// `UnitIsGhost`: `PLAYER_FLAGS` bit `0x10`, so players only.
     pub ghost: bool,
     /// The reaction toward the player on `UnitReaction`'s scale, 1 hated to 7 revered, which
-    /// Exalted reads too (`0x606439` caps the rank), 0 unknown (nil). Fed for the tokens naming
-    /// another unit; `"player"` and `"pet"` stay 0.
+    /// Exalted reads too, 0 unknown (nil). Fed for the tokens naming another unit; `"player"` and
+    /// `"pet"` stay 0.
     pub reaction: u8,
     /// The player's reaction toward the unit, `UnitReaction("player", unit)` on the same scale:
     /// 12340's `0x7251c0` with the player as `this`, which answers a reputation faction by the
@@ -120,26 +117,26 @@ pub struct UnitState {
     pub class: Option<String>,
     /// `UnitClass`'s second return, the uppercase token (`"WARRIOR"`).
     pub class_file: Option<String>,
-    /// `UnitHasRelicSlot` (`0x519e50`): INVSLOT 17 is a relic slot, from `ChrClasses.dbc` field
+    /// `UnitHasRelicSlot`: INVSLOT 17 is a relic slot, from `ChrClasses.dbc` field
     /// 16. Players only, true for Paladin, Shaman and Druid.
     pub has_relic_slot: bool,
     /// `ChrClasses.dbc` field 2 for a player's class, 0-based (Strength 0, Agility 1), which
-    /// `GetDamageBonusStat` (`0x48b520`) reads for the active player; `None` with no class row.
+    /// `GetDamageBonusStat` reads for the active player; `None` with no class row.
     pub damage_bonus_stat: Option<u32>,
-    /// `UnitSex`'s scale, 2 male and 3 female, from `UNIT_FIELD_BYTES_0` byte 2 (0 male, 1
-    /// female). The unfilled 0 answers 2, the reference's unresolved answer (`0x517f9f`).
+    /// `UnitSex`'s scale, 2 male and 3 female, from `UNIT_FIELD_BYTES_0` byte 2 (0 male, 1 female).
+    /// The unfilled 0 answers 2, the reference's unresolved answer.
     pub sex: u8,
     /// `UnitIsPlayer`: a player character by guid, whose tooltip level line shows race and class.
     pub is_player: bool,
-    /// `UnitPlayerControlled` (`0x516410`): `UNIT_FIELD_FLAGS` bit `0x8`, which a player's pet
-    /// and a charmed creature carry as well as a player.
+    /// `UnitPlayerControlled`: `UNIT_FIELD_FLAGS` bit `0x8`, which a player's pet and a charmed
+    /// creature carry as well as a player.
     pub player_controlled: bool,
     /// `UNIT_FIELD_FLAGS`, raw: `UnitIsPlusMob` reads bit `0x40`, and `UNIT_FLAGS` fires when it
     /// moves.
     pub flags: u32,
-    /// `PLAYER_FLAGS` (field 190), raw, 0 on a creature. `PLAYER_FLAGS_CHANGED` fires when any
-    /// bit moves on any player, remote ones included: the reference's handler (`0x5ee990`) fires
-    /// before any bit test or local-player check. Raw, as most of its bits are not decoded here.
+    /// `PLAYER_FLAGS` (field 190), raw, 0 on a creature. `PLAYER_FLAGS_CHANGED` fires when any bit
+    /// moves on any player, remote ones included: the reference's handler fires before any bit test
+    /// or local-player check. Raw, as most of its bits are not decoded here.
     pub player_flags: u32,
     /// `UnitIsAFK` (`0x60cc30`): a held player's `PLAYER_FLAGS` `0x2`, else the party record's
     /// status `0x40`.
@@ -153,9 +150,9 @@ pub struct UnitState {
     /// `UnitInVehicle` (`0x6133d0`): a party record's vehicle status bit `0x200`. benilla tracks
     /// no vehicle, so a held unit rides none.
     pub in_vehicle: bool,
-    /// `UNIT_DYNAMIC_FLAGS` (field 143), raw. The event of the same name fires when any bit
-    /// moves: the reference's field watch (`0x51bbb0`) compares the whole dword, and bits such as
-    /// `0x2` (tracked) are not decoded here.
+    /// `UNIT_DYNAMIC_FLAGS` (field 143), raw. The event of the same name fires when any bit moves:
+    /// the reference's field watch compares the whole dword, and bits such as `0x2` (tracked) are
+    /// not decoded here.
     pub dynamic_flags: u32,
     /// The owner: `UNIT_FIELD_SUMMONEDBY`, else the charmer, else the creator, else 0; the
     /// "or pet" half of `UnitPlayerOrPetInParty` and `UnitPlayerOrPetInRaid`.
@@ -165,18 +162,18 @@ pub struct UnitState {
     pub guild: Option<super::guild::UnitGuild>,
     /// The creature template's subname ("Stable Master"), the tooltip's second line.
     pub subtitle: Option<String>,
-    /// The word ("Beast") from `CreatureType.dbc` for the type the reference's resolver `0x605570`
-    /// returns for any unit: the shapeshift form's, else the creature template's, else the
-    /// race's. `UnitCreatureType` answers it, and a creature's level line takes it as its class
-    /// slot; a player's reads race and class instead. `None` for type 0 or no descriptor.
+    /// The word ("Beast") from `CreatureType.dbc` for the type the reference's resolver returns for
+    /// any unit: the shapeshift form's, else the creature template's, else the race's.
+    /// `UnitCreatureType` answers it, and a creature's level line takes it as its class slot; a
+    /// player's reads race and class instead. `None` for type 0 or no descriptor.
     pub creature_type_name: Option<String>,
-    /// Creature rank 0..=4 as the reference's getter (`0x605620`) answers it, so already gated:
-    /// 0 without a cached creature template or with a pet number. The tooltip's rank word,
-    /// `UnitLevel`'s boss -1 and `UnitClassification` all read it.
+    /// Creature rank 0..=4 as the reference's getter answers it, so already gated: 0 without a
+    /// cached creature template or with a pet number. The tooltip's rank word, `UnitLevel`'s boss
+    /// -1 and `UnitClassification` all read it.
     pub rank: u32,
     /// The creature civilian flag, one term of [`is_civilian_kill`].
     pub civilian: bool,
-    /// The creature racial-leader flag, the tooltip's LEADER line when PvP-flagged (`0x6125c0`).
+    /// The creature racial-leader flag, the tooltip's LEADER line when PvP-flagged.
     pub racial_leader: bool,
     /// `UNIT_FIELD_FLAGS`' PvP bit: `UnitIsPVP` and the tooltip's PvP line.
     pub pvp: bool,
@@ -186,10 +183,10 @@ pub struct UnitState {
     /// The faction name ("Stormwind"), the tooltip line after the level line, from `Faction.dbc`
     /// through the faction template with its hiding gates applied; `None` shows no line.
     pub faction_name: Option<String>,
-    /// `UnitIsConnected`: any unit the object manager holds answers 1 (`0x517daf`); a party token
-    /// with no object takes the roster status byte's `0x01`. The default `false` reads
-    /// disconnected, which greys a stock mana bar (`UnitFrame.lua:214`), so a hand-built live
-    /// unit must set it; the app's `snapshot` does for every held one.
+    /// `UnitIsConnected`: any unit the object manager holds answers 1; a party token with no object
+    /// takes the roster status byte's `0x01`. The default `false` reads disconnected, which greys a
+    /// stock mana bar (`UnitFrame.lua:214`), so a hand-built live unit must set it; the app's
+    /// `snapshot` does for every held one.
     pub is_connected: bool,
     /// `UnitIsPVPFreeForAll`: `PLAYER_FLAGS` bit `0x80`, or the roster status byte's `0x10`;
     /// independent of [`Self::pvp`].
@@ -209,10 +206,10 @@ pub struct UnitState {
     pub faction_group: Option<String>,
     /// `UnitFactionGroup`'s second return, `FactionGroup.dbc`'s localized `Name0`: display text.
     pub faction_group_localized: Option<String>,
-    /// The team digit of `PVP_RANK_<rank>_<team>` (`0x5efe00`): 0 Horde, 1 Alliance, -1 no side.
-    /// It follows the race through `ChrRaces` and `FactionTemplate`, never the live template
-    /// `UnitFactionGroup` reads for any token but `"player"` (`0x60d167`), so a GM keeps it. The
-    /// default 0 is the reference's answer for a unit it cannot resolve (`0x51a9af`).
+    /// The team digit of `PVP_RANK_<rank>_<team>`: 0 Horde, 1 Alliance, -1 no side. It follows the
+    /// race through `ChrRaces` and `FactionTemplate`, never the live template `UnitFactionGroup`
+    /// reads for any token but `"player"` (`0x60d167`), so a GM keeps it. The default 0 is the
+    /// reference's answer for a unit it cannot resolve.
     pub pvp_team: i8,
     /// `OBJECT_FIELD_GUID`, which `UnitIsUnit` and `UnitInParty` compare; 0 is unresolved, and
     /// two zeros never match.
@@ -223,23 +220,23 @@ pub struct UnitState {
     /// `GetRaidTargetIndex`: 0 none, else the mark 1..=8, from the group's raid-target board.
     pub raid_target: u8,
     /// Whether the player can attack the unit, `UnitCanAttack("player", unit)`, which the binding
-    /// (`0x516c50`, delegating to `CanAttack` `0x606980`) answers for both argument orders. Fed for
-    /// `target`, `targettarget`, `npc` and the units a chain ends on; other tokens read false.
+    /// (delegating to `CanAttack`) answers for both argument orders. Fed for `target`,
+    /// `targettarget`, `npc` and the units a chain ends on; other tokens read false.
     pub can_attack: bool,
     /// Whether the player can assist the unit, `UnitCanAssist("player", unit)` (12340 `0x7293d0`,
     /// `CanAssist`); fed where [`Self::can_attack`] is, and true for the player.
     pub can_assist: bool,
-    /// `UnitIsCorpse` (`0x5161c0`): the token names a `TYPEID_CORPSE` object, which a dead unit
-    /// is not. No feed sets it.
+    /// `UnitIsCorpse`: the token names a `TYPEID_CORPSE` object, which a dead unit is not. No feed
+    /// sets it.
     pub corpse_object: bool,
-    /// `UnitAffectingCombat` (`0x517e10`): `UNIT_FIELD_FLAGS` bit `0x00080000`, for every token
-    /// including `"player"`; the reference has no separate player combat flag.
+    /// `UnitAffectingCombat`: `UNIT_FIELD_FLAGS` bit `0x00080000`, for every token including
+    /// `"player"`; the reference has no separate player combat flag.
     pub in_combat: bool,
 }
 
-/// The name of a unit whose name is not yet known, as the reference's `UnitName` (`0x517220`) and
-/// unit tooltip title (`0x609324`) both answer it: the `UNKNOWNOBJECT` GlobalString (enUS
-/// "Unknown"), else the literal "Unknown Being" (`0x860fa4`) when the global is missing or empty.
+/// The name of a unit whose name is not yet known, as the reference's `UnitName` and unit tooltip
+/// title both answer it: the `UNKNOWNOBJECT` GlobalString (enUS "Unknown"), else the literal
+/// "Unknown Being" when the global is missing or empty.
 pub fn unknownobject(lua: &Lua) -> mlua::Result<mlua::String> {
     // One expression: `benilla-app`'s `reference_strings` check matches
     // `globals().get::<String>`, and a line break inside it would hide this lookup.
@@ -250,13 +247,12 @@ pub fn unknownobject(lua: &Lua) -> mlua::Result<mlua::String> {
     })
 }
 
-/// The reference's grey-level band (`0x80ae98`; twins at `0x81dda8` and `0x8076c0`), indexed by
-/// player level / 5.
+/// The reference's grey-level band, indexed by player level / 5.
 const GREY_BAND: [u32; 20] = [
     4, 4, 5, 5, 6, 6, 7, 7, 8, 9, 10, 11, 12, 12, 12, 12, 12, 12, 12, 12,
 ];
 
-/// `GetQuestGreenRange`'s answer (`0x4e17d0`): the band for a player level, 12 past the table.
+/// `GetQuestGreenRange`'s answer: the band for a player level, 12 past the table.
 pub fn grey_band(player_level: u32) -> u32 {
     GREY_BAND
         .get((player_level / 5) as usize)
@@ -264,32 +260,32 @@ pub fn grey_band(player_level: u32) -> u32 {
         .unwrap_or(12)
 }
 
-/// The reference's grey level test (`0x5f0700`): the unit is more than the band below the player,
-/// strictly, so a gap equal to the band is still green. The reference also returns false for a
-/// player (object type bit `0x10`, `0x5f0726`-`0x5f0732`); a pet takes the level test.
+/// The reference's grey level test: the unit is more than the band below the player, strictly, so a
+/// gap equal to the band is still green. The reference also returns false for a player (object type
+/// bit `0x10`); a pet takes the level test.
 pub fn unit_is_grey(player_level: u32, unit_level: u32) -> bool {
     player_level > unit_level && player_level - unit_level > grey_band(player_level)
 }
 
-/// The civilian gate (`0x612550`), a dishonorable kill: PvP-flagged, a civilian creature, hostile
+/// The civilian gate, a dishonorable kill: PvP-flagged, a civilian creature, hostile
 /// (`UnitReaction` <= 2) and grey. The tooltip's CIVILIAN line and `UnitPVPName`'s civilian prefix
-/// (`0x609370`) both read it. The terms are the tooltip line's; `0x612550`'s body is not traced.
+/// both read it. The terms are the tooltip line's; the reference's body is not traced.
 pub fn is_civilian_kill(u: &UnitState, player_level: u32) -> bool {
     u.civilian && u.pvp && u.reaction != 0 && u.reaction <= 2 && unit_is_grey(player_level, u.level)
 }
 
-/// The tooltip's "??" level gate (`0x529fe0`): never a player; level 0, world-boss rank 3, or a
-/// hostile (reaction <= 2) at least 10 levels above the player. `UnitLevel` (`0x517fc0`) answers
-/// the boss and hostile legs with -1, but returns a level of 0 as is.
+/// The tooltip's "??" level gate: never a player; level 0, world-boss rank 3, or a hostile
+/// (reaction <= 2) at least 10 levels above the player. `UnitLevel` answers the boss and hostile
+/// legs with -1, but returns a level of 0 as is.
 pub fn level_reads_unknown(u: &UnitState, player_level: u32) -> bool {
     let much_higher_hostile =
         u.reaction != 0 && u.reaction <= 2 && u.level >= player_level.saturating_add(10);
     !u.is_player && (u.level == 0 || u.rank == 3 || much_higher_hostile)
 }
 
-/// `UnitClassification` (`0x516d90`): the word table at `0x850424` indexed by the gated
-/// [`UnitState::rank`]; an unresolved token reads index 0, "normal" (`0x516dc4`). "rareelite" is
-/// a real answer, though stock draws it with the elite art (`TargetFrame.lua:209`).
+/// `UnitClassification`: the word table indexed by the gated [`UnitState::rank`]; an unresolved
+/// token reads index 0, "normal". "rareelite" is a real answer, though stock draws it with the
+/// elite art (`TargetFrame.lua:209`).
 pub fn classification_word(rank: u32) -> &'static str {
     match rank {
         1 => "elite",
@@ -357,9 +353,9 @@ impl super::UiScript {
 
     /// Push, or clear with `None`, the snapshot of a unit a `target` chain can end on, by guid. A
     /// token with a hop that no push names (`"party1target"`, `"raid3targettarget"`) resolves
-    /// through [`UnitGuids`] to a guid and reads that guid's entry, the reference's order
-    /// (`0x515970`, then each getter's object lookup `0x468460`); the guids to cover are
-    /// [`Self::chain_end_guids`]. A token without a hop reads its own push, not this.
+    /// through [`UnitGuids`] to a guid and reads that guid's entry, the reference's order (then
+    /// each getter's object lookup); the guids to cover are [`Self::chain_end_guids`]. A token
+    /// without a hop reads its own push, not this.
     pub fn set_unit_by_guid(&mut self, guid: u64, state: Option<UnitState>) {
         let mut model = self.model_mut();
         match state {
@@ -428,14 +424,14 @@ impl super::UiScript {
         set_field!(self, billing_time_rested, minutes);
     }
 
-    /// Enter the UI-load sound-suppression scope (`0x458f50`): a depth every name-keyed
-    /// `PlaySound` reads, so scopes nest and only the outermost exit re-enables sound.
+    /// Enter the UI-load sound-suppression scope: a depth every name-keyed `PlaySound` reads, so
+    /// scopes nest and only the outermost exit re-enables sound.
     pub fn push_sound_suppression(&self) {
         let mut model = self.model_mut();
         model.sound_suppression = model.sound_suppression.saturating_add(1);
     }
 
-    /// Leave it (`0x458f60`), saturating so an unbalanced pop cannot wrap to a muted UI.
+    /// Leave it, saturating so an unbalanced pop cannot wrap to a muted UI.
     pub fn pop_sound_suppression(&self) {
         let mut model = self.model_mut();
         model.sound_suppression = model.sound_suppression.saturating_sub(1);
@@ -456,8 +452,8 @@ impl super::UiScript {
         model.exhaustion = rows.into_iter().map(|(id, n, f)| (id, (n, f))).collect();
     }
 
-    /// Push our combo points and the unit they sit on, as `CGGameUI::UpdateComboPoints`
-    /// (`0x519780`) banks them. Raw: `GetComboPoints`' class gate is the binding's.
+    /// Push our combo points and the unit they sit on, as `CGGameUI::UpdateComboPoints` banks them.
+    /// Raw: `GetComboPoints`' class gate is the binding's.
     pub fn set_combo_points(&mut self, points: u8, target: u64) {
         let mut model = self.model_mut();
         model.combo_points = points;
@@ -479,9 +475,8 @@ impl super::UiScript {
         })
     }
 
-    /// Take the `TargetNearest*([reverse])` calls out of the call stream, `true` for reverse.
-    /// They name no unit: the reference runs the TAB cycler (`0x493f60`) straight into
-    /// `SetSelection`.
+    /// Take the `TargetNearest*([reverse])` calls out of the call stream, `true` for reverse. They
+    /// name no unit: the reference runs the TAB cycler straight into `SetSelection`.
     pub fn take_target_nearest_requests(&mut self) -> Vec<(NearestMode, bool)> {
         self.take_calls_where(|c| match c {
             ScriptCall::TargetNearest { mode, reverse } => Some((*mode, *reverse)),
@@ -504,8 +499,8 @@ impl super::UiScript {
             .is_empty()
     }
 
-    /// Drain `DropItemOnUnit`'s tokens; on the pet the app casts the learned Feed Pet spell at
-    /// the held item (`0x48d960`).
+    /// Drain `DropItemOnUnit`'s tokens; on the pet the app casts the learned Feed Pet spell at the
+    /// held item.
     pub fn take_drop_item_on_unit(&mut self) -> Vec<String> {
         drain_field!(self, drop_item_on_unit)
     }
@@ -579,9 +574,8 @@ fn pair_reaction(lua: &Lua, a: &str, b: &str) -> Option<u8> {
 }
 
 /// A unit predicate's body: the number 1 or nil through [`super::binding_abi::flag`], never a Lua
-/// boolean, as the reference pushes only `lua_pushnumber` (`0x6f3810`) or `lua_pushnil`
-/// (`0x6f37f0`). `UnitReaction`, `UnitLevel` and `UnitPowerType` are getters with their own
-/// shapes and do not route here.
+/// boolean, as the reference pushes only `lua_pushnumber` or `lua_pushnil`. `UnitReaction`,
+/// `UnitLevel` and `UnitPowerType` are getters with their own shapes and do not route here.
 fn unit_predicate(
     lua: &Lua,
     token: &Option<String>,

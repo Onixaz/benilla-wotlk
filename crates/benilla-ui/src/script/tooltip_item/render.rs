@@ -1,9 +1,9 @@
-//! The item tooltip's line law, [`render_view`]: the emission order of the reference's builder
-//! `0x52b650`. Every sentence is a key the builder itself names (the string pointers reachable
-//! from `[0x52b650, 0x52e600)`), never a match on English: `ITEM_REQ_SKILL` and the three
-//! `LOCKED_WITH_*` keys all read "Requires %s" in enUS and differ elsewhere. A key the player's
-//! `GlobalStrings.lua` lacks emits no line, as in the reference, whose `FrameScript_GetText`
-//! returns the empty string and whose `AddLine` drops an empty row uncounted.
+//! The item tooltip's line law, [`render_view`]: the emission order of the reference's builder.
+//! Every sentence is a key the builder itself names (the string pointers reachable), never a match
+//! on English: `ITEM_REQ_SKILL` and the three `LOCKED_WITH_*` keys all read "Requires %s" in enUS
+//! and differ elsewhere. A key the player's `GlobalStrings.lua` lacks emits no line, as in the
+//! reference, whose `FrameScript_GetText` returns the empty string and whose `AddLine` drops an
+//! empty row uncounted.
 
 use mlua::{Lua, Table};
 
@@ -17,31 +17,30 @@ use super::names::*;
 /// roll. A template source passes `None`.
 #[derive(Default)]
 pub(super) struct ItemInstance {
-    /// The name with its random suffix joined, which the reference composes in the builder
-    /// (`0x52b7bf`, `0x5d8b00` through `ITEM_SUFFIX_TEMPLATE`); `None` takes the template's.
+    /// The name with its random suffix joined, which the reference composes in the builder (through
+    /// `ITEM_SUFFIX_TEMPLATE`); `None` takes the template's.
     pub name: Option<String>,
     /// Live `(current, max)`; `None` for an indestructible item or one not yet streamed.
     pub durability: Option<(u32, u32)>,
-    /// The resolved `ITEM_FIELD_CREATOR` name (the reference's `0x55f080`); `None` while it is
-    /// unresolved, which prints no line either (`0x52e209`).
+    /// The resolved `ITEM_FIELD_CREATOR` name; `None` while it is unresolved, which prints no line
+    /// either.
     pub creator: Option<String>,
-    /// `ITEM_FIELD_FLAGS & 0x200`, a letter's copy: the creator line reads WRITTEN_BY
-    /// (`0x52e223`) and READABLE shows (`0x52e348`).
+    /// `ITEM_FIELD_FLAGS & 0x200`, a letter's copy: the creator line reads WRITTEN_BY and READABLE
+    /// shows.
     pub has_text: bool,
-    /// `ITEM_FIELD_FLAGS`: UNLOCKED `0x4` (read at `0x52e30c`), WRAPPED `0x8` (`0x52e31d`).
+    /// `ITEM_FIELD_FLAGS`: UNLOCKED `0x4`, WRAPPED `0x8`.
     pub flags: u32,
-    /// Runtime-bound (`0x5da2c0`): `ITEM_FIELD_FLAGS & 1`, or an enchant that binds. App-resolved,
-    /// since [`Self::enchants`] drops rows the line law hides.
+    /// Runtime-bound: `ITEM_FIELD_FLAGS & 1`, or an enchant that binds. App-resolved, since
+    /// [`Self::enchants`] drops rows the line law hides.
     pub already_bound: bool,
     /// The petition a charter names, printed between the name and `ITEM_SIGNABLE`.
     pub petition: Option<crate::script::PetitionSlotView>,
-    /// The enchant slots, app-resolved, in slot order (`0x52c991`).
+    /// The enchant slots, app-resolved, in slot order.
     pub enchants: Vec<crate::script::EnchantView>,
-    /// The reference's p6 = 0, no caller-supplied instance block (`[this+0x440]`, tested at
-    /// `0x52e2e8`; when set, only READABLE is evaluated). It is per call site, not per binding:
-    /// `SetBagItem` (`0x534620`) takes p6=1 (`0x534900`) iff the cooldown query `0x6e2ed0` at
-    /// `0x53483a` finds one running, else p6=0 (`0x53493e`), so the open line and the cooldown
-    /// line never show together there.
+    /// The reference's p6 = 0, no caller-supplied instance block (`[this+0x440]`, when set, only
+    /// READABLE is evaluated). It is per call site, not per binding: `SetBagItem` takes p6=1 iff
+    /// the cooldown query finds one running, else p6=0, so the open line and the cooldown line
+    /// never show together there.
     pub openable_source: bool,
     /// A timed item's remaining lifetime in ms, from `SMSG_ITEM_TIME_UPDATE`, not
     /// `ITEM_FIELD_DURATION`: the client displays from the packet (`Objects/Item.cpp:1093`).
@@ -69,10 +68,10 @@ pub(super) fn equipment_set_list(
     (!out.is_empty()).then_some(out)
 }
 
-/// The set block's blank gold line, the reference's literal `0x854b2c`: a space and a newline. An
-/// empty string would be no row, as `AddLine` (`0x530270`) drops an empty left text uncounted
-/// (`0x5302a9`). `" \n"` is one row: the stepper `0x5c7470` consumes the break with the space
-/// (`0x5c7659`), as the app's `fontstring_lines` trailing-break rule does.
+/// The set block's blank gold line, the reference's literal: a space and a newline. An empty string
+/// would be no row, as `AddLine` drops an empty left text uncounted. `" \n"` is one row: the
+/// stepper consumes the break with the space, as the app's `fontstring_lines` trailing-break rule
+/// does.
 const SET_SPACER: &str = " \n";
 
 /// Where the money block (`0x62d71b`) takes its stack from: the builder's item object or its
@@ -101,22 +100,22 @@ impl Sell {
     };
 }
 
-/// The builder's render flags: p4 and p5 of `0x52b650`, and the money source.
+/// The builder's render flags: p4 and p5, and the money source.
 #[derive(Clone, Copy, Default)]
 pub(super) struct BuilderFlags {
     /// p5 `[arg+0x18]`: prepend the gray `CURRENTLY_EQUIPPED` line. Only the two compare bindings
     /// set it, and both pass [`name_only`](Self::name_only) zero.
     pub currently_equipped: bool,
-    /// p4 `[arg+0x14]`, the compact mode the reference calls `nameOnly` (`0x8552dc`), reachable
-    /// only through `SetInventoryItem`'s third argument. The name goes white, the bind/lock region
-    /// and the stat body are cut, and all after the cooldown line is skipped; the slot/type cell,
-    /// durability, duration, requirements, spell triggers and set block still print.
+    /// p4 `[arg+0x14]`, the compact mode the reference calls `nameOnly`, reachable only through
+    /// `SetInventoryItem`'s third argument. The name goes white, the bind/lock region and the stat
+    /// body are cut, and all after the cooldown line is skipped; the slot/type cell, durability,
+    /// duration, requirements, spell triggers and set block still print.
     pub name_only: bool,
     pub sell: Sell,
 }
 
-/// Render one item into the tooltip in `0x52b650`'s order. Not built: ITEM_COOLDOWN_TIME,
-/// ITEM_WRAPPED_BY and the `LOCKED_WITH_*` line under LOCKED.
+/// Render one item into the tooltip's order. Not built: ITEM_COOLDOWN_TIME, ITEM_WRAPPED_BY and the
+/// `LOCKED_WITH_*` line under LOCKED.
 pub(super) fn render_view(
     lua: &Lua,
     this: &Table,
@@ -177,16 +176,16 @@ pub(super) fn render_view(
         }
     };
 
-    // The gray header (`[arg+0x18]`, colour `0xc0d3c4`) is all a compare adds: the only two of
-    // `0x52b650`'s 31 call sites passing p5 (`0x5362d4`, `0x53603e`) pass p4 = 0, so none is cut.
+    // The gray header (`[arg+0x18]`) is all a compare adds: the only two of the reference's 31 call
+    // sites passing p5 pass p4 = 0, so none is cut.
     if flags.currently_equipped {
         keyed("CURRENTLY_EQUIPPED", &[], GRAY, false)?;
     }
     let name = inst
         .and_then(|i| i.name.clone())
         .unwrap_or_else(|| v.name.clone());
-    // `nameOnly` paints the name white (`0x52b8b3`), else the quality arm colours it (`0x52b8ca`);
-    // nothing else recolors it, not even for an unusable item.
+    // `nameOnly` paints the name white, else the quality arm colours it; nothing else recolors it,
+    // not even for an unusable item.
     let name_color = if flags.name_only {
         WHITE
     } else {
@@ -213,15 +212,14 @@ pub(super) fn render_view(
     if v.flags & 0x2000 != 0 {
         keyed("ITEM_SIGNABLE", &[], GREEN, false)?;
     }
-    // p4's first cut (`0x52babe`, skipping `[0x52bac9, 0x52bfad)` at `0x52bac3`): the bind/lock
-    // region. ITEM_SIGNABLE above survives it.
+    // p4's first cut: the bind/lock region. ITEM_SIGNABLE above survives it.
     if !flags.name_only {
         if v.flags & 0x2 != 0 {
             keyed("ITEM_CONJURED", &[], WHITE, false)?;
         }
         // Bonding (`[record+0x194]`) 1..5 decides whether a bind line prints. A runtime-bound
-        // instance (`0x5da2c0`) prints ITEM_SOULBOUND, or ITEM_BIND_QUEST for the quest kinds;
-        // otherwise the jump table `0x52e4fc` picks 1 pickup, 2 equip, 3 use, 4 and 5 quest.
+        // instance prints ITEM_SOULBOUND, or ITEM_BIND_QUEST for the quest kinds; otherwise the
+        // jump table picks 1 pickup, 2 equip, 3 use, 4 and 5 quest.
         match v.bonding {
             4 | 5 => keyed("ITEM_BIND_QUEST", &[], WHITE, false)?,
             1..=3 if inst.is_some_and(|i| i.already_bound) => {
@@ -246,16 +244,14 @@ pub(super) fn render_view(
         }
     }
     // The slot | type line, or for a bag the CONTAINER_SLOTS line in its seat. The type cell is
-    // hidden for cloaks (16) and display-hidden subclasses. The cells recolor independently
-    // (`0x52c143..0x52c1f9`): a proficiency miss (`0xc4d4a0[class]` bit `1 << subclass`; a class
-    // with no mask never reds) reds the type, or the slot when a weapon's alternate subclass is
-    // proficient; an off-hand weapon (22) without Dual Wield (`0x5eab70`) reds the slot.
-    // The bag gate is `InventoryType == 18` alone (`0x52b754`, read at `0x52bffe`), never the slot
-    // count. Quivers and ammo pouches are 18 too, so 27 is dead (`0x809200[27]` maps to no slot).
+    // hidden for cloaks (16) and display-hidden subclasses. The cells recolor independently: a
+    // proficiency miss (`[class]` bit `1 << subclass`; a class with no mask never reds) reds the
+    // type, or the slot when a weapon's alternate subclass is proficient; an off-hand weapon (22)
+    // without Dual Wield reds the slot. The bag gate is `InventoryType == 18` alone, never the slot
+    // count. Quivers and ammo pouches are 18 too, so 27 is dead (maps to no slot).
     if v.inventory_type == 18 {
         // `%s` is the subclass DisplayName the type cell reads ("8 Slot Quiver"); a subclass
-        // without one prints no line at all (`0x52c006`, `0x52c018`, `0x52c021`), and
-        // displayFlags bit 0 is not read here.
+        // without one prints no line at all, and displayFlags bit 0 is not read here.
         if let Some(name) = v.sub_class_display.as_deref() {
             keyed(
                 "CONTAINER_SLOTS",
@@ -265,16 +261,15 @@ pub(super) fn render_view(
             )?;
         }
     } else {
-        // The slot cell: for `ItemClass == 6`, `ItemClass.dbc`'s own name ("Projectile", read
-        // from `[0xc0dc24]` at `0x52c0bc`), the column `GetItemInfo`'s itemType reads; else the
-        // `0x83ddb0` key, so a bow reads "Ranged | Bow" and a gun, whose key ships no string,
-        // "Gun" alone.
+        // The slot cell: for `ItemClass == 6`, `ItemClass.dbc`'s own name ("Projectile"), the
+        // column `GetItemInfo`'s itemType reads; else the key, so a bow reads "Ranged | Bow" and a
+        // gun, whose key ships no string, "Gun" alone.
         let slot = if v.class == 6 {
             v.item_type.clone()
         } else {
             invtype_key(v.inventory_type).and_then(&get)
         };
-        // The type cell: `ItemSubClass.dbc`'s DisplayName, app-resolved (the builder's `0xc0db90`).
+        // The type cell: `ItemSubClass.dbc`'s DisplayName, app-resolved.
         let ty = if v.inventory_type == 16 || v.hide_subclass {
             None
         } else {
@@ -307,18 +302,18 @@ pub(super) fn render_view(
             _ => {}
         }
     }
-    // p4's second cut (`0x52c220`, skipping `[0x52c22b, 0x52cc5b)` at `0x52c225`): damage through
-    // the enchant family. The slot/type cell between the two cuts always prints.
+    // p4's second cut: damage through the enchant family. The slot/type cell between the two cuts
+    // always prints.
     if !flags.name_only {
-        // The damage block, `[0x52c22b, 0x52c5a1)`: per slot, a key picked by school (non-zero),
-        // ammo (`ItemClass == 6` alone) and, on the no-school non-ammo leaf only, single
-        // (`floor(min) == ceil(max)`); every emitted slot after the first takes `PLUS_`.
+        // The damage block: per slot, a key picked by school (non-zero), ammo (`ItemClass == 6`
+        // alone) and, on the no-school non-ammo leaf only, single (`floor(min) == ceil(max)`);
+        // every emitted slot after the first takes `PLUS_`.
         let mut first = true;
         let mut dps_acc = 0.0f32;
         for &(min, max, school) in v.damages.iter().take(5) {
-            // The biased floor and ceil (`0x808120`), not rounding: 38.7-85.7 reads "38 - 86".
+            // The biased floor and ceil, not rounding: 38.7-85.7 reads "38 - 86".
             let (lo, hi) = (floor_min(min), ceil_max(max));
-            // A slot is emitted iff either rounded bound is nonzero (`0x52c292`).
+            // A slot is emitted iff either rounded bound is nonzero.
             if lo == 0 && hi == 0 {
                 continue;
             }
@@ -356,14 +351,14 @@ pub(super) fn render_view(
                     vec![Arg::D(lo.into()), Arg::D(hi.into())],
                 )
             };
-            // Speed rides a weapon's first emitted line only (`0x52c494`, `0x52c49c`): the literal
-            // `"%s %.2f"` over `Delay × 0.001`, with only the word a key.
+            // Speed rides a weapon's first emitted line only: the literal `"%s %.2f"` over
+            // `Delay × 0.001`, with only the word a key.
             let speed = (first && v.class == 2).then(|| {
                 let word = get("SPEED").unwrap_or_default();
                 let secs = f64::from(v.delay_ms) * f64::from(0.001_f32);
                 format!("{word} {secs:.2}")
             });
-            // White in both cells, even for an unusable item (`0x52c4fa..0x52c516`).
+            // White in both cells, even for an unusable item.
             if let Some(t) = get(&key) {
                 let line = (fill(&t, &args), WHITE);
                 match speed {
@@ -377,8 +372,8 @@ pub(super) fn render_view(
         }
         // DPS needs an emitted line and `ItemClass == 2`, so ammunition has none.
         if !first && v.class == 2 {
-            // The precision is `DPS_TEMPLATE`'s own (`0x854c4c`); the reference has no
-            // divide-by-zero guard either.
+            // The precision is `DPS_TEMPLATE`'s own; the reference has no divide-by-zero guard
+            // either.
             let secs = f64::from(v.delay_ms) * f64::from(0.001_f32);
             keyed(
                 "DPS_TEMPLATE",
@@ -398,9 +393,9 @@ pub(super) fn render_view(
                 false,
             )?;
         }
-        // Stats in the display order of `0x808e88` (4,3,7,5,6,1,0, then 8,9,2,10 and zero padding;
-        // `0x52c6b0..0x52c801`), not wire order. Deviation: the reference's padding repeats a mana
-        // stat once per zero entry; not emulated, since only the internal test ring 6674 has one.
+        // Stats in the display order of (4,3,7,5,6,1,0, then 8,9,2,10 and zero padding), not wire
+        // order. Deviation: the reference's padding repeats a mana stat once per zero entry; not
+        // emulated, since only the internal test ring 6674 has one.
         const STAT_DISPLAY_ORDER: [u32; 7] = [4, 3, 7, 5, 6, 1, 0];
         for &want in &STAT_DISPLAY_ORDER {
             for &(t, val) in &v.stats {
@@ -425,8 +420,8 @@ pub(super) fn render_view(
                 false,
             )?;
         } else {
-            // The builder's order, not field order: `0x52c8ad..0x52c93e` walks 1..5 reading school
-            // 6 for 1, so Arcane comes first and Holy is displaced rather than tested.
+            // The builder's order, not field order: the reference walks 1..5 reading school 6 for
+            // 1, so Arcane comes first and Holy is displaced rather than tested.
             const RESIST_EMIT_ORDER: [u32; 5] = [6, 2, 3, 4, 5];
             for school in RESIST_EMIT_ORDER {
                 let r = v.resistances[school as usize - 1];
@@ -443,18 +438,18 @@ pub(super) fn render_view(
                 )?;
             }
         }
-        // The enchant family, `[0x52c991, 0x52cc69)`: the slot loop, or with no id source at all
-        // the `ITEM_RANDOM_ENCHANT` placeholder (`0x52cc33`). Slots 0 and 1 are green `0xc0d3ac`
-        // for a positive id and red `0xc0d398` for a negative one; the suffix slots 2..6 are always
-        // white. A signable item (`0x2000`) zeroes every id (`0x52c9e0`) and shows no enchant line.
+        // The enchant family: the slot loop, or with no id source at all the `ITEM_RANDOM_ENCHANT`
+        // placeholder. Slots 0 and 1 are green for a positive id and red for a negative one; the
+        // suffix slots 2..6 are always white. A signable item (`0x2000`) zeroes every id and shows
+        // no enchant line.
         let signable = v.flags & 0x2000 != 0;
         let enchant_slots = match signable {
             true => &[][..],
             false => inst.map(|i| i.enchants.as_slice()).unwrap_or_default(),
         };
-        // No id source (`0x52c991`): a wrapped gift, or no item object and no instance block
-        // (`+0x440 == 0`), here a hover passing no [`ItemInstance`]. The fork tests the block's
-        // presence, not its contents (`0x52c9a3`), so a block source never shows the placeholder.
+        // No id source: a wrapped gift, or no item object and no instance block (`+0x440 == 0`),
+        // here a hover passing no [`ItemInstance`]. The fork tests the block's presence, not its
+        // contents, so a block source never shows the placeholder.
         let no_id_source = inst.is_none_or(|i| i.flags & 0x8 != 0);
         if no_id_source && !signable && v.random_property != 0 {
             keyed("ITEM_RANDOM_ENCHANT", &[], GREEN, false)?;
@@ -465,8 +460,8 @@ pub(super) fn render_view(
                 (true, true) => ENCHANT_RED,
                 (false, _) => WHITE,
             };
-            // A temporary enchant's countdown replaces its name, in the same line and colour
-            // (`0x52ca49`); the time is `SMSG_ITEM_ENCHANT_TIME_UPDATE`'s.
+            // A temporary enchant's countdown replaces its name, in the same line and colour; the
+            // time is `SMSG_ITEM_ENCHANT_TIME_UPDATE`'s.
             let mut text = match e.remaining_ms {
                 // A missing template skips the slot, not falling back to the bare name: the
                 // reference formats an empty string, which `AddLine` drops.
@@ -476,8 +471,7 @@ pub(super) fn render_view(
                 },
                 None => e.name.clone(),
             };
-            // The slot's charges: ITEM_SPELL_CHARGES inside the literal `" (%s)"` (`0x854820`,
-            // `0x52caa6..0x52cb38`).
+            // The slot's charges: ITEM_SPELL_CHARGES inside the literal `" (%s)"`.
             if let Some(charges) = charges_phrase(e.charges, &get) {
                 text.push_str(&format!(" ({charges})"));
             }
@@ -485,7 +479,7 @@ pub(super) fn render_view(
         }
     }
     if let Some((cur, max)) = inst.and_then(|i| i.durability).filter(|&(_, max)| max > 0) {
-        // Red (`0xc0d390`) only when broken.
+        // Red only when broken.
         let color = if cur == 0 { RED } else { WHITE };
         keyed(
             "DURABILITY_TEMPLATE",
@@ -502,9 +496,8 @@ pub(super) fn render_view(
             false,
         )?;
     }
-    // ITEM_DURATION (`0x854bb4`, `0x52ce0d`), the item's own expiry: after durability
-    // (`0x52cd0e..0x52cd22`), before ITEM_COOLDOWN_TIME (`0x52e140`), through the `0x52fa50`
-    // ladder. Its prefix ships no `_P1` twin, so every count reads "days" or "hrs"
+    // ITEM_DURATION, the item's own expiry: after durability, before ITEM_COOLDOWN_TIME, through
+    // the ladder. Its prefix ships no `_P1` twin, so every count reads "days" or "hrs"
     // (`GlobalStrings.lua:2401-2404`). The reference's formatter takes a dword, so a timer past
     // 49.7 days saturates here; no 1.12 item lasts past a fortnight.
     if let Some(ms) = inst.and_then(|i| i.duration_ms) {
@@ -548,7 +541,7 @@ pub(super) fn render_view(
             )?;
         }
     }
-    // Only a required level above 1 prints (`0x52d2cf`).
+    // Only a required level above 1 prints.
     if v.required_level > 1 {
         keyed(
             "ITEM_MIN_LEVEL",
@@ -562,8 +555,8 @@ pub(super) fn render_view(
     if show_item_level && matches!(v.class, 2 | 4 | 5 | 6) {
         keyed("ITEM_LEVEL", &[Arg::D(v.item_level.into())], WHITE, false)?;
     }
-    // ITEM_MIN_SKILL with a rank, ITEM_REQ_SKILL without (`0x52d34e`, `0x52d355`); the required
-    // spell takes ITEM_REQ_SKILL too (`0x52d650`).
+    // ITEM_MIN_SKILL with a rank, ITEM_REQ_SKILL without; the required spell takes ITEM_REQ_SKILL
+    // too.
     if let Some(skill) = &v.required_skill_name {
         let have = req.skills.get(&v.required_skill).copied().unwrap_or(0);
         let color = req_color(have >= v.required_skill_rank.max(1));
@@ -585,7 +578,7 @@ pub(super) fn render_view(
         }
     }
     if let Some(rep) = &v.required_rep_line {
-        // Red (`0xc0d390`) below the required rank (`[+0x58]`); an unfed faction reads as unmet.
+        // Red below the required rank (`[+0x58]`); an unfed faction reads as unmet.
         let rank = req
             .rep_ranks
             .get(&v.required_rep_faction)
@@ -599,8 +592,8 @@ pub(super) fn render_view(
     if taught_known {
         keyed("ITEM_SPELL_KNOWN", &[], RED, false)?;
     }
-    // Green, wrapped trigger lines: the prefix key and the app-resolved text joined by the
-    // literal `"%s %s"` (`0x82ef08`, `0x52da7e`).
+    // Green, wrapped trigger lines: the prefix key and the app-resolved text joined by the literal
+    // `"%s %s"`.
     for &(trigger, _, ref text) in &v.spell_triggers {
         let key = match trigger {
             0 | 5 => "ITEM_SPELL_TRIGGER_ONUSE",
@@ -614,12 +607,11 @@ pub(super) fn render_view(
     if let Some(charges) = charges_phrase(v.charges.max(0) as u32, &get) {
         add((charges, WHITE))?;
     }
-    // The set block (`0x52d8a0..0x52e0f5`), above p4's cut at `0x52e14c`: a blank gold line, the
-    // gold "name (owned/total)" header, the set's skill line, the members (cream `0xc0d368` when
-    // equipped, else gray; one still in flight waits), a second blank, then the bonuses sorted by
-    // threshold (`0x52e5c0`), green when the skill is met (`0x5eaae0`) and enough are owned.
-    // "Owned" counts equipped members on both builder paths. A met bonus is ITEM_SET_BONUS, the
-    // text alone; only an unmet one is ITEM_SET_BONUS_GRAY, with its count (`0x52e056..0x52e0d6`).
+    // The set block, above p4's cut: a blank gold line, the gold "name (owned/total)" header, the
+    // set's skill line, the members (else gray; one still in flight waits), a second blank, then
+    // the bonuses sorted by threshold, green when the skill is met and enough are owned. "Owned"
+    // counts equipped members on both builder paths. A met bonus is ITEM_SET_BONUS, the text alone;
+    // only an unmet one is ITEM_SET_BONUS_GRAY, with its count.
     if let Some(set) = &set_view {
         let owned = set
             .members
@@ -650,7 +642,7 @@ pub(super) fn render_view(
                 keyed("ITEM_REQ_SKILL", &[Arg::S(skill)], color, false)?;
             }
         }
-        // The two-space indent is the literal `"  %s"` (`0x854b14`), not a key.
+        // The two-space indent is the literal `"  %s"`, not a key.
         for (id, name) in &set.members {
             let Some(name) = name else { continue };
             let color = if equipped.contains(id) { CREAM } else { GRAY };
@@ -668,22 +660,22 @@ pub(super) fn render_view(
             }
         }
     }
-    // p4's early return (`0x52e147..0x52e14c`): compact falls through to `0x52e14e`, lays out and
-    // returns, so nothing from `0x52e170` on runs: flavor text, creator, open or read line, money.
+    // p4's early return: compact falls through, lays out and returns, so nothing from the reference
+    // on runs: flavor text, creator, open or read line, money.
     if flags.name_only {
         return Ok(());
     }
     if !v.description.is_empty() {
         addw((format!("\"{}\"", v.description), GOLD))?;
     }
-    // The reference gates the instance lines on an item object (`0x52e1c7`, `0x52e2e0`). Here only
-    // a template source (`None`) skips them, so a link, loot, mail or auction hover, which has an
-    // instance but no object, still reaches READABLE.
+    // The reference gates the instance lines on an item object. Here only a template source
+    // (`None`) skips them, so a link, loot, mail or auction hover, which has an instance but no
+    // object, still reaches READABLE.
     if let Some(inst) = inst {
-        // The creator line (`0x52e1b1..0x52e2db`), white `0xc0cf60`: ITEM_WRITTEN_BY for a letter,
-        // else ITEM_CREATED_BY, green by its own `|cff00ff00`. A wrapped instance (`0x8`, gate
-        // `0x52b7b0`) takes ITEM_WRAPPED_BY off `ITEM_FIELD_GIFTCREATOR` in the reference; that is
-        // not built, so a wrapped instance prints no creator line.
+        // The creator line, white: ITEM_WRITTEN_BY for a letter, else ITEM_CREATED_BY, green by its
+        // own `|cff00ff00`. A wrapped instance (`0x8`) takes ITEM_WRAPPED_BY off
+        // `ITEM_FIELD_GIFTCREATOR` in the reference; that is not built, so a wrapped instance
+        // prints no creator line.
         if inst.flags & 0x8 == 0 {
             if let Some(name) = &inst.creator {
                 let key = if inst.has_text {
@@ -694,11 +686,10 @@ pub(super) fn render_view(
                 keyed(key, &[Arg::S(name)], WHITE, false)?;
             }
         }
-        // One green line, OPENABLE winning (`0x52e2f2..0x52e35d`). Openable: a p6=0 source and
-        // either the loot flag `0x4` behind its lock gate (a lock needs UNLOCKED) or a wrapped gift
-        // (`0x200` and WRAPPED `0x8`). Readable: PageText (`0x5d9e10`) or the letter text. The lock
-        // gate is the line's only: the click tests the bare flag (`ItemInfo::opens_loot`), and
-        // READABLE wins there.
+        // One green line, OPENABLE winning. Openable: a p6=0 source and either the loot flag `0x4`
+        // behind its lock gate (a lock needs UNLOCKED) or a wrapped gift (`0x200` and WRAPPED
+        // `0x8`). Readable: PageText or the letter text. The lock gate is the line's only: the
+        // click tests the bare flag (`ItemInfo::opens_loot`), and READABLE wins there.
         let openable = inst.openable_source
             && ((v.flags & 0x4 != 0 && (v.lock_id == 0 || inst.flags & 0x4 != 0))
                 || (v.flags & 0x200 != 0 && inst.flags & 0x8 != 0));
@@ -779,16 +770,16 @@ fn add_sell_price(lua: &Lua, this: &Table, v: &ItemTemplateView, sell: Sell) -> 
     Ok(())
 }
 
-/// A temporary enchant's name with its countdown (`0x52fa50`): `ITEM_ENCHANT_TIME_LEFT_<unit>`, its
-/// `_P1` twin picked by [`plural_template`]. Two holes, the name then the count, so not
-/// `duration_text`; `None` when the install lacks the family, and the caller draws no line.
+/// A temporary enchant's name with its countdown: `ITEM_ENCHANT_TIME_LEFT_<unit>`, its `_P1` twin
+/// picked by [`plural_template`]. Two holes, the name then the count, so not `duration_text`;
+/// `None` when the install lacks the family, and the caller draws no line.
 fn enchant_time_left(name: &str, ms: u64, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     let (suffix, n) = time_bucket(ms);
     let template = plural_template(&format!("ITEM_ENCHANT_TIME_LEFT_{suffix}"), n, get)?;
     Some(fill(&template, &[Arg::S(name), Arg::D(i64::from(n))]))
 }
 
-/// `0x52fa50`'s unit and count: the largest unit that fits, the count ceiled for days, hours and
+/// The reference's unit and count: the largest unit that fits, the count ceiled for days, hours and
 /// minutes (all seven callers pass `roundUp` 1) and truncated for seconds.
 fn time_bucket(ms: u64) -> (&'static str, u32) {
     const SEC: u64 = 1_000;
@@ -805,8 +796,8 @@ fn time_bucket(ms: u64) -> (&'static str, u32) {
     (suffix, u32::try_from(n).unwrap_or(u32::MAX))
 }
 
-/// `ITEM_SPELL_CHARGES` or its `_P1` twin (`0x84e3b4`), pushed at `0x52cae8` for the enchant
-/// suffix and `0x52db61` for the charges line; zero charges have no phrase.
+/// `ITEM_SPELL_CHARGES` or its `_P1` twin, pushed for the enchant suffix and the reference for the
+/// charges line; zero charges have no phrase.
 fn charges_phrase(n: u32, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     if n == 0 {
         return None;
@@ -838,7 +829,7 @@ mod tests {
         )
     }
 
-    /// The `0x52fa50` ladder: minutes and seconds have no `_P1` twin, so each reaches one key.
+    /// The ladder: minutes and seconds have no `_P1` twin, so each reaches one key.
     #[test]
     fn enchant_countdown_buckets_and_rounding() {
         let t = |ms| enchant_time_left("Rockbiter", ms, &table);

@@ -89,7 +89,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         )?,
     )?;
 
-    // GetVertexColor (`0x79aa50`): white when never set.
+    // GetVertexColor: white when never set.
     m.set(
         "GetVertexColor",
         lua.create_function(|lua, this: Table| {
@@ -150,10 +150,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 
     m.set(
         "SetTexture",
-        // The path form reads one argument (`0x770200`), the colour form (`0x770360`) up to four,
-        // and extras such as `SetTexture(path, true)` are ignored. `SetTexture` (`0x79bb40`)
-        // answers 1, or nil when the path form's file does not load, as the host's
-        // `Model::texture_probe` judges; with no probe the path form answers nil.
+        // The path form reads one argument, the colour form up to four, and extras such as
+        // `SetTexture(path, true)` are ignored. `SetTexture` answers 1, or nil when the path form's
+        // file does not load, as the host's `Model::texture_probe` judges; with no probe the path
+        // form answers nil.
         lua.create_function(
             |lua, (this, arg, g, b, a): (Table, Value, Value, Value, Value)| {
                 let rh = region_handle_of(lua, &this)?;
@@ -165,10 +165,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     let data = model.region_data.entry(rh).or_default();
                     data.circular = false;
                     data.portrait_unit = None;
-                    // SetTexture clears the desaturation: `0x770200` writes the shader slot
-                    // (`+0x128`) from an argument the binding (`0x79bb40`) always passes NULL. The
-                    // same path returns first (`0x770225`) and keeps it, nil or "" clear it, and
-                    // the colour form (`0x770360`) never writes it.
+                    // SetTexture clears the desaturation: the reference writes the shader slot
+                    // (`+0x128`) from an argument the binding always passes NULL. The same path
+                    // returns first and keeps it, nil or "" clear it, and the colour form never
+                    // writes it.
                     let same_path = matches!((&arg, &data.texture),
                     (Value::String(s), Some(cur)) if s.to_str().is_ok_and(|s| *s == **cur));
                     let colour_form = matches!(&arg, Value::Number(_) | Value::Integer(_));
@@ -192,8 +192,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             false
                         }
                         // Ask the probe before writing: on a failed load the reference returns 0
-                        // and keeps the texture it had (`0x770288`, `0x77028e`-`0x7702b2`). With
-                        // no probe the path is stored, though the answer is nil.
+                        // and keeps the texture it had. With no probe the path is stored, though
+                        // the answer is nil.
                         Value::String(s) => {
                             let path = s.to_str()?.to_string();
                             drop(model);
@@ -232,7 +232,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             data.texture = None;
                             true
                         }
-                        // nil clears, so the region draws nothing, and answers 1 (`0x79bb40`).
+                        // nil clears, so the region draws nothing, and answers 1.
                         Value::Nil => {
                             data.texture = None;
                             data.fill = None;
@@ -256,12 +256,11 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         )?,
     )?;
 
-    // SetDesaturated(flag) (`0x79c1e0`), Texture only, answers shaderSupported, which stock
+    // SetDesaturated(flag), Texture only, answers shaderSupported, which stock
     // `ItemButtonTemplate.lua:69` reads to fall back to a grey tint; the renderer greys the texel,
-    // so this answers 1. The flag is `GetBoolOrDefault` (`0x6f1c10`, default 1, jump table
-    // `0x6f1ce8`): no argument is on, hence the `MultiValue`, nil is off, a number truncating to 0
-    // is off (`0x6f3620`, `0x40a2b0`), and a table, function or userdata is on. Every string is on
-    // here; the reference's string arm (`0x6f1c51`, against `0x871460` and `0x853758`) is not.
+    // so this answers 1. The flag is `GetBoolOrDefault` (default 1): no argument is on, hence the
+    // `MultiValue`, nil is off, a number truncating to 0 is off, and a table, function or userdata
+    // is on. Every string is on here; the reference's string arm is not.
     m.set(
         "SetDesaturated",
         lua.create_function(|lua, args: MultiValue| {
@@ -281,14 +280,13 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let rh = region_handle_of(lua, &this)?;
             let mut model = crate::script::model_mut_of(lua);
             model.region_data.entry(rh).or_default().desaturated = on;
-            // 1, not true: the reference pushes the number 1 (`0x6f3810`).
+            // 1, not true: the reference pushes the number 1.
             Ok(Value::Number(1.0))
         })?,
     )?;
 
-    // GetTexture (`0x79ba70`), Texture only, answers one value: "Solid Texture" for the colour
-    // form (`0x835708`), not nil, and a path cut at its last `.` (`0x79baf0`), even a dot in a
-    // directory name, as the client cuts it.
+    // GetTexture, Texture only, answers one value: "Solid Texture" for the colour form, not nil,
+    // and a path cut at its last `.`, even a dot in a directory name, as the client cuts it.
     m.set(
         "GetTexture",
         lua.create_function(|lua, this: Table| {
@@ -321,9 +319,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetBlendMode (`0x79a950`, the alphaMode enum `0x811aa8`) stores the mode as given; an
-    // unknown name leaves it alone, as the enum lookup does. Only ADD draws differently here, the
-    // others as straight alpha.
+    // SetBlendMode stores the mode as given; an unknown name leaves it alone, as the enum lookup
+    // does. Only ADD draws differently here, the others as straight alpha.
     m.set(
         "SetBlendMode",
         lua.create_function(|lua, (this, mode): (Table, String)| {
@@ -335,9 +332,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // GetBlendMode (`0x79a890`, table `0x87c128`): one string, the enum's spelling, "BLEND" when
-    // never set (the ctor's `[+0xd0] = 2`, `0x76fc64`). The reference's nil, for a mode outside
-    // its table, cannot arise from the five modes here.
+    // GetBlendMode: one string, the enum's spelling, "BLEND" when never set (the ctor's
+    // `[+0xd0] = 2`). The reference's nil, for a mode outside its table, cannot arise from the five
+    // modes here.
     m.set(
         "GetBlendMode",
         lua.create_function(|lua, this: Table| {
@@ -353,16 +350,15 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetTexCoordModifiesRect/GetTexCoordModifiesRect (`0x79c080`/`0x79c120`, table `0x87c128`):
-    // the setter is the only writer of `[texture+0x124]`, the getter answers 1 or nil. Stored, not
-    // applied: there a set flag makes `SetTexCoord` re-derive the rect from the UV quad
-    // (`0x770462`).
+    // SetTexCoordModifiesRect/GetTexCoordModifiesRect: the setter is the only writer of
+    // `[texture+0x124]`, the getter answers 1 or nil. Stored, not applied: there a set flag makes
+    // `SetTexCoord` re-derive the rect from the UV quad.
     m.set(
         "SetTexCoordModifiesRect",
         lua.create_function(|lua, (this, arg): (Table, Value)| {
             let rh = region_handle_of(lua, &this)?;
-            // `GetBoolOrDefault` (`0x6f1c10`) with default 1 (`0x79c105`), but a missing argument
-            // arrives here as nil and reads false, where the reference sets the flag.
+            // `GetBoolOrDefault` with default 1, but a missing argument arrives here as nil and
+            // reads false, where the reference sets the flag.
             let on = crate::script::binding_abi::bool_or_default(Some(&arg), false);
             let mut model = crate::script::model_mut_of(lua);
             model
@@ -389,10 +385,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetDrawLayer(layer) (`0x79a780`) reads the layer name alone, against the five-row table at
-    // `0x811a80` (`0x6f18b0`); a further argument is never read, as 1.12 has no sub-level within a
-    // layer. A name off the table, or no name, raises the Usage line naming the region
-    // (`0x87c42c`), and the layer stays.
+    // SetDrawLayer(layer) reads the layer name alone, against the five-row table; a further
+    // argument is never read, as 1.12 has no sub-level within a layer. A name off the table, or no
+    // name, raises the Usage line naming the region, and the layer stays.
     m.set(
         "SetDrawLayer",
         lua.create_function(|lua, (this, layer): (Table, Value)| {
@@ -423,7 +418,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetDrawLayer (Texture `0x79a6c0`, FontString `0x79c660`): the layer name alone.
+    // GetDrawLayer: the layer name alone.
     m.set(
         "GetDrawLayer",
         lua.create_function(|lua, this: Table| {
@@ -480,8 +475,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // `TaxiFrame.lua:223` draws route lines, stored per corner in screen winding.
     m.set(
         "SetTexCoord",
-        // Each coordinate is a bare `lua_tonumber` (`0x79beb0`), so nil or a table is 0; only the
-        // count is gated, 4 or 8 (`0x79bf5d`).
+        // Each coordinate is a bare `lua_tonumber`, so nil or a table is 0; only the count is
+        // gated, 4 or 8.
         lua.create_function(|lua, (this, args): (Table, mlua::Variadic<Value>)| {
             let rest: Vec<f32> = args.iter().map(as_f32).collect();
             let rh = region_handle_of(lua, &this)?;
@@ -520,8 +515,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model");
-            // Eight values in the order of `SetTexCoord`'s usage string (`0x87c538`): ULx, ULy,
-            // LLx, LLy, URx, URy, LRx, LRy. The four-edge form is setter-only.
+            // Eight values in the order of `SetTexCoord`'s usage string: ULx, ULy, LLx, LLy, URx,
+            // URy, LRx, LRy. The four-edge form is setter-only.
             let corners = model
                 .region_data
                 .get(&rh)
@@ -565,8 +560,8 @@ impl crate::script::UiScript {
     }
 
     /// Install the host's texel-size check, which lets an axis sized 0 take its span from the art
-    /// as `CSimpleTexture::GetWidth` (`0x770720`) falls back to the texels; without one such a
-    /// region stays where it was.
+    /// as `CSimpleTexture::GetWidth` falls back to the texels; without one such a region stays
+    /// where it was.
     pub fn set_texture_size_probe(&mut self, probe: crate::script::TextureSizeProbe) {
         self.model_mut().texture_size_probe = Some(probe);
     }

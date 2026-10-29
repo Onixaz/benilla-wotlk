@@ -1,16 +1,16 @@
-//! Cast-failure text, resolved in the three layers of the reference's handler `0x6e1a00`:
+//! Cast-failure text, resolved in the three layers of the reference's handler:
 //!
 //! 1. The wire reason names a `SPELL_FAILED_*` GlobalStrings key ([`CAST_FAIL_KEYS`]).
-//! 2. A per-reason errorId goes to `CGGameUI::DisplayError` (`0x496720`): the default `0x2c` is
-//!    a bare `"%s"`, an override replaces the text. The pet's handler `0x6e8eb0` has its own
-//!    overrides ([`Caster`]); layers 1 and 3 are shared.
-//! 3. An argument arm (`0x6e1d8e`) fills the template's `%s`: the DBC arms in [`FailArgs::fill`],
-//!    the item, subclass and two-word arms (`0x78`, `0x5c`, `0x19`-`0x1b`, `0x31`, `0x97`,
-//!    `0x90`) in the drain.
+//! 2. A per-reason errorId goes to `CGGameUI::DisplayError`: the default `0x2c` is a bare `"%s"`,
+//!    an override replaces the text. The pet's handler has its own overrides ([`Caster`]); layers 1
+//!    and 3 are shared.
+//! 3. An argument arm fills the template's `%s`: the DBC arms in [`FailArgs::fill`], the item,
+//!    subclass and two-word arms (`0x78`, `0x5c`, `0x19`-`0x1b`, `0x31`, `0x97`, `0x90`) in the
+//!    drain.
 //!
-//! The combat log (`0x62c360`) reads a second buffer the overrides never touch
-//! ([`CastFailLine::arg_text`]). `0x30`'s arm (`0x6e1e3d`) fills nothing in the reference.
-//! `0x0a`'s item-target line (`ERR_INVALID_ITEM_TARGET`) is not built.
+//! The combat log reads a second buffer the overrides never touch ([`CastFailLine::arg_text`]).
+//! `0x30`'s arm fills nothing in the reference. `0x0a`'s item-target line
+//! (`ERR_INVALID_ITEM_TARGET`) is not built.
 
 use std::collections::HashMap;
 
@@ -21,9 +21,9 @@ use benilla_formats::{
 
 use super::Caster;
 
-/// A shared reason to its `SPELL_FAILED_*` GlobalStrings key: 1.12.1's numbering (its table
-/// `0x6e23e0`), then the reasons only 3.3.5a has. A 3.3.5a wire reason reaches this numbering
-/// through `benilla_protocol::messages::wotlk_cast_fail_shared`.
+/// A shared reason to its `SPELL_FAILED_*` GlobalStrings key: 1.12.1's numbering, then the reasons
+/// only 3.3.5a has. A 3.3.5a wire reason reaches this numbering through
+/// `benilla_protocol::messages::wotlk_cast_fail_shared`.
 pub(crate) const CAST_FAIL_KEYS: [&str; 193] = [
     "SPELL_FAILED_AFFECTING_COMBAT",             // 0x00
     "SPELL_FAILED_ALREADY_AT_FULL_HEALTH",       // 0x01
@@ -222,8 +222,7 @@ pub(crate) const CAST_FAIL_KEYS: [&str; 193] = [
     "SPELL_FAILED_TARGET_CANNOT_BE_RESURRECTED",   // 0xc0
 ];
 
-/// A power type (`SpellRec+0x7c`) to its NO_POWER key (the reference's table `0x8118dc`) and
-/// its power noun; health is -2.
+/// A power type (`SpellRec+0x7c`) to its NO_POWER key and its power noun; health is -2.
 fn power_keys(power_type: u32) -> (&'static str, &'static str) {
     match power_type {
         1 => ("ERR_OUT_OF_RAGE", "RAGE"),
@@ -248,47 +247,47 @@ fn is_food(spell: Option<&SpellDisplay>) -> bool {
 #[derive(Default, Clone, Copy)]
 pub(super) struct FailArgs<'a> {
     pub(super) arg: Option<u32>,
-    /// `SpellFocusObject.dbc` (`0xc0d800`), for `0x5e`.
+    /// `SpellFocusObject.dbc`, for `0x5e`.
     pub(super) focus: Option<&'a SpellFocusCatalog>,
-    /// `AreaTable.dbc` (`0xc0e048`), for `0x5d`.
+    /// `AreaTable.dbc`, for `0x5d`.
     pub(super) areas: Option<&'a AreaTableCatalog>,
-    /// `SpellMechanic.dbc` (`0xc0d7c4`), for `0x8d`.
+    /// `SpellMechanic.dbc`, for `0x8d`.
     pub(super) mechanics: Option<&'a SpellMechanicCatalog>,
-    /// `SpellShapeshiftForm.dbc` (`0xc0d76c`), for `0x56`, keyed by form id.
+    /// `SpellShapeshiftForm.dbc`, for `0x56`, keyed by form id.
     pub(super) forms: Option<&'a HashMap<u32, ShapeshiftForm>>,
     /// `TotemCategory.dbc`, for `0x9c`.
     pub(super) totems: Option<&'a TotemCategoryCatalog>,
 }
 
-/// What an argument arm produced, and when nothing, which exit the reference takes: every arm
-/// but `0x56` declines to the shared default `0x6e21d8`, which still displays the template, while
-/// `0x56` spends `edi` as its loop counter and exits to the epilogue `0x6e224f`, past the display,
-/// the log and the cast abort `0x6e4940`.
+/// What an argument arm produced, and when nothing, which exit the reference takes: every arm but
+/// `0x56` declines to the shared default, which still displays the template, while `0x56` spends
+/// `edi` as its loop counter and exits to the epilogue, past the display, the log and the cast
+/// abort.
 pub(super) enum Fill {
     /// The name for the template's `%s`.
     Filled(String),
-    /// Declined; the reference displays the unfilled template (`0x6e21d8`).
+    /// Declined; the reference displays the unfilled template.
     Template,
-    /// Declined; the reference displays nothing (`0x6e224f`).
+    /// Declined; the reference displays nothing.
     Nothing,
 }
 
 impl FailArgs<'_> {
     /// The `%s` fill for the arms this module owns; `replace` matches the reference's printf
-    /// because each template has one `%s`. `0x5e` (`0x6e1f62`) and `0x5d` (`0x6e1fad`) read the
-    /// wire's argument word, never `Spell.dbc`, and name a `SpellFocusObject` or `AreaTable` row.
-    /// Deviation: `0x5e` with no word falls back to the spell's own `RequiresSpellFocus`, which
-    /// the reference never reads here, because it is the id vmangos sends (`Spell.cpp:4426`).
-    /// `0x5d` has no such stand-in: vmangos takes its area from its own `spell_area` table
-    /// (`Spell.cpp:4429`), which `Spell.dbc` does not carry.
+    /// because each template has one `%s`. `0x5e` and `0x5d` read the wire's argument word, never
+    /// `Spell.dbc`, and name a `SpellFocusObject` or `AreaTable` row. Deviation: `0x5e` with no
+    /// word falls back to the spell's own `RequiresSpellFocus`, which the reference never reads
+    /// here, because it is the id vmangos sends (`Spell.cpp:4426`). `0x5d` has no such stand-in:
+    /// vmangos takes its area from its own `spell_area` table (`Spell.cpp:4429`), which `Spell.dbc`
+    /// does not carry.
     fn fill(&self, caster: Caster, reason: u8, spell: Option<&SpellDisplay>) -> Fill {
         let named = |name: Option<&str>| match name {
             Some(name) => Fill::Filled(name.to_string()),
             None => Fill::Template,
         };
         match reason {
-            // `0x8d` (`0x6e2190`), "Can't do that while stunned": the word is the local
-            // crowd-control ladder's mechanic id, not the wire's.
+            // `0x8d`, "Can't do that while stunned": the word is the local crowd-control ladder's
+            // mechanic id, not the wire's.
             0x8D => named(self.arg.and_then(|id| self.mechanics?.name(id))),
             0x5D => named(self.arg.and_then(|id| self.areas?.name(id))),
             0x5E => {
@@ -309,12 +308,11 @@ impl FailArgs<'_> {
         }
     }
 
-    /// `0x56` ONLY_SHAPESHIFT (`0x6e1ff8`), "Must be in Cat Form": no wire word, but the spell's
-    /// own `Stances` mask (`SpellRec+0x2c`), each set bit `b` naming the DBC's row `b`, which in
-    /// 1.12's file is form id `b+1`. Empty names are skipped (1.12 ships fourteen) and the rest
-    /// joined with `", "` (`0x84480c`). It never tests `StancesNot`, nor the permissive
-    /// `AttributesEx2` bit `0x80000` the tooltip honours (`0x52f115`). No spell, no DBC or no
-    /// name is [`Fill::Nothing`].
+    /// `0x56` ONLY_SHAPESHIFT, "Must be in Cat Form": no wire word, but the spell's own `Stances`
+    /// mask (`SpellRec+0x2c`), each set bit `b` naming the DBC's row `b`, which in 1.12's file is
+    /// form id `b+1`. Empty names are skipped (1.12 ships fourteen) and the rest joined with
+    /// `", "`. It never tests `StancesNot`, nor the permissive `AttributesEx2` bit `0x80000` the
+    /// tooltip honours. No spell, no DBC or no name is [`Fill::Nothing`].
     fn shapeshift_forms(&self, caster: Caster, spell: Option<&SpellDisplay>) -> Fill {
         let (Some(forms), Some(stances)) = (self.forms, spell.map(|d| d.stances)) else {
             return Fill::Nothing;
@@ -325,8 +323,8 @@ impl FailArgs<'_> {
             .map(|f| f.name.as_str())
             .filter(|n| !n.is_empty());
         match caster {
-            // The pet's arm (`0x6e921a`) reads the same rows but leaves the loop at the first
-            // name (`0x6e9282`); it never joins.
+            // The pet's arm reads the same rows but leaves the loop at the first name; it never
+            // joins.
             Caster::Pet => named.next().map(str::to_string),
             Caster::Player => {
                 let all: Vec<&str> = named.collect();
@@ -348,10 +346,9 @@ pub(super) const PASSTHROUGH: &str = "ERR_SPELL_FAILED_S";
 pub(super) struct CastFailLine {
     pub key: &'static str,
     pub text: String,
-    /// The argText buffer the combat log (`0x62c360`) reads (`edi` at `0x6e21e2`): the
-    /// first-layer string (`0x6e1d77`), since an override changes only the displayed text. Only a
-    /// filled arm, `0x02` and `0x4d` rewrite it (`0x6e21d2`); empty means the log reads the
-    /// displayed text ([`Self::logged`]).
+    /// The argText buffer the combat log reads (`edi`): the first-layer string, since an override
+    /// changes only the displayed text. Only a filled arm, `0x02` and `0x4d` rewrite it; empty
+    /// means the log reads the displayed text ([`Self::logged`]).
     pub arg_text: String,
 }
 
@@ -365,8 +362,8 @@ impl CastFailLine {
         }
     }
 
-    /// What the combat log prints (`0x6e21e2`): the argText buffer, or when it is empty the
-    /// last-error cell `0xb4da40`, which holds the displayed text (`0x496802`).
+    /// What the combat log prints: the argText buffer, or when it is empty the last-error cell,
+    /// which holds the displayed text.
     pub(super) fn logged(&self) -> &str {
         if self.arg_text.is_empty() {
             &self.text
@@ -375,8 +372,8 @@ impl CastFailLine {
         }
     }
 
-    /// The `0x4d` arm empties the argText buffer (`0x6e20fd`), so the log reads the displayed
-    /// text. The pet's line is never logged; it is blanked only to keep one shape.
+    /// The `0x4d` arm empties the argText buffer, so the log reads the displayed text. The pet's
+    /// line is never logged; it is blanked only to keep one shape.
     fn arm_blanked(self) -> Self {
         Self {
             arg_text: String::new(),
@@ -403,8 +400,8 @@ pub(super) fn cast_fail_text(
     get: &dyn Fn(&str) -> Option<String>,
 ) -> Option<CastFailLine> {
     let get_text = |key: &str| get(key).filter(|s| !s.is_empty());
-    // `[ebp-0x488]`, the first-layer string (`edi` from `0x6e1d9a`): what the log reads for
-    // every reason no arm claims, overrides included. Empty when 1.12 ships no such key.
+    // `[ebp-0x488]`, the first-layer string (`edi`): what the log reads for every reason no arm
+    // claims, overrides included. Empty when 1.12 ships no such key.
     let first_layer = CAST_FAIL_KEYS
         .get(usize::from(reason))
         .and_then(|k| get_text(k))
@@ -419,18 +416,18 @@ pub(super) fn cast_fail_text(
     };
     // The errorId overrides, from the caster's own handler; everything after this is shared.
     match caster {
-        // `0x6e8eb0`: reasons above `0x8d` take the default arm, the rest the index table
-        // `0x6e93d0`. Six overrides are the `ERR_PET_SPELL_*` rows only this handler raises.
+        // Reasons above `0x8d` take the default arm, the rest the index table. Six overrides are
+        // the `ERR_PET_SPELL_*` rows only this handler raises.
         Caster::Pet => match reason {
-            0x00 => return get_display("ERR_PET_SPELL_AFFECTING_COMBAT"), // 0x14c @0x6e8fab
-            0x13 => return get_display("ERR_PET_SPELL_DEAD"),             // 0x150 @0x6e9017
-            0x32 => return get_display("ERR_PET_SPELL_NOPATH"),           // 0x151 @0x6e9032
-            0x33 => return get_display("ERR_PET_SPELL_NOT_BEHIND"),       // 0x14e @0x6e8fe1
-            0x59 => return get_display("ERR_PET_SPELL_OUT_OF_RANGE"),     // 0x14d @0x6e8fc6
-            0x5F => return get_display("ERR_PET_SPELL_ROOTED"),           // 0x14b @0x6e8f4f
-            0x65 => return get_display("ERR_PET_SPELL_TARGETS_DEAD"),     // 0x14f @0x6e8ffc
-            // `0x6e8f2a`: `((SpellRec+0x18 & 0x10) | 0x300) >> 4`, ability or spell only; unlike
-            // the player's `0x6e1aab`, no food or potion leg.
+            0x00 => return get_display("ERR_PET_SPELL_AFFECTING_COMBAT"), // 0x14c @
+            0x13 => return get_display("ERR_PET_SPELL_DEAD"),             // 0x150 @
+            0x32 => return get_display("ERR_PET_SPELL_NOPATH"),           // 0x151 @
+            0x33 => return get_display("ERR_PET_SPELL_NOT_BEHIND"),       // 0x14e @
+            0x59 => return get_display("ERR_PET_SPELL_OUT_OF_RANGE"),     // 0x14d @
+            0x5F => return get_display("ERR_PET_SPELL_ROOTED"),           // 0x14b @
+            0x65 => return get_display("ERR_PET_SPELL_TARGETS_DEAD"),     // 0x14f @
+            // `((SpellRec+0x18 & 0x10) | 0x300) >> 4`, ability or spell only; unlike the player's,
+            // no food or potion leg.
             0x3C => {
                 return get_display(if spell.is_some_and(|d| d.attributes & 0x10 != 0) {
                     "ERR_ABILITY_COOLDOWN"
@@ -438,26 +435,26 @@ pub(super) fn cast_fail_text(
                     "ERR_SPELL_COOLDOWN"
                 });
             }
-            // `0x6e8f6a`: health takes `0x123`, the rest `[0x8118f0 + 4*power]`, the same five
-            // ids as the player's `0x8118dc`, so [`power_keys`] serves both.
+            // Health takes `0x123`, the rest `[ + 4*power]`, the same five ids as the player's, so
+            // [`power_keys`] serves both.
             0x4D => {
                 let power = spell.map_or(0, |d| d.power_type);
                 return get_display(power_keys(power).0).map(CastFailLine::arm_blanked);
             }
             // The pet sends `0x01`, `0x02`, `0x09`, `0x18`, `0x28`, `0x41` and `0x8e` to its
             // generic arm, so it never says those lines. `0x17` goes there too and shows nothing
-            // only because 1.12 ships no `SPELL_FAILED_DONT_REPORT`. `0x56`'s pet arm
-            // (`0x6e921a`, errorId `0xd6`, a bare `"%s"` like `0x2c`) is in [`FailArgs::fill`].
+            // only because 1.12 ships no `SPELL_FAILED_DONT_REPORT`. `0x56`'s pet arm (errorId
+            // `0xd6`, a bare `"%s"` like `0x2c`) is in [`FailArgs::fill`].
             _ => {}
         },
-        // `0x6e1a00`, overrides at `0x6e1aab`-`0x6e1c5f`.
+        // Overrides.
         Caster::Player => match reason {
             0x01 => return get_display("ERR_SPELL_FAILED_ALREADY_AT_FULL_HEALTH"),
             0x02 => {
                 let t = get_display("ERR_SPELL_FAILED_ALREADY_AT_FULL_POWER_S")?;
                 let power = spell.map_or(0, |d| d.power_type);
                 let name = get_text(power_keys(power).1).unwrap_or_default();
-                // `0x6e211f` puts only the power noun in the argText buffer: the log reads the
+                // The reference puts only the power noun in the argText buffer: the log reads the
                 // bare word.
                 return Some(CastFailLine {
                     arg_text: name.clone(),
@@ -504,10 +501,10 @@ pub(super) fn cast_fail_text(
     };
     let text = get_text(key)?;
     let line = CastFailLine::passthrough;
-    // The argument arms (`0x6e1d8e`).
+    // The argument arms.
     match args.fill(caster, reason, spell) {
         Fill::Filled(name) => return Some(line(text.replace("%s", &name))),
-        // The epilogue `0x6e224f` skips the log too.
+        // The epilogue skips the log too.
         Fill::Nothing => return None,
         Fill::Template => {}
     }
@@ -690,7 +687,7 @@ mod tests {
         assert_eq!(kind_of(its.key), MsgKind::Error);
     }
 
-    /// The pet's table `0x8118f0` holds the player's five ids (`0x8118dc`).
+    /// The pet's table holds the player's five ids.
     #[test]
     fn the_pets_no_power_pick_is_the_players() {
         let m = gs();
@@ -778,7 +775,7 @@ mod tests {
             text(0x90).as_deref(),
             Some("Must be in Bear Form, Dire Bear Form"),
         );
-        // An empty name is skipped (`0x6e2058`).
+        // An empty name is skipped.
         assert_eq!(
             text(0x90 | 0x100).as_deref(),
             Some("Must be in Bear Form, Dire Bear Form"),
@@ -786,7 +783,7 @@ mod tests {
         assert_eq!(text(0x101).as_deref(), Some("Must be in Cat Form"));
     }
 
-    /// `0x56` declines to the epilogue (`0x6e224f`) and shows nothing; other arms show the stem.
+    /// `0x56` declines to the epilogue and shows nothing; other arms show the stem.
     #[test]
     fn an_unfillable_only_shapeshift_says_nothing_at_all() {
         let m = gs();
@@ -825,7 +822,7 @@ mod tests {
         );
     }
 
-    /// The pet's arm (`0x6e921a`) breaks at the first named form (`0x6e9282`).
+    /// The pet's arm breaks at the first named form.
     #[test]
     fn the_pets_only_shapeshift_names_the_first_form_and_never_joins() {
         let m = gs();
@@ -950,7 +947,7 @@ mod tests {
         }
     }
 
-    /// The `0x6e23e0` table's anchors.
+    /// The table's anchors.
     #[test]
     fn the_key_table_holds_the_verified_anchors() {
         // 1.12.1's 146, then the 47 only 3.3.5a has.

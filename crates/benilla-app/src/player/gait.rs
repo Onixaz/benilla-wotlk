@@ -1,6 +1,6 @@
-//! The rendered body heading and the animation's view of the flags, the reference's display facing
-//! (the `0x607ed0` tail). [`super::control`] calls [`drive_body_heading`] once per controlled
-//! frame, after the move flags are final.
+//! The rendered body heading and the animation's view of the flags, the reference's display facing.
+//! [`super::control`] calls [`drive_body_heading`] once per controlled frame, after the move flags
+//! are final.
 
 use crate::creature_anim::{ease_strafe_yaw, move_flags, strafe_body_offset, wrap_pi};
 
@@ -10,10 +10,10 @@ use super::{Player, STATIONARY_CHASE_RATE};
 /// keeps the real key flags). Strafing eases the body toward `face_yaw ± 90°` (`± 45°` diagonal,
 /// mirrored backpedaling) by a quarter of the gap a frame in aim-relative offset space, so a
 /// left-right flip swings round the front. Moving forward or back or airborne (`flags & 0x2003`),
-/// or swimming, snaps it to the aim; standing runs the frozen chase (`0x6081bf`), holding the 90°
-/// ceiling while the aim is steered, then sweeping onto it at 8× the turn rate. The swim pitch is
-/// applied at the transform write (`0x60a110`). The turn-in-place shuffle keys on the body's own
-/// rotation (chase-step bits `0x800`/`0x1000`), not the turn keys, so a deck's turn never shuffles.
+/// or swimming, snaps it to the aim; standing runs the frozen chase, holding the 90° ceiling while
+/// the aim is steered, then sweeping onto it at 8× the turn rate. The swim pitch is applied at the
+/// transform write. The turn-in-place shuffle keys on the body's own rotation (chase-step bits
+/// `0x800`/`0x1000`), not the turn keys, so a deck's turn never shuffles.
 pub(super) fn drive_body_heading(
     player: &mut Player,
     move_flags_now: u32,

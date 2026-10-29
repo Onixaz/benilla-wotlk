@@ -1,7 +1,7 @@
-//! `WeaponSwingSounds2.dbc`: the whoosh of a connecting melee swing. The reference loads it
-//! (`0x45cb00`) into a six-slot cache (`0xb06bd4`) at `critical + swingType * 2`, and the play site
-//! (`0x457f8d`) indexes it the same way; this catalog is that cache. `swingType` is the weapon's
-//! `ItemSubClass.WeaponSwingSize`: 0 light, 1 medium, 2 heavy.
+//! `WeaponSwingSounds2.dbc`: the whoosh of a connecting melee swing. The reference loads it into a
+//! six-slot cache at `critical + swingType * 2`, and the play site indexes it the same way; this
+//! catalog is that cache. `swingType` is the weapon's `ItemSubClass.WeaponSwingSize`: 0 light, 1
+//! medium, 2 heavy.
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};
@@ -9,10 +9,10 @@ use benilla_dbc::{FieldType, Schema, SchemaField};
 use crate::dbc::{parse, u32_at};
 use crate::Chain;
 
-/// The reference's `swingType` bound: the play site (`0x457f63`) and the loader both stop at 3.
+/// The reference's `swingType` bound: the play site and the loader both stop at 3.
 const SWING_TYPES: usize = 3;
 
-/// The six-slot swing-kit cache (`0xb06bd4`), indexed `critical + swingType*2`.
+/// The six-slot swing-kit cache, indexed `critical + swingType*2`.
 pub struct WeaponSwingCatalog {
     cache: [u32; SWING_TYPES * 2],
 }

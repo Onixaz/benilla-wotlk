@@ -78,8 +78,8 @@ pub struct ItemInfo {
     pub spells: Vec<ItemSpellEntry>,
     /// Block 0's `SpellCharges`, unfiltered: the reference's `template+0x144`.
     pub spell_charges_0: i32,
-    /// The first ON_USE (trigger 0) spell block: what a use casts, and the item's cooldown key
-    /// (the reference's `GetItemCooldown` scan, `0x6e2ed0`).
+    /// The first ON_USE (trigger 0) spell block: what a use casts, and the item's cooldown key (the
+    /// reference's `GetItemCooldown` scan).
     pub use_spell: Option<ItemUseSpell>,
     /// `ItemBondingType` (0 none … 4 quest-bind).
     pub bonding: u32,
@@ -111,9 +111,9 @@ pub struct ItemInfo {
     pub area: u32,
     /// `Map.dbc` map the item is bound to; 0 for anywhere.
     pub map: u32,
-    /// The specialised container an item belongs in (1 quiver, 2 ammo pouch, 3 soul bag, 6 herb,
-    /// 7 enchanting, 8 engineering, 9 keyring; 0 none). An enum, not a mask, in 1.12: the
-    /// reference's `HasKey` (`0x48ae90`) tests `== 9`.
+    /// The specialised container an item belongs in (1 quiver, 2 ammo pouch, 3 soul bag, 6 herb, 7
+    /// enchanting, 8 engineering, 9 keyring; 0 none). An enum, not a mask, in 1.12: the reference's
+    /// `HasKey` tests `== 9`.
     pub bag_family: u32,
     /// The `TotemCategory.dbc` row this item is a tool for, 0 none (`ItemRec+0x1bc`).
     pub totem_category: u32,
@@ -126,9 +126,9 @@ impl ItemInfo {
         self.spell_charges_0 != 0 && self.spell_charges_0 != -1
     }
 
-    /// Consumable as the action bar's count means it (reference `IsConsumableAction`,
-    /// `0x4e5250`): ammo or thrown, or an ON_USE spell with negative charges, which use the item
-    /// up. Neither positive charges nor `Class` count: a mount, with charges 0, shows no count.
+    /// Consumable as the action bar's count means it (reference `IsConsumableAction`): ammo or
+    /// thrown, or an ON_USE spell with negative charges, which use the item up. Neither positive
+    /// charges nor `Class` count: a mount, with charges 0, shows no count.
     pub fn is_consumable(&self) -> bool {
         const INVTYPE_AMMO: u32 = 0x18;
         const INVTYPE_THROWN: u32 = 0x19;
@@ -136,38 +136,37 @@ impl ItemInfo {
             || self.spells.iter().any(|s| s.trigger == 0 && s.charges < 0)
     }
 
-    /// The reference `PlaceAction`'s only item filter (`0x4e6571`): an on-use spell or anything
-    /// equippable, bags included; anything else is refused silently.
+    /// The reference `PlaceAction`'s only item filter: an on-use spell or anything equippable, bags
+    /// included; anything else is refused silently.
     pub fn placeable_on_action_bar(&self) -> bool {
         self.use_spell.is_some() || self.inventory_type != 0
     }
 
-    /// Whether the tooltip shows the green `<Right Click to Open>` line (`0x52e2f8`), given the
-    /// instance's `ITEM_FIELD_FLAGS`: lootable and, if locked, unlocked; or a wrapped gift. An
-    /// object-less view (a hyperlink, a merchant row) gets no line at all (`0x52e2e0`). Stricter
-    /// than [`Self::opens_loot`] on purpose: the click still sends for a locked box.
+    /// Whether the tooltip shows the green `<Right Click to Open>` line, given the instance's
+    /// `ITEM_FIELD_FLAGS`: lootable and, if locked, unlocked; or a wrapped gift. An object-less
+    /// view (a hyperlink, a merchant row) gets no line at all. Stricter than [`Self::opens_loot`]
+    /// on purpose: the click still sends for a locked box.
     pub fn shows_open_line(&self, instance_flags: u32) -> bool {
         let lootable = self.flags & ITEM_FLAG_LOOTABLE != 0
             && (self.lock_id == 0 || instance_flags & ITEM_DYNFLAG_UNLOCKED != 0);
         lootable || self.unwraps_gift(instance_flags)
     }
 
-    /// Whether a right-click sends `CMSG_OPEN_ITEM` to unwrap a gift (`0x5d8d92`). The reference
-    /// tests it before the quest-starter and readable arms; the loot arm comes after them.
+    /// Whether a right-click sends `CMSG_OPEN_ITEM` to unwrap a gift. The reference tests it before
+    /// the quest-starter and readable arms; the loot arm comes after them.
     pub fn unwraps_gift(&self, instance_flags: u32) -> bool {
         self.flags & ITEM_FLAG_WRAPPER != 0 && instance_flags & ITEM_DYNFLAG_WRAPPED != 0
     }
 
     /// Whether a right-click arms the gift-wrap cursor: wrapping paper, not a wrapped present.
-    /// Nothing is sent (`0x5edea0` locks the paper and sets cursor mode 2); the next left-click on
-    /// a container slot sends [`wrap_item`].
+    /// Nothing is sent (locks the paper and sets cursor mode 2); the next left-click on a container
+    /// slot sends [`wrap_item`].
     pub fn begins_gift_wrap(&self, instance_flags: u32) -> bool {
         self.flags & ITEM_FLAG_WRAPPER != 0 && instance_flags & ITEM_DYNFLAG_WRAPPED == 0
     }
 
-    /// Whether a right-click sends `CMSG_OPEN_ITEM` to loot the item (`0x5d8f7c`): the bare
-    /// template bit with no lock test, so a locked box still sends and the server answers
-    /// `EQUIP_ERR_ITEM_LOCKED`.
+    /// Whether a right-click sends `CMSG_OPEN_ITEM` to loot the item: the bare template bit with no
+    /// lock test, so a locked box still sends and the server answers `EQUIP_ERR_ITEM_LOCKED`.
     pub fn opens_loot(&self) -> bool {
         self.flags & ITEM_FLAG_LOOTABLE != 0
     }
@@ -211,7 +210,7 @@ pub struct ItemSpellEntry {
 
 /// An item's first ON_USE spell block. The server substitutes the spell's own cooldowns for unset
 /// ones (`ItemHandler.cpp:354-380`), but a `-1` can still arrive; negative means the spell's
-/// `Spell.dbc` value, as the reference's `StartCooldown` (`0x6e2c60`) reads it.
+/// `Spell.dbc` value, as the reference's `StartCooldown` reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ItemUseSpell {
     pub spell_id: u32,
@@ -476,7 +475,7 @@ pub const SLOT_KEYRING_FIRST: u8 = 86;
 pub const KEYRING_SLOTS: u8 = 32;
 
 /// The `SpellCastTargets` block of a `CMSG_USE_ITEM`, the same block a `CMSG_CAST_SPELL` carries:
-/// the reference's `SendCast` (`0x6e54f0`) only picks the opcode (`0x6e57d8`).
+/// the reference's `SendCast` only picks the opcode.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum UseItemTarget {
     /// Mask 0 (`TARGET_FLAG_SELF`): an ordinary consumable; the server resolves the target.
@@ -486,14 +485,14 @@ pub enum UseItemTarget {
     Unit(u64),
     /// `TARGET_FLAG_GAMEOBJECT` and a packed guid: a key used on a lock, which the server honours
     /// only from an item cast (`Spell.cpp:7892`). The mask is `0x0800` alone; the reference's
-    /// `BindTarget` (`0x6e5b40`) never writes `TARGET_FLAG_LOCKED`.
+    /// `BindTarget` never writes `TARGET_FLAG_LOCKED`.
     Object(u64),
     /// `TARGET_FLAG_DEST_LOCATION` and three `f32` coords: a thrown item, dynamite or a grenade.
     Dest([f32; 3]),
     /// `TARGET_FLAG_ITEM` and a packed guid: a poison, oil or stone applied to a clicked item.
     Item(u64),
-    /// `TARGET_FLAG_SOURCE_LOCATION` and three `f32` coords (`BindLocation`, `0x6e60f0`); only
-    /// items carrying spell 265, such as Martin Fury, use it. vmangos reads it before the dest.
+    /// `TARGET_FLAG_SOURCE_LOCATION` and three `f32` coords (`BindLocation`); only items carrying
+    /// spell 265, such as Martin Fury, use it. vmangos reads it before the dest.
     Source([f32; 3]),
     /// A corpse bit and the corpse's packed guid: Goblin Jumper Cables' Defibrillate
     /// (`Targets 0x8000`) on a released player's corpse.
@@ -619,15 +618,15 @@ pub fn destroy_item(bag: u8, slot: u8, count: u8) -> Vec<u8> {
 }
 
 /// Body of `CMSG_SET_AMMO` (opcode `0x268`): the ammo's item entry, not a bag and slot; the
-/// reference's auto-equip sender (`0x5e1480`) sends it for ammo, and the stack stays in its bag.
+/// reference's auto-equip sender sends it for ammo, and the stack stays in its bag.
 pub fn set_ammo(entry: u32) -> Vec<u8> {
     entry.to_le_bytes().to_vec()
 }
 
 /// Read `SMSG_INVENTORY_CHANGE_FAILURE` into `(reason, required_level, item_guid, bag_slot)`: a
-/// `u8` reason and, unless it is 0, a `u32` level for reason 1 only, two item guids and a bag
-/// slot. That slot is the target bag's player-array slot, 255 for the player's own
-/// (`Player.cpp:8975`); the reference names that bag in reason 16's message (`0x5ede00`).
+/// `u8` reason and, unless it is 0, a `u32` level for reason 1 only, two item guids and a bag slot.
+/// That slot is the target bag's player-array slot, 255 for the player's own (`Player.cpp:8975`);
+/// the reference names that bag in reason 16's message.
 pub(super) fn read_inventory_change_failure(
     r: &mut &[u8],
 ) -> io::Result<(u8, Option<u32>, u64, u8)> {
@@ -661,14 +660,14 @@ pub(super) fn read_open_container(r: &mut &[u8]) -> io::Result<u64> {
 }
 
 /// Read `SMSG_INSPECT`, the echoed target guid (`MiscHandler.cpp:957`); the reference's handler
-/// (`0x5e7d70`) ignores it.
+/// ignores it.
 pub(super) fn read_inspect(r: &mut &[u8]) -> io::Result<u64> {
     read_u64_le(r)
 }
 
 /// Read `SMSG_ITEM_ENCHANT_TIME_UPDATE` (`Server/Packets/Item.cpp:161-169`): item guid, slot,
-/// seconds, then our own guid, left unread. The reference stores 0 seconds as no timer
-/// (`0x5d9cc0`), not as a timer at zero.
+/// seconds, then our own guid, left unread. The reference stores 0 seconds as no timer, not as a
+/// timer at zero.
 pub(super) fn read_item_enchant_time(r: &mut &[u8]) -> io::Result<(u64, u32, u32)> {
     let item_guid = read_u64_le(r)?;
     let slot = read_u32_le(r)?;

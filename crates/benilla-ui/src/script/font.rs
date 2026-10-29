@@ -1,25 +1,23 @@
 //! Font objects: a `<Font name=…>` or a `CreateFont` font is a Lua object, published as the global
 //! of its name with its own method table. Stock FrameXML never calls this API; addons do.
 //!
-//! The reference's class is `CSimpleFont` (`0x87a454`). Its method table (`0x87c7c8`) has 22
-//! entries (`mov edx,0x16` at `0x7a10d5`), and its lookup `0x7a1100` has no base-class fallback.
-//! All are here but the `SetSpacing` pair ([`install`]); `CopyFontObject` is the one a FontString
-//! lacks. A named font is published by `0x783870` through `SetName 0x784150` and `CreateLuaHandle
-//! 0x701bd0`, which leaves a non-nil `_G[name]` alone (`0x701cb8`).
+//! The reference's class is `CSimpleFont`. Its method table has 22 entries (`mov edx,0x16`), and
+//! its lookup has no base-class fallback. All are here but the `SetSpacing` pair ([`install`]);
+//! `CopyFontObject` is the one a FontString lacks. A named font is published by the reference
+//! through `SetName` and `CreateLuaHandle`, which leaves a non-nil `_G[name]` alone.
 //!
 //! A setter repaints every FontString that inherits the font. The reference links dependents into
-//! the font's list (`+0x74`/`+0x78`) and each setter ends in `NotifyDependents 0x784180`, calling
-//! `OnFontChanged` (`0x77e4b0` on a font, `0x773530` then `0x770800` on a FontString); here each
-//! setter writes the [`FontObject`] and calls [`propagate`]. A local setter clears its property's
-//! bit in the dependent's inherit mask (`+0x2c`, FontString `+0xd4`) and nothing restores it, so a
-//! colour set on a FontString survives a later `SetFontObject`: [`RegionData::font_explicit`] is
-//! that mask. `+0x38` is not it; its high bits mark a held value, which the inheriting merge also
-//! sets (`0x7709d3`).
+//! the font's list (`+0x74`/`+0x78`) and each setter ends in `NotifyDependents`, calling
+//! `OnFontChanged`; here each setter writes the [`FontObject`] and calls [`propagate`]. A local
+//! setter clears its property's bit in the dependent's inherit mask (`+0x2c`, FontString `+0xd4`)
+//! and nothing restores it, so a colour set on a FontString survives a later `SetFontObject`:
+//! [`RegionData::font_explicit`] is that mask. `+0x38` is not it; its high bits mark a held value,
+//! which the inheriting merge also sets.
 //!
 //! Not built: a `<Font inherits=…>` chain is flattened at load (`Loader::do_font`), so mutating
-//! `MasterFont` does not reach `GameFontNormal`, where the reference links it live: `LoadXML
-//! 0x783c30` calls the `SetFontObject` link `0x770c60` for `inherits=` (`0x783ce6`) and `font=`
-//! (`0x783d22`). No corpus addon mutates a declared font object.
+//! `MasterFont` does not reach `GameFontNormal`, where the reference links it live: `LoadXML` calls
+//! the `SetFontObject` link for `inherits=` and `font=`. No corpus addon mutates a declared font
+//! object.
 
 use mlua::{Lua, Table, Value};
 
@@ -73,8 +71,8 @@ fn name_of(this: &Table) -> mlua::Result<String> {
 }
 
 /// A font argument as a registry name, `None` for nil: an object, a name or nil, the three forms of
-/// the reference's usage `SetFontObject(font or "font" or nil)` (`0x87c5cc`). Anything else
-/// raises, as the reference's `luaL_error 0x6f4940` does.
+/// the reference's usage `SetFontObject(font or "font" or nil)`. Anything else raises, as the
+/// reference's `luaL_error` does.
 pub(super) fn resolve(verb: &str, v: &Value) -> mlua::Result<Option<String>> {
     match v {
         Value::Nil => Ok(None),
@@ -92,7 +90,7 @@ pub(super) fn resolve(verb: &str, v: &Value) -> mlua::Result<Option<String>> {
     }
 }
 
-/// [`resolve`] refusing nil, for `CopyFontObject`, which has nothing to copy from (`0x7a01b0`).
+/// [`resolve`] refusing nil, for `CopyFontObject`, which has nothing to copy.
 fn resolve_required(verb: &str, v: &Value) -> mlua::Result<String> {
     resolve(verb, v)?.ok_or_else(|| {
         mlua::Error::runtime(format!(
@@ -105,8 +103,7 @@ fn resolve_required(verb: &str, v: &Value) -> mlua::Result<String> {
 
 /// Copy a font object's paint onto one region, skipping each property the region set itself
 /// ([`RegionData::font_explicit`]) and each the font does not hold: the reference gates every merge
-/// on the source's held-value bits (`+0x38`, the merge `0x770910`), so an empty `CreateFont` font
-/// changes nothing.
+/// on the source's held-value bits (`+0x38`), so an empty `CreateFont` font changes nothing.
 ///
 /// The outline is always copied, as [`Outline`] has no unset state; only an empty `CreateFont` font
 /// on an outlined FontString differs from the reference, clearing the outline.
@@ -202,8 +199,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetObjectType",
         lua.create_function(|_, _this: Table| Ok("Font"))?,
     )?;
-    // `1` or nil, never a boolean, like the Region's (`0x7a1290`): the Font's own `IsObjectType`
-    // (`0x79fe60`) answers a number. Its argument handling is untraced; mlua's coercion applies.
+    // `1` or nil, never a boolean, like the Region's: the Font's own `IsObjectType` answers a
+    // number. Its argument handling is untraced; mlua's coercion applies.
     m.set(
         "IsObjectType",
         lua.create_function(|_, (_this, ty): (Table, String)| {
@@ -227,7 +224,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
         })?,
     )?;
-    // CopyFontObject(other): refuses nil (`0x7a01b0` value-copies and re-parents).
+    // CopyFontObject(other): refuses nil.
     m.set(
         "CopyFontObject",
         lua.create_function(|lua, (this, other): (Table, Value)| {
@@ -249,8 +246,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetFont",
         lua.create_function(
             |lua, (this, file, height, flags): (Table, Value, Value, Option<String>)| {
-                // The argument gate the FontString and EditBox tables share (`0x79f210`); a
-                // missing argument raises (`0x87c69c`).
+                // The argument gate the FontString and EditBox tables share; a missing argument
+                // raises.
                 let (path, height) = super::font_block::set_font_args(&file, &height, "Font")?;
                 let ok = !path.is_empty();
                 edit(lua, &this, |fo| {
@@ -268,8 +265,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             },
         )?,
     )?;
-    // GetFont() → path, height, flags. An unset Font answers nil, 0, "": the constructor
-    // `0x783a40` zeroes the height and stores a NULL path (`0x41e3a0`), which pushes as nil.
+    // GetFont() → path, height, flags. An unset Font answers nil, 0, "": the constructor zeroes the
+    // height and stores a NULL path, which pushes as nil.
     m.set(
         "GetFont",
         lua.create_function(|lua, this: Table| {
@@ -283,7 +280,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── colour, and the alpha that is its fourth channel ────────────────────────────────────
-    // Shape C on r, g, b (`SetTextColor 0x79f4d0`): nil or a non-number is 0, never a raise.
+    // Shape C on r, g, b (`SetTextColor`): nil or a non-number is 0, never a raise.
     m.set(
         "SetTextColor",
         lua.create_function(
@@ -327,7 +324,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "SetShadowColor",
         lua.create_function(
-            // Shape C on r, g, b (`Font:SetShadowColor 0x79f730`): never raises.
+            // Shape C on r, g, b (`Font:SetShadowColor`): never raises.
             |lua, (this, r, g, b, a): (Table, Value, Value, Value, Option<f32>)| {
                 let (r, g, b) = (
                     crate::script::object::as_f32(&r),
@@ -467,10 +464,10 @@ fn copy_from(lua: &Lua, this: &Table, other: &Value, verb: &str) -> mlua::Result
 }
 
 /// `CreateFont(name)`: mint a font object, publish it as the global `name` and return it; addons
-/// use both. An existing name returns that object unchanged and unrepublished (`0x7839ab`).
+/// use both. An existing name returns that object unchanged and unrepublished.
 ///
-/// The reference's gate (`0x706048`) takes a number or any string, the empty one included, and
-/// raises on anything else. A fresh object holds nothing, so it copies nothing ([`repaint`]).
+/// The reference's gate takes a number or any string, the empty one included, and raises on
+/// anything else. A fresh object holds nothing, so it copies nothing ([`repaint`]).
 fn create_font(lua: &Lua, name: Option<String>) -> mlua::Result<Table> {
     let name = name.ok_or_else(|| {
         mlua::Error::runtime("CreateFont: a font name is required (it becomes a global)")

@@ -117,10 +117,10 @@ fn read_move_set_speed(kind: SpeedKind, r: &mut impl Read) -> io::Result<ServerP
     })
 }
 
-/// True for an opcode the server relays as `[packed guid][MovementInfo]`, one client handler
-/// (`0x603bb0`): the echoed input stream (vmangos `HandleMovementOpcodes`), and the observer leg
-/// of root, hover, feather-fall, water-walk and teleport, with no ack and its direction in the
-/// flags word. `MSG_MOVE_TELEPORT` (197) has no counter, unlike `MSG_MOVE_TELEPORT_ACK` (199).
+/// True for an opcode the server relays as `[packed guid][MovementInfo]`, one client handler: the
+/// echoed input stream (vmangos `HandleMovementOpcodes`), and the observer leg of root, hover,
+/// feather-fall, water-walk and teleport, with no ack and its direction in the flags word.
+/// `MSG_MOVE_TELEPORT` (197) has no counter, unlike `MSG_MOVE_TELEPORT_ACK` (199).
 const fn is_movement_relay(o: u16) -> bool {
     matches!(
         o,
@@ -163,7 +163,7 @@ const fn is_movement_relay(o: u16) -> bool {
     )
 }
 
-/// `SMSG_ADDON_INFO`'s records, with no count, names or trailer, as `0x51da70` reads each:
+/// `SMSG_ADDON_INFO`'s records, with no count, names or trailer, as the reference reads each:
 ///
 /// ```text
 /// u8  status              ; 2 -> [rec+0x29] = 1 (hidden from the Lua index space)
@@ -1061,7 +1061,7 @@ fn parse_server_body(
                 seconds,
             }
         }
-        // One body, two tables: the opcode picks, as `0x6e9950`'s `cmp edi,0x267` does.
+        // One body, two tables: the opcode picks, as the reference's `cmp edi,0x267` does.
         opcode::SMSG_SET_FLAT_SPELL_MODIFIER | opcode::SMSG_SET_PCT_SPELL_MODIFIER => {
             let (mask_bit, op, value) = spells::read_set_spell_modifier(&mut r)?;
             ServerPacket::SpellModifier {
@@ -1510,7 +1510,7 @@ fn parse_server_body(
                 opcode::SMSG_SPLINE_MOVE_START_SWIM => (SplineMode::Swimming, true),
                 opcode::SMSG_SPLINE_MOVE_STOP_SWIM => (SplineMode::Swimming, false),
                 // The one inverted pair: RUN_MODE clears `MOVEFLAG_WALK_MODE`, because the
-                // reference's `0x617e80` feeds the opcode's bool to `SetRunMode 0x7c71c0`.
+                // reference's feeds the opcode's bool to `SetRunMode`.
                 opcode::SMSG_SPLINE_MOVE_SET_WALK_MODE => (SplineMode::WalkMode, true),
                 opcode::SMSG_SPLINE_MOVE_SET_RUN_MODE => (SplineMode::WalkMode, false),
                 opcode::SMSG_SPLINE_MOVE_SET_FLYING => (SplineMode::Flying, true),

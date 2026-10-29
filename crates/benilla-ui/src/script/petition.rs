@@ -19,7 +19,7 @@ pub fn petition_type_name(static_type: u32) -> &'static str {
     }
 }
 
-/// The cached `CGPetition` record `[0xbdce28]`, as `GetPetitionInfo` reads it; `None` in
+/// The cached `CGPetition` record, as `GetPetitionInfo` reads it; `None` in
 /// [`PetitionState::record`] is the no-record leg.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PetitionRecordView {
@@ -94,27 +94,26 @@ pub struct ArenaBannerChoice {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PetitionRequest {
     /// `BuyGuildCharter(name)`, after [`validate_guild_name`]; the app adds the registrar NPC
-    /// latched at `[0xbdceb0]`, not `CGGameUI`'s interaction pair.
+    /// latched, not `CGGameUI`'s interaction pair.
     Buy(String),
-    /// `TurnInGuildCharter()`: the app scans the bags on every call, as the reference does
-    /// (`0x5ef2b0`).
+    /// `TurnInGuildCharter()`: the app scans the bags on every call, as the reference does.
     TurnIn,
-    /// `CloseGuildRegistrar()`: sends nothing (`0x4f5010`).
+    /// `CloseGuildRegistrar()`: sends nothing.
     CloseRegistrar,
-    /// `GetTabardInfo()` (`0x4f5300`), not a getter: with a player, `MSG_TABARDVENDOR_ACTIVATE`
-    /// for the registrar's guid unless the designer is already open on that guid, or the
+    /// `GetTabardInfo()`, not a getter: with a player, `MSG_TABARDVENDOR_ACTIVATE` for the
+    /// registrar's guid unless the designer is already open on that guid, or the
     /// `ERR_EMBLEMERROR_NOTABARDGEOSET` refusal while the player's display id is not its native
-    /// one (`0x5e00e0`); then the registrar closes (`0x4f5355` → `0x4f5010`).
+    /// one; then the registrar closes.
     TabardInfo,
-    /// `SignPetition([n])`: a wire byte defaulting to 1, not 0 (`0x4f46d9`); vmangos skips it.
+    /// `SignPetition([n])`: a wire byte defaulting to 1, not 0; vmangos skips it.
     Sign(i8),
     /// `OfferPetition()`: the app resolves the current target (`CGGameUI`'s selection pair, not its
     /// interaction pair) and runs the eight guards.
     Offer,
     /// `RenamePetition(name)`, after [`validate_guild_name`].
     Rename(String),
-    /// `ClosePetition()`: `0x4f3f60` sends `MSG_PETITION_DECLINE` when a petition was open, no sign
-    /// is in flight, a record is cached and we do not own it; the app decides.
+    /// `ClosePetition()`: the reference sends `MSG_PETITION_DECLINE` when a petition was open, no
+    /// sign is in flight, a record is cached and we do not own it; the app decides.
     ClosePetition,
     /// A name [`validate_guild_name`] refused, with the GlobalStrings key to show; no packet.
     NameRefused(&'static str),
@@ -752,7 +751,7 @@ mod tests {
         }
     }
 
-    /// `GetTabardInfo()` pushes nothing (`0x4f535f`) and queues the designer's opener.
+    /// `GetTabardInfo()` pushes nothing and queues the designer's opener.
     #[test]
     fn get_tabard_info_is_an_intent_with_no_returns() {
         let mut s = UiScript::new().unwrap();

@@ -1,9 +1,8 @@
-//! The spell, the reference's `Spell_C`: the cast ladder and commit ([`cast_send`], `TryCast
-//! 0x6e4b60` and `SendCast 0x6e54f0`), the target bind ([`cast_target`], `ArmCast 0x6e5250` and
-//! `BindTarget 0x6e5b40`), the party and raid relations its arms ask ([`group_relation`],
-//! `0x606c20`, `0x606d20`), the requirement validator ([`validator`], `0x6094f0`), the usable walk
-//! ([`usable`], `IsSpellUsableNow 0x6e3d60`), the targeting cursor ([`targeting`], `0xcecac0`),
-//! the in-flight slot, the cooldowns, the talent modifiers and their packet handlers ([`net`]).
+//! The spell, the reference's `Spell_C`: the cast ladder and commit ([`cast_send`], `TryCast` and
+//! `SendCast`), the target bind ([`cast_target`], `ArmCast` and `BindTarget`), the party and raid
+//! relations its arms ask ([`group_relation`]), the requirement validator ([`validator`]), the
+//! usable walk ([`usable`], `IsSpellUsableNow`), the targeting cursor ([`targeting`]), the
+//! in-flight slot, the cooldowns, the talent modifiers and their packet handlers ([`net`]).
 
 use bevy::prelude::*;
 
@@ -144,9 +143,8 @@ impl Plugin for SpellPlugin {
                     group_relation::publish_group_roster
                         .in_set(UiFeed)
                         .before(UnitFeed),
-                    // The item-target commit (`0x495d60`): after the input pass so a bag click
-                    // binds the same frame; outside the target chain, as its clicks never reach
-                    // the world.
+                    // The item-target commit: after the input pass so a bag click binds the same
+                    // frame; outside the target chain, as its clicks never reach the world.
                     targeting::commit_item_cast_on_pick.after(UiInput),
                 ),
             )
@@ -167,9 +165,9 @@ impl Plugin for SpellPlugin {
     }
 }
 
-/// The player's skill in `spell_id`'s own line, the input of every per-level term: `0x5ea690`
-/// hops spell to SkillLineAbility line (`0x6de040`), then `0x5ea520` reads that line's
-/// `PLAYER_SKILL_INFO` slot. Every missing input reads 0, like the reference's null paths.
+/// The player's skill in `spell_id`'s own line, the input of every per-level term: the reference
+/// hops spell to SkillLineAbility line, then the reference reads that line's `PLAYER_SKILL_INFO`
+/// slot. Every missing input reads 0, like the reference's null paths.
 pub(crate) fn spell_skill_value(
     me: Option<&crate::net::ObjectStore>,
     skill_lines: Option<&benilla_formats::SkillLineCatalog>,
@@ -201,9 +199,8 @@ pub(crate) fn skill_line_value(me: Option<&crate::net::ObjectStore>, line: u32) 
     )
 }
 
-/// `0x5ea520`'s sum on the line's first slot (`0x5ea3f0`): the value, plus the bonus word's high
-/// half read unsigned when the value is positive (`0x5ea571`-`0x5ea580`), plus its low half read
-/// signed (`0x5ea5ac`-`0x5ea5ba`), floored at 0 (`0x5ea5bc`).
+/// The reference's sum on the line's first slot: the value, plus the bonus word's high half read
+/// unsigned when the value is positive, plus its low half read signed, floored at 0.
 fn line_skill_value(
     slots: impl Iterator<Item = benilla_protocol::messages::PlayerSkillSlot>,
     line: u32,

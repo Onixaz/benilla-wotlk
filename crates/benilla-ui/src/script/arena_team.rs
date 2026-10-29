@@ -174,7 +174,7 @@ fn player_exists(model: &super::Model) -> bool {
 }
 
 /// A banner colour's channels as `GetArenaTeam` scales them, `byte * (1.0f / 255.0f)` in single
-/// precision (`0x5a3a30`).
+/// precision.
 fn channels(argb: u32) -> [f64; 3] {
     [16, 8, 0].map(|shift| f64::from(((argb >> shift) & 0xFF) as f32 * (1.0f32 / 255.0)))
 }

@@ -1,4 +1,4 @@
-//! The wound flinch: a decaying blend in the struck bone's secondary slot (`0x60ea70`).
+//! The wound flinch: a decaying blend in the struck bone's secondary slot.
 
 use benilla_assets::ModelAnimations;
 use benilla_formats::AnimDataCatalog;
@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use super::super::{find_resolved, AnimDriver, MovementState, Wound};
 use super::select::{self, STAND};
 
-/// A wound trigger into `0x60ea70`: a melee hit, severity its crit bit, or a spell, severity 0.
+/// A wound trigger: a melee hit, severity its crit bit, or a spell, severity 0.
 #[derive(Clone, Copy)]
 pub(super) enum WoundEdge {
     Melee(u32),
@@ -15,7 +15,7 @@ pub(super) enum WoundEdge {
 }
 
 /// Decays the wound every frame, above the death override: the kernel advances every armed
-/// secondary slot unconditionally, and the slot self-releases at λ = 0 (`0x7147b9`).
+/// secondary slot unconditionally, and the slot self-releases at λ = 0.
 pub(super) fn wound_upkeep(entity: Entity, drv: &mut AnimDriver, player: &mut AnimationPlayer) {
     if let Some(wd) = drv.wound {
         let finished = match player.animation_mut(wd.node) {
@@ -46,8 +46,8 @@ pub(super) fn wound_upkeep(entity: Entity, drv: &mut AnimDriver, player: &mut An
 }
 
 /// Evicts the wound on a blended primary re-arm of its bone: op4 with `blendFlag≠0` copies the
-/// outgoing pose over the secondary slot (`+0xc4..`). The other bone's plays leave it decaying
-/// (`0x714260`); a mode or gait change counts as a bone-0 play.
+/// outgoing pose over the secondary slot (`+0xc4..`). The other bone's plays leave it decaying; a
+/// mode or gait change counts as a bone-0 play.
 pub(super) fn wound_evict(
     entity: Entity,
     drv: &mut AnimDriver,
@@ -78,10 +78,10 @@ pub(super) fn wound_evict(
 }
 
 /// Lays wound clip `id` (8–10) into the secondary slot as a decaying 0.75-amplitude blend over
-/// whatever plays (`0x60ea70`, op4 `linkFlag=0`), with no mid-swing gate: the base track and the
-/// one-shot slot run on underneath. It calls op4, not `PlayAnimation`, so the sheath reconcile and
-/// event scan never see it; it is the frame's last write, as in the packet order.
-/// The caller holds the entry gates; the reference's attached-spell-effect gate is not built.
+/// whatever plays (op4 `linkFlag=0`), with no mid-swing gate: the base track and the one-shot slot
+/// run on underneath. It calls op4, not `PlayAnimation`, so the sheath reconcile and event scan
+/// never see it; it is the frame's last write, as in the packet order. The caller holds the entry
+/// gates; the reference's attached-spell-effect gate is not built.
 pub(super) fn wound_trigger(
     entity: Entity,
     drv: &mut AnimDriver,
@@ -93,12 +93,12 @@ pub(super) fn wound_trigger(
     mv: &MovementState,
     mounted: bool,
 ) {
-    // `0x605f90`'s third IsDead clause, stand state 7; the dead branch took the other two.
+    // The reference's third IsDead clause, stand state 7; the dead branch took the other two.
     if mv.stand_state != 7 {
         let base = drv.resolved_anim(anims, catalog).unwrap_or(STAND);
         let full = select::wound_full_body(id, base, mv.flags, mounted);
         // Rolls its variation (op4's `variationIdx −1`). A zero span expires on arrival
-        // (`end = clock`) and no clip at all is the `0x711a20` asset-presence abort: both skip.
+        // (`end = clock`) and no clip at all is the asset-presence abort: both skip.
         let clip = find_resolved(anims, id, catalog)
             .and_then(|h| anims.pick_variation(h.anim_id, rng.draw()))
             .filter(|c| c.duration > 0.0);

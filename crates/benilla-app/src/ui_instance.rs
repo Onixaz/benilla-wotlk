@@ -1,7 +1,7 @@
 //! The instance lockout messages, the bookkeeping behind `CanShowResetInstances()`, and
 //! `CMSG_RESET_INSTANCES`. No 1.12 Lua handles the lines: the client fills the `GlobalStrings.lua`
-//! template itself and hands it to the chat composer `0x49a870` as `CHAT_MSG_SYSTEM`; here the net
-//! handlers queue them and [`feed_instance`] resolves them against the VM.
+//! template itself and hands it to the chat composer as `CHAT_MSG_SYSTEM`; here the net handlers
+//! queue them and [`feed_instance`] resolves them against the VM.
 //!
 //! Deviation: walking out of a party dungeon ourselves also counts as holding a bind
 //! ([`InstanceState::saw_own_dungeon`]), because vmangos reports only permanent binds
@@ -16,28 +16,26 @@ use crate::net::{ClientCommand, NetCommands};
 use crate::ui_chat::{ChatEvent, ChatEventKind, ChatLog};
 use crate::ui_script::{UiFeed, UiInput};
 
-/// `CanShowResetInstances()`'s window, 25 hours: `cmp eax, 0x15f90` at `0x495ce6` against
-/// `time(0)` minus when we left, unsigned, so the boundary is inclusive.
+/// `CanShowResetInstances()`'s window, 25 hours: `cmp eax, 0x15f90` against `time(0)` minus when we
+/// left, unsigned, so the boundary is inclusive.
 const RESET_OFFER_WINDOW_SECS: u64 = 90_000;
 
-/// The lockout bookkeeping: three of the four globals `CanShowResetInstances` (`0x495c90`) reads;
-/// the fourth, the map we stand on (`0xb4e378`), is [`benilla_world::world_map::CurrentMap`].
-/// Session-scoped, like the reference's zero-initialized globals.
+/// The lockout bookkeeping: three of the four globals `CanShowResetInstances` reads; the fourth,
+/// the map we stand on, is [`benilla_world::world_map::CurrentMap`]. Session-scoped, like the
+/// reference's zero-initialized globals.
 #[derive(Resource, Default)]
 pub(crate) struct InstanceState {
-    /// `0xb4e37c`, "do you hold any bind": `SMSG_UPDATE_INSTANCE_OWNERSHIP`, sent on every map
-    /// change (`Player.cpp:2116`), where vmangos says yes only for a raid save.
+    /// "do you hold any bind": `SMSG_UPDATE_INSTANCE_OWNERSHIP`, sent on every map change
+    /// (`Player.cpp:2116`), where vmangos says yes only for a raid save.
     owns_saved: bool,
     /// benilla's half of the same term: we watched the player walk out of a party dungeon. Raised
     /// by [`LatchWriter::WorldEntry`], cleared by a reset and at logout, and never by an
     /// `owns_saved = false`, which vmangos sends on the very teleport out of the dungeon.
     saw_own_dungeon: bool,
-    /// `0xb4e374`: the `Map.dbc` id of the last dungeon left; only a party dungeon lands here
-    /// (`0x495d33`).
+    /// The `Map.dbc` id of the last dungeon left; only a party dungeon lands here.
     last_dungeon: Option<u32>,
-    /// `0xb4e370`: when [`Self::last_dungeon`] was recorded, in seconds. Deviation: the app's
-    /// monotonic clock, not `time(0)`, because it cannot run backwards; they differ only across a
-    /// suspend.
+    /// When [`Self::last_dungeon`] was recorded, in seconds. Deviation: the app's monotonic clock,
+    /// not `time(0)`, because it cannot run backwards; they differ only across a suspend.
     last_dungeon_at: u64,
     /// `SMSG_UPDATE_LAST_INSTANCE` map ids for [`track_instance_state`]: the packet tests against
     /// the current map, which [`benilla_world::world_map::CurrentMap`] reaches only after the
@@ -60,8 +58,7 @@ pub(crate) struct LockoutLine {
     map: Option<u32>,
     /// The `%d` fills in template order (`RAID_INSTANCE_WELCOME` takes three).
     numbers: Vec<u32>,
-    /// The `"(Debug-Only Lock Notice) %s"` wrapper, `SMSG_INSTANCE_SAVE_CREATED`'s flag-1 arm
-    /// (`0x4e7eb3`).
+    /// The `"(Debug-Only Lock Notice) %s"` wrapper, `SMSG_INSTANCE_SAVE_CREATED`'s flag-1 arm.
     debug_notice: bool,
 }
 
@@ -69,21 +66,21 @@ pub(crate) struct LockoutLine {
 /// does, as only the world entry is first-hand evidence of a bind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum LatchWriter {
-    /// `0x464ff0`, the map-load path: we just walked out of this map.
+    /// The map-load path: we just walked out of this map.
     WorldEntry,
-    /// `0x49e6ac`, `SMSG_UPDATE_LAST_INSTANCE`: the server's word, already given as `owns_saved`.
+    /// `SMSG_UPDATE_LAST_INSTANCE`: the server's word, already given as `owns_saved`.
     Packet,
 }
 
 impl InstanceState {
-    /// `SMSG_UPDATE_INSTANCE_OWNERSHIP` → `0x495d50`: one store, no line.
+    /// `SMSG_UPDATE_INSTANCE_OWNERSHIP`: one store, no line.
     pub(crate) fn set_ownership(&mut self, owns: bool) {
         self.owns_saved = owns;
     }
 
-    /// The latch `0x495d10`: record `map` as the dungeon just left if it is a party dungeon and
-    /// not the map we stand on, tested first (`cmp edx,esi; je`), as vmangos sends one packet per
-    /// permanent bind on every map change, the entered instance included.
+    /// The latch: record `map` as the dungeon just left if it is a party dungeon and not the map we
+    /// stand on, tested first (`cmp edx,esi; je`), as vmangos sends one packet per permanent bind
+    /// on every map change, the entered instance included.
     pub(crate) fn note_last_instance(
         &mut self,
         map: u32,
@@ -105,7 +102,7 @@ impl InstanceState {
         }
     }
 
-    /// `SMSG_INSTANCE_RESET` → `0x495d00`, before the body is read: any reset clears the offer.
+    /// `SMSG_INSTANCE_RESET`, before the body is read: any reset clears the offer.
     pub(crate) fn clear_last_instance(&mut self) {
         self.last_dungeon = None;
         self.last_dungeon_at = 0;
@@ -118,9 +115,9 @@ impl InstanceState {
         self.saw_own_dungeon = false;
     }
 
-    /// `CanShowResetInstances()` (`0x495c90`), its four terms in the reference's order:
+    /// `CanShowResetInstances()`, its four terms in the reference's order:
     ///
-    /// 1. a bind held: `0xb4e37c`, or [`InstanceState::saw_own_dungeon`];
+    /// 1. a bind held, or [`InstanceState::saw_own_dungeon`];
     /// 2. not standing in a party dungeon;
     /// 3. the last dungeon left is a party dungeon `Map.dbc` knows;
     /// 4. left no more than [`RESET_OFFER_WINDOW_SECS`] ago.
@@ -190,12 +187,12 @@ fn lockout_text(
     })
 }
 
-/// The reference's `"(Debug-Only Lock Notice) %s"` (`0x84c36c`), a literal in the binary, not a
-/// GlobalString. Only flag 1 shows it; vmangos sends 0 (`Map.cpp:2289`, `Map.cpp:2389`).
+/// The reference's `"(Debug-Only Lock Notice) %s"`, a literal in the binary, not a GlobalString.
+/// Only flag 1 shows it; vmangos sends 0 (`Map.cpp:2289`, `Map.cpp:2389`).
 const DEBUG_LOCK_NOTICE_PREFIX: &str = "(Debug-Only Lock Notice) ";
 
 /// A template's `%s`: the `Map.dbc` name, or the id in decimal when there is no row, as the
-/// reference prints it (`0x49e228`, `"%d"` at `0x835154`, when `[0xc0daa8][id]` is null).
+/// reference prints it (`"%d"`, when `[id]` is null).
 fn map_name(map: u32, catalog: Option<&benilla_assets::MapCatalogRes>) -> String {
     catalog
         .and_then(|c| c.0.name(map))
@@ -204,8 +201,7 @@ fn map_name(map: u32, catalog: Option<&benilla_assets::MapCatalogRes>) -> String
 }
 
 /// The line for one `SMSG_RAID_INSTANCE_MESSAGE`, `None` for a type the jump table drops (0 and 5
-/// up, `0x49e246`). The reference divides with truncation (hours `0x49e259`, minutes `0x49e2c8`
-/// and `0x49e337`, the welcome's days, hours and minutes `0x49e3a6`), and the plural follows the
+/// up). The reference divides with truncation (the welcome's days), and the plural follows the
 /// truncated number.
 fn raid_instance_line(message: &RaidInstanceMessage) -> Option<LockoutLine> {
     let warning = RaidInstanceWarning::from_wire(message.message_type)?;
@@ -272,7 +268,7 @@ pub(crate) mod net {
         }
     }
 
-    /// `SMSG_RAID_INSTANCE_MESSAGE` (`0x49e1c0`): one of four `RAID_INSTANCE_*` lines.
+    /// `SMSG_RAID_INSTANCE_MESSAGE`: one of four `RAID_INSTANCE_*` lines.
     pub(crate) fn raid_instance_message(state: &mut InstanceState, message: RaidInstanceMessage) {
         match raid_instance_line(&message) {
             Some(line) => state.push(line),
@@ -284,8 +280,8 @@ pub(crate) mod net {
         }
     }
 
-    /// `SMSG_INSTANCE_RESET` (`0x49e470`): clear the latch (`0x495d00`) before the body is read,
-    /// then print `INSTANCE_RESET_SUCCESS` (`0x49e4ea`).
+    /// `SMSG_INSTANCE_RESET`: clear the latch before the body is read, then print
+    /// `INSTANCE_RESET_SUCCESS`.
     pub(crate) fn instance_reset(state: &mut InstanceState, map: u32) {
         state.clear_last_instance();
         state.push(LockoutLine {
@@ -297,9 +293,9 @@ pub(crate) mod net {
         });
     }
 
-    /// `SMSG_INSTANCE_RESET_FAILED` (`0x49e540`): one of three refusals. Deviation: reason 3 and up
-    /// prints nothing, where the reference prints an uninitialized 2 KB stack buffer, because that
-    /// is a bug and vmangos means 3 and up as silent (`MapPersistentStateMgr.h:275`).
+    /// `SMSG_INSTANCE_RESET_FAILED`: one of three refusals. Deviation: reason 3 and up prints
+    /// nothing, where the reference prints an uninitialized 2 KB stack buffer, because that is a
+    /// bug and vmangos means 3 and up as silent (`MapPersistentStateMgr.h:275`).
     pub(crate) fn instance_reset_failed(state: &mut InstanceState, failure: InstanceResetFailed) {
         match InstanceResetFailure::from_wire(failure.reason) {
             Some(reason) => state.push(LockoutLine {
@@ -317,20 +313,20 @@ pub(crate) mod net {
         }
     }
 
-    /// `SMSG_UPDATE_LAST_INSTANCE` (`0x49e670`): queued for [`track_instance_state`] to weigh
-    /// against the map we end up on. No line.
+    /// `SMSG_UPDATE_LAST_INSTANCE`: queued for [`track_instance_state`] to weigh against the map we
+    /// end up on. No line.
     pub(crate) fn update_last_instance(state: &mut InstanceState, map: u32) {
         state.pending_last_instance.push(map);
     }
 
-    /// `SMSG_UPDATE_INSTANCE_OWNERSHIP` (`0x49e6c0`): one store (`0x495d50`), no line.
+    /// `SMSG_UPDATE_INSTANCE_OWNERSHIP`: one store, no line.
     pub(crate) fn update_instance_ownership(state: &mut InstanceState, owns: bool) {
         state.set_ownership(owns);
     }
 
-    /// `SMSG_INSTANCE_SAVE_CREATED` (`0x4e7e60`): `INSTANCE_SAVED`, bare on flag 0 and wrapped on
-    /// flag 1. Deviation: flag 2 and up prints nothing, where the reference prints an
-    /// uninitialized 2 KB stack buffer, because that is a bug, not a mechanism.
+    /// `SMSG_INSTANCE_SAVE_CREATED`: `INSTANCE_SAVED`, bare on flag 0 and wrapped on flag 1.
+    /// Deviation: flag 2 and up prints nothing, where the reference prints an uninitialized 2 KB
+    /// stack buffer, because that is a bug, not a mechanism.
     pub(crate) fn instance_save_created(state: &mut InstanceState, flag: u32) {
         let debug_notice = match flag {
             0 => false,
@@ -352,7 +348,7 @@ pub(crate) mod net {
 
 /// Runs both latch writers, VM-free so the latch survives a `/reload` as the reference's globals
 /// do. The first observed map records nothing: there is no map left at login, as in the reference
-/// (`0xb4e378` starts at 0, and map 0 is not a dungeon).
+/// (and map 0 is not a dungeon).
 fn track_instance_state(
     mut state: ResMut<InstanceState>,
     maps: Option<Res<benilla_assets::MapCatalogRes>>,
@@ -442,7 +438,7 @@ fn drain_instance(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommand
 }
 
 /// Drop the witness at logout, as the next login may be another character. The three globals stay,
-/// as the reference keeps them (`0x495d00` runs only on `SMSG_INSTANCE_RESET`): its bind term is
+/// as the reference keeps them (the reference runs only on `SMSG_INSTANCE_RESET`): its bind term is
 /// re-sent at the next world entry, where ours has no server to correct it.
 fn clear_witness_on_logout(
     mut state: ResMut<InstanceState>,

@@ -108,19 +108,18 @@ pub(crate) struct UiCostWanted(pub(crate) bool);
 pub(crate) struct PlayerUiHover(pub(crate) Option<u32>);
 
 /// Who owns this frame's keys (the client's `DAT_00cf4dc8 != 0` gate), written in [`UiInput`] and
-/// read after it: a focused EditBox takes every key, a shown keyboard-enabled frame only the key
-/// it ate. Neither releases a held key: only the window deactivate (`0x514490`, from `0x493058`)
-/// and the world-enter cascade (`0x5144c0`) clear the direction bits, so W keeps running while
-/// you type.
+/// read after it: a focused EditBox takes every key, a shown keyboard-enabled frame only the key it
+/// ate. Neither releases a held key: only the window deactivate and the world-enter cascade clear
+/// the direction bits, so W keeps running while you type.
 #[derive(Resource, Default)]
 pub(crate) struct UiKeyboardCapture {
-    /// A focused EditBox eats every key (`0x77b35e` returns 1 on every path but alt-arrow).
+    /// A focused EditBox eats every key.
     pub(crate) typing: bool,
-    /// Keys a shown keyboard-enabled frame consumed this frame (the existence gate, `0x76b7d0`),
-    /// per key so the map eating `M` suppresses no other binding; raw codes, as read.
+    /// Keys a shown keyboard-enabled frame consumed this frame (the existence gate), per key so the
+    /// map eating `M` suppresses no other binding; raw codes, as read.
     pub(crate) consumed: Vec<bevy::input::keyboard::KeyCode>,
     /// The arrows fall through: the focused box is in alt-arrow mode and ALT is up, so the
-    /// reference declines them at `0x77b1c4` and `CGWorldFrame` runs their bindings.
+    /// reference declines them and `CGWorldFrame` runs their bindings.
     pub(crate) arrows_fall_through: bool,
 }
 
@@ -131,7 +130,7 @@ pub(crate) struct UiKeyboardCapture {
 pub(crate) struct PlayerUiClickConsumed(pub(crate) bool);
 
 /// Whether the cursor carries a payload, a `Send` mirror. A click on sky with one held never
-/// deselects: the reference gates its nothing-leg `SetSelection(0,0)` on no payload (`0x492d30`).
+/// deselects: the reference gates its nothing-leg `SetSelection(0,0)` on no payload.
 #[derive(Resource, Default)]
 pub(crate) struct CursorPayloadHeld(pub(crate) bool);
 
@@ -302,8 +301,7 @@ impl Default for UiScaleCvar {
 
 impl UiScaleCvar {
     /// The dial as `kind`'s VM sees it: the game UI's parent alone takes the scale
-    /// (`CGGameUI::SetUIScale 0x513240` scales the frame at `[0xbd0778]`), so the glue screens
-    /// stay 768 units tall.
+    /// (`CGGameUI::SetUIScale 0x513240` scales the frame), so the glue screens stay 768 units tall.
     pub(crate) fn for_vm(&self, kind: benilla_ui::script::VmKind) -> f32 {
         match kind {
             benilla_ui::script::VmKind::Glue => 1.0,
@@ -470,7 +468,7 @@ impl Plugin for UiScriptPlugin {
             .add_message::<WorldLeaveSweepMessage>()
             .add_systems(Update, lifecycle::arm_leaving_world_on_self_create)
             // A queued `ReloadUI()` runs in `PreUpdate`, a frame after its drain (the reference's
-            // deferral, `0x495590`) and before every `Update` seed or feed.
+            // deferral) and before every `Update` seed or feed.
             .init_resource::<ReloadUiPending>()
             // Both are exclusive edges on the VM and must not interleave.
             .add_systems(
@@ -827,8 +825,8 @@ impl benilla_ui::script::TextMeasure for FixedWidthFont {
 #[cfg(test)]
 pub(crate) mod test_ui;
 
-/// The chat loader's two login events (`0x498a60`): `UPDATE_CHAT_WINDOWS` once, then
-/// `UPDATE_CHAT_COLOR` per registry entry.
+/// The chat loader's two login events: `UPDATE_CHAT_WINDOWS` once, then `UPDATE_CHAT_COLOR` per
+/// registry entry.
 #[cfg(test)]
 pub(crate) fn fire_chat_login(s: &mut benilla_ui::script::UiScript) {
     // `FCF_OnUpdate` reads `UIOptionsFrame:IsShown()` every frame; stand in a closed one.
@@ -1282,7 +1280,7 @@ mod pointer_arbiter_tests {
         );
     }
 
-    /// The camera reads the raw flag (`0x7662c0` gives a mouse-down to exactly one frame, the
+    /// The camera reads the raw flag (the reference gives a mouse-down to exactly one frame, the
     /// plate); the wheel reads chrome, walking past a frame that only takes the mouse.
     #[test]
     fn the_camera_yields_to_a_plate_and_the_wheel_does_not() {

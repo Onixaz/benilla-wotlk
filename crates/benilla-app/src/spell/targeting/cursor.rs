@@ -1,7 +1,6 @@
 //! The cursor while a cast waits for its click: the ground point's range verdict
-//! (`CheckGroundPointInRange 0x6e6810`, in `0x4820f0`), the hovered object's validity (`0x6e6460`,
-//! in `0x4828d0`: a GameObject, a unit or a corpse) and the reticle's radius
-//! (`GetCurrentCastRadius 0x6e6350`).
+//! (`CheckGroundPointInRange`), the hovered object's validity (a unit or a corpse) and the
+//! reticle's radius (`GetCurrentCastRadius`).
 
 use bevy::prelude::*;
 
@@ -14,12 +13,11 @@ use crate::ui_action::Spells;
 
 use super::{SpellTargeting, TargetingWants};
 
-/// What `GetMinMaxRange 0x6e3480` reads for the cursor's two range verdicts: the ground point
-/// (`CheckGroundPointInRange 0x6e6810`, a null target at `0x6e6879`) and the GameObject leg of
-/// `0x6e6460` (the object as target at `0x6e679b`). Neither passes a unit, which the function
-/// tests for at `0x6e34e1`-`0x6e34f9`: the ranged arm pads nothing and takes no moving bonus,
-/// and the melee arm sums the caster's reach with its auto-attack target's and asks that unit's
-/// motion, with the caster's, for the bonus.
+/// What `GetMinMaxRange` reads for the cursor's two range verdicts: the ground point
+/// (`CheckGroundPointInRange`) and the GameObject leg. Neither passes a unit, which the function
+/// tests for: the ranged arm pads nothing and takes no moving bonus, and the melee arm sums the
+/// caster's reach with its auto-attack target's and asks that unit's motion, with the caster's, for
+/// the bonus.
 #[derive(Clone, Copy)]
 struct RangeCall<'a> {
     spell: &'a SpellDisplay,
@@ -43,11 +41,10 @@ fn range_call<'a>(checks: &'a super::BindChecks, spell_id: u32) -> Option<RangeC
     })
 }
 
-/// `CheckGroundPointInRange 0x6e6810`: the squared caster-to-point distance against
-/// `GetMinMaxRange`'s bounds, whose max carries spell-mod op 5 (`0x6e3744`), so a range talent
-/// moves the verdict. The compare fails on min² > d² (`0x6e68b5`-`0x6e68c3`) and on max² < d²
-/// (`0x6e68c5`-`0x6e68d3`), a NaN failing both; the min has no `> 0` guard, a zero one is inert.
-/// Its one caller is the hover classifier `0x4820f0`, so it colours the cursor and the click never
+/// `CheckGroundPointInRange`: the squared caster-to-point distance against `GetMinMaxRange`'s
+/// bounds, whose max carries spell-mod op 5, so a range talent moves the verdict. The compare fails
+/// on min² > d² and on max² < d², a NaN failing both; the min has no `> 0` guard, a zero one is
+/// inert. Its one caller is the hover classifier, so it colours the cursor and the click never
 /// asks.
 fn ground_point_in_range(call: Option<RangeCall>, self_pos: Vec3, point: Vec3) -> bool {
     let Some(call) = call else {
@@ -57,8 +54,8 @@ fn ground_point_in_range(call: Option<RangeCall>, self_pos: Vec3, point: Vec3) -
         target: None,
         attack_target: call.attack_target,
     };
-    // The self row is `{0, 0}` (`0x6e35dd`, `0x6e35ea`) and `min_max_range` answers `None` for it:
-    // only the caster's own spot passes it here.
+    // The self row is `{0, 0}` and `min_max_range` answers `None` for it: only the caster's own
+    // spot passes it here.
     let (min, max) = call
         .mods
         .min_max_range(call.spell, Some(call.row), call.caster, targets)
@@ -67,11 +64,10 @@ fn ground_point_in_range(call: Option<RangeCall>, self_pos: Vec3, point: Vec3) -
     min * min <= dist_sq && dist_sq <= max * max
 }
 
-/// `GetCurrentCastRadius 0x6e6350`: per effect `radius + casterLevel × perLevel` over
-/// `EffectRadiusIndex[0]` and `[1]` only, the larger with slot 1 winning ties and NaN, clamped to
-/// 20.0 (`0x4820f0`'s `[0x804478]`). 0.0 means no radius rows and the reticle's default size.
-/// The reference then applies spell-mod op 6 (SPELLMOD_RADIUS, `0x6e6bf0`) before the reticle's
-/// 20-yard clamp (`0x4820f0`).
+/// `GetCurrentCastRadius`: per effect `radius + casterLevel × perLevel` over `EffectRadiusIndex[0]`
+/// and `[1]` only, the larger with slot 1 winning ties and NaN, clamped to 20.0. 0.0 means no
+/// radius rows and the reticle's default size. The reference then applies spell-mod op 6
+/// (SPELLMOD_RADIUS) before the reticle's 20-yard clamp.
 pub(crate) fn ground_cast_radius(
     spells: Option<&Spells>,
     spell_id: u32,
@@ -98,26 +94,24 @@ pub(crate) fn ground_cast_radius(
     mods.apply_float(d, super::super::OP_RADIUS, r).min(20.0)
 }
 
-/// While targeting, runs after the world classifier and overwrites its verdict (`0x4820f0`'s
-/// pre-empt). It runs every frame, even over a UI frame, because the reticle reads
-/// `WorldCursor.unable` as its colour; the reference's hover gate `0x481790` (WorldFrame has mouse
-/// focus) lives in [`crate::cursor`].
+/// While targeting, runs after the world classifier and overwrites its verdict. It runs every
+/// frame, even over a UI frame, because the reticle reads `WorldCursor.unable` as its colour; the
+/// reference's hover gate (WorldFrame has mouse focus) lives in [`crate::cursor`].
 ///
-/// The pick flags come from the word alone (`0x481050`), so the word picks the handler:
+/// The pick flags come from the word alone, so the word picks the handler:
 ///
-/// | pick state | handler | verdict |
-/// |---|---|---|
-/// | 1, terrain | `0x4820f0` | `CheckGroundPointInRange 0x6e6810` on the ground point |
-/// | 2, object | `0x4828d0` → `0x6e6460` | the hovered object's validity |
-/// | 0, nothing | `0x481790`'s tail | `CursorSetMode(0x16)`, UnableCast |
+/// | pick state | verdict |
+/// |---|---|
+/// | 1, terrain | the spell's range check on the ground point |
+/// | 2, object | the hovered object's validity |
+/// | 0, nothing | the UnableCast cursor |
 ///
 /// A word without `& 0x60` sets no terrain pick bit, so an armed lockpick is grey except over a
 /// GameObject it can open. An item-only word (`0x0010`) sets no pick flags, the pick bails before
-/// its ray (`0x4812c8`) and the world cursor stays grey.
+/// its ray and the world cursor stays grey.
 ///
-/// The object arm is `0x6e6460`'s GameObject leg: `word & 0x4800`, the lock predicate `0x5f8260`,
-/// then the same min/max range test through `GetMinMaxRange 0x6e3480`, its range modifier included.
-/// Its unit leg is
+/// The object arm is the reference's GameObject leg: `word & 0x4800`, the lock predicate, then the
+/// same min/max range test through `GetMinMaxRange`, its range modifier included. Its unit leg is
 /// [`SpellTargeting::can_target_unit`] and its corpse leg [`SpellTargeting::can_target_corpse`],
 /// over a corpse the pick admitted under a word in `0x8600`. The world-item leg is not built.
 ///
@@ -170,7 +164,7 @@ pub(crate) fn drive_targeting_cursor(
     {
         targeting.can_target_corpse(corpse, &checks)
     } else if targeting.wants(TargetingWants::Location) {
-        // `0x4820f0`. No ground hit (sky, mouselook) is state 0, UnableCast.
+        // . No ground hit (sky, mouselook) is state 0, UnableCast.
         match (occlusion.point, me) {
             (Some(point), Some(me)) => ground_point_in_range(range, me, point),
             _ => false,
@@ -185,7 +179,7 @@ pub(crate) fn drive_targeting_cursor(
     };
 }
 
-/// `0x6e6460`'s GameObject leg past the `& 0x4800` test: the lock predicate `0x5f8260`, then range.
+/// The reference's GameObject leg past the `& 0x4800` test: the lock predicate, then range.
 fn object_arm(
     hovered_object: &crate::target::HoveredObject,
     stores: &Query<(
@@ -202,7 +196,7 @@ fn object_arm(
     let (Some(entity), Some(guid)) = (hovered_object.target, hovered_object.guid) else {
         return false;
     };
-    // `0x5f8260`'s lookups: the template, then its `Lock.dbc` row. A template in flight is grey.
+    // The reference's lookups: the template, then its `Lock.dbc` row. A template in flight is grey.
     let Some(tmpl) = lock_inputs.templates.get(guid) else {
         return false;
     };
@@ -278,8 +272,8 @@ mod tests {
         let banded = row(8.0, 35.0);
         assert!(!ground(&banded, 5.0));
         assert!(ground(&banded, 20.0));
-        // Both bounds are inclusive (`min² > d²` and `max² < d²` fail, `0x6e68c3`, `0x6e68d3`), and
-        // a NaN distance fails both.
+        // Both bounds are inclusive (`min² > d²` and `max² < d²` fail), and a NaN distance fails
+        // both.
         assert!(ground(&banded, 8.0));
         assert!(ground(&banded, 35.0));
         assert!(!ground(&banded, f32::NAN));
@@ -345,8 +339,8 @@ mod tests {
         assert!(!ground(&blizzard, &banded, &talented, 43.0));
     }
 
-    /// With no unit passed, the melee arm sums the caster's reach with its auto-attack target's, else
-    /// its own, and the max is floored at 5.0 (`0x6e3552`-`0x6e35bf`).
+    /// With no unit passed, the melee arm sums the caster's reach with its auto-attack target's,
+    /// else its own, and the max is floored at 5.0.
     #[test]
     fn the_melee_row_reads_the_casters_reaches() {
         let melee = SpellRange {
@@ -379,9 +373,9 @@ mod tests {
         assert!(!ground(1.5, Some(4.0), 7.0));
     }
 
-    /// The moving bonus (`0x6e3648`-`0x6e36a2`) on the ground verdict: with no unit passed, only
-    /// the melee arm has a unit for it, the auto-attack target, and both must run. The ranged arm
-    /// has none, whoever the caster's auto-attack target is.
+    /// The moving bonus on the ground verdict: with no unit passed, only the melee arm has a unit
+    /// for it, the auto-attack target, and both must run. The ranged arm has none, whoever the
+    /// caster's auto-attack target is.
     #[test]
     fn the_ground_verdict_takes_the_moving_bonus_on_the_melee_row_alone() {
         let running = RangeUnit {
@@ -501,7 +495,7 @@ mod tests {
         assert_eq!(ground_cast_radius(s, 777, 60, &mods), 0.0);
         // Per-level: 2.0 + 60 × 0.1 = 8.0 beats slot 1's 5.0.
         assert_eq!(ground_cast_radius(s, 778, 60, &mods), 8.0);
-        // The 20.0 clamp (`[0x804478]`).
+        // The 20.0 clamp.
         assert_eq!(ground_cast_radius(s, 779, 60, &mods), 20.0);
         // Unknown spell or no data: 0, the default size.
         assert_eq!(ground_cast_radius(s, 9999, 60, &mods), 0.0);
@@ -565,7 +559,7 @@ mod tests {
         // …and over sky / mouselook there is no point: state 0.
         assert!(!verdict(0x0040, None, None), "no ground hit → UnableCast");
 
-        // An item-only word (`0x0010`): no pick flags, the pick bails at `0x4812c8`, always grey.
+        // An item-only word (`0x0010`): no pick flags, the pick bails, always grey.
         assert!(!verdict(0x0010, Some(Vec3::ZERO), None));
         assert!(!verdict(0x0010, None, None));
         // Even over a GameObject: `& 0x4800` is 0.
@@ -583,8 +577,8 @@ mod tests {
         assert!(verdict(0x4840, Some(Vec3::ZERO), None));
     }
 
-    /// `0x4820f0` over terrain. Blizzard (10, `Targets 0x40`, family 3 mask `0x80080`, row 4, 0 to
-    /// 30 yd) under Arctic Reach's cells, and a melee-row ground spell (12684, row 2) under the
+    /// The reference over terrain. Blizzard (10, `Targets 0x40`, family 3 mask `0x80080`, row 4, 0
+    /// to 30 yd) under Arctic Reach's cells, and a melee-row ground spell (12684, row 2) under the
     /// caster's reach and its auto-attack target's.
     #[test]
     fn the_terrain_verdict_reads_the_range_talent_and_the_casters_reaches() {
@@ -689,8 +683,8 @@ mod tests {
         assert!(!verdict(MELEE_GROUND, false, 1.5, Some(4.0), 7.0));
     }
 
-    /// `0x6e6460`'s GameObject leg asks the same range through the same call: a chest a lock spell
-    /// opens, `d` yd out, on a family-3 lock spell (fixture) with row 12, 0 to 5 yd.
+    /// The reference's GameObject leg asks the same range through the same call: a chest a lock
+    /// spell opens, `d` yd out, on a family-3 lock spell (fixture) with row 12, 0 to 5 yd.
     #[test]
     fn the_object_leg_reads_the_range_talent() {
         use super::super::corpse_fixture as fx;
@@ -785,9 +779,9 @@ mod tests {
         assert!(!verdict(true, 6.5), "past 6 yd");
     }
 
-    /// `0x6e6460`'s unit leg over a hovered unit: the relation checks, then min² ≤ d² ≤ max²
-    /// (`6e677c`–`6e6802`). Row 5 is 0 to 30 yd and row 114 is 8 to 35 yd, both padded by the two
-    /// 1.5 combat reaches: 0 to 33 and 11 to 38.
+    /// The reference's unit leg over a hovered unit: the relation checks, then min² ≤ d² ≤ max².
+    /// Row 5 is 0 to 30 yd and row 114 is 8 to 35 yd, both padded by the two 1.5 combat reaches: 0
+    /// to 33 and 11 to 38.
     #[test]
     fn the_unit_leg_is_grey_out_of_range_or_off_relation() {
         use bevy::ecs::system::RunSystemOnce;
@@ -880,9 +874,9 @@ mod tests {
         );
     }
 
-    /// The unit leg's range compare, the tail of `SpellCanTargetUnit 0x6e6460`, hands
-    /// `GetMinMaxRange` the hovered unit (`0x6e679b`, `0x6e67d1`): a melee spell is in range to
-    /// 7.667 yards while the caster and that unit both run, and to the 5.0 floor otherwise.
+    /// The unit leg's range compare, the tail of `SpellCanTargetUnit`, hands `GetMinMaxRange` the
+    /// hovered unit: a melee spell is in range to 7.667 yards while the caster and that unit both
+    /// run, and to the 5.0 floor otherwise.
     #[test]
     fn the_unit_leg_takes_the_moving_bonus_on_the_melee_row() {
         use bevy::ecs::system::RunSystemOnce;
@@ -985,9 +979,9 @@ mod tests {
         assert!(verdict(false, false, 4.9), "the floor");
     }
 
-    /// `0x6e6460`'s corpse leg over a hovered corpse: bones, a hostile corpse under the ally bit
-    /// and a corpse out of range are grey. The range pads a corpse by the caster's reach twice
-    /// (`6e3605`–`6e361e`): Resurrection's 30 yd with a 3.0 reach is 36.
+    /// The reference's corpse leg over a hovered corpse: bones, a hostile corpse under the ally bit
+    /// and a corpse out of range are grey. The range pads a corpse by the caster's reach twice:
+    /// Resurrection's 30 yd with a 3.0 reach is 36.
     #[test]
     fn the_corpse_leg_is_grey_for_bones_a_hostile_corpse_or_out_of_range() {
         use super::super::corpse_fixture as fx;

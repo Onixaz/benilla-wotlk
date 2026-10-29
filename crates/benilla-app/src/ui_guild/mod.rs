@@ -23,26 +23,26 @@ mod sort;
 pub(crate) use sort::RosterRow;
 use sort::{SortField, SortStack};
 
-/// `GuildRoster()`'s silence after a request: the reference's 10 000 ms against `0xb73130`
-/// (`0x4d10d0`). The arg1 edge of [`RosterUpdate`] clears it.
+/// `GuildRoster()`'s silence after a request: the reference's 10 000 ms against. The arg1 edge of
+/// [`RosterUpdate`] clears it.
 const ROSTER_REQUEST_THROTTLE_SECS: f64 = 10.0;
 
 /// One guild's identity, from `SMSG_GUILD_QUERY_RESPONSE`.
 #[derive(Clone, Debug, Default)]
 struct Identity {
-    /// Empty means no such guild, as the reference reads it (`0x5552ae`: cache insert `0x561070`
-    /// or remove `0x561390`); cached as a negative so the query is not re-sent.
+    /// Empty means no such guild, as the reference reads it (: cache insert or remove); cached as a
+    /// negative so the query is not re-sent.
     name: String,
     /// The ten rank names, index 0 = guild master; empty past the guild's real rank count.
     rank_names: [String; GUILD_RANKS_MAX_COUNT],
     /// The tabard's five emblem indices for the body composite: the reference reads this record
-    /// from its character compositor (`0x6d6d20`, `0x47a610`) as well as from `GetGuildInfo`.
+    /// from its character compositor as well as from `GetGuildInfo`.
     emblem: GuildEmblem,
 }
 
 impl Identity {
     /// The name of rank `index`, or `""`. Deviation: bounded at the ten slots, because the
-    /// reference's read (`0x4c93e7`) runs past its array.
+    /// reference's read runs past its array.
     fn rank_name(&self, index: u32) -> &str {
         usize::try_from(index)
             .ok()
@@ -57,10 +57,9 @@ impl Identity {
 }
 
 /// Which `GUILD_ROSTER_UPDATE` the feed owes. A truthy arg1 makes the stock pane re-request the
-/// roster (`FriendsFrame.lua:646-653`). The reference's `0x4d1160` fires it bare for a parsed
-/// roster, a show-offline change, a re-sort and a landed guild record (`0x4d0d3c`, `0x4d0f9f`,
-/// `0x4d1022`, `0x4d148c`), and with arg1 only for `SMSG_GUILD_EVENT` cases `0x00`-`0x0b`
-/// (`0x5e74c4`) and two `SMSG_GUILD_COMMAND_RESULT` arms (`0x5e7792`), clearing the
+/// roster (`FriendsFrame.lua:646-653`). The reference's fires it bare for a parsed roster, a
+/// show-offline change, a re-sort and a landed guild record, and with arg1 only for
+/// `SMSG_GUILD_EVENT` cases `0x00`-`0x0b` and two `SMSG_GUILD_COMMAND_RESULT` arms, clearing the
 /// `GuildRoster()` throttle first. arg1 on a parsed roster would re-request forever.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RosterUpdate {
@@ -77,9 +76,8 @@ impl RosterUpdate {
     }
 }
 
-/// The `guildMemberNotify` CVar, Guild Member Alert on the Chat options page (help string at
-/// `0x860320`). Off by default: its register site `0x5e24c7` pushes `"0"` (`0x82e570`). Kept apart
-/// from [`GuildState`], which is cleared on disconnect.
+/// The `guildMemberNotify` CVar, Guild Member Alert on the Chat options page. Off by default: its
+/// register site pushes `"0"`. Kept apart from [`GuildState`], which is cleared on disconnect.
 #[derive(Resource, Default)]
 pub(crate) struct GuildMemberNotify(pub(crate) bool);
 
@@ -107,11 +105,11 @@ pub(crate) struct GuildState {
     /// The members, in wire order.
     members: Vec<GuildRosterMember>,
     sort: SortStack,
-    /// `SetGuildRosterShowOffline`, off at start like the reference's `0xb73124` (`0x4d0a25`); the
-    /// FrameXML restores the saved value at `VARIABLES_LOADED`.
+    /// `SetGuildRosterShowOffline`, off at start like the reference's; the FrameXML restores the
+    /// saved value at `VARIABLES_LOADED`.
     show_offline: bool,
-    /// The selected member as a guid, `0` for none, as `SetGuildRosterSelection 0x4d1820` stores
-    /// it (`0xb73128`, at `0x4d186a`/`0x4d1872`): a re-sort keeps the same player selected.
+    /// The selected member as a guid, `0` for none, as `SetGuildRosterSelection` stores it: a
+    /// re-sort keeps the same player selected.
     selection: u64,
     /// Member guids in the order last shown, mapping a Lua row index back to its player.
     display_order: Vec<u64>,
@@ -123,7 +121,7 @@ pub(crate) struct GuildState {
     /// The pushed snapshot is stale; the feed rebuilds only when set.
     dirty: bool,
     /// `/ginfo` answers for [`feed`], which builds their lines where the VM is: their templates are
-    /// not catalog rows (`0x5e6fb0`), so they cannot ride [`crate::ui_action::UiErrorKeys`].
+    /// not catalog rows, so they cannot ride [`crate::ui_action::UiErrorKeys`].
     pending_info: Vec<GuildInfo>,
     /// The guild bank's copper, `GetGuildBankMoney` (`0xc1dc20`), 0 until a bank-money event.
     bank_money: u64,
@@ -235,7 +233,7 @@ impl GuildState {
     }
 
     /// The read that also asks: `None` on a miss, which sends the query, as the reference's
-    /// `GetGuildRosterInfo` answers nil and queries inline (`0x4d1291`).
+    /// `GetGuildRosterInfo` answers nil and queries inline.
     fn resolve_identity(&self, guild_id: u32, commands: &NetCommands) -> Option<&Identity> {
         self.request_identity(guild_id, commands);
         self.identity(guild_id)
@@ -263,8 +261,8 @@ impl GuildState {
         ])
     }
 
-    /// Drop our guild's cached record after a saved emblem (`0x5e715f`), so the next read
-    /// re-fetches it and every member in sight re-dresses, as in the reference.
+    /// Drop our guild's cached record after a saved emblem, so the next read re-fetches it and
+    /// every member in sight re-dresses, as in the reference.
     pub(crate) fn evict_own_identity(&mut self) {
         if self.identities.evict(self.guild_id) {
             self.identity_generation = self.identity_generation.wrapping_add(1);
@@ -293,7 +291,7 @@ impl GuildState {
         self.dirty = true;
         if ours {
             // Our rank names landed: repaint, never re-request, as the reference's cache callback
-            // `0x4d1480` does (`0x4d148c`).
+            // does.
             self.note_roster_update(RosterUpdate::Applied);
         }
     }
@@ -302,8 +300,8 @@ impl GuildState {
     fn apply_roster(&mut self, roster: GuildRoster) {
         self.motd = roster.motd;
         self.info_text = roster.info;
-        // Deviation: clamped to ten, because the reference's unbounded loop (`0x4d0bb0`) overruns
-        // its ten-slot array on a hostile `rankCount >= 12`.
+        // Deviation: clamped to ten, because the reference's unbounded loop overruns its ten-slot
+        // array on a hostile `rankCount >= 12`.
         self.rank_rights = roster.rank_rights;
         self.rank_rights.truncate(GUILD_RANKS_MAX_COUNT);
         self.rank_bank = roster.rank_bank;
@@ -334,8 +332,8 @@ impl GuildState {
                 self.dirty = true;
             }
             guild_event::UPDATE_RANK_NAME => {
-                // Written into the cached record with no event of its own (`0x560e30`); params are
-                // the rank id as text, then the name (vmangos `Guild/Guild.h:133`).
+                // Written into the cached record with no event of its own; params are the rank id
+                // as text, then the name (vmangos `Guild/Guild.h:133`).
                 let rank = notice.params.first().and_then(|p| p.parse::<usize>().ok());
                 let name = notice.params.get(1).cloned().unwrap_or_default();
                 if let (Some(rank), Some(identity)) = (rank, self.identities.get_mut(self.guild_id))
@@ -355,8 +353,8 @@ impl GuildState {
     }
 
     /// `SMSG_GUILD_COMMAND_RESULT`'s effect on the mirror: stale only for a successful command
-    /// `0x13`/`0x14` or result `0x14` on command `0x05` (`0x5e7792`); the server re-sends the
-    /// roster for any real change.
+    /// `0x13`/`0x14` or result `0x14` on command `0x05`; the server re-sends the roster for any
+    /// real change.
     fn apply_command_result(&mut self, result: &GuildCommandResult) {
         use benilla_protocol::messages::{guild_command, guild_command_error};
         let stale = match result.result {
@@ -377,8 +375,8 @@ impl GuildState {
         self.dirty = true;
     }
 
-    /// The popup's Accept or Decline. Nothing raises a hide edge (`0x48f470` has no callers), but
-    /// clearing lets a second invitation fire the show edge again.
+    /// The popup's Accept or Decline. Nothing raises a hide edge, but clearing lets a second
+    /// invitation fire the show edge again.
     fn clear_invite(&mut self) {
         if self.pending_invite.take().is_some() {
             self.dirty = true;
@@ -391,8 +389,8 @@ impl GuildState {
         self.note_roster_update(RosterUpdate::Applied);
     }
 
-    /// `SetGuildRosterShowOffline(flag)`: re-sort and repaint; an unchanged value does nothing,
-    /// as in the reference (`0x4d0f70`).
+    /// `SetGuildRosterShowOffline(flag)`: re-sort and repaint; an unchanged value does nothing, as
+    /// in the reference.
     fn set_show_offline(&mut self, on: bool) {
         if self.show_offline != on {
             self.show_offline = on;
@@ -424,9 +422,9 @@ impl GuildState {
         self.members.iter_mut().find(|m| m.guid == guid)
     }
 
-    /// `GetNumGuildMembers()`: the whole roster with show-offline on, else the online tally
-    /// (`0x4d1190`, against `0xb73118`/`0xb7311c`). A loop bound, not the addressable range: with
-    /// show-offline off the offline rows sort last ([`sort`]).
+    /// `GetNumGuildMembers()`: the whole roster with show-offline on, else the online tally. A loop
+    /// bound, not the addressable range: with show-offline off the offline rows sort last
+    /// ([`sort`]).
     fn num_members(&self) -> usize {
         if self.show_offline {
             self.members.len()
@@ -487,17 +485,15 @@ impl GuildState {
     }
 }
 
-/// Days since logout, fully decomposed as `GetGuildRosterLastOnline 0x4d14a0` does
-/// (`0x4d1508`-`0x4d1598`), each step truncated (`_ftol` `0x40a2b0`) and the remainder after
-/// months narrowed to f32 (`0x4d1544`). The stock frame shows only the largest non-zero unit, and
-/// all zeroes as under an hour (`FriendsFrame.lua:957-978`).
+/// Days since logout, fully decomposed as `GetGuildRosterLastOnline` does, each step truncated
+/// (`_ftol`) and the remainder after months narrowed to f32. The stock frame shows only the largest
+/// non-zero unit, and all zeroes as under an hour (`FriendsFrame.lua:957-978`).
 pub(crate) fn last_online(days: f32) -> LastOnline {
     if days.is_nan() || days <= 0.0 {
         // NaN, negative, and an online member's absent float: all zeroes.
         return LastOnline::default();
     }
-    // f64 for the reference's x87 extended precision; it multiplies by f32 reciprocals (1/365 at
-    // `0x80733c`, 1/30 at `0x807334`; 365, 30 and 24 at `0x807338`, `0x807330`, `0x80732c`).
+    // f64 for the reference's x87 extended precision; it multiplies by f32 reciprocals (365).
     const PER_YEAR: f32 = 1.0 / 365.0;
     const PER_MONTH: f32 = 1.0 / 30.0;
     let days = f64::from(days);
@@ -516,7 +512,7 @@ pub(crate) fn last_online(days: f32) -> LastOnline {
 
 /// `GetGuildInfo(unit)`: the unit's public guild fields joined against the identity cache, asking
 /// on a miss. `None` for a guildless unit, a creature or an unanswered query, one nil path in the
-/// reference (`0x4c93d7`, `0x4c943c`).
+/// reference.
 pub(crate) fn unit_guild(
     fields: &ObjectFields,
     guild: &mut GuildState,
@@ -532,9 +528,9 @@ pub(crate) fn unit_guild(
     })
 }
 
-/// A unit's guild name alone: the overhead name stack's guild line (`"\n<%s>"`, `0x860f9c`), shown
-/// under `UnitNamePlayerGuild`'s mask bit `0x10` (`0x609085`) and read through `0x5e09f0`.
-/// [`unit_guild`] without its clones: [`crate::nameplates::drive_nameplates`] reads it per frame.
+/// A unit's guild name alone: the overhead name stack's guild line (`"\n<%s>"`), shown under
+/// `UnitNamePlayerGuild`'s mask bit `0x10` and read. [`unit_guild`] without its clones:
+/// [`crate::nameplates::drive_nameplates`] reads it per frame.
 pub(crate) fn unit_guild_name<'a>(
     fields: &ObjectFields,
     guild: &'a mut GuildState,
@@ -547,10 +543,9 @@ pub(crate) fn unit_guild_name<'a>(
 
 /// A unit's guild crest for the body composite, off its public `PLAYER_GUILDID`, asking on a miss
 /// like [`unit_guild`]. `None` keeps a Guild Tabard's own `Tabard_A_05Default` art, as the
-/// reference never enters its install (`0x47a610`) for a guildless wearer (`0x560e30` returns NULL
-/// at `0x560e3f`), a creature, a query in flight (re-dressed when
-/// [`GuildState::identity_generation`] moves; the reference's callback is `0x5e0650`) or an
-/// undesigned `-1` crest, which would paint blank.
+/// reference never enters its install for a guildless wearer, a creature, a query in flight
+/// (re-dressed when [`GuildState::identity_generation`] moves) or an undesigned `-1` crest, which
+/// would paint blank.
 pub(crate) fn unit_guild_emblem(
     fields: &ObjectFields,
     guild: &mut GuildState,
@@ -559,8 +554,8 @@ pub(crate) fn unit_guild_emblem(
     guild_emblem(fields.player_guild_id(), guild, commands)
 }
 
-/// The same crest for a corpse, off its own `CORPSE_FIELD_GUILD` (`0x5d6edf`) through the same
-/// lookup (`0x5d6ec0`), with the same `None` cases.
+/// The same crest for a corpse, off its own `CORPSE_FIELD_GUILD` through the same lookup, with the
+/// same `None` cases.
 pub(crate) fn corpse_guild_emblem(
     fields: &ObjectFields,
     guild: &mut GuildState,
@@ -703,14 +698,14 @@ pub(crate) mod net {
     }
 
     /// `SMSG_GUILD_EVENT`. The sign-on/sign-off pair's guid serves its line's condition, four
-    /// conjuncts in the reference's `0x0c`/`0x0d` arms, each failing to the silent exit `0x5e74c9`:
+    /// conjuncts in the reference's `0x0c`/`0x0d` arms, each failing to the silent exit:
     ///
     /// 1. a local player exists (ours: we know our guid);
-    /// 2. `guildMemberNotify` is on (`0x5e733f`, `0x5e73e7`);
-    /// 3. the subject is not us: the reference compares names (`0x609210`), we compare guids, and
-    ///    vmangos sends the sign-on to the signer too (`Guild.cpp:651-656`);
-    /// 4. the subject is not a friend (`FriendList::FindFriendSlot 0x5ae810`, not the ignore
-    ///    check), since `SMSG_FRIEND_STATUS` prints the same line ungated (`0x5acde6`, `0x5ace08`).
+    /// 2. `guildMemberNotify` is on;
+    /// 3. the subject is not us: the reference compares names, we compare guids, and vmangos sends
+    ///    the sign-on to the signer too (`Guild.cpp:651-656`);
+    /// 4. the subject is not a friend (`FriendList::FindFriendSlot`, not the ignore check), since
+    ///    `SMSG_FRIEND_STATUS` prints the same line ungated.
     pub(crate) fn event(
         guild: &mut GuildState,
         errors: &mut UiErrorKeys,
@@ -894,7 +889,7 @@ mod tests {
         );
         assert!(
             net::announce_signon(&social, &on, me, Some(9)),
-            "the reference announces an ignored guildmate — 0x5ae810 is not the ignore check"
+            "the reference announces an ignored guildmate — the reference is not the ignore check"
         );
 
         // 1: a local player, and the pair's guid; either missing is the silent exit.

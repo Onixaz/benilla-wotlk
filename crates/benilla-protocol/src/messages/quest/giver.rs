@@ -467,7 +467,7 @@ pub(in crate::messages) fn read_questgiver_quest_invalid(r: &mut &[u8]) -> io::R
     read_u32_le(r)
 }
 
-/// Read `SMSG_QUESTGIVER_QUEST_FAILED` (`0x6cda70`): `u32 questId, u32 reason`.
+/// Read `SMSG_QUESTGIVER_QUEST_FAILED`: `u32 questId, u32 reason`.
 pub(in crate::messages) fn read_questgiver_quest_failed(r: &mut &[u8]) -> io::Result<(u32, u32)> {
     Ok((read_u32_le(r)?, read_u32_le(r)?))
 }

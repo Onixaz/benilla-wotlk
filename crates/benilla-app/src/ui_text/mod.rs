@@ -2,13 +2,13 @@
 //! shaped through `cosmic-text` 0.16 and emitted as [`crate::ui_pass::UiQuad`]s.
 //!
 //! Glyphs are shaped one character at a time ([`engine::TextEngine::ensure_char`]) and the pen
-//! steps by the reference's law: `floor(advance) + 1` px per glyph (`(FT_advance>>6)+1.0` at
-//! `0x5d1120`), plus 1 more under a THICK outline (`0x5ca2b0`). The four client faces have no
-//! ligature or contextual substitution, which `engine::differential_tests` asserts.
+//! steps by the reference's law: `floor(advance) + 1` px per glyph (`(FT_advance>>6)+1.0`), plus 1
+//! more under a THICK outline. The four client faces have no ligature or contextual substitution,
+//! which `engine::differential_tests` asserts.
 //!
 //! Kerning is dropped, where the reference applies negative pair kerns only, rounded up
-//! (`ComputeStep`, `0x5ca2d0`), about 0 px at UI sizes. A width is then a pure function of its
-//! characters, so one table answers a measure and a draw, even inside a Lua call.
+//! (`ComputeStep`), about 0 px at UI sizes. A width is then a pure function of its characters, so
+//! one table answers a measure and a draw, even inside a Lua call.
 //!
 //! Glyph bitmaps are swash's unhinted coverage, where the reference runs FreeType with hinting
 //! (load flags `0x208a`/`0x20c2`), so stems are slightly slimmer at small sizes.
@@ -35,9 +35,8 @@ pub(crate) use layout::{
 const DEFAULT_FONT_SIZE: f32 = 12.0;
 
 /// The one-to-one raster cap. Every `CSimpleFontString` sets the one-to-one bit (`+0x120` bit
-/// `0x200`, ctor `0x770d30` default `0x212`), which only `SetTextHeight` clears (`0x771600`), so it
-/// draws at its raster size (getter `0x7727b0(1)`), which is
-/// `min(32, max(2, round((height/768)·deviceH)))` (`0x5ca030` → `[CGxFont+0x24c]`): a FontHeight
+/// `0x200`, ctor default `0x212`), which only `SetTextHeight` clears, so it draws at its raster
+/// size, which is `min(32, max(2, round((height/768)·deviceH)))` (`[CGxFont+0x24c]`): a FontHeight
 /// of 32 or more draws 32 px, and nothing in the text pipeline scales to fit.
 ///
 /// Deviation: the cap is 32 logical units, not 32 device px, because the reference's raster-memory
@@ -47,16 +46,16 @@ const DEFAULT_FONT_SIZE: f32 = 12.0;
 pub(crate) const FONTSTRING_EM_CAP: f32 = 32.0;
 
 /// Apply [`FONTSTRING_EM_CAP`] to a UI FontString's requested height. Render and measure both cap,
-/// so `GetStringWidth` reports the width at the capped size, as the reference does (`0x772890`).
+/// so `GetStringWidth` reports the width at the capped size, as the reference does.
 pub(crate) fn fontstring_em(height: Option<f32>) -> Option<f32> {
     height.map(|h| h.min(FONTSTRING_EM_CAP))
 }
 
 /// The drawn pixel height of a UI FontString times the seam scale `s = windowH/768 × uiScale`
-/// (`crate::ui_script::seam_scale`), under the reference's two size regimes (getter `0x7727b0`):
-/// one-to-one, the default, draws the raster size ([`FONTSTRING_EM_CAP`] applied in units), and a
-/// `SetTextHeight` size (`text_height`) draws uncapped, the reference magnifying the raster to it
-/// (`0x771600` clears bit `0x200`; the drawn em is `round(size/768·deviceH)`).
+/// (`crate::ui_script::seam_scale`), under the reference's two size regimes: one-to-one, the
+/// default, draws the raster size ([`FONTSTRING_EM_CAP`] applied in units), and a `SetTextHeight`
+/// size (`text_height`) draws uncapped, the reference magnifying the raster to it (the reference
+/// clears bit `0x200`; the drawn em is `round(size/768·deviceH)`).
 pub(crate) fn drawn_px(font_height: Option<f32>, text_height: Option<f32>, s: f32) -> Option<f32> {
     match text_height {
         Some(t) => Some(t * s),
@@ -80,16 +79,15 @@ mod cap_tests {
         assert_eq!(fontstring_em(None), None);
     }
 }
-// Line pitch has no line-height factor: the reference's `LayoutLines` (`0x5cdc20`) steps
-// `px(size) + spacing`, XML `spacing` defaulting to 0. Cosmic buffers take `size` as their line
-// height too, unused: every run shapes single-line (`Wrap::None`).
+// Line pitch has no line-height factor: the reference's `LayoutLines` steps `px(size) + spacing`,
+// XML `spacing` defaulting to 0. Cosmic buffers take `size` as their line height too, unused: every
+// run shapes single-line (`Wrap::None`).
 
 /// The FontString display string, the ellipsis seam's answer, remembered per region. The reference
-/// builds it once (`0x771ec0`, into `CGxString+0xf8`) and rebuilds it only when the guard
-/// `[fontstring+0x60] & 1` is cleared: by `SetFont` (`0x7715e0`), `SetTextHeight` (`0x771666`),
-/// `SetText` (`0x771ea4`) or a resolved-rect size change (`0x768d20`); nothing per frame reaches
-/// `0x771ec0` or `0x7724a0`. This compares those inputs instead of keeping a dirty flag, sizes at
-/// the reference's `1e-5`, and not position, as a move rebuilds nothing.
+/// builds it once (into `CGxString+0xf8`) and rebuilds it only when the guard
+/// `[fontstring+0x60] & 1` is cleared: by `SetFont`, `SetTextHeight`, `SetText` or a resolved-rect
+/// size change; nothing per frame reaches. This compares those inputs instead of keeping a dirty
+/// flag, sizes at the reference's `1e-5`, and not position, as a move rebuilds nothing.
 #[derive(Default)]
 pub(crate) struct EllipsisMemo {
     entries: std::collections::HashMap<RegionHandle, Remembered>,
@@ -108,7 +106,7 @@ struct Remembered {
     display: Option<String>,
 }
 
-/// The reference's rect-change tolerance (`0x768d20`): edges moving less than this rebuild nothing.
+/// The reference's rect-change tolerance: edges moving less than this rebuild nothing.
 const RECT_EPS: f32 = 1e-5;
 
 /// Entries past which the map is dropped whole, for handle churn: a `/reload` builds a new frame

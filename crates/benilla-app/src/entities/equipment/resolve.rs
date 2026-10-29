@@ -16,9 +16,9 @@ use super::{
     ItemModelKind, ATTACH_SLOTS, COMPOSITE_SLOTS, HELD_SLOTS, NO_GLOW, PLAYER_HELD_SLOTS,
 };
 
-/// Where one held slot's item hangs, if it shows: a melee item drawn in sheath state 1, else by
-/// its own sheath type (`0x47a070`); a ranged weapon only in state 2, a bow in the left hand and
-/// the rest in the right (`0x611e10`), and detached when stowed (`0x7130a0`).
+/// Where one held slot's item hangs, if it shows: a melee item drawn in sheath state 1, else by its
+/// own sheath type; a ranged weapon only in state 2, a bow in the left hand and the rest in the
+/// right, and detached when stowed.
 pub(in crate::entities) fn placement(
     slot: usize,
     inv_type: u32,
@@ -53,7 +53,7 @@ pub(in crate::entities) fn placement(
     }
 }
 
-/// One held slot's enchant ids folded for [`DressKey`], over the seven `CGItem` slots (`0x62ec70`).
+/// One held slot's enchant ids folded for [`DressKey`], over the seven `CGItem` slots.
 fn enchant_fold(
     s: &benilla_protocol::messages::ObjectFields,
     kind: EntityKind,
@@ -67,9 +67,9 @@ fn enchant_fold(
         .fold(0i32, |acc, e| acc.wrapping_mul(31).wrapping_add(e as i32))
 }
 
-/// The nocked ammo's attachment (`0x60ba30`): HandArrow, once the `$BWP` latch is set
-/// (`[+0xd58] & 0x4000`, [`NockLatch`]). Only a bow gets there: gun and crossbow return early
-/// (`gunXbow`), thrown fails the `== 0x18` gate, and a wand's Shoot has no ammo item.
+/// The nocked ammo's attachment: HandArrow, once the `$BWP` latch is set (`[+0xd58] & 0x4000`,
+/// [`NockLatch`]). Only a bow gets there: gun and crossbow return early (`gunXbow`), thrown fails
+/// the `== 0x18` gate, and a wand's Shoot has no ammo item.
 fn ammo_attach(ranged_inv_type: Option<u32>, nock_latched: bool) -> Option<u16> {
     const INVTYPE_RANGED_BOW: u32 = 0x0f;
     (ranged_inv_type == Some(INVTYPE_RANGED_BOW) && nock_latched).then_some(attach_id::HAND_ARROW)
@@ -103,10 +103,10 @@ pub(in crate::entities) struct ResolveKey {
     latched: bool,
 }
 
-/// The dress half of the resolve, one of a model widget's re-take triggers (`0x5dee30`,
-/// `crate::portrait::SnapKey`). Its weapons are read above [`placement`], so a sheath that shows
-/// or hides one does not move it. Left out: the nocked ammo and quiver, which raise no model event
-/// (`0x60ba30` reaches no queue site), and what no sheath moves, read off the mirrored geometry.
+/// The dress half of the resolve, one of a model widget's re-take triggers
+/// (`crate::portrait::SnapKey`). Its weapons are read above [`placement`], so a sheath that shows
+/// or hides one does not move it. Left out: the nocked ammo and quiver, which raise no model event,
+/// and what no sheath moves, read off the mirrored geometry.
 #[derive(Component, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct DressKey {
     /// The body the widget duplicates.
@@ -218,7 +218,8 @@ pub(in crate::entities) fn resolve_equipment(
             commands.entity(entity).insert(key);
         }
         // `PLAYER_FLAGS`' `HIDE_HELM 0x400` and `HIDE_CLOAK 0x800` are public, so another player's
-        // choice shows here; a hidden piece is display id 0, so its model and `0x4799a0` masks go.
+        // choice shows here; a hidden piece is display id 0, so its model and the reference masks
+        // go.
         let (hide_helm, hide_cloak) = (s.player_hides_helm(), s.player_hides_cloak());
         if net_entity.kind == EntityKind::Player {
             let mut eq = Equipment {
@@ -258,7 +259,7 @@ pub(in crate::entities) fn resolve_equipment(
             eq.emblem = guilds
                 .as_deref_mut()
                 .and_then(|g| crate::ui_guild::unit_guild_emblem(s, g, &net));
-            // The designer's preview, our own body only (`[cc+0xc]`, the `0x47a610` install).
+            // The designer's preview, our own body only (`[cc+0xc]`).
             if is_self {
                 if let Some(design) = tabard_design.as_deref().and_then(|d| d.preview()) {
                     eq.emblem = Some(design);
@@ -301,7 +302,7 @@ pub(in crate::entities) fn resolve_equipment(
             visual_sheath.map_or(committed, |v| v.for_slot(slot, inv_type))
         };
         // A player in a non-character display (a form, a morph) resolves `Wielded` but attaches no
-        // item models: the reference's attach lives on the character component (`0x47a0c0`).
+        // item models: the reference's attach lives on the character component.
         let char_component = net_entity.kind != EntityKind::Player
             || net_entity
                 .display_id
@@ -309,7 +310,7 @@ pub(in crate::entities) fn resolve_equipment(
                 .is_none_or(|dm| dm.is_character_body);
         let mut slots: [Option<HeldSlot>; ATTACH_SLOTS] = [None; ATTACH_SLOTS];
         let mut wielded = Wielded {
-            // Read where the reference's `GetWeapon` reads it (`0x5ec2b8`).
+            // Read where the reference's `GetWeapon` reads it.
             disarmed: s.unit_flags() & UNIT_FLAG_DISARMED != 0,
             ..Wielded::default()
         };
@@ -369,10 +370,10 @@ pub(in crate::entities) fn resolve_equipment(
         }
         // The one hand `UNIT_FLAG_DISARMED` hides, if any.
         let hidden = wielded.disarmed_hand();
-        // The rising edge (`0x5ff580` fires on a change); a unit first seen disarmed never had one.
+        // The rising edge; a unit first seen disarmed never had one.
         let disarm_edge = hidden.is_some() && current_wielded.is_some_and(|w| !w.disarmed);
         let mut next_freeze = match hidden {
-            // The falling edge clears it: `0x5ff67d` re-attaches by the live sheath state.
+            // The falling edge clears it: the reference re-attaches by the live sheath state.
             None => None,
             // The edge writes it below, from the placement the weapon had at that moment.
             Some(_) if disarm_edge => None,
@@ -399,7 +400,7 @@ pub(in crate::entities) fn resolve_equipment(
             // enchant raises a model event drawn or not and `visual` exists only for a placed slot.
             worn[slot] = Some((display, kind, enchant_fold(s, net_entity.kind, slot)));
             let live = placement(slot, inv_type, item_sheath, sheath_of(slot, inv_type));
-            // The hidden hand's weapon stays where the disarm reflex left it (`0x5ff580`).
+            // The hidden hand's weapon stays where the disarm reflex left it.
             let attach = if hidden == Some(slot) {
                 if disarm_edge {
                     let kept = live
@@ -417,7 +418,7 @@ pub(in crate::entities) fn resolve_equipment(
             };
             ensure_item_model_mut(&mut held, display, kind, &asset_server);
             let enchants = (net_entity.kind == EntityKind::Player).then(|| {
-                // All seven `CGItem` slots (`0x62ec70`); 1.12 sends two, PERM and TEMP.
+                // All seven `CGItem` slots; 1.12 sends two, PERM and TEMP.
                 (0..7u8).filter_map(|j| s.player_visible_item_enchant(PLAYER_HELD_SLOTS[slot], j))
             });
             let visual = resolve_glow(
@@ -462,7 +463,7 @@ pub(in crate::entities) fn resolve_equipment(
                 ItemModelKind::Ammo,
                 &asset_server,
             );
-            // The ammo model's own visual (`0x479f40`, at `0x47a051`); ammo carries no enchants.
+            // The ammo model's own visual; ammo carries no enchants.
             let visual = resolve_glow(
                 glows.as_deref_mut(),
                 enchant_rows,
@@ -478,13 +479,13 @@ pub(in crate::entities) fn resolve_equipment(
                 visual,
             });
         }
-        // The quiver, players only, while the ranged weapon is drawn (`0x611e10`): the first
-        // ItemClass 11 bag in the unit's own bag slots, at attachment 26. Those slots are private
-        // fields (`UpdateFields_1_12_1.cpp:237`), so only our own body shows one; the reference is
-        // inferred to match, as its scan (`0x611f2d`) reads the unit's own inventory.
-        // Deviation: it attaches at that clip's `$SHL`, where the reference attaches it at the
-        // draw's start, because it keys on the ranged slot's sheath so it arrives with the bow it
-        // feeds; the two are a few hundred ms apart in one clip and never seen apart.
+        // The quiver, players only, while the ranged weapon is drawn: the first ItemClass 11 bag in
+        // the unit's own bag slots, at attachment 26. Those slots are private fields
+        // (`UpdateFields_1_12_1.cpp:237`), so only our own body shows one; the reference is
+        // inferred to match, as its scan reads the unit's own inventory. Deviation: it attaches at
+        // that clip's `$SHL`, where the reference attaches it at the draw's start, because it keys
+        // on the ranged slot's sheath so it arrives with the bow it feeds; the two are a few
+        // hundred ms apart in one clip and never seen apart.
         if net_entity.kind == EntityKind::Player
             && char_component
             && sheath_of(2, ranged_inv_type.unwrap_or(0)) == 2
@@ -570,7 +571,7 @@ pub(in crate::entities) fn resolve_equipment(
             }
         }
         let next = HeldItems { slots };
-        // A weapon at a hand's attachment closes that hand (`0x60b590`); a forearm shield does not.
+        // A weapon at a hand's attachment closes that hand; a forearm shield does not.
         let grip = HandGrip {
             right: next
                 .slots
@@ -602,12 +603,11 @@ pub(in crate::entities) fn resolve_equipment(
     }
 }
 
-/// A corpse's dress: the reference loops its 19 `CORPSE_FIELD_ITEM` slots into `0x478cb0`
-/// (`0x5d6260`), each `DisplayInfoID | InventoryType << 24` (vmangos `Player.cpp:4822`). Its own
-/// `HIDE_HELM 0x08` and `HIDE_CLOAK 0x10` zero head and back (`0x5d6465`, `0x5d6470`); ranged is
-/// skipped (`0x5d644e`) and the weapons are looked up as object guids that never resolve
-/// (`0x5d649b`, `0x468460`). A bone pile wears nothing (`0x5d6291`) but gets an empty
-/// [`Equipment`], which also gates the attach.
+/// A corpse's dress: the reference loops its 19 `CORPSE_FIELD_ITEM` slots, each
+/// `DisplayInfoID | InventoryType << 24` (vmangos `Player.cpp:4822`). Its own `HIDE_HELM 0x08` and
+/// `HIDE_CLOAK 0x10` zero head and back; ranged is skipped and the weapons are looked up as object
+/// guids that never resolve. A bone pile wears nothing but gets an empty [`Equipment`], which also
+/// gates the attach.
 #[allow(clippy::type_complexity)]
 pub(in crate::entities) fn resolve_corpse_equipment(
     mut commands: Commands,
@@ -649,8 +649,8 @@ pub(in crate::entities) fn resolve_corpse_equipment(
             if !s.corpse_hides_helm() {
                 eq.helm = s.corpse_item(0).map_or(0, |(display, _)| display);
             }
-            // The crest off the corpse's own `CORPSE_FIELD_GUILD` (`0x5d6ec0`, at tabard slot 0x12
-            // when its display has flag bit 0), through the living body's guild cache (`0x6d6d20`).
+            // The crest off the corpse's own `CORPSE_FIELD_GUILD` (at tabard slot 0x12 when its
+            // display has flag bit 0), through the living body's guild cache.
             eq.emblem = guilds
                 .as_deref_mut()
                 .and_then(|g| crate::ui_guild::corpse_guild_emblem(s, g, &net));
@@ -658,7 +658,7 @@ pub(in crate::entities) fn resolve_corpse_equipment(
         if current != Some(&eq) {
             commands.entity(entity).insert(eq);
         }
-        // Helm and shoulders: ordinary `0x478cb0` slots in the reference, attachments here.
+        // Helm and shoulders: ordinary slots in the reference, attachments here.
         let mut slots: [Option<HeldSlot>; ATTACH_SLOTS] = [None; ATTACH_SLOTS];
         if let (false, Some(look)) = (bones, s.corpse_look()) {
             let (race, sex) = (look.race, look.sex.min(1));
@@ -1074,7 +1074,7 @@ mod tests {
             None,
             "a drawn weapon leaves the hand on the disarm edge"
         );
-        // It comes back when the flag clears (`0x5ff67d`, `0x60b770(0)`).
+        // It comes back when the flag clears.
         *app.world_mut().get_mut::<ObjectStore>(player).unwrap() = store(0, 1);
         app.update();
         assert_eq!(

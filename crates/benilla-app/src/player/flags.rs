@@ -30,8 +30,8 @@ pub(super) fn this_frame(
     jumped: bool,
     held: bool,
     air_nudged: bool,
-    // The reference's input predicates `0x514560` and `0x5145b0` (`state::may_translate`,
-    // `state::may_turn`); death takes both down.
+    // The reference's input predicates (`state::may_translate`, `state::may_turn`); death takes
+    // both down.
     may_translate: bool,
     may_turn: bool,
     now: f32,
@@ -56,9 +56,9 @@ pub(super) fn this_frame(
     let landed;
     if let Some((swim_fwd, swim_side)) = swim {
         // SWIMMING (its pitch tail rides with it) and the direction bits of the netted swim
-        // amounts, which the swim gait selector cascades on (`0x5fd100`: turn 41, strafe 43/44,
-        // back 45, forward 42, idle 41), and the vertical channel's flags. No FALLING, and the arc
-        // is cleared. A flyer carries FLYING in SWIMMING's place (`0x989890`).
+        // amounts, which the swim gait selector cascades on (strafe 43/44, back 45, forward 42,
+        // idle 41), and the vertical channel's flags. No FALLING, and the arc is cleared. A flyer
+        // carries FLYING in SWIMMING's place (`0x989890`).
         let medium = if player.flying {
             move_flags::FLYING
         } else {
@@ -106,9 +106,9 @@ pub(super) fn this_frame(
             move_flags_now |= move_flags::FALLING;
             // In mid-air the wire's direction bits track the keys, as the reference's do (in a
             // 1.12.1 capture a strafe pressed mid-air lands as `(Forward, StrafeLeft)`); only the
-            // velocity basis freezes (`0x7c5a20` skips it while FALLING), and observers pick the
-            // landing anim off the touchdown flags (`0x602c60`). The pose keeps the takeoff
-            // directions, re-seeded by a new arc and by the standstill air nudge.
+            // velocity basis freezes, and observers pick the landing anim off the touchdown flags.
+            // The pose keeps the takeoff directions, re-seeded by a new arc and by the standstill
+            // air nudge.
             if arc.new_arc || air_nudged {
                 player.airborne_dirs = move_flags_now & move_flags::ANY_MOVE;
             }
@@ -123,15 +123,14 @@ pub(super) fn this_frame(
             move_flags_now = 0;
         }
     }
-    // `MOVEFLAG_WALK_MODE` (`0x100`) is a mode, not a motion, so it goes on after the settle's
-    // wipe and survives the root and stun suppressions: the reference's input allow-list
-    // (`0x615c71`, table `0x618054`) blocks translation under a root and permits run/walk.
+    // `MOVEFLAG_WALK_MODE` (`0x100`) is a mode, not a motion, so it goes on after the settle's wipe
+    // and survives the root and stun suppressions: the reference's input allow-list blocks
+    // translation under a root and permits run/walk.
     if player.walking {
         move_flags_now |= move_flags::WALK_MODE;
     }
-    // A knockback streams FORWARD all arc: the reference's apply `0x6179c0` clears bit 1
-    // (`0x617a0f`) and sets bit 0 (`0x617a18 or edx,0x8001`) at launch, and the send mask
-    // (`0x618909 and edx,0x75a07dff`) keeps it; the same bit makes the arc unsteerable.
+    // A knockback streams FORWARD all arc: the reference's apply clears bit 1 and sets bit 0 at
+    // launch, and the send mask keeps it; the same bit makes the arc unsteerable.
     if player.knock_arc {
         move_flags_now = (move_flags_now & !move_flags::BACKWARD) | move_flags::FORWARD;
     }
@@ -145,7 +144,7 @@ pub(super) fn this_frame(
     }
 
     // In the air the pose keeps the takeoff directions: the reference's anim layer plays the
-    // takeoff flags until FALLINGFAR latches (`0x602c40`) or the unit lands.
+    // takeoff flags until FALLINGFAR latches or the unit lands.
     let pose_flags = if airborne {
         (move_flags_now & !move_flags::ANY_MOVE) | player.airborne_dirs
     } else {

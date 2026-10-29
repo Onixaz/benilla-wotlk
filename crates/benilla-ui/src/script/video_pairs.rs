@@ -14,29 +14,29 @@ use super::Model;
 /// setter warn and store nothing.
 pub const VIDEO_PAIR_CVARS: [&str; 4] = ["farclip", "shadowLevel", "texLodBias", "baseMip"];
 
-/// How a getter answers, from the CVar record it looks up by name (`0x63de30`).
+/// How a getter answers, from the CVar record it looks up by name.
 #[derive(Clone, Copy)]
 enum Read {
-    /// A constant, `GetWaterDetail`'s `0.0` (`0x488ec0`).
+    /// A constant, `GetWaterDetail`'s `0.0`.
     Zero,
     /// The record's f32 (`fld [rec+0x24]`), widened.
     Float(&'static str),
-    /// `1.0 − ` the record's integer (`fild [rec+0x28]`, `fsubr [0x8015b8]`).
+    /// `1.0 − ` the record's integer (`fild [rec+0x28]`, `fsubr`).
     OneMinusInt(&'static str),
-    /// `1.0 − ` the record's f32 (`fld [rec+0x24]`, `fsubr [0x8015b8]`).
+    /// `1.0 − ` the record's f32 (`fld [rec+0x24]`, `fsubr`).
     OneMinusFloat(&'static str),
 }
 
-/// How a setter writes, after the `lua_isnumber` gate and `lua_tonumber` (`0x6f3620`).
+/// How a setter writes, after the `lua_isnumber` gate and `lua_tonumber`.
 #[derive(Clone, Copy)]
 enum Write {
-    /// `SetWaterDetail` (`0x488ed0`): the gate, then nothing.
+    /// `SetWaterDetail`: the gate, then nothing.
     Nothing,
-    /// The number as "%f" (format `0x835160`).
+    /// The number as "%f".
     Float(&'static str),
-    /// `1 − trunc(v)` as "%d" (`__ftol`, then `mov ecx,1; sub ecx,eax`, format `0x835154`).
+    /// `1 − trunc(v)` as "%d" (`__ftol`, then `mov ecx,1; sub ecx,eax`).
     OneMinusTrunc(&'static str),
-    /// `trunc(1.0 − v)` as "%d" (`fsubr [0x8015b8]`, then `__ftol`).
+    /// `trunc(1.0 − v)` as "%d" (`fsubr`, then `__ftol`).
     TruncOneMinus(&'static str),
 }
 
@@ -52,7 +52,7 @@ struct Pair {
 }
 
 const PAIRS: [Pair; 5] = [
-    // `0x488ec0`/`0x488ed0`, usage `0x842408`: no CVar behind either.
+    // Usage: no CVar behind either.
     Pair {
         get: "GetWaterDetail",
         set: "SetWaterDetail",
@@ -61,7 +61,7 @@ const PAIRS: [Pair; 5] = [
         write: Write::Nothing,
         default: "0",
     },
-    // `0x488f00`/`0x488f30` over `farclip` (`0x842428`), usage `0x842430`.
+    // The reference over `farclip`, usage.
     Pair {
         get: "GetFarclip",
         set: "SetFarclip",
@@ -70,8 +70,8 @@ const PAIRS: [Pair; 5] = [
         write: Write::Float("farclip"),
         default: "350",
     },
-    // `0x488fb0`/`0x488fe0` over `shadowLevel` (`0x84244c`), usage `0x842458`: the slider shows
-    // `1 − shadowLevel`, so High (1) is shadow mip 0.
+    // The reference over `shadowLevel`, usage: the slider shows `1 − shadowLevel`, so High (1) is
+    // shadow mip 0.
     Pair {
         get: "GetTerrainMip",
         set: "SetTerrainMip",
@@ -80,7 +80,7 @@ const PAIRS: [Pair; 5] = [
         write: Write::OneMinusTrunc("shadowLevel"),
         default: "1",
     },
-    // `0x489110`/`0x489140` over `texLodBias` (`0x84249c`), usage `0x8424a8`.
+    // The reference over `texLodBias`, usage.
     Pair {
         get: "GetTexLodBias",
         set: "SetTexLodBias",
@@ -89,8 +89,7 @@ const PAIRS: [Pair; 5] = [
         write: Write::Float("texLodBias"),
         default: "0.0",
     },
-    // `0x489280`/`0x4892b0` over `baseMip` (`0x8424e4`), usage `0x8424ec`: the slider shows
-    // `1 − baseMip`, so High (1) is base mip 0.
+    // The reference over `baseMip`, usage: the slider shows `1 − baseMip`, so High (1) is base mip 0.
     Pair {
         get: "GetBaseMip",
         set: "SetBaseMip",
@@ -101,9 +100,9 @@ const PAIRS: [Pair; 5] = [
     },
 ];
 
-/// `__ftol` (`0x40a2b0`) truncates toward zero into a qword, and the "%d" these setters format
-/// reads its low dword. Out of range or NaN it stores the integer indefinite `0x8000000000000000`,
-/// whose low dword is 0.
+/// `__ftol` truncates toward zero into a qword, and the "%d" these setters format reads its low
+/// dword. Out of range or NaN it stores the integer indefinite `0x8000000000000000`, whose low
+/// dword is 0.
 fn ftol_low(v: f64) -> i32 {
     if v.is_finite() && v.abs() < 2f64.powi(63) {
         v.trunc() as i64 as i32

@@ -43,9 +43,9 @@ fn main() -> mlua::Result<()> {
             rows.extend(members);
         }
 
-        // The per-type metatables. Every row should read `nil`: 1.12's `lua_setmetatable`
-        // (`0x6f4020`) takes only tables and userdata, where 5.1 gives strings one whose `__index`
-        // makes `("x"):upper()` work. Probed one by one, since a `nil` has no table entry.
+        // The per-type metatables. Every row should read `nil`: 1.12's `lua_setmetatable` takes
+        // only tables and userdata, where 5.1 gives strings one whose `__index` makes
+        // `("x"):upper()` work. Probed one by one, since a `nil` has no table entry.
         let metatables: Vec<String> = script.eval(
             "local out = {} \
              local function probe(name, v) \

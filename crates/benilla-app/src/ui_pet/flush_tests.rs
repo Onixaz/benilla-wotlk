@@ -1,6 +1,6 @@
 //! The flush behind every mutation of the pet's cooldown list, whole client headless: each packet
-//! that reaches the list arrives as the session event it is, and the pet's feeds run after it.
-//! `0x4b31b0` fires `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN` and `0x4bce90` fires
+//! that reaches the list arrives as the session event it is, and the pet's feeds run after it. The
+//! reference fires `ACTIONBAR_UPDATE_COOLDOWN` then `SPELL_UPDATE_COOLDOWN` and the reference fires
 //! `PET_BAR_UPDATE_COOLDOWN`; none of the callers fires `PET_BAR_UPDATE`.
 
 use std::time::{Duration, Instant};
@@ -20,7 +20,7 @@ const FLUSH: [&str; 3] = [
     "PET_BAR_UPDATE_COOLDOWN",
 ];
 
-/// `UNIT_FIELD_SUMMONEDBY`, low word, the owner test the GO's pet leg reads (`0x6e859a`).
+/// `UNIT_FIELD_SUMMONEDBY`, low word, the owner test the GO's pet leg reads.
 const SUMMONEDBY: u16 = 12;
 
 /// Our own pet by the field the GO's pet leg reads: `SUMMONEDBY` us.
@@ -94,8 +94,8 @@ impl Rig {
     }
 }
 
-/// `0x6e85f7` inserts into the pet's list, `0x6e85fc` and `0x6e8601` flush. The bar takes no
-/// `PET_BAR_UPDATE` from it, which the spellbook's pet tab would take as a repaint of its own.
+/// The reference inserts into the pet's list, flush. The bar takes no `PET_BAR_UPDATE` from it,
+/// which the spellbook's pet tab would take as a repaint of its own.
 #[test]
 fn a_pets_spell_go_fires_the_flush_and_no_bar_update() {
     let mut rig = growl_rig();
@@ -106,7 +106,7 @@ fn a_pets_spell_go_fires_the_flush_and_no_bar_update() {
     assert!(rig.frame().is_empty(), "once, not every frame");
 }
 
-/// The GO's owner test (`0x6e859a`) admits our pet and nobody else's: no insert, no flush.
+/// The GO's owner test admits our pet and nobody else's: no insert, no flush.
 #[test]
 fn a_strangers_pet_go_flushes_nothing() {
     let strangers = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
@@ -145,8 +145,8 @@ fn a_pet_addressed_spell_cooldown_fires_the_flush() {
     assert_eq!(rig.frame(), FLUSH);
 }
 
-/// `0x6e3071`-`0x6e3080` (`SMSG_COOLDOWN_EVENT`, `SMSG_CLEAR_COOLDOWN`) and `0x6e9712`-`0x6e971c`
-/// (`SMSG_COOLDOWN_CHEAT`): each flushes for the pet's list as for a spell cast.
+/// (`SMSG_COOLDOWN_EVENT`, `SMSG_CLEAR_COOLDOWN`) and (`SMSG_COOLDOWN_CHEAT`): each flushes for the
+/// pet's list as for a spell cast.
 #[test]
 fn the_pets_event_clear_and_cheat_packets_fire_the_flush() {
     // Attributes bit 25: the record parks until the event.
@@ -199,9 +199,9 @@ fn several_mutations_in_a_frame_fire_the_flush_once() {
     assert_eq!(rig.frame(), FLUSH);
 }
 
-/// `SMSG_PET_SPELLS` seeds the list through `0x6e2c60`, which flushes nothing, and ends in
-/// `SetPet`'s `SignalEvent(0x161)` (`0x4bc90c`) whatever the packet changed: a packet that moves
-/// only the cooldowns is one `PET_BAR_UPDATE`, not the flush.
+/// `SMSG_PET_SPELLS` seeds the list, which flushes nothing, and ends in `SetPet`'s
+/// `SignalEvent(0x161)` whatever the packet changed: a packet that moves only the cooldowns is one
+/// `PET_BAR_UPDATE`, not the flush.
 #[test]
 fn the_pet_spells_packet_signals_the_bar_and_never_flushes() {
     let mut rig = growl_rig();
@@ -366,7 +366,7 @@ fn a_pet_gcd_sweeps_the_spellbooks_pet_tab_button() {
     );
     {
         let world = rig.app.world_mut();
-        // Our class, so the book reads a token (`0x4b4463`); no `ChrClasses` row, so "PET".
+        // Our class, so the book reads a token; no `ChrClasses` row, so "PET".
         world.spawn((
             crate::net::SelfPlayer,
             ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(36, 3 << 8)])),

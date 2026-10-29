@@ -1,11 +1,9 @@
-//! Character appearance render data: the geosets an appearance shows ([`CharacterGeosets`], the
-//! client's geoset dispatch `0x477520`) and the body skin it wears: body-skin batches
-//! (`M2TextureType::Other(1)`) have no texture of their own, and [`CharSections::composite_body`]
-//! builds one on the 256² partition `0x475c50` and the section→cell map `0x4782e0`.
+//! Character appearance render data: the geosets an appearance shows ([`CharacterGeosets`]) and the
+//! body skin it wears: body-skin batches (`M2TextureType::Other(1)`) have no texture of their own,
+//! and [`CharSections::composite_body`] builds one on the 256² partition and the section→cell map.
 //!
-//! DBC layouts follow the client's record readers: CharSections `0x575540`, the geoset tables
-//! `0x5753b0`/`0x575a80`.
-//! The compositor disables geosets 0..=1700; higher IDs keep their model visibility through
+//! DBC layouts follow the client's record readers: CharSections, the geoset tables. The compositor
+//! disables geosets 0..=1700; higher IDs keep their model visibility through
 //! [`VisibleGeosets::contains`].
 
 mod customization;

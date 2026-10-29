@@ -10,9 +10,8 @@ fn picker() -> UiScript {
     stock_ui(1024.0, 768.0)
 }
 
-/// What the widget reads back after being set to `(r, g, b)`: `SetColorRGB` (`0x78eae0`) rounds
-/// into bytes and stores HSV, the read-back (`0x7bbec0`) floors, so 9.75% of colours come back a
-/// step low on one channel.
+/// What the widget reads back after being set to `(r, g, b)`: `SetColorRGB` rounds into bytes and
+/// stores HSV, the read-back floors, so 9.75% of colours come back a step low on one channel.
 fn after_round_trip(r: f64, g: f64, b: f64) -> (f64, f64, f64) {
     let mut cs = benilla_ui::widget::ColorSelectState::default();
     cs.set_rgb(r, g, b);

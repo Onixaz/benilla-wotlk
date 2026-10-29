@@ -60,7 +60,7 @@ pub(super) struct FedParty {
 
 pub(crate) const PARTY_TOKENS: [&str; 4] = ["party1", "party2", "party3", "party4"];
 
-/// `partypet1..partypet4`, the pet of each [`PARTY_TOKENS`] slot (`0x4e81d0`).
+/// `partypet1..partypet4`, the pet of each [`PARTY_TOKENS`] slot.
 pub(crate) const PARTY_PET_TOKENS: [&str; 4] = ["partypet1", "partypet2", "partypet3", "partypet4"];
 
 /// A new list or a new answer: `RaidFrame.lua:43-52` decides the Raid Info button on the second
@@ -70,9 +70,9 @@ fn saved_instances_moved(saved: &[SavedInstanceInfo], answers: u32, fed: &FedPar
 }
 
 /// The `PARTY_MEMBERS_CHANGED`s the lists applied since the feed's last look owe: one each, as the
-/// reference signals once per packet (`0x5e6c61`). A fresh VM saw none of them, so it gets one
-/// catch-up for a group whose list landed before it, never the history; a count that ran backwards
-/// is a new session's, all of whose lists are new.
+/// reference signals once per packet. A fresh VM saw none of them, so it gets one catch-up for a
+/// group whose list landed before it, never the history; a count that ran backwards is a new
+/// session's, all of whose lists are new.
 fn members_changed_owed(applied: u32, seen: u32, fresh_vm: bool) -> u32 {
     match (fresh_vm, applied.checked_sub(seen)) {
         (true, _) => u32::from(applied != 0),
@@ -82,9 +82,9 @@ fn members_changed_owed(applied: u32, seen: u32, fresh_vm: bool) -> u32 {
 }
 
 /// The `RAID_ROSTER_UPDATE`s the lists applied since the feed's last look owe: one each, as the
-/// reference signals once per list (`0x4babef`, `0x4ba57b`). A fresh VM is owed none, since the
-/// roster edge gives the raid it finds its one catch-up; a count that ran backwards is a new
-/// session's, all of whose lists are new.
+/// reference signals once per list. A fresh VM is owed none, since the roster edge gives the raid
+/// it finds its one catch-up; a count that ran backwards is a new session's, all of whose lists are
+/// new.
 fn roster_updates_owed(applied: u32, seen: u32, fresh_vm: bool) -> u32 {
     if fresh_vm {
         return 0;
@@ -102,7 +102,7 @@ pub(crate) const RAID_TOKENS: [&str; 40] = [
     "raid38", "raid39", "raid40",
 ];
 
-/// `raidpet1..raidpet40`, the pet of each [`RAID_TOKENS`] row (`0x491960`).
+/// `raidpet1..raidpet40`, the pet of each [`RAID_TOKENS`] row.
 #[rustfmt::skip]
 pub(crate) const RAID_PET_TOKENS: [&str; 40] = [
     "raidpet1", "raidpet2", "raidpet3", "raidpet4", "raidpet5", "raidpet6", "raidpet7",
@@ -259,10 +259,10 @@ pub(super) fn feed_party(
                 4 => "needbeforegreed",
                 _ => "group",
             };
-            // `GetLootMethod`'s second return (`0x4e91b0`): 0 when the looter is us, else the
-            // looter's party slot + 1 over the four slots only (`0x4e81a0`, even in a raid), else
-            // nil. A master looter in another raid subgroup reads nil, never 0, which would light
-            // the crown on our portrait (`PlayerFrame.lua:48`).
+            // `GetLootMethod`'s second return: 0 when the looter is us, else the looter's party
+            // slot + 1 over the four slots only (even in a raid), else nil. A master looter in
+            // another raid subgroup reads nil, never 0, which would light the crown on our portrait
+            // (`PlayerFrame.lua:48`).
             let master = (loot.method == 2 && loot.master != 0)
                 .then(|| {
                     if Some(loot.master) == self_guid {
@@ -363,9 +363,8 @@ pub(super) fn feed_party(
         }
         // ── PARTY_MEMBER_ENABLE / PARTY_MEMBER_DISABLE ──────────────────────
         //
-        // Fired as a slot's object enters (`0x4e86b6`) or leaves (`0x5e9b78`) the object manager,
-        // with the 1-based slot as a string. Stock FrameXML ignores them
-        // (`PartyMemberFrame.lua:145` is commented out).
+        // Fired as a slot's object enters or leaves the object manager, with the 1-based slot as a
+        // string. Stock FrameXML ignores them (`PartyMemberFrame.lua:145` is commented out).
         let presence = member.map_or((0, false), |m| (m.guid, index.0.contains_key(&m.guid)));
         if fed.presence[i] != presence {
             gate.audit("feed_party", "a party-slot presence edge");
@@ -479,9 +478,9 @@ pub(super) fn feed_party(
 
     // ── PARTY_MEMBERS_CHANGED ───────────────────────────────────────────────
     //
-    // Signalled after every `SMSG_GROUP_LIST`'s member loop (`0x5e6c61`), whatever the list changed:
-    // a status, the flags, the leader or nothing at all, and an empty list reaches it too
-    // (`0x5e6b3c`). Each list in this drain fires its own, after the snapshots above.
+    // Signalled after every `SMSG_GROUP_LIST`'s member loop, whatever the list changed: a status,
+    // the flags, the leader or nothing at all, and an empty list reaches it too. Each list in this
+    // drain fires its own, after the snapshots above.
     let owed = members_changed_owed(group.lists_applied, fed.lists_applied, vm_reset);
     fed.lists_applied = group.lists_applied;
     if owed != 0 {
@@ -504,13 +503,13 @@ pub(super) fn feed_party(
     //
     // The reference signals it from four places, and `GroupState` counts the two that a list
     // drives; each list in this drain fires its own. A raid list's roster rebuild signals with no
-    // member name pending, whatever the list changed (`0x4babef`; nothing gates the signal on a difference),
-    // and a list that is not a raid signals for the roster it drops (`0x4ba57b`). The other two
-    // have no list behind them: the last pending name's answer (`0x4bada6`) and world entry filling
-    // in our own row (`0x4ba1a2`). The roster's identity (members, order, rank, subgroup, online)
-    // stands in for them when no list signalled: it moves as our own row arrives, and a list held
-    // back by a pending name fires on it when it moves. Level and health are not in it, which
-    // `RaidGroupFrame_OnEvent` re-reads on `UNIT_LEVEL` and `UNIT_HEALTH`.
+    // member name pending, whatever the list changed (nothing gates the signal on a difference),
+    // and a list that is not a raid signals for the roster it drops. The other two have no list
+    // behind them: the last pending name's answer and world entry filling in our own row. The
+    // roster's identity (members, order, rank, subgroup, online) stands in for them when no list
+    // signalled: it moves as our own row arrives, and a list held back by a pending name fires on
+    // it when it moves. Level and health are not in it, which `RaidGroupFrame_OnEvent` re-reads on
+    // `UNIT_LEVEL` and `UNIT_HEALTH`.
     let owed = roster_updates_owed(group.roster_updates, fed.roster_updates, vm_reset);
     fed.roster_updates = group.roster_updates;
     let roster_moved = raid_key != fed.raid_key;
@@ -536,9 +535,9 @@ pub(super) fn feed_party(
 
     // ── READY_CHECK ─────────────────────────────────────────────────────────
     //
-    // Fired by the reference's open handler `0x4ba360` (at `0x4ba53a`), which also arms the 30 s
-    // deadline (`0xb713f4`). `UIParent.lua:571` shows the popup on it, and UIParent's OnUpdate
-    // ticks the deadline through `CheckReadyCheckTime` (`UIParent.xml:24`): no clock here.
+    // Fired by the reference's open handler, which also arms the 30 s deadline. `UIParent.lua:571`
+    // shows the popup on it, and UIParent's OnUpdate ticks the deadline through
+    // `CheckReadyCheckTime` (`UIParent.xml:24`): no clock here.
     if group.ready_check != fed.ready_check {
         gate.audit("feed_party", "the ready-check edge");
         fed.ready_check = group.ready_check;
@@ -628,7 +627,7 @@ pub(super) struct RaidSelf {
     /// Our subgroup bits and assistant flag, `SMSG_GROUP_LIST`'s second byte.
     pub(super) flags: u8,
     pub(super) level: u32,
-    /// The area under us, walked to a zone by the caller (the reference reads `0xb4e314`).
+    /// The area under us, walked to a zone by the caller.
     pub(super) area: Option<u32>,
     /// Return 9's live-object arm, health 0 or below: `unit_is_dead`, not `unit_reads_dead`, so
     /// a feigning hunter does not read dead.
@@ -639,8 +638,8 @@ pub(super) struct RaidSelf {
 }
 
 /// The raid rows as guids, in the order [`raid_roster`] builds them, which the RaidFrame's drag,
-/// kick and menu verbs address by index: the two must agree. Us first, then the wire's members;
-/// the reference appends the local player after them (`0x5e6e73`). Empty outside a raid.
+/// kick and menu verbs address by index: the two must agree. Us first, then the wire's members; the
+/// reference appends the local player after them. Empty outside a raid.
 pub(crate) fn raid_row_guids(group: &GroupState, self_guid: Option<u64>) -> Vec<u64> {
     raid_rows(group, self_guid).collect()
 }
@@ -708,9 +707,9 @@ fn raid_guid_for_name(
         .map(|m| m.guid)
 }
 
-/// `GetRaidRosterInfo`'s array (`0x4bb560`) in [`raid_row_guids`]' order: empty outside a raid,
-/// so `GetNumRaidMembers()` answers 0 in a party. The reference's array holds the local player
-/// and the wire's list does not, so our row comes from [`RaidSelf`].
+/// `GetRaidRosterInfo`'s array in [`raid_row_guids`]' order: empty outside a raid, so
+/// `GetNumRaidMembers()` answers 0 in a party. The reference's array holds the local player and the
+/// wire's list does not, so our row comes from [`RaidSelf`].
 fn raid_roster(
     group: &GroupState,
     me: Option<&RaidSelf>,
@@ -721,8 +720,8 @@ fn raid_roster(
     if group.group_type != GROUPTYPE_RAID {
         return Vec::new();
     }
-    // Rank 2 leader, 1 assistant, 0 member, as the reference's roster rebuild writes it
-    // (`0x4ba90c`, `0x4ba920`, `0x4ba929`) and the binding returns it unchanged.
+    // Rank 2 leader, 1 assistant, 0 member, as the reference's roster rebuild writes it and the
+    // binding returns it unchanged.
     let rank_of = |guid: u64, flags: u8| {
         if guid == group.leader {
             2
@@ -747,7 +746,7 @@ fn raid_roster(
             name,
             guid,
             rank: rank_of(guid, flags),
-            // Stored 0-based; the binding adds one (`0x4bb61a`).
+            // Stored 0-based; the binding adds one.
             subgroup: u32::from(flags & GROUP_MEMBER_SUBGROUP),
             level,
             class: class.map(|(n, _)| n.to_string()),
@@ -763,7 +762,7 @@ fn raid_roster(
     if let Some(me) = me {
         roster.push(row(
             me.guid,
-            // An unresolved name gets the binding's miss tuple, not a half-filled row (`0x4bb5f8`).
+            // An unresolved name gets the binding's miss tuple, not a half-filled row.
             names.peek(me.guid).unwrap_or_default().to_string(),
             me.flags,
             me.level,
@@ -823,7 +822,7 @@ fn member_assignments(flags: u8) -> u8 {
 fn member_unit_state(
     m: &GroupMemberEntry,
     stats: Option<&PartyMemberStatsInfo>,
-    // Their live descriptor while the object manager holds them (the reference's `0x468460`).
+    // Their live descriptor while the object manager holds them.
     store: Option<&ObjectStore>,
     group: &GroupState,
     own_group: Option<String>,
@@ -837,11 +836,10 @@ fn member_unit_state(
         Some(store) => {
             crate::ui_unit::snapshot(store, m.guid, Some(m.name.clone()), 0, classes, types)
         }
-        // Unstreamed: the roster record, snapshotted from the descriptor at despawn (`0x5f0880`),
-        // seated at 1/1 for a member never seen (`0x4e82d0`) and patched by the wire. The
-        // reference's getters read the descriptor, then the party record (`0x496400`), then the
-        // pet record (`0x496420`); a `partyN` token names a player, so only `partypetN` reaches
-        // that last leg ([`pets`]).
+        // Unstreamed: the roster record, snapshotted from the descriptor at despawn, seated at 1/1
+        // for a member never seen and patched by the wire. The reference's getters read the
+        // descriptor, then the party record, then the pet record; a `partyN` token names a player,
+        // so only `partypetN` reaches that last leg ([`pets`]).
         None => UnitState {
             exists: true,
             guid: m.guid,
@@ -850,18 +848,17 @@ fn member_unit_state(
             max_health: stats.and_then(|s| s.max_hp).unwrap_or(0),
             level: stats.and_then(|s| s.level).map_or(0, u32::from),
             power_type: stats.map_or(0, PartyMemberStatsInfo::shown_power_type),
-            // Divided as on the live leg (`UnitMana`'s record path, `0x517744`-`0x51775e`).
+            // Divided as on the live leg (`UnitMana`'s record path).
             power: stats.map_or(0, PartyMemberStatsInfo::shown_power),
             max_power: stats.map_or(0, PartyMemberStatsInfo::shown_max_power),
-            // Connected is the record's own online bit (`+0x08 & 1`, `0x517dd3`), which each list
-            // rewrites from its row's status (`0x4e836e`-`0x4e837b`) and a stats packet's status
-            // moves alone, so the roster byte is not read. A held member never gets here, its 1 is
-            // `snapshot`'s (`0x517daf`); a member with no record has no bit to read.
+            // Connected is the record's own online bit (`+0x08 & 1`), which each list rewrites from
+            // its row's status and a stats packet's status moves alone, so the roster byte is not
+            // read. A held member never gets here, its 1 is `snapshot`'s; a member with no record
+            // has no bit to read.
             is_connected: stats.is_some_and(PartyMemberStatsInfo::is_online),
-            // Dead and ghost from the record, as the reference's `UnitIsDead` (`0x517b5d`,
-            // `+0x08 & 4`) and `UnitIsGhost` (`0x517c32`, `& 8`) read it: fresher than the roster
-            // byte, which only `SMSG_GROUP_LIST` moves. AFK and DND likewise (`0x60cd0c`,
-            // `0x60cde9`).
+            // Dead and ghost from the record, as the reference's `UnitIsDead` (`+0x08 & 4`) and
+            // `UnitIsGhost` (`& 8`) read it: fresher than the roster byte, which only
+            // `SMSG_GROUP_LIST` moves. AFK and DND likewise (`0x60cd0c`, `0x60cde9`).
             dead: stats.is_some_and(|s| s.has_status(member_status::DEAD)),
             ghost: stats.is_some_and(|s| s.has_status(member_status::GHOST)),
             afk: stats.is_some_and(|s| s.has_status(member_status::AFK)),
@@ -1040,7 +1037,7 @@ pub(super) fn drain_party(
                     0
                 };
                 // An absent threshold keeps the group's current one (at least 2), where the
-                // reference's binding defaults it to 2 (`0x4e946d`), so a method change resets it.
+                // reference's binding defaults it to 2, so a method change resets it.
                 let threshold = asked.unwrap_or_else(|| {
                     group
                         .loot
@@ -1093,7 +1090,7 @@ pub(super) fn drain_party(
             // ── The raid-management verbs ────────────────────────────────────
             //
             // The RaidFrame names rows by index, UnitPopup by name. A row that is not there sends
-            // nothing, as in the reference's bindings (`UninviteFromRaid`, `0x48a5c9`).
+            // nothing, as in the reference's bindings (`UninviteFromRaid`).
             PartyRequest::ConvertToRaid => {
                 let _ = commands.0.send(ClientCommand::GroupRaidConvert);
             }
@@ -1180,9 +1177,8 @@ fn test_apply_local(
     let was_raid = group.group_type == GROUPTYPE_RAID;
     let handled = apply_test_intent(group, req, self_guid, target_guid);
     // The server answers each of these with a fresh `SMSG_GROUP_LIST`, which the reference signals
-    // `PARTY_MEMBERS_CHANGED` for whether or not it changed anything (`0x5e6c61`). A raid's list
-    // also signals `RAID_ROSTER_UPDATE` (`0x4babef`), and the one that ends a raid for the roster
-    // it drops (`0x4ba57b`).
+    // `PARTY_MEMBERS_CHANGED` for whether or not it changed anything. A raid's list also signals
+    // `RAID_ROSTER_UPDATE`, and the one that ends a raid for the roster it drops.
     if matches!(
         req,
         PartyRequest::Leave
@@ -1653,7 +1649,7 @@ mod tests {
         assert_eq!(
             (s.power_type, s.power, s.max_power),
             (1, 57, 100),
-            "rage reads 57/100, not 570/1000 — `UnitMana`'s record leg divides too (0x517744)"
+            "rage reads 57/100, not 570/1000 — `UnitMana`'s record leg divides too"
         );
         assert!(s.exists && s.is_player && s.is_connected);
 
@@ -1755,8 +1751,8 @@ mod tests {
         );
     }
 
-    /// `UnitIsConnected` (`0x517d50`) answers 1 for any unit the object manager holds
-    /// (`0x517daf`), whatever the roster's status byte says; the record is not read.
+    /// `UnitIsConnected` answers 1 for any unit the object manager holds, whatever the roster's
+    /// status byte says; the record is not read.
     #[test]
     fn a_held_member_reads_connected_whatever_the_roster_status_says() {
         let mut app = app();
@@ -1779,8 +1775,8 @@ mod tests {
     }
 
     /// The reported shape: a member goes link-dead while still in view. The roster marks them
-    /// offline and the reference keeps them connected until the object leaves (`0x517daf`), then
-    /// reads the record's online bit (`0x517dd3`).
+    /// offline and the reference keeps them connected until the object leaves, then reads the
+    /// record's online bit.
     #[test]
     fn a_held_member_going_offline_reads_disconnected_only_once_the_object_leaves() {
         let mut app = app();
@@ -1810,8 +1806,7 @@ mod tests {
         );
     }
 
-    /// With no object, the record's online bit (`+0x08 & 1`) is the answer: clear is nil
-    /// (`0x517dfd`).
+    /// With no object, the record's online bit (`+0x08 & 1`) is the answer: clear is nil.
     #[test]
     fn an_unheld_member_with_the_online_bit_clear_reads_nil() {
         let mut app = app();
@@ -1824,7 +1819,7 @@ mod tests {
         assert_eq!(flag(&mut app, "UnitIsConnected('raid1')"), None);
     }
 
-    /// Set, it is 1 (`0x517dd7`).
+    /// Set, it is 1.
     #[test]
     fn an_unheld_member_with_the_online_bit_set_reads_connected() {
         let mut app = app();
@@ -1838,8 +1833,8 @@ mod tests {
     }
 
     /// The answer is the record's bit, not the roster byte the list also carries: a stats packet's
-    /// status moves the record alone (`0x5e54b7`-`0x5e54d8`), and `UnitIsConnected` reads the record
-    /// (`0x517dca`-`0x517dd3`), so the two can disagree between lists.
+    /// status moves the record alone, and `UnitIsConnected` reads the record, so the two can
+    /// disagree between lists.
     #[test]
     fn an_unheld_members_connected_follows_the_record_when_only_a_stats_packet_moves_it() {
         let mut app = app();
@@ -1935,8 +1930,8 @@ mod tests {
     const OFF: u8 = member_status::OFFLINE;
 
     /// The reported shape: a member out of view logs off, and the server sends the list again with
-    /// their status alone moved. The reference signals after every list (`0x5e6c61`), so the party
-    /// frame rereads them.
+    /// their status alone moved. The reference signals after every list, so the party frame rereads
+    /// them.
     #[test]
     fn a_list_that_moves_only_a_members_status_fires_party_members_changed() {
         let mut app = app();
@@ -1977,8 +1972,8 @@ mod tests {
         assert_eq!(changed(&mut app), 1, "a new threshold");
     }
 
-    /// The handler has no compare against the roster it holds (`0x5e6a40`): a list that says what
-    /// the last one said is signalled all the same.
+    /// The handler has no compare against the roster it holds: a list that says what the last one
+    /// said is signalled all the same.
     #[test]
     fn an_identical_list_fires_party_members_changed_again() {
         let mut app = app();
@@ -2008,8 +2003,8 @@ mod tests {
         assert_eq!(flag(&mut app, "UnitIsConnected('party1')"), Some(1.0));
     }
 
-    /// An empty list jumps straight to the signal (`0x5e6b3c`), the all-zero "you left" list and a
-    /// solo leader's alike, and a second one to a group already empty is not skipped.
+    /// An empty list jumps straight to the signal, the all-zero "you left" list and a solo leader's
+    /// alike, and a second one to a group already empty is not skipped.
     #[test]
     fn an_empty_list_fires_party_members_changed() {
         let mut app = app();

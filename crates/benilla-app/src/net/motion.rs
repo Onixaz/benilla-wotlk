@@ -40,8 +40,8 @@ pub(super) fn wire_yaw(orientation: f32) -> Quat {
 }
 
 /// The Bevy rotation of a GameObject placement: its `GAMEOBJECT_ROTATION` quaternion, which the
-/// reference's render matrix and collision use (`0x5f7910`); `GAMEOBJECT_FACING` (`0x5f9fb0`) is
-/// never consulted for placement.
+/// reference's render matrix and collision use; `GAMEOBJECT_FACING` is never consulted for
+/// placement.
 ///
 /// vmangos fills `rotation2/3` from the facing when the spawn row leaves them zero
 /// (`GameObject::UpdateRotationFields`), so a yaw-only row still sends `rot_z(o)`, and a row with
@@ -69,8 +69,7 @@ pub(super) fn pose_transform(position: [f32; 3], rotation: Quat) -> Transform {
 /// not yet query-visible on its spawn frame is skipped, as its spawn pose already placed it.
 ///
 /// A wire pose overrides the local facing turn, so it drops any [`DisplayFacing`] and the smoother
-/// re-seeds from this pose, as the reference's resync sets the goal and wipes the ring
-/// (`0x601020`).
+/// re-seeds from this pose, as the reference's resync sets the goal and wipes the ring.
 pub(super) fn write_pose(
     commands: &mut Commands,
     transforms: &mut Query<&mut Transform>,

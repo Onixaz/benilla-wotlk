@@ -32,7 +32,7 @@ pub struct WmoGroupNav {
     pub ref_count: u16,
     /// The `WMOAreaTable.WMOGroupID` key, MOGP `uniqueID`; 0 when none.
     pub area_table_id: u32,
-    /// MOGP fog indices (disk `+0x30`) into [`WmoModel::fogs`], for the fog selector (`0x69de20`).
+    /// MOGP fog indices (disk `+0x30`) into [`WmoModel::fogs`], for the fog selector.
     pub fog_indices: [u8; 4],
     /// The kind the whole group is submerged in, a type nibble from the target's
     /// [`benilla_formats::WmoLiquidRule::flood`] (`0xf` = none): when set, it reads submerged at
@@ -59,7 +59,7 @@ pub struct WmoModel {
     /// The root's MOSB skybox model, drawn while the camera is in a group flagged `0x40000`.
     pub skybox: Option<String>,
     /// Per-group walking-collision faces (non-DETAIL, no orientation filter): the reference's
-    /// walking BSP set (`0x6be250`, mask `0x84`) that the current-group down-ray casts on.
+    /// walking BSP set (mask `0x84`) that the current-group down-ray casts on.
     pub group_collision_tris: Vec<Vec<[[f32; 3]; 3]>>,
     /// Per-group camera-only faces (DETAIL `0x04` set, NOCAMCOLLIDE `0x02` clear). Deviation: the
     /// down-ray tries them when the walking and portal legs miss and no terrain lies below the eye,
@@ -86,16 +86,16 @@ pub struct WmoModel {
     /// Per-group MOGI interior flag and box, in WMO model space.
     pub group_bounds: Vec<WmoGroupInfo>,
     /// Per-MODD lighting base, parallel to [`Self::doodads`]. A MODD doodad never takes the
-    /// footprint down-ray: its create (`0x694e90`) never calls `SetMatrix` (`0x698d20`).
+    /// footprint down-ray: its create never calls `SetMatrix`.
     pub doodad_base: Vec<DoodadBase>,
     /// Per-MODD first referencing group, whose MOLR set the interior lane folds; the
     /// interior/exterior class reads [`Self::doodad_groups`].
     pub doodad_owner: Vec<Option<u16>>,
     /// Per-MODD every group whose MODR names it: the portal-cull key, as the reference admits a
-    /// group's props each frame its portal walk visits it (`0x685d70` → `0x6838f0`).
+    /// group's props each frame its portal walk visits it.
     pub doodad_groups: Vec<Arc<[u16]>>,
     /// Per-group footprint faces (render faces, MOCV, MOPY flags); `None` for exterior groups and
-    /// groups without MOCV. A GameObject M2 down-rays them for its MOCV lighting (`0x69e4c0`).
+    /// groups without MOCV. A GameObject M2 down-rays them for its MOCV lighting.
     pub group_footprints: Vec<Option<FootprintTris>>,
     /// Root MOMT `ground_type` per material: the `TerrainType.dbc` id of a face's MOPY material.
     pub material_ground_type: Vec<u32>,
@@ -113,7 +113,7 @@ pub struct WmoModel {
 }
 
 /// One MODD doodad's lighting base. The reference fills an interior doodad's words at create from
-/// the MODD colour: `0x694e90` calls `0x6a77e0`, diffuse floor `0x70`, ambient cap `0x60`.
+/// the MODD colour, diffuse floor `0x70`, ambient cap `0x60`.
 #[derive(Clone, PartialEq, Debug)]
 pub enum DoodadBase {
     /// The sky-lit lane of an exterior-group doodad.
@@ -245,8 +245,8 @@ pub fn collision_tri_bounds(
     (per_group, union)
 }
 
-/// The ambient cap of `0x6a77e0`, in its fixed point: a colour whose max channel exceeds 96 scales
-/// per channel to `(c·scale + 255) >> 8`, `scale = round(96·255/max − 0.5)`; otherwise it is raw.
+/// The ambient cap, in its fixed point: a colour whose max channel exceeds 96 scales per channel to
+/// `(c·scale + 255) >> 8`, `scale = round(96·255/max − 0.5)`; otherwise it is raw.
 pub fn cap96(c: [u8; 3]) -> [f32; 3] {
     let max = c[0].max(c[1]).max(c[2]);
     if max <= 96 {
@@ -256,8 +256,8 @@ pub fn cap96(c: [u8; 3]) -> [f32; 3] {
     c.map(|v| ((u32::from(v) * scale + 255) >> 8) as f32 / 255.0)
 }
 
-/// The diffuse floor of `0x6a77e0`: a colour whose max channel is below `thresh` is raised by the
-/// reference's HSV round trip at value `thresh`, a scale by `thresh/max` truncated per channel.
+/// The diffuse floor: a colour whose max channel is below `thresh` is raised by the reference's HSV
+/// round trip at value `thresh`, a scale by `thresh/max` truncated per channel.
 fn floor_raise(c: [u8; 3], thresh: u8) -> [f32; 3] {
     let max = c[0].max(c[1]).max(c[2]);
     if max >= thresh || max == 0 {
@@ -272,15 +272,15 @@ pub fn floor112(c: [u8; 3]) -> [f32; 3] {
     floor_raise(c, 112)
 }
 
-/// [`floor_raise`] at the GameObject footprint attach site's diffuse threshold `0xA8` (168),
-/// `0x69e4c0`, the entity twin of the ADT-MDDF attach at `0x6a8410`.
+/// [`floor_raise`] at the GameObject footprint attach site's diffuse threshold `0xA8` (168), the
+/// entity twin of the ADT-MDDF attach.
 pub fn floor168(c: [u8; 3]) -> [f32; 3] {
     floor_raise(c, 168)
 }
 
 /// MODD index to its first referencing group, whose MOLR set the interior lane uses. The reference
-/// creates a group's props once, when the group enters the streaming window (`0x698720` →
-/// `0x695aa0`, MODR at `+0xe8`, count `+0x144`), and never one no group names.
+/// creates a group's props once, when the group enters the streaming window (MODR at `+0xe8`, count
+/// `+0x144`), and never one no group names.
 fn modr_owners(doodad_count: usize, group_doodad_refs: &[Vec<u16>]) -> Vec<Option<u16>> {
     let mut owner: Vec<Option<u16>> = vec![None; doodad_count];
     for (gi, refs) in group_doodad_refs.iter().enumerate() {
@@ -294,7 +294,7 @@ fn modr_owners(doodad_count: usize, group_doodad_refs: &[Vec<u16>]) -> Vec<Optio
 }
 
 /// MODD index to every group whose MODR names it: the reference admits a group's props in each
-/// frame its portal walk visits it (`0x685d70` → `0x6838f0`), so a prop shows while any is visible.
+/// frame its portal walk visits it, so a prop shows while any is visible.
 fn modr_refs(doodad_count: usize, group_doodad_refs: &[Vec<u16>]) -> Vec<Arc<[u16]>> {
     let mut refs: Vec<Vec<u16>> = vec![Vec::new(); doodad_count];
     for (gi, group) in group_doodad_refs.iter().enumerate() {
@@ -310,10 +310,10 @@ fn modr_refs(doodad_count: usize, group_doodad_refs: &[Vec<u16>]) -> Vec<Arc<[u1
     refs.into_iter().map(Arc::from).collect()
 }
 
-/// Every MODD doodad's lighting base, from MODR ownership, never a spatial test; an unnamed MODD
-/// is Exterior. Exterior wins: the reference keeps one def per (MODD, placement) (`0x694e90`), and
-/// its classify (`0x695aa0`) never re-marks an exterior def interior while an exterior group
-/// clears the interior bit, so any exterior referrer makes the prop sky-lit.
+/// Every MODD doodad's lighting base, from MODR ownership, never a spatial test; an unnamed MODD is
+/// Exterior. Exterior wins: the reference keeps one def per (MODD, placement), and its classify
+/// never re-marks an exterior def interior while an exterior group clears the interior bit, so any
+/// exterior referrer makes the prop sky-lit.
 fn resolve_doodad_bases(
     doodads: &[WmoDoodad],
     groups: &[WmoGroupInfo],
@@ -468,7 +468,7 @@ impl AssetLoader for WmoModelLoader {
                 }
             }
             let subs = wmo_group_submeshes(&gbytes, &root).map_err(to_io)?;
-            // The reference walks MODR at `0x695aa0` and MOLR at `0x695c00`.
+            // The reference walks MODR and MOLR.
             if let Some(slot) = group_doodad_refs.get_mut(gi as usize) {
                 *slot = wmo_group_doodad_refs(&gbytes);
             }
@@ -589,9 +589,9 @@ impl AssetLoader for WmoModelLoader {
 
 /// The MLIQ shared-cell gate: a cell flagged `0x80` ([`LiquidMesh::shared`]) is authored in two
 /// groups and only one may draw it, or the sheet composites twice. The reference picks the drawer
-/// by the portal flood's depth parity each frame (`0x6b41c0`, `0x6b4074`, `0x6b61a0`); the lowest
-/// group index draws the same pixels, as both claimants carry the same alpha and heights. Cells
-/// match on their XY centre, quantised to 0.01 yd only to hash.
+/// by the portal flood's depth parity each frame; the lowest group index draws the same pixels, as
+/// both claimants carry the same alpha and heights. Cells match on their XY centre, quantised to
+/// 0.01 yd only to hash.
 fn resolve_shared_liquid_cells(group_liquids: &mut [Option<LiquidMesh>]) {
     let key = |m: &LiquidMesh, c: usize| -> Option<(i32, i32)> {
         let (cols, rows) = (m.grid[0] as usize, m.grid[1] as usize);
@@ -661,7 +661,7 @@ mod doodad_base_tests {
     }
 
     /// Northshire Abbey's candle stands MODD[18] and MODD[24], as the reference commits them
-    /// through `0x6a77e0` (cap scales 182 and 173).
+    /// through (cap scales 182 and 173).
     #[test]
     fn cap96_matches_the_decoded_abbey_stands_bit_exact() {
         let as_bytes = |c: [f32; 3]| c.map(|v| (v * 255.0).round() as u8);
@@ -673,8 +673,8 @@ mod doodad_base_tests {
         let raised = as_bytes(floor112([56, 28, 14]));
         assert_eq!(raised[0], 112);
         assert_eq!(raised, [112, 56, 28]);
-        // Black stays black in the reference too: it scales the HSV value by `thresh/max`
-        // (`0x6a78a5`) and forces max to 1 only to keep that divide finite (`0x6a780e`).
+        // Black stays black in the reference too: it scales the HSV value by `thresh/max` and
+        // forces max to 1 only to keep that divide finite.
         assert_eq!(as_bytes(floor112([0, 0, 0])), [0, 0, 0]);
     }
 

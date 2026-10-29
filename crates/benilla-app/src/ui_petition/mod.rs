@@ -122,8 +122,8 @@ pub(crate) struct PetitionState {
     open: Option<OpenCharter>,
     /// The record cache by petition id, asked once through [`QueryCache`].
     records: QueryCache<u32, Record>,
-    /// `[0xbdce1c]`: set while our sign is outstanding. A close's decline leg is gated on it
-    /// (`0x4f3f89`), so closing while our own signature is in flight sends no decline.
+    /// Set while our sign is outstanding. A close's decline leg is gated on it, so closing while
+    /// our own signature is in flight sends no decline.
     signing: bool,
     /// One step per landed or patched record. The charter tooltip's hover issues the record query,
     /// so `ui_items`' bag feed gates its rebuild on this or keeps the `None` it read first.
@@ -234,8 +234,8 @@ impl PetitionState {
         })
     }
 
-    /// The owner's half of a sign: append the signer, as the reference does (`0x4f41c0`), since no
-    /// fresh list comes. Returns the name if cached, the condition for `ERR_PETITION_SIGNED_S`.
+    /// The owner's half of a sign: append the signer, as the reference does, since no fresh list
+    /// comes. Returns the name if cached, the condition for `ERR_PETITION_SIGNED_S`.
     fn append_signer(
         &mut self,
         item: u64,
@@ -250,10 +250,9 @@ impl PetitionState {
         names.resolve(signer, commands).map(str::to_string)
     }
 
-    /// The `MSG_PETITION_DECLINE` `ClosePetition()` sends (`0x4f3f60`'s leg at `0x4f3fb5`), only
-    /// when a petition is open (`0x4f3f7c`), no sign of ours is in flight (`0x4f3f89`), a record
-    /// is cached (`0x4f3f95`), and we are not the owner (`0x4f3fa5`/`0x4f3fae`). The reference
-    /// reads that owner off the cached record (`0x4f3fa2`); this reads the packet's.
+    /// The `MSG_PETITION_DECLINE` `ClosePetition()` sends, only when a petition is open, no sign of
+    /// ours is in flight, a record is cached, and we are not the owner. The reference reads that
+    /// owner off the cached record; this reads the packet's.
     fn decline_on_close(&mut self, me: u64, commands: &NetCommands) {
         let Some(open) = self.open.as_ref() else {
             return;
@@ -391,7 +390,7 @@ pub(crate) mod net {
         }
     }
 
-    /// The ignore list is consulted before anything else (`0x5eeefe`).
+    /// The ignore list is consulted before anything else.
     fn on_show_signatures(
         In(ev): In<SessionEvent>,
         mut petition: ResMut<PetitionState>,
@@ -477,7 +476,7 @@ pub(crate) mod net {
     }
 
     /// `SMSG_PETITION_SHOW_SIGNATURES`: our charter or one offered to us. An ignored owner
-    /// suppresses the whole update, silently (`0x5eeefe`-`0x5eef0b`).
+    /// suppresses the whole update, silently.
     pub(crate) fn show_signatures(
         petition: &mut PetitionState,
         sigs: PetitionShowSignatures,
@@ -500,8 +499,8 @@ pub(crate) mod net {
     }
 
     /// `SMSG_PETITION_SIGN_RESULTS`: signer and owner get identical copies, told apart by the
-    /// player guid (`0x5eefee`). Another's signature is appended, result unread (`0x4f41c0`); ours
-    /// prints its line, clears the latch, and on success closes the window (`0x5ef037`).
+    /// player guid. Another's signature is appended, result unread; ours prints its line, clears
+    /// the latch, and on success closes the window.
     pub(crate) fn sign_results(
         petition: &mut PetitionState,
         names: &NameCache,
@@ -525,8 +524,8 @@ pub(crate) mod net {
         }
     }
 
-    /// `SMSG_TURN_IN_PETITION_RESULTS`: success prints nothing and closes the registrar
-    /// (`0x5ef166` fires `GUILD_REGISTRAR_CLOSED`); only the two refusals print, both red.
+    /// `SMSG_TURN_IN_PETITION_RESULTS`: success prints nothing and closes the registrar (the
+    /// reference fires `GUILD_REGISTRAR_CLOSED`); only the two refusals print, both red.
     pub(crate) fn turn_in_results(
         petition: &mut PetitionState,
         registrar: &mut GuildRegistrarState,
@@ -544,7 +543,7 @@ pub(crate) mod net {
     }
 
     /// `MSG_PETITION_DECLINE` inbound: a line only if the decliner's name is already cached, with
-    /// no query or retry (`0x5ef12a`/`0x5ef139`), so this arm takes no command channel.
+    /// no query or retry, so this arm takes no command channel.
     pub(crate) fn declined(petition: &mut PetitionState, names: &NameCache, player: u64) {
         if let Some(name) = names.peek(player) {
             let line = lines::declined_line(name);
@@ -552,8 +551,8 @@ pub(crate) mod net {
         }
     }
 
-    /// `MSG_PETITION_RENAME` inbound: the echo's name overwrites the cached title in place, with
-    /// no re-query (`0x5ef292`, which then fires `PETITION_SHOW`).
+    /// `MSG_PETITION_RENAME` inbound: the echo's name overwrites the cached title in place, with no
+    /// re-query (which then fires `PETITION_SHOW`).
     pub(crate) fn renamed(petition: &mut PetitionState, rename: PetitionRename) {
         let Some(id) = petition
             .open

@@ -1,9 +1,8 @@
 //! `DurabilityCosts.dbc` and `DurabilityQuality.dbc`, behind the repair price the reference
-//! computes itself (`0x5da330`, wrapped by `0x4faf30`): points lost × the quality row
-//! `2·Quality + 1` × the item level's weapon or armor column by subclass, rounded half away from
-//! zero to at least 1, then × `f32(1 - discount)`, stored as f32 and rounded half to even. vmangos
-//! keys the quality row `(Quality + 1)·2` (`Player.cpp:4996`), so its charge may differ from the
-//! price shown.
+//! computes itself: points lost × the quality row `2·Quality + 1` × the item level's weapon or
+//! armor column by subclass, rounded half away from zero to at least 1, then × `f32(1 - discount)`,
+//! stored as f32 and rounded half to even. vmangos keys the quality row `(Quality + 1)·2`
+//! (`Player.cpp:4996`), so its charge may differ from the price shown.
 
 use std::collections::HashMap;
 
@@ -48,8 +47,8 @@ impl DurabilityTables {
         row.get(idx).copied()
     }
 
-    /// The displayed repair cost of one item in copper, `0x4faf30`, after `discount`, the price
-    /// discount `0x612b80` returns (0 with no merchant open), kept in f64 as the reference's `st0`.
+    /// The displayed repair cost of one item in copper, after `discount`, the price discount
+    /// returns (0 with no merchant open), kept in f64 as the reference's `st0`.
     pub fn repair_cost(
         &self,
         points_lost: u32,
@@ -71,9 +70,9 @@ impl DurabilityTables {
         let base = f64::from(points_lost) * f64::from(mult) * f64::from(col);
         // Half away from zero, as the reference's ±0.5 then `_ftol`, then at least 1.
         let per = ((base + 0.5).floor() as i64).max(1);
-        // `1 - discount` stored as an f32 (`0x4faf8f fsubr`, `0x4faf95 fstp dword`).
+        // `1 - discount` stored as an f32 (`fsubr`).
         let factor = (1.0 - discount) as f32;
-        // The product stored as an f32 (`0x4fafaf`), then `fistp` rounds half to even (`0x4fafb5`).
+        // The product stored as an f32, then `fistp` rounds half to even.
         let product = (per as f64 * f64::from(factor)) as f32;
         f64::from(product).round_ties_even() as u32
     }
@@ -168,8 +167,8 @@ mod tests {
         assert_eq!(t.repair_cost(42, 23, 1, 2, 7, 0.5), 21);
     }
 
-    /// `0x4faf30` at the discounts `0x612b80` returns: the f32 multiplier and the f32 product make
-    /// a near-tie an exact `.5`, which then rounds to even where the f64 shortcut rounds down.
+    /// The reference at the discounts returns: the f32 multiplier and the f32 product make a
+    /// near-tie an exact `.5`, which then rounds to even where the f64 shortcut rounds down.
     #[test]
     fn the_discounted_cost_stores_the_multiplier_and_the_product_as_f32() {
         let mut t = tables();

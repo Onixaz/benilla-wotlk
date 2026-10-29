@@ -1,9 +1,8 @@
 //! What the binding functions called from Lua ([`BindingInput`]) leave for the engine. Every key
 //! runs its command's `Bindings.xml` body, so this is the one way a key moves the player: in the
 //! reference `MOVEFORWARD` runs `MoveForwardStart()` on the press and `MoveForwardStop()` on the
-//! release, and both halves set and clear one bit of `[InputControl+4]` through `0x515090`; so a
-//! Start with no Stop keeps moving, a Stop clears the bit whichever input set it, and a one-shot
-//! fires once per call.
+//! release, and both halves set and clear one bit of `[InputControl+4]`; so a Start with no Stop
+//! keeps moving, a Stop clears the bit whichever input set it, and a one-shot fires once per call.
 
 use benilla_ui::script::{BindingInput, FiredInput, HeldInput};
 
@@ -82,8 +81,8 @@ impl BindingsState {
     pub(super) fn apply_script_input(&mut self, inputs: Vec<BindingInput>) {
         for input in inputs {
             match input {
-                // The set helper `0x514840` early-outs on a bit already set, so a Start on a held
-                // bit is no new edge.
+                // The set helper early-outs on a bit already set, so a Start on a held bit is no
+                // new edge.
                 BindingInput::Start(held) => {
                     let i = held_input(held);
                     if !self.pressed(i) {
@@ -92,10 +91,10 @@ impl BindingsState {
                         self.control_changed = true;
                     }
                 }
-                // `0x514b70` clears the bit whoever set it, so a second key still down on the
-                // same command stops too, and its release is a no-op second Stop.
-                // A Stop that clears its bit also hands the camera its keep-smoothing argument
-                // (`0x5fa450`), which the look's end reads.
+                // The reference clears the bit whoever set it, so a second key still down on the
+                // same command stops too, and its release is a no-op second Stop. A Stop that
+                // clears its bit also hands the camera its keep-smoothing argument (`0x5fa450`),
+                // which the look's end reads.
                 BindingInput::Stop(held, keep_smoothing) => {
                     let i = held_input(held);
                     if self.pressed(i) {

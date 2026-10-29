@@ -9,10 +9,9 @@
 //! server re-anchors object visibility to the flying camera while one runs (vmangos
 //! `Player::UpdateCinematic`), so the world streams from the camera, not the avatar.
 //!
-//! The plant is `world = origin + Rz(+facing)·local`, z unchanged. The reference applies affines
-//! to a row vector on the left (`out = in·M`, `0x7bca80`), so its stored 3×3
-//! `[[cos,sin,0],[−sin,cos,0],[0,0,1]]` (`0x50c870`) is `Rz(+facing)`, though it reads as
-//! `Rz(−facing)` on a column vector.
+//! The plant is `world = origin + Rz(+facing)·local`, z unchanged. The reference applies affines to
+//! a row vector on the left (`out = in·M`), so its stored 3×3 `[[cos,sin,0],[−sin,cos,0],[0,0,1]]`
+//! is `Rz(+facing)`, though it reads as `Rz(−facing)` on a column vector.
 
 use std::collections::HashMap;
 
@@ -193,8 +192,8 @@ pub struct CinematicPath {
     /// The row's `SoundEntries.dbc` narration id, 0 for a silent shot.
     pub sound_id: u32,
     /// The authored field of view in radians: 45° on every shipped shot but the Undead intro's 90°.
-    /// Not the fly-by's framing: the reference reads the record's optics only in `0x7ac640`, on the
-    /// portrait and `<Model>` paths, and flies through the world camera's own, set every frame.
+    /// Not the fly-by's framing: the reference reads the record's optics only, on the portrait and
+    /// `<Model>` paths, and flies through the world camera's own, set every frame.
     pub fov: f32,
     /// The authored near clip (8/36 on every shipped shot), unread on this path like [`Self::fov`].
     pub near_clip: f32,

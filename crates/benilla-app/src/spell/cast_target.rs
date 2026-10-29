@@ -1,18 +1,17 @@
-//! Cast target resolution: what goes in `CMSG_CAST_SPELL`'s target block (reference: `ArmCast
-//! 0x6e5250`, `BindTarget 0x6e5b40`). The flag word is seeded from `Spell.dbc` `Targets` and
-//! adjusted by the implicit-target switch (jump table `0x6e5484`), then:
+//! Cast target resolution: what goes in `CMSG_CAST_SPELL`'s target block (reference: `ArmCast`,
+//! `BindTarget`). The flag word is seeded from `Spell.dbc` `Targets` and adjusted by the
+//! implicit-target switch, then:
 //!
 //! - word 0: commit at once with mask 0 and no guid, never the selection; the server fills the
 //!   target from the spell's implicit targeting.
-//! - `Attributes & 0x200`: the candidate is the equipped main hand (`0x6e5361`), bound as an item
-//!   with no cursor; an empty hand refuses with "Your weapon hand is empty" (`0x6e504b`).
+//! - `Attributes & 0x200`: the candidate is the equipped main hand, bound as an item with no
+//!   cursor; an empty hand refuses with "Your weapon hand is empty".
 //! - otherwise the selection meets `BindTarget`'s gates ([`bind_gates`]), then each bit is cleared
-//!   by its relation check; then the player behind `autoSelfCast` (`0x6e53d7`) does the same. Only a
-//!   fully cleared word commits, as a unit guid.
-//! - a word with item, lock, GameObject or location bits enters the targeting cursor carrying
-//!   the whole word: its location (`0x6e6320`, `& 0x60`), item (`0x6e6330`, `& 0x4010`),
-//!   GameObject (`0x6e62d0`, `& 0x4800`), glyph socket (`0x7fdd60`, `& 0x20000`) and unit
-//!   (`0x6e6460`) predicates can hold at once, and the click picks the leg.
+//!   by its relation check; then the player behind `autoSelfCast` does the same. Only a fully
+//!   cleared word commits, as a unit guid.
+//! - a word with item, lock, GameObject or location bits enters the targeting cursor carrying the
+//!   whole word: its location (`& 0x60`), item (`& 0x4010`), GameObject (`& 0x4800`), glyph socket
+//!   (`0x7fdd60`, `& 0x20000`) and unit predicates can hold at once, and the click picks the leg.
 //!
 //! The unit hand cursor receives a residual unit word without the enemy bit. A word carrying
 //! `0x80` instead raises the local no-target/invalid-target refusal; STRING bit 13 remains
@@ -32,7 +31,7 @@ use crate::target::{can_assist, can_attack, Factions, Selection};
 use crate::unit_auras::UnitAuras;
 use benilla_protocol::messages::OwnerFallback;
 
-/// `TARGET_FLAG_*` bits of the client's targeting flag word (`0xcecac0`).
+/// `TARGET_FLAG_*` bits of the client's targeting flag word.
 const TF_UNIT: u32 = 0x0002;
 const TF_UNIT_RAID: u32 = 0x0004;
 const TF_UNIT_PARTY: u32 = 0x0008;
@@ -42,7 +41,7 @@ const TF_CORPSE_ENEMY: u32 = 0x0200;
 pub(super) const TF_EXPLICIT_GATE: u32 = 0x0400;
 const TF_CORPSE_ALLY: u32 = 0x8000;
 /// The corpse words, `0x8600`: `BindTarget`'s dead-unit gate lets a dead unit through for any of
-/// them (`6e5c7a`).
+/// them.
 pub(super) const CORPSE_WORD_BITS: u32 = TF_CORPSE_ENEMY | TF_EXPLICIT_GATE | TF_CORPSE_ALLY;
 /// The unit-shaped bits a selected unit (alive or dead) can satisfy.
 const UNIT_BITS: u32 = TF_UNIT
@@ -59,28 +58,27 @@ pub(crate) const ERR_NO_TARGET: u8 = 0x09;
 pub(crate) const ERR_INVALID_TARGET: u8 = 0x0A;
 
 /// `SPELL_FAILED_MAINHAND_EMPTY`, "Your weapon hand is empty": the reference's own refusal for an
-/// imbue with an empty main hand (`0x6e5050`).
+/// imbue with an empty main hand.
 pub(crate) const ERR_MAINHAND_EMPTY: u8 = 0x2d;
 
-/// The dest-location bit, the ground-cast wire mask (`BindLocation 0x6e60f0`).
+/// The dest-location bit, the ground-cast wire mask (`BindLocation`).
 const TF_DEST_LOCATION: u32 = 0x0040;
-/// The source-location bit, `BindLocation 0x6e60f0`'s other arm (`0x6e6105`).
+/// The source-location bit, `BindLocation`'s other arm.
 const TF_SOURCE_LOCATION: u32 = 0x0020;
-/// `TargetingWantsLocation 0x6e6320`'s mask: the terrain click serves both location bits.
+/// `TargetingWantsLocation`'s mask: the terrain click serves both location bits.
 const LOCATION_BITS: u32 = TF_SOURCE_LOCATION | TF_DEST_LOCATION;
-/// The item bit, asked by the bag and paper-doll click seams (`TargetingWantsItem 0x6e6330`).
+/// The item bit, asked by the bag and paper-doll click seams (`TargetingWantsItem`).
 const TF_ITEM: u32 = 0x0010;
 /// `TARGET_FLAG_LOCKED`: in both the item mask `0x4010` and the GameObject mask `0x4800`, so one
-/// lock spell ends on a bag item or a world object. It never reaches the wire: `BindTarget`
-/// writes ITEM (`0x6e5f2e`) or GAMEOBJECT (`0x6e5f69`) instead, which vmangos accepts for a
-/// lock spell (`Spell.cpp:6755`).
+/// lock spell ends on a bag item or a world object. It never reaches the wire: `BindTarget` writes
+/// ITEM or GAMEOBJECT instead, which vmangos accepts for a lock spell (`Spell.cpp:6755`).
 const TF_LOCKED: u32 = 0x4000;
-/// `TARGET_FLAG_GAMEOBJECT`, the other bit of `TargetingWantsGameObject 0x6e62d0`'s `0x4800`.
+/// `TARGET_FLAG_GAMEOBJECT`, the other bit of `TargetingWantsGameObject`'s `0x4800`.
 const TF_GAMEOBJECT: u32 = 0x0800;
 /// `TARGET_FLAG_GLYPH_SLOT`, the glyph frame's seam (`SpellCanTargetGlyph 0x7fdd60`): every
 /// `Targets` bit above `0xffff` on 12340 is this one, alone.
 pub(crate) const TF_GLYPH_SLOT: u32 = 0x2_0000;
-/// The bits `BindTarget`'s item arm admits and clears (`0x6e5f1e`, `0x6e5f36`).
+/// The bits `BindTarget`'s item arm admits and clears.
 const ITEM_ARM_BITS: u32 = TF_ITEM | TF_LOCKED;
 
 /// What the wire's target block should carry for this cast.
@@ -94,27 +92,26 @@ pub(crate) enum CastWireTarget {
     /// imbue binds an item from the cast itself; every other item target comes from a click.
     Item(u64),
     /// No send yet: enter the targeting cursor with this flag word (reference: word != 0 is
-    /// `IsTargeting 0x6e48a0`). Each click seam tests the word with its own mask, so one word can
-    /// serve several: Opening and Pick Lock take a bag item or a world GameObject.
+    /// `IsTargeting`). Each click seam tests the word with its own mask, so one word can serve
+    /// several: Opening and Pick Lock take a bag item or a world GameObject.
     Targeting(u32),
     /// Do not send; show this client error.
     Refused(u8),
-    /// A refusal the reference raises in its cast tail after `ArmCast` returns false (`0x6e5045`).
-    /// That tail runs after the requirement validator `0x6094f0`, so it fires at the cursor-entry
-    /// point in [`super::send_spell_cast`], not at the resolver's return.
+    /// A refusal the reference raises in its cast tail after `ArmCast` returns false. That tail
+    /// runs after the requirement validator, so it fires at the cursor-entry point in
+    /// [`super::send_spell_cast`], not at the resolver's return.
     RefusedAtArm(u8),
 }
 
-/// Where `ArmCast 0x6e5250` takes its candidate guid from (`0x6e5361`-`0x6e539f`). The main hand
-/// is taken instead of the selection, never before it; `caster` is the separate `autoSelfCast`
-/// fallback (`0x6e53d7`).
+/// Where `ArmCast` takes its candidate guid. The main hand is taken instead of the selection, never
+/// before it; `caster` is the separate `autoSelfCast` fallback.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct CastCandidates {
-    /// The current selection (the client's `0xb4e2d8`); benilla never passes an explicit guid.
+    /// The current selection; benilla never passes an explicit guid.
     pub(crate) selection: Option<u64>,
     pub(crate) caster: Option<u64>,
     /// The equipped main hand's item guid (`[player+0x1d3c][15]`), only when it resolves to a
-    /// streamed item object (`0x468460` at `0x6e53bc`).
+    /// streamed item object.
     pub(crate) main_hand_item: Option<u64>,
 }
 
@@ -129,12 +126,12 @@ pub(crate) struct TargetRelations<'a> {
     pub(crate) reputations: &'a Reputations,
     /// The creature-type gate's inputs, for the candidate and for the player alike.
     pub(crate) types: CreatureTypeSources<'a>,
-    /// The party and raid predicates' inputs (`0x606c20`, `0x606d20`).
+    /// The party and raid predicates' inputs.
     pub(crate) group: GroupInputs<'a>,
 }
 
-/// A unit's owner as the controller resolve `0x606170` reads it, its charmer
-/// else its creator: that object's descriptor, if it has streamed (`0x468460`).
+/// A unit's owner as the controller resolve reads it, its charmer else its creator: that object's
+/// descriptor, if it has streamed.
 pub(super) fn owner_store<'a>(
     store: Option<&ObjectStore>,
     index: Option<&GuidIndex>,
@@ -159,8 +156,8 @@ impl TargetRelations<'_> {
             )
     }
 
-    /// `CanAttack 0x606980` toward the candidate, never the caster. The binder's enemy arm and the
-    /// world pick's relation leg both ask it.
+    /// `CanAttack` toward the candidate, never the caster. The binder's enemy arm and the world
+    /// pick's relation leg both ask it.
     pub(super) fn attackable(&self, is_self: bool) -> bool {
         !is_self
             && can_attack(
@@ -179,7 +176,7 @@ pub(crate) struct CastContext<'a> {
     pub(crate) self_guid: Option<u64>,
     pub(crate) auto_self_cast: bool,
     pub(crate) rel: TargetRelations<'a>,
-    /// The local range gate's inputs (`IsTargetInRange 0x6e47b0`).
+    /// The local range gate's inputs (`IsTargetInRange`).
     pub(crate) range: RangeInputs,
     /// The main hand's item guid off the player descriptor (`PLAYER_FIELD_INV_SLOT_HEAD + 2*15`);
     /// the send path checks that it names a streamed item.
@@ -197,8 +194,8 @@ pub(crate) struct CastContext<'a> {
 }
 
 /// Positions and the two units for the pre-send range refusal: the client's cast runs
-/// `CanTargetUnit 0x6e4440` and `IsTargetInRange 0x6e47b0` before the commit, so an out-of-range
-/// press refuses locally and none of the commit tail runs.
+/// `CanTargetUnit` and `IsTargetInRange` before the commit, so an out-of-range press refuses
+/// locally and none of the commit tail runs.
 #[derive(Clone, Copy)]
 pub(crate) struct RangeInputs {
     pub(crate) self_pos: Option<Vec3>,
@@ -210,10 +207,10 @@ pub(crate) struct RangeInputs {
 }
 
 impl RangeInputs {
-    /// The one range compare: the squared 3D distance against `GetMinMaxRange 0x6e3480`'s bounds,
-    /// "Out of range." (0x59) past max², "Target too close" (0x76) inside a nonzero min². The
-    /// pre-send gate (`IsTargetInRange 0x6e47b0`) and the targeting cursor's unit leg (`0x6e6460`,
-    /// `6e677c`–`6e6802`) both ask it. No row or no position passes; the server judges.
+    /// The one range compare: the squared 3D distance against `GetMinMaxRange`'s bounds, "Out of
+    /// range." (0x59) past max², "Target too close" (0x76) inside a nonzero min². The pre-send gate
+    /// (`IsTargetInRange`) and the targeting cursor's unit leg both ask it. No row or no position
+    /// passes; the server judges.
     pub(crate) fn refusal(
         &self,
         def: &SpellDisplay,
@@ -434,7 +431,7 @@ impl Aim {
     }
 }
 
-/// `EQUIPMENT_SLOT_MAINHAND` (the client reads it at `0x6e538b`, offset `0x78 == 15 * 8`).
+/// `EQUIPMENT_SLOT_MAINHAND` (offset `0x78 == 15 * 8`).
 const EQUIPMENT_SLOT_MAINHAND: u8 = 15;
 
 /// The `autoSelfCast` CVar, on by default as 12340 registers it (`0x51dbee`, default `"1"`).
@@ -494,8 +491,8 @@ pub(crate) fn on_cvar(
     }
 }
 
-/// The flag word: `Targets`, then one arm keyed on `EffectImplicitTargetA[0]` (`0x6e525a`-
-/// `0x6e52ef`); every implicit target not matched below leaves the word as it is.
+/// The flag word: `Targets`, then one arm keyed on `EffectImplicitTargetA[0]`; every implicit
+/// target not matched below leaves the word as it is.
 pub(crate) fn cast_target_mask(def: &SpellDisplay) -> u32 {
     let mut word = def.targets;
     match def.implicit_target_a1 {
@@ -515,16 +512,13 @@ pub(crate) fn cast_target_mask(def: &SpellDisplay) -> u32 {
     word
 }
 
-/// `BindTarget 0x6e5b40`'s unit branch past the gates: clear every flag-word bit the candidate
-/// satisfies.
+/// `BindTarget`'s unit branch past the gates: clear every flag-word bit the candidate satisfies.
 ///
-/// The assist bit asks `CanAssist 0x6066f0`: selectable, friendly or better, and an NPC's owner
-/// (or the NPC itself) PvP-enabled. This keeps friendly ambient NPCs and critters unbindable.
-/// The enemy bit asks `CanAttack` (`0x606980`). The party bit needs `0x606c20` and then `CanAssist`
-/// (`6e5cad`-`6e5cec`): the player, a member of his party, or a unit that answers to one. The raid
-/// bit needs `0x606d20` and `CanAssist` (`6e5cf1`-`6e5d2f`): the same, with the raid roster
-/// counting as well as the party slots. The corpse check (`0x6067d0`) is assistable with health 0
-/// here.
+/// The assist bit asks `CanAssist`: selectable, friendly or better, and an NPC's owner (or the NPC
+/// itself) PvP-enabled. This keeps friendly ambient NPCs and critters unbindable. The enemy bit
+/// asks `CanAttack`. The party bit needs and then `CanAssist`: the player, a member of his party,
+/// or a unit that answers to one. The raid bit needs and `CanAssist`: the same, with the raid
+/// roster counting as well as the party slots. The corpse check is assistable with health 0 here.
 fn clear_satisfied_bits(word: u32, is_self: bool, rel: &TargetRelations) -> u32 {
     let mut word = word;
     let assist = rel.assistable(is_self);
@@ -541,8 +535,8 @@ fn clear_satisfied_bits(word: u32, is_self: bool, rel: &TargetRelations) -> u32 
     if word & TF_UNIT_ENEMY != 0 && rel.attackable(is_self) {
         word &= !TF_UNIT_ENEMY;
     }
-    // Bit 1 has no relation check: any unit binds. A dead unit's bind clears bit 10 (`6e5d89`,
-    // `6e5ddb`); the gate refuses a living unit under that word before it gets here.
+    // Bit 1 has no relation check: any unit binds. A dead unit's bind clears bit 10; the gate
+    // refuses a living unit under that word before it gets here.
     if word & TF_UNIT != 0 {
         word &= !TF_UNIT;
     }
@@ -563,7 +557,7 @@ fn unit_word_binds(word: u32, is_self: bool, rel: &TargetRelations) -> bool {
     word & UNIT_BITS != 0 && clear_satisfied_bits(word, is_self, rel) == 0
 }
 
-/// Whether `BindTarget 0x6e5b40`'s unit branch binds this unit under the standing word: the gates
+/// Whether `BindTarget`'s unit branch binds this unit under the standing word: the gates
 /// ([`bind_gates`]), then the relation checks. The initial selection, the `autoSelfCast` fallback,
 /// a world click, `SpellTargetUnit` and the hover verdict all ask this one predicate. An unknown
 /// spell has no row to gate on and leaves the relation checks alone.
@@ -594,24 +588,23 @@ pub(crate) fn resolve_cast_target(
     if word == 0 {
         return CastWireTarget::SelfImplicit;
     }
-    // Implicit target 16 enters the cursor before any candidate bind (`0x6e535b`), but after the
-    // word-0 commit above (`0x6e5338` comes first).
+    // Implicit target 16 enters the cursor before any candidate bind, but after the word-0 commit
+    // above.
     if def.implicit_target_a1 == 16 {
         // The reference flags this outside the word; the click seams read only the word, so the
         // DEST bit carries it (shipped arm-16 rows already have it in `Targets`).
         return CastWireTarget::Targeting(word | TF_DEST_LOCATION);
     }
-    // `Attributes & 0x200` takes the main hand as the candidate (`0x6e5361`-`0x6e5391`). This
-    // must precede the non-unit cursor defer below: an item candidate clears bit 4.
+    // `Attributes & 0x200` takes the main hand as the candidate. This must precede the non-unit
+    // cursor defer below: an item candidate clears bit 4.
     if def.targets_main_hand_item() {
         match cand.main_hand_item {
-            // `BindTarget`'s item arm clears bits 4 and 14 (`0x6e5f35`) and the cleared word
-            // commits at once (`0x6e60c1`).
+            // `BindTarget`'s item arm clears bits 4 and 14 and the cleared word commits at once.
             Some(item) if word & ITEM_ARM_BITS != 0 && word & !ITEM_ARM_BITS == 0 => {
                 return CastWireTarget::Item(item)
             }
-            // Empty hand: not a cursor. The cast tail re-tests the attribute (`0x6e504b`), clears
-            // the word (`0x6e5057`) and raises 0x2d, jumping over the cursor arm (`0x6e50ab`).
+            // Empty hand: not a cursor. The cast tail re-tests the attribute, clears the word and
+            // raises 0x2d, jumping over the cursor arm.
             None => return CastWireTarget::RefusedAtArm(ERR_MAINHAND_EMPTY),
             // A residual the item arm cannot clear waits at the cursor in the reference; no
             // shipped row has one (all 22 carry `Targets == 0x10`).
@@ -619,9 +612,9 @@ pub(crate) fn resolve_cast_target(
         }
     }
     // A non-unit bit enters the cursor with the whole word. The reference only reaches the cursor
-    // after the unit walk fails (`0x6e50c8`), so deferring first matches it only because no unit
-    // candidate clears these bits; a location word with a unit bit beside it (0x42, NPC-cast
-    // spell 28218) binds the unit first in the reference, so it refuses here instead.
+    // after the unit walk fails, so deferring first matches it only because no unit candidate
+    // clears these bits; a location word with a unit bit beside it (0x42, NPC-cast spell 28218)
+    // binds the unit first in the reference, so it refuses here instead.
     if word & !UNIT_BITS != 0 {
         if word & LOCATION_BITS != 0 && word & UNIT_BITS == 0
             || word & (TF_ITEM | TF_LOCKED | TF_GAMEOBJECT | TF_GLYPH_SLOT) != 0
@@ -630,15 +623,15 @@ pub(crate) fn resolve_cast_target(
         }
         return CastWireTarget::Refused(ERR_INVALID_TARGET);
     }
-    // The selection (`0xb4e2d8`, `0x6e539f`). A unit the gates or the relation checks refuse binds
-    // nothing, so the fallback below gets its turn.
+    // The selection. A unit the gates or the relation checks refuse binds nothing, so the fallback
+    // below gets its turn.
     if let Some(guid) = cand.selection {
         let is_self = cand.caster == Some(guid);
         if unit_binds(Some(def), word, is_self, rel) {
             return CastWireTarget::Unit(guid);
         }
     }
-    // The fallback: the active player (`0x6e53d7`), behind autoSelfCast, through the same gates.
+    // The fallback: the active player, behind autoSelfCast, through the same gates.
     if auto_self_cast {
         if let Some(guid) = cand.caster {
             let self_rel = TargetRelations {
@@ -825,8 +818,8 @@ mod tests {
         );
     }
 
-    /// Flamestrike (implicit 16) defers even with a selection, Blizzard (implicit 28) by its
-    /// bare DEST word; a word of 0 still commits first (`0x6e5338`).
+    /// Flamestrike (implicit 16) defers even with a selection, Blizzard (implicit 28) by its bare
+    /// DEST word; a word of 0 still commits first.
     #[test]
     fn ground_masks_enter_targeting_mode() {
         let flamestrike = spell(0x40, 16);
@@ -857,7 +850,7 @@ mod tests {
         );
     }
 
-    /// A bare SOURCE word raises the cursor like DEST (`0x6e6320` tests `& 0x60`); spell 265,
+    /// A bare SOURCE word raises the cursor like DEST (the reference tests `& 0x60`); spell 265,
     /// `Targets 0x20` with implicit 15, is the shipped case.
     #[test]
     fn the_source_location_word_enters_targeting_mode() {
@@ -964,8 +957,7 @@ mod tests {
             CastWireTarget::Item(WEAPON),
             "neither the selection nor autoSelfCast has anything to do with it"
         );
-        // Unarmed: the cast tail's second test of the bit (`0x6e504b`) refuses, skipping the
-        // cursor arm (`0x6e50ab`).
+        // Unarmed: the cast tail's second test of the bit refuses, skipping the cursor arm.
         assert_eq!(
             resolve_cast_target(
                 Some(&rockbiter),
@@ -991,8 +983,8 @@ mod tests {
         );
     }
 
-    /// A dead unit's bind clears the `0x400` bit whoever it is (`6e5d89`, `6e5ddb`); a living
-    /// unit's never does, and the gate refuses it before the relation checks are asked.
+    /// A dead unit's bind clears the `0x400` bit whoever it is; a living unit's never does, and the
+    /// gate refuses it before the relation checks are asked.
     #[test]
     fn a_dead_units_bind_clears_the_0x400_bit() {
         use benilla_protocol::ObjectFields;

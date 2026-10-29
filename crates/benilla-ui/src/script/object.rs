@@ -1,10 +1,10 @@
 //! The FrameScript object model, frame side: `CreateFrame`, the frame wrappers and metatables, and
 //! the shared frame methods; the region side is [`super::region`].
 //!
-//! A frame's Lua value is a table `T` with `T[0] = lightuserdata(id)` (`0x701bd0`), cached by id
-//! and published to `_G` by name without overwriting; its metatable is its kind's
-//! ([`frame_meta_for`]). Every table lives in the Lua registry under a named key, and Rust holds
-//! none across calls (the MAXCSTACK discipline).
+//! A frame's Lua value is a table `T` with `T[0] = lightuserdata(id)`, cached by id and published
+//! to `_G` by name without overwriting; its metatable is its kind's ([`frame_meta_for`]). Every
+//! table lives in the Lua registry under a named key, and Rust holds none across calls (the
+//! MAXCSTACK discipline).
 
 use std::ffi::c_void;
 
@@ -38,7 +38,7 @@ pub(super) fn id_to_lud(id: u32) -> LightUserData {
     LightUserData(id as usize as *mut c_void)
 }
 
-/// Read the id out of a wrapper table's `T[0]` lightuserdata (`0x701bd0` writes it).
+/// Read the id out of a wrapper table's `T[0]` lightuserdata.
 pub(crate) fn decode_id(this: &Table) -> mlua::Result<u32> {
     match this.raw_get::<Value>(0)? {
         Value::LightUserData(l) => Ok(l.0 as usize as u32),
@@ -62,7 +62,7 @@ pub(crate) fn frame_handle_of(lua: &Lua, this: &Table) -> mlua::Result<FrameHand
 }
 
 // ─────────────────────────────────────────────────────────────────────────────────────────────
-// Wrapper cache (`0x701bd0`)
+// Wrapper cache
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /// The wrapper table for a frame id, created and cached on first use and published to `_G` under
@@ -110,7 +110,7 @@ pub(crate) fn frame_wrapper(lua: &Lua, id: u32) -> mlua::Result<Table> {
     Ok(t)
 }
 
-/// Publish a wrapper to `_G[name]`, non-overwriting (`0x701bd0`).
+/// Publish a wrapper to `_G[name]`, non-overwriting.
 pub(super) fn publish_global(lua: &Lua, name: &str, wrapper: &Table) -> mlua::Result<()> {
     let g = lua.globals();
     if g.get::<Value>(name)?.is_nil() {
@@ -120,11 +120,10 @@ pub(super) fn publish_global(lua: &Lua, name: &str, wrapper: &Table) -> mlua::Re
 }
 
 /// A widget name argument already looked up in `_G` ([`prefetch_named_target`], then
-/// [`resolve_named_target`]). The globals table is the client's only widget namespace (`0x701bd0`
-/// publishes there; `0x76c760` and the anchor resolver `0x76c700` read back), so a global alias
-/// of a frame (`Bar8Button1 = CharacterBag3Slot`) resolves like its name. The read is
-/// `lua_gettable` (`0x6f3a40` → `0x6f7cf0`), which honours an `__index` on `_G` that may call back
-/// into a widget binding, so it runs with no `Model` borrow alive and the decode comes after.
+/// [`resolve_named_target`]). The globals table is the client's only widget namespace, so a global
+/// alias of a frame (`Bar8Button1 = CharacterBag3Slot`) resolves like its name. The read is
+/// `lua_gettable`, which honours an `__index` on `_G` that may call back into a widget binding, so
+/// it runs with no `Model` borrow alive and the decode comes after.
 pub(crate) struct NamedTarget {
     /// The name as looked up, after any `$parent` expansion: the spelling a diagnostic quotes.
     pub(crate) name: String,
@@ -143,10 +142,9 @@ impl NamedTarget {
 }
 
 /// Read `_G[name]` for a name argument, with no `Model` borrow alive. `parent_base` is what a
-/// leading `$parent` expands to, `None` where the binding does not expand: `0x76c5b0` is called
-/// only from `SetName` (`0x76c691`) and the anchor resolver (`0x76c71c` in `0x76c700`), so
-/// `SetPoint`/`SetAllPoints`' `relativeTo` expands, and `SetParent`, `SetScrollChild` and XML
-/// `parent=`, which call `0x76c760` directly, do not.
+/// leading `$parent` expands to, `None` where the binding does not expand: the reference is called
+/// only from `SetName` and the anchor resolver, so `SetPoint`/`SetAllPoints`' `relativeTo` expands,
+/// and `SetParent`, `SetScrollChild` and XML `parent=`, which call directly, do not.
 pub(crate) fn prefetch_named_target(
     lua: &Lua,
     name: &str,
@@ -164,15 +162,15 @@ pub(crate) fn prefetch_named_target(
 }
 
 /// Decode a [`NamedTarget`] to a live frame's or region's id: `SetPoint` accepts any widget (the
-/// `CScriptRegion` type id `[0xcf0c3c]`), while `SetParent` and `SetScrollChild` check the Frame
-/// id `[0xcf0c10]` and narrow the result themselves.
+/// `CScriptRegion` type id), while `SetParent` and `SetScrollChild` check the Frame id and narrow
+/// the result themselves.
 pub(crate) fn resolve_named_target(model: &Model, target: &NamedTarget) -> Option<u32> {
     let id = decode_id(target.wrapper.as_ref()?).ok()?;
     (model.id_to_frame.contains_key(&id) || model.id_to_region.contains_key(&id)).then_some(id)
 }
 
-/// What a leading `$parent` expands to: the first non-empty name at or above `start` (`0x76c5b0`'s
-/// `+0x9c` walk), else [`crate::framexml::DEFAULT_PARENT_NAME`] (`0x76c5dd`). `start` is the
+/// What a leading `$parent` expands to: the first non-empty name at or above `start` (the
+/// reference's `+0x9c` walk), else [`crate::framexml::DEFAULT_PARENT_NAME`]. `start` is the
 /// anchoring widget's parent: a frame's enclosing frame, a region's owner.
 pub(crate) fn parent_token_base(model: &Model, start: Option<FrameHandle>) -> String {
     let mut cur = start;
@@ -210,9 +208,9 @@ pub(crate) fn point_from_str(s: &str) -> Option<Point> {
     })
 }
 
-/// The inverse of [`point_from_str`]: the names of the client's point table `0x811a38`.
-/// `GetPoint(n)`'s anchor: the `n`th set point in `FRAMEPOINT` order, `TOPLEFT` first, not in the
-/// order the points were set (`GetPoint` `0x49d950` walks the region's point slots).
+/// The inverse of [`point_from_str`]: the names of the client's point table. `GetPoint(n)`'s
+/// anchor: the `n`th set point in `FRAMEPOINT` order, `TOPLEFT` first, not in the order the points
+/// were set (`GetPoint` `0x49d950` walks the region's point slots).
 pub(crate) fn nth_point<A>(anchors: &[A], n: usize, point: impl Fn(&A) -> Point) -> Option<&A> {
     let mut by_point: Vec<&A> = anchors.iter().collect();
     by_point.sort_by_key(|a| point(a).id());
@@ -235,14 +233,13 @@ pub(crate) fn point_name(p: Point) -> &'static str {
 
 /// An enum token, trimmed and uppercased; trimmed here rather than at the attribute read, since a
 /// `text=` value's spaces count. The reference's strata lookup compares the whole token,
-/// case-insensitively (`0x6f17ee`), so a padded `"BACKGROUND "` misses there.
+/// case-insensitively, so a padded `"BACKGROUND "` misses there.
 fn enum_token(s: &str) -> String {
     s.trim().to_ascii_uppercase()
 }
 
-/// A strata name, from the reference's eight-row table (`0x8119f8`), `BACKGROUND`..`TOOLTIP`, walked
-/// by `0x6f17d0`. Stratum 0, `WORLD`, has no name: only the WorldFrame's constructor sets it
-/// (`0x481aff`).
+/// A strata name, from the reference's eight-row table, `BACKGROUND`..`TOOLTIP`, walked. Stratum 0,
+/// `WORLD`, has no name: only the WorldFrame's constructor sets it.
 pub(crate) fn strata_from_str(s: &str) -> Option<Strata> {
     Some(match enum_token(s).as_str() {
         "BACKGROUND" => Strata::Background,
@@ -285,10 +282,10 @@ pub fn frame_kind_from_tag(s: &str) -> Option<FrameKind> {
     frame_type(s).map(|t| t.kind)
 }
 
-/// The type registry lookup `CreateFrame` and the XML loader share (`0x6ee280`, table
-/// `[0xcee9d8]`): the tag's [`FrameKind`] if a factory is registered for it now. The WorldFrame's
-/// record is released once the first one is made (`0x6ee439`), so a second one misses. On a miss
-/// Lua raises and XML logs `Unknown frame type: %s` and skips the node.
+/// The type registry lookup `CreateFrame` and the XML loader share: the tag's [`FrameKind`] if a
+/// factory is registered for it now. The WorldFrame's record is released once the first one is
+/// made, so a second one misses. On a miss Lua raises and XML logs `Unknown frame type: %s` and
+/// skips the node.
 pub(crate) fn registered_frame_kind(lua: &Lua, kind: &str) -> Option<FrameKind> {
     let t = frame_type(kind)?;
     let model = lua
@@ -302,24 +299,21 @@ pub(crate) fn registered_frame_kind(lua: &Lua, kind: &str) -> Option<FrameKind> 
     (registered && !one_shot_spent).then_some(t.kind)
 }
 
-/// `ModelFFX`, the glue's `CSimpleModelFFX` (registered by the glue manager's init `0x4db9f0`): a
-/// `CSimpleModel` answering as `Model`, with `Model`'s methods and its own four light methods
-/// (table `0xac465c`).
+/// `ModelFFX`, the glue's `CSimpleModelFFX`: a `CSimpleModel` answering as `Model`, with `Model`'s
+/// methods and its own four light methods (table `0xac465c`).
 pub(crate) fn is_model_ffx(kind: &str) -> bool {
     enum_token(kind) == "MODELFFX"
 }
 
-/// When a frame type's factory is registered (`FrameXML_RegisterFactory` `0x813d20`) into the
-/// process-wide registry, which nothing clears before shutdown.
+/// When a frame type's factory is registered (`FrameXML_RegisterFactory`) into the process-wide
+/// registry, which nothing clears before shutdown.
 #[derive(Clone, Copy)]
 enum Factory {
-    /// Before any FrameScript state is built: the 13 base types (`0x813df0`), and `ModelFFX`,
-    /// which the glue manager's init registers (`0x4db9f0`) before its first build, so the
-    /// in-game state has it too.
+    /// Before any FrameScript state is built: the 13 base types, and `ModelFFX`, which the glue
+    /// manager's init registers before its first build, so the in-game state has it too.
     Startup,
-    /// `CGWorldFrame::RegisterFrames`'s eight (`0x521040`). They stay registered after a logout,
-    /// so only a glue state that never entered the world lacks them, which is the one benilla
-    /// builds.
+    /// `CGWorldFrame::RegisterFrames`'s eight. They stay registered after a logout, so only a glue
+    /// state that never entered the world lacks them, which is the one benilla builds.
     InGame,
 }
 
@@ -333,12 +327,12 @@ fn frame_type(s: &str) -> Option<FrameType> {
     use Factory::{InGame, Startup};
     let (kind, factory) = match enum_token(s).as_str() {
         "FRAME" => (FrameKind::Frame, Startup),
-        // Registered by `0x521040`, the one row passing `1` (unique) as its third argument.
+        // Registered, the one row passing `1` (unique) as its third argument.
         "WORLDFRAME" => (FrameKind::WorldFrame, InGame),
-        // A plain `CSimpleFrame`: factory `0x495ba0` allocates `0x314` like `<Frame>`'s `0x6eec10`,
-        // the ctor `0x506950` adds no field, and its paint `0x506a90` does nothing, so
-        // `GetObjectType()` is "Frame" and `IsObjectType("TaxiRouteFrame")` false (`0x484800` is
-        // not overridden). The flight lines are the FrameXML's own rotated textures.
+        // A plain `CSimpleFrame`: factory allocates `0x314` like `<Frame>`'s, the ctor adds no
+        // field, and its paint does nothing, so `GetObjectType()` is "Frame" and
+        // `IsObjectType("TaxiRouteFrame")` false. The flight lines are the FrameXML's own rotated
+        // textures.
         "TAXIROUTEFRAME" => (FrameKind::Frame, InGame),
         "BUTTON" => (FrameKind::Button, Startup),
         "CHECKBUTTON" => (FrameKind::CheckButton, Startup),
@@ -411,7 +405,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.set_named_registry_value(REG_KIND_METAS, lua.create_table()?)?;
     let frame_meta = frame_meta_for(lua, None)?;
     lua.set_named_registry_value(REG_FRAME_META, frame_meta.clone())?;
-    // FrameScript init publishes it as `_G["__framescript_meta"]` (`0x7039f7`).
+    // FrameScript init publishes it as `_G["__framescript_meta"]`.
     lua.globals().set("__framescript_meta", frame_meta)?;
 
     let create_frame = lua.create_function(create_frame)?;
@@ -442,7 +436,7 @@ pub(super) fn install_in_game(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `SetupFullscreenScale(frame)` (`0x48c270`) sets only the frame's scale, through `SetScale`:
+    // `SetupFullscreenScale(frame)` sets only the frame's scale, through `SetScale`:
     // `min(0.75 · a, 1.0)` for the configured aspect `a`, the `gxResolution` width over height,
     // which is the window's here (the reference's `widescreen` CVar at 0 would make it 4:3).
     // `UIParent`'s scale does not enter.
@@ -544,8 +538,8 @@ fn frame_meta_chain(lua: &Lua, chain: &[&'static str]) -> mlua::Result<Table> {
 }
 
 /// The registry keys of a kind's own method tables in the client's lookup order (`CheckButton`'s
-/// `0x79a5d0` tail-calls `Button`'s); empty for a plain kind or no live frame. Each chain must be
-/// its own table followed by its base's whole chain, or [`frame_meta_for`] cannot link it.
+/// tail-calls `Button`'s); empty for a plain kind or no live frame. Each chain must be its own
+/// table followed by its base's whole chain, or [`frame_meta_for`] cannot link it.
 fn kind_method_registries(kind: Option<FrameKind>) -> &'static [&'static str] {
     match kind {
         Some(FrameKind::StatusBar) => &[super::statusbar::REG_STATUSBAR_METHODS],
@@ -565,19 +559,18 @@ fn kind_method_registries(kind: Option<FrameKind>) -> &'static [&'static str] {
             super::button::REG_BUTTON_METHODS,
         ],
         Some(FrameKind::Model) => &[super::modelframe::REG_MODEL_METHODS],
-        // Its 3 methods, then `Model`'s 23: `0x506260` misses into `0x76f870`.
+        // Its 3 methods, then `Model`'s 23: the reference misses.
         Some(FrameKind::PlayerModel) => &[
             super::modelframe::REG_PLAYERMODEL_METHODS,
             super::modelframe::REG_MODEL_METHODS,
         ],
-        // 3 of its own (`0x84f190`), then `PlayerModel`'s 3 (`0x506260`), then `Model`'s 23
-        // (`0x76f870`).
+        // 3 of its own, then `PlayerModel`'s 3, then `Model`'s 23.
         Some(FrameKind::DressUpModel) => &[
             super::dressup::REG_DRESSUPMODEL_METHODS,
             super::modelframe::REG_PLAYERMODEL_METHODS,
             super::modelframe::REG_MODEL_METHODS,
         ],
-        // 10 of its own (`0x84ee40`), then `PlayerModel`'s 3, then `Model`'s 23.
+        // 10 of its own, then `PlayerModel`'s 3, then `Model`'s 23.
         Some(FrameKind::TabardModel) => &[
             super::tabard::REG_TABARDMODEL_METHODS,
             super::modelframe::REG_PLAYERMODEL_METHODS,
@@ -596,12 +589,11 @@ fn kind_method_registries(kind: Option<FrameKind>) -> &'static [&'static str] {
 }
 
 /// `CreateFrame(kind, name?, parent?, inherits?, id?)` (`0x81bb20`), the runtime frame factory;
-/// `id` is the node's `id=` attribute, so the template's `OnLoad` already reads it.
-/// `inherits` names one template, applied after the frame is made
-/// ([`crate::loader::apply_template`]) so its `OnLoad` sees the frame's real name and its `$parent`
-/// resolves against the caller's name. An unknown template raises `Couldn't find inherited node`
-/// and creates nothing (`0x7061dd`); a known but unusable one (not virtual, or the wrong shape)
-/// only warns, since the lookup itself succeeded.
+/// `id` is the node's `id=` attribute, so the template's `OnLoad` already reads it. `inherits`
+/// names one template, applied after the frame is made ([`crate::loader::apply_template`]) so its
+/// `OnLoad` sees the frame's real name and its `$parent` resolves against the caller's name. An
+/// unknown template raises `Couldn't find inherited node` and creates nothing; a known but unusable
+/// one (not virtual, or the wrong shape) only warns, since the lookup itself succeeded.
 pub(super) fn create_frame(
     lua: &Lua,
     (kind, name, parent, inherits, frame_id): (
@@ -612,20 +604,19 @@ pub(super) fn create_frame(
         Option<Value>,
     ),
 ) -> mlua::Result<Table> {
-    // An unknown type raises. The reference's message (`0x872fa8`) capitalises `Unknown`, and it
-    // tests the template first (`0x7061dd`), raising for the type only at `0x7062a0`.
+    // An unknown type raises. The reference's message capitalises `Unknown`, and it tests the
+    // template first, raising for the type only.
     let frame_kind = registered_frame_kind(lua, &kind)
         .ok_or_else(|| mlua::Error::runtime(format!("CreateFrame: unknown frame type '{kind}'")))?;
-    // `name` and `inherits` go through `lua_tostring` (`0x6f3690`) unguarded, so a number is a
-    // string: `CreateFrame("Frame", 5)` names the frame "5". For `inherits` the conversion runs
-    // before the string-type gate and retags the slot (`0x70613f`, `0x6f7cb1`), so a number there
-    // raises as a missing template, where `CreateTexture` ignores one.
+    // `name` and `inherits` go through `lua_tostring` unguarded, so a number is a string:
+    // `CreateFrame("Frame", 5)` names the frame "5". For `inherits` the conversion runs before the
+    // string-type gate and retags the slot, so a number there raises as a missing template, where
+    // `CreateTexture` ignores one.
     let name: Option<String> = name.as_ref().and_then(|v| optional_string(lua, v));
     let template: Option<String> = inherits.as_ref().and_then(|v| optional_string(lua, v));
 
     // A table is the parent and a name string is looked up; anything else is no parent. The
-    // reference raises `Usage: CreateFrame(...)` (`0x872f60`) for anything but a table or nil
-    // (`0x706112`).
+    // reference raises `Usage: CreateFrame(...)` for anything but a table or nil.
     let parent_handle: Option<FrameHandle> = {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
@@ -639,8 +630,8 @@ pub(super) fn create_frame(
         }
     };
 
-    // The reference silently ignores a fourth argument that is neither string nor number
-    // (`0x7061cb`); the warning is ours and changes nothing.
+    // The reference silently ignores a fourth argument that is neither string nor number; the
+    // warning is ours and changes nothing.
     if template.is_none() {
         if let Some(v) = inherits.as_ref().filter(|v| !v.is_nil()) {
             let mut model = crate::script::model_mut_of(lua);
@@ -653,10 +644,9 @@ pub(super) fn create_frame(
         }
     }
 
-    // The template lookup comes before anything is built: a miss (`0x7061dd` → `0x6ee6f0`) raises
-    // at `0x7061ed`, before the node build (`0x706208`) and the name store (`0x70622d`), so it
-    // leaves no partial widget and no global. The raise never returns and `pcall` catches it, as
-    // the widget dispatcher (`0x704f10`) does for every handler.
+    // The template lookup comes before anything is built: a miss raises, before the node build and
+    // the name store, so it leaves no partial widget and no global. The raise never returns and
+    // `pcall` catches it, as the widget dispatcher does for every handler.
     if let Some(t) = template.as_deref().filter(|t| !t.is_empty()) {
         let missing = {
             let model = lua
@@ -680,8 +670,8 @@ pub(super) fn create_frame(
     }
 
     // A leading `$parent` in the name expands as in XML: `CreateFrame` sets `name=` on a synthetic
-    // node (`0x70622d`) for the XML builder `0x6ee280`, so the name reaches `SetName` (`0x76c650`),
-    // whose `0x76c691` call expands it against the parent's first named ancestor.
+    // node for the XML builder, so the name reaches `SetName`, whose the reference call expands it
+    // against the parent's first named ancestor.
     let name = name.map(|n| {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
@@ -758,7 +748,7 @@ fn install_frame_methods(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `0x48c270`'s scale: `0.75 · aspect` below 1.0, else 1.0; NaN takes the 1.0 leg, as the
+/// The reference's scale: `0.75 · aspect` below 1.0, else 1.0; NaN takes the 1.0 leg, as the
 /// reference's `fcomp` fails every ordered test.
 pub(crate) fn fullscreen_scale(aspect: f32) -> f32 {
     let g = 0.75 * aspect;

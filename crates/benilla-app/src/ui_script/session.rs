@@ -1,7 +1,7 @@
 //! Host-side memory about the UI VM, which lives for one login: the reference builds it at world
-//! entry and destroys it at the character screen (`0x48fbf0`, `0x490bd0`). A seed or change memo
-//! kept past its VM silently skips the push into the next one; [`VmMemo`] keys it on
-//! [`UiScript::session`], so against a new VM it reads as fresh.
+//! entry and destroys it at the character screen. A seed or change memo kept past its VM silently
+//! skips the push into the next one; [`VmMemo`] keys it on [`UiScript::session`], so against a new
+//! VM it reads as fresh.
 
 use benilla_ui::script::UiScript;
 

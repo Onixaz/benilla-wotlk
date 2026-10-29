@@ -138,8 +138,8 @@ fn shipped_gossip_frame_drives_end_to_end() {
     let icon_rect = quads
         .iter()
         .find(|q| {
-            // Case-folded: the 1.12 client answers the type in lowercase (table `0x84b7ac`), and
-            // `GossipFrame.lua` builds the path from it verbatim.
+            // Case-folded: the 1.12 client answers the type in lowercase, and `GossipFrame.lua`
+            // builds the path from it verbatim.
             matches!(&q.content, QuadContent::Texture { path: Some(p), .. }
                     if p.to_ascii_lowercase().contains("vendorgossipicon"))
         })
@@ -881,7 +881,7 @@ fn a_dead_player_opens_only_whiledead_windows() {
         s.eval::<bool>("return GetUIPanel('left') == nil").unwrap(),
         "the refused window took no slot"
     );
-    // `NotWhileDeadError` (`0x48d340`, error 0x7e) queues its key for the app to show.
+    // `NotWhileDeadError` (error 0x7e) queues its key for the app to show.
     assert_eq!(
         s.take_ui_errors(),
         vec!["ERR_PLAYER_DEAD"],

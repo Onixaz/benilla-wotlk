@@ -260,9 +260,9 @@ fn clicks_cast_and_flip_autocast() {
 }
 
 /// Every click starts with `this:SetChecked(0)` (PetActionBarFrame.lua:253); the repaint restores
-/// the ring from `isActive`, never by diffing views. The reference signals it from state writes
-/// (`0x4bc940`/`0x4bc960`), not from a refused `TogglePetAutocast` (`0x4bcbf7`), so a right-click
-/// on a token leaves the ring off until something else repaints.
+/// the ring from `isActive`, never by diffing views. The reference signals it from state writes,
+/// not from a refused `TogglePetAutocast`, so a right-click on a token leaves the ring off until
+/// something else repaints.
 #[test]
 fn a_click_drops_the_ring_and_the_repaint_restores_it() {
     benilla_formats::wow_data_or_skip!();
@@ -547,7 +547,7 @@ fn shift_clicking_a_pet_button_picks_it_up_rather_than_casting() {
 }
 
 /// A bound `BONUSACTIONBUTTONn` runs `PetActionButtonDown/Up` (PetActionBarFrame.lua:218-231), a
-/// bare `CastPetAction` on release. The live Attack is a possess bar's: `0x4bd420` raises the
+/// bare `CastPetAction` on release. The live Attack is a possess bar's: the reference raises the
 /// attack latch only for a possessed unit, so on a hunter's bar key and click agree.
 #[test]
 fn the_keybind_pair_pushes_and_casts_without_the_clicks_forks() {

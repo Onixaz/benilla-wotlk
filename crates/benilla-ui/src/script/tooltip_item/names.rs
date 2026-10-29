@@ -4,34 +4,33 @@
 //! `INVTYPE_WEAPONOFFHAND` both read "Off Hand" in enUS and differ elsewhere. [`CLASS_NAMES`] and
 //! [`RACE_NAMES`] are English literals; the reference reads `ChrClasses.dbc` and `ChrRaces.dbc`.
 
-/// The reference's quality colour table, `0xc0d3c8`, read by `GetItemQualityColor` (`0x48dfb0`).
+/// The reference's quality colour table, read by `GetItemQualityColor`.
 pub(super) const QUALITY_RGB: [[f32; 3]; 7] = [
-    [0.616, 0.616, 0.616], // 0 Poor      9d9d9d
+    [0.616, 0.616, 0.616], // 0 Poor
     [1.0, 1.0, 1.0],       // 1 Common    ffffff
-    [0.118, 1.0, 0.0],     // 2 Uncommon  1eff00
-    [0.0, 0.439, 0.867],   // 3 Rare      0070dd
-    [0.639, 0.208, 0.933], // 4 Epic      a335ee
-    [1.0, 0.502, 0.0],     // 5 Legendary ff8000
-    [0.902, 0.8, 0.502],   // 6 Artifact  e6cc80
+    [0.118, 1.0, 0.0],     // 2 Uncommon
+    [0.0, 0.439, 0.867],   // 3 Rare
+    [0.639, 0.208, 0.933], // 4 Epic
+    [1.0, 0.502, 0.0],     // 5 Legendary
+    [0.902, 0.8, 0.502],   // 6 Artifact
 ];
 
-// The tooltip colours: white `0xc0cf60` ffffffff, red `0xc0d390` ffff2020, green `0xc0d3ac`
-// ff00ff00, gold `0xc0d3e8` ffffd200, gray `0xc0d3c4` ff808080.
+// The tooltip colours: white ffffffff, red ffff2020, green ff00ff00, gold ffffd200, gray ff808080.
 pub(super) const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 pub(super) const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 pub(super) const RED: [f32; 4] = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
-/// The pure red `0xc0d398` (ffff0000), used by two enchant lines (`0x52ca29`, `0x52cc13`): a
-/// negative enchant id in slot 0 or 1, and ITEM_ENCHANT_DISCLAIMER.
+/// The pure red (ffff0000), used by two enchant lines: a negative enchant id in slot 0 or 1, and
+/// ITEM_ENCHANT_DISCLAIMER.
 pub(super) const ENCHANT_RED: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 pub(super) const GOLD: [f32; 4] = [1.0, 210.0 / 255.0, 0.0, 1.0];
 pub(super) const GRAY: [f32; 4] = [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0];
-/// An equipped set member's cream, `0xc0d368` (ffffff97, written at `0x529050`).
+/// An equipped set member's cream, (ffffff97).
 pub(super) const CREAM: [f32; 4] = [1.0, 1.0, 151.0 / 255.0, 1.0];
 
-/// InventoryType to the slot line's key: the builder's 30-entry table `0x83ddb0`, indexed by
-/// `[record+0x2c]` (`0x52c103`); entries 0 and 29 are the empty string `0x882748`, here `None`. A
-/// bag (18) takes CONTAINER_SLOTS instead, and class 6 its class name (`0x52c0bc`); 24-27 ship no
-/// `GlobalStrings.lua` value, so a thrown weapon (25) or a gun (26) has an empty slot cell.
+/// InventoryType to the slot line's key: the builder's 30-entry table, indexed by `[record+0x2c]`;
+/// entries 0 and 29 are the empty string, here `None`. A bag (18) takes CONTAINER_SLOTS instead,
+/// and class 6 its class name; 24-27 ship no `GlobalStrings.lua` value, so a thrown weapon (25) or
+/// a gun (26) has an empty slot cell.
 pub(super) fn invtype_key(t: u32) -> Option<&'static str> {
     Some(match t {
         1 => "INVTYPE_HEAD",
@@ -64,30 +63,28 @@ pub(super) fn invtype_key(t: u32) -> Option<&'static str> {
     })
 }
 
-/// The damage bias `[0x808120]`, 0.9999899864196777: an integral max is not bumped, and unlike a
-/// true `ceil()` a value within ~1e-5 above an integer is not rounded up.
+/// The damage bias, 0.9999899864196777: an integral max is not bumped, and unlike a true `ceil()` a
+/// value within ~1e-5 above an integer is not rounded up.
 const DAMAGE_BIAS: f32 = f32::from_bits(0x3f7f_ff58);
 
-/// The builder's `floor(DamageMin)`: subtract the bias unless positive, then truncate toward zero
-/// (`0x52c253..0x52c276`).
+/// The builder's `floor(DamageMin)`: subtract the bias unless positive, then truncate toward zero.
 pub(super) fn floor_min(m: f32) -> i32 {
     (if m > 0.0 { m } else { m - DAMAGE_BIAS }) as i32
 }
 
-/// The builder's `ceil(DamageMax)`: add the bias if positive, then truncate (`0x52c26e..0x52c28c`).
+/// The builder's `ceil(DamageMax)`: add the bias if positive, then truncate.
 pub(super) fn ceil_max(m: f32) -> i32 {
     (if m > 0.0 { m + DAMAGE_BIAS } else { m }) as i32
 }
 
-/// A school's name key, `SPELL_SCHOOL%d_CAP`, the one key the builder composes (`0x84e4cc`,
-/// pushed at `0x52c2a8` and `0x52c8d1`). School 0 has none: a physical weapon takes the
-/// school-less `DAMAGE_TEMPLATE` arm.
+/// A school's name key, `SPELL_SCHOOL%d_CAP`, the one key the builder composes. School 0 has none:
+/// a physical weapon takes the school-less `DAMAGE_TEMPLATE` arm.
 pub(super) fn school_key(s: u32) -> Option<String> {
     (1..=6).contains(&s).then(|| format!("SPELL_SCHOOL{s}_CAP"))
 }
 
 /// Stat type to its `ITEM_MOD_*` line template (`"%c%d Agility"`); the builder's 8-way jump table
-/// `0x52e510` skips 2 (keys at `0x52c6eb..0x52c777`).
+/// skips 2.
 pub(super) fn stat_key(t: u32) -> Option<&'static str> {
     Some(match t {
         0 => "ITEM_MOD_MANA",

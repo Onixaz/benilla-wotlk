@@ -50,20 +50,19 @@ impl EmoteSounds {
         self.0.gesture(slot)
     }
 
-    /// An `Emotes.dbc` id's raw `EmoteFlags`, read by the posture-eligibility gate (`0x47db40`).
+    /// An `Emotes.dbc` id's raw `EmoteFlags`, read by the posture-eligibility gate.
     pub(crate) fn emote_flags(&self, emote_id: u32) -> Option<u32> {
         self.0.emote_flags(emote_id)
     }
 
-    /// The stand state a posture emote (`EmoteSpecProc == 1`) sets, as in `DoEmote`'s state
-    /// branch (`0x5ef560` → `0x5ed430`).
+    /// The stand state a posture emote (`EmoteSpecProc == 1`) sets, as in `DoEmote`'s state branch.
     pub(crate) fn posture_state(&self, emote_id: u32) -> Option<u32> {
         self.0.posture_state(emote_id)
     }
 
     /// The `$ESD` anim event's kit for a looping state emote: `EventSoundID` only when
-    /// `EmoteSpecProc == 2` (`row[+0x10] == 2` in the handler `0x6239f0`), so a one-shot emote id
-    /// in the state field stays silent.
+    /// `EmoteSpecProc == 2` (`row[+0x10] == 2` in the handler), so a one-shot emote id in the state
+    /// field stays silent.
     pub(crate) fn state_event_sound(&self, emote_id: u32) -> Option<u32> {
         (self.0.spec_proc(emote_id) == Some(2))
             .then(|| self.0.event_sound(emote_id))
@@ -86,14 +85,13 @@ fn load_emote_sounds(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     }
 }
 
-/// The attachment the emote voice plays at (`0x623c3a push 0x11`).
+/// The attachment the emote voice plays.
 pub(super) const VOICE_ATTACH: u16 = 17;
 
-/// Who hears a text emote's voice: the composer's tail (`0x623c80`) plays it for relation class
-/// 0, the active player, or 2, a player in one of the four party slots (`0x623cc2`-`0x623cce`,
-/// `0x5efea0`). A raid-only member is class 4, a hostile player 6, a creature 1/3/5/7/8 and an
-/// unstreamed performer 9, none of which play. An ignored performer never reaches the composer
-/// (`0x49dc36`).
+/// Who hears a text emote's voice: the composer's tail plays it for relation class 0, the active
+/// player, or 2, a player in one of the four party slots. A raid-only member is class 4, a hostile
+/// player 6, a creature 1/3/5/7/8 and an unstreamed performer 9, none of which play. An ignored
+/// performer never reaches the composer.
 fn voice_audible(
     performer: u64,
     me: Option<u64>,
@@ -107,10 +105,10 @@ fn voice_audible(
     Some(performer) == me || performer_is_player && roster.in_party(me, performer)
 }
 
-/// `0x623c10`: play `kit` at the unit's attachment `0x11`, then stop the unit's previous emote
-/// voice (`[unit+0xb28]`, `0x623c63`-`0x623c70`); a play that opens no channel stops nothing
-/// (`0x623c55`). Shared by the text-emote voice and the `$CSD` anim event. A Death Knight's takes
-/// its voice chain, except kit 6576 (`CGUnit_C::PlayEmoteSound 0x746d60`).
+/// Play `kit` at the unit's attachment `0x11`, then stop the unit's previous emote voice
+/// (`[unit+0xb28]`); a play that opens no channel stops nothing. Shared by the text-emote voice and
+/// the `$CSD` anim event. A Death Knight's takes its voice chain, except kit 6576
+/// (`CGUnit_C::PlayEmoteSound 0x746d60`).
 pub(super) fn play_emote_voice(
     kits: &mut SoundKits,
     assets: &WorldAssets,
@@ -149,9 +147,9 @@ pub(super) fn play_emote_voice(
     Ok(opened)
 }
 
-/// Route a text emote to the performer's race/sex voice. A performer whose race/sex has not
-/// arrived yet stays silent. `SMSG_EMOTE` plays no sound: the one-shot path never reads
-/// `EventSoundID` (`0x5e66b0` -> `0x5fcd20`), which only the state emote's `$ESD` does (`0x623a21`).
+/// Route a text emote to the performer's race/sex voice. A performer whose race/sex has not arrived
+/// yet stays silent. `SMSG_EMOTE` plays no sound: the one-shot path never reads `EventSoundID`,
+/// which only the state emote's `$ESD` does.
 fn emote_sounds(
     mut msgs: MessageReader<EmoteMessage>,
     units: Query<(&ObjectStore, &Transform)>,
@@ -204,7 +202,7 @@ fn emote_sounds(
         ) {
             continue;
         }
-        // The display override's race and sex before the descriptor's (`0x60c6a0`/`0x60c6c0`).
+        // The display override's race and sex before the descriptor's.
         let overridden = store
             .0
             .unit_displayid()
@@ -266,7 +264,7 @@ mod tests {
         }
     }
 
-    /// `0x623cc2`-`0x623cce`: class 0 and class 2 play, every other class is silent.
+    /// Class 0 and class 2 play, every other class is silent.
     #[test]
     fn only_you_and_the_party_are_heard() {
         let r = roster();
@@ -294,7 +292,7 @@ mod tests {
         ));
     }
 
-    /// An ignored performer is dropped before the composer (`0x49dc36`), even you or a mate.
+    /// An ignored performer is dropped before the composer, even you or a mate.
     #[test]
     fn an_ignored_performer_is_silent() {
         let r = roster();

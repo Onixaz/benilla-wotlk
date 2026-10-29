@@ -1,7 +1,7 @@
 //! Every render batch's UNLIT (0x01) and UNFOGGED (0x02) flags as our reader resolves them, with
 //! blend mode and texture. A batch printed `lit` that the asset authors UNLIT (the render-flag
 //! array at header 0x84) is a reader bug. Glue-scene ground overlays are authored UNLIT and drawn
-//! fullbright (`0x70c190`), which is how UI_Tauren's ground is lit with no ambient light.
+//! fullbright, which is how UI_Tauren's ground is lit with no ambient light.
 //! `cargo run -p benilla-formats --example batch_lit -- <m2 path>`
 
 fn main() -> anyhow::Result<()> {

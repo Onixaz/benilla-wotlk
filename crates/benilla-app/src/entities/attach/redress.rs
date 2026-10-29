@@ -1,9 +1,8 @@
 //! Re-dressing a character in place when its worn equipment changes. The reference re-dresses the
-//! same `CM2Model`: its compositor re-blits the atlas and re-runs the geoset selection
-//! (`0x477520`), which writes only the model's visibility array (`+0x98`, through `0x7110d0`), and
-//! never touches the attachments (`0x712f70`). So a re-dress re-points the standing parts at the
-//! new materials, despawns the batches the gear hides, spawns the ones it reveals, and leaves the
-//! rig and everything hanging off it alone.
+//! same `CM2Model`: its compositor re-blits the atlas and re-runs the geoset selection, which
+//! writes only the model's visibility array (`+0x98`), and never touches the attachments. So a
+//! re-dress re-points the standing parts at the new materials, despawns the batches the gear hides,
+//! spawns the ones it reveals, and leaves the rig and everything hanging off it alone.
 
 use benilla_protocol::EntityKind;
 use bevy::prelude::*;
@@ -56,7 +55,7 @@ pub(in crate::entities) fn redress_player_looks(
             Option<&benilla_world::interior::BodyBakeCenter>,
             Option<&benilla_world::model_fade::UnitAppearFade>,
         ),
-        // A torn-down player is freed, not re-dressed (`0x464920`).
+        // A torn-down player is freed, not re-dressed.
         (
             With<VisualAttached>,
             Without<benilla_world::model_fade::DespawnFade>,
@@ -121,10 +120,10 @@ pub(in crate::entities) fn redress_player_looks(
         let worn = resolve_worn_equip(net, Some(live), Some(dm));
         // Players only: a clone's look is never re-dressed in place.
         let look = resolve_char_look(net, Some(dm), entity, &stores, None, Some(live));
-        // A re-dress is the reference's incremental composite (`0x47789c`–`0x4778c3`): the new
-        // geosets apply at once and the atlas composites that frame when its sections are
-        // resident, never gated or withheld. So it composites here, in the frame, taking over a
-        // running composite of the same look; only an arriving body waits for its atlas.
+        // A re-dress is the reference's incremental composite: the new geosets apply at once and
+        // the atlas composites that frame when its sections are resident, never gated or withheld.
+        // So it composites here, in the frame, taking over a running composite of the same look;
+        // only an arriving body waits for its atlas.
         let body_tex = look.as_ref().and_then(|l| {
             forced_body_atlas(
                 l,
@@ -635,7 +634,7 @@ mod tests {
     }
 
     /// A gear change on a standing body is the reference's incremental composite, never gated or
-    /// withheld (`0x47789c`–`0x4778c3`): the new look, atlas included, lands the frame it is seen.
+    /// withheld: the new look, atlas included, lands the frame it is seen.
     #[test]
     fn a_gear_change_composites_in_the_frame_it_is_seen() {
         let mut s = stand(&[0, 401], &[0, 1], None);

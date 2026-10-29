@@ -1,11 +1,11 @@
-//! The two 1.12 text filters: the `profanityFilter` masker (`0x4a1a60`) over `ChatProfanity.dbc`
-//! and the `spamFilter` predicate (`0x4a1ca0`) over `SpamMessages.dbc`, both PCRE lists compiled
-//! once at startup and never reloaded.
+//! The two 1.12 text filters: the `profanityFilter` masker over `ChatProfanity.dbc` and the
+//! `spamFilter` predicate over `SpamMessages.dbc`, both PCRE lists compiled once at startup and
+//! never reloaded.
 //!
-//! The masker self-gates on `[0x843600]` (read at `0x4a1a66`), so no call site tests the CVar. Each
-//! matched byte becomes the next of `!@#$%^&*` (`.rdata 0x806458`) through a process-global index
-//! (`[0xb6e5f0]`) that is never reset, so the phase carries across matches and messages. Patterns
-//! apply in list order, not text order, every occurrence, and the length never changes.
+//! The masker self-gates on, so no call site tests the CVar. Each matched byte becomes the next of
+//! `!@#$%^&*` (`.rdata`) through a process-global index that is never reset, so the phase carries
+//! across matches and messages. Patterns apply in list order, not text order, every occurrence, and
+//! the length never changes.
 //!
 //! Only the chat chokepoint is wired. The reference masks twelve more sites, not built here: the
 //! mail subject, `GetInboxText`, `GetGuildInfo`, the two guild-record accessors, the roster MOTD
@@ -17,17 +17,17 @@
 //! drops the line silently.
 //!
 //! Two PCRE translations are the reference's own behaviour. `\<` and `\>` are the non-directional
-//! `\b`: the client's patched escape table (`.rdata 0x812330`) gives all three the code -4.
-//! CASELESS folds ASCII only (the fold table `0x873c40` is the identity over `0x80..=0xff`), so
-//! the pattern literals and the subject are ASCII-lowercased and matched case-sensitively, which
-//! keeps every offset. The shipped patterns use no backreferences or lookaround.
+//! `\b`: the client's patched escape table (`.rdata`) gives all three the code -4. CASELESS folds
+//! ASCII only (the fold table is the identity over `0x80..=0xff`), so the pattern literals and the
+//! subject are ASCII-lowercased and matched case-sensitively, which keeps every offset. The shipped
+//! patterns use no backreferences or lookaround.
 
 use bevy::prelude::*;
 use regex::{Regex, RegexSet};
 
 use benilla_formats::FilterPattern;
 
-/// `.rdata 0x806458`: the eight mask bytes, in order.
+/// `.rdata`: the eight mask bytes, in order.
 const MASK_TOKENS: &[u8; 8] = b"!@#$%^&*";
 
 /// One compiled list: the set for the cheap pass beside the expressions, in list order.
@@ -37,7 +37,7 @@ struct PatternList {
 }
 
 impl PatternList {
-    /// Compile a list, skipping and naming a row that fails, as `0x6c94cf` does.
+    /// Compile a list, skipping and naming a row that fails, as the reference does.
     fn compile(rows: &[FilterPattern], list: &str) -> Self {
         let mut patterns = Vec::with_capacity(rows.len());
         let mut each = Vec::with_capacity(rows.len());
@@ -105,8 +105,8 @@ fn ascii_lower(text: &str) -> String {
     s
 }
 
-/// The two switches mirrored off their CVars: the reference's `[0x843600]` (`profanityFilter`)
-/// and `[0x843604]` (`spamFilter`), both registered `"1"` (`0x402e68`, `0x402e8e`).
+/// The two switches mirrored off their CVars: the reference's (`profanityFilter`) and
+/// (`spamFilter`), both registered `"1"`.
 #[derive(Resource, Debug, Clone, Copy)]
 pub(crate) struct TextFilterSwitches {
     /// `profanityFilter`, the masker's self-gate.
@@ -124,8 +124,8 @@ impl Default for TextFilterSwitches {
     }
 }
 
-/// The 14 player-authored chat types the reference masks (`.rdata 0x8046d8`, bound at `0x49aabb`);
-/// any other type, a monster's yell included, is never masked.
+/// The 14 player-authored chat types the reference masks (`.rdata`); any other type, a monster's
+/// yell included, is never masked.
 pub(crate) const PROFANITY_MASKED_CHAT_TYPES: &[u8] = &[
     0x00, // SAY
     0x01, // PARTY
@@ -148,7 +148,7 @@ pub(crate) const PROFANITY_MASKED_CHAT_TYPES: &[u8] = &[
 pub(crate) struct TextFilter {
     profanity: PatternList,
     spam: PatternList,
-    /// `[0xb6e5f0]`: zero-initialized, advanced mod 8, never reset.
+    /// Zero-initialized, advanced mod 8, never reset.
     mask_index: usize,
 }
 
@@ -180,9 +180,9 @@ impl TextFilter {
         self.spam.len()
     }
 
-    /// `0x4a1ca0`: whether the text matches the spam list. The reference also scans a server-pushed
-    /// list (SMSG `0x332`) that vmangos never sends. `enabled` is `spamFilter`, which the reference
-    /// tests at the call site.
+    /// Whether the text matches the spam list. The reference also scans a server-pushed list (SMSG
+    /// `0x332`) that vmangos never sends. `enabled` is `spamFilter`, which the reference tests at
+    /// the call site.
     pub(crate) fn is_spam(&self, enabled: bool, text: &str) -> bool {
         if !enabled || text.is_empty() || self.spam.len() == 0 {
             return false;
@@ -190,7 +190,7 @@ impl TextFilter {
         self.spam.set.is_match(&ascii_lower(text))
     }
 
-    /// `0x4a1a60` with `dl = 0`: mask in place, return whether anything matched. `enabled` is
+    /// The reference with `dl = 0`: mask in place, return whether anything matched. `enabled` is
     /// `profanityFilter`, tested here as the reference does.
     pub(crate) fn mask(&mut self, enabled: bool, text: &mut String) -> bool {
         if !enabled || text.is_empty() || self.profanity.len() == 0 {
@@ -199,8 +199,8 @@ impl TextFilter {
         self.mask_uncached(text)
     }
 
-    /// The byte loop of `0x4a1b6a`-`0x4a1ba6`: one pass in list order over the mutating buffer, so
-    /// an earlier pattern's mask can enable a later match but never the reverse.
+    /// The byte loop: one pass in list order over the mutating buffer, so an earlier pattern's mask
+    /// can enable a later match but never the reverse.
     fn mask_uncached(&mut self, text: &mut String) -> bool {
         // The subject is ASCII-lowercased, byte-aligned with `text` and masked in step.
         let mut subject = ascii_lower(text);
@@ -423,9 +423,9 @@ pub(crate) struct ChatTextFilter<'w> {
 }
 
 impl ChatTextFilter<'_> {
-    /// Arm 1 (`0x49aac9`-`0x49ab33`): whether to drop the line. In the reference's order: not
-    /// `CHAT_MSG_FILTERED`, no `"GM"` tag, a non-GM viewer, `spamFilter` on, then the predicate.
-    /// Every exit, a GM viewer's included, still reaches the mask arm (`0x49abb7`).
+    /// Arm 1: whether to drop the line. In the reference's order: not `CHAT_MSG_FILTERED`, no
+    /// `"GM"` tag, a non-GM viewer, `spamFilter` on, then the predicate. Every exit, a GM viewer's
+    /// included, still reaches the mask arm.
     pub(crate) fn should_drop(
         &self,
         chat_type: u8,
@@ -440,8 +440,7 @@ impl ChatTextFilter<'_> {
         self.filter.is_spam(self.switches.spam, text)
     }
 
-    /// Arm 2: mask the line if its type is in the reference's table (`0x49aa98`-`0x49aac2`); the
-    /// CVar is the masker's own.
+    /// Arm 2: mask the line if its type is in the reference's table; the CVar is the masker's own.
     pub(crate) fn mask_chat(&mut self, chat_type: u8, text: &mut String) {
         if !PROFANITY_MASKED_CHAT_TYPES.contains(&chat_type) {
             return;
@@ -450,8 +449,8 @@ impl ChatTextFilter<'_> {
     }
 }
 
-/// Load both lists off the patch chain once, as the reference's startup init does
-/// (`0x402b7f → 0x6c91a0`). It must run after `AssetSet::Open`, or the filters are silently empty.
+/// Load both lists off the patch chain once, as the reference's startup init does. It must run
+/// after `AssetSet::Open`, or the filters are silently empty.
 fn load_text_filter_lists(
     mut commands: Commands,
     assets: Option<Res<benilla_assets::WorldAssets>>,
@@ -483,8 +482,8 @@ fn load_text_filter_lists(
 
 pub(crate) struct TextFilterPlugin;
 
-/// The two switches' change callback, as the reference's `0x403570`/`0x4035b0` mirror
-/// `SStrToInt(newValue)` into a global.
+/// The two switches' change callback, as the reference's mirror `SStrToInt(newValue)` into a
+/// global.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut switches: ResMut<TextFilterSwitches>) {
     match ev.key().as_str() {
         "profanityfilter" => switches.profanity = ev.flag(),

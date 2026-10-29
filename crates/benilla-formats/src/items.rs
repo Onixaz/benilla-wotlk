@@ -1,5 +1,5 @@
 //! `ItemDisplayInfo.dbc`: a display id to a held item's or worn equipment's visual identity. 23
-//! fields and 92-byte records in 5875, both checked by the reference loader (`0x547590`).
+//! fields and 92-byte records in 5875, both checked by the reference loader.
 //!
 //! A row's model and texture are independently resolved basenames in the same
 //! `Item\ObjectComponents\<dir>\` folder; never derive one from the other. The Worn Wooden Shield
@@ -31,23 +31,22 @@ pub struct ItemDisplay {
     /// Body-region textures, in ArmUpper, ArmLower, Hand, TorsoUpper, TorsoLower, LegUpper,
     /// LegLower, Foot order.
     pub region_textures: [Option<String>; 8],
-    /// A helm's `HelmetGeosetVisData` rows, `[male, female]`, 0 for none (`0x4799a0` reads
+    /// A helm's `HelmetGeosetVisData` rows, `[male, female]`, 0 for none (the reference reads
     /// `+0x30 + sex * 4`).
     pub helmet_vis: [u32; 2],
     /// The inventory icon as an extensionless `Interface\Icons\…` path, ready to load.
     pub icon: Option<String>,
-    /// The `ItemGroupSounds.dbc` pickup and place sound group (`0x458008`); 0 is silent, as the
-    /// reference's bounds check returns (`0x45800b`).
+    /// The `ItemGroupSounds.dbc` pickup and place sound group; 0 is silent, as the reference's
+    /// bounds check returns.
     pub group_sounds: u32,
     /// The `SpellVisual.dbc` id a ranged-attribute spell borrows from the equipped ranged weapon,
-    /// field by field where its own visual leaves a 0 (`VisualStages::merged_over_weapon`,
-    /// `0x60d450`, read at `0x60d493`).
+    /// field by field where its own visual leaves a 0 (`VisualStages::merged_over_weapon`).
     pub spell_visual: u32,
     /// The flags word, the reference's `+0x24`. Only bit 0 is read, [`Self::takes_guild_emblem`];
     /// bit 1, set on four chest and robe rows, has no reader.
     pub flags: u32,
-    /// The `ItemVisuals.dbc` id of the display's intrinsic weapon glow (`0x47a200`). Signed, as the
-    /// reference's `jle` gate reads it (`0x4798c0`): 0 and `-1` both mean none.
+    /// The `ItemVisuals.dbc` id of the display's intrinsic weapon glow. Signed, as the reference's
+    /// `jle` gate reads it: 0 and `-1` both mean none.
     pub item_visual: i32,
     /// The model's particle colour override (`ParticleColorID`), which `AddLink` (`0x4eaa70`)
     /// applies to every item model it attaches; `None` for id 0.
@@ -56,16 +55,16 @@ pub struct ItemDisplay {
 
 impl ItemDisplay {
     /// The `HelmetGeosetVisData` pair this display hides hair and ears with, only when it names a
-    /// left model: the reference's head-slot handler (`0x4799a0`) tests `ModelName[0]` for an empty
-    /// string (`0x4799c1`) and skips the whole geoset-vis tail (`0x479b33`), never reading the
-    /// right slot or the model's load result. Twelve model-less rows carry a mask that 126 NPC head
-    /// displays point at, and the reference draws those NPCs' hair in full.
+    /// left model: the reference's head-slot handler tests `ModelName[0]` for an empty string and
+    /// skips the whole geoset-vis tail, never reading the right slot or the model's load result.
+    /// Twelve model-less rows carry a mask that 126 NPC head displays point at, and the reference
+    /// draws those NPCs' hair in full.
     pub fn worn_helm_vis(&self) -> Option<[u32; 2]> {
         self.model[0].is_some().then_some(self.helmet_vis)
     }
 
-    /// Whether the wearer's guild emblem replaces this tabard's torso art (`flags & 1`, tested at
-    /// `0x472ca4` on the tabard slot). Seven shipped rows set it, all tabards.
+    /// Whether the wearer's guild emblem replaces this tabard's torso art (`flags & 1`, tested on
+    /// the tabard slot). Seven shipped rows set it, all tabards.
     pub fn takes_guild_emblem(&self) -> bool {
         self.flags & FLAG_GUILD_EMBLEM_TABARD != 0
     }
@@ -254,8 +253,8 @@ mod tests {
 
     /// A projectile display carries its flight model in the right slot (`Ammo\`), a thrown weapon
     /// in the left (`Weapon\`). The missile spawner keys its folder on that shape; the reference
-    /// keys the same fork on the ammo's `InventoryType` (`0x19` thrown, `0x60ba30`), with the same
-    /// result on every shipped row.
+    /// keys the same fork on the ammo's `InventoryType` (`0x19` thrown), with the same result on
+    /// every shipped row.
     #[test]
     fn real_ammo_displays_carry_flight_models_right_thrown_left() {
         let data = crate::wow_data_or_skip!();

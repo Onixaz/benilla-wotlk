@@ -107,8 +107,7 @@ fn shift(g: GlobalTransform, origin: Vec3) -> GlobalTransform {
 }
 
 /// One rig's chain and its replaced bones from `root_g`, the root frame `[model+0xfc]` (for a
-/// rider, its seat anchor, `0x714389`), passed translation-zeroed; mirrors
-/// `billboard_joint_palette`.
+/// rider, its seat anchor), passed translation-zeroed; mirrors `billboard_joint_palette`.
 fn rig_worlds(
     rig: &RigPose,
     root_g: GlobalTransform,
@@ -123,7 +122,7 @@ fn rig_worlds(
             Some(p) => worlds[p],
             None => root_g,
         };
-        // The arm first (`0x714961`): it rewrites the billboard's input.
+        // The arm first: it rewrites the billboard's input.
         let mut g = match rig.arms[i] {
             Some(arm) => {
                 touched[i] = true;
@@ -410,7 +409,7 @@ mod tests {
     }
 
     /// `RidingHorse`'s seat, in the model pass: under a swinging spine, the `flags = 0x6` bone
-    /// keeps the model's orientation and rides the spine's position (`0x714caf`–`0x714d09`).
+    /// keeps the model's orientation and rides the spine's position.
     #[test]
     fn a_flags_0x6_seat_bone_discards_the_gallop_before_the_anchors_are_seated() {
         let sk = skeleton(vec![

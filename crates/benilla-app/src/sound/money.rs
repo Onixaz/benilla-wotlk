@@ -1,7 +1,7 @@
 //! The coin sound: the 1.12 client has no money kit; a `CMirrorHandler` callback on
-//! `PLAYER_FIELD_COINAGE` (`0x5ddf30`), the same watcher that fires `PLAYER_MONEY`, plays
-//! `LOOTWINDOWCOINSOUND` (kit 895) on every change, so buying, selling, looting money and any
-//! other purse change all sound. Played 2D on the SFX bucket.
+//! `PLAYER_FIELD_COINAGE`, the same watcher that fires `PLAYER_MONEY`, plays `LOOTWINDOWCOINSOUND`
+//! (kit 895) on every change, so buying, selling, looting money and any other purse change all
+//! sound. Played 2D on the SFX bucket.
 //!
 //! The first value after login or reconnect seeds without playing; whether the reference's watcher
 //! fires on the login set is untraced. Deviation: the reference also plays an optimistic coin at
@@ -17,7 +17,7 @@ use benilla_assets::WorldAssets;
 use super::kit::{self, KitRef, SoundKits};
 use super::{SoundConfig, SoundOutput};
 
-/// The SoundEntries name the client plays on any coinage change (kit 895, `0x5ddf30`).
+/// The SoundEntries name the client plays on any coinage change (kit 895).
 const COIN_SOUND: &str = "LOOTWINDOWCOINSOUND";
 
 /// Play the coin whenever the self-player's coinage changes, in either direction. The previous

@@ -6,8 +6,8 @@ use std::collections::HashMap;
 
 use crate::order::{DrawLayer, Strata};
 
-/// The effective-scale epsilon of `0x76ac90`: the client's constant `0x8029d4` (`0x34800000`,
-/// about 2.384e-7), the same one the layout's `OnSizeChanged` gate uses.
+/// The effective-scale epsilon: the client's constant (`0x34800000`, about 2.384e-7), the same one
+/// the layout's `OnSizeChanged` gate uses.
 pub const SCALE_EPS: f64 = crate::layout::SIZE_EPS;
 
 // ── Handles ──────────────────────────────────────────────────────────────────────────────────
@@ -161,9 +161,9 @@ impl Glance {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Frame {
     pub kind: FrameKind,
-    /// Layers switched off by `DisableDrawLayer` (`0x775680`) and back on by `EnableDrawLayer`
-    /// (`0x7755b0`), bit `n` for [`DrawLayer::index`] `n`: a frame-level mask, so each region
-    /// keeps its own shown state underneath.
+    /// Layers switched off by `DisableDrawLayer` and back on by `EnableDrawLayer`, bit `n` for
+    /// [`DrawLayer::index`] `n`: a frame-level mask, so each region keeps its own shown state
+    /// underneath.
     pub disabled_layers: u8,
     /// The global name, which a later duplicate carries without owning ([`WidgetArena::lookup`]).
     pub name: Option<String>,
@@ -173,7 +173,7 @@ pub struct Frame {
     /// Owned regions in link order, a detached one included so `destroy` frees it.
     pub regions: Vec<RegionHandle>,
     /// The title region (`CSimpleFrame+0xA8`), also in `regions`. One per frame: a second
-    /// `CreateTitleRegion` returns it with its anchors cleared (`0x767ed0` → `0x767620`).
+    /// `CreateTitleRegion` returns it with its anchors cleared.
     pub title_region: Option<RegionHandle>,
     /// The draw stratum (`frameStrata +0xc0`, default MEDIUM).
     pub strata: Strata,
@@ -182,7 +182,7 @@ pub struct Frame {
     /// This frame's own alpha, 0.0..=1.0 (`alpha +0xc8`, default 1.0).
     pub alpha: f32,
     /// Always equal to [`Frame::alpha`]: alpha cascades at set time, and at draw a region
-    /// multiplies only its owner frame's alpha (`0x772180`/`0x77fac0`).
+    /// multiplies only its owner frame's alpha.
     pub effective_alpha: f32,
     /// The frame's own Show/Hide bit (`+0xd0`, default true).
     pub shown: bool,
@@ -193,11 +193,11 @@ pub struct Frame {
     /// `EnableMouseWheel`, or an `<OnMouseWheel>` script at XML load: the mask's wheel bit (3).
     /// A frame with the script but not the bit is transparent to the wheel.
     pub mouse_wheel_enabled: bool,
-    /// `EnableKeyboard` (`0x776ec0`), XML `enableKeyboard` or a key script at XML load: the
-    /// mask's char and key bits (`0x76af00`), which key delivery walks
-    /// ([`crate::script::keyboard`]); a script-less frame there declines.
+    /// `EnableKeyboard`, XML `enableKeyboard` or a key script at XML load: the mask's char and key
+    /// bits, which key delivery walks ([`crate::script::keyboard`]); a script-less frame there
+    /// declines.
     pub keyboard_enabled: bool,
-    /// `SetClampedToScreen`, geometry flags bit 4: `0x767a20` shifts the rect back on screen.
+    /// `SetClampedToScreen`, geometry flags bit 4: the reference shifts the rect back on screen.
     /// Every GameTooltip is born with it here; the stock tooltips get it from their template,
     /// `GameTooltipTemplate.xml:3`.
     pub clamped_to_screen: bool,
@@ -213,28 +213,27 @@ pub struct Frame {
     pub movable: bool,
     /// `SetResizable`: the guard `StartSizing` checks.
     pub resizable: bool,
-    /// `SetMinResize` (`0x776020`; `GetMinResize` `0x775f20`): the resize drag's floor, `(width,
-    /// height)` in `SetWidth` units. `0.0` is unbounded per axis (ctor `0x767680`); a negative
-    /// bound clamps (`0x768710`). Only the drag reads it, never `SetWidth` or the layout.
+    /// `SetMinResize` (`GetMinResize`): the resize drag's floor, `(width, height)` in `SetWidth`
+    /// units. `0.0` is unbounded per axis; a negative bound clamps. Only the drag reads it, never
+    /// `SetWidth` or the layout.
     pub min_resize: (f32, f32),
-    /// `SetMaxResize` (`0x7762a0`; `GetMaxResize` `0x7761a0`): the ceiling, same rules.
+    /// `SetMaxResize` (`GetMaxResize`): the ceiling, same rules.
     pub max_resize: (f32, f32),
-    /// `SetUserPlaced`: the layout cache keeps this frame's position. Every drag (`0x7652b0`)
-    /// stamps it (`0x7652e5`), so the cache also requires `movable` or `resizable`, at write and
-    /// at apply.
+    /// `SetUserPlaced`: the layout cache keeps this frame's position. Every drag stamps it, so the
+    /// cache also requires `movable` or `resizable`, at write and at apply.
     pub user_placed: bool,
-    /// `SetToplevel` (`0x775440`): bit `0x1` of the flag word `[frame+0xb4]` (`movable` `0x100`,
-    /// `resizable` `0x200`, all set by `0x76a3c0`). It raises nothing; `CSimpleTop::Raise`
-    /// (`0x7650f0`) raises the nearest toplevel self-or-ancestor of a clicked or shown frame.
+    /// `SetToplevel`: bit `0x1` of the flag word `[frame+0xb4]` (`movable` `0x100`, `resizable`
+    /// `0x200`). It raises nothing; `CSimpleTop::Raise` raises the nearest toplevel
+    /// self-or-ancestor of a clicked or shown frame.
     pub toplevel: bool,
     /// This frame's own scale (`ownScale +0xb8`, default 1.0).
     pub scale: f32,
-    /// `layoutScale` = `parentEffective * ownScale`, ε-gated (`0x76ac90`).
+    /// `layoutScale` = `parentEffective * ownScale`, ε-gated.
     pub effective_scale: f32,
     /// A later client's `ignoreParentScale`, not 1.12: nothing sets it.
     pub ignore_parent_scale: bool,
-    /// `GetID`/`SetID` and XML `id`, at `+0xb0` (`0x77531f`, `0x7753e7`): data for handlers, such
-    /// as a tab index, not the script model's frame id. Default 0.
+    /// `GetID`/`SetID` and XML `id`, at `+0xb0`: data for handlers, such as a tab index, not the
+    /// script model's frame id. Default 0.
     pub wow_id: i64,
     /// The link position in the `(strata, level)` bucket, re-stamped at the tail on each relink.
     /// Drawing puts the later-linked frame on top; the hit test probes the earlier-linked first.
@@ -253,12 +252,12 @@ pub struct Region {
     pub owner: FrameHandle,
     pub draw_layer: DrawLayer,
     /// The engine's own order within a layer, which only the EditBox caret sets, to draw over the
-    /// text; 1.12 gives Lua and XML no sub-level (`0x76a860`, `0x79a780`).
+    /// text; 1.12 gives Lua and XML no sub-level.
     pub sub_level: i8,
     /// The index within the owner frame, the last within-layer draw tiebreak.
     pub decl_seq: u32,
-    /// `Region:SetParent(nil)`: unlinked and not drawn, but not destroyed (`0x77fd10` with a null
-    /// parent). The owner's `regions` keeps it so `destroy` frees it; `SetParent(frame)` relinks.
+    /// `Region:SetParent(nil)`: unlinked and not drawn, but not destroyed. The owner's `regions`
+    /// keeps it so `destroy` frees it; `SetParent(frame)` relinks.
     pub detached: bool,
 }
 
@@ -311,19 +310,18 @@ impl Default for WidgetArena {
     }
 }
 
-/// Whether this kind's constructor enables the mouse, so it takes clicks with no `enableMouse`
-/// and no mouse script: the base ctor `0x769090` zeroes the input mask `[frame+0xcc]`, and Button
-/// (`0x778771`, CheckButton through it), Slider (`0x789467`), ColorSelect (`0x78b2b5`), EditBox
-/// (`0x779ced`..`0x779d03`, with char and key) and Minimap (`0x4edc38`) set its mouse bit. The
+/// Whether this kind's constructor enables the mouse, so it takes clicks with no `enableMouse` and
+/// no mouse script: the base ctor zeroes the input mask `[frame+0xcc]`, and Button (CheckButton
+/// through it), Slider, ColorSelect, EditBox (with char and key) and Minimap set its mouse bit. The
 /// ScrollFrame and ScrollingMessageFrame ctors set none; a chat link takes clicks through a
-/// mouse-enabled child per span (`0x7a3240`), which `script::pointer` models as rects.
+/// mouse-enabled child per span, which `script::pointer` models as rects.
 pub fn mouse_enabled_by_ctor(kind: FrameKind) -> bool {
     matches!(
         kind,
         FrameKind::Button
             | FrameKind::CheckButton
             | FrameKind::EditBox
-            // `CGWorldFrame`'s ctor enables key, mouse, wheel (`0x481b09`/`0x481b14`/`0x481b1f`).
+            // `CGWorldFrame`'s ctor enables key, mouse, wheel.
             | FrameKind::WorldFrame
             | FrameKind::Slider
             | FrameKind::ColorSelect
@@ -498,7 +496,7 @@ impl WidgetArena {
         *top = (*top).max(level.saturating_add(1));
     }
 
-    /// The first frame created with `name`; a later duplicate never takes it over (`0x701bd0`).
+    /// The first frame created with `name`; a later duplicate never takes it over.
     pub fn lookup(&self, name: &str) -> Option<FrameHandle> {
         self.names.get(name).copied()
     }
@@ -525,8 +523,8 @@ impl WidgetArena {
 
     // ── Create / destroy ────────────────────────────────────────────────────────────────────────
 
-    /// Create a frame as the client's ctor `0x769090` does, whatever the parent: shown, MEDIUM,
-    /// level 0, scale and alpha 1.0. A dead `parent` makes a top-level frame.
+    /// Create a frame as the client's ctor does, whatever the parent: shown, MEDIUM, level 0, scale
+    /// and alpha 1.0. A dead `parent` makes a top-level frame.
     pub fn create(
         &mut self,
         kind: FrameKind,
@@ -568,7 +566,7 @@ impl WidgetArena {
             shown,
             effective_visible: shown && parent_visible,
             mouse_enabled: mouse_enabled_by_ctor(kind),
-            // The WorldFrame ctor takes the wheel (`0x481b1f`); the reference's ScrollFrame and
+            // The WorldFrame ctor takes the wheel; the reference's ScrollFrame and
             // ScrollingMessageFrame ctors do not, and a stock one takes it from `<OnMouseWheel>`.
             mouse_wheel_enabled: matches!(
                 kind,
@@ -693,14 +691,13 @@ impl WidgetArena {
         handle
     }
 
-    /// Build the five regions the `CSimpleEditBox` ctor gives every EditBox, in its order: the
-    /// text FontString `E+0x328` (`0x779bee`, `0x770d30(E, 2, 1)`), three selection quads
-    /// `E+0x350/0x354/0x358` (`0x779c41`..`0x779c72`, `0x76fc40(E, 2, 0)`) and the caret
-    /// `E+0x368` (`0x779c86`..`0x779cac`, `0x76fc40(E, 3, 1)`). `GetRegions` (`0x773f60`) lists
-    /// them first, hidden or not, so authored `<Layers>` regions start at index 6. The quads carry
-    /// no texture: caret and selection paint host-side.
+    /// Build the five regions the `CSimpleEditBox` ctor gives every EditBox, in its order: the text
+    /// FontString `E+0x328` (`(E, 2, 1)`), three selection quads `E+0x350/0x354/0x358`
+    /// (`(E, 2, 0)`) and the caret `E+0x368` (`(E, 3, 1)`). `GetRegions` lists them first, hidden
+    /// or not, so authored `<Layers>` regions start at index 6. The quads carry no texture: caret
+    /// and selection paint host-side.
     fn build_editbox_engine_regions(&mut self, eb: FrameHandle) {
-        // OVERLAY here; the reference ctor puts the text in layer 2, ARTWORK (`0x770d30(E, 2, 1)`).
+        // OVERLAY here; the reference ctor puts the text in layer 2, ARTWORK (`(E, 2, 1)`).
         let text = self.create_region(eb, RegionKind::FontString, DrawLayer::Overlay, 0);
         let mut selection = [None; 3];
         for slot in &mut selection {
@@ -715,7 +712,7 @@ impl WidgetArena {
     }
 
     /// Build a Minimap's nine engine `Model` children, the ninth its player arrow. They are born
-    /// anonymous and without a model file; `CMinimap::LoadXML` (`0x4ee2b0`) assigns the paths.
+    /// anonymous and without a model file; `CMinimap::LoadXML` assigns the paths.
     fn build_minimap_engine_children(&mut self, minimap: FrameHandle) {
         let mut ninth = None;
         for _ in 0..kinds::MINIMAP_ENGINE_CHILDREN {
@@ -796,8 +793,8 @@ impl WidgetArena {
     }
 
     /// Free one region, as only `CSimpleHTML::SetText` does in the client, pool-freeing the last
-    /// parse's blocks (`0x78adc6`). The caller drops the region's script-model state too, and never
-    /// frees a region some state holds by handle.
+    /// parse's blocks. The caller drops the region's script-model state too, and never frees a
+    /// region some state holds by handle.
     pub fn destroy_region(&mut self, h: RegionHandle) -> bool {
         let Some(region) = self.region(h) else {
             return false;

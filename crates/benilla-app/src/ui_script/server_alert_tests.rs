@@ -294,8 +294,8 @@ fn a_server_that_says_nothing_times_out() {
     assert!(start.elapsed() < Duration::from_millis(1500));
 }
 
-/// The status and the first bytes, then silence past the read timeout: the done call
-/// (`0x7a6c4b`) runs whatever ended the reads, and finds the prefix.
+/// The status and the first bytes, then silence past the read timeout: the done call runs whatever
+/// ended the reads, and finds the prefix.
 #[test]
 fn a_body_that_stalls_keeps_what_came_before_it() {
     let fake = Fake::start(|_, _, _| {

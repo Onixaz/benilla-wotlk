@@ -1,7 +1,7 @@
 //! The equip, auto-equip and use soulbind confirmations (`EQUIP_BIND`, `AUTOEQUIP_BIND`,
-//! `USE_BIND`). Unlike the loot arm (`bonding == 1` and `quality >= 2`, `0x4c2790`), they read
-//! only the template's bonding at `+0x194`, never quality: `SwapItem` (`0x5e0c40`) and
-//! `AutoEquipCursorItem` (`0x5e1480`) ask on 2, `CGItem::Use` (`0x5d8d00`) on 3.
+//! `USE_BIND`). Unlike the loot arm (`bonding == 1` and `quality >= 2`), they read only the
+//! template's bonding at `+0x194`, never quality: `SwapItem` and `AutoEquipCursorItem` ask on 2,
+//! `CGItem::Use` on 3.
 //!
 //! There is no confirm packet: `EquipPendingItem(index)` re-runs the original action with the
 //! suppress flag set, and `CancelPendingEquip(index)` sends nothing and drops the record. The
@@ -17,7 +17,7 @@ use crate::net::Objects;
 
 /// The equip arms' `item_template.bonding` (vmangos `ItemPrototype.h` `ItemBondingType`).
 pub(crate) const BIND_WHEN_EQUIPPED: u32 = 2;
-/// The use arm's value (`0x5d91d6`).
+/// The use arm's value.
 pub(crate) const BIND_WHEN_USE: u32 = 3;
 
 /// One deferred action, stored as its own coordinates rather than a built packet: accept re-runs
@@ -37,9 +37,9 @@ pub(crate) enum PendingEquip {
     AutoEquip { bag_index: u8, slot: u8, guid: u64 },
 }
 
-/// The client's pending-equip array (`0xc4c290`-`0xc4c29c`, stride `0x20`), allocated by
-/// `0x5e1110`: the event's `arg1` is a 0-based index into it, passed through Lua untouched.
-/// Not reset on world enter or leave: the reference zeroes it once at static init.
+/// The client's pending-equip array (stride `0x20`), allocated: the event's `arg1` is a 0-based
+/// index into it, passed through Lua untouched. Not reset on world enter or leave: the reference
+/// zeroes it once at static init.
 #[derive(Resource, Default)]
 pub(crate) struct PendingEquips {
     slots: Vec<Option<PendingEquip>>,
@@ -61,7 +61,7 @@ impl PendingEquips {
         u32::try_from(idx).unwrap_or(u32::MAX)
     }
 
-    /// Frees the element. An index nobody filed does nothing, as `0x5e1be0` bounds-checks it.
+    /// Frees the element. An index nobody filed does nothing, as the reference bounds-checks it.
     pub(crate) fn take(&mut self, index: u32) -> Option<PendingEquip> {
         self.slots.get_mut(index as usize)?.take()
     }
@@ -73,8 +73,8 @@ impl PendingEquips {
     }
 }
 
-/// The use arm's pending state, one cell with no index and no cancel verb: the reference stamps
-/// the item guid (`0xc4c240`) and target guid (`0xc4c1d0`) and `ConfirmBindOnUse()` re-issues
+/// The use arm's pending state, one cell with no index and no cancel verb: the reference stamps the
+/// item guid and target guid and `ConfirmBindOnUse()` re-issues
 /// `CGItem::Use(&target, suppress = 1)` off them.
 #[derive(Resource, Default)]
 pub(crate) struct PendingBindOnUse(pub(crate) Option<PendingUse>);
@@ -89,16 +89,16 @@ pub(crate) type PendingUse = crate::ui_items::ItemUse;
 pub(crate) struct BindGate<'w> {
     pub(crate) equips: ResMut<'w, PendingEquips>,
     pub(crate) on_use: ResMut<'w, PendingBindOnUse>,
-    /// An enchant can soulbind its item, and `0x5da2c0` walks all seven enchant slots; without
+    /// An enchant can soulbind its item, and the reference walks all seven enchant slots; without
     /// client data only the instance flag counts.
     pub(crate) enchants: Option<Res<'w, Enchants>>,
 }
 
 impl BindGate<'_> {
-    /// Whether this equip must ask first: not already bound (`0x5da2c0`), `bonding == 2` and
-    /// equippable (`0x5ea930`). `item_guid` is the item that would bind (a swap's non-equip side,
-    /// an auto-equip's clicked slot); an unknown item or uncached template fails open, as the
-    /// reference's cache-hit conjunct does.
+    /// Whether this equip must ask first: not already bound, `bonding == 2` and equippable.
+    /// `item_guid` is the item that would bind (a swap's non-equip side, an auto-equip's clicked
+    /// slot); an unknown item or uncached template fails open, as the reference's cache-hit
+    /// conjunct does.
     pub(crate) fn equip_binds(
         &self,
         script: &UiScript,
@@ -122,9 +122,9 @@ impl BindGate<'_> {
         t.bonding == BIND_WHEN_EQUIPPED && script.item_usable(entry)
     }
 
-    /// The use arm's predicate: `[0x5d91d3, 0x5d91f2)` holds exactly three branches to the cast,
-    /// `bonding == 3`, not already bound (`0x5da2c0`) and `suppress == 0`. There is no can-use
-    /// (`0x5ea930`) leg: that failure exits `0x5d8d00` before the bind arm.
+    /// The use arm's predicate: the reference holds exactly three branches to the cast,
+    /// `bonding == 3`, not already bound and `suppress == 0`. There is no can-use leg: that failure
+    /// exits before the bind arm.
     pub(crate) fn use_binds(
         &self,
         objects: &Objects,

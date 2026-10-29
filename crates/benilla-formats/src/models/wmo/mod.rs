@@ -31,8 +31,8 @@ pub fn load_wmo(chain: &mut Chain, raw_path: &str) -> Result<Vec<super::RenderSu
 }
 
 /// Find a top-level WMO chunk's data by its on-disk magic, which WMO stores reversed (`MODN` is
-/// `NDOM`). As in the reference's walk (`0x6c3a60`/`0x6c3f80`), the last chunk clamps to EOF and
-/// never rejects the file: `Undercity_144.wmo`'s MOGP declares one byte more than the file holds.
+/// `NDOM`). As in the reference's walk, the last chunk clamps to EOF and never rejects the file:
+/// `Undercity_144.wmo`'s MOGP declares one byte more than the file holds.
 pub(crate) fn find_wmo_chunk<'a>(bytes: &'a [u8], magic: &[u8; 4]) -> Option<&'a [u8]> {
     let mut off = 0usize;
     while off + 8 <= bytes.len() {

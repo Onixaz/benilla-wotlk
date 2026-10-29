@@ -24,8 +24,8 @@ pub enum BlpVariant {
     /// these quads are mostly magnified and their thin cut-out arms fade out down the mips.
     Effect,
     /// The snow flake: [`Self::Effect`] with the authored mips kept. The reference draws it as
-    /// `GL_POINTS` with `GL_COORD_REPLACE` (`0x678610`; device init `0x59cf30`-`0x59cf58`), 14 px
-    /// at the eye and 1 px past 46 yd, where mip 0 alone aliases into speckle.
+    /// `GL_POINTS` with `GL_COORD_REPLACE`, 14 px at the eye and 1 px past 46 yd, where mip 0 alone
+    /// aliases into speckle.
     PointSprite,
     /// A minimap tile (ADT `map<X>_<Y>` or a WMO group's interior tile): [`map_tile_image`].
     MapTile,
@@ -156,10 +156,10 @@ fn sprite_image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
     image
 }
 
-/// A minimap tile, sampled as the reference samples every tile (the tile loader `0x6d9ed0`): clamp,
-/// `GL_LINEAR` with no mips, anisotropy 1 and `GL_SKIP_DECODE_EXT`, so the hardware filters the
-/// gamma bytes. An sRGB upload would darken every alpha edge against black, so the tile uploads as
-/// [`GAMMA_BYTES`] and the shader converts after the filter.
+/// A minimap tile, sampled as the reference samples every tile: clamp, `GL_LINEAR` with no mips,
+/// anisotropy 1 and `GL_SKIP_DECODE_EXT`, so the hardware filters the gamma bytes. An sRGB upload
+/// would darken every alpha edge against black, so the tile uploads as [`GAMMA_BYTES`] and the
+/// shader converts after the filter.
 fn map_tile_image(width: u32, height: u32, rgba: Vec<u8>) -> Image {
     effect_image(width, height, rgba)
 }

@@ -1,15 +1,15 @@
-//! The world pick's unit and player filter while a word stands. The pick flags come from the
-//! word alone (`0x481050`'s targeting arm, `4810f1`-`481187`), and each unit and player the trace
-//! finds meets them in `0x480610`, where `0x480780`'s unit and player arms send it. A unit the
-//! spell cannot take is no candidate, so the cursor and the click reach the one behind it.
+//! The world pick's unit and player filter while a word stands. The pick flags come from the word
+//! alone (-`481187`), and each unit and player the trace finds meets them, where the reference's
+//! unit and player arms send it. A unit the spell cannot take is no candidate, so the cursor and
+//! the click reach the one behind it.
 //!
-//! - [`PickFlags`]: the unit-shaped bits of the flags, [`PickFlags::of`], and the legs of
-//!   `0x480610` they switch on, [`PickFlags::admits`].
+//! - [`PickFlags`]: the unit-shaped bits of the flags, [`PickFlags::of`], and the legs of the
+//!   reference they switch on, [`PickFlags::admits`].
 //! - [`UnitPick`]: the flags as the frame began, [`publish_unit_pick`], beside
 //!   [`super::PicksSelf`] (flag `0x20`) and [`super::CorpsePick`] (flag `0x40`), which own the
 //!   other two bits the flags carry for these arms.
 //! - [`PickChecks`]: what the hover reads per candidate, the relation checks the bind runs
-//!   ([`crate::spell::cast_target::TargetRelations`]), the party leg `0x606c20` among them.
+//!   ([`crate::spell::cast_target::TargetRelations`]), the party leg among them.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -21,38 +21,37 @@ use crate::spell::cast_target::{owner_store, TargetRelations};
 use crate::spell::group_relation::{GroupInputs, GroupRoster};
 use crate::target::Factions;
 
-/// Flags `0x8` and `0x10`, which `0x480780`'s unit and player arms test (`4807e1`, `4807cb`) and
-/// `0x481050` sets together (`481116 or esi,0x18`) for a word with unit bits.
+/// Flags `0x8` and `0x10`, which the reference's unit and player arms test and the reference sets
+/// together (`481116 or esi,0x18`) for a word with unit bits.
 const UNITS: u32 = 0x18;
-/// The relation flags: `0x606c20` (`0x6e61e0`), `CanAssist 0x6066f0` (`0x6e6200`) and `CanAttack
-/// 0x606980` (`0x6e6210`), of which `0x480610` needs one (`480686`).
+/// The relation flags, `CanAssist` and `CanAttack`, of which the reference needs one (`480686`).
 const PARTY: u32 = 0x1_0000;
 const ASSIST: u32 = 0x2_0000;
 const ATTACK: u32 = 0x4_0000;
 const RELATIONS: u32 = PARTY | ASSIST | ATTACK;
-/// The liveness flags: the word takes a living candidate, or a dead one (`4806fd`).
+/// The liveness flags: the word takes a living candidate, or a dead one.
 const ALIVE: u32 = 0x10_0000;
 const DEAD: u32 = 0x20_0000;
 const LIVENESS: u32 = ALIVE | DEAD;
 
-/// `UNIT_FLAG_IMMUNE_TO_PLAYER` (vmangos `UnitDefines.h:553`): the `[desc+0xa0]` bit 8 that
-/// `0x480737` refuses while targeting.
+/// `UNIT_FLAG_IMMUNE_TO_PLAYER` (vmangos `UnitDefines.h:553`): the `[desc+0xa0]` bit 8 that the
+/// reference refuses while targeting.
 const UNIT_FLAG_IMMUNE_TO_PLAYER: u32 = 0x100;
 
-/// The unit-shaped bits of the pick flags `0x481050` builds from the standing word. The terrain
-/// (`0x3`), GameObject (`0x4`), self (`0x20`) and corpse (`0x40`) bits belong to their own arms.
+/// The unit-shaped bits of the pick flags builds from the standing word. The terrain (`0x3`),
+/// GameObject (`0x4`), self (`0x20`) and corpse (`0x40`) bits belong to their own arms.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PickFlags(u32);
 
 impl PickFlags {
-    /// `0x481050`'s targeting arm over the word `0xcecac0`:
+    /// The reference's targeting arm over the word:
     ///
-    /// - units and players (`0x18`) for a word in `0x878e` (`0x6e6180`), and inside that arm the
-    ///   relation flags for a word in `0x40c` (`0x6e61e0`, party), `0x500` (`0x6e6200`, assist)
-    ///   and `0x480` (`0x6e6210`, enemy), then the liveness flag: dead for a word in `0x8600`
-    ///   (`0x6e6230`, with the corpse flag, `0x200040`), else alive (`0x100000`);
-    /// - after it, the ally corpse bit `0x8000` (`0x6e6240`) adds the assist flag and the enemy
-    ///   corpse bit `0x200` (`0x6e6250`) the attack flag (`0x20040`, `0x40040`).
+    /// - units and players (`0x18`) for a word in `0x878e`, and inside that arm the relation flags
+    ///   for a word in `0x40c` (party), `0x500` (assist) and `0x480` (enemy), then the liveness
+    ///   flag: dead for a word in `0x8600` (with the corpse flag, `0x200040`), else alive
+    ///   (`0x100000`);
+    /// - after it, the ally corpse bit `0x8000` adds the assist flag and the enemy corpse bit
+    ///   `0x200` the attack flag (`0x20040`, `0x40040`).
     pub(crate) fn of(word: u32) -> Self {
         let mut flags = 0;
         if word & 0x878e != 0 {
@@ -77,17 +76,17 @@ impl PickFlags {
         Self(flags)
     }
 
-    /// Whether a unit or player is a candidate of the pick: `0x480780`'s arms need the unit
-    /// flags, then `0x480610`'s three legs:
+    /// Whether a unit or player is a candidate of the pick: the reference's arms need the unit
+    /// flags, then the reference's three legs:
     ///
     /// - `480686`: with a relation flag set, one of the set relations must hold. The party leg
-    ///   `in_party` is `0x606c20`, run only when asked.
-    /// - `4806fd`: with a liveness flag set, a living candidate needs `0x100000` and a dead one
-    ///   `0x200000`. Alive is the signed `UNIT_FIELD_HEALTH` above 0 (`480713 setg`), the bind's
-    ///   own test ([`unit_alive`]), and a candidate with no descriptor reads dead.
+    ///   `in_party`, run only when asked.
+    /// -: with a liveness flag set, a living candidate needs `0x100000` and a dead one `0x200000`.
+    ///   Alive is the signed `UNIT_FIELD_HEALTH` above 0 (`480713 setg`), the bind's own test
+    ///   ([`unit_alive`]), and a candidate with no descriptor reads dead.
     /// - `480737`: while targeting, `UNIT_FIELD_FLAGS & 0x100` refuses.
     ///
-    /// The self exclusions that come first (`48062c`-`480683`) are the caller's.
+    /// The self exclusions that come first (-`480683`) are the caller's.
     pub(crate) fn admits(
         self,
         is_self: bool,
@@ -266,7 +265,7 @@ mod tests {
         PickFlags::of(word).admits(is_self, &rel, in_party)
     }
 
-    /// `0x481050`'s targeting arm, bit by bit: which unit-shaped flags each word sets.
+    /// The reference's targeting arm, bit by bit: which unit-shaped flags each word sets.
     #[test]
     fn the_word_builds_the_flags_as_the_chooser_does() {
         let flags = |word| PickFlags::of(word).0;
@@ -282,13 +281,9 @@ mod tests {
         assert_eq!(flags(ASSIST_WORD), UNITS | ASSIST | ALIVE);
         assert_eq!(flags(ENEMY), UNITS | ATTACK | ALIVE);
         assert_eq!(flags(PARTY_WORD), UNITS | PARTY | ALIVE);
-        assert_eq!(
-            flags(RAID),
-            UNITS | PARTY | ALIVE,
-            "raid asks `0x606c20` too"
-        );
-        // Resurrection: the ally corpse bit takes the assist flag through `0x6e6240`, and a word
-        // in `0x8600` takes the dead flag instead of the alive one.
+        assert_eq!(flags(RAID), UNITS | PARTY | ALIVE, "raid asks too");
+        // Resurrection: the ally corpse bit takes the assist flag, and a word in `0x8600` takes the
+        // dead flag instead of the alive one.
         assert_eq!(flags(CORPSE_ALLY), UNITS | ASSIST | DEAD);
         assert_eq!(flags(CORPSE_ENEMY), UNITS | ATTACK | DEAD);
         // Skinning's word: all three relations, and dead.
@@ -318,12 +313,12 @@ mod tests {
         assert!(!admits_as(ENEMY, true, &friend(100), || false));
     }
 
-    /// `4806fd`: a living candidate needs the alive flag, a dead one the dead flag.
+    /// A living candidate needs the alive flag, a dead one the dead flag.
     #[test]
     fn a_resurrection_word_drops_the_living_and_keeps_the_dead() {
         assert!(admits(CORPSE_ALLY, &friend(0)), "a dead friend");
         assert!(!admits(CORPSE_ALLY, &friend(100)), "a living friend");
-        // The assist flag `0x6e6240` adds still applies: a dead foe is no ally's corpse.
+        // The assist flag adds still applies: a dead foe is no ally's corpse.
         assert!(!admits(CORPSE_ALLY, &foe(0)), "a dead foe");
         // The dead-only word: a dead unit of any relation, never a living one.
         assert!(admits(UNIT | DEAD_ONLY, &foe(0)));
@@ -340,7 +335,7 @@ mod tests {
         assert!(admits(CORPSE_ALLY, &bare));
     }
 
-    /// The enemy corpse bit: `0x6e6250` adds the attack flag, so only a dead unit that can be
+    /// The enemy corpse bit: the reference adds the attack flag, so only a dead unit that can be
     /// attacked is a candidate; a dead friend and a living foe are not.
     #[test]
     fn the_enemy_corpse_word_takes_the_dead_that_can_be_attacked() {
@@ -508,8 +503,8 @@ mod tests {
         unit(&pairs)
     }
 
-    /// `0x606c20`, through the party word: us, a member of our party, our own pet and a member's
-    /// pet pass; a stranger, a hostile creature, and a member who is not player-controlled do not.
+    /// Through the party word: us, a member of our party, our own pet and a member's pet pass; a
+    /// stranger, a hostile creature, and a member who is not player-controlled do not.
     #[test]
     fn the_party_word_takes_us_and_the_people_of_our_party() {
         let (mut world, me) = party_world();
@@ -521,7 +516,7 @@ mod tests {
         let npc = spawn(&mut world, 7, foe(100));
         seat(&mut world, 2);
 
-        assert!(asked(&mut world, PARTY_WORD, me), "ourselves (606c3d)");
+        assert!(asked(&mut world, PARTY_WORD, me), "ourselves");
         assert!(asked(&mut world, PARTY_WORD, member), "a party member");
         assert!(asked(&mut world, PARTY_WORD, pet), "our own pet");
         assert!(asked(&mut world, PARTY_WORD, member_pet), "a member's pet");
@@ -532,13 +527,13 @@ mod tests {
         assert!(!asked(&mut world, PARTY_WORD, stranger_pet), "his pet");
         assert!(!asked(&mut world, PARTY_WORD, npc), "a creature");
 
-        // Not player-controlled on either side: no party relation (606c5e, 606c76).
+        // Not player-controlled on either side: no party relation.
         world.entity_mut(member).insert(player(&[(FLAGS, 0)]));
         assert!(
             !asked(&mut world, PARTY_WORD, member),
             "a member without flag 0x8"
         );
-        // A pet whose owner has not streamed answers no controller (606c92).
+        // A pet whose owner has not streamed answers no controller.
         let orphan = spawn(&mut world, 8, unit(&[(FLAGS, 0x8), (CREATED_BY, 99)]));
         assert!(!asked(&mut world, PARTY_WORD, orphan));
         // The raid word asks the same predicate.

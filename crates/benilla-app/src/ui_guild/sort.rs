@@ -1,14 +1,12 @@
-//! The guild roster's display order: sorted, never filtered (the reference comparator
-//! `0x4d0d50`). With show-offline off, offline members sink below online ones
-//! (`0x4d0d60`-`0x4d0d8a`), so `GetNumGuildMembers`' online count addresses the leading rows.
+//! The guild roster's display order: sorted, never filtered. With show-offline off, offline members
+//! sink below online ones, so `GetNumGuildMembers`' online count addresses the leading rows.
 
 use std::cmp::Ordering;
 
 use benilla_ui::script::GuildMemberInfo;
 
-/// A `SortGuildRoster` column, in the reference's key order (`0x4d1cb0`): `rank` 0, `level` 1,
-/// `name` 2, `zone` 3, `class` 4, `group` 5, `online` 6, `note` 7. The chain starts as
-/// `key[i] = i` (`0x4d0a50`).
+/// A `SortGuildRoster` column, in the reference's key order: `rank` 0, `level` 1, `name` 2, `zone`
+/// 3, `class` 4, `group` 5, `online` 6, `note` 7. The chain starts as `key[i] = i`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SortField {
     Rank,
@@ -16,14 +14,14 @@ pub(super) enum SortField {
     Name,
     Zone,
     Class,
-    /// A dead key: its jump-table slot (`0x4d0f44`, slot 5) is the loop's continue label
-    /// `0x4d0efd`, so it orders nothing. It stays so `"group"` does not parse as `name`.
+    /// A dead key: its jump-table slot (slot 5) is the loop's continue label, so it orders nothing.
+    /// It stays so `"group"` does not parse as `name`.
     Group,
     Online,
     Note,
 }
 
-/// [`SortStack`]'s initial chain: the eight keys in order, all ascending (`0x4d0a50`-`0x4d0a62`).
+/// [`SortStack`]'s initial chain: the eight keys in order, all ascending.
 const SORT_FIELDS: [SortField; 8] = [
     SortField::Rank,
     SortField::Level,
@@ -36,8 +34,8 @@ const SORT_FIELDS: [SortField; 8] = [
 ];
 
 impl SortField {
-    /// The column a `SortGuildRoster` string names, case-insensitively (`0x64a4c0`, `0x414310`);
-    /// anything else sorts by `name`, the preloaded key (`0x4d1cdb`, `0x4d1df4`).
+    /// The column a `SortGuildRoster` string names, case-insensitively; anything else sorts by
+    /// `name`, the preloaded key.
     pub(super) fn parse(field: &str) -> SortField {
         match field {
             f if f.eq_ignore_ascii_case("rank") => SortField::Rank,
@@ -54,13 +52,13 @@ impl SortField {
     /// Order two rows by this column alone; `Equal` is the reference arm's jump to the loop tail.
     fn compare(self, a: &RosterRow, b: &RosterRow) -> Ordering {
         match self {
-            // Reversed: the higher rank id sorts first, so the guild master sorts last
-            // (`0x4d0e54`); every other numeric column is plain a-vs-b (`0x4d0dd3`).
+            // Reversed: the higher rank id sorts first, so the guild master sorts last; every other
+            // numeric column is plain a-vs-b.
             SortField::Rank => b.info.rank_index.cmp(&a.info.rank_index),
             SortField::Level => a.info.level.cmp(&b.info.level),
             SortField::Name => icmp(&a.info.name, &b.info.name),
-            // By the localized DBC name, not the id (`0x4d0e67`, `0x4d0ded`); an id the DBC does
-            // not resolve ties with another miss and sorts after a hit (`0x4d0ea1`, `0x4d0e27`).
+            // By the localized DBC name, not the id; an id the DBC does not resolve ties with
+            // another miss and sorts after a hit.
             SortField::Zone => misses_last(&a.info.zone, &b.info.zone),
             SortField::Class => misses_last(&a.info.class, &b.info.class),
             SortField::Group => Ordering::Equal,
@@ -68,9 +66,9 @@ impl SortField {
                 (true, true) => Ordering::Equal,
                 (true, false) => Ordering::Less,
                 (false, true) => Ordering::Greater,
-                // Both offline: the more recently seen first, on the raw days float (`0x4d0f19`).
-                // Deviation: an exact tie is `Equal` where the reference answers ±1, and a NaN
-                // has a place (`total_cmp`), because Rust's sort requires a total order.
+                // Both offline: the more recently seen first, on the raw days float. Deviation: an
+                // exact tie is `Equal` where the reference answers ±1, and a NaN has a place
+                // (`total_cmp`), because Rust's sort requires a total order.
                 (false, false) => a.last_online_days.total_cmp(&b.last_online_days),
             },
             SortField::Note => icmp(&a.info.note, &b.info.note),
@@ -78,7 +76,7 @@ impl SortField {
     }
 }
 
-/// Case-insensitive ASCII order, as the reference's `0x414310` folds `A-Z` and compares bytes.
+/// Case-insensitive ASCII order, as the reference's folds `A-Z` and compares bytes.
 fn icmp(a: &str, b: &str) -> Ordering {
     a.bytes()
         .map(|c| c.to_ascii_lowercase())
@@ -86,7 +84,7 @@ fn icmp(a: &str, b: &str) -> Ordering {
 }
 
 /// [`icmp`] with an empty value (the zone and class arms' DBC miss) after every name; two misses
-/// tie. Deviation: the reference ties a miss with a hit (`0x4d0e27`, `0x4d0ea1`), no total order.
+/// tie. Deviation: the reference ties a miss with a hit, no total order.
 fn misses_last(a: &str, b: &str) -> Ordering {
     match (a.is_empty(), b.is_empty()) {
         (true, true) => Ordering::Equal,
@@ -96,8 +94,8 @@ fn misses_last(a: &str, b: &str) -> Ordering {
     }
 }
 
-/// The reference's eight-slot `{key, direction}` chain (`0xb72680`), most recent first: `0x4d0fb0`
-/// maintains it and `0x4d0d50` walks it, so every column clicked before stays a tie-break, and one
+/// The reference's eight-slot `{key, direction}` chain, most recent first: the reference maintains
+/// it and the reference walks it, so every column clicked before stays a tie-break, and one
 /// returned to keeps the direction it was left at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct SortStack([(SortField, bool); 8]);
@@ -109,8 +107,8 @@ impl Default for SortStack {
 }
 
 impl SortStack {
-    /// `SortGuildRoster(field)`: a field already first flips its direction (`0x4d0fcf`); any other
-    /// moves to the front with the direction it was left at (`0x4d0fdc`-`0x4d0ff3`).
+    /// `SortGuildRoster(field)`: a field already first flips its direction; any other moves to the
+    /// front with the direction it was left.
     pub(super) fn select(&mut self, field: SortField) {
         let Some(at) = self.0.iter().position(|(f, _)| *f == field) else {
             return; // unreachable: the chain holds all eight, always
@@ -130,9 +128,8 @@ impl SortStack {
         self.0[0]
     }
 
-    /// Order two rows. With `show_offline` off, offline sinks below online before any key
-    /// (`0x4d0d60`-`0x4d0d8a`); then the first deciding key wins, in its own direction, not slot
-    /// 0's (`0x4d0f36`).
+    /// Order two rows. With `show_offline` off, offline sinks below online before any key; then the
+    /// first deciding key wins, in its own direction, not slot 0's.
     fn compare(&self, a: &RosterRow, b: &RosterRow, show_offline: bool) -> Ordering {
         if !show_offline {
             match (a.info.online, b.info.online) {
@@ -150,7 +147,7 @@ impl SortStack {
         Ordering::Equal
     }
 
-    /// Put `rows` in display order; unstable, like the reference's MSVC CRT `qsort` (`0x73f727`).
+    /// Put `rows` in display order; unstable, like the reference's MSVC CRT `qsort`.
     pub(super) fn order(&self, rows: &mut [RosterRow], show_offline: bool) {
         rows.sort_unstable_by(|a, b| self.compare(a, b, show_offline));
     }

@@ -20,8 +20,8 @@ impl Player {
     /// and clears the far latch. The height is `launch_y`, not the post-step `pos.y` a tick
     /// higher, which would read a flat jump's descent as a far fall.
     ///
-    /// FALLINGFAR (`0x633240`) splits on the launch speed: a jump latches [`FALL_FAR_DROP`] below
-    /// its launch, a step-off after [`FALL_FAR_TIME`] airborne; only a landing clears it.
+    /// FALLINGFAR splits on the launch speed: a jump latches [`FALL_FAR_DROP`] below its launch, a
+    /// step-off after [`FALL_FAR_TIME`] airborne; only a landing clears it.
     pub(super) fn advance_airborne_arc(
         &mut self,
         airborne: bool,
@@ -58,9 +58,9 @@ impl Player {
         ArcEdges {
             new_arc,
             // A same-frame relaunch stays airborne and streams a JUMP. A root ends the arc in
-            // mid-air (`SetRoot`'s `StopFalling`) with no land packet (`0x602df3 test ah,0x10`
-            // before opcode `0xc9`), which would hand vmangos `Player::HandleFall` the whole fall
-            // clock; the release is a fresh arc, `ClearRoot`'s `StartFalling(0)`.
+            // mid-air (`SetRoot`'s `StopFalling`) with no land packet (before opcode `0xc9`), which
+            // would hand vmangos `Player::HandleFall` the whole fall clock; the release is a fresh
+            // arc, `ClearRoot`'s `StartFalling(0)`.
             landed: !airborne && was_airborne && !self.modes.rooted,
         }
     }
@@ -247,7 +247,7 @@ mod tests {
     }
 
     /// The mover's anchor holds a rooted body in mid-air, so `airborne` drops there; the reference
-    /// sends no land packet in that state (`0x602df3`).
+    /// sends no land packet in that state.
     #[test]
     fn a_root_taken_mid_fall_ends_the_arc_without_landing_it() {
         let mut p = take_off(100.0);
@@ -269,8 +269,8 @@ mod tests {
         );
     }
 
-    /// A mid-air release is `ClearRoot`'s (`0x7c7370`) `StartFalling(0)`: a fresh arc from a zero
-    /// clock, so the server measures the fall from the release.
+    /// A mid-air release is `ClearRoot`'s `StartFalling(0)`: a fresh arc from a zero clock, so the
+    /// server measures the fall from the release.
     #[test]
     fn releasing_the_root_mid_air_starts_a_fresh_fall_not_a_resumption() {
         let mut p = take_off(100.0);

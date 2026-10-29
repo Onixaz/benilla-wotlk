@@ -1,21 +1,19 @@
-//! `/afk` and `/dnd`, which the reference's `SendChatMessage` (`0x49f1e0`) handles differently.
-//! DND (`0x49f3de`-`0x49f591`) reads `PLAYER_FLAGS` bit `0x4` live and falls through to the plain
-//! `CMSG_MESSAGECHAT` send. AFK (`0x49f4f3`-`0x49f562`) reads the client-side [`AfkMirror`] and
-//! hands off to `CGPlayer_C::SetAFK` (`0x5eb740`) or `ClearAFK` (`0x5eb830`), which send their
-//! own packets. Both echo before the send, never from the descriptor: the `PLAYER_FLAGS` delta arm
-//! (`0x5ee990`) prints nothing. The four lines are `CHAT_MSG_SYSTEM` (`0x49a870`, type `0xA`);
-//! the `CHAT_MSG_AFK`/`DND` events are other players' auto-replies.
+//! `/afk` and `/dnd`, which the reference's `SendChatMessage` handles differently. DND reads
+//! `PLAYER_FLAGS` bit `0x4` live and falls through to the plain `CMSG_MESSAGECHAT` send. AFK reads
+//! the client-side [`AfkMirror`] and hands off to `CGPlayer_C::SetAFK` or `ClearAFK`, which send
+//! their own packets. Both echo before the send, never from the descriptor: the `PLAYER_FLAGS`
+//! delta arm prints nothing. The four lines are `CHAT_MSG_SYSTEM` (type `0xA`); the
+//! `CHAT_MSG_AFK`/`DND` events are other players' auto-replies.
 
 use bevy::prelude::*;
 
 use super::event::{ChatEvent, ChatEventKind};
 use super::feed::ChatLog;
 
-/// The reference's optimistic mirror of our `PLAYER_FLAGS` AFK bit (`[0xb6e5cc]`): written at
-/// command time (`0x5eb7ae`, `0x5eb885`), reconciled from the descriptor (`0x5ee9f2`), reseeded
-/// at world enter (`0x4989c0`). A `u32` tested for non-zero: the reconcile stores
-/// `PLAYER_FLAGS & 2`, so a set mirror can read 2. DND has no mirror, so a second `/dnd` before
-/// the server's update re-marks where a second `/afk` clears.
+/// The reference's optimistic mirror of our `PLAYER_FLAGS` AFK bit: written at command time,
+/// reconciled from the descriptor, reseeded at world enter. A `u32` tested for non-zero: the
+/// reconcile stores `PLAYER_FLAGS & 2`, so a set mirror can read 2. DND has no mirror, so a second
+/// `/dnd` before the server's update re-marks where a second `/afk` clears.
 #[derive(Resource, Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AfkMirror(pub(crate) u32);
 
@@ -37,9 +35,8 @@ pub(crate) struct AwayOutcome {
     pub(crate) body: String,
 }
 
-/// `/afk <msg>`, the AFK arm (`0x49f4f3`-`0x49f562`). The default text is substituted before the
-/// send (`0x49f512`), so the server stores `"Away from Keyboard"`, never an empty body, and the
-/// no-`%s` `MARKED_AFK` goes unused.
+/// `/afk <msg>`, the AFK arm. The default text is substituted before the send, so the server stores
+/// `"Away from Keyboard"`, never an empty body, and the no-`%s` `MARKED_AFK` goes unused.
 pub(crate) fn afk_line(
     msg: &str,
     mirror: AfkMirror,
@@ -55,7 +52,7 @@ pub(crate) fn afk_line(
                 body: String::new(),
             }
         } else {
-            // Re-marking while AFK prints nothing (`0x5eb76e`), but the new text is still sent.
+            // Re-marking while AFK prints nothing, but the new text is still sent.
             AwayOutcome {
                 line: None,
                 mirror: None,
@@ -76,9 +73,9 @@ pub(crate) fn afk_line(
     }
 }
 
-/// `/dnd <msg>` against the live `PLAYER_FLAGS` bit `0x4`, the DND arm (`0x49f3de`-`0x49f591`);
-/// unlike `/afk`, a repeat with a message re-prints. `MARKED_DND` carries its period inside the
-/// format string, so it is filled, never composed.
+/// `/dnd <msg>` against the live `PLAYER_FLAGS` bit `0x4`, the DND arm; unlike `/afk`, a repeat
+/// with a message re-prints. `MARKED_DND` carries its period inside the format string, so it is
+/// filled, never composed.
 pub(crate) fn dnd_line(
     msg: &str,
     is_dnd: bool,
@@ -104,10 +101,9 @@ pub(crate) fn dnd_line(
     }
 }
 
-/// The implicit AFK clear on every chat send but type `0x14` (`0x49f3c7`/`0x49f3d6`), gated on
-/// `autoClearAFK`, so `/dnd` (`0x15`) clears AFK first. The caller sends the empty `0x14` packet
-/// and zeroes the mirror. It runs before the refusal arms (`0x49f592`): a ghost's `/say` clears
-/// AFK, then gets `ERR_CHAT_WHILE_DEAD`.
+/// The implicit AFK clear on every chat send but type `0x14`, gated on `autoClearAFK`, so `/dnd`
+/// (`0x15`) clears AFK first. The caller sends the empty `0x14` packet and zeroes the mirror. It
+/// runs before the refusal arms: a ghost's `/say` clears AFK, then gets `ERR_CHAT_WHILE_DEAD`.
 pub(crate) fn auto_clear_line(
     mirror: AfkMirror,
     auto_clear_afk: bool,
@@ -151,10 +147,9 @@ pub(crate) fn push_system(chat: &mut ChatLog, line: String) {
 #[derive(Resource, Default)]
 pub(crate) struct AfkMirrorMemo(Option<u32>);
 
-/// Reconcile the mirror from our descriptor: the `PLAYER_FLAGS` delta arm (`0x5ee990`) and the
-/// world-enter reseed (`0x4989c0`). The delta arm writes `flags & 2` only when AFK, DND or GM
-/// moved (`0x5ee9ba test al,0xe`); writing on any delta would let an unrelated bit, such as
-/// resting, clear an optimistic AFK a round trip early.
+/// Reconcile the mirror from our descriptor: the `PLAYER_FLAGS` delta arm and the world-enter
+/// reseed. The delta arm writes `flags & 2` only when AFK, DND or GM moved; writing on any delta
+/// would let an unrelated bit, such as resting, clear an optimistic AFK a round trip early.
 pub(crate) fn reconcile_afk_mirror(
     self_q: Query<&crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
     mut mirror: ResMut<AfkMirror>,
@@ -167,7 +162,7 @@ pub(crate) fn reconcile_afk_mirror(
     };
     let flags = store.0.player_flags();
     match memo.0.replace(flags) {
-        // World enter (`0x4989c0`): seed outright.
+        // World enter: seed outright.
         None => mirror.0 = flags & 0x2,
         // The delta arm: only an AFK/DND/GM move reconciles.
         Some(prev) if (prev ^ flags) & 0xE != 0 => mirror.0 = flags & 0x2,
@@ -175,10 +170,10 @@ pub(crate) fn reconcile_afk_mirror(
     }
 }
 
-/// The movement AFK clears: jump (`0x513d36`), forward/back (`0x514e23`), strafe (`0x514f0b`)
-/// and keyboard turn (`0x514fca`). They sit in the movement emitters, so only a key press
-/// clears; mouse-look turning never reaches `0x514f50`, and knockback, fear and splines press
-/// nothing. Jump is here but not in `player::follow`'s cancel set: two separate reference tables.
+/// The movement AFK clears: jump, forward/back, strafe and keyboard turn. They sit in the movement
+/// emitters, so only a key press clears; mouse-look turning never reaches, and knockback, fear and
+/// splines press nothing. Jump is here but not in `player::follow`'s cancel set: two separate
+/// reference tables.
 pub(crate) fn movement_clears_afk(
     binds: Res<crate::bindings::BindingsState>,
     cvars: Res<crate::cvars::Cvars>,
@@ -303,7 +298,7 @@ mod tests {
                 body: "busy".into(),
             }
         );
-        // `/dnd M` while DND re-prints: DND reads the live bit and has no mirror (`0x49f3f0`).
+        // `/dnd M` while DND re-prints: DND reads the live bit and has no mirror.
         assert_eq!(
             dnd("busy", true),
             AwayOutcome {
@@ -326,7 +321,7 @@ mod tests {
             "not afk"
         );
         assert!(auto_clear_line(AfkMirror(1), true, &strings).is_some());
-        // The reconcile stores `PLAYER_FLAGS & 2` (`0x5ee9f2`), so a set mirror can read 2.
+        // The reconcile stores `PLAYER_FLAGS & 2`, so a set mirror can read 2.
         assert!(
             auto_clear_line(AfkMirror(2), true, &strings).is_some(),
             "2 is truthy — every one of the reference's six readers is a non-zero test"

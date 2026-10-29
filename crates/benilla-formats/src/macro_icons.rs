@@ -6,8 +6,8 @@ use anyhow::Result;
 
 use crate::Chain;
 
-/// The directory the chooser enumerates and the prefix `GetMacroIconInfo` splices back on
-/// (`0x84c988`, at `0x4f1a8d`); the reference strips its 16 characters from each stored entry.
+/// The directory the chooser enumerates and the prefix `GetMacroIconInfo` splices back on; the
+/// reference strips its 16 characters from each stored entry.
 const ICON_DIR: &str = "Interface\\Icons\\";
 
 /// The chooser's list: `INV_Misc_QuestionMark`, which `LoadIcons` seeds and its comparator

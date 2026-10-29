@@ -1,22 +1,22 @@
 // Liquid shader, one arm per reference liquid renderer:
-//   ADT MCLQ river/ocean (`0x6851b0`/`0x685010`): `ocean0_s.bls`, the depth swatch on stage 0 and
+//   ADT MCLQ river/ocean: `ocean0_s.bls`, the depth swatch on stage 0 and
 //     the animated sheet on stage 1; the only arm with a depth ramp.
-//   WMO MLIQ water (`0x6b62e0` category 0), split on `MOGP.flags & 0x48`: exterior `0x6b6630`
-//     binds `MapObjExtWater0.bls`, interior `0x6b6420` is fixed-function and unlit.
-//   Magma/slime (`0x6b68f0` WMO, `0x68dca0` ADT): the sheet is the opaque body.
+//   WMO MLIQ water, split on `MOGP.flags & 0x48`: exterior
+//     binds `MapObjExtWater0.bls`, interior is fixed-function and unlit.
+//   Magma/slime: the sheet is the opaque body.
 //
 // The ADT combine, `Shaders\Pixel\ocean0_s.bls` (0.25 is the program's own `PARAM`):
 //   rgb   = primary·colorTex.rgb + detail.rgb + (secondary + 0.25)·detail.a
 //   alpha = colorTex.a
 // colorTex is the depth swatch off the zone's `Light.dbc` water bands (IntBand 16/17 river/lake,
-// 14/15 ocean), rebuilt every frame (`0x680b90`, refill `0x58acd0`); detail is the `lake_a` or
+// 14/15 ocean), rebuilt every frame; detail is the `lake_a` or
 // `ocean_h` frame, near-black RGB and the ripple in alpha, which its authored mips fade with
 // distance, so the sampler's mips and anisotropy matter; primary is the lit default white vertex
 // (`glColorMaterial`); secondary is the sun sheen.
-// The ADT water alpha is the swatch's own: the `0xc7fbc0` LUT texture binds only behind
-// `[0xc800ec]` (`0x685244`-`0x685257`), which never holds one (its one store, `0x68c7f8`, is 0).
+// The ADT water alpha is the swatch's own: the LUT texture binds only behind
+//Which never holds one (its one store, is 0).
 // Deviation: this is the `specular`/`pixelShaders` = 1 leg the reference install runs; both CVars
-// (`0x6886a0`/`0x688712`) default to 0, where water has no program, no specular, a plain ADD
+//Default to 0, where water has no program, no specular, a plain ADD
 // combine and no blend. An active ARB program bypasses the texture environment.
 //
 // Culling is off for every kind: all four reference liquid passes disable GL_CULL_FACE. Water
@@ -71,7 +71,7 @@ struct LiquidVsOut {
     @location(4) secondary_vtx: vec3<f32>,
     // A WMO interior pool's `MOMT.diffColor`, as its reference vertex carries; white elsewhere.
     @location(5) vcolor: vec4<f32>,
-    // `MeshTag` bit 30: the room's per-frame interior-fog gate, the reference's `[0xca7f00]`.
+    // `MeshTag` bit 30: the room's per-frame interior-fog gate, the reference's.
     @location(6) @interpolate(flat) room_fog: u32,
 }
 
@@ -79,12 +79,12 @@ struct LiquidVsOut {
 fn sun_sheen(world_normal: vec3<f32>, world_pos: vec3<f32>) -> vec3<f32> {
     let n = normalize(world_normal);
     let to_light = -normalize(wow_light.light_sun.xyz);
-    // Local viewer, per vertex: the reference sets `GL_LIGHT_MODEL_LOCAL_VIEWER = 1` at `0x59cf89`.
+    // Local viewer, per vertex: the reference sets `GL_LIGHT_MODEL_LOCAL_VIEWER = 1`.
     let to_view = normalize(view.world_position.xyz - world_pos);
     let half_v = normalize(to_light + to_view);
     let ndoth = max(dot(n, half_v), 0.0);
     // No `N·L > 0` specular gate: the sun stays between +20° and +37° (`DayNight::SetDirection`),
-    // so N·L on the flat up normal is always > 0. Shininess is water's own (6.0, `[0x8102e8]`) and
+    // so N·L on the flat up normal is always > 0. Shininess is water's own (6.0) and
     // material specular is white (`SetRenderState(3, 0xffffffff)`). The reference's specular light
     // colour (`CGLight+0x48` to `glLightfv(GL_SPECULAR)`) is not pinned; row 9 stands in for it.
     return wow_light.light_spec.rgb * pow(ndoth, max(w.kind.w, 1.0));
@@ -94,24 +94,24 @@ fn anim_time() -> f32 {
     return w.anim.w * globals.time;
 }
 
-// The 24 fps flip, 30 frames over 1.25 s (`0x68aac0`), floored to a whole frame.
+// The 24 fps flip, 30 frames over 1.25 s, floored to a whole frame.
 fn frame_layer() -> i32 {
     return i32(floor(anim_time() * 24.0) % max(w.anim.y, 1.0));
 }
 
 fn apply_scroll(uv: vec2<f32>) -> vec2<f32> {
-    // Magma/slime scroll (liquid nibbles 6/7): the reference's stage-0 texture matrix (`0x6b68f0`,
-    // pushed at `0x6b6ae3`) translates v by `fmod(t, 10) · 0.1` (rate `[0x801620]`, period
-    // `[0x80e5a0]`), continuously; its phase is machine uptime, so only rate and period match.
+    // Magma/slime scroll (liquid nibbles 6/7): the reference's stage-0 texture matrix (
+    // pushed) translates v by `fmod(t, 10) · 0.1` (rate, period
+    //), continuously; its phase is machine uptime, so only rate and period match.
     // REPEAT wrapping hides the reset.
     return vec2<f32>(uv.x, uv.y + w.anim.z * fract(anim_time() / 10.0));
 }
 
-// Planar eye-Z GL_LINEAR fog in gamma space, as terrain.wgsl; GL_FOG defaults on (`0x593bf0`) and
-// no liquid pass turns it off. Block 1 (`+0x70/74/78`) is the scene fog (`0x66ff20`); block 2
+// Planar eye-Z GL_LINEAR fog in gamma space, as terrain.wgsl; GL_FOG defaults on and
+// no liquid pass turns it off. Block 1 (`+0x70/74/78`) is the scene fog; block 2
 // (`+0x80/84/88`) is the interior haze, eased toward the MFOG or zone target over about 4 s
-// (`0x6cf054`). Only the WMO geometry pass (`0x6b51d9`/`0x6b51ea`) and the WMO liquid pass
-// (`0x6b6323` to `0x6b6342`) submit block 2, under the room gate `[0xca7f00]`: `w.kind.z` is its
+//. Only the WMO geometry pass and the WMO liquid pass
+//Submit block 2, under the room gate: `w.kind.z` is its
 // static half (`MOGI & 0x48`), `room_fog` the per-frame half.
 fn apply_fog(rgb: vec3<f32>, world_pos: vec3<f32>, room_fog: u32) -> vec3<f32> {
     var fog_color = wow_light.fog_color;
@@ -153,16 +153,16 @@ fn vertex(in: Vertex) -> LiquidVsOut {
 
 // ── The ADT depth swatch ─────────────────────────────────────────────────────────────────────
 //
-// `0x68a830` fills an 8×64 texture, each row the same across its 8 columns, with an exact
+//Fills an 8×64 texture, each row the same across its 8 columns, with an exact
 // byte-space integer accumulator, `row(i) = c0 + floor(i * (c1 - c0) / 64)` for i = 0..63, so
 // row 63 stops short of the deep endpoint. On the ocean (selector 0) the last row's HSV value is
-// scaled by 0.9 (`0x68aa13`, `[0x8102ec]`), which `floor(0.9 * byte)` reproduces within 1/255,
-// and its alpha is forced to 255 (`0x7bbec0`/`0x7bbec8`). Sampling is LINEAR, no mip, clamped
+// scaled by 0.9, which `floor(0.9 * byte)` reproduces within 1/255,
+// and its alpha is forced to 255. Sampling is LINEAR, no mip, clamped
 // (flags `0x201`), so V maps to texel `V*64 - 0.5` and the ocean darkening ramps over the last
-// 1/64 of V. The WMO arms use the 256-entry ramp `0xca7f10` instead, which a plain lerp
+// 1/64 of V. The WMO arms use the 256-entry ramp instead, which a plain lerp
 // reproduces.
 fn swatch_row(shallow: vec4<f32>, deep: vec4<f32>, i: f32, ocean: bool) -> vec4<f32> {
-    // RGB endpoints are bytes already (`0x68a8fb`/`0x68a902`), so they round back exactly; alpha
+    // RGB endpoints are bytes already, so they round back exactly; alpha
     // endpoints are `LightParams` floats the reference quantizes with `floor(v*255)`.
     let c0 = vec4<f32>(round(shallow.rgb * 255.0), floor(shallow.w * 255.0));
     let c1 = vec4<f32>(round(deep.rgb * 255.0), floor(deep.w * 255.0));
@@ -209,9 +209,9 @@ fn fragment(in: LiquidVsOut) -> @location(0) vec4<f32> {
         return vec4<f32>(apply_fog(detail.rgb, in.world_position.xyz, in.room_fog), 1.0);
     }
 
-    // V, from the authored depth byte CPU-side: clamp(byte/42) on river/lake (LUT `0xc81768`,
-    // `0x68d790`, saturating near 5 yd), clamp(byte/255) on ocean (LUT `0xc7fcd8`,
-    // `0x68d690`), both built in `0x68c4c0`. One V indexes colour and alpha alike.
+    // V, from the authored depth byte CPU-side: clamp(byte/42) on river/lake (LUT,
+    //Saturating near 5 yd), clamp(byte/255) on ocean (LUT,
+    //), both built. One V indexes colour and alpha alike.
     let depth = clamp(in.depth, 0.0, 1.0);
     var shallow = wow_light.water_river[0];
     var deep = wow_light.water_river[1];
@@ -223,12 +223,12 @@ fn fragment(in: LiquidVsOut) -> @location(0) vec4<f32> {
     // alpha ramp, carried in `in.depth`.
     let vtx_alpha = mix(shallow.w, deep.w, depth);
     if (w.path.x > 1.5) {
-        // ---- WMO interior (`0x6b6420`): fixed-function whatever the CVars (`[0xc9607c]` unread),
+        // ---- WMO interior: fixed-function whatever the CVars,
         // lighting off (`0x0e = 0`), fog on (`0x0f = 1`), combine preset `(0x1f, 3)`:
         //     rgb = clamp(Cf + Ct)      alpha = clamp(Af + At)
         // Cf is the pool's raw `MOMT.diffColor`; the vertex has no normal, so no sun and no sheen.
         // Preset 3 is `GL_ADD` through `GL_COMBINE` on both channels (`COMBINE_ALPHA` at
-        // `0x85c2fc`), so the ripple adds to the pool's opacity rather than multiplying it.
+        //), so the ripple adds to the pool's opacity rather than multiplying it.
         let body = clamp(in.vcolor.rgb + detail.rgb, vec3<f32>(0.0), vec3<f32>(1.0));
         return vec4<f32>(
             apply_fog(body, in.world_position.xyz, in.room_fog),
@@ -236,13 +236,13 @@ fn fragment(in: LiquidVsOut) -> @location(0) vec4<f32> {
         );
     }
     if (w.path.x > 0.5) {
-        // ---- WMO exterior (`0x6b6630`): `Shaders\Pixel\MapObjExtWater0.bls` (bound `0x6b6654`),
-        // the shader leg of the `[0xc9607c]` gate:
+        // ---- WMO exterior: `Shaders\Pixel\MapObjExtWater0.bls`,
+        // the shader leg of the gate:
         //     rgb = primary.rgb + detail.rgb + secondary·detail.a      alpha = primary.a
         // No `+0.25`, which is the ADT program's own. Lighting is on (`0x0e` never set), so
         // primary = band · clamp(ambient + diffuse·max(N·L, 0)), the band one flat colour for
         // every nibble: the deep river row, `LightIntBand` sub-17 (`water_river[1]`), an immediate
-        // at `0x6b66be`. A DayNight slot is not a sub: `0x6d64d0` moves sub-8 out to `+0x4c`, so
+        //. A DayNight slot is not a sub: the reference moves sub-8 out to `+0x4c`, so
         // the kernel's slot 16 is sub-17.
         let n_ext = normalize(in.world_normal);
         let to_light_ext = -normalize(wow_light.light_sun.xyz);

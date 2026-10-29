@@ -1,16 +1,15 @@
-//! `Wow.ini`, the client's `[WoW Config]` section. The reference loads it through the archive
-//! chain at startup (`0x40249d`, `SFileLoadFile`), and a stock install ships it in
-//! `interface.MPQ`. 5875's `Region` picked the realm categories; 12340's category set is every
-//! `Cfg_Categories.dbc` row ([`crate::load_realm_categories`]).
+//! `Wow.ini`, the client's `[WoW Config]` section. The reference loads it through the archive chain
+//! at startup (`SFileLoadFile`), and a stock install ships it in `interface.MPQ`. 5875's `Region`
+//! picked the realm categories; 12340's category set is every `Cfg_Categories.dbc` row
+//! ([`crate::load_realm_categories`]).
 
 use crate::Chain;
 
 const WOW_INI: &str = "Wow.ini";
 const SECTION: &str = "WoW Config";
 
-/// The client Region, `[WoW Config] Region` (`0x4024bd` into `[0x882730]`). 0 when the file is
-/// absent (`0x4024a4` skips the read, leaving the zero-initialised `.data` word) or has no such
-/// key (`0x44542c` stores 0 before the lookup).
+/// The client Region, `[WoW Config] Region`. 0 when the file is absent (leaving the
+/// zero-initialised `.data` word) or has no such key.
 pub fn client_region(chain: &Chain) -> u32 {
     chain
         .read(WOW_INI)
@@ -21,8 +20,7 @@ pub fn client_region(chain: &Chain) -> u32 {
         .unwrap_or(0) as u32
 }
 
-/// The value of `key` in `[section]`. Both names compare case-insensitively (`SStrCmpI` at
-/// `0x445356` and `0x4453cb`).
+/// The value of `key` in `[section]`. Both names compare case-insensitively (`SStrCmpI`).
 fn ini_value<'a>(text: &'a str, section: &str, key: &str) -> Option<&'a str> {
     let mut in_section = false;
     for line in text.lines().map(str::trim) {
@@ -37,9 +35,9 @@ fn ini_value<'a>(text: &'a str, section: &str, key: &str) -> Option<&'a str> {
     None
 }
 
-/// An integer value as `0x445470` reads one: a quoted run of up to four characters packed
-/// big-endian, else `SStrToInt` (`0x64ac60`), an optional `-` then decimal digits up to the first
-/// non-digit, 0 when there are none.
+/// An integer value as the reference reads one: a quoted run of up to four characters packed
+/// big-endian, else `SStrToInt`, an optional `-` then decimal digits up to the first non-digit, 0
+/// when there are none.
 fn ini_int(value: &str) -> i32 {
     if let Some(quoted) = value.strip_prefix('\'') {
         return quoted

@@ -100,7 +100,7 @@ pub(super) fn setup_player(
         Projection::from(PerspectiveProjection {
             far: cam_far,
             // Frame zero only: `view::stamp_near_clip` re-stamps the live `nearclip` every frame,
-            // as `0x511bc0` overwrites the reference camera's `[cam+0x38]`.
+            // as the reference overwrites the reference camera's `[cam+0x38]`.
             near: NEARCLIP_DEFAULT,
             fov: CAM_FOVY,
             ..default()

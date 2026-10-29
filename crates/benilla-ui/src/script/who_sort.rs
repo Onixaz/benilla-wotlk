@@ -167,7 +167,7 @@ fn cmp_upper(c: u32) -> u32 {
     }
 }
 
-/// `SStrCmpUTF8I` (`0x76ea40`), the name arm: folded code points in order, a shorter string first.
+/// `SStrCmpUTF8I`, the name arm: folded code points in order, a shorter string first.
 pub(crate) fn cmp_utf8i(a: &str, b: &str) -> Ordering {
     let fold = |s: &str| s.chars().map(|c| cmp_upper(code(c))).collect::<Vec<_>>();
     fold(a).cmp(&fold(b))

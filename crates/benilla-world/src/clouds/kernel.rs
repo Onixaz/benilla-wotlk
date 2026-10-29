@@ -1,12 +1,12 @@
-//! The reference's procedural cloud field (`0xce98e8`): a scrolling 128×128 byte tile of 4-octave
-//! toroidal value noise, thresholded by the Light.dbc cloud density, shaped by a fixed tone curve
-//! (`0x6d0900`) and colored into the texels the dome draws. The glare samples the same tile.
+//! The reference's procedural cloud field: a scrolling 128×128 byte tile of 4-octave toroidal value
+//! noise, thresholded by the Light.dbc cloud density, shaped by a fixed tone curve and colored into
+//! the texels the dome draws. The glare samples the same tile.
 
 use bevy::math::Vec3;
 
 use super::tables::{fade_table, gradient_table, CURVE, PERM};
 
-/// Tile side at `SkyCloudLOD` 0, its default (`128 << LOD`, `0x6d1d60`); only LOD 0 is built.
+/// Tile side at `SkyCloudLOD` 0, its default (`128 << LOD`); only LOD 0 is built.
 pub const COLS: usize = 128;
 /// `log2(COLS)`, the sampler's row-pitch shift (`[cfg+0x20]`).
 pub const SHIFT: u32 = 7;
@@ -14,9 +14,9 @@ pub const SHIFT: u32 = 7;
 pub const ROWS_PER_TICK: usize = 32;
 /// Octaves (`[cfg+0x28]`).
 pub const OCTAVES: usize = 4;
-/// Regen countdown reset in seconds (`0x8115b4`): a 10 Hz cadence.
+/// Regen countdown reset in seconds: a 10 Hz cadence.
 pub const REGEN_PERIOD: f32 = 0.1;
-/// Per-octave lattice frequencies, LOD 0 row of the base table `0x86f3dc` (`(16 >> LOD) << oct`).
+/// Per-octave lattice frequencies, LOD 0 row of the base table (`(16 >> LOD) << oct`).
 const BASE_FREQ: [u16; OCTAVES] = [16, 32, 64, 128];
 
 #[inline]
@@ -24,7 +24,7 @@ fn perm(i: u32) -> u32 {
     u32::from(PERM[(i & 0xff) as usize])
 }
 
-/// Per-octave lattice walk state: `0x6cffc0`'s 0x54-byte stack record as named fields.
+/// Per-octave lattice walk state: the reference's 0x54-byte stack record as named fields.
 struct Octave {
     freq: u16,
     /// Row key (`B+4`), from `scroll·freq`, `+freq` per row: high byte the cell, low byte the fade.
@@ -55,7 +55,7 @@ pub struct CloudKernel {
     /// Per-cell slopes from the octave-2 leg (`[cfg+0x68]`), the glow normal `(dx, dy, 1)`.
     deriv: Vec<[f32; 2]>,
     prevrow: Vec<f32>,
-    /// Colored texels (`[cfg+0x38]`), the buffer the reference binds as its texture (`0x58ac70`).
+    /// Colored texels (`[cfg+0x38]`), the buffer the reference binds as its texture.
     rgba: Vec<[u8; 4]>,
     /// The tile row the next band starts at (`[cfg+0x18]`).
     scroll: usize,
@@ -67,7 +67,7 @@ pub struct CloudKernel {
     fade: [f32; 256],
 }
 
-/// The color pass inputs (`0x6cfb00`'s per-frame setup), from [`crate::lighting::WowLighting`].
+/// The color pass inputs (the reference's per-frame setup), from [`crate::lighting::WowLighting`].
 #[derive(Clone, Copy, PartialEq)]
 pub struct CloudFrame {
     /// Sun-glow palette (IntBand sub-10), sRGB 0..1.
@@ -80,7 +80,7 @@ pub struct CloudFrame {
     pub(crate) bcc: f32,
     /// Camera→glow body direction (Bevy frame): the sun by day, the moon by night.
     pub(crate) glow_dir: Vec3,
-    /// The glow's day envelope, the reference's static track at `0xce9ab8`.
+    /// The glow's day envelope, the reference's static track.
     pub(crate) glow_track: f32,
 }
 
@@ -104,7 +104,7 @@ impl Default for CloudKernel {
 }
 
 impl CloudKernel {
-    /// Regenerates one band when the countdown runs out (`0x6cffc0`); true if the tile changed.
+    /// Regenerates one band when the countdown runs out; true if the tile changed.
     pub fn tick(&mut self, dt: f32, density: f32, frame: &CloudFrame) -> bool {
         self.countdown -= dt;
         if self.countdown > 0.0 {
@@ -115,7 +115,7 @@ impl CloudKernel {
         true
     }
 
-    /// Regenerates every row (`0x6cff90`), as the reference does on init, zone and LOD changes.
+    /// Regenerates every row, as the reference does on init, zone and LOD changes.
     pub fn rebuild(&mut self, density: f32, frame: &CloudFrame) {
         self.scroll = 0;
         self.regen(density, COLS, frame);
@@ -127,9 +127,9 @@ impl CloudKernel {
         self.color_band(0, COLS, frame);
     }
 
-    /// One fire of `0x6cffc0`: noise, quantize and color `rows` rows from `scroll`, then advance.
+    /// One fire: noise, quantize and color `rows` rows from `scroll`, then advance.
     fn regen(&mut self, density: f32, rows: usize, frame: &CloudFrame) {
-        // Threshold (`0x6d0970`): the reference does not clamp; authored densities stay in [0, 1].
+        // Threshold: the reference does not clamp; authored densities stay in [0, 1].
         let threshold = ((1.0 - density.clamp(0.0, 1.0)) * 255.0) as i32;
 
         // The time axis: the phase's high byte picks the permutation slice pair.
@@ -234,7 +234,7 @@ impl CloudKernel {
             self.tile[cell] = if idx >= 0 { CURVE[idx as usize] } else { 0 };
         }
 
-        // The color pass (`0x6cfb00`) runs before the scroll advance.
+        // The color pass runs before the scroll advance.
         self.color_band(scroll, rows, frame);
 
         self.scroll += rows;
@@ -244,8 +244,8 @@ impl CloudKernel {
         }
     }
 
-    /// The color pass (`0x6cfb00`): a hole copies the previous cell's RGB at alpha 0; a covered
-    /// cell is a gradient in its coverage plus a glow by the angle to its slope normal.
+    /// The color pass: a hole copies the previous cell's RGB at alpha 0; a covered cell is a
+    /// gradient in its coverage plus a glow by the angle to its slope normal.
     fn color_band(&mut self, start: usize, rows: usize, frame: &CloudFrame) {
         let f = f64::from;
         let z_bias = (f(frame.bcc) * 192.0 + 64.0) as f32;
@@ -298,8 +298,8 @@ impl CloudKernel {
         }
     }
 
-    /// The coverage in [0, 1] toward camera-relative `d` (`0x6cfa90`). `d` is not normalized: the
-    /// glare samples at its 12-unit sky point, so the zenith shift weighs `cos45°/|d|`.
+    /// The coverage in [0, 1] toward camera-relative `d`. `d` is not normalized: the glare samples
+    /// at its 12-unit sky point, so the zenith shift weighs `cos45°/|d|`.
     pub fn coverage(&self, d: Vec3) -> f32 {
         let Some((u, v)) = project_cells(d) else {
             return f32::from(self.tile[(COLS / 2) * COLS + COLS / 2]) / 255.0;
@@ -310,7 +310,7 @@ impl CloudKernel {
         f32::from(self.tile[cell]) / 255.0
     }
 
-    /// The colored texels the visible layer uploads (`0x58ac70`).
+    /// The colored texels the visible layer uploads.
     pub fn rgba(&self) -> &[[u8; 4]] {
         &self.rgba
     }
@@ -326,8 +326,8 @@ impl CloudKernel {
     }
 }
 
-/// The azimuthal tile projection (`0x6cf870`): the zenith at the centre, the radius growing with
-/// the angle off a `+cos(π/4)`-shifted axis up to the 45° rim, where lower directions clamp.
+/// The azimuthal tile projection: the zenith at the centre, the radius growing with the angle off a
+/// `+cos(π/4)`-shifted axis up to the 45° rim, where lower directions clamp.
 fn project_cells(d: Vec3) -> Option<(f32, f32)> {
     let len = f64::from(d.length());
     if len < 1e-6 {
@@ -354,8 +354,8 @@ fn project_cells(d: Vec3) -> Option<(f32, f32)> {
     ))
 }
 
-/// The glow body's tile cell (`0x6cfb00` setup): the camera→body ray's far hit on the unit dome
-/// shifted by `−cos(π/4)` (`0x6cf9c0`), projected onto the tile.
+/// The glow body's tile cell: the camera→body ray's far hit on the unit dome shifted by
+/// `−cos(π/4)`, projected onto the tile.
 fn body_cells(dir: Vec3) -> Option<(f32, f32)> {
     let f = f64::from;
     // k = −cos(π/4), the dome's shift.
@@ -376,7 +376,7 @@ fn body_cells(dir: Vec3) -> Option<(f32, f32)> {
     project_cells(hit)
 }
 
-/// The larger root of `a·t² + b·t + c = 0`, rounded as the reference's solver does (`0x454f40`).
+/// The larger root of `a·t² + b·t + c = 0`, rounded as the reference's solver does.
 fn quadratic_larger_root(a: f32, b: f32, c: f32) -> Option<f32> {
     let f = f64::from;
     let g = f(a) * f(c) * 4.0;
@@ -398,26 +398,26 @@ fn quadratic_larger_root(a: f32, b: f32, c: f32) -> Option<f32> {
     })
 }
 
-/// `1/255` as the reference stores it (`0x8026c8`).
+/// `1/255` as the reference stores it.
 const INV_255: f32 = f32::from_bits(0x3b80_8081);
 
-/// The reference's inverse-sqrt seed (`0x456330`), no Newton step: its error shapes the glow.
+/// The reference's inverse-sqrt seed, no Newton step: its error shapes the glow.
 fn fisr(x: f32) -> f32 {
     f32::from_bits(0x5f39_97bbu32.wrapping_sub((x.to_bits() >> 1) & 0x3fff_ffff))
 }
 
-/// Packs a channel as the reference does (`0x6cfef6..0x6cff44`): clamped above only, floored.
+/// Packs a channel as the reference does: clamped above only, floored.
 fn pack_channel(ch: f64) -> u8 {
     let clamped = if ch < 1.0 { ch } else { 1.0 };
     (((clamped * 255.0 + 512.0) as f32).to_bits() >> 14) as u8
 }
 
-/// The sun glare's cloud occlusion (`0x6cf7b0`): the flare dims linearly with coverage.
+/// The sun glare's cloud occlusion: the flare dims linearly with coverage.
 pub fn occ1_sun(r: f32) -> f32 {
     1.0 - r
 }
 
-/// The moon glare's cloud occlusion (`0x6cf7d0`): a tent, so the halo blooms only in thin cloud.
+/// The moon glare's cloud occlusion: a tent, so the halo blooms only in thin cloud.
 pub fn occ1_moon(r: f32) -> f32 {
     1.0 - (2.0 * (r - 0.5)).abs()
 }

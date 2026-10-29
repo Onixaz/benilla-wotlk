@@ -210,8 +210,8 @@ fn inspect_unit_refuses_out_of_range() {
     );
 }
 
-/// `CanInspect` refuses only when `100.0 < d²` (`0x48a28b`), so exactly 100.0 is in range;
-/// `CheckInteractDistance` admits only when `d² < table[type - 1]` (`0x48bb0a`), so 100.0 is out.
+/// `CanInspect` refuses only when `100.0 < d²`, so exactly 100.0 is in range;
+/// `CheckInteractDistance` admits only when `d² < table[type - 1]`, so 100.0 is out.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn range_predicates_transcribe_the_verified_thresholds() {
@@ -246,8 +246,8 @@ fn range_predicates_transcribe_the_verified_thresholds() {
             .unwrap(),
         "the same distance is out of range for the 10-yard type"
     );
-    // A token with no unit in the object manager answers nil (`0x48babe`): a party member outside
-    // the local area has a GUID from the roster but no object.
+    // A token with no unit in the object manager answers nil: a party member outside the local area
+    // has a GUID from the roster but no object.
     assert!(
         s.eval::<bool>(r#"return CheckInteractDistance("party3", 1) == nil"#)
             .unwrap(),
@@ -459,7 +459,7 @@ fn the_active_tab_is_inert_and_toggle_inspect_closes() {
     s.run(r#"InspectUnit("target")"#).unwrap();
     let _ = s.take_sounds();
 
-    // `IsEnabled` answers the number 1 or 0 (`0x7800b0`), and 0 is truthy in Lua.
+    // `IsEnabled` answers the number 1 or 0, and 0 is truthy in Lua.
     assert!(
         !s.eval::<bool>("return InspectFrameTab1:IsEnabled() ~= 0")
             .unwrap(),
@@ -481,9 +481,9 @@ fn the_active_tab_is_inert_and_toggle_inspect_closes() {
 
 /// Re-opening through `ToggleInspect` after a close raises, as in the reference:
 /// `InspectFrame_OnHide` clears `this.unit`, so `OnShow` runs with no token, and
-/// `SetPortraitTexture` (`0x519ef0`) raises its usage error at its `lua_isstring` gate
-/// (`0x519fb4`), before the portrait is touched. Stock 1.12 has no inspect binding and no caller
-/// outside the hidden window's own tabs, so only an addon or a macro gets here.
+/// `SetPortraitTexture` raises its usage error at its `lua_isstring` gate, before the portrait is
+/// touched. Stock 1.12 has no inspect binding and no caller outside the hidden window's own tabs,
+/// so only an addon or a macro gets here.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn toggle_inspect_reopens_after_a_close_and_raises_like_the_reference() {

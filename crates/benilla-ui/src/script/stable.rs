@@ -10,8 +10,8 @@
 //! `UnitExists("pet")` is false (`PetStable.lua:138`).
 //!
 //! `PickupStablePet` puts the pet on the global cursor as payload mode 10
-//! ([`super::cursor::CursorPayload::StablePet`]): `[0xb4d900] = 10` is written at one site,
-//! `0x4950ae`, in the stabled-pet grab `0x495010`.
+//! ([`super::cursor::CursorPayload::StablePet`]): the reference is written at one site, in the
+//! stabled-pet grab.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -49,9 +49,9 @@ pub struct StableState {
     pub next_slot_cost: u32,
     /// The three window slots; index 0 is the current pet.
     pub slots: [Option<StablePetSlot>; NUM_STABLE_SLOTS],
-    /// A live pet is out: the client's pet-guid test (`[0xb714a0]|[0xb714a4]`), which forks a
-    /// stabled pet's drop between swap and unstable. Not `slots[0].is_some()`: a dismissed or
-    /// distant pet keeps its slot-0 row with no live guid.
+    /// A live pet is out: the client's pet-guid test, which forks a stabled pet's drop between swap
+    /// and unstable. Not `slots[0].is_some()`: a dismissed or distant pet keeps its slot-0 row with
+    /// no live guid.
     pub has_live_pet: bool,
 }
 
@@ -79,14 +79,14 @@ pub enum StableIntent {
 #[derive(Debug)]
 pub(crate) struct StableModel {
     pub(crate) state: Option<StableState>,
-    /// The selection as the client holds it (`[0xb72250]`): -1 the summoned pet, 0 nothing, else
-    /// a pet number, so a pet no longer listed reads back as nothing (`0x4cb84c`).
+    /// The selection as the client holds it: -1 the summoned pet, 0 nothing, else a pet number, so
+    /// a pet no longer listed reads back as nothing.
     pub(crate) selected: i32,
     pub(crate) intents: Vec<StableIntent>,
     pub(crate) close: bool,
 }
 
-/// Nothing selected, the client's reset (`0x4caad3`); Lua reads it as -1 through
+/// Nothing selected, the client's reset; Lua reads it as -1 through
 /// [`super::UiScript::stable_selection`] (`PetStable.lua:50`).
 impl Default for StableModel {
     fn default() -> Self {
@@ -101,13 +101,12 @@ impl Default for StableModel {
 
 impl super::UiScript {
     /// Push the open stable's snapshot, or clear it with `None`. Every push clears the selection,
-    /// as each list does in the client (`0x4cadf8`); the stock window then re-picks the current pet
-    /// or the first occupied slot (`PetStable.lua:49-62`).
+    /// as each list does in the client; the stock window then re-picks the current pet or the first
+    /// occupied slot (`PetStable.lua:49-62`).
     pub fn set_stable(&mut self, state: Option<StableState>) {
         let mut model = self.model_mut();
         model.stable.selected = 0;
-        // A held pet stays on the cursor: the reference's close clears only the stable-master
-        // guid (`0x4cae10`).
+        // A held pet stays on the cursor: the reference's close clears only the stable-master guid.
         model.stable.state = state;
     }
 
@@ -129,7 +128,7 @@ impl super::UiScript {
     }
 }
 
-/// The pet number to slot translation behind `GetSelectedStablePet` (`0x4cb810`).
+/// The pet number to slot translation behind `GetSelectedStablePet`.
 fn selected_slot(m: &StableModel) -> i32 {
     match m.selected {
         -1 => 0,
@@ -148,7 +147,7 @@ fn selected_slot(m: &StableModel) -> i32 {
                     })
                     .map(|(i, _)| i as i32)
             })
-            // A pet no longer listed reads as nothing, the loop's fall-through at `0x4cb84c`.
+            // A pet no longer listed reads as nothing, the loop's fall-through.
             .unwrap_or(-1),
     }
 }
@@ -158,10 +157,10 @@ fn slot_index(i: i64) -> Option<usize> {
     usize::try_from(i).ok().filter(|&i| i < NUM_STABLE_SLOTS)
 }
 
-/// The verb a drop from slot `from` onto slot `to` sends (`ClickStablePet 0x4cb420`): the summoned
-/// pet onto an occupied slot swaps, onto an empty bought slot stables, onto an unbought slot sends
-/// nothing; a stabled pet onto slot 0 swaps when a live pet is out, else unstables. Stable to
-/// stable has no opcode.
+/// The verb a drop from slot `from` onto slot `to` sends (`ClickStablePet`): the summoned pet onto
+/// an occupied slot swaps, onto an empty bought slot stables, onto an unbought slot sends nothing;
+/// a stabled pet onto slot 0 swaps when a live pet is out, else unstables. Stable to stable has no
+/// opcode.
 fn drag_verb(from: u8, to: u8, state: &StableState) -> Option<StableIntent> {
     if from == to {
         return None;
@@ -200,8 +199,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetStablePetInfo(i) → icon, name, level, family, loyalty: five values on every exit
-    // (`0x4cb280`), a miss answering nil, nil, 0, nil, nil.
+    // GetStablePetInfo(i) → icon, name, level, family, loyalty: five values on every exit, a miss
+    // answering nil, nil, 0, nil, nil.
     g.set(
         "GetStablePetInfo",
         lua.create_function(|lua, i: i64| {
@@ -318,9 +317,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ClickStablePet(i) → one value (`0x4cb420`), keyed only on whether the cursor held a pet: a
-    // plain click selects and answers 1, so the stock window repaints; a drop answers nil, packet
-    // or not, and the repaint comes with the server's next list.
+    // ClickStablePet(i) → one value, keyed only on whether the cursor held a pet: a plain click
+    // selects and answers 1, so the stock window repaints; a drop answers nil, packet or not, and
+    // the repaint comes with the server's next list.
     g.set(
         "ClickStablePet",
         lua.create_function(|lua, i: i64| {
@@ -373,7 +372,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // PickupStablePet(i): the mode-10 cursor grab, returning nothing. The gate is the family icon,
-    // not occupancy (`0x495010`): no icon, no grab.
+    // not occupancy: no icon, no grab.
     g.set(
         "PickupStablePet",
         lua.create_function(|lua, i: i64| {
@@ -406,8 +405,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnstablePet(i): silently refused with a pet out (`0x468550`), a gate the drag path lacks; its
-    // unsigned bound rejects slot 0. The reference's other gate, no charmed unit, is not built.
+    // UnstablePet(i): silently refused with a pet out, a gate the drag path lacks; its unsigned
+    // bound rejects slot 0. The reference's other gate, no charmed unit, is not built.
     g.set(
         "UnstablePet",
         lua.create_function(|lua, i: i64| {
@@ -440,8 +439,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, _model: Value| Ok(()))?,
     )?;
 
-    // BuyStableSlot(): the client's silent gates, in order: an open stable, fewer than 2 slots
-    // (`0x4cb0c4`), a price row and affordability (`0x4cb122`).
+    // BuyStableSlot(): the client's silent gates, in order: an open stable, fewer than 2 slots, a
+    // price row and affordability.
     g.set(
         "BuyStableSlot",
         lua.create_function(|lua, ()| {
@@ -611,7 +610,7 @@ mod tests {
         s.eval::<()>("ClickStablePet(1)").unwrap();
         assert_eq!(s.stable_selection(), 1);
 
-        // Every list clears it (`0x4cadf8`).
+        // Every list clears it.
         open(&mut s);
         assert_eq!(s.stable_selection(), -1, "a list clears the selection");
     }

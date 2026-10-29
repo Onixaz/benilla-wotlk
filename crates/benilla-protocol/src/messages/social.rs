@@ -1,7 +1,6 @@
-//! The social family: the contact list (friends, ignores and voice mutes in one packet) and
-//! `/who` (0x62-0x6d). The 3.3.5a client holds 100 friends, 50 ignores and 50 mutes (`FriendList`
-//! at `0xc28168`; `GetNumFriends` `0x6b34a0`, `GetNumIgnores` `0x6b3630`, `GetNumMutes`
-//! `0x6b3680`).
+//! The social family: the contact list (friends, ignores and voice mutes in one packet) and `/who`
+//! (0x62-0x6d). The 3.3.5a client holds 100 friends, 50 ignores and 50 mutes (`FriendList`;
+//! `GetNumFriends` `0x6b34a0`, `GetNumIgnores` `0x6b3630`, `GetNumMutes` `0x6b3680`).
 
 use std::io::{self, Read};
 

@@ -23,8 +23,7 @@ pub struct Viewer {
     pub self_fade: f32,
     /// Drunkenness, `0.0..=1.0`: `PLAYER_BYTES_3` byte 1, clamped at 100; the full-screen haze.
     pub drunk: f32,
-    /// A ghost: the active `LightParams` slot is 4, the death profile, applied instantly
-    /// (`0x6d4620` sets it, `0x6d2260` re-derives it every frame).
+    /// A ghost: the active `LightParams` slot is 4, the death profile, applied instantly.
     pub ghost: bool,
     /// A loading cover is over the world. The appear ramp arms on its falling edge, since the
     /// reference's trigger is the player seeing the entity.
@@ -49,7 +48,7 @@ impl Default for Viewer {
 
 impl Viewer {
     /// The body is translating: the four direction bits (`& 0xf`), the test the reference's
-    /// water-ripple driver runs (`0x5fa760`).
+    /// water-ripple driver runs.
     pub(crate) fn translating(&self) -> bool {
         self.move_flags & 0xf != 0
     }
@@ -61,11 +60,11 @@ impl Viewer {
     }
 }
 
-/// View distance in yards. `farclip` is the one view distance: the detailed world's far wall and the
-/// reach of terrain residency, the `farclip` CVar ([`ViewDistance::setting`]) as the current map
-/// admits it ([`validate_farclip`]).
-/// `nearclip` shares the resource because `0x511bc0` stamps both onto the camera every frame, the
-/// `nearclip` record's float to `[cam+0x38]` (`0x511bd4`) and the `farclip` one's to `[cam+0x3c]`.
+/// View distance in yards. `farclip` is the one view distance: the detailed world's far wall and
+/// the reach of terrain residency, the `farclip` CVar ([`ViewDistance::setting`]) as the current
+/// map admits it ([`validate_farclip`]). `nearclip` shares the resource because the reference
+/// stamps both onto the camera every frame, the `nearclip` record's float to `[cam+0x38]` and the
+/// `farclip` one's to `[cam+0x3c]`.
 #[derive(Resource, Clone, Copy)]
 pub struct ViewDistance {
     /// The far wall in use, [`Self::setting`] validated for the current map.
@@ -98,16 +97,16 @@ pub fn validate_farclip(setting: f32, map_id: u32) -> f32 {
 }
 
 /// The settable range of [`ViewDistance::nearclip`]: the bounds in the reference's `nearclip`
-/// change callback `0x688d90`, `[0x8029d0]` = 0.01 and `[0x808300]` = 0.33.
+/// change callback0.01 and0.33.
 ///
-/// Deviation: the reference refuses a value outside them, echoing "NearClip must be in range
-/// 0.01 - 0.33" (`0x869abc`); ours clamps, as every CVar consumer here clamps at its own edge.
+/// Deviation: the reference refuses a value outside them, echoing "NearClip must be in range 0.01 -
+/// 0.33"; ours clamps, as every CVar consumer here clamps at its own edge.
 pub const NEARCLIP_RANGE: std::ops::RangeInclusive<f32> = 0.01..=0.33;
 
-/// The world camera's multisampling, the `gxMultisample` CVar: a sample count in [`MSAA_RANGE`],
-/// 1 meaning none, as both reference backends read it (D3D9 `0x599899`, GL `0x59de32`). Its
-/// default, 1, is the reference's: `CVar::Register` (`0x63a950`) takes it from the
-/// `VideoHardware.dbc` row `DetectHardware` (`0x641260`) matched, and every fallback row holds 1.
+/// The world camera's multisampling, the `gxMultisample` CVar: a sample count in [`MSAA_RANGE`], 1
+/// meaning none, as both reference backends read it. Its default, 1, is the reference's:
+/// `CVar::Register` takes it from the `VideoHardware.dbc` row `DetectHardware` matched, and every
+/// fallback row holds 1.
 ///
 /// Latched, as the reference registers it ("set pending gxRestart"): a write moves this at the
 /// `RestartGx` commit, and `benilla-app`'s `video` hands it to the world camera then.
@@ -117,8 +116,7 @@ pub struct MsaaSetting {
     pub samples: u32,
 }
 
-/// The settable range of [`MsaaSetting::samples`]: the reference's `atoi`-then-clamp at
-/// `0x63b250`.
+/// The settable range of [`MsaaSetting::samples`]: the reference's `atoi`-then-clamp.
 pub const MSAA_RANGE: std::ops::RangeInclusive<u32> = 1..=16;
 
 impl Default for MsaaSetting {
@@ -137,7 +135,7 @@ impl Default for MsaaSetting {
 impl MsaaSetting {
     /// The sample count as a Bevy [`Msaa`](bevy::render::view::Msaa) level: wgpu expresses only 1,
     /// 2, 4 and 8, so a request rounds down, the direction the reference's device-init retry loop
-    /// steps (`0x63b380`, `-= 2` floored at 1).
+    /// steps (`-= 2` floored at 1).
     pub fn level(self) -> bevy::render::view::Msaa {
         use bevy::render::view::Msaa;
         match self.samples {
@@ -185,8 +183,7 @@ pub fn clamp_to_supported(requested: u32, supported: &[u32]) -> u32 {
 }
 
 /// The multisample formats this device accepts, `(color_bits, depth_bits, samples)` ascending, for
-/// the Video options dropdown, as the reference's triple list at `[0xb4b444]` (built by
-/// `0x48c3e0`); empty with no adapter.
+/// the Video options dropdown, as the reference's triple list; empty with no adapter.
 #[derive(Resource, Default, Clone, Debug)]
 pub struct MsaaFormats {
     pub formats: Vec<(u32, u32, u32)>,
@@ -334,16 +331,15 @@ pub fn msaa_from_env() -> bevy::render::view::Msaa {
     }
 }
 
-/// The `nearclip` CVar's registered default, 0.1 (the string at `0x84fb48`, registered at
-/// `0x68867a`, record `[0xc7f348]`); the camera ctor's 1/9 (`0x50a6c0`) is overwritten from the
+/// The `nearclip` CVar's registered default, 0.1; the camera ctor's 1/9 is overwritten from the
 /// record in the first frame, before it renders. The small near keeps the waterline-crossing band
 /// inches tall (`liquid::detect_submersion`), and the self-avatar fade completes over it
 /// ([`crate::model_fade::self_model_fade_alpha`]), as in the reference, where both are
 /// `[cam+0x38]`.
 pub const NEARCLIP_DEFAULT: f32 = 0.1;
 
-/// The reference's `0x511bc0` near stamp: the live `nearclip` onto the world camera's projection
-/// every frame. The far plane is not stamped: ours is [`CAM_FAR`].
+/// The reference's near stamp: the live `nearclip` onto the world camera's projection every frame.
+/// The far plane is not stamped: ours is [`CAM_FAR`].
 pub fn stamp_near_clip(
     view: Res<ViewDistance>,
     mut cam: Query<&mut Projection, With<WorldCamera>>,
@@ -426,8 +422,9 @@ pub fn revalidate_farclip(
 }
 
 pub(crate) fn plugin(app: &mut App) {
-    // In `Update`, so this frame's `nearclip` write reaches this frame's projection, as `0x511bc0`
-    // runs inside the world-frame driver; initialized here too for a harness with only this plugin.
+    // In `Update`, so this frame's `nearclip` write reaches this frame's projection, as the
+    // reference runs inside the world-frame driver; initialized here too for a harness with only
+    // this plugin.
     app.init_resource::<ViewDistance>()
         .init_resource::<ProjectedTextures>()
         .add_systems(
@@ -455,7 +452,7 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
 
-    /// `0x511bc0`'s near stamp reaches the projection, and an unchanged one stays unmarked.
+    /// The reference's near stamp reaches the projection, and an unchanged one stays unmarked.
     #[test]
     fn the_near_plane_follows_the_cvar_and_settles() {
         let mut app = App::new();
@@ -624,7 +621,7 @@ mod msaa_tests {
         assert_eq!(*MSAA_RANGE.end(), 16);
     }
 
-    /// A request steps down to the nearest offered count, as in the reference (`0x63b380`).
+    /// A request steps down to the nearest offered count, as in the reference.
     #[test]
     fn an_unsupported_count_steps_down_to_the_nearest_the_device_offers() {
         // A player types 8 on a device that stops at 4x.

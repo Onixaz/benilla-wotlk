@@ -1,10 +1,8 @@
 //! The underwater drift cloud: 4000 world-fixed motes the reference draws while the camera eye is
-//! inside a liquid. The object is `World.cpp`'s own (`0xfa40` bytes from `0x66f971`, ctor
-//! `0x68e5a0`, held at `[0xc63180]`), sharing nothing with the weather manager `[0xc6326c]`. The
-//! advect (`0x66fee0`) and the draw (`0x6701e0`) both need the render-flag bit
-//! `[0xc7b2a4] & 0x2000000` and a camera-eye liquid type `[0xc7f288] != 0xf` ([`Underwater`]). The
-//! draw (`0x483731`) is the frame's last world content, after the water surface and both M2
-//! transparent passes ([`Rung::DRIFT_CLOUD`](crate::sky_order::Rung::DRIFT_CLOUD)), and no
+//! inside a liquid. The object is `World.cpp`'s own (`0xfa40` bytes), sharing nothing with the
+//! weather manager. The advect and the draw both need the render-flag bit and a camera-eye liquid
+//! type ([`Underwater`]). The draw is the frame's last world content, after the water surface and
+//! both M2 transparent passes ([`Rung::DRIFT_CLOUD`](crate::sky_order::Rung::DRIFT_CLOUD)), and no
 //! `LightParams` value reaches a mote.
 //!
 //! Deviation: mote `i` draws cell `i & 7` of its set, because the reference reads its cell index
@@ -26,49 +24,48 @@ use crate::view::WorldCamera;
 
 use super::Underwater;
 
-/// The population, `[0x81038c] = 4000.0f` through `0x68e650`'s one caller; nothing scales it.
+/// The population, `= 4000.0f` through the reference's one caller; nothing scales it.
 const COUNT: usize = 4000;
 
-/// The wrap box's edge (`+0xfa1c`, ctor `30.0f` via `0x68e680`): motes live in `[−15, +15)`.
+/// The wrap box's edge (`+0xfa1c`, ctor `30.0f`): motes live in `[−15, +15)`.
 const BOX_EDGE: f32 = 30.0;
 const BOX_HALF: f32 = BOX_EDGE * 0.5;
 
-/// A one-frame camera jump this long re-scatters the field (`0x68e99a` loads the edge, not half).
+/// A one-frame camera jump this long re-scatters the field (not half).
 const TELEPORT: f32 = BOX_EDGE;
 
-/// The mote edge base (`+0xfa18`, set by `0x68e670`): `1/36` for water and ocean (`0x680b1d`),
-/// `1/9` for magma (`0x680b5c`). An edge is uniform in `[base·0.5, base·1.5)`.
+/// The mote edge base (`+0xfa18`): `1/36` for water and ocean, `1/9` for magma. An edge is uniform
+/// in `[base·0.5, base·1.5)`.
 const SCALE_WATER: f32 = 1.0 / 36.0;
 const SCALE_MAGMA: f32 = 1.0 / 9.0;
 
-/// Gust frequency (`[0x807a4c]`) and amplitude (`[0x807a3c]`) units: each roll is `m·unit`,
-/// `m ∈ [1, 2)`.
+/// Gust frequency and amplitude units: each roll is `m·unit`, `m ∈ [1, 2)`.
 const GUST_FREQ_UNIT: f32 = 0.0125;
 const GUST_AMP_UNIT: f32 = 0.005;
 
-/// The vertical squash on a rolled gust (`[0x8029b0]`), before normalising: a bias, not a bound
-/// (`atan(0.25)` is the median elevation). The `fchs` at `0x68e27d` keeps `z ≥ 0`.
+/// The vertical squash on a rolled gust, before normalising: a bias, not a bound (`atan(0.25)` is
+/// the median elevation). The `fchs` keeps `z ≥ 0`.
 const GUST_RISE: f32 = 0.25;
 
-/// Magma sinks at `0.02` yd/s (`[0x86a098]`), the one mode the reference scales by `dt`.
+/// Magma sinks at `0.02` yd/s, the one mode the reference scales by `dt`.
 const MAGMA_SINK: f32 = -0.02;
 
-/// Deviation: the water gust moves `speed·dt·60` a frame where the reference (`0x68e4f0`,
-/// `mode <= 1`) moves `speed` with no `dt`, because the reference's drift doubles from 30 to
-/// 60 fps; 60 Hz holds the top of the era's range at any frame rate.
+/// Deviation: the water gust moves `speed·dt·60` a frame where the reference (`mode <= 1`) moves
+/// `speed` with no `dt`, because the reference's drift doubles from 30 to 60 fps; 60 Hz holds the
+/// top of the era's range at any frame rate.
 const GUST_REF_HZ: f32 = 60.0;
 
-/// The draw's cap: `0x68f2cd` stops the fill at `0xa68` = 2664 vertices, 666 quads, about the
+/// The draw's cap: the reference stops the fill at `0xa68` = 2664 vertices, 666 quads, about the
 /// share of the cube inside the 90° cone, so it rarely bites.
 const SUBMIT_CAP: usize = 666;
 
-/// The atlas cell pitch, `[0x810334] = 51/256`.
+/// The atlas cell pitch.
 const CELL: f32 = 51.0 / 256.0;
 
-/// The `Textures\WaterPoop02.blp` atlas as `(column, row)` cells, as the CRT initialiser
-/// `[0x68ebf0, 0x68efae)` fills it: four columns per row, plus cell 8 alone at column 4 of row 0.
-/// Deviation: cell 12 is completed, because the initialiser's last store (`0x68efa5`) leaves its
-/// bottom-right corner at zero and one magma mote in four would smear across the atlas diagonal.
+/// The `Textures\WaterPoop02.blp` atlas as `(column, row)` cells, as the CRT initialiser fills it:
+/// four columns per row, plus cell 8 alone at column 4 of row 0. Deviation: cell 12 is completed,
+/// because the initialiser's last store leaves its bottom-right corner at zero and one magma mote
+/// in four would smear across the atlas diagonal.
 const ATLAS: [(f32, f32); 13] = [
     (0.0, 0.0),
     (1.0, 0.0),
@@ -85,14 +82,14 @@ const ATLAS: [(f32, f32); 13] = [
     (3.0, 2.0),
 ];
 
-/// The atlas cells a mode draws from (`[0x86a0a0]`): water and ocean cycle 0–7, magma 9–12.
+/// The atlas cells a mode draws: water and ocean cycle 0–7, magma 9–12.
 const CELLS_WATER: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 const CELLS_MAGMA: [usize; 8] = [9, 10, 11, 12, 9, 10, 11, 12];
 
-/// The cull's per-axis tangent limits: the reference's fixed 90° cone about the view axis
-/// (`0x68f1c9`: `vz > 0 && |vx| < vz && |vy| < vz`), which sizes [`SUBMIT_CAP`]. Deviation: floored
-/// at the frustum, because the cone stops containing the view at about 21:9, and a wider window
-/// would lose motes in bands down its sides.
+/// The cull's per-axis tangent limits: the reference's fixed 90° cone about the view axis (:
+/// `vz > 0 && |vx| < vz && |vy| < vz`), which sizes [`SUBMIT_CAP`]. Deviation: floored at the
+/// frustum, because the cone stops containing the view at about 21:9, and a wider window would lose
+/// motes in bands down its sides.
 fn cull_limits(fov_y: f32, aspect: f32) -> (f32, f32) {
     let ty = (fov_y * 0.5).tan();
     ((ty * aspect).max(1.0), ty.max(1.0))
@@ -105,8 +102,8 @@ struct Mote {
     edge: f32,
 }
 
-/// The liquid class the field is configured for. Slime has no motes: its dispatch arm
-/// (`0x680b6f`) clears the enable byte without a re-scatter.
+/// The liquid class the field is configured for. Slime has no motes: its dispatch arm clears the
+/// enable byte without a re-scatter.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum DriftMode {
     /// Liquid types 0 and 1, water and ocean.
@@ -130,7 +127,7 @@ impl DriftMode {
         }
     }
 
-    /// Fog is on for magma alone (`0x68f36e` sets gx id `0x0f` to `mode == 2`).
+    /// Fog is on for magma alone (the reference sets gx id `0x0f` to `mode == 2`).
     fn fog(self) -> EffectFog {
         match self {
             DriftMode::Water => EffectFog::Off,
@@ -147,7 +144,7 @@ pub(super) struct DriftCloud {
     last_cam: Vec3,
     /// `None`: the enable byte is clear (never configured, or slime).
     mode: Option<DriftMode>,
-    /// Last frame's [`Underwater`]; an unchanged liquid type skips reconfiguring (`[0xc7f288]`).
+    /// Last frame's [`Underwater`]; an unchanged liquid type skips reconfiguring.
     was: Submersion,
     gust_dir: Vec3,
     gust_freq: f32,
@@ -186,7 +183,7 @@ impl Default for DriftCloud {
 }
 
 impl DriftCloud {
-    /// Scatter the field and redraw each edge (`0x68e720`): on a liquid-type change or a teleport.
+    /// Scatter the field and redraw each edge: on a liquid-type change or a teleport.
     fn scatter(&mut self, mode: DriftMode) {
         let base = mode.scale_base();
         let lo = base * 0.5;
@@ -205,7 +202,7 @@ impl DriftCloud {
         self.mode = Some(mode);
     }
 
-    /// Roll a fresh gust direction, period and amplitude (`0x68e1c0`).
+    /// Roll a fresh gust direction, period and amplitude.
     fn roll_gust(&mut self) {
         let mut rng = self.rng;
         let angle = |r: &mut u32| (rand01(r) * 2.0 - 1.0) * std::f32::consts::PI;
@@ -220,15 +217,15 @@ impl DriftCloud {
         self.rng = rng;
     }
 
-    /// This frame's whole-field displacement (`0x68e4f0`).
+    /// This frame's whole-field displacement.
     fn gust(&mut self, mode: DriftMode, dt: f32) -> Vec3 {
         match mode {
             DriftMode::Magma => Vec3::new(0.0, MAGMA_SINK * dt, 0.0),
             DriftMode::Water => {
                 self.gust_phase += dt;
                 let mut term = self.gust_phase * self.gust_freq;
-                // Strictly greater (`0x68e542`): each gust is one non-negative half-sine over 20
-                // to 40 s, then a new roll.
+                // Strictly greater: each gust is one non-negative half-sine over 20 to 40 s, then a
+                // new roll.
                 if term > 0.5 {
                     self.roll_gust();
                     term = 0.0;
@@ -240,8 +237,8 @@ impl DriftCloud {
         }
     }
 
-    /// Advance the field (`0x68e930`): `delta` is the camera's backward step, so the
-    /// camera-relative cloud stands still in the world and only the gust moves it.
+    /// Advance the field: `delta` is the camera's backward step, so the camera-relative cloud
+    /// stands still in the world and only the gust moves it.
     fn advect(&mut self, mode: DriftMode, eye: Vec3, dt: f32) {
         let mut delta = self.last_cam - eye;
         self.last_cam = eye;
@@ -296,8 +293,8 @@ fn setup_drift(
     });
 }
 
-/// Reconfigure on a liquid-class change, then advect: the reference's update leg (`0x66fee0` →
-/// `0x68e930`), with `0x6809c0`'s type dispatch folded in ahead of it.
+/// Reconfigure on a liquid-class change, then advect: the reference's update leg, with the
+/// reference's type dispatch folded in ahead of it.
 fn simulate_drift(
     mut cloud: ResMut<DriftCloud>,
     underwater: Res<Underwater>,
@@ -312,12 +309,12 @@ fn simulate_drift(
     if now != cloud.was {
         cloud.was = now;
         match now {
-            // Going dry keeps the configuration: `0x680abe` intercepts `0xf` before the type
+            // Going dry keeps the configuration: the reference intercepts `0xf` before the type
             // dispatch, and the frame gate alone hides the field.
             Submersion::Dry => {}
-            // Slime disables outright, with no re-scatter (`0x680b6f`).
+            // Slime disables outright, with no re-scatter.
             Submersion::Slime => cloud.mode = None,
-            // One configuration: the cell set is keyed on liquid types 0 and 1 (`[0x86a0a0]`).
+            // One configuration: the cell set is keyed on liquid types 0 and 1.
             Submersion::Water | Submersion::Ocean => {
                 cloud.scatter(DriftMode::Water);
                 cloud.last_cam = eye;
@@ -329,7 +326,7 @@ fn simulate_drift(
         }
     }
     // The frame gate's second conjunct; the first, render-flag `0x2000000`, is the unwired
-    // `waterParticulates` console latch (default on, console table `0x63f9e0`, not a CVar).
+    // `waterParticulates` console latch (default on, not a CVar).
     if !now.any() || cloud.off {
         return;
     }
@@ -339,7 +336,7 @@ fn simulate_drift(
     cloud.advect(mode, eye, time.delta_secs());
 }
 
-/// Emit the surviving motes into the effect stream: the render leg (`0x6701e0` → `0x68efe0`).
+/// Emit the surviving motes into the effect stream: the render leg.
 fn push_drift(
     mut cloud: ResMut<DriftCloud>,
     underwater: Res<Underwater>,
@@ -407,7 +404,7 @@ fn push_drift(
                 quads.verts.push(EffectVertex {
                     pos: pos.to_array(),
                     uv,
-                    // An immediate `0xFFFFFFFF` (`0x68f27b`): no per-mote colour, no fade.
+                    // An immediate `0xFFFFFFFF`: no per-mote colour, no fade.
                     color: [1.0, 1.0, 1.0, 1.0],
                 });
             }

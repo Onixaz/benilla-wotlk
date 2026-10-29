@@ -448,8 +448,8 @@ mod tests {
     }
 
     /// A first visit keeps the menu closed until its text answers, then opens it complete: the
-    /// reference's greeting write and `GOSSIP_SHOW` sit together on its one success path
-    /// (`0x4e229a`, `0x4e22b0`), and its cache-miss exit fires nothing.
+    /// reference's greeting write and `GOSSIP_SHOW` sit together on its one success path, and its
+    /// cache-miss exit fires nothing.
     #[test]
     fn first_visit_holds_the_menu_until_the_text_answers() {
         let mut state = GossipState::default();
@@ -541,9 +541,9 @@ mod tests {
 
     const GUARD: u64 = 0xF130_0000_0000_0007; // HIGHGUID_UNIT
 
-    /// A guard's sub-menu on a first-visit text: nothing fires while the query is out, the old
-    /// menu stays with its selects refused, and the text repaints in place, as the reference's
-    /// exit at `0x4e2068` leaves it. A close fired at the pending step would flash the window.
+    /// A guard's sub-menu on a first-visit text: nothing fires while the query is out, the old menu
+    /// stays with its selects refused, and the text repaints in place, as the reference's exit
+    /// leaves it. A close fired at the pending step would flash the window.
     #[test]
     fn the_hold_fires_nothing_a_pending_submenu_keeps_the_frame_painted() {
         let (mut app, rx) = feed_app(|s| s.run(RECORDER).unwrap());
@@ -771,8 +771,8 @@ mod tests {
         );
     }
 
-    /// The reference's missing-text path (`0x4e216e`) ends the interaction, and its
-    /// `DBCache::Get` never queries id 0.
+    /// The reference's missing-text path ends the interaction, and its `DBCache::Get` never queries
+    /// id 0.
     #[test]
     fn missing_text_ends_the_interaction_and_id_zero_never_queries() {
         // The record's male column is empty, so a male NPC has no line.

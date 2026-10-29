@@ -1,4 +1,4 @@
-//! StatusBar behaviour (`LoadXML` `0x782ef0`).
+//! StatusBar behaviour (`LoadXML`).
 
 use super::common::script;
 use crate::script::*;
@@ -32,7 +32,7 @@ fn statusbar_value_clamps_and_minmax_swaps() {
         assert(b:GetValue() == 100, "clamped to max")
         b:SetValue(-5)
         assert(b:GetValue() == 0, "clamped to min")
-        -- A reversed pair is swapped (LoadXML `0x782ef0`'s behavior, one rule for both paths).
+        -- A reversed pair is swapped (LoadXML the reference's behavior, one rule for both paths).
         b:SetMinMaxValues(80, 20)
         local mn, mx = b:GetMinMaxValues()
         assert(mn == 20 and mx == 80, "reversed pair swapped")
@@ -126,8 +126,8 @@ fn statusbar_bar_region_scales_by_fraction_on_extract() {
     );
 }
 
-/// The fill crops its art, never squeezes it (`0x770410`): `SetValue` sets the UV `u1` to the fill
-/// fraction `(value - min) / (max - min)` and shrinks the quad by the same fraction.
+/// The fill crops its art, never squeezes it: `SetValue` sets the UV `u1` to the fill fraction
+/// `(value - min) / (max - min)` and shrinks the quad by the same fraction.
 #[test]
 fn statusbar_bar_region_crops_its_texture_rather_than_stretching_it() {
     let mut s = script();

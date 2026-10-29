@@ -4,8 +4,8 @@
 
 use mlua::{Lua, MultiValue, Value};
 
-/// `IsInInstance()`'s type word for a `Map.dbc` `InstanceType`: the reference's table at
-/// `0x83de58`, and `"none"` from 4 up.
+/// `IsInInstance()`'s type word for a `Map.dbc` `InstanceType`: the reference's table, and `"none"`
+/// from 4 up.
 pub fn instance_type_name(instance_type: u32) -> &'static str {
     match instance_type {
         1 => "party",
@@ -18,7 +18,7 @@ pub fn instance_type_name(instance_type: u32) -> &'static str {
 impl super::UiScript {
     /// Push the current map's `Map.dbc` `InstanceType`, `None` for a map with no row. Deviation:
     /// `IsInInstance()` then answers `nil, "none"`, because the reference returns two results
-    /// without pushing either (`0x48a7a9`), a stack bug.
+    /// without pushing either, a stack bug.
     pub fn set_instance_type(&mut self, instance_type: Option<u32>) {
         if self.model_ref().instance_type == instance_type {
             return;
@@ -96,7 +96,7 @@ fn atoi(s: &str) -> i64 {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `IsInInstance()` (`0x48a750`): 1 if `InstanceType` is nonzero, else nil; then the type word.
+    // `IsInInstance()`: 1 if `InstanceType` is nonzero, else nil; then the type word.
     g.set(
         "IsInInstance",
         lua.create_function(|lua, ()| {

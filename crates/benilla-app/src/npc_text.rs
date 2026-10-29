@@ -1,7 +1,6 @@
 //! The `$`-token expansion of server-authored NPC text (gossip, questgiver panels, the quest log),
 //! which the client does, not the server; every feed that pushes NPC text into the VM runs it, as
-//! the reference routes its fourteen call sites through one expander (`0x506f70`, token handler
-//! `0x5070a0`).
+//! the reference routes its fourteen call sites through one expander.
 //!
 //! - The accepted set is `A B C E G N R T W` in either case; anything else re-emits the `$` and
 //!   leaves the letter as text.
@@ -28,8 +27,7 @@ pub(crate) struct Subject {
     pub gender: u8,
 }
 
-/// Everything a `$`-token can read; `states` is the reference's global world-state table
-/// (`[0xb71ec8]`).
+/// Everything a `$`-token can read; `states` is the reference's global world-state table.
 pub(crate) struct MacroContext<'a> {
     /// `None` is the reference's no-subject case.
     pub subject: Option<&'a Subject>,
@@ -45,7 +43,7 @@ pub(crate) fn substitute(text: &str, ctx: &MacroContext) -> String {
     substitute_checked(text, ctx).0
 }
 
-/// [`substitute`] plus `0x506f70`'s return flag, `true` when no token failed (no subject, or a
+/// [`substitute`] plus the reference's return flag, `true` when no token failed (no subject, or a
 /// token outside the set). Panels ignore it; chat must not, since the reference's chat path drops
 /// or defers a line rather than show a `$`.
 pub(crate) fn substitute_checked(text: &str, ctx: &MacroContext) -> (String, bool) {
@@ -188,8 +186,8 @@ pub(crate) fn player_identity(
     })
 }
 
-/// The chat feed's [`Subject`] for any guid: the object manager's descriptors, else the name
-/// cache (`0x506f70`). Guid 0 has no subject.
+/// The chat feed's [`Subject`] for any guid: the object manager's descriptors, else the name cache.
+/// Guid 0 has no subject.
 pub(crate) fn subject_for_guid(
     guid: u64,
     index: &GuidIndex,
@@ -211,7 +209,7 @@ pub(crate) fn subject_for_guid(
         });
     }
     // A creature lands on zeros, so `$R` and `$C` emit nothing; the reference's non-player arm
-    // emits the unit's name (`0x50716b`, `0x5071f7`), which is not built.
+    // emits the unit's name, which is not built.
     let (race, class, gender) = names.player_traits(guid).unwrap_or((0, 0, 0));
     Some(Subject {
         name,

@@ -24,7 +24,7 @@ const NAME_MAX_TRIES: u16 = 120;
 #[derive(Resource)]
 pub(crate) struct EmoteTexts(pub(crate) EmoteTextCatalog);
 
-/// The DBC string column: 0, enUS; the reference reads its locale slot `[0xc0e080]`.
+/// The DBC string column: 0, enUS; the reference reads its locale slot.
 const LOCALE: usize = 0;
 
 /// Load `EmotesText.dbc` with `EmotesTextData.dbc`; before `AssetSet::Open` it loads nothing.
@@ -56,7 +56,7 @@ enum Pending {
         tries: u16,
     },
     /// An inbound addon line waiting on its sender's name: the reference fires `CHAT_MSG_ADDON`
-    /// (event 227, `0x49a95f`) from the name-query callback (`0x49ccc0`), so `sender` is a name.
+    /// (event 227) from the name-query callback, so `sender` is a name.
     Addon {
         prefix: String,
         message: String,
@@ -87,9 +87,9 @@ enum Pending {
         rank: u8,
         tries: u16,
     },
-    /// A text emote waiting on its performer's name: the reference's `PENDINGTEXTEMOTE` node
-    /// (`0x49cc00`), queued when `0x49dbe0` finds no cached name and drained by `0x49d0d0`.
-    /// `target` is the wire's name, empty when untargeted, used as sent.
+    /// A text emote waiting on its performer's name: the reference's `PENDINGTEXTEMOTE` node,
+    /// queued when the reference finds no cached name and drained. `target` is the wire's name,
+    /// empty when untargeted, used as sent.
     TextEmote {
         performer: u64,
         text_id: u32,
@@ -99,14 +99,14 @@ enum Pending {
     /// An area discovery (`SMSG_EXPLORATION_EXPERIENCE`), fired at the drain, which holds the VM.
     Discovery { area: String, xp: u32 },
     /// One combat-log line, classified at the packet, waiting on its two endpoint names; the
-    /// reference's deferred queue (`0xc4e208`) waits only on an item name.
+    /// reference's deferred queue waits only on an item name.
     Combat(Box<super::combat::PendingCombat>),
     /// A ready event (client-composed lines; name-carrying notices).
     Event(ChatEvent),
 }
 
-/// Fire `CHAT_MSG_ADDON(prefix, message, distribution, sender)` (`0x49a95f`), not through
-/// [`route`]: it is no `ChatTypeInfo` key and takes four arguments, not ten.
+/// Fire `CHAT_MSG_ADDON(prefix, message, distribution, sender)`, not through [`route`]: it is no
+/// `ChatTypeInfo` key and takes four arguments, not ten.
 pub(super) fn fire_addon_message(
     script: &mut benilla_ui::script::UiScript,
     prefix: String,
@@ -121,10 +121,9 @@ pub(super) fn fire_addon_message(
     );
 }
 
-/// A text emote's chat event, or `None` when the sentence is blank, as SIT, STAND and TRAIN are
-/// in every locale (`0x49b4bd`). `sender` is the performer, seen only by addons as arg2:
-/// `TEXT_EMOTE` prints verbatim (`ChatFrame.lua:1395`), and the fire (`0x49b495`) pushes the name
-/// record resolved at `0x49b289`.
+/// A text emote's chat event, or `None` when the sentence is blank, as SIT, STAND and TRAIN are in
+/// every locale. `sender` is the performer, seen only by addons as arg2: `TEXT_EMOTE` prints
+/// verbatim (`ChatFrame.lua:1395`), and the fire pushes the name record resolved.
 pub(super) fn text_emote_event(
     cat: &EmoteTextCatalog,
     text_id: u32,
@@ -227,8 +226,8 @@ impl ChatLog {
     }
 
     /// Queue an inbound addon line for its sender's name. The text splits on its first tab, and
-    /// with none it is all prefix (`0x49a8d0`); `distribution` names PARTY, RAID, GUILD and
-    /// BATTLEGROUND, any other type `"UNKNOWN"` (`0x49aff4`).
+    /// with none it is all prefix; `distribution` names PARTY, RAID, GUILD and BATTLEGROUND, any
+    /// other type `"UNKNOWN"`.
     pub(crate) fn push_addon(&mut self, text: &str, chat_type: u8, guid: u64) {
         let (prefix, message) = match text.find('\t') {
             Some(i) => (text[..i].to_string(), text[i + 1..].to_string()),
@@ -432,7 +431,7 @@ pub(super) fn honor_gain_line(
     }
 }
 
-/// The `ERR_ZONE_EXPLORED` toast (error route 1, `AddErrorMessage` `0x4945b0`), every packet.
+/// The `ERR_ZONE_EXPLORED` toast (error route 1, `AddErrorMessage`), every packet.
 pub(super) fn exploration_toast(
     area_name: &str,
     get: &dyn Fn(&str) -> Option<String>,
@@ -444,7 +443,7 @@ pub(super) fn exploration_toast(
     )
 }
 
-/// The `ERR_ZONE_EXPLORED_XP` system line, only when the packet carries XP (`jle` at `0x5e422f`).
+/// The `ERR_ZONE_EXPLORED_XP` system line, only when the packet carries XP (`jle`).
 pub(super) fn exploration_line(
     area_name: &str,
     xp: u32,
@@ -465,8 +464,8 @@ pub(super) fn notice_event(
     a: Option<String>,
     b: Option<String>,
 ) -> Option<ChatEvent> {
-    // Each arm's `mov edi` in the `0x49c60c` jump table: MODE_CHANGE fires nothing, a byte past
-    // THROTTLED fires SYSTEM, the rest CHANNEL_NOTICE (0x12) or CHANNEL_NOTICE_USER (0x13).
+    // Each arm's `mov edi` in the jump table: MODE_CHANGE fires nothing, a byte past THROTTLED
+    // fires SYSTEM, the rest CHANNEL_NOTICE (0x12) or CHANNEL_NOTICE_USER (0x13).
     use channel_notice as n;
     let kind = match notice_byte {
         n::JOINED => ChatEventKind::ChannelJoin,
@@ -481,7 +480,7 @@ pub(super) fn notice_event(
         | n::MUTED
         | n::BANNED
         | n::THROTTLED
-        // 3.3.5a's two refusals fire the same event (`esi = 0x15`, `0x50e927`, `0x50e942`).
+        // 3.3.5a's two refusals fire the same event (`esi = 0x15`).
         | n::NOT_IN_AREA
         | n::NOT_IN_LFG => ChatEventKind::ChannelNotice,
         n::PASSWORD_CHANGED
@@ -504,7 +503,7 @@ pub(super) fn notice_event(
         | n::NOT_MODERATED
         | n::PLAYER_INVITED
         | n::PLAYER_INVITE_BANNED
-        // 3.3.5a's voice toggles name their actor (`esi = 0x16`, `0x50e980`, `0x50ea21`).
+        // 3.3.5a's voice toggles name their actor (`esi = 0x16`).
         | n::VOICE_ON
         | n::VOICE_OFF => ChatEventKind::ChannelNoticeUser,
         _ => ChatEventKind::System,
@@ -519,12 +518,11 @@ pub(super) fn notice_event(
     })
 }
 
-/// Deliver one built event: a `YOU_JOINED` claims its slot before the render, a `YOU_LEFT` frees
-/// it after, so the leave line keeps its number and colour ("Left Channel: [2. General - Elwynn
-/// Forest]") and a handler's `GetChannelName` still finds it. The reference flags the teardown
-/// (`0x49c115`), fires the event (`0x49c5b0` calling `0x49a870`), then drops the record
-/// (`0x49c5b5`, `0x49c5c2` calling `0x49bbd0`); its suspended leg (`0x49c0e9`) skips the flag.
-/// Both arms mirror the list into the VM for `GetChannelName`.
+/// Deliver one built event: a `YOU_JOINED` claims its slot before the render, a `YOU_LEFT` frees it
+/// after, so the leave line keeps its number and colour ("Left Channel: [2. General - Elwynn
+/// Forest]") and a handler's `GetChannelName` still finds it. The reference flags the teardown,
+/// fires the event, then drops the record; its suspended leg skips the flag. Both arms mirror the
+/// list into the VM for `GetChannelName`.
 pub(super) fn deliver(
     script: &mut benilla_ui::script::UiScript,
     windows: &mut ChatWindows,
@@ -534,8 +532,8 @@ pub(super) fn deliver(
     let notice = event
         .notice_byte()
         .filter(|_| event.kind == Some(ChatEventKind::ChannelNotice));
-    // Read first: the reference picks the token from `slot+0x9c` (`0x49c0c2`) before writing it
-    // (`0x49bb20`), and the renamed and suspended tokens keep the window's registration.
+    // Read first: the reference picks the token from `slot+0x9c` before writing it, and the renamed
+    // and suspended tokens keep the window's registration.
     event.slot_state = channels.slot_state(&event.channel);
     if let Some(byte) = notice {
         // The server's half of every join and leave, for a log to tell a request from its answer.
@@ -547,7 +545,7 @@ pub(super) fn deliver(
         );
     }
     if notice == Some(channel_notice::YOU_JOINED) {
-        // A confirmed join sets the `ZONECHANNELS` bit (`0x49bbaf`), its only runtime growth.
+        // A confirmed join sets the `ZONECHANNELS` bit, its only runtime growth.
         channels.note_zone_channel_joined(&event.channel);
         // A slot the walk renamed is numbered already, but its state must return to `Joined`.
         channels.confirm_slot(&event.channel);
@@ -560,8 +558,8 @@ pub(super) fn deliver(
                     event.channel
                 );
             }
-            // All ten slots taken: no number, as in the reference, whose slot allocator also
-            // prints `ERR_TOO_MANY_CHAT_CHANNELS` (`0x199` at `0x49b9c5`); here it is only logged.
+            // All ten slots taken: no number, as in the reference, whose slot allocator also prints
+            // `ERR_TOO_MANY_CHAT_CHANNELS` (`0x199`); here it is only logged.
             None => warn!(
                 "chat: server confirms channel {:?} joined but all {} slots are taken — it has no \
                  number, so /N cannot reach it",
@@ -578,8 +576,8 @@ pub(super) fn deliver(
     }
     // The wire name, kept before `stamp_channel` decorates arg4 with the slot number.
     let leaving = (notice == Some(channel_notice::YOU_LEFT)).then(|| event.channel.clone());
-    // 3.3.5a drops the record after a `NOT_IN_AREA` or `NOT_IN_LFG` refusal (`0x507a30` at
-    // `0x50eaa5`), so the refused channel gives its number back.
+    // 3.3.5a drops the record after a `NOT_IN_AREA` or `NOT_IN_LFG` refusal, so the refused channel
+    // gives its number back.
     let refused = matches!(
         notice,
         Some(channel_notice::NOT_IN_AREA | channel_notice::NOT_IN_LFG)
@@ -589,8 +587,8 @@ pub(super) fn deliver(
     channels.stamp_channel(event);
     route(script, windows, event);
     if let Some(name) = leaving {
-        // A suspended slot (state 3, `0x49c0e0`) survives its leave: the reference skips the
-        // teardown (`0x49c115`), so leaving a capital keeps Trade's number for the re-join.
+        // A suspended slot (state 3) survives its leave: the reference skips the teardown, so
+        // leaving a capital keeps Trade's number for the re-join.
         if event.slot_state == Some(super::edit::SlotState::Suspended) {
             debug!("chat: channel {name:?} suspended — the record and its number stay");
         } else {
@@ -620,10 +618,10 @@ pub(super) struct SpeakerEffects<'w> {
 /// `UNIT_FIELD_FLAGS` bit `0x20000000` (`PREVENT_ANIM`: Polymorph, Kidney Shot, Gouge, Sleep).
 const UNIT_FLAG_PREVENT_ANIM: u32 = 0x2000_0000;
 
-/// Whether the speaker's flags suppress the chat talk gesture. Only the handler's own copy of
-/// the selector tests the bit (`0x49d7f7`, the one `0xa0` test of `0x20000000` in the image),
-/// which runs when the sender's name is already cached (`tries == 0`); a line held for the name
-/// query gestures from the deferred copies (`0x49cf2b`, `0x49d3bb`), which do not.
+/// Whether the speaker's flags suppress the chat talk gesture. Only the handler's own copy of the
+/// selector tests the bit (the one `0xa0` test of `0x20000000` in the image), which runs when the
+/// sender's name is already cached (`tries == 0`); a line held for the name query gestures from the
+/// deferred copies, which do not.
 pub(super) fn gesture_prevented(tries: u16, speaker_flags: Option<u32>) -> bool {
     tries == 0 && speaker_flags.is_some_and(|f| f & UNIT_FLAG_PREVENT_ANIM != 0)
 }
@@ -653,7 +651,7 @@ pub(super) fn feed_chat(
     langs: Res<super::language::ChatLanguages>,
     // Item names for `TRADESKILL_LOG`, `FEEDPET_LOG`, `ITEMENCHANTMENT*`, `SPELLDURABILITYDAMAGE`.
     items: Res<crate::items::Items>,
-    // The spam and profanity filters, which run in the reference's display function `0x49a870`.
+    // The spam and profanity filters, which run in the reference's display function.
     mut text_filter: crate::text_filter::ChatTextFilter,
 ) {
     let Some(mut script) = script else {
@@ -700,9 +698,9 @@ pub(super) fn feed_chat(
                 // The base name; `stamp_channel` adds arg4's number and arg7-arg9 below.
                 let channel_base = msg.channel.clone().unwrap_or_default();
                 // `$`-macros expand for the monster, boss, BG system and award types only, against
-                // the addressee. A failed expansion (`0x49dac2`-`0x49db1e`, `0x49d9c9`) with a zero
-                // subject or a known name drops the line, one with an unknown name holds it for
-                // the name query (`tries`), and only a second failure shows the raw text.
+                // the addressee. A failed expansion with a zero subject or a known name drops the
+                // line, one with an unknown name holds it for the name query (`tries`), and only a
+                // second failure shows the raw text.
                 let award = matches!(
                     msg.chat_type,
                     benilla_protocol::messages::CHAT_MSG_ACHIEVEMENT
@@ -767,18 +765,18 @@ pub(super) fn feed_chat(
                 };
                 let plain = expanded.unwrap_or_else(|| msg.text.clone());
                 // The language gate: the garble writes the one buffer the line, `arg1` and the
-                // bubble read, as `0x49a870` fills `[ebp-0xd0c]` once (`0x49a9f0` copy, `0x49aa7c`
-                // garble) and never reads the wire text again.
+                // bubble read, as the reference fills `[ebp-0xd0c]` once and never reads the wire
+                // text again.
                 let language = langs.effective_language(msg.chat_type, msg.language);
                 let mut text = langs.garble(language, &plain);
 
-                // The text filters, on the garbled buffer as in `0x49a870`: spam first, then the
+                // The text filters, on the garbled buffer as the reference: spam first, then the
                 // mask, so a dropped line consumes no mask indices (the phase is global).
                 if text_filter.should_drop(msg.chat_type, msg.chat_tag, langs.is_gm(), &text) {
-                    // Nothing shows in its place: the not-a-whisper leg (`0x49ab33`) jumps to the
-                    // epilogue `0x49afd7`. A whisper with a non-zero report guid also sends
-                    // `CMSG_CHAT_FILTERED` (`0x331`, the `u64` guid, `0x49ab50`) in the reference;
-                    // not sent here, as vmangos leaves the opcode unhandled (`Opcodes.cpp:932`).
+                    // Nothing shows in its place: the not-a-whisper leg jumps to the epilogue. A
+                    // whisper with a non-zero report guid also sends `CMSG_CHAT_FILTERED` (`0x331`,
+                    // the `u64` guid) in the reference; not sent here, as vmangos leaves the opcode
+                    // unhandled (`Opcodes.cpp:932`).
                     debug!(
                         "chat: spam filter dropped [{:#04x}] {:?}",
                         msg.chat_type, text
@@ -807,16 +805,15 @@ pub(super) fn feed_chat(
                 };
                 channels.stamp_channel(&mut event);
                 route(&mut script, &mut windows, &event);
-                // The bubble gets the same text: the reference spawns it in this path (`0x49acd9`).
+                // The bubble gets the same text: the reference spawns it in this path.
                 if let Some(kind) = event.kind {
                     speaker
                         .bubbles
                         .push(&speaker.bubble_cfg, msg.sender_guid, kind, &text);
                 }
                 // The gesture reads the raw type and `plain`, not the garbled text: the selector is
-                // in the parser (`0x49d560`, `0x49d820`-`0x49d8ae`) on the buffer `0x49dbc2` hands
-                // `0x49a870`, so a Horde `lol` laughs for every observer.
-                // The immediate path alone refuses a speaker that cannot animate (`0x49d7f7`).
+                // in the parser on the buffer hands, so a Horde `lol` laughs for every observer.
+                // The immediate path alone refuses a speaker that cannot animate.
                 let speaker_flags = guids
                     .0
                     .get(&msg.sender_guid)
@@ -859,11 +856,10 @@ pub(super) fn feed_chat(
                     continue;
                 }
                 // Stamped against the channel list as it stands at delivery: the reference hands
-                // the composer `0x49a870` the notice's channel name, directly when the names are
-                // cached (`0x49c59f`-`0x49c5b0`), else from the queued line's node (`+0x2c`) in
-                // the name-query callback (`0x49cfb4`-`0x49cfc1`), and the composer looks it up
-                // among the joined channels (`0x49aa1e`-`0x49aa31`). Unstamped, arg7-arg9 are
-                // empty and the stock filter (`ChatFrame.lua:1374-1392`) drops the line.
+                // the composer the notice's channel name, directly when the names are cached, else
+                // from the queued line's node (`+0x2c`) in the name-query callback, and the
+                // composer looks it up among the joined channels. Unstamped, arg7-arg9 are empty
+                // and the stock filter (`ChatFrame.lua:1374-1392`) drops the line.
                 if let Some(mut event) = notice_event(
                     notice,
                     channel,
@@ -993,9 +989,9 @@ pub(super) fn feed_chat(
                     }
                     resolved
                 };
-                // The title's side is the victim's and its gender ours (`0x625270` genders against
-                // the local player). No name record means side 0: a creature, where only a racial
-                // leader is ranked (19, "Leader" either side, `HonorMgr.cpp:1075-1076`).
+                // The title's side is the victim's and its gender ours (genders against the local
+                // player). No name record means side 0: a creature, where only a racial leader is
+                // ranked (19, "Leader" either side, `HonorMgr.cpp:1075-1076`).
                 let team = names
                     .player_traits(victim)
                     .and_then(|(race, _, _)| crate::ui_unit::race_faction_group(race))
@@ -1041,7 +1037,7 @@ pub(super) fn feed_chat(
                     continue;
                 }
                 // No performer name, no line (not "Unknown"): the reference bails when its
-                // player-only name cache misses (`0x49b28c`); the animation rode `EmoteMessage`.
+                // player-only name cache misses; the animation rode `EmoteMessage`.
                 let (Some(performer_name), Some(cat)) = (performer_name, emote_texts.as_deref())
                 else {
                     debug!("chat: text emote {text_id} from {performer:#x} has no sentence source");

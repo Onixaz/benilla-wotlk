@@ -23,9 +23,8 @@ use crate::wmo_portal::{
 pub enum Subject {
     /// The player's own body, from the interior down-ray `wmo_portal` runs each frame.
     Player,
-    /// The camera eye: the reference's `[0xc7b748]` branch of the environment probe `0x6809c0`.
-    /// It differs from the body when the camera is outside the feet's room, and decides the
-    /// submerged view.
+    /// The camera eye: the reference's branch of the environment probe. It differs from the body
+    /// when the camera is outside the feet's room, and decides the submerged view.
     Eye,
     /// A streamed unit; its room is looked up here.
     Unit(Entity),
@@ -121,7 +120,7 @@ impl WorldPoint<'_, '_> {
     }
 
     /// Which liquid the camera eye is in: water reads the zone's underwater slot, magma and slime
-    /// fixed global rows (`0x6d2371`).
+    /// fixed global rows.
     pub fn submersion(&self) -> benilla_formats::Submersion {
         self.underwater.0
     }
@@ -192,10 +191,10 @@ impl WorldPoint<'_, '_> {
             .resolve(keys.wmo_id, keys.name_set, keys.group_area_id)
     }
 
-    /// The two exact-key `WMOAreaTable` rows zone-text naming reads (`0x67e670`): the hit group's,
-    /// which sets the subzone, and the WMO's default (`-1`) row, which may override the zone, with
-    /// the claim's keys for dedup. No name-set fallback, unlike [`Self::interior_row`]: the
-    /// reference names a room only by exact key.
+    /// The two exact-key `WMOAreaTable` rows zone-text naming reads: the hit group's, which sets
+    /// the subzone, and the WMO's default (`-1`) row, which may override the zone, with the claim's
+    /// keys for dedup. No name-set fallback, unlike [`Self::interior_row`]: the reference names a
+    /// room only by exact key.
     pub fn area_interior_rows(
         &self,
     ) -> Option<(
@@ -215,8 +214,8 @@ impl WorldPoint<'_, '_> {
         ))
     }
 
-    /// The player's zone-text interior claim: indoors comes from a down-ray under the player alone
-    /// (`0x6a87f0`), so a doorway portal under the eye does not count.
+    /// The player's zone-text interior claim: indoors comes from a down-ray under the player alone,
+    /// so a doorway portal under the eye does not count.
     pub fn area_interior(&self) -> Option<crate::wmo_portal::WmoInteriorKeys> {
         self.area_interior.0
     }

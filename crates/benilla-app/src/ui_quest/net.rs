@@ -33,8 +33,8 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::Worldport, on_worldport);
 }
 
-/// The reference's world-enter reset `0x500af0`, run by the enter-world cascade `0x4908c0` on a
-/// login and on every worldport, is the `0xbe0824` latch's only clear.
+/// The reference's world-enter reset, run by the enter-world cascade on a login and on every
+/// worldport, is the latch's only clear.
 fn on_login(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
     if let SessionEvent::Connected { .. } = ev {
         world_enter_reset(&mut quest);
@@ -50,7 +50,7 @@ fn on_worldport(In(ev): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
 
 fn world_enter_reset(quest: &mut QuestGiver) {
     quest.close_on_cancel = 0;
-    // The same reset zeroes the chosen reward (`0x500b15`).
+    // The same reset zeroes the chosen reward.
     quest.chosen_reward = 0;
 }
 
@@ -186,11 +186,10 @@ fn on_session_end(In(_): In<SessionEvent>, mut quest: ResMut<QuestGiver>) {
 }
 
 /// `SMSG_QUESTGIVER_STATUS`: one guid's `dialog_status`, for the markers and the minimap dot. A
-/// GameObject's answer is dropped, as the reference's `0x5dc9f0` resolves the guid by
-/// `TYPEMASK_UNIT` (`0x5dca22`) and exits at `0x5dca2f`; vmangos answers GameObjects
-/// (`QuestHandler.cpp:40`). The guid's shape gives the same partition. The reference's second
-/// test, `UNIT_NPC_FLAGS & 0x2` on the unit, is not built; the marker query's teardown covers a
-/// giver whose flag clears.
+/// GameObject's answer is dropped, as the reference's resolves the guid by `TYPEMASK_UNIT` and
+/// exits; vmangos answers GameObjects (`QuestHandler.cpp:40`). The guid's shape gives the same
+/// partition. The reference's second test, `UNIT_NPC_FLAGS & 0x2` on the unit, is not built; the
+/// marker query's teardown covers a giver whose flag clears.
 fn quest_giver_status(npc: u64, status: u32, quest: &mut QuestGiver) {
     use benilla_protocol::guid;
     if !(guid::is_player(npc) || guid::is_creature_or_pet(npc)) {
@@ -214,8 +213,8 @@ fn quest_greeting(list: QuestGiverList, quest: &mut QuestGiver) {
 /// `SMSG_QUESTGIVER_QUEST_DETAILS`: the accept panel.
 fn quest_detail(d: QuestDetails, quest: &mut QuestGiver, commands: &NetCommands) {
     debug!("net: quest detail — quest {} on {:#x}", d.quest_id, d.npc);
-    // A share landing on an open window is refused by the client with `BUSY` (`0x5dbf85`), and
-    // the open panel stays; the server's own busy test only knows about other shares.
+    // A share landing on an open window is refused by the client with `BUSY`, and the open panel
+    // stays; the server's own busy test only knows about other shares.
     if benilla_protocol::guid::is_player(d.npc) && quest.is_open() {
         debug!(
             "net: busy — refusing {:#x}'s shared quest {}",
@@ -238,7 +237,7 @@ fn quest_progress(p: QuestRequestItems, quest: &mut QuestGiver) {
         "net: quest progress — quest {} on {:#x} (complete: {})",
         p.quest_id, p.npc, p.is_complete
     );
-    // The progress publisher `0x501070` writes `closeOnCancel` into the same latch (`0x50111a`).
+    // The progress publisher writes `closeOnCancel` into the same latch.
     quest.close_on_cancel = p.close_on_cancel;
     quest.open(p.npc, crate::ui_quest::QuestView::Progress(p));
 }
@@ -268,7 +267,7 @@ fn quest_complete(c: QuestComplete, quest: &mut QuestGiver, lines: &mut QuestLin
     if c.xp != 0 {
         lines.push(QuestLine::Experience(c.xp));
     }
-    // A signed test (`0x5dc50b`).
+    // A signed test.
     if (c.money as i32) > 0 {
         lines.push(QuestLine::Money(c.money));
     }
@@ -304,9 +303,8 @@ fn quest_objectives_complete(quest_id: u32, quest: &mut QuestGiver) {
 }
 
 /// `SMSG_QUESTUPDATE_FAILED` (`0x196`) or `_FAILEDTIMER` (`0x197`): `ERR_QUEST_FAILED_S` (msg
-/// `0x8b`) in chat, named by the quest's title. The reference's arm (`0x5e5ad0`) prints nothing
-/// without a cached template, as here, or when the slot's `byte[slot+7] & 2` is set, which this
-/// does not check.
+/// `0x8b`) in chat, named by the quest's title. The reference's arm prints nothing without a cached
+/// template, as here, or when the slot's `byte[slot+7] & 2` is set, which this does not check.
 fn quest_failed(
     quest_id: u32,
     timed: bool,
@@ -331,9 +329,9 @@ fn quest_log_full(quest: &mut QuestGiver) {
     quest.push_message(UiError::key("ERR_QUEST_LOG_FULL"));
 }
 
-/// `SMSG_QUESTGIVER_QUEST_INVALID` (`0x5dbca0`): a `QuestFailedReason` and no quest id, shown in
-/// chat through `questgiver_invalid_key`. Both refusal handlers then close the window with
-/// `0x501130(0,0)`, which zeroes the giver guid (`0xbe0810`) and fires `QUEST_FINISHED`.
+/// `SMSG_QUESTGIVER_QUEST_INVALID`: a `QuestFailedReason` and no quest id, shown in chat through
+/// `questgiver_invalid_key`. Both refusal handlers then close the window with, which zeroes the
+/// giver guid and fires `QUEST_FINISHED`.
 fn quest_giver_invalid(reason: u32, quest: &mut QuestGiver) {
     debug!("net: questgiver refused to offer the quest (reason {reason})");
     quest.push_message(UiError::key(crate::ui_quest::questgiver_invalid_key(
@@ -342,9 +340,9 @@ fn quest_giver_invalid(reason: u32, quest: &mut QuestGiver) {
     quest.clear();
 }
 
-/// `SMSG_QUESTGIVER_QUEST_FAILED` (`0x5dc840`): the line's `%s` is the quest's title, from the
-/// open panel or the template cache. A full bag adds msg 0, `ERR_INV_FULL`, on the red surface,
-/// and the window closes as on an invalid quest.
+/// `SMSG_QUESTGIVER_QUEST_FAILED`: the line's `%s` is the quest's title, from the open panel or the
+/// template cache. A full bag adds msg 0, `ERR_INV_FULL`, on the red surface, and the window closes
+/// as on an invalid quest.
 fn quest_giver_failed(
     quest_id: u32,
     reason: u32,
@@ -399,7 +397,7 @@ mod tests {
         assert_eq!(
             quest.status(POSTER),
             None,
-            "a GameObject GUID misses typemask bit 3 and the handler exits at 0x5dca2f"
+            "a GameObject GUID misses typemask bit 3 and the handler exits"
         );
         assert_eq!(quest.status(ELEVATOR), None, "…and so does a transport GO");
         assert_eq!(
@@ -674,7 +672,7 @@ mod tests {
         assert_eq!(quest.close_on_cancel, 0, "the world-enter reset zeroes it");
     }
 
-    /// Every panel publish clears the already-acted latch (`0x500bd0`, `0x500d91`).
+    /// Every panel publish clears the already-acted latch.
     #[test]
     fn a_panel_packet_clears_the_acted_latch() {
         let (tx, _rx) = crossbeam_channel::unbounded();

@@ -2,9 +2,9 @@
 //! ("Bob waves at you."). [`crate::emotes`] owns the same table's command, animation and voice
 //! columns; this module owns its 16 `EmoteText[]` columns and the strings they point into.
 //!
-//! The composer is the reference's `0x49b200`: a 4-bit column selector, a four-rung fallback when
-//! the column has no string for the locale, then one of four `SStrPrintf` sites, performer first.
-//! All four rungs empty means no chat line at all; the emote is then only an animation and a voice.
+//! The composer is the reference's: a 4-bit column selector, a four-rung fallback when the column
+//! has no string for the locale, then one of four `SStrPrintf` sites, performer first. All four
+//! rungs empty means no chat line at all; the emote is then only an animation and a voice.
 
 use std::collections::HashMap;
 
@@ -26,38 +26,36 @@ const FORMS: usize = 16;
 pub struct EmoteTextCatalog {
     /// `EmotesText.dbc` id to its 16 `EmoteText[]` columns, each an `EmotesTextData` id or 0.
     forms: HashMap<u32, [u32; FORMS]>,
-    /// `EmotesTextData.dbc` id to its text per locale column; the client reads the slot named
-    /// in `[0xc0e080]`.
+    /// `EmotesTextData.dbc` id to its text per locale column; the client reads the slot named.
     data: HashMap<u32, Vec<Option<String>>>,
 }
 
-/// The facts `0x49b200` branches on. A self-emote never names you as its target: the sending
-/// client clears a self-target before building the packet (`DoEmote`, `0x5ef611`), so it arrives
-/// untargeted and reads "You wave.".
+/// The facts branches on. A self-emote never names you as its target: the sending client clears a
+/// self-target before building the packet (`DoEmote`), so it arrives untargeted and reads "You
+/// wave.".
 #[derive(Debug, Clone, Copy)]
 pub struct EmoteLine<'a> {
     /// The performer's resolved name, the `%s` the reference fills from its `NameCache` record.
     pub performer: &'a str,
-    /// The performer guid is the active player's (`0x49b2c8`).
+    /// The performer guid is the active player's.
     pub performer_is_you: bool,
-    /// The performer is female, `NameCache` record `+0x13c == 1`: `+8` on the column (`0x49b31c`).
+    /// The performer is female, `NameCache` record `+0x13c == 1`: `+8` on the column.
     pub performer_female: bool,
     /// The target name as the wire carries it, never round-tripped through a name cache; empty is
-    /// untargeted (`0x49b311`).
+    /// untargeted.
     pub target: &'a str,
-    /// Your own name (`GetOwnName`, `0x609210`), compared case-insensitively with `target` at
-    /// `0x49b2f3` (`0x64a480`).
+    /// Your own name (`GetOwnName`), compared case-insensitively with `target`.
     pub your_name: &'a str,
 }
 
 impl EmoteTextCatalog {
-    /// The chat line for a text emote; `None` when the ladder runs dry (`0x49b4bd`). `locale` is
-    /// the client's locale column, 0 for enUS.
+    /// The chat line for a text emote; `None` when the ladder runs dry. `locale` is the client's
+    /// locale column, 0 for enUS.
     pub fn compose(&self, text_id: u32, line: &EmoteLine, locale: usize) -> Option<String> {
         let forms = self.forms.get(&text_id)?;
 
-        // ── the selector (`0x49b2c3`-`0x49b316`) ────────────────────────────────────────────────
-        // Order matters: matching the performer skips the target compare entirely.
+        // ── the selector ──────────────────────────────────────────────── Order matters: matching
+        // the performer skips the target compare entirely.
         let (mut performer_is_other, mut target_is_other) = (true, true);
         let mut ctx = 0usize;
         if line.performer_is_you {
@@ -72,8 +70,8 @@ impl EmoteTextCatalog {
         }
         let gender = usize::from(line.performer_female) * 8;
 
-        // ── the ladder (`0x49b332` / `0x49b35e` / `0x49b38a` / `0x49b3c5`) ──────────────────────
-        // Rung 3 rewrites `ctx` in place, as the reference does `esi`, so rung 4 reads the new one.
+        // ── the ladder ────────────────────── Rung 3 rewrites `ctx` in place, as the reference
+        // does `esi`, so rung 4 reads the new one.
         let template = self
             .template(forms, gender | ctx, locale)
             .or_else(|| self.template(forms, ctx, locale))
@@ -83,7 +81,7 @@ impl EmoteTextCatalog {
             })
             .or_else(|| self.template(forms, ctx, locale))?;
 
-        // ── the four printf sites (`0x49b3fa`-`0x49b479`), performer first ──────────────────────
+        // ── the four printf sites, performer first ──────────────────────
         Some(match (performer_is_other, target_is_other) {
             (true, true) => fill(template, &[line.performer, line.target]),
             (true, false) => fill(template, &[line.performer]),
@@ -114,8 +112,8 @@ impl EmoteTextCatalog {
     }
 }
 
-/// `SStrPrintf` (`0x64a7f0`) reduced to the `%s` these templates use. Deviation: a surplus `%s`
-/// stays verbatim, where the reference would print stack garbage; no shipped row has one.
+/// `SStrPrintf` reduced to the `%s` these templates use. Deviation: a surplus `%s` stays verbatim,
+/// where the reference would print stack garbage; no shipped row has one.
 fn fill(template: &str, args: &[&str]) -> String {
     let mut out = String::with_capacity(template.len() + 16);
     let mut rest = template;
@@ -142,8 +140,8 @@ pub(crate) fn emotes_text_schema() -> Schema {
     s
 }
 
-/// `EmotesTextData.dbc`: an id, a `LocalizedString` block and its flags. In 1.12.1 the block is
-/// 8 locales, the 40-byte record the reader checks (`cmp eax,0x28`, `0x544579`); 3.3.5a's is 16.
+/// `EmotesTextData.dbc`: an id, a `LocalizedString` block and its flags. In 1.12.1 the block is 8
+/// locales, the 40-byte record the reader checks (`cmp eax,0x28`); 3.3.5a's is 16.
 pub(crate) fn emotes_text_data_schema(l: &LocalizedTable) -> Schema {
     let mut s = Schema::new("EmotesTextData");
     s.add_field(SchemaField::new("ID", FieldType::UInt32));
@@ -263,7 +261,7 @@ mod tests {
     }
 
     /// The branch order would render your own name for a self-target, but the send side clears a
-    /// self-target (`DoEmote`, `0x5ef611`), so the server echoes an empty name: "You wave.".
+    /// self-target (`DoEmote`), so the server echoes an empty name: "You wave.".
     #[test]
     fn the_self_named_target_form_is_unreachable_from_the_wire() {
         let data = crate::wow_data_or_skip!();
@@ -301,7 +299,7 @@ mod tests {
         );
     }
 
-    /// An unshipped locale is empty everywhere, so the ladder runs dry: no line (`0x49b4bd`).
+    /// An unshipped locale is empty everywhere, so the ladder runs dry: no line.
     #[test]
     fn an_unshipped_locale_composes_nothing() {
         let data = crate::wow_data_or_skip!();

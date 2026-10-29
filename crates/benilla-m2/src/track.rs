@@ -5,14 +5,14 @@
 /// loops on its global sequence.
 #[derive(Clone, Debug)]
 pub struct M2Track<V> {
-    /// `0` step (the previous key), nonzero linear: the scalar sampler's two-way test (`0x71af20`).
+    /// `0` step (the previous key), nonzero linear: the scalar sampler's two-way test.
     pub interp: u16,
     /// Global-sequence index, `0xffff` = an ordinary sequence-timeline track.
     pub gseq: u16,
     /// The per-sequence key-index window `(lo, hi)`, one per sequence in file order, which the
-    /// reference's key search reads before any timestamp (`0x713d50`; empty means search all
-    /// keys). Brackets, not the clip's keys: `hi` often lands in a later sequence's band. A band
-    /// with no keys resolves to `keys[lo]`.
+    /// reference's key search reads before any timestamp (empty means search all keys). Brackets,
+    /// not the clip's keys: `hi` often lands in a later sequence's band. A band with no keys
+    /// resolves to `keys[lo]`.
     pub ranges: Vec<(u32, u32)>,
     /// `(absolute ms, value)` keys, file order (time-ascending within a band).
     pub keys: Vec<(u32, V)>,
@@ -45,9 +45,9 @@ impl<V: Copy + PartialEq> M2Track<V> {
 }
 
 /// One key of a cubic track: the value, then the in and out tangents, each `sizeof(T)` apart. The
-/// wide key is the stride whatever `interp` says: the reference addresses keys as `k*0x24`
-/// (`0x716b51`) or `k*0xc` (`0x7173cc`) before dispatching, and step and linear read its `value`
-/// (`Cameras\FlyByDwarf.m2`'s roll track is `interp = 0` with 12-byte keys).
+/// wide key is the stride whatever `interp` says: the reference addresses keys as `k*0x24` or
+/// `k*0xc` before dispatching, and step and linear read its `value` (`Cameras\FlyByDwarf.m2`'s roll
+/// track is `interp = 0` with 12-byte keys).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct M2SplineKey<V> {
     pub value: V,
@@ -64,8 +64,8 @@ pub type M2ScalarSplineTrack = M2Track<M2SplineKey<f32>>;
 pub trait CubicValue: Copy {
     /// `w0·p0 + w1·p1 + w2·p2 + w3·p3`.
     fn combine(w: [f32; 4], p: [Self; 4]) -> Self;
-    /// The linear leg in the reference's form `a + (b − a)·t` (`0x716cf1`), which rounds
-    /// differently in f32 from `(1−t)·a + t·b`.
+    /// The linear leg in the reference's form `a + (b − a)·t`, which rounds differently in f32 from
+    /// `(1−t)·a + t·b`.
     fn lerp(a: Self, b: Self, t: f32) -> Self;
 }
 
@@ -91,11 +91,11 @@ impl<V: CubicValue> M2Track<M2SplineKey<V>> {
     /// Sample at absolute timeline `ms`, clamped at both ends, by the cubic loops' four-way
     /// `interp` dispatch (the bone loops have only two):
     ///
-    /// - `0` step: `value[k0]` (`0x716b5f`).
-    /// - `1` linear (`0x716cf1`).
-    /// - `2` Bézier over `{value[k0], outTan[k0], inTan[k1], value[k1]}` (`0x716c41`), what every
-    ///   `Cameras\*.m2` fly-by authors for position and target.
-    /// - `3` Hermite over `value[k0]`, `outTan[k0]`, `value[k1]`, `inTan[k1]` (`0x716b9e`).
+    /// - `0` step: `value[k0]`.
+    /// - `1` linear.
+    /// - `2` Bézier over `{value[k0], outTan[k0], inTan[k1], value[k1]}`, what every `Cameras\*.m2`
+    ///   fly-by authors for position and target.
+    /// - `3` Hermite over `value[k0]`, `outTan[k0]`, `value[k1]`, `inTan[k1]`.
     ///
     /// A span takes the out tangent of the key it leaves and the in tangent of the key it enters.
     pub fn sample_ms(&self, ms: u32) -> Option<V> {

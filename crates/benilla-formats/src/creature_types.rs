@@ -1,6 +1,6 @@
 //! `CreatureType.dbc`: each creature type's flags word, column 18 after 12340's seventeen-column
-//! name. 5875's TAB-target scorer (`0x494200`) looks a unit's type up in its cached table
-//! (`[0xc0de2c]`) and rejects it when the flags have bit 1. A unit's type comes from `SMSG_CREATURE_QUERY_RESPONSE`.
+//! name. 5875's TAB-target scorer looks a unit's type up in its cached table and rejects it when
+//! the flags have bit 1. A unit's type comes from `SMSG_CREATURE_QUERY_RESPONSE`.
 
 use std::collections::HashMap;
 

@@ -441,7 +441,7 @@ impl TradeSkillModel {
         count.max(1)
     }
 
-    /// `StopRecast` (`0x5d9ff0`); whether a repeat stopped, which fires `UPDATE_TRADESKILL_RECAST`.
+    /// `StopRecast`; whether a repeat stopped, which fires `UPDATE_TRADESKILL_RECAST`.
     pub(super) fn stop_recast(&mut self) -> bool {
         let active = self.recast.spell != 0 || self.recast.pending_spell != 0;
         self.recast.spell = 0;

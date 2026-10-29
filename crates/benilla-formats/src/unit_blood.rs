@@ -1,12 +1,12 @@
 //! `UnitBlood.dbc` and `UnitBloodLevels.dbc`, the melee blood-spurt tables.
 //!
-//! The chain (`0x624530`, `0x625010`): a melee hit with `HitInfo & 0x2`, nonzero damage and
-//! victim state 1 or 4 resolves the victim's blood id ([`BloodCatalog::level_key`]), whose
-//! `UnitBloodLevels` row names a `UnitBlood` row per violence level: the censorship table, where
-//! red blood turns green at violence 1 and vanishes at 0. That row's first four fields are
-//! `SpellVisualEffectName` ids in front-small, front-large, back-small, back-large order (read
-//! from the effect names): front or back by `sign(victimForward · (attackerPos − victimPos))`,
-//! large on the crushing bit `HitInfo & 0x2000`, not the crit bit `0x80`, the wound flinch's.
+//! The chain: a melee hit with `HitInfo & 0x2`, nonzero damage and victim state 1 or 4 resolves the
+//! victim's blood id ([`BloodCatalog::level_key`]), whose `UnitBloodLevels` row names a `UnitBlood`
+//! row per violence level: the censorship table, where red blood turns green at violence 1 and
+//! vanishes at 0. That row's first four fields are `SpellVisualEffectName` ids in front-small,
+//! front-large, back-small, back-large order (read from the effect names): front or back by
+//! `sign(victimForward · (attackerPos − victimPos))`, large on the crushing bit `HitInfo & 0x2000`,
+//! not the crit bit `0x80`, the wound flinch's.
 //!
 //! Fields 5 to 9 are ground-splat textures 1.12.1 never reads: no instruction touches
 //! `UnitBloodRecord + 0x14` to `+0x24` and the string `"BloodSplat"` is absent from the binary,
@@ -43,12 +43,11 @@ struct BloodRow {
 }
 
 impl BloodCatalog {
-    /// The victim's `UnitBloodLevels` key by the reference's three tiers (`0x60afb0`, which stores
-    /// the row at `[unit+0xb48]`): `CreatureDisplayInfo.BloodLevel`, else
-    /// `CreatureModelData.BloodID`, else `UnitBloodLevels`' first file row, the red one. A tier
-    /// misses on `< 0`, on `> maxId` or on an empty `idIndex` slot. `BloodID` -1 is a miss, not
-    /// bloodless: 595 of the 10534 shipped displays reach the third tier, Quilboar, Crocolisks and
-    /// Gnolls among them.
+    /// The victim's `UnitBloodLevels` key by the reference's three tiers (which stores the row at
+    /// `[unit+0xb48]`): `CreatureDisplayInfo.BloodLevel`, else `CreatureModelData.BloodID`, else
+    /// `UnitBloodLevels`' first file row, the red one. A tier misses on `< 0`, on `> maxId` or on
+    /// an empty `idIndex` slot. `BloodID` -1 is a miss, not bloodless: 595 of the 10534 shipped
+    /// displays reach the third tier, Quilboar, Crocolisks and Gnolls among them.
     pub fn level_key(&self, display_blood: i32, model_blood: i32) -> Option<u32> {
         let resolves = |v: i32| {
             u32::try_from(v)
@@ -85,8 +84,8 @@ impl BloodCatalog {
         self.row(blood_id, violence).map_or(&[], |r| &r.splats)
     }
 
-    /// The `UnitBlood` row through the censorship table (`GetUnitBloodRecord`, `0x60a390`). The
-    /// non-positive guard is defensive: no resolve produces such a key.
+    /// The `UnitBlood` row through the censorship table (`GetUnitBloodRecord`). The non-positive
+    /// guard is defensive: no resolve produces such a key.
     fn row(&self, blood_id: i32, violence: usize) -> Option<&BloodRow> {
         if blood_id <= 0 {
             return None;
@@ -228,8 +227,8 @@ mod tests {
         assert_eq!(blood.effect_id(0, 2, true, false), None);
     }
 
-    /// The three-tier resolve (`0x60afb0`): a `BloodLevel` of 0 and a `BloodID` of -1 both miss,
-    /// and the third tier returns the red row, id 1.
+    /// The three-tier resolve: a `BloodLevel` of 0 and a `BloodID` of -1 both miss, and the third
+    /// tier returns the red row, id 1.
     #[test]
     fn the_blood_row_resolve_falls_through_to_the_records_base() {
         let data = crate::wow_data_or_skip!();

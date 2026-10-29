@@ -2,20 +2,20 @@
 //! Lua API reads and writes ([`ModelState`]); the app draws it.
 //!
 //! Each 1.12 model-pane class has its own method table that never repeats its base's entries; a
-//! derived pane reaches its base's methods on a miss (`__index` meta `0x7020b0`), never the
-//! reverse, so a plain `<Model>` has no `SetUnit`:
+//! derived pane reaches its base's methods on a miss (`__index` meta), never the reverse, so a
+//! plain `<Model>` has no `SetUnit`:
 //!
 //! ```text
-//! CSimpleFrame 0x778590
-//! └─ CSimpleModel          0x76f870   table 0x878948 (23)   <Model>          ← here
-//!    └─ CGCharacterModelBase 0x506260  table 0x84f1fc (3)   <PlayerModel>    ← here
-//!       ├─ DressUpModelFrame 0x5050d0  table 0x84f190 (3)   <DressUpModel>   ← `dressup`
-//!       └─ TabardModel       0x503bd0  table 0x84ee40 (10)  <TabardModel>    ← `tabard`
+//! CSimpleFrame
+//! └─ CSimpleModel   table (23)   <Model>          ← here
+//!    └─ CGCharacterModelBase  table (3)   <PlayerModel>    ← here
+//!       ├─ DressUpModelFrame  table (3)   <DressUpModel>   ← `dressup`
+//!       └─ TabardModel  table (10)  <TabardModel>    ← `tabard`
 //! ```
 //!
 //! The pane's clock is the engine's, since Lua sees it through `OnUpdateModel`, fired at the top of
-//! every paint (`0x76d1bc`), and `OnAnimFinished` (`0x76cdc0`). What only the file knows arrives
-//! from the host once the asset is resident ([`crate::script::UiScript::set_model_facts`]).
+//! every paint, and `OnAnimFinished`. What only the file knows arrives from the host once the asset
+//! is resident ([`crate::script::UiScript::set_model_facts`]).
 
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ use super::Model;
 use crate::widget::{model_key, FrameHandle, KindState, ModelFileFacts, ModelLight, ModelState};
 
 impl Model {
-    /// FrameXML units per layout unit, `768 · √(a²+1)` for the screen aspect `a` (`[0x832a48]`
+    /// FrameXML units per layout unit, `768 · √(a²+1)` for the screen aspect `a` (the reference
     /// holds `1/√(a²+1)`): the unit of `SetPosition` and of the implicit rect. `a` is 4/3 before a
     /// screen exists.
     pub(crate) fn layout_unit(&self) -> f32 {
@@ -35,12 +35,12 @@ impl Model {
         768.0 * (a * a + 1.0).sqrt()
     }
 
-    /// `SetModel` on the pane `h` (`0x76cce0`): the file, seeded now if its facts are held (else
-    /// asked for), and the implicit rect it may give a size-less pane. A frame that is no model
-    /// pane is left as it is.
+    /// `SetModel` on the pane `h`: the file, seeded now if its facts are held (else asked for), and
+    /// the implicit rect it may give a size-less pane. A frame that is no model pane is left as it
+    /// is.
     pub(crate) fn set_pane_model(&mut self, h: FrameHandle, path: String) {
-        // The reference's asset-resident test (`0x71d5a3`): the loader's Stand seed runs now, or
-        // when the file lands.
+        // The reference's asset-resident test: the loader's Stand seed runs now, or when the file
+        // lands.
         let facts = self.model_facts_for(&path);
         let instance = self.model_instances + 1;
         let Some(KindState::Model(m)) = self.arena.frame_mut(h).map(|f| &mut f.kind_state) else {
@@ -53,7 +53,7 @@ impl Model {
         self.apply_implicit_rect(h);
     }
 
-    /// `SetCamera(idx)` on the pane `h` (`0x76cec0`), against the facts of the file it holds.
+    /// `SetCamera(idx)` on the pane `h`, against the facts of the file it holds.
     pub(crate) fn set_pane_camera(&mut self, h: FrameHandle, idx: i32) {
         let path = match self.arena.frame(h).map(|f| &f.kind_state) {
             Some(KindState::Model(m)) => m.path.clone(),
@@ -66,7 +66,7 @@ impl Model {
     }
 
     /// The implicit rect: a pane with no authored size takes its file's bounding-box extent, in
-    /// layout units, as the reference's geometry overrides answer it (`0x76d080`, `0x76d0d0`).
+    /// layout units, as the reference's geometry overrides answer it.
     pub(crate) fn apply_implicit_rect(&mut self, h: FrameHandle) {
         let unit = self.layout_unit();
         let extent = {
@@ -136,8 +136,8 @@ fn facts_of_pane(lua: &Lua, this: &Table) -> mlua::Result<Option<Arc<ModelFileFa
 /// Registry key of the `Model` method table (the MAXCSTACK discipline: a Lua-side root).
 pub(super) const REG_MODEL_METHODS: &str = "__benilla_model_methods";
 
-/// Registry key of the `PlayerModel` table, its own three methods only: `Model`'s 23 are reached
-/// on a miss, as `0x506260` falls through to `0x76f870`.
+/// Registry key of the `PlayerModel` table, its own three methods only: `Model`'s 23 are reached on
+/// a miss, as the reference falls through.
 pub(super) const REG_PLAYERMODEL_METHODS: &str = "__benilla_playermodel_methods";
 
 /// Run `f` on a frame's Model state under one short write borrow. Errors on a receiver that is not
@@ -186,12 +186,12 @@ fn number(v: &Value) -> Option<f32> {
     }
 }
 
-/// `[0x8029d4]`, the client's float-zero epsilon: `SetLight`'s intensity gate, `0x71b6a0`'s
-/// direction normalise and the paint's degenerate-rect test.
+/// The client's float-zero epsilon: `SetLight`'s intensity gate, the reference's direction
+/// normalise and the paint's degenerate-rect test.
 const FLOAT_EPS: f32 = 2.384_185_8e-7;
 
-/// `Model:SetLight`'s usage error. The reference's (`0x878c00`) names the receiver through `%s`
-/// and ends in `)`; this one names `Model` and drops the `)`.
+/// `Model:SetLight`'s usage error. The reference's names the receiver through `%s` and ends in `)`;
+/// this one names `Model` and drops the `)`.
 const SET_LIGHT_USAGE: &str = "Usage: Model:SetLight(enabled[, omni, dirX, dirY, dirZ, \
      ambIntensity[, ambR, ambG, ambB], dirIntensity[, dirR, dirG, dirB]]";
 
@@ -199,18 +199,16 @@ const SET_LIGHT_USAGE: &str = "Usage: Model:SetLight(enabled[, omni, dirX, dirY,
 enum SetLight {
     /// A non-number where one is required: `luaL_error(SET_LIGHT_USAGE)`.
     Raise,
-    /// `enabled == 0` returns (`0x76e2cb`) before the copy, so the call neither disables nor
-    /// edits the light.
+    /// `enabled == 0` returns before the copy, so the call neither disables nor edits the light.
     NoOp,
-    /// The light, copied whole over the widget's (`0x76cf30` at `0x76e777`).
+    /// The light, copied whole over the widget's.
     Set(ModelLight),
 }
 
-/// `Model:SetLight`'s argument walk (`0x76e1e0`) over the arguments after `self` (`a[0]` is Lua
-/// index 2), into a local light whose colours start black (`0x71b4a0`), not the widget's white.
-/// A colour triple is read only when its intensity is nonzero and all three are numbers; otherwise
-/// it is white and the cursor does not advance, so `SetLight(1, 0, x, y, z, ambI, dirI)` reads the
-/// second intensity at index 8, not 11.
+/// `Model:SetLight`'s argument walk over the arguments after `self` (`a[0]` is Lua index 2), into a
+/// local light whose colours start black, not the widget's white. A colour triple is read only when
+/// its intensity is nonzero and all three are numbers; otherwise it is white and the cursor does
+/// not advance, so `SetLight(1, 0, x, y, z, ambI, dirI)` reads the second intensity at index 8, not 11.
 fn parse_set_light(a: &[Value]) -> SetLight {
     let Some(enabled) = a.first().and_then(number) else {
         return SetLight::Raise;
@@ -229,13 +227,13 @@ fn parse_set_light(a: &[Value]) -> SetLight {
     let omni = head[0] as i32 != 0;
     let mut vector = [head[1], head[2], head[3]];
     if !omni {
-        // A direction is normalised on write (`0x71b6a0`); a position is stored raw (`0x71b650`).
+        // A direction is normalised on write; a position is stored raw.
         let len = (vector[0] * vector[0] + vector[1] * vector[1] + vector[2] * vector[2]).sqrt();
         if len > FLOAT_EPS {
             vector = vector.map(|v| v / len);
         }
     }
-    // Each colour is packed to 8 bits a channel and back (`0x76f900`), so a round trip is lossy.
+    // Each colour is packed to 8 bits a channel and back, so a round trip is lossy.
     let quantize = |v: f32| ((v.clamp(0.0, 1.0) * 255.0).round()) / 255.0;
     let block = |at: usize| -> Option<[f32; 3]> {
         let c: Vec<f32> = (at..at + 3)
@@ -278,7 +276,7 @@ fn string_arg(v: &Value) -> Option<std::borrow::Cow<'_, str>> {
     }
 }
 
-/// The client's `Usage:` error, naming the receiver by `GetName()` or `<unnamed>` (`0x84c7f0`).
+/// The client's `Usage:` error, naming the receiver by `GetName()` or `<unnamed>`.
 fn usage(lua: &Lua, this: &Table, call: &str) -> mlua::Error {
     let name = this
         .get::<mlua::Function>("GetName")
@@ -297,11 +295,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     //
     // `SetModel` and `PlayerModel:SetUnit` are alternative contents: setting one clears the other.
     // `SetModel` raises `Usage: %s:SetModel("file")` on anything `lua_isstring` refuses, nil
-    // included (`0x76d950`); `ClearModel` is the clear.
+    // included; `ClearModel` is the clear.
     //
     // Deviation: a path that does not resolve is stored, where the reference raises
-    // `Invalid model file: %s` (`0x878b44`), because the file loads asynchronously here and the
-    // call cannot know yet.
+    // `Invalid model file: %s`, because the file loads asynchronously here and the call cannot know
+    // yet.
     m.set(
         "SetModel",
         lua.create_function(|lua, (this, path): (Table, Value)| {
@@ -325,10 +323,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     // ── Animation ───────────────────────────────────────────────────────────
     //
-    // Both verbs are one arm, `0x7121a0(model, -1, id, 0, ms, 1.0f, 0, 1)`: `SetSequence` with
-    // `ms = 0` (`0x76dec0` → `0x76cf50`), `SetSequenceTime` with the caller's (`0x76dfc0` →
-    // `0x76cf80`). It anchors the play head at `clock − trunc(ms)`, re-read every frame
-    // (`0x71273d`). The id is an `AnimationData` id, not a file slot.
+    // Both verbs are one arm, `(model, -1, id, 0, ms, 1.0f, 0, 1)`: `SetSequence` with `ms = 0`,
+    // `SetSequenceTime` with the caller's. It anchors the play head at `clock − trunc(ms)`, re-read
+    // every frame. The id is an `AnimationData` id, not a file slot.
     m.set(
         "SetSequence",
         lua.create_function(|lua, (this, seq): (Table, Value)| {
@@ -348,8 +345,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ── The pane's view: yaw, scale, camera, position ───────────────────────────────────────
     //
-    // `SetFacing` (`0x878948[4]` → `0x76dce0`) writes the yaw at `+0x39c`, the field
-    // `PlayerModel:SetRotation` also writes.
+    // `SetFacing` writes the yaw at `+0x39c`, the field `PlayerModel:SetRotation` also writes.
     m.set(
         "SetFacing",
         lua.create_function(|lua, (this, rad): (Table, Value)| {
@@ -372,9 +368,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetModelScale",
         lua.create_function(|lua, this: Table| with_model(lua, &this, |m| m.scale))?,
     )?;
-    // `SetCamera(n)` (`0x76e0e0` → `0x76cec0`) picks a camera by raw table index, not through
-    // `cameraLookup`; past the table it installs the NULL (orthographic) camera, and until the
-    // facts arrive the pane draws nothing.
+    // `SetCamera(n)` picks a camera by raw table index, not through `cameraLookup`; past the table
+    // it installs the NULL (orthographic) camera, and until the facts arrive the pane draws
+    // nothing.
     m.set(
         "SetCamera",
         lua.create_function(|lua, (this, c): (Table, Value)| {
@@ -428,8 +424,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 Value::Number(f64::from(l.vector[1])),
                 Value::Number(f64::from(l.vector[2])),
             ];
-            // A colour comes back as `1.0, r, g, b` if any component is above 0, else as a lone 0
-            // (`0x76e953`), so the arity is 7, 10 or 13.
+            // A colour comes back as `1.0, r, g, b` if any component is above 0, else as a lone 0,
+            // so the arity is 7, 10 or 13.
             for c in [l.ambient, l.diffuse] {
                 if c.iter().any(|&v| v > 0.0) {
                     out.push(Value::Number(1.0));
@@ -460,7 +456,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let q = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u32;
                 let a = a.as_ref().map_or(1.0, num);
                 let packed = (q(a) << 24) | (q(num(&r)) << 16) | (q(num(&g)) << 8) | q(num(&b));
-                // Setting the colour arms the fog (`0x76f059`), the only verb that does.
+                // Setting the colour arms the fog, the only verb that does.
                 with_model(lua, &this, |m| {
                     m.fog_color = packed;
                     m.fog = true;
@@ -478,8 +474,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `SetFogNear` (`0x76f1e0`) and `SetFogFar` (`0x76f390`) store raw, with no clamp or order
-    // check (the `≥ 0` clamp is XML-only), and do not arm the fog.
+    // `SetFogNear` and `SetFogFar` store raw, with no clamp or order check (the `≥ 0` clamp is
+    // XML-only), and do not arm the fog.
     m.set(
         "SetFogNear",
         lua.create_function(|lua, (this, v): (Table, Value)| {
@@ -502,7 +498,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetFogFar",
         lua.create_function(|lua, this: Table| with_model(lua, &this, |m| m.fog_far))?,
     )?;
-    // `ClearFog` (`0x76f540`) clears the armed bit alone (`0x76f5c5`): colour, near and far stay.
+    // `ClearFog` clears the armed bit alone: colour, near and far stay.
     m.set(
         "ClearFog",
         lua.create_function(|lua, this: Table| with_model(lua, &this, |m| m.fog = false))?,
@@ -510,18 +506,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ── AdvanceTime and ReplaceIconTexture ─────────────────────────────────────────────────
 
-    // `AdvanceTime()` (`0x878948[14]` → `0x76eca0`) does nothing: it reads no argument, returns
-    // nothing, writes no field, and its one call, `0x76cfb0`, is `mov eax,1; ret`.
+    // `AdvanceTime()` does nothing: it reads no argument, returns nothing, writes no field, and its
+    // one call, is `mov eax,1; ret`.
     m.set(
         "AdvanceTime",
         lua.create_function(|lua, this: Table| with_model(lua, &this, |_| ()))?,
     )?;
 
-    // `ReplaceIconTexture(path)` (`0x878948[15]` → `0x76ed70`): `0x76cfe0(0xe, path)` → `0x710ec0`
-    // retextures every type-14 texture of the model instance and of its ribbon (`0x7b7950`) and
-    // particle (`0x7b4d20`) emitters, so `SetModel` and `ClearModel` drop it with the instance.
-    // With no instance (`[widget+0x318] == 0`) the call is dropped; with one not yet resident it is
-    // replayed on load, so the pane stores the override for the host to apply.
+    // `ReplaceIconTexture(path)`: `(0xe, path)` → retextures every type-14 texture of the model
+    // instance and of its ribbon and particle emitters, so `SetModel` and `ClearModel` drop it with
+    // the instance. With no instance (`[widget+0x318] == 0`) the call is dropped; with one not yet
+    // resident it is replayed on load, so the pane stores the override for the host to apply.
     m.set(
         "ReplaceIconTexture",
         lua.create_function(|lua, (this, path): (Table, Value)| {
@@ -540,14 +535,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.set_named_registry_value(REG_MODEL_METHODS, m)
 }
 
-/// `PlayerModel`'s own three methods (table `0x84f1fc`); the rest are `Model`'s, reached on a miss.
-/// Only the in-game state registers it (`0x506230`, from `0x490260`), where `Model`'s is in the
-/// widget set both states install (`0x76f840`, from `0x706350`).
+/// `PlayerModel`'s own three methods; the rest are `Model`'s, reached on a miss. Only the in-game
+/// state registers it, where `Model`'s is in the widget set both states install.
 pub(super) fn install_player_model(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
-    // `SetUnit(unit)` (`0x84f1fc[0]` → `0x505d70`) clears the `SetModel` path; the unit token is
-    // resolved at render.
+    // `SetUnit(unit)` clears the `SetModel` path; the unit token is resolved at render.
     m.set(
         "SetUnit",
         lua.create_function(|lua, (this, unit): (Table, Value)| {
@@ -560,7 +553,7 @@ pub(super) fn install_player_model(lua: &Lua) -> mlua::Result<()> {
                 m.path = None;
                 m.creature = None;
             })?;
-            // A dress-up pane rebuilds from the unit's live model, dropping try-ons (`0x5059a0`).
+            // A dress-up pane rebuilds from the unit's live model, dropping try-ons.
             super::dressup::redress_if_dressup(lua, &this)
         })?,
     )?;
@@ -579,22 +572,21 @@ pub(super) fn install_player_model(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `RefreshUnit()` (`0x84f1fc[1]` → `0x505e40`) re-reads the pane's unit; the token already
-    // resolves at render, so only a dress-up pane has work to do.
+    // `RefreshUnit()` re-reads the pane's unit; the token already resolves at render, so only a
+    // dress-up pane has work to do.
     m.set(
         "RefreshUnit",
         lua.create_function(|lua, this: Table| {
             with_model(lua, &this, |_| ())?;
-            // The same worker as `SetUnit`'s (`0x505b50`).
+            // The same worker as `SetUnit`'s.
             super::dressup::redress_if_dressup(lua, &this)
         })?,
     )?;
 
-    // `SetRotation(rad)` (`0x84f1fc[2]` → `0x505f00` → `0x505bb0`) writes the yaw `SetFacing`
-    // writes (`0x505c44`). Not built: the reference also plays a turn animation, ShuffleRight
-    // (`0xc`) when the facing grows, ShuffleLeft (`0xb`) when it shrinks, else Stand (0), unless
-    // already armed on bone slot 0, and holds the turn 100 ms (`[+0x3e8]`, `[+0x3ec]`, expired by
-    // `0x505c50`).
+    // `SetRotation(rad)` writes the yaw `SetFacing` writes. Not built: the reference also plays a
+    // turn animation, ShuffleRight (`0xc`) when the facing grows, ShuffleLeft (`0xb`) when it
+    // shrinks, else Stand (0), unless already armed on bone slot 0, and holds the turn 100 ms
+    // (`[+0x3e8]`, `[+0x3ec]`).
     m.set(
         "SetRotation",
         lua.create_function(|lua, (this, rad): (Table, Value)| {
@@ -633,8 +625,7 @@ impl crate::script::UiScript {
         let mut model = self.model_mut();
         model.model_facts.insert(key.clone(), facts.clone());
         model.model_facts_wanted.retain(|k| *k != key);
-        // The panes holding this file: the waiters the reference links on its streaming drain
-        // (`0x71d640`).
+        // The panes holding this file: the waiters the reference links on its streaming drain.
         let handles: Vec<_> = model
             .arena
             .iter_frames()
@@ -702,7 +693,7 @@ impl crate::script::UiScript {
                 let path = m.path.as_deref()?;
                 let facts = model.model_facts.get(&model_key(path))?;
                 // A pane whose camera is still pending paints nothing, not even its
-                // `OnUpdateModel` (`0x76d5f0`).
+                // `OnUpdateModel`.
                 if m.camera_pending.is_some() {
                     return None;
                 }
@@ -729,12 +720,12 @@ pub struct ModelPaneFrame {
 /// The registry key of `ModelFFX`'s own method table (`0xac465c`), chained over `Model`'s.
 pub(super) const REG_MODELFFX_METHODS: &str = "__benilla_modelffx_methods";
 
-/// `ModelFFX`'s four light methods (`CSimpleModelFFX`, `0x4e6c40`-`0x4e6d60`): `ResetLights`
-/// clears the three sets; `AddLight`, `AddCharacterLight` and `AddPetLight` take an optional
-/// array index (nonzero picks the second) and `SetLight`'s arguments, and append the light to the
-/// background's, the character's or the pet's set while it holds fewer than four. A disabled light
-/// is appended too (`SetLightHelper` `0x960a10` returns success for it), so it still marks the set
-/// custom while adding no light.
+/// `ModelFFX`'s four light methods (`CSimpleModelFFX`,-`0x4e6d60`): `ResetLights` clears the three
+/// sets; `AddLight`, `AddCharacterLight` and `AddPetLight` take an optional array index (nonzero
+/// picks the second) and `SetLight`'s arguments, and append the light to the background's, the
+/// character's or the pet's set while it holds fewer than four. A disabled light is appended too
+/// (`SetLightHelper` `0x960a10` returns success for it), so it still marks the set custom while
+/// adding no light.
 pub(super) fn install_ffx(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
     m.set(

@@ -26,7 +26,7 @@ const EXPECT_NAME: &str = "Woo Ping";
 const EXPECT_POS: [f32; 2] = [-8796.2, 613.098];
 const EXPECT_ICON: u32 = 6; // ICON_POI_REDFLAG
 const EXPECT_FLAGS: u32 = 99; // bits 0 (a candidate) and 1 (draw the in-range icon)
-/// The in/out-of-range split of the minimap's landmark pass (`0x811730`).
+/// The in/out-of-range split of the minimap's landmark pass.
 const BLIP_EDGE_RATIO: f32 = 0.8;
 
 pub(crate) struct ProbeGuardPoiPlugin;

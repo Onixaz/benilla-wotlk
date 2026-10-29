@@ -3,17 +3,13 @@
 //! ([`M2BatchMaterials::skybox`]).
 //!
 //! Two slots feed it. A WMO root names a model in MOSB, and the reference draws it when any group
-//! the portal flood reaches carries flag `0x40000` (`0x6b42e0` inside the flood `0x6b41c0`,
-//! published to `[0xca8080]`, read at `0x681282`). The ghost sky (`LightSkybox.dbc`) fills the DBC
-//! slot, whose weight 1.0 skips the WMO slot outright (`0x6d4ac1`–`0x6d4acc`), so it is taken
-//! first.
+//! the portal flood reaches carries flag `0x40000`. The ghost sky (`LightSkybox.dbc`) fills the DBC
+//! slot, whose weight 1.0 skips the WMO slot outright, so it is taken first.
 //!
-//! The WMO slot's weight is the camera-in-WMO interior crossfade `[0xce9bdc]`
-//! (`0x6d4810(0, [0xca8080], [0xce9bdc])`), the number the MFOG fog lerp rides. Above
-//! `[0x808aac]` = 0.99 a slot replaces the whole celestial pass (`0x6d4a3b`): stars, sun disc,
-//! both moons, gradient band and cloud dome; below it they draw under the sky. The glare quads
-//! draw on their own path (`0x483740` → `0x6d48c0` → `0x7e57e0`), and the fog, ambient and
-//! diffuse are untouched.
+//! The WMO slot's weight is the camera-in-WMO interior crossfade, the number the MFOG fog lerp
+//! rides. Above0.99 a slot replaces the whole celestial pass: stars, sun disc, both moons, gradient
+//! band and cloud dome; below it they draw under the sky. The glare quads draw on their own path,
+//! and the fog, ambient and diffuse are untouched.
 
 use std::collections::HashSet;
 
@@ -37,14 +33,13 @@ const SHOW_SKYBOX: u32 = 0x40000;
 pub struct CameraSkybox(pub Option<String>);
 
 /// The skybox slot's weight this frame: the interior crossfade [`crate::lighting::WmoCrossfade`]
-/// (±0.25/s, `[0x8115b0]`) for a WMO sky, 1.0 for the ghost sky (`0x6d2260`), and 0 when none
-/// resolves.
+/// (±0.25/s) for a WMO sky, 1.0 for the ghost sky, and 0 when none resolves.
 #[derive(Resource, Default, PartialEq)]
 pub struct SkyboxWeight(pub f32);
 
 impl SkyboxWeight {
-    /// Whether the skybox replaces the whole celestial pass: weight above `[0x808aac]` = 0.99
-    /// (`0x6d49e8`/`0x6d4a1f`); below it the sky blends over the six elements.
+    /// Whether the skybox replaces the whole celestial pass: weight above0.99; below it the sky
+    /// blends over the six elements.
     pub fn replaces_celestial(&self) -> bool {
         self.0 > 0.99
     }
@@ -57,8 +52,8 @@ struct SkyboxPart {
     path: String,
     /// The batch's authored-blend material, drawn at weight 1.0.
     steady: Handle<WowModelMaterial>,
-    /// The blend-promotion twin for `0 < weight < 1` (`0x811fe0`); `steady` itself when the batch
-    /// already blends.
+    /// The blend-promotion twin for `0 < weight < 1`; `steady` itself when the batch already
+    /// blends.
     fade_blend: Handle<WowModelMaterial>,
 }
 
@@ -109,8 +104,8 @@ impl Plugin for SkyboxPlugin {
 }
 
 /// Resolve the wanted skybox and its weight. A WMO sky needs a group of the placement's flood PVS,
-/// not the camera's own group, to carry [`SHOW_SKYBOX`] (`0x6b42e0`, `ebx` the group visited) and
-/// its root to name a MOSB; the weight rides the down-ray claim's crossfade, a separate resolver.
+/// not the camera's own group, to carry [`SHOW_SKYBOX`] (`ebx` the group visited) and its root to
+/// name a MOSB; the weight rides the down-ray claim's crossfade, a separate resolver.
 fn resolve_camera_skybox(
     instances: Query<&crate::wmo_portal::WmoPortalInstance>,
     wmos: Res<Assets<WmoModel>>,
@@ -134,7 +129,7 @@ fn resolve_camera_skybox(
             if want.0.as_deref() != Some(sky) {
                 want.0 = Some(sky.to_owned());
             }
-            // The DBC slot's weight is 1.0 whenever filled (`0x6d26cb`/`0x6d26d0`): it pops in.
+            // The DBC slot's weight is 1.0 whenever filled: it pops in.
             weight.set_if_neq(SkyboxWeight(1.0));
             return;
         }
@@ -162,8 +157,8 @@ fn resolve_camera_skybox(
     if want.0 != resolved {
         want.0 = resolved;
     }
-    // The WMO slot's weight is the interior crossfade `[0xce9bdc]`; a name seen through a doorway
-    // at weight 0 fills the slot, which `0x6d4afe` declines to draw.
+    // The WMO slot's weight is the interior crossfade; a name seen through a doorway at weight 0
+    // fills the slot, which the reference declines to draw.
     weight.set_if_neq(SkyboxWeight(match want.0 {
         Some(_) => crossfade.t(),
         None => 0.0,
@@ -284,9 +279,9 @@ fn sole_bone(sub: &benilla_formats::RenderSubmesh) -> Option<u16> {
 }
 
 /// Show the wanted skybox at the slot weight and hide every other, the sole `Visibility`, material
-/// and `MeshTag` writer for these entities. As the reference: hidden at weight 0 (`0x6d4afe`), the
-/// weight in every batch's alpha (`0x710cb0` → `[CM2Model+0x180]`), and below 1 the batch
-/// promoted to SRC_ALPHA blending whatever its mode (`0x811fe0`).
+/// and `MeshTag` writer for these entities. As the reference: hidden at weight 0, the weight in
+/// every batch's alpha (`[CM2Model+0x180]`), and below 1 the batch promoted to SRC_ALPHA blending
+/// whatever its mode.
 fn apply_skybox_visibility(
     want: Res<CameraSkybox>,
     weight: Res<SkyboxWeight>,
@@ -326,10 +321,10 @@ fn apply_skybox_visibility(
 }
 
 /// Pin the box to the camera, world-aligned and at authored scale, the model's origin at the eye as
-/// the reference places it (`0x707680` given a zeroed recentre vector, `0x6d4b3a`–`0x6d4b48`):
-/// `StratholmeSkybox` is authored off-centre, so recentring it would be wrong. A spinning batch
-/// turns about its bone's pivot inside the anchor, `T(eye) · T(pivot) · R(t) · T(−pivot)`, on the
-/// scene clock; the reference's phase starts at load, which a 66.7 s ring does not show.
+/// the reference places it (given a zeroed recentre vector): `StratholmeSkybox` is authored
+/// off-centre, so recentring it would be wrong. A spinning batch turns about its bone's pivot
+/// inside the anchor, `T(eye) · T(pivot) · R(t) · T(−pivot)`, on the scene clock; the reference's
+/// phase starts at load, which a 66.7 s ring does not show.
 #[allow(clippy::type_complexity)]
 fn follow_camera(
     time: Res<Time>,

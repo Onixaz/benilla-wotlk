@@ -1,18 +1,17 @@
-//! The player's cooldowns, the client's `SpellHistory` list (node ops `0x6e12c0`, `0x6e13e0`,
-//! `0x6e1630`, `0x6e1790`; handlers `0x806dd0`, `0x6e95d0`, `0x6e9670`, `0x6e9730`).
+//! The player's cooldowns, the client's `SpellHistory` list (handlers `0x806dd0`).
 //!
 //! - A record holds three timers: the spell's recovery, its category's recovery and the GCD
 //!   (`startRecoveryCategory`, `startRecoveryTime`); `on_hold` parks the first two until
 //!   `SMSG_COOLDOWN_EVENT` (`SPELL_ATTR_COOLDOWN_ON_EVENT`: Stealth, Feign Death).
-//! - The GCD starts at cast send (`0x6e58fb`); the spell's recovery is computed from `Spell.dbc`
-//!   when our own `SMSG_SPELL_GO` arrives (`0x6e8498`, `0x6e8566`). vmangos sends no cooldown
-//!   packet for a plain cast; `SMSG_SPELL_COOLDOWN` is its override path.
-//! - A failed cast clears the GCD armed at send (`0x6e1d83`, `0x6e1630`) and, unless the reason
-//!   is 0x3c, removes a cooldown-on-event spell's parked record (`0x6e73cc`).
+//! - The GCD starts at cast send; the spell's recovery is computed from `Spell.dbc` when our own
+//!   `SMSG_SPELL_GO` arrives. vmangos sends no cooldown packet for a plain cast;
+//!   `SMSG_SPELL_COOLDOWN` is its override path.
+//! - A failed cast clears the GCD armed at send and, unless the reason is 0x3c, removes a
+//!   cooldown-on-event spell's parked record.
 //!
 //! Every mutation the reference flushes bumps [`Cooldowns::generation`], the edge of the flush
-//! `0x4b31b0` makes (`ACTIONBAR_UPDATE_COOLDOWN`, `SPELL_UPDATE_COOLDOWN`); a natural expiry does
-//! not, since the stock `Cooldown.lua` frame hides itself at the end.
+//! makes (`ACTIONBAR_UPDATE_COOLDOWN`, `SPELL_UPDATE_COOLDOWN`); a natural expiry does not, since
+//! the stock `Cooldown.lua` frame hides itself at the end.
 
 use std::time::{Duration, Instant};
 
@@ -47,7 +46,7 @@ impl Timer {
     }
 }
 
-/// One `SpellHistory` node (`0x6e12c0`).
+/// One `SpellHistory` node.
 #[derive(Clone, Debug)]
 struct Record {
     spell_id: u32,
@@ -55,8 +54,8 @@ struct Record {
     item_id: u32,
     recovery: Timer,
     category: u32,
-    /// The category's `SpellCategory` row has flags bit 0x2, so it matches every query
-    /// (`0x6e1563`); wand Shoot's 351 is the only one.
+    /// The category's `SpellCategory` row has flags bit 0x2, so it matches every query; wand
+    /// Shoot's 351 is the only one.
     category_wildcard: bool,
     category_recovery: Timer,
     /// The recovery timers hold their durations but have not started.
@@ -70,8 +69,8 @@ struct Record {
 }
 
 /// One action's cooldown read (`GetActionCooldown`): the winning timer's start, duration and
-/// remainder, and `enabled == false` for an on-hold record, which `CooldownFrame_SetTimer`
-/// hides. The start is what `GetCooldownInfo 0x6e13e0` returns, so two arms never alias.
+/// remainder, and `enabled == false` for an on-hold record, which `CooldownFrame_SetTimer` hides.
+/// The start is what `GetCooldownInfo` returns, so two arms never alias.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CooldownInfo {
     /// For an on-hold record, when it was inserted.
@@ -102,15 +101,15 @@ impl CooldownInfo {
     }
 }
 
-/// One cooldown list, the client's `SpellHistory`: the player's is this resource (`0xcecaec`), the
-/// pet's is [`crate::ui_pet::PetBar::cooldowns`] (`0xcecb04`), which the pet bar, the pet book and
-/// the pet's `SMSG_SPELL_GO` leg read and write. Each list's edge feeds its own events: the
-/// player's `feed_action_state`, the pet's `ui_pet::bar::fire_pet_cooldown_events`.
+/// One cooldown list, the client's `SpellHistory`: the player's is this resource, the pet's is
+/// [`crate::ui_pet::PetBar::cooldowns`], which the pet bar, the pet book and the pet's
+/// `SMSG_SPELL_GO` leg read and write. Each list's edge feeds its own events: the player's
+/// `feed_action_state`, the pet's `ui_pet::bar::fire_pet_cooldown_events`.
 #[derive(Resource, Default)]
 pub(crate) struct Cooldowns {
     records: Vec<Record>,
-    /// Bumped on every mutation the reference flushes (`0x4b31b0`), the flush's edge. Only counts
-    /// up, across [`Self::clear_silent`] too, so a watcher reads a reset as no mutation.
+    /// Bumped on every mutation the reference flushes, the flush's edge. Only counts up, across
+    /// [`Self::clear_silent`] too, so a watcher reads a reset as no mutation.
     pub(crate) generation: u64,
     /// Bumped when [`Self::prune`] marks records spent or [`Self::collect`] drops them. Kept
     /// apart from [`Self::generation`]: gated feeds must see an expiry, but the reference never
@@ -165,10 +164,10 @@ impl Cooldowns {
         })
     }
 
-    /// `AddCooldown 0x6e12c0`: always appends, never matching by id, so one spell holds separate
-    /// nodes for its cast-send GCD and its SPELL_GO recovery. Replacing by id would let the GO
-    /// insert wipe the running GCD. Spent records stay until [`Self::collect`]; whether the insert
-    /// stored anything is returned.
+    /// `AddCooldown`: always appends, never matching by id, so one spell holds separate nodes for
+    /// its cast-send GCD and its SPELL_GO recovery. Replacing by id would let the GO insert wipe
+    /// the running GCD. Spent records stay until [`Self::collect`]; whether the insert stored
+    /// anything is returned.
     fn add(
         &mut self,
         now: Instant,
@@ -182,7 +181,7 @@ impl Cooldowns {
         gcd_category: u32,
         gcd: Timer,
     ) -> bool {
-        // The client's early-out when nothing is tracked (`0x6e12c3`).
+        // The client's early-out when nothing is tracked.
         if recovery.duration.is_zero()
             && category_recovery.duration.is_zero()
             && !on_hold
@@ -263,12 +262,12 @@ impl Cooldowns {
         true
     }
 
-    /// A spell's own cooldown from `Spell.dbc` (`StartCooldown 0x6e2c60`), without a GCD.
+    /// A spell's own cooldown from `Spell.dbc` (`StartCooldown`), without a GCD.
     ///
     /// `ranged_attack_time_ms` is `UNIT_FIELD_RANGEDATTACKTIME` when
-    /// [`SpellDisplay::ranged_speed_cooldown`], else 0, added to the category timer (`0x6e2b60`):
-    /// the Throw and wand Shoot sweep. Category 0 (Auto Shot) never surfaces it. `mods` applies
-    /// op 11 to both timers, as the self and pet legs do; `None` inserts the DBC values.
+    /// [`SpellDisplay::ranged_speed_cooldown`], else 0, added to the category timer: the Throw and
+    /// wand Shoot sweep. Category 0 (Auto Shot) never surfaces it. `mods` applies op 11 to both
+    /// timers, as the self and pet legs do; `None` inserts the DBC values.
     pub(crate) fn start_spell(
         &mut self,
         spell_id: u32,
@@ -312,8 +311,8 @@ impl Cooldowns {
         }
     }
 
-    /// An item use's cooldown (`StartCooldown 0x6e2c60`): the item's values, a negative one
-    /// falling back to the spell's `Spell.dbc` value.
+    /// An item use's cooldown (`StartCooldown`): the item's values, a negative one falling back to
+    /// the spell's `Spell.dbc` value.
     pub(crate) fn start_item(
         &mut self,
         item_entry: u32,
@@ -356,12 +355,11 @@ impl Cooldowns {
         }
     }
 
-    /// Arm the GCD at cast send (`StartGlobalCooldown 0x6e2de0`, from `0x6e58fb`) for any cast or
-    /// item use, and at a pet-bar spell press (`0x4bd367`, into the pet's list), unless
-    /// `startRecoveryCategory` and `startRecoveryTime` are both 0
-    /// (`0x6e2e0f`-`0x6e2e21`), then with op 21 applied (`0x6e2e2c`) and nothing armed for a zero
-    /// result (`0x6e2e3d`). A negative one arms nothing either, where the reference inserts a
-    /// record no reader shows. `on_hold` is Attributes bit 25.
+    /// Arm the GCD at cast send (`StartGlobalCooldown`) for any cast or item use, and at a pet-bar
+    /// spell press (into the pet's list), unless `startRecoveryCategory` and `startRecoveryTime`
+    /// are both 0, then with op 21 applied and nothing armed for a zero result. A negative one arms
+    /// nothing either, where the reference inserts a record no reader shows. `on_hold` is
+    /// Attributes bit 25.
     pub(crate) fn start_gcd(
         &mut self,
         spell_id: u32,
@@ -372,7 +370,7 @@ impl Cooldowns {
         if spell.start_recovery_category == 0 && spell.start_recovery_ms == 0 {
             return;
         }
-        // `StartGlobalCooldown 0x6e2de0`: op 21 before the zero-duration exit (`0x6e2e2c`).
+        // `StartGlobalCooldown`: op 21 before the zero-duration exit.
         let duration_ms = mods.apply(spell, OP_GCD, spell.start_recovery_ms as i32);
         if duration_ms <= 0 {
             return;
@@ -409,7 +407,7 @@ impl Cooldowns {
         let mut touched = false;
         for r in &mut self.records {
             if r.spell_id == spell_id && !r.gcd.duration.is_zero() {
-                // `0x6e1630` zeroes both the category and the time.
+                // The reference zeroes both the category and the time.
                 r.gcd_category = 0;
                 r.gcd = Timer::none(now);
                 touched = true;
@@ -427,7 +425,7 @@ impl Cooldowns {
         }
     }
 
-    /// `SMSG_COOLDOWN_EVENT` (`0x6e1790`, force 0): an on-hold record's timers start now.
+    /// `SMSG_COOLDOWN_EVENT` (force 0): an on-hold record's timers start now.
     pub(crate) fn cooldown_event(&mut self, spell_id: u32, now: Instant) {
         let mut touched = false;
         for r in &mut self.records {
@@ -443,7 +441,7 @@ impl Cooldowns {
         }
     }
 
-    /// `SMSG_CLEAR_COOLDOWN` and the cast-fail revert (`0x6e1790`, force 1).
+    /// `SMSG_CLEAR_COOLDOWN` and the cast-fail revert (force 1).
     pub(crate) fn clear_spell(&mut self, spell_id: u32) {
         let before = self.records.len();
         self.records.retain(|r| r.spell_id != spell_id);
@@ -478,7 +476,7 @@ impl Cooldowns {
         self.bump();
     }
 
-    /// `SMSG_COOLDOWN_CHEAT` (`0x6e9700`).
+    /// `SMSG_COOLDOWN_CHEAT`.
     pub(crate) fn wipe(&mut self) {
         if !self.records.is_empty() {
             self.records.clear();
@@ -486,10 +484,9 @@ impl Cooldowns {
         }
     }
 
-    /// Empty the list with no flush: `SMSG_PET_SPELLS` clears the pet's list (`0x6e9b60` →
-    /// `0x6e1880`) before it seeds it again, or for a teardown leaves it empty, and the packet
-    /// calls no `0x4b31b0`. The counters keep their place, so a watcher never reads the reset as
-    /// a mutation.
+    /// Empty the list with no flush: `SMSG_PET_SPELLS` clears the pet's list before it seeds it
+    /// again, or for a teardown leaves it empty, and the packet calls no. The counters keep their
+    /// place, so a watcher never reads the reset as a mutation.
     pub(crate) fn clear_silent(&mut self) {
         self.records.clear();
     }
@@ -554,7 +551,7 @@ impl Cooldowns {
         );
     }
 
-    /// `SMSG_ITEM_COOLDOWN` (`0x6e95d0`): the client's hardcoded 30 s on the item's on-use spell.
+    /// `SMSG_ITEM_COOLDOWN`: the client's hardcoded 30 s on the item's on-use spell.
     pub(crate) fn apply_wire_item_cooldown(
         &mut self,
         item_entry: u32,
@@ -610,8 +607,8 @@ impl Cooldowns {
     /// One `SMSG_PET_SPELLS` cooldown: remainders, starting now. The category duration's
     /// [`PET_COOLDOWN_PERMANENT`] flag is stripped, or it would read as a 24-day sweep.
     ///
-    /// The handler seeds through `StartCooldown 0x6e2c60` (`0x4bdabf`), which calls no flush, so
-    /// the insert leaves [`Self::generation`] where it was.
+    /// The handler seeds through `StartCooldown`, which calls no flush, so the insert leaves
+    /// [`Self::generation`] where it was.
     pub(crate) fn seed_pet(
         &mut self,
         cd: &benilla_protocol::messages::PetSpellCooldown,
@@ -686,12 +683,12 @@ impl Cooldowns {
         Some((ready - 10_000, 10_000, triple.is_none_or(|t| t.2)))
     }
 
-    /// The client's `IsSpellOnCooldown 0x6e1690`, which despite its name is true only for an
-    /// on-hold record; it feeds the usable check's grey-while-parked leg (`0x6e3fb1`).
+    /// The client's `IsSpellOnCooldown`, which despite its name is true only for an on-hold record;
+    /// it feeds the usable check's grey-while-parked leg.
     ///
-    /// Keyed on spell and item (`0x6e173f`): the action bar's item gate `0x6e2fc0` passes the
-    /// item entry (`0x6e3037`), every other caller 0. `category` is the item's for an item
-    /// (`0x6e16f6` takes it from the item's spell slot), else the spell's.
+    /// Keyed on spell and item: the action bar's item gate passes the item entry, every other
+    /// caller 0. `category` is the item's for an item (the reference takes it from the item's spell
+    /// slot), else the spell's.
     pub(crate) fn has_on_hold_record(&self, spell_id: u32, item_entry: u32, category: u32) -> bool {
         self.records.iter().any(|r| {
             r.on_hold
@@ -702,11 +699,10 @@ impl Cooldowns {
         })
     }
 
-    /// The cast validator's first check (`0x6094f0` at `0x609565`, via `0x6e2ea0`): refused while
-    /// [`Self::info`] reads any remainder, so a press sharing the running GCD's category is
-    /// refused whatever its own `startRecoveryTime`. The caller picks the reason (`0x60952b`):
-    /// 0x28 for an item, 0x3c for a spell. Refusing locally matters: the server's NOT_READY
-    /// failure would clear the running GCD.
+    /// The cast validator's first check: refused while [`Self::info`] reads any remainder, so a
+    /// press sharing the running GCD's category is refused whatever its own `startRecoveryTime`.
+    /// The caller picks the reason: 0x28 for an item, 0x3c for a spell. Refusing locally matters:
+    /// the server's NOT_READY failure would clear the running GCD.
     pub(crate) fn not_ready(
         &self,
         spell_id: u32,
@@ -717,13 +713,13 @@ impl Cooldowns {
         self.info(spell_id, item_entry, spell, now).remaining_ms > 0
     }
 
-    /// `GetCooldownInfo 0x6e13e0`: the longest remainder over every record's three legs.
+    /// `GetCooldownInfo`: the longest remainder over every record's three legs.
     ///
-    /// - `Effect[0]` of ATTACK or TRADE_SKILL always reads cold (`0x6e1439`).
+    /// - `Effect[0]` of ATTACK or TRADE_SKILL always reads cold.
     /// - Spell leg: id and item match; a parked record reads its full duration, disabled.
     /// - Category leg: equal category, or any query for a wildcard row; parked likewise.
-    /// - GCD leg (`0x6e15cc`): the node's GCD category equals the query's
-    ///   `startRecoveryCategory` and the node's time is nonzero; it ignores on-hold.
+    /// - GCD leg: the node's GCD category equals the query's `startRecoveryCategory` and the node's
+    ///   time is nonzero; it ignores on-hold.
     pub(crate) fn info(
         &self,
         spell_id: u32,
@@ -882,7 +878,7 @@ mod tests {
         let ch = cds.info(100, 0, Some(&charge()), mid);
         assert_eq!(ch.remaining_ms, 0, "no startRecoveryCategory — no GCD read");
 
-        // The press gate reads the same getter; `0x6e1690` stays false with nothing parked.
+        // The press gate reads the same getter; stays false with nothing parked.
         assert!(cds.not_ready(133, 0, Some(&fireball()), mid));
         assert!(!cds.has_on_hold_record(133, 0, fireball().category));
     }
@@ -924,7 +920,7 @@ mod tests {
         let mid = t0 + Duration::from_millis(100);
         assert!(cds.not_ready(5384, 0, Some(&fd), mid));
 
-        // The fail path (0x6e1a00): GCD cleared (0x6e1630), the record removed (0x6e3050).
+        // The fail path: GCD cleared, the record removed.
         cds.clear_gcd(5384, mid);
         cds.clear_spell(5384);
         assert!(!cds.not_ready(5384, 0, Some(&fd), mid));
@@ -968,7 +964,7 @@ mod tests {
         assert!(cds.not_ready(5384, 0, Some(&fd), t0 + Duration::from_secs(60)));
         assert!(
             cds.has_on_hold_record(5384, 0, fd.category),
-            "the corrected 0x6e1690: an on-hold record — the usable walk's grey-while-parked"
+            "the corrected: an on-hold record — the usable walk's grey-while-parked"
         );
 
         // SMSG_COOLDOWN_EVENT starts the clocks now.
@@ -1069,7 +1065,7 @@ mod tests {
         );
     }
 
-    /// `0x6e1690` matches the spell and item pair; only the item gate `0x6e2fc0` passes an entry.
+    /// The reference matches the spell and item pair; only the item gate passes an entry.
     #[test]
     fn an_on_hold_record_is_findable_only_under_the_key_that_armed_it() {
         let t0 = Instant::now();
@@ -1086,7 +1082,7 @@ mod tests {
 
         assert!(
             cds.has_on_hold_record(5384, 1487, 0),
-            "the ITEM gate's own query — `0x6e2fc0` passes the entry as itemId"
+            "the ITEM gate's own query — the reference passes the entry as itemId"
         );
         assert!(
             !cds.has_on_hold_record(5384, 0, 0),
@@ -1538,8 +1534,8 @@ mod tests {
         assert_eq!(read(32, 10.0326), settled, "settled, every frame after");
     }
 
-    /// The GCD leg (`0x6e15cc`) ignores the pressed spell's own time: a `{133, 0}` scroll press
-    /// is refused, a `{0, 0}` press is not.
+    /// The GCD leg ignores the pressed spell's own time: a `{133, 0}` scroll press is refused, a
+    /// `{0, 0}` press is not.
     #[test]
     fn a_running_gcd_locks_presses_by_category_equality_alone() {
         let t0 = Instant::now();
@@ -1565,7 +1561,7 @@ mod tests {
         assert!(!cds.not_ready(133, 0, Some(&fireball()), t0 + Duration::from_millis(1_501)));
     }
 
-    /// The getter's exclusion (`0x6e1439`, `0x6e1442`).
+    /// The getter's exclusion.
     #[test]
     fn attack_and_tradeskill_reads_are_always_cold() {
         let t0 = Instant::now();
@@ -1581,7 +1577,7 @@ mod tests {
         assert!(!cds.not_ready(6603, 0, Some(&attack), mid));
     }
 
-    /// The wildcard leg (`0x6e1563`): wand Shoot's category 351 sweeps every button.
+    /// The wildcard leg: wand Shoot's category 351 sweeps every button.
     #[test]
     fn a_wildcard_category_record_reaches_every_query() {
         let t0 = Instant::now();
@@ -1619,7 +1615,7 @@ mod tests {
         assert_eq!(cds.info(133, 0, Some(&fireball()), t0).remaining_ms, 0);
     }
 
-    /// The ranged pad (`0x6e2b60`): Throw (category 76, no DBC recovery) sweeps the weapon speed.
+    /// The ranged pad: Throw (category 76, no DBC recovery) sweeps the weapon speed.
     #[test]
     fn throw_sweeps_the_ranged_attack_time_via_its_category() {
         let t0 = Instant::now();

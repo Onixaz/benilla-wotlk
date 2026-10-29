@@ -80,7 +80,7 @@ fn bar_color(s: &UiScript, frame: &str) -> (f64, f64, f64) {
     .unwrap()
 }
 
-/// A blank caption reads nil: `FontString:GetText` (`0x79d690`) returns nil for an empty string.
+/// A blank caption reads nil: `FontString:GetText` returns nil for an empty string.
 fn caption(s: &UiScript, frame: &str) -> Option<String> {
     s.eval::<Option<String>>(&format!("return {frame}Text:GetText()"))
         .unwrap()

@@ -142,8 +142,8 @@ fn shapeshift_bonus_bars_match_the_verified_table() {
         assert!(forms.get(&stance).unwrap().is_stance(), "form {stance}");
     }
     assert!(!forms.get(&1).unwrap().is_stance(), "cat is a shapeshift");
-    // flags1 bit 0x2 blocks the stance bar's toggle-cancel (`0x4b4963`): the warrior stances
-    // (0x7) carry it, so clicking the active one does nothing.
+    // flags1 bit 0x2 blocks the stance bar's toggle-cancel: the warrior stances (0x7) carry it, so
+    // clicking the active one does nothing.
     for stance in [17u32, 18, 19] {
         assert!(
             !forms.get(&stance).unwrap().cancelable(),
@@ -159,7 +159,7 @@ fn shapeshift_bonus_bars_match_the_verified_table() {
 }
 
 /// The stance bar's Spell.dbc columns: the MOD_SHAPESHIFT form id, the signed StanceBarOrder that
-/// `0x4b2bb0` sorts by, and the ActiveIconID `0x4b45c0` reads.
+/// the reference sorts by, and the ActiveIconID reads.
 #[test]
 fn stance_bar_spell_columns_match_the_probed_values() {
     let data = benilla_formats::wow_data_or_skip!();

@@ -1,22 +1,21 @@
-//! One-sided movement collision. The reference gathers faces at their file winding (`0x671cc0`)
-//! and its resolver skips any with `n·dir > −1e-5` (`0x632700`) for every caller of `0x632ba0`:
-//! falling, walking, step-up, ground settle, transports and the water surface, so a floor is
-//! filtered exactly like a wall.
+//! One-sided movement collision. The reference gathers faces at their file winding and its resolver
+//! skips any with `n·dir > −1e-5` for every caller: falling, walking, step-up, ground settle,
+//! transports and the water surface, so a floor is filtered exactly like a wall.
 //!
 //! parry's trimesh is two-sided, and a first-hit cast cannot yield the front face behind a
 //! backface, so this re-runs avian's `move_and_slide` over its public pieces and gates each
 //! triangle in its own BVH walk. The winding seen is the authored one: `Collider::trimesh` keeps
 //! it, and every transform is a rotation. Convex colliders stay whole-shape, and camera and
-//! line-of-sight casts stay two-sided, as the reference's segment kernel is (`0x7c29f0`).
+//! line-of-sight casts stay two-sided, as the reference's segment kernel is.
 //!
 //! Deviation: the slide, step and snap are avian's kinematic controller, with parry's edge-hit
 //! normals, not the reference's resolver, because pieces of that resolver grafted onto the
 //! controller left the mover in states the reference never reaches; only its face filters, the
 //! facing law and the backface band, are ported.
 //!
-//! There is no depenetration: the reference's resolver (`0x634040`) is a sweep with no push-out, so
-//! a body inside geometry, such as a player the server seats inside a chair's box, walks out
-//! through the faces wound away from it instead of being shoved sideways.
+//! There is no depenetration: the reference's resolver is a sweep with no push-out, so a body
+//! inside geometry, such as a player the server seats inside a chair's box, walks out through the
+//! faces wound away from it instead of being shoved sideways.
 
 use avian3d::character_controller::move_and_slide::{
     MoveAndSlide, MoveAndSlideConfig, MoveAndSlideHitData, MoveAndSlideHitResponse,
@@ -32,17 +31,17 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use core::time::Duration;
 
-/// The facing gate (`[0x80c5c4]`, −1e-5): a face blocks only when `n·dir` is at most this, `n` its
-/// authored normal and `dir` the unit motion.
+/// The facing gate (−1e-5): a face blocks only when `n·dir` is at most this, `n` its authored
+/// normal and `dir` the unit motion.
 const FACING_EPS: f32 = f32::from_bits(0xb727_c5ac);
 
 /// avian's `pull_back` floor for a near-zero `n·dir` (its `move_and_slide.rs`).
 const DOT_EPSILON: f32 = 0.005;
 
-/// The backface band (`[0x7ff9c8]`, 1/36 yd): `0x632830`'s clip drops a face whose every vertex
-/// lies more than this behind the mover's leading plane along the motion, and keeps one with any
-/// vertex nearer as a hit at `t = 0`. Measured on the vertices: a penetration depth would drop a
-/// sloped floor just above the feet, and the body would fall through the world.
+/// The backface band (1/36 yd): the reference's clip drops a face whose every vertex lies more than
+/// this behind the mover's leading plane along the motion, and keeps one with any vertex nearer as
+/// a hit at `t = 0`. Measured on the vertices: a penetration depth would drop a sloped floor just
+/// above the feet, and the body would fall through the world.
 const BACKFACE_BAND: f32 = 1.0 / 36.0;
 
 /// One-sided [`MoveAndSlide::cast_move`]: sweeps the axis-aligned `shape` along `movement` to
@@ -435,7 +434,7 @@ fn for_each_contact(
 }
 
 /// Whether every vertex lies more than [`BACKFACE_BAND`] behind the shape's support point along
-/// `dir`, `0x632830`'s per-vertex test.
+/// `dir`, the reference's per-vertex test.
 fn behind_the_band(tri: &Triangle, shape_pose: &Pose3, shape: &Collider, dir: Vec3) -> bool {
     let Some(support) = shape.shape_scaled().as_support_map() else {
         return false;

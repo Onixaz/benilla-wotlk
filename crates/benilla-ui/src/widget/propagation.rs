@@ -80,8 +80,8 @@ impl WidgetArena {
 
     // ── Strata ───────────────────────────────────────────────────────────────────────────────────
 
-    /// Force `h` and its whole subtree to `strata` (`0x76a470`), moving each visible frame to the
-    /// tail of its new bucket.
+    /// Force `h` and its whole subtree to `strata`, moving each visible frame to the tail of its
+    /// new bucket.
     pub fn set_frame_strata(&mut self, h: FrameHandle, strata: Strata) {
         let (visible, children) = match self.frame_mut(h) {
             Some(f) => {
@@ -120,7 +120,7 @@ impl WidgetArena {
             None => return,
         };
         self.sync_glance(h);
-        // Only a visible frame relinks (`0x76a541`); a hidden one is in no bucket.
+        // Only a visible frame relinks; a hidden one is in no bucket.
         if self.frame(h).is_some_and(|f| f.effective_visible) {
             self.resequence_to_tail(h);
         }
@@ -187,7 +187,7 @@ impl WidgetArena {
 
     // ── Toplevel ─────────────────────────────────────────────────────────────────────────────────
 
-    /// `SetToplevel` (`0x775440`) via the bit-setter `0x76a3c0`: a flag write that raises nothing.
+    /// `SetToplevel` via the bit-setter: a flag write that raises nothing.
     pub fn set_toplevel(&mut self, h: FrameHandle, toplevel: bool) {
         if let Some(f) = self.frame_mut(h) {
             f.toplevel = toplevel;
@@ -200,8 +200,8 @@ impl WidgetArena {
 
     // ── Scale ────────────────────────────────────────────────────────────────────────────────────
 
-    /// Set `h`'s own scale and recompute `effective_scale = parent's * own` down the subtree
-    /// (`0x76ac90`), stopping at a frame whose value moves less than [`SCALE_EPS`].
+    /// Set `h`'s own scale and recompute `effective_scale = parent's * own` down the subtree,
+    /// stopping at a frame whose value moves less than [`SCALE_EPS`].
     pub fn set_scale(&mut self, h: FrameHandle, scale: f32) {
         if let Some(f) = self.frame_mut(h) {
             f.scale = scale;
@@ -234,9 +234,9 @@ impl WidgetArena {
 
     // ── Alpha ────────────────────────────────────────────────────────────────────────────────────
 
-    /// `SetAlpha` (`0x76a690`): write the raw value to `h` and every descendant frame (`+0xc8`),
-    /// with no draw-time product, so a child's own later `SetAlpha` holds until an ancestor's next.
-    /// Every draw target `set_alpha` on `h` reaches: `h`, its descendants, and their regions.
+    /// `SetAlpha`: write the raw value to `h` and every descendant frame (`+0xc8`), with no
+    /// draw-time product, so a child's own later `SetAlpha` holds until an ancestor's next. Every
+    /// draw target `set_alpha` on `h` reaches: `h`, its descendants, and their regions.
     pub fn subtree_targets(&self, h: FrameHandle) -> Vec<crate::order::ZTarget> {
         let mut out = Vec::new();
         let mut stack = vec![h];
@@ -366,17 +366,16 @@ impl WidgetArena {
     }
 
     /// `Region:SetParent` for a texture or font string; `None` detaches. The client re-links in
-    /// full (`0x7733d0` → `0x77fd10`): out of the old parent's layer (`0x77fc60`) and list, into
-    /// the new parent's list (`0x76a750`) and layer (`0x77fcb0`), its layer kept, so the region
-    /// takes the tail `decl_seq`. Readers resolve through `owner`, so nothing propagates. A
-    /// same-owner call is a no-op, as in the reference (`0x77fd33`).
+    /// full: out of the old parent's layer and list, into the new parent's list and layer, its
+    /// layer kept, so the region takes the tail `decl_seq`. Readers resolve through `owner`, so
+    /// nothing propagates. A same-owner call is a no-op, as in the reference.
     pub fn set_region_owner(&mut self, rh: RegionHandle, new_owner: Option<FrameHandle>) -> bool {
         let Some(region) = self.region(rh) else {
             return false;
         };
         let (old_owner, was_detached) = (region.owner, region.detached);
-        // No cycle check: the client's (`0x7a177f`) looks for the receiver in the new parent's
-        // frame chain, and a region is never a frame.
+        // No cycle check: the client's looks for the receiver in the new parent's frame chain, and
+        // a region is never a frame.
         let new_owner = new_owner.filter(|&f| self.frame(f).is_some());
         match new_owner {
             Some(f) if f == old_owner && !was_detached => return false,
@@ -419,14 +418,14 @@ impl WidgetArena {
         }
     }
 
-    /// `EnableKeyboard` (`0x776ec0`): the char and key bits the key walk filters on.
+    /// `EnableKeyboard`: the char and key bits the key walk filters on.
     pub fn set_keyboard_enabled(&mut self, h: FrameHandle, enabled: bool) {
         if let Some(f) = self.frame_mut(h) {
             f.keyboard_enabled = enabled;
         }
     }
 
-    /// `IsKeyboardEnabled` (`0x776f90`).
+    /// `IsKeyboardEnabled`.
     pub fn is_keyboard_enabled(&self, h: FrameHandle) -> bool {
         self.frame(h).is_some_and(|f| f.keyboard_enabled)
     }
@@ -446,14 +445,14 @@ impl WidgetArena {
         self.frame(h).map(|f| f.mouse_enabled).unwrap_or(false)
     }
 
-    /// `SetClampedToScreen` (`0x776c00`).
+    /// `SetClampedToScreen`.
     pub fn set_clamped_to_screen(&mut self, h: FrameHandle, clamp: bool) {
         if let Some(f) = self.frame_mut(h) {
             f.clamped_to_screen = clamp;
         }
     }
 
-    /// `IsClampedToScreen` (`0x776cb0`).
+    /// `IsClampedToScreen`.
     pub fn is_clamped_to_screen(&self, h: FrameHandle) -> bool {
         self.frame(h).map(|f| f.clamped_to_screen).unwrap_or(false)
     }
@@ -486,7 +485,7 @@ impl WidgetArena {
 
     // ── Small helpers ────────────────────────────────────────────────────────────────────────────
 
-    /// Whether `maybe_ancestor` is on `node`'s parent chain (`0x767010`, read the other way round).
+    /// Whether `maybe_ancestor` is on `node`'s parent chain (read the other way round).
     pub fn is_ancestor(&self, maybe_ancestor: FrameHandle, node: FrameHandle) -> bool {
         let mut cur = self.frame(node).and_then(|f| f.parent);
         let mut guard = 0usize;

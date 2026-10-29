@@ -16,13 +16,11 @@ pub(crate) struct AnimSoundEvent {
     pub(crate) ident: [u8; 4],
     /// The tag payload (a SoundEntries id for `$SND`/`$DSL`/`$DSO`; 0 otherwise).
     pub(crate) data: u32,
-    /// The `AnimationData.dbc` id of the clip that fired the key: the reference's `0x5fdb50`
-    /// answer when a handler runs, which the `$BWR` bow/rifle fork reads (`0x5fcfb0` bow
-    /// {46,105,109}, `0x5fcfd0` rifle {49,106,110}).
+    /// The `AnimationData.dbc` id of the clip that fired the key: the reference's answer when a
+    /// handler runs, which the `$BWR` bow/rifle fork reads (105,109},106,110}).
     pub(crate) anim_id: u16,
     /// Where the key fired, `placementMatrix · (boneMatrix[bone] · position)`, snapshotted at the
-    /// fire as the event kernel `0x719370` does for every dispatcher (`0x5ffbd0` units,
-    /// `0x5f3e20` GameObjects, `0x6951e0` placed models). Not the object's origin: 149 of 244
+    /// fire as the event kernel does for every dispatcher. Not the object's origin: 149 of 244
     /// shipped `$DSL` keys sit off it, up to 67.6 yd. `None` uses the object's own transform.
     pub(crate) pos: Option<Vec3>,
 }
@@ -46,22 +44,21 @@ impl EventFrame<'_> {
     }
 }
 
-/// The footstep sound channel: `$FSD` alone, which the dispatcher `0x5ffbd0` routes to
-/// `0x623390`; the per-foot side tags go to the visual handler `0x5fbf70` and never sound.
+/// The footstep sound channel: `$FSD` alone, which the dispatcher routes; the per-foot side tags go
+/// to the visual handler and never sound.
 pub(crate) fn is_footstep_sound(ident: &[u8; 4]) -> bool {
     ident == b"$FSD"
 }
 
-/// The footfall handler's radius, 2500 yd² (50 yd, `[0x80c5b4]` read at `0x5fc00a` in
-/// `0x5fbf70`), measured from the active camera's eye (`0x4818f0`, `[[0xb4b2bc]+0x65b8]`). It
-/// gates all the handler spawns (decal, camera shake, spray), the local player's feet included:
-/// the `GUID == local player` compare (`0x5fc042`–`0x5fc06b`) only picks the decal's ring pool.
+/// The footfall handler's radius, 2500 yd² (50 yd), measured from the active camera's eye. It gates
+/// all the handler spawns (decal, camera shake, spray), the local player's feet included: the
+/// `GUID == local player` compare only picks the decal's ring pool.
 const FOOTFALL_RADIUS_SQ: f32 = 2500.0;
 
-/// Whether a footfall is out of the handler's range. The reference sums in x87 extended and
-/// rounds once to f32 (`0x5fbffe` store, `0x5fc007` reload); f64 holds every difference, square
-/// and sum exactly, so this matches bit for bit where `Vec3::distance_squared` can round across
-/// the 50 yd edge. The compare is strict and keeps a NaN (`test ah,0x41; je`), as `>` does.
+/// Whether a footfall is out of the handler's range. The reference sums in x87 extended and rounds
+/// once to f32; f64 holds every difference, square and sum exactly, so this matches bit for bit
+/// where `Vec3::distance_squared` can round across the 50 yd edge. The compare is strict and keeps
+/// a NaN (`test ah,0x41; je`), as `>` does.
 pub(crate) fn footfall_culls(a: Vec3, b: Vec3) -> bool {
     footfall_dist2(a, b) > FOOTFALL_RADIUS_SQ
 }
@@ -73,8 +70,8 @@ fn footfall_dist2(a: Vec3, b: Vec3) -> f32 {
     (dx * dx + dy * dy + dz * dz) as f32
 }
 
-/// The visual footfall channel: the foot side a per-foot tag names (`$FL0` gives `L`), over the
-/// ten families the dispatcher tables (`0x5ffe32` left, `0x5ffc82` right).
+/// The visual footfall channel: the foot side a per-foot tag names (`$FL0` gives `L`), over the ten
+/// families the dispatcher tables.
 pub(crate) fn footfall_side(ident: &[u8; 4]) -> Option<u8> {
     matches!(
         &ident[..3],
@@ -100,7 +97,7 @@ pub(crate) type TrackMemory = bevy::ecs::entity::EntityHashMap<TrackSeek>;
 
 /// Fire the event keys each unit's base and overlay clips crossed since last frame; runs after
 /// [`super::driver::drive_animations`]. A `t = 0` key re-fires on every loop wrap, as in the
-/// reference's walker `0x719370`.
+/// reference's walker.
 #[allow(clippy::type_complexity)] // one Bevy query tuple, the house convention
 pub(super) fn fire_anim_events(
     units: Query<(
@@ -126,10 +123,9 @@ pub(super) fn fire_anim_events(
 ) {
     let catalog = anim_data.as_deref().map(|d| &d.0);
     for (entity, anims, player, drv, parked, store, world, pose) in &units {
-        // A parked unit's tracks are not scanned, as the reference's second walk never ticks it
-        // (`0x683dd0` skips `0x710b90`), unless its template carries `MORE_AUDIBLE` (the
-        // `0x607da0` re-link); a missing template reads not audible (`0x623b70`). Dropping the
-        // memories makes a waking track re-arm rather than scan the whole parked gap.
+        // A parked unit's tracks are not scanned, as the reference's second walk never ticks it,
+        // unless its template carries `MORE_AUDIBLE`; a missing template reads not audible.
+        // Dropping the memories makes a waking track re-arm rather than scan the whole parked gap.
         if parked
             && !store
                 .and_then(|s| s.0.object_entry())
@@ -179,11 +175,11 @@ pub(super) fn fire_anim_events(
     }
 }
 
-/// Advance a track's memory, keyed by graph node, and return the seek to scan from, or `None` on
-/// an arm frame. The reference's arm `0x7121a0` stamps the window start at now (`0x712758`), so
-/// the walker skips that frame (`0x719518`) and opens the next at the stamp, lower-inclusive
-/// (`0x7196d5`–`0x7196d9`): `t = 0` keys fire only for a clip still armed a frame later. An arm
-/// deep in its timeline (past [`FRESH_CLIP_HEAD`]) opens at its own stamp, not the head.
+/// Advance a track's memory, keyed by graph node, and return the seek to scan from, or `None` on an
+/// arm frame. The reference's arm stamps the window start at now, so the walker skips that frame
+/// and opens the next at the stamp, lower-inclusive: `t = 0` keys fire only for a clip still armed
+/// a frame later. An arm deep in its timeline (past [`FRESH_CLIP_HEAD`]) opens at its own stamp,
+/// not the head.
 pub(crate) fn advance_track(
     last: &mut TrackMemory,
     entity: Entity,

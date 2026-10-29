@@ -39,7 +39,7 @@ fn enable_mouse_gates_hit_testing() {
 }
 
 /// At a strata and level tie the earlier-linked frame takes the hit, though the later one draws on
-/// top: `0x764aa0` appends equal keys after (strict `ja`) and `0x7660d0` sweeps from index 0.
+/// top: the reference appends equal keys after (strict `ja`) and the reference sweeps from index 0.
 #[test]
 fn hit_order_is_strata_then_level_then_the_earlier_linked_frame() {
     let mut s = script();
@@ -329,11 +329,11 @@ fn an_enum_attribute_tolerates_the_whitespace_a_real_addon_ships() {
 
 // ── OnDoubleClick ──
 //
-// The interval is a fixed 300 ms (`0x77937b`, `cmp ecx, 0x12c`) and the only fire site is the
-// mouse-up dispatcher `0x7792d0`. The double replaces the second `OnClick` (`0x77939d` jumps past
-// it), a completed double zeroes the stamp so clicks pair up, the detector arms only when the frame
-// has an `OnDoubleClick` script (`[+0x4d4] != 0`), and it keys on no button: `RegisterForClicks`
-// is what confines it to the left button.
+// The interval is a fixed 300 ms (`cmp ecx, 0x12c`) and the only fire site is the mouse-up
+// dispatcher. The double replaces the second `OnClick`, a completed double zeroes the stamp so
+// clicks pair up, the detector arms only when the frame has an `OnDoubleClick` script
+// (`[+0x4d4] != 0`), and it keys on no button: `RegisterForClicks` is what confines it to the left
+// button.
 
 #[test]
 fn a_second_fast_click_fires_on_double_click_instead_of_the_second_on_click() {
@@ -582,8 +582,8 @@ fn the_unfired_script_kinds_still_raise_rather_than_silently_accepting() {
     }
 }
 
-/// Hiding the hovered frame fires its `OnLeave` inside the hide, before its `OnHide` (`0x764ba0`'s
-/// removal tail, the leave at `0x764cce`), and an ancestor's `Hide()` reaches it by the cascade.
+/// Hiding the hovered frame fires its `OnLeave` inside the hide, before its `OnHide`, and an
+/// ancestor's `Hide()` reaches it by the cascade.
 #[test]
 fn hiding_the_hovered_frame_fires_its_onleave_before_onhide() {
     let mut s = script();
@@ -611,8 +611,8 @@ fn hiding_the_hovered_frame_fires_its_onleave_before_onhide() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `0x764cce` dispatches the leave virtually (`[edx+0x50]`), so a disabled Button's own guard
-/// (`0x7794e0`) swallows it; `OnHide` is not the hover notify and fires either way.
+/// The reference dispatches the leave virtually (`[edx+0x50]`), so a disabled Button's own guard
+/// swallows it; `OnHide` is not the hover notify and fires either way.
 #[test]
 fn hiding_a_hovered_disabled_button_fires_onhide_but_no_onleave() {
     let mut s = script();
@@ -661,8 +661,8 @@ fn hiding_an_unhovered_frame_fires_no_onleave() {
 }
 
 /// After the hovered frame hides, the next tick re-hovers what is topmost at the unmoved cursor
-/// (`[root+0x1100]`, the pump tail `0x7660d0` on the saved event); a frame shown under the cursor
-/// is hovered the same way (`0x764b8d`).
+/// (`[root+0x1100]`, the pump tail on the saved event); a frame shown under the cursor is hovered
+/// the same way.
 #[test]
 fn the_repick_re_hovers_without_a_mouse_move() {
     let mut s = script();
@@ -703,7 +703,7 @@ fn the_repick_re_hovers_without_a_mouse_move() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-// ── The mouse-up dispatch (`0x766420`) ──
+// ── The mouse-up dispatch ──
 
 /// Two side-by-side frames, each recording every `OnMouseDown`/`OnMouseUp` it gets.
 fn two_frames() -> crate::script::UiScript {
@@ -732,9 +732,9 @@ fn log_of(s: &mut crate::script::UiScript) -> String {
     s.eval::<String>("return table.concat(log, ' ')").unwrap()
 }
 
-/// `0x766420` reads the capture `[mgr+0x80]` at entry (`0x76642b`) and never the hover
-/// `[mgr+0x7c]`, so the release reaches the pressed frame wherever the cursor is; a chat resize
-/// grip's `FCF_StopResize` relies on it (`FloatingChatFrame.xml:292`).
+/// The reference reads the capture `[mgr+0x80]` at entry and never the hover `[mgr+0x7c]`, so the
+/// release reaches the pressed frame wherever the cursor is; a chat resize grip's `FCF_StopResize`
+/// relies on it (`FloatingChatFrame.xml:292`).
 #[test]
 fn the_release_goes_to_the_frame_that_took_the_press() {
     let mut s = two_frames();
@@ -749,7 +749,7 @@ fn the_release_goes_to_the_frame_that_took_the_press() {
 }
 
 /// The down handler falls back to the hover (`root+0x80` else `root+0x7c`), the up handler does
-/// not: with no capture, `0x766498` jumps to `0x7664cd` and dispatches nothing.
+/// not: with no capture, and dispatches nothing.
 #[test]
 fn a_press_that_captured_nothing_delivers_no_release() {
     let mut s = two_frames();
@@ -785,9 +785,9 @@ fn the_capture_is_per_button() {
     );
 }
 
-/// A disabled Button fires neither `OnEnter` nor `OnLeave`: `CSimpleButton::OnEnter` (`0x779490`)
-/// and `OnLeave` (`0x7794e0`) test `[esi+0x328]` and skip the base notify (`0x76b6a0`,
-/// `0x76b6f0`). It still takes the hover: the walk sets `[root+0x7c]` before the notify.
+/// A disabled Button fires neither `OnEnter` nor `OnLeave`: `CSimpleButton::OnEnter` and `OnLeave`
+/// test `[esi+0x328]` and skip the base notify. It still takes the hover: the walk sets
+/// `[root+0x7c]` before the notify.
 #[test]
 fn a_disabled_button_takes_the_hover_but_fires_no_enter_or_leave() {
     let mut s = script();

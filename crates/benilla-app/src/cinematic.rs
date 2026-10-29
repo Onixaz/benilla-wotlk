@@ -4,21 +4,20 @@
 //! `CinematicCamera.dbc` shots, each an eye/target/roll path in a `Cameras\*.m2`, evaluated by
 //! [`benilla_formats::CinematicPath`]. This module is the playback.
 //!
-//! - A trigger before the world is up waits in a single-slot latch (`0xc4d75c`), last write wins,
-//!   and starts when the world-load gate opens (`0x5deb78`); here the gate is the loading screen.
-//! - The path plays as an M2 animation (`0x7121a0`, sequence 0, rate 1.0), and a shot ends at its
-//!   sequence band's end ([`CinematicPath::duration_ms`]); shipped fly-bys clamp and play once.
+//! - A trigger before the world is up waits in a single-slot latch, last write wins, and starts
+//!   when the world-load gate opens; here the gate is the loading screen.
+//! - The path plays as an M2 animation (sequence 0, rate 1.0), and a shot ends at its sequence
+//!   band's end ([`CinematicPath::duration_ms`]); shipped fly-bys clamp and play once.
 //! - Every shot, the first included, is announced with `CMSG_NEXT_CINEMATIC_CAMERA` from the shot
-//!   arm (`0x48edf0`, sent at `0x48ef11`). A camera id of 0 ends the cinematic (`0x48efe0`).
+//!   arm. A camera id of 0 ends the cinematic.
 //! - ESC is no engine binding: `StopCinematic` has no native caller, and the only skip is
 //!   `CinematicFrame.xml`'s `OnKeyDown`, whose Lua queues
 //!   [`SessionRequest::StopCinematic`](benilla_ui::script::SessionRequest).
-//! - `CMSG_COMPLETE_CINEMATIC` goes out once, on a natural end and on a skip alike (`0x48f080`).
-//!   Unacked, vmangos keeps object visibility on its own copy of the flying camera
-//!   (`Player.cpp:1448`), and everything around the body stays despawned until relog.
-//! - Every boundary (start, shot advance, end) cuts through black: a 0.25 s fade-out
-//!   (`[0x804550]`, `0x4c0d10`) whose completion runs the step, then a fade-in (`0x4c1280`). There
-//!   is no audio fade on this path.
+//! - `CMSG_COMPLETE_CINEMATIC` goes out once, on a natural end and on a skip alike. Unacked,
+//!   vmangos keeps object visibility on its own copy of the flying camera (`Player.cpp:1448`), and
+//!   everything around the body stays despawned until relog.
+//! - Every boundary (start, shot advance, end) cuts through black: a 0.25 s fade-out whose
+//!   completion runs the step, then a fade-in. There is no audio fade on this path.
 //!
 //! Playback takes over, and releases, the camera pose, the streaming focus (which follows the
 //! camera, so the flight is over streamed terrain) and the UI's cinematic flag, which drives
@@ -45,16 +44,15 @@ pub(crate) struct Cinematics(pub(crate) CinematicCatalog);
 /// The shot being played, plus the deferred-start latch.
 #[derive(Resource, Default)]
 pub(crate) struct Cinematic {
-    /// The reference's single-slot latch (`0xc4d75c`): a sequence the world was not ready to show.
+    /// The reference's single-slot latch: a sequence the world was not ready to show.
     pending: Option<u32>,
     playing: Option<Playing>,
-    /// Seconds of black left while the world comes back after the end. The reference's
-    /// EndCinematic (`0x48f080`) blocks on a terrain load at full black and raises no loading cover
-    /// (`0x406800` has no caller there); streaming cannot block, so the black holds instead, for
-    /// at most [`SETTLE_BUDGET`].
+    /// Seconds of black left while the world comes back after the end. The reference's EndCinematic
+    /// blocks on a terrain load at full black and raises no loading cover; streaming cannot block,
+    /// so the black holds instead, for at most [`SETTLE_BUDGET`].
     settling: Option<f32>,
-    /// A skip not yet paid: `StopCinematic` runs EndCinematic as its fade-out's completion
-    /// (`0x48f067`, `0x48f080`), so [`stop`] sets this and [`drive`] pays it at full black.
+    /// A skip not yet paid: `StopCinematic` runs EndCinematic as its fade-out's completion, so
+    /// [`stop`] sets this and [`drive`] pays it at full black.
     skip: bool,
 }
 
@@ -159,7 +157,7 @@ impl Plugin for CinematicPlugin {
             )
             .add_systems(Update, send_opening_cinematic.in_set(WorldStage::Input))
             // Leaving the world drops a cinematic with no ack, as the reference's teardown does
-            // (`0x490a80` clears the flag and sends no `CMSG_COMPLETE_CINEMATIC`).
+            // (the reference clears the flag and sends no `CMSG_COMPLETE_CINEMATIC`).
             .add_systems(OnExit(ClientState::InWorld), abandon_on_leaving_world);
     }
 }
@@ -211,9 +209,9 @@ fn drive_letterbox(
     // `area = "full"` routes to `SetFullScreenFrame`, which hides `UIParent`.
 
     // The hardware cursor hides at StartCinematic and returns at EndCinematic and the leave-world
-    // teardown (`0x58b590(0)`/`(1)`); nothing else hides it while the view is detached. Written
-    // only on a real change: `bevy_winit` re-applies `CursorOptions` to AppKit on every change,
-    // which can stall the main thread.
+    // teardown (/`(1)`); nothing else hides it while the view is detached. Written only on a real
+    // change: `bevy_winit` re-applies `CursorOptions` to AppKit on every change, which can stall
+    // the main thread.
     if let Ok(mut opts) = cursor.single_mut() {
         if playing && opts.visible {
             opts.visible = false;
@@ -330,9 +328,8 @@ fn start_pending(
     let (Some(catalog), Some(assets)) = (catalog, assets) else {
         return;
     };
-    // The shot is armed as the fade-out's completion (`0x48edc5` arms `0x4c0d10(0x48edd0, 0,
-    // 0.25)`), so all below runs at full black. Gated after every can't-play return, so a failed
-    // start never darkens the screen.
+    // The shot is armed as the fade-out's completion, so all below runs at full black. Gated after
+    // every can't-play return, so a failed start never darkens the screen.
     if !fade.is_black() {
         fade.fade_out(crate::screen_fade::CINEMATIC);
         return;
@@ -379,12 +376,12 @@ fn start_pending(
         elapsed: Duration::ZERO,
     });
     announce_shot(net.as_deref());
-    // `0x48ef43`, the tail of the shot arm: the shot fades in from the black it was armed under.
+    // The tail of the shot arm: the shot fades in from the black it was armed under.
     fade.fade_in(crate::screen_fade::CINEMATIC);
 }
 
-/// `CMSG_NEXT_CINEMATIC_CAMERA`, sent as each shot is armed, the first included (`0x48ef11`).
-/// vmangos ignores it (`MiscHandler.cpp:919`) and flies its camera copy on its own clock.
+/// `CMSG_NEXT_CINEMATIC_CAMERA`, sent as each shot is armed, the first included. vmangos ignores it
+/// (`MiscHandler.cpp:919`) and flies its camera copy on its own clock.
 fn announce_shot(net: Option<&NetCommands>) {
     if let Some(net) = net {
         let _ = net.0.send(ClientCommand::NextCinematicCamera);
@@ -398,8 +395,8 @@ const SETTLE_BUDGET: f32 = 8.0;
 /// Advance the shot and seat the camera on it; hand over to the next shot, or end the cinematic.
 ///
 /// Runs after `control` seats the follow camera, which it re-seats every frame, so the pose needs
-/// no restore. The FOV is left alone: the M2 camera's `fov` (written at `0x70f336`) is read by
-/// nothing on this path, its one reader `0x7ac640` serving only portraits and `<Model>` frames.
+/// no restore. The FOV is left alone: the M2 camera's `fov` is read by nothing on this path, its
+/// one reader serving only portraits and `<Model>` frames.
 fn drive(
     mut cine: ResMut<Cinematic>,
     time: Res<Time>,
@@ -425,7 +422,7 @@ fn drive(
                 );
             }
             cine.settling = None;
-            // `0x48f199`: the tail of EndCinematic fades back in to the live world.
+            // The tail of EndCinematic fades back in to the live world.
             fade.fade_in(crate::screen_fade::CINEMATIC);
         } else {
             cine.settling = Some(left);
@@ -441,8 +438,7 @@ fn drive(
     play.elapsed += time.delta();
 
     // --- Every boundary cuts through black: a run-out shot or a skip fades out and steps at full
-    // black, as the fade's completion (`0x48efd7` to `0x48efe0` to advance, `0x48f067` to
-    // `0x48f080` to stop), which keeps the cut invisible under a hitch.
+    // black, as the fade's completion, which keeps the cut invisible under a hitch.
     if skip || play.elapsed.as_millis() as u32 >= play.shot().duration_ms {
         if !fade.is_black() {
             fade.fade_out(crate::screen_fade::CINEMATIC);
@@ -483,7 +479,7 @@ fn drive(
                 cine.settling = Some(SETTLE_BUDGET);
                 return;
             }
-            // `0x48ef43`: the next shot comes in from the black it was armed under.
+            // The next shot comes in from the black it was armed under.
             fade.fade_in(crate::screen_fade::CINEMATIC);
         }
     }
@@ -520,8 +516,8 @@ fn drive(
 /// a completion.
 pub(crate) fn stop(cine: &mut Cinematic, net: Option<&NetCommands>) {
     if cine.playing.is_some() {
-        // Something is on screen: [`drive`] pays at full black, as `StopCinematic` (`0x48f050`)
-        // arms a 0.25 s fade-out with EndCinematic (`0x48f080`) as its completion.
+        // Something is on screen: [`drive`] pays at full black, as `StopCinematic` arms a 0.25 s
+        // fade-out with EndCinematic as its completion.
         cine.skip = true;
         return;
     }
@@ -578,8 +574,8 @@ fn feed_ui(
     );
 }
 
-/// Each Lua `OpeningCinematic()` is one empty `CMSG_OPENING_CINEMATIC` (`0x48c8c0`); the server
-/// answers, if at all, with the `SMSG_TRIGGER_CINEMATIC` [`take_trigger`] plays.
+/// Each Lua `OpeningCinematic()` is one empty `CMSG_OPENING_CINEMATIC`; the server answers, if at
+/// all, with the `SMSG_TRIGGER_CINEMATIC` [`take_trigger`] plays.
 fn send_opening_cinematic(script: Option<NonSendMut<UiScript>>, net: Option<Res<NetCommands>>) {
     let Some(mut script) = script else {
         return;
@@ -677,7 +673,7 @@ mod ack_ledger {
         app
     }
 
-    /// The ESC skip's one ack is paid at full black, not at the key press (`0x48f050`).
+    /// The ESC skip's one ack is paid at full black, not at the key press.
     #[test]
     fn stopping_a_playing_cinematic_acks_it_once() {
         let (net, rx) = wire();
@@ -744,7 +740,7 @@ mod ack_ledger {
         assert_eq!(cine.pending, Some(81));
     }
 
-    /// Leaving the world pays nothing, as the reference's teardown (`0x490a80`).
+    /// Leaving the world pays nothing, as the reference's teardown.
     #[test]
     fn abandoning_the_world_acks_nothing() {
         let (net, rx) = wire();
@@ -759,8 +755,8 @@ mod ack_ledger {
     }
 }
 
-/// The end boundary holds the black until the world is back around the body, where the
-/// reference blocks on its terrain load (`0x48f080`).
+/// The end boundary holds the black until the world is back around the body, where the reference
+/// blocks on its terrain load.
 #[cfg(test)]
 mod settling_under_black {
     use super::*;
@@ -877,7 +873,7 @@ mod opening_cinematic {
         assert_eq!(sent, 2);
         app.update();
         assert_eq!(rx.try_iter().count(), 0, "drained once");
-        // The opcode the reference puts at `0x48c8c9`.
+        // The opcode the reference puts.
         assert_eq!(
             benilla_protocol::messages::opcode::CMSG_OPENING_CINEMATIC,
             0xf9

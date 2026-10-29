@@ -42,10 +42,10 @@ pub const SMSG_UPDATE_OBJECT: u16 = 0x00A9;
 pub const SMSG_DESTROY_OBJECT: u16 = 0x00AA;
 // Cinematics: a first login's race intro, or a type-13 GameObject camera. Until the COMPLETE ack,
 // vmangos sees from the camera and despawns all around the body (`Player::UpdateCinematic`).
-/// Lua's `OpeningCinematic()` (`0x48c8c0`); empty body. vmangos does not handle it.
+/// Lua's `OpeningCinematic()`; empty body. vmangos does not handle it.
 pub const CMSG_OPENING_CINEMATIC: u16 = 0x00F9;
 pub const SMSG_TRIGGER_CINEMATIC: u16 = 0x00FA;
-/// The next camera of a multi-camera `CinematicSequences` row began; empty body (`0x48efe0`).
+/// The next camera of a multi-camera `CinematicSequences` row began; empty body.
 pub const CMSG_NEXT_CINEMATIC_CAMERA: u16 = 0x00FB;
 pub const CMSG_COMPLETE_CINEMATIC: u16 = 0x00FC;
 pub const SMSG_MONSTER_MOVE: u16 = 0x00DD;
@@ -104,7 +104,7 @@ pub const CMSG_SPLIT_ITEM: u16 = 0x010E; // 270
 pub const CMSG_DESTROYITEM: u16 = 0x0111; // 273, the popup-confirmed world-drop delete
 pub const SMSG_INVENTORY_CHANGE_FAILURE: u16 = 0x0112; // 274
 /// A bag was auto-equipped: one raw `u64` guid (`ItemHandler.cpp:227`). The reference raises
-/// `BAG_OPEN` for it (`0x4f9410`): our own guid is container 0, a cached bag 1..10, else nothing.
+/// `BAG_OPEN` for it: our own guid is container 0, a cached bag 1..10, else nothing.
 pub const SMSG_OPEN_CONTAINER: u16 = 0x0113; // 275
 
 // Trade. CMSG bodies: INITIATE u64 target, ACCEPT u32 (ignored), SET_ITEM 3×u8 (tradeSlot, bag,
@@ -122,13 +122,13 @@ pub const CMSG_CLEAR_TRADE_ITEM: u16 = 0x011E; // 286
 pub const CMSG_SET_TRADE_GOLD: u16 = 0x011F; // 287
 pub const SMSG_TRADE_STATUS: u16 = 0x0120; // 288
 pub const SMSG_TRADE_STATUS_EXTENDED: u16 = 0x0121; // 289
-/// Load ammo (`PLAYER_AMMO_ID`); the auto-equip sender `0x5e1480` sends ammo here. Trap: `0x0268`
-/// is not decimal 268, which is `CMSG_SWAP_ITEM` (`0x010C`).
+/// Load ammo (`PLAYER_AMMO_ID`); the auto-equip sender sends ammo here. Trap: `0x0268` is not
+/// decimal 268, which is `CMSG_SWAP_ITEM` (`0x010C`).
 pub const CMSG_SET_AMMO: u16 = 0x0268; // 616
 /// Set one action-bar button (`HandleSetActionButtonOpcode`, `MiscHandler.cpp:885`).
 pub const CMSG_SET_ACTION_BUTTON: u16 = 0x0128; // 296
 /// The four extra action bars' visibility: one `u8`, stored as `PLAYER_FIELD_BYTES` byte 2
-/// (sent only from `0x4e771d`; `MiscHandler.cpp:923-932`).
+/// (`MiscHandler.cpp:923-932`).
 pub const CMSG_SET_ACTIONBAR_TOGGLES: u16 = 0x02BF; // 703
 pub const SMSG_ACTION_BUTTONS: u16 = 0x0129; // 297
 pub const SMSG_INITIAL_SPELLS: u16 = 0x012A; // 298
@@ -156,22 +156,22 @@ pub const SMSG_PET_ACTION_FEEDBACK: u16 = 0x02C6; // 710
 /// [`SMSG_CAST_RESULT`] for a failed pet cast, with the same `SpellCastResult` codes.
 pub const SMSG_PET_CAST_FAILED: u16 = 0x0138; // 312
 
-/// Tame, Call Pet or Revive Pet refused: one `u8` reason. The reference (`0x6e97e0`) shows
-/// `ERR_TAME_FAILED` with the reason's `PETTAME_*` string, `PETTAME_UNKNOWNERROR` outside 1..=12.
+/// Tame, Call Pet or Revive Pet refused: one `u8` reason. The reference shows `ERR_TAME_FAILED`
+/// with the reason's `PETTAME_*` string, `PETTAME_UNKNOWNERROR` outside 1..=12.
 pub const SMSG_PET_TAME_FAILURE: u16 = 0x0173; // 371
 /// A refused pet rename: a `u32` name code, the name, and a declension flag with its forms
 /// (`0x6e2fb1`).
 pub const SMSG_PET_NAME_INVALID: u16 = 0x0178; // 376
-/// The pet ran away at zero loyalty (`Pet.cpp:822`): empty body. The reference (`0x4bdc00`) only
-/// shows `ERR_PET_BROKEN`; the bar's teardown still comes as an `SMSG_PET_SPELLS`.
+/// The pet ran away at zero loyalty (`Pet.cpp:822`): empty body. The reference only shows
+/// `ERR_PET_BROKEN`; the bar's teardown still comes as an `SMSG_PET_SPELLS`.
 pub const SMSG_PET_BROKEN: u16 = 0x02AF; // 687
-/// The pet's voice: `u64 petGuid`, `u32` talk selector (`Pet.h:98`). The reference (`0x6040c0`)
-/// barks `CreatureSoundData` column 28 (`PetOrder`) for 0, 27 (`PetAttack`) for 1, else nothing,
-/// through the unit's one-shot voice slot.
+/// The pet's voice: `u64 petGuid`, `u32` talk selector (`Pet.h:98`). The reference barks
+/// `CreatureSoundData` column 28 (`PetOrder`) for 0, 27 (`PetAttack`) for 1, else nothing, through
+/// the unit's one-shot voice slot.
 pub const SMSG_PET_ACTION_SOUND: u16 = 0x0324; // 804
-/// A dismissed pet's parting sound: `u32 creatureModelDataId`, `f32` x, y, z. The reference
-/// (`0x604140`) plays that model's `CreatureSoundData` column 29 there at `z + 1.0`, with no unit.
-/// vmangos never sends it.
+/// A dismissed pet's parting sound: `u32 creatureModelDataId`, `f32` x, y, z. The reference plays
+/// that model's `CreatureSoundData` column 29 there at `z + 1.0`, with no unit. vmangos never sends
+/// it.
 pub const SMSG_PET_DISMISS_SOUND: u16 = 0x0325; // 805
 
 /// Our own server-driven spline (Charge, taxi) finished: `MovementInfo` at the endpoint, the
@@ -186,26 +186,26 @@ pub const SMSG_TIME_SYNC_REQ: u16 = 0x0390; // 912
 /// (`0x6e9bb0`).
 pub const CMSG_TIME_SYNC_RESP: u16 = 0x0391; // 913
 /// Another mover's clock skip, relayed: packed guid, `u32` lag (`MovementHandler.cpp:1005-1011`).
-/// The reference (`0x603b40`) adds it to that unit's last wire timestamp (`CMovement+0xac`); if
-/// dropped, the unit's next packet lands `lag` ms late.
+/// The reference adds it to that unit's last wire timestamp (`CMovement+0xac`); if dropped, the
+/// unit's next packet lands `lag` ms late.
 pub const MSG_MOVE_TIME_SKIPPED: u16 = 0x0319; // 793
 pub const SMSG_ATTACKSTART: u16 = 0x0143; // 323
 pub const SMSG_ATTACKSTOP: u16 = 0x0144; // 324
 pub const SMSG_ATTACKERSTATEUPDATE: u16 = 0x014A; // 330
 
 // The server's refusals of a `CMSG_ATTACKSWING`, all with empty bodies (`Combat.cpp`). `0x147`
-// NOTSTANDING is absent on purpose: the reference registers no handler for it (`0x6255b0`).
+// NOTSTANDING is absent on purpose: the reference registers no handler for it.
 pub const SMSG_ATTACKSWING_NOTINRANGE: u16 = 0x0145; // 325
 pub const SMSG_ATTACKSWING_BADFACING: u16 = 0x0146; // 326
 pub const SMSG_ATTACKSWING_DEADTARGET: u16 = 0x0148; // 328
 pub const SMSG_ATTACKSWING_CANT_ATTACK: u16 = 0x0149; // 329
 
 /// The forced attack cancel: empty body (`Player::SendAttackSwingCancelAttack`). The reference
-/// (`0x5e7dd0`) stops our attack and shows nothing.
+/// stops our attack and shows nothing.
 pub const SMSG_CANCEL_COMBAT: u16 = 0x014E; // 334
 
-/// A Feign Death was resisted: empty body (`Unit.cpp:9465-9471`). The reference (`0x6e9800`) only
-/// shows `ERR_FEIGN_DEATH_RESISTED`.
+/// A Feign Death was resisted: empty body (`Unit.cpp:9465-9471`). The reference only shows
+/// `ERR_FEIGN_DEATH_RESISTED`.
 pub const SMSG_FEIGN_DEATH_RESISTED: u16 = 0x02B4; // 692
 /// A creature's aggro or alert flare.
 pub const SMSG_AI_REACTION: u16 = 0x013C; // 316
@@ -223,12 +223,12 @@ pub const MSG_TABARDVENDOR_ACTIVATE: u16 = 0x01F2; // 498
 pub const SMSG_CANCEL_AUTO_REPEAT: u16 = 0x029C; // 668
 pub const SMSG_SPELL_FAILED_OTHER: u16 = 0x02A6; // 678
 
-/// The only source of a chain beam's extra hops: the reference (`0x6e9820`) fills `unit+0xd44`,
-/// which the chain `CharProc` consumes once and zeroes.
+/// The only source of a chain beam's extra hops: the reference fills `unit+0xd44`, which the chain
+/// `CharProc` consumes once and zeroes.
 pub const SMSG_SPELL_UPDATE_CHAIN_TARGETS: u16 = 0x0330; // 816
 
 /// A talent's flat spell modifier; the next opcode is the percent one. Both carry the same 6-byte
-/// body, the absolute value of one table cell, never a delta (reference `0x6e9950`).
+/// body, the absolute value of one table cell, never a delta.
 pub const SMSG_SET_FLAT_SPELL_MODIFIER: u16 = 0x0266; // 614
 pub const SMSG_SET_PCT_SPELL_MODIFIER: u16 = 0x0267; // 615
 
@@ -239,12 +239,11 @@ pub const SMSG_CLEAR_COOLDOWN: u16 = 0x01DE; // 478
 pub const SMSG_COOLDOWN_CHEAT: u16 = 0x01E1; // 481
 
 /// A timed item's remaining life in seconds; the display reads this, not `ITEM_FIELD_DURATION`
-/// (`Item.cpp:1094`). Its reference handler is the enchant update's, forking on the opcode
-/// (`0x5e4f69`).
+/// (`Item.cpp:1094`). Its reference handler is the enchant update's, forking on the opcode.
 pub const SMSG_ITEM_TIME_UPDATE: u16 = 0x01EA; // 490
 
-/// The only source of a temporary enchant's remaining time: the reference tooltip reads a
-/// per-slot deadline (`obj + slot*4 + 0x324`) that this handler (`0x5e4f82`) writes.
+/// The only source of a temporary enchant's remaining time: the reference tooltip reads a per-slot
+/// deadline (`obj + slot*4 + 0x324`) that this handler writes.
 pub const SMSG_ITEM_ENCHANT_TIME_UPDATE: u16 = 0x01EB; // 491
 
 /// Cast pushback, to the caster: raw `u64` guid, `u32` delay ms (`Spell.cpp:7472`), and the cast
@@ -298,8 +297,8 @@ pub const CMSG_CHAR_CREATE: u16 = 0x0036;
 pub const CMSG_CHAR_ENUM: u16 = 0x0037;
 pub const CMSG_PLAYER_LOGIN: u16 = 0x003D;
 pub const CMSG_LOGOUT_REQUEST: u16 = 0x004B;
-/// The forced logout (`ForceLogout`, `0x48ab50`): empty body, sent in place of
-/// `CMSG_LOGOUT_REQUEST` and past the pending-logout latch.
+/// The forced logout (`ForceLogout`): empty body, sent in place of `CMSG_LOGOUT_REQUEST` and past
+/// the pending-logout latch.
 pub const CMSG_PLAYER_LOGOUT: u16 = 0x004A; // 74
 /// The CAMP/QUIT dialog's Cancel: empty body, answered by [`SMSG_LOGOUT_CANCEL_ACK`].
 pub const CMSG_LOGOUT_CANCEL: u16 = 0x004E;
@@ -322,11 +321,11 @@ pub const CMSG_PET_STOP_ATTACK: u16 = 0x02EA; // 746
 /// Cancel one of the pet's auras; `CMSG_CANCEL_AURA` carries only a spell id, no unit.
 pub const CMSG_PET_CANCEL_AURA: u16 = 0x026B; // 619
 
-/// The pet menu's Abandon (`PetAbandon`, `0x4be4c0`): deletes a hunter pet, unsummons anything
-/// else (`PetHandler.cpp:347-374`). Dismiss sends [`CMSG_PET_ACTION`] word `0x07000003` instead.
+/// The pet menu's Abandon (`PetAbandon`): deletes a hunter pet, unsummons anything else
+/// (`PetHandler.cpp:347-374`). Dismiss sends [`CMSG_PET_ACTION`] word `0x07000003` instead.
 pub const CMSG_PET_ABANDON: u16 = 0x0176; // 374
-/// Rename the pet (`PetRename`, `0x4be4e0`). One-shot: the server clears `UNIT_FLAG_PET_RENAME`
-/// on success (`PetHandler.cpp:302-345`); a refusal is [`SMSG_PET_NAME_INVALID`].
+/// Rename the pet (`PetRename`). One-shot: the server clears `UNIT_FLAG_PET_RENAME` on success
+/// (`PetHandler.cpp:302-345`); a refusal is [`SMSG_PET_NAME_INVALID`].
 pub const CMSG_PET_RENAME: u16 = 0x0177; // 375
 
 /// The ask-once GameObject template lookup, shaped like `CMSG_CREATURE_QUERY`.
@@ -340,8 +339,8 @@ pub const CMSG_USE_ITEM: u16 = 0x00AB; // 171
 /// Open an openable item (a clam, a lockbox, a gift) by bag position; the loot that answers names
 /// the item's own guid (`HandleOpenItemOpcode`).
 pub const CMSG_OPEN_ITEM: u16 = 0x00AC; // 172
-/// Gift-wrap an item: `giftBag`, `giftSlot`, `itemBag`, `itemSlot`, paper first. Sent when the
-/// wrap cursor, armed locally by right-clicking the paper (`0x5edea0`), clicks the item.
+/// Gift-wrap an item: `giftBag`, `giftSlot`, `itemBag`, `itemSlot`, paper first. Sent when the wrap
+/// cursor, armed locally by right-clicking the paper, clicks the item.
 pub const CMSG_WRAP_ITEM: u16 = 0x01D3; // 467
 /// Use a GameObject by full guid; chests loot through this, since `CMSG_LOOT` refuses their guids.
 pub const CMSG_GAMEOBJ_USE: u16 = 0x00B1; // 177
@@ -354,7 +353,7 @@ pub const SMSG_GAMEOBJECT_CUSTOM_ANIM: u16 = 0x00B3; // 179
 pub const SMSG_GAMEOBJECT_DESPAWN_ANIM: u16 = 0x0215; // 533
 /// We walked into an area trigger: its `AreaTrigger.dbc` id (reference `0x6dbe30`).
 pub const CMSG_AREATRIGGER: u16 = 0x00B4; // 180
-/// An area trigger's refusal (level, ghost, faction), shown like `SMSG_NOTIFICATION` (`0x4945b0`).
+/// An area trigger's refusal (level, ghost, faction), shown like `SMSG_NOTIFICATION`.
 pub const SMSG_AREA_TRIGGER_MESSAGE: u16 = 0x02B8; // 696
 pub const CMSG_MESSAGECHAT: u16 = 0x0095;
 pub const SMSG_MESSAGECHAT: u16 = 0x0096;
@@ -400,13 +399,13 @@ pub const SMSG_FISH_ESCAPED: u16 = 0x01C9; // 457
 pub const SMSG_NOTIFICATION: u16 = 0x01CB; // 459
 
 // World broadcasts: to everyone, or to everyone in a zone.
-/// An area is under attack: one `u32` `AreaTable.dbc` id. The client (`0x49dcc0`) fills
-/// `ZONE_UNDER_ATTACK` and posts it on the joined defense channels, not as a system line.
+/// An area is under attack: one `u32` `AreaTable.dbc` id. The client fills `ZONE_UNDER_ATTACK` and
+/// posts it on the joined defense channels, not as a system line.
 pub const SMSG_ZONE_UNDER_ATTACK: u16 = 0x0254; // 596
 /// A shutdown countdown or operator broadcast: a `u32` `ServerMessages.dbc` id, whose text formats
-/// the cstring that follows; shown as `CHAT_MSG_SYSTEM` (`0x49df80`).
+/// the cstring that follows; shown as `CHAT_MSG_SYSTEM`.
 pub const SMSG_SERVER_MESSAGE: u16 = 0x0291; // 657
-/// A trial account hit its whisper cap: empty body; the client (`0x5e4a09`) shows error `0x1c3`.
+/// A trial account hit its whisper cap: empty body; the client shows error `0x1c3`.
 pub const SMSG_CHAT_RESTRICTED: u16 = 0x02FD; // 765
 /// A defense broadcast (the Eastern Plaguelands towers): `u32 zoneId`, `u32 length`, the text
 /// (`Map.cpp:1868-1884`); 12340 reads it at `0x50c850`.
@@ -426,11 +425,11 @@ pub const MSG_RANDOM_ROLL: u16 = 0x01FB; // 507
 /// Ask for a new stand state.
 pub const CMSG_STANDSTATECHANGE: u16 = 0x0101; // 257
 /// A server-side change to our stand state (eat/drink sit, stand on damage): one `u8`, no guid
-/// (`Unit.cpp:9541`). The reference (`0x603e50`) applies it to the local player, ungated.
+/// (`Unit.cpp:9541`). The reference applies it to the local player, ungated.
 pub const SMSG_STANDSTATE_UPDATE: u16 = 0x029D; // 669
 pub const CMSG_CAST_SPELL: u16 = 0x012E; // 302
 /// Cancel our cast: one `u32` spell id. The wand auto-repeat handoff sends it for the cached Shoot
-/// before the local cancel (`0x6095b8`).
+/// before the local cancel.
 pub const CMSG_CANCEL_CAST: u16 = 0x012F; // 303
 pub const CMSG_CANCEL_AURA: u16 = 0x0136; // 310
 /// Get off the mount (`CGUnit_C::Dismount 0x7412e0`, `0x741325`): no body.
@@ -444,7 +443,7 @@ pub const CMSG_CANCEL_CHANNELLING: u16 = 0x013B; // 315
 /// Inspect a player: a raw 8-byte guid. The server selects it, then answers `SMSG_INSPECT` unless
 /// it is beyond 10 yd or attackable (`MiscHandler.cpp:943-960`).
 pub const CMSG_INSPECT: u16 = 0x0114; // 276
-/// The inspect reply, the echoed `u64` guid; the reference discards it (`0x5e7d70`), so we drop it.
+/// The inspect reply, the echoed `u64` guid; the reference discards it, so we drop it.
 pub const SMSG_INSPECT: u16 = 0x0115; // 277
 /// The inspect Honor tab, both ways: we send a raw 8-byte guid, the reply is a 50-byte body.
 /// Refused silently like [`CMSG_INSPECT`], but without selecting (`MiscHandler.cpp:962-972`).
@@ -452,7 +451,7 @@ pub const MSG_INSPECT_HONOR_STATS: u16 = 0x02D6; // 726
 /// Another player's arena teams, both ways: we send the raw guid, each reply is one team slot
 /// (`0x5e7b00`); it fires `INSPECT_HONOR_UPDATE`.
 pub const MSG_INSPECT_ARENA_TEAMS: u16 = 0x0377; // 887
-/// Right-click a battlemaster (`0x5e01a0`): a `u64` guid; answered by `SMSG_BATTLEFIELD_LIST`.
+/// Right-click a battlemaster: a `u64` guid; answered by `SMSG_BATTLEFIELD_LIST`.
 pub const CMSG_BATTLEMASTER_HELLO: u16 = 0x02D7; // 727
 pub const CMSG_SET_SELECTION: u16 = 0x013D; // 317
 pub const CMSG_ATTACKSWING: u16 = 0x0141; // 321
@@ -468,11 +467,11 @@ pub const CMSG_MOVE_NOT_ACTIVE_MOVER: u16 = 0x02D1; // 721
 /// body (`MiscHandler.cpp:1138-1155`). Sending 0 moves visibility home while the camera stays on
 /// the object, so it must be deliberate; the server expects no reply.
 pub const CMSG_FAR_SIGHT: u16 = 0x027A; // 634
-/// Stop auto-repeat: empty body, sent from the local cancel (`0x6ea080`), so on every cancel.
+/// Stop auto-repeat: empty body, sent from the local cancel, so on every cancel.
 pub const CMSG_CANCEL_AUTO_REPEAT_SPELL: u16 = 0x026D; // 621
 
-// Keepalive: the 1.12 client pings every 30 s (`0x537ff0`) with `u32 sequence`, `u32 lastRtt`,
-// and the pong echoes the sequence. vmangos kicks after more than 2 pings under 27 s apart.
+// Keepalive: the 1.12 client pings every 30 s with `u32 sequence`, `u32 lastRtt`, and the pong
+// echoes the sequence. vmangos kicks after more than 2 pings under 27 s apart.
 pub const CMSG_PING: u16 = 0x01DC; // 476
 pub const SMSG_PONG: u16 = 0x01DD; // 477
 
@@ -514,9 +513,9 @@ pub const SMSG_SPLINE_SET_FLIGHT_BACK_SPEED: u16 = 0x0386; // 902
 pub const SMSG_SPLINE_SET_PITCH_RATE: u16 = 0x045E; // 1118
 
 // Mode changes on any unit, for observers: a bare packed guid, no counter, no ack
-// (`MovementPacketSender.cpp:399-462`). The reference handles all twelve at `0x603c80`, drops an
-// unresolvable guid, and re-picks the unit's animation after each. Trap: SET_RUN_MODE clears
-// `MOVEFLAG_WALK_MODE` and SET_WALK_MODE sets it (`0x617e80`).
+// (`MovementPacketSender.cpp:399-462`). The reference handles all twelve, drops an unresolvable
+// guid, and re-picks the unit's animation after each. Trap: SET_RUN_MODE clears
+// `MOVEFLAG_WALK_MODE` and SET_WALK_MODE sets it.
 pub const SMSG_SPLINE_MOVE_UNROOT: u16 = 0x0304; // 772
 pub const SMSG_SPLINE_MOVE_FEATHER_FALL: u16 = 0x0305; // 773
 pub const SMSG_SPLINE_MOVE_NORMAL_FALL: u16 = 0x0306; // 774
@@ -641,7 +640,7 @@ pub const CMSG_BUY_ITEM: u16 = 0x01A2; // 418
 pub const CMSG_BUY_ITEM_IN_SLOT: u16 = 0x01A3; // 419
 pub const SMSG_BUY_ITEM: u16 = 0x01A4; // 420
 pub const SMSG_BUY_FAILED: u16 = 0x01A5; // 421
-/// Buy a sold item back (`BuybackItem`, `0x4fb950`); outside the 0x19E vendor run.
+/// Buy a sold item back (`BuybackItem`); outside the 0x19E vendor run.
 pub const CMSG_BUYBACK_ITEM: u16 = 0x0290; // 656
 /// Repair one item by guid, or everything with guid 0, at a repair vendor.
 pub const CMSG_REPAIR_ITEM: u16 = 0x02A8; // 680
@@ -704,8 +703,8 @@ pub const SMSG_BUY_BANK_SLOT_RESULT: u16 = 0x01BA; // 442
 pub const CMSG_AUTOSTORE_BANK_ITEM: u16 = 0x0282; // 642
 pub const CMSG_AUTOBANK_ITEM: u16 = 0x0283; // 643
 
-/// Forget a cached player name: `u64 guid`, the cache's only eviction for a player (it has no
-/// TTL; `0x556ff0`). vmangos never sends it.
+/// Forget a cached player name: `u64 guid`, the cache's only eviction for a player (it has no TTL).
+/// vmangos never sends it.
 pub const SMSG_INVALIDATE_PLAYER: u16 = 0x031C; // 796
 
 // The pet stable. `MSG_LIST_STABLED_PETS` runs both ways: the server sends the list to open the
@@ -865,8 +864,8 @@ pub const CMSG_AREA_SPIRIT_HEALER_QUEUE: u16 = 0x02E3; // 739
 /// The healer's next resurrection: `u64 guid`, `u32 ms`. For the cached healer and a positive
 /// time it arms the deadline and fires `AREA_SPIRIT_HEALER_IN_RANGE`.
 pub const SMSG_AREA_SPIRIT_HEALER_TIME: u16 = 0x02E4; // 740
-/// Right-click a meeting stone (GameObject type 23): `u64` guid, sent by `0x4c9ff0`. A stone never
-/// sends [`CMSG_GAMEOBJ_USE`], which vmangos ignores for type 23 (`GameObject.cpp:1836`).
+/// Right-click a meeting stone (GameObject type 23): `u64` guid, sent. A stone never sends
+/// [`CMSG_GAMEOBJ_USE`], which vmangos ignores for type 23 (`GameObject.cpp:1836`).
 pub const CMSG_MEETINGSTONE_JOIN: u16 = 0x0292; // 658
 /// The 3.3.5a meaning of 0x292: a saved lockout's extend toggle (`0x50dc10`).
 pub const CMSG_SET_SAVED_INSTANCE_EXTEND: u16 = 0x0292; // 658
@@ -891,7 +890,7 @@ pub const CMSG_PET_UNLEARN: u16 = 0x02F0; // 752
 pub const SMSG_PET_UNLEARN_CONFIRM: u16 = 0x02F1; // 753
 
 /// A summon offer (warlock, meeting stone, GM). The client can only accept, with
-/// `CMSG_SUMMON_RESPONSE` (`0x48b770`); a decline is silence until the two-minute timeout.
+/// `CMSG_SUMMON_RESPONSE`; a decline is silence until the two-minute timeout.
 pub const SMSG_SUMMON_REQUEST: u16 = 0x02AB; // 683
 pub const CMSG_SUMMON_RESPONSE: u16 = 0x02AC; // 684
 
@@ -980,9 +979,9 @@ pub const CMSG_MOVE_SET_COLLISION_HGT_ACK: u16 = 0x0517; // 1303
 pub const CMSG_MOVE_SET_FLY: u16 = 0x0346; // 838
 
 // The observers' leg of those modes and of teleports (`MovementPacketSender.h:30-60`): the relay
-// shape `[packed guid][MovementInfo]`, handled like the relay opcodes (`0x603bb0`). Only root has
-// two opcodes; apply is in the flags word. `MSG_MOVE_TELEPORT` has no counter and comes twice per
-// near teleport, both with the destination; a creature blink arrives the same way.
+// shape `[packed guid][MovementInfo]`, handled like the relay opcodes. Only root has two opcodes;
+// apply is in the flags word. `MSG_MOVE_TELEPORT` has no counter and comes twice per near teleport,
+// both with the destination; a creature blink arrives the same way.
 pub const MSG_MOVE_TELEPORT: u16 = 0x00C5; // 197
 pub const MSG_MOVE_ROOT: u16 = 0x00EC; // 236
 pub const MSG_MOVE_UNROOT: u16 = 0x00ED; // 237
@@ -998,7 +997,7 @@ pub const MSG_MOVE_GRAVITY_CHNG: u16 = 0x04D2; // 1234
 // speedXY, speedZ, with speedZ down-positive like the jump tail. The mandatory ack is full u64
 // guid, counter, `MovementInfo`, whose jump tail must echo the four floats within 0.01 with
 // `MOVEFLAG_JUMPING` set; a knockback is never re-sent (`Unit.cpp:6912`). Observers get
-// `MSG_MOVE_KNOCK_BACK`: the relay shape plus the four floats, re-launched by `0x6026f0`.
+// `MSG_MOVE_KNOCK_BACK`: the relay shape plus the four floats, re-launched.
 pub const SMSG_MOVE_KNOCK_BACK: u16 = 0x00EF; // 239
 pub const CMSG_MOVE_KNOCK_BACK_ACK: u16 = 0x00F0; // 240
 pub const MSG_MOVE_KNOCK_BACK: u16 = 0x00F1; // 241
@@ -1120,8 +1119,8 @@ pub const CMSG_REQUEST_RAID_INFO: u16 = 0x02CD; // 717
 /// Our permanent binds: `u32 count`, count × `{u32 mapId, u32 secondsUntilReset, u32 instanceId}`.
 pub const SMSG_RAID_INSTANCE_INFO: u16 = 0x02CC; // 716
 
-// Duels (reference handlers registered at `0x4d4710`). A challenge is a `CMSG_CAST_SPELL` of the
-// `SPELL_EFFECT_DUEL` (83) spell; there is no opcode to start one.
+// Duels. A challenge is a `CMSG_CAST_SPELL` of the `SPELL_EFFECT_DUEL` (83) spell; there is no
+// opcode to start one.
 pub const SMSG_DUEL_REQUESTED: u16 = 0x0167; // 359
 pub const SMSG_DUEL_OUTOFBOUNDS: u16 = 0x0168; // 360
 pub const SMSG_DUEL_INBOUNDS: u16 = 0x0169; // 361
@@ -1129,8 +1128,8 @@ pub const SMSG_DUEL_COMPLETE: u16 = 0x016A; // 362
 pub const SMSG_DUEL_WINNER: u16 = 0x016B; // 363
 pub const CMSG_DUEL_ACCEPTED: u16 = 0x016C; // 364
 pub const CMSG_DUEL_CANCELLED: u16 = 0x016D; // 365
-/// The duel countdown in milliseconds; the client divides by 1000 (`0x4d4aef`). Registered with
-/// the 0x167 block (`0x4d474a`) despite its number.
+/// The duel countdown in milliseconds; the client divides by 1000. Registered with the 0x167 block
+/// despite its number.
 pub const SMSG_DUEL_COUNTDOWN: u16 = 0x02B7; // 695
 
 // Instance difficulty, both `u32 difficulty, u32 set the player's, u32 set the group's` (`0x526b04`).
@@ -1195,29 +1194,28 @@ pub const SMSG_AUCTION_REMOVED_NOTIFICATION: u16 = 0x028D; // 653
 pub const CMSG_AUCTION_LIST_PENDING_SALES: u16 = 0x048F; // 1167
 pub const SMSG_AUCTION_LIST_PENDING_SALES: u16 = 0x0490; // 1168
 
-// The world-state table; these two are its only writers (reference `0x48f690`). NPC text's
-// `$<n>w`/`$<n>e` tokens read it.
+// The world-state table; these two are its only writers. NPC text's `$<n>w`/`$<n>e` tokens read it.
 pub const SMSG_INIT_WORLD_STATES: u16 = 0x02C2; // 706
 pub const SMSG_UPDATE_WORLD_STATE: u16 = 0x02C3; // 707
 
 // ── Instance and raid lockouts ──
 
-/// "You are now saved to this instance": a `u32` flag, 0 from vmangos (`0x4e7e60`; 1 adds a debug
-/// prefix). Deviation: 2 or more prints nothing, because the reference prints an uninitialized
-/// buffer.
+/// "You are now saved to this instance": a `u32` flag, 0 from vmangos (1 adds a debug prefix).
+/// Deviation: 2 or more prints nothing, because the reference prints an uninitialized buffer.
 pub const SMSG_INSTANCE_SAVE_CREATED: u16 = 0x02CB; // 715
-/// A raid-lockout warning: `u32 type`, `u32 mapId`, `u32 secondsUntilReset` (`0x49e1c0`).
+/// A raid-lockout warning: `u32 type`, `u32 mapId`, `u32 secondsUntilReset`.
 pub const SMSG_RAID_INSTANCE_MESSAGE: u16 = 0x02FA; // 762
-/// "Reset all instances": empty body (`ResetInstances`, `0x48a6b0`).
+/// "Reset all instances": empty body (`ResetInstances`).
 pub const CMSG_RESET_INSTANCES: u16 = 0x031D; // 797
-/// "%s has been reset.": `u32 mapId`; `0x49e470` clears the last-instance latch before reading it.
+/// "%s has been reset.": `u32 mapId`; the reference clears the last-instance latch before reading
+/// it.
 pub const SMSG_INSTANCE_RESET: u16 = 0x031E; // 798
-/// The reset refusal: `u32 reason`, `u32 mapId` (`0x49e540`).
+/// The reset refusal: `u32 reason`, `u32 mapId`.
 pub const SMSG_INSTANCE_RESET_FAILED: u16 = 0x031F; // 799
-/// The dungeon we were last in: `u32 mapId` (`0x49e670`), half of what
-/// `CanShowResetInstances()` reads; it shows no line.
+/// The dungeon we were last in: `u32 mapId`, half of what `CanShowResetInstances()` reads; it shows
+/// no line.
 pub const SMSG_UPDATE_LAST_INSTANCE: u16 = 0x0320; // 800
-/// Whether we hold any permanent bind: `u32` flag (`0x49e6c0`), half of `CanShowResetInstances()`.
+/// Whether we hold any permanent bind: `u32` flag, half of `CanShowResetInstances()`.
 pub const SMSG_UPDATE_INSTANCE_OWNERSHIP: u16 = 0x032B; // 811
 
 // ── The dungeon finder (`CGLookingForGroup`, handlers set by `InitializeGame 0x55d440`) ──

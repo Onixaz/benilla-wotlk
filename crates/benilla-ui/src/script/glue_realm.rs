@@ -1,14 +1,12 @@
-//! The realm list's glue verbs (`RealmList.cpp`, registrar `0x46f480`, table `0xac4190`) and the
-//! list they read: the realm holder the `CMD_REALM_LIST` parser fills (`0x5b2230`), the client
-//! Region's categories (`0x46e300`), the sort (`0xb41f40`) and the two selection cells
-//! (`0x837e98`, `0x837e9c`). The host's glue manager seeds the holder and runs the rebuild
-//! (`0x46e510`) where `CGlueMgr::Update` does; the verbs that only read or re-sort the list answer
-//! here, firing their events as they return, and the ones that reach the network queue a
-//! [`GlueRequest`].
+//! The realm list's glue verbs (`RealmList.cpp`, table `0xac4190`) and the list they read: the
+//! realm holder the `CMD_REALM_LIST` parser fills, the client Region's categories, the sort and the
+//! two selection cells. The host's glue manager seeds the holder and runs the rebuild where
+//! `CGlueMgr::Update` does; the verbs that only read or re-sort the list answer here, firing their
+//! events as they return, and the ones that reach the network queue a [`GlueRequest`].
 //!
 //! Every category argument that crosses the Lua boundary is a 1-based ordinal over the categories
-//! holding a realm, mapped to the stored index by `0x46edf0`, which has no sentinel: an ordinal
-//! past the last one, or below 1, reads stored category 0.
+//! holding a realm, mapped to the stored index, which has no sentinel: an ordinal past the last
+//! one, or below 1, reads stored category 0.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -16,8 +14,8 @@ use super::binding_abi::{bool_or_default, flag, ftol, string_arg};
 use super::glue_core::{queue, GlueRequest};
 use super::{Model, ScriptValue};
 
-/// One realm of the holder, a `CMD_REALM_LIST` record (`0x5b2230`, stride `0x134`) as the parser
-/// leaves it, the population sentinels already remapped into flag bits `0x20`/`0x40`/`0x80`.
+/// One realm of the holder, a `CMD_REALM_LIST` record (stride `0x134`) as the parser leaves it, the
+/// population sentinels already remapped into flag bits `0x20`/`0x40`/`0x80`.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GlueRealm {
     /// `+0x09`.
@@ -34,11 +32,10 @@ pub struct GlueRealm {
     pub category: u8,
 }
 
-/// One `Cfg_Categories.dbc` row of the client's Region, the category set `0x46e300` builds once
-/// per process.
+/// One `Cfg_Categories.dbc` row of the client's Region, the category set builds once per process.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GlueRealmCategory {
-    /// Column 0, the id a realm's category byte is matched against (`0x46e60b`).
+    /// Column 0, the id a realm's category byte is matched against.
     pub id: u32,
     /// The locale's `Name_Lang` slot.
     pub name: String,
@@ -48,7 +45,7 @@ pub struct GlueRealmCategory {
     pub flags: u32,
 }
 
-/// One `Cfg_Configs.dbc` row (the store `0xc0dfa0`): a realm type and its PvP and RP flags.
+/// One `Cfg_Configs.dbc` row: a realm type and its PvP and RP flags.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GlueRealmType {
     pub realm_type: u32,
@@ -56,35 +53,32 @@ pub struct GlueRealmType {
     pub rp: bool,
 }
 
-/// A sort column, `SortRealms`' string argument (`0x4df420`) and the comparator's case
-/// (`0x46e790`, jump table `0x46e998`).
+/// A sort column, `SortRealms`' string argument (`0x4df420`) and the comparator's case.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RealmSortKey {
-    /// `"characters"` (`0x83807c`), case 0: more characters first.
+    /// `"characters"`, case 0: more characters first.
     Characters,
-    /// `"load"` (`0x838088`), case 1: the load band.
+    /// `"load"`, case 1: the load band.
     Load,
-    /// `"name"` (`0x838090`), case 2, and any string that names no column.
+    /// `"name"`, case 2, and any string that names no column.
     Name,
-    /// `"mode"` (`0x838074`), case 3: the `Cfg_Configs` `(rp, pvp)` pair.
+    /// `"mode"`, case 3: the `Cfg_Configs` `(rp, pvp)` pair.
     Mode,
 }
 
-/// The cells that outlive a glue VM: the reference keeps them in C globals, so a glue rebuild
-/// (`0x46a7b0`, back from the world) finds them as they were. The host carries them from one glue
-/// VM to the next.
+/// The cells that outlive a glue VM: the reference keeps them in C globals, so a glue rebuild (back
+/// from the world) finds them as they were. The host carries them from one glue VM to the next.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GlueRealmCells {
-    /// The four `{key, descending}` records at `0xb41f40`, written once per process by
-    /// `0x46e300`'s tail to characters, load, name, mode, all ascending.
+    /// The four `{key, descending}` records, written once per process by the reference's tail to
+    /// characters, load, name, mode, all ascending.
     pub sort: [(RealmSortKey, bool); 4],
-    /// `[0x837e98]`, the stored category `GetSelectedCategory` reads; -1 at load.
+    /// The stored category `GetSelectedCategory` reads; -1 at load.
     pub category: i32,
-    /// `[0x837e9c]`, "a realm has been chosen this session": -1 (`None`) at load, then 0 from
-    /// `ChangeRealm` (`0x46f1d1`) or a roster with characters (`0x472556`, the host's), or a
-    /// category id from `SetPreferredInfo` (`0x46ea52`).
+    /// "a realm has been chosen this session": -1 (`None`) at load, then 0 from `ChangeRealm` or a
+    /// roster with characters (the host's), or a category id from `SetPreferredInfo`.
     pub chosen: Option<u32>,
-    /// The type `SetPreferredInfo` last asked for (`[0xb41fa8]`, `[0xb41fac]`).
+    /// The type `SetPreferredInfo` last asked for.
     pub preferred: (bool, bool),
 }
 
@@ -130,7 +124,7 @@ pub(crate) struct GlueRealmList {
     /// counted by `[cat+0x18]`), each sorted by [`GlueRealmCells::sort`].
     buckets: Vec<Vec<usize>>,
     types: Vec<GlueRealmType>,
-    /// `[0xb41fb0]` and `[0xb41fb4]`, the load band's mean and scaled deviation.
+    /// The load band's mean and scaled deviation.
     mean: f32,
     stddev: f32,
     pub(super) cells: GlueRealmCells,
@@ -138,12 +132,12 @@ pub(crate) struct GlueRealmList {
     characters: u16,
 }
 
-/// The std-dev scale, 0.6 (`[0x8038d8]`).
+/// The std-dev scale, 0.6.
 const STDDEV_MULT: f32 = f32::from_bits(0x3f19_999a);
 
-/// `realm_load_stats` (`0x46e510`): `(mean, sqrt(Σ(pop − mean)² / (n − 1)) · 0.6)` over every
-/// realm's population. Both accumulators round to `f32` each iteration; the divide, sqrt and scale
-/// run at 53 bits. `n <= 1` gives `(1.0, 0.0)`, so a lone realm is banded against the literal 1.0.
+/// `realm_load_stats`: `(mean, sqrt(Σ(pop − mean)² / (n − 1)) · 0.6)` over every realm's
+/// population. Both accumulators round to `f32` each iteration; the divide, sqrt and scale run at
+/// 53 bits. `n <= 1` gives `(1.0, 0.0)`, so a lone realm is banded against the literal 1.0.
 pub fn realm_load_stats(populations: &[f32]) -> (f32, f32) {
     let n = populations.len();
     if n <= 1 {
@@ -166,9 +160,9 @@ pub fn realm_load_stats(populations: &[f32]) -> (f32, f32) {
     (mean, stddev)
 }
 
-/// `realm_load_classify` (`0x46ec60`): `GetRealmInfo`'s load. The three sentinel bits, which the
-/// parser synthesizes from magic populations, win in this order; then the band, whose 53-bit
-/// comparisons are strict, so a population on an edge reads 0.
+/// `realm_load_classify`: `GetRealmInfo`'s load. The three sentinel bits, which the parser
+/// synthesizes from magic populations, win in this order; then the band, whose 53-bit comparisons
+/// are strict, so a population on an edge reads 0.
 pub fn realm_load_classify(flags: u8, population: f32, mean: f32, stddev: f32) -> f32 {
     if flags & 0x20 != 0 {
         return -3.0;
@@ -188,7 +182,7 @@ pub fn realm_load_classify(flags: u8, population: f32, mean: f32, stddev: f32) -
     0.0
 }
 
-/// `SStrCmpI` (`0x64a4c0` → the CRT's `_strnicmp`): bytes folded to lower case.
+/// `SStrCmpI` (the CRT's `_strnicmp`): bytes folded to lower case.
 fn cmp_folded(a: &str, b: &str) -> std::cmp::Ordering {
     a.bytes()
         .map(|c| c.to_ascii_lowercase())
@@ -198,9 +192,9 @@ fn cmp_folded(a: &str, b: &str) -> std::cmp::Ordering {
 impl GlueRealmList {
     /// The categories: the Region's rows, or one that holds every realm when there are none.
     ///
-    /// Deviation: with no Region rows the reference reads a NULL category (`0x46e5b8`,
-    /// `0x46f26a`) and faults; benilla lists every realm under one category, so a client whose
-    /// `Wow.ini` names another Region still reaches a realm.
+    /// Deviation: with no Region rows the reference reads a NULL category and faults; benilla lists
+    /// every realm under one category, so a client whose `Wow.ini` names another Region still
+    /// reaches a realm.
     fn categories(&self) -> Vec<Category> {
         if self.rows.is_empty() {
             return vec![Category {
@@ -221,7 +215,7 @@ impl GlueRealmList {
             .collect()
     }
 
-    /// `GetRealm` (`0x5ab930`): a holder index, or NULL past its end.
+    /// `GetRealm`: a holder index, or NULL past its end.
     fn realm(&self, index: usize) -> Option<&GlueRealm> {
         self.holder.get(index)
     }
@@ -231,7 +225,7 @@ impl GlueRealmList {
         self.buckets.get(at).map_or(0, Vec::len)
     }
 
-    /// `0x46edf0`: the stored index of the `visible`-th (0-based) category holding a realm, else 0.
+    /// The stored index of the `visible`-th (0-based) category holding a realm, else 0.
     fn stored_index(&self, visible: i32) -> usize {
         let n = self.categories().len();
         (0..n)
@@ -241,7 +235,7 @@ impl GlueRealmList {
     }
 
     /// The first `Cfg_Configs` row of a realm type, `(pvp, rp)`; `(false, false)` with none, as
-    /// `GetRealmInfo` (`0x46efda`) and `realm_select` (`0x46ea98`) scan it.
+    /// `GetRealmInfo` and `realm_select` scan it.
     fn type_of(&self, realm_type: u32) -> (bool, bool) {
         self.types
             .iter()
@@ -249,8 +243,8 @@ impl GlueRealmList {
             .map_or((false, false), |t| (t.pvp, t.rp))
     }
 
-    /// The comparator (`0x46e790`) over two holder indices: the sort records in order, the first
-    /// that does not tie decides, negated by its own `descending`.
+    /// The comparator over two holder indices: the sort records in order, the first that does not
+    /// tie decides, negated by its own `descending`.
     fn compare(&self, a: usize, b: usize) -> std::cmp::Ordering {
         use std::cmp::Ordering;
         let (Some(ra), Some(rb)) = (self.realm(a), self.realm(b)) else {
@@ -258,20 +252,20 @@ impl GlueRealmList {
         };
         for (key, descending) in self.cells.sort {
             let ord = match key {
-                // Case 0: two empty counts tie (`0x46e826`); otherwise more characters first.
-                // Deviation: equal nonzero counts tie here, where the reference answers +1 both
-                // ways (its name tie-break at `0x46e841` is clobbered by `0x46e846`), because a
-                // comparator that is not a total order has no defined sort.
+                // Case 0: two empty counts tie; otherwise more characters first. Deviation: equal
+                // nonzero counts tie here, where the reference answers +1 both ways (its name
+                // tie-break is clobbered), because a comparator that is not a total order has no
+                // defined sort.
                 RealmSortKey::Characters => rb.characters.cmp(&ra.characters),
-                // Case 1: the bands, ascending (`0x46e871`-`0x46e88b`).
+                // Case 1: the bands, ascending.
                 RealmSortKey::Load => {
                     let la = realm_load_classify(ra.flags, ra.population, self.mean, self.stddev);
                     let lb = realm_load_classify(rb.flags, rb.population, self.mean, self.stddev);
                     la.partial_cmp(&lb).unwrap_or(Ordering::Equal)
                 }
                 RealmSortKey::Name => cmp_folded(&ra.name, &rb.name),
-                // Case 3: the last `Cfg_Configs` row of each type (the scan at `0x46e8d3` has no
-                // break), RP first, then PvP (`0x46e92c`-`0x46e978`).
+                // Case 3: the last `Cfg_Configs` row of each type (the scan has no break), RP
+                // first, then PvP.
                 RealmSortKey::Mode => {
                     let pair = |t: u32| {
                         self.types
@@ -290,7 +284,7 @@ impl GlueRealmList {
         Ordering::Equal
     }
 
-    /// `0x46e750`: every category's realms re-sorted.
+    /// Every category's realms re-sorted.
     fn sort(&mut self) {
         let mut buckets = std::mem::take(&mut self.buckets);
         for b in &mut buckets {
@@ -299,18 +293,18 @@ impl GlueRealmList {
         self.buckets = buckets;
     }
 
-    /// The realm list rebuild (`0x46e510`): every category emptied and refilled from the holder by
-    /// category byte, the load statistics over every realm, the sort, and the stored category moved
-    /// to the one holding the realm `realm_name` names. Returns the event its tail fires
-    /// (`0x46e718`-`0x46e73d`): `GET_PREFERRED_REALM_INFO` for an account with no characters that
-    /// has chosen no realm this session, else `OPEN_REALM_LIST`.
+    /// The realm list rebuild: every category emptied and refilled from the holder by category
+    /// byte, the load statistics over every realm, the sort, and the stored category moved to the
+    /// one holding the realm `realm_name` names. Returns the event its tail fires:
+    /// `GET_PREFERRED_REALM_INFO` for an account with no characters that has chosen no realm this
+    /// session, else `OPEN_REALM_LIST`.
     fn rebuild(&mut self, realm_name: &str) -> &'static str {
         let cats = self.categories();
         let mut buckets = vec![Vec::new(); cats.len()];
         // `[ebp-0x14]`, -1 until a realm of that name is met; the last one met decides.
         let mut named: Option<Option<u32>> = None;
         for (i, realm) in self.holder.iter().enumerate() {
-            // A 0 byte takes the first category's id (`0x46e5b8`).
+            // A 0 byte takes the first category's id.
             let id = match realm.category {
                 0 => cats[0].id,
                 b => Some(u32::from(b)),
@@ -318,7 +312,7 @@ impl GlueRealmList {
             if cmp_folded(&realm.name, realm_name).is_eq() {
                 named = Some(id);
             }
-            // No break: a realm joins every category of its id (`0x46e600`-`0x46e65c`).
+            // No break: a realm joins every category of its id.
             for (bucket, cat) in buckets.iter_mut().zip(&cats) {
                 if cat.holds(id) {
                     bucket.push(i);
@@ -341,9 +335,8 @@ impl GlueRealmList {
         }
     }
 
-    /// `0x46e9b0`: a sort click. The front record's key toggles its direction; any other moves to
-    /// the front keeping its own, the records it passes shifting down; a key on no record only
-    /// re-sorts.
+    /// A sort click. The front record's key toggles its direction; any other moves to the front
+    /// keeping its own, the records it passes shifting down; a key on no record only re-sorts.
     fn set_primary(&mut self, key: RealmSortKey) {
         let sort = &mut self.cells.sort;
         if let Some(at) = sort.iter().position(|(k, _)| *k == key) {
@@ -354,8 +347,8 @@ impl GlueRealmList {
         self.sort();
     }
 
-    /// The realm a `(category, index)` pair names (`0x46eee0`-`0x46ef35`): the 1-based ordinal
-    /// through `0x46edf0`, then the 1-based index into that category, compared unsigned.
+    /// The realm a `(category, index)` pair names: the 1-based ordinal, then the 1-based index into
+    /// that category, compared unsigned.
     fn by_pair(&self, category: i32, index: i32) -> (usize, Option<&GlueRealm>) {
         let at = self.stored_index(category.wrapping_sub(1));
         let index = index.wrapping_sub(1) as u32 as usize;
@@ -367,16 +360,16 @@ impl GlueRealmList {
         (at, realm)
     }
 
-    /// The realm a flat 1-based index names over every category in turn (`0x46ee8c`-`0x46eede`).
-    /// The walk has no break, so a later category whose count still exceeds the residual answers
-    /// again, and the last answer stands.
+    /// The realm a flat 1-based index names over every category in turn. The walk has no break, so
+    /// a later category whose count still exceeds the residual answers again, and the last answer
+    /// stands.
     fn by_flat(&self, index: i32) -> Option<&GlueRealm> {
         let mut residual = index.wrapping_sub(1) as u32;
         let mut found = None;
         for bucket in &self.buckets {
             let count = bucket.len() as u32;
             if count > residual {
-                // Stored unconditionally, a NULL from `GetRealm` included (`0x46eed3`, `0x46f167`).
+                // Stored unconditionally, a NULL from `GetRealm` included.
                 found = bucket.get(residual as usize).and_then(|&h| self.realm(h));
             } else {
                 residual = residual.wrapping_sub(count);
@@ -385,15 +378,14 @@ impl GlueRealmList {
         found
     }
 
-    /// `realm_select` (`0x46ea20`), `SetPreferredInfo`'s body: the first valid realm of the asked
-    /// category with the asked type, else the category's first valid realm, else the first valid
-    /// realm of the type in any category; `None` when there is none. "Valid" skips flag `0x01`
-    /// only (`0x46ea7c`), so a realm that is down can be suggested. Returns the pair
-    /// `SUGGEST_REALM` carries: the stored category index plus 1, and the index plus 1.
+    /// `realm_select`, `SetPreferredInfo`'s body: the first valid realm of the asked category with
+    /// the asked type, else the category's first valid realm, else the first valid realm of the
+    /// type in any category; `None` when there is none. "Valid" skips flag `0x01` only, so a realm
+    /// that is down can be suggested. Returns the pair `SUGGEST_REALM` carries: the stored category
+    /// index plus 1, and the index plus 1.
     fn select(&mut self, stored: usize, pvp: bool, rp: bool) -> Option<(usize, usize)> {
         let cats = self.categories();
-        // `cmp edi,eax ; jbe`: an index past the count reads 0; the count itself is never reached
-        // through `0x46edf0`.
+        // `cmp edi,eax ; jbe`: an index past the count reads 0; the count itself is never reached.
         let stored = if stored < cats.len() { stored } else { 0 };
         self.cells.category = stored as i32;
         self.cells.chosen = Some(cats[stored].id.unwrap_or(0));
@@ -420,8 +412,7 @@ impl GlueRealmList {
 }
 
 impl super::UiScript {
-    /// Seed the client Region's categories and the realm types, read once per process
-    /// (`0x46e300`, `0x5413f0`).
+    /// Seed the client Region's categories and the realm types, read once per process.
     pub fn set_glue_realm_setup(
         &mut self,
         categories: Vec<GlueRealmCategory>,
@@ -432,8 +423,8 @@ impl super::UiScript {
         model.glue.realms.types = types;
     }
 
-    /// Fill the holder from a realm list reply, as the parser does (`0x5b2230`): the categories
-    /// keep what the last rebuild put in them.
+    /// Fill the holder from a realm list reply, as the parser does: the categories keep what the
+    /// last rebuild put in them.
     pub fn set_glue_realms(&mut self, holder: Vec<GlueRealm>) {
         self.model_mut().glue.realms.holder = holder;
     }
@@ -453,7 +444,7 @@ impl super::UiScript {
         self.model_mut().glue.realms.cells = cells;
     }
 
-    /// The realm list rebuild (`0x46e510`) and the event its tail fires.
+    /// The realm list rebuild and the event its tail fires.
     pub fn rebuild_glue_realms(&mut self) {
         let event = {
             let mut model = self.model_mut();
@@ -464,7 +455,7 @@ impl super::UiScript {
     }
 }
 
-/// The `realmName` CVar's value (`0x5ab7d0`), empty when unregistered.
+/// The `realmName` CVar's value, empty when unregistered.
 fn realm_name(model: &Model) -> String {
     model
         .cvars
@@ -477,13 +468,13 @@ fn model(lua: &Lua) -> crate::script::ModelGuard<'_> {
     crate::script::model_mut_of(lua)
 }
 
-/// `is-number` (`0x6f34d0`) on an argument, then `tonumber` and `0x40a2b0`.
+/// `is-number` on an argument, then `tonumber` and.
 fn number_at(lua: &Lua, args: &MultiValue, i: usize) -> Option<i32> {
     let v = args.get(i)?.clone();
     lua.coerce_number(v).ok().flatten().map(ftol)
 }
 
-/// `GetRealmInfo`'s eight returns for a realm, or its not-found leg (`0x46f090`).
+/// `GetRealmInfo`'s eight returns for a realm, or its not-found leg.
 fn realm_info(
     lua: &Lua,
     list: &GlueRealmList,
@@ -523,8 +514,8 @@ fn realm_info(
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // An optional flag (`0x6f1c10`, default 0) into `0x46b8d0`, which raises the status dialog
-    // only for a nonzero one; the stock five-second refresh passes none.
+    // An optional flag (default 0), which raises the status dialog only for a nonzero one; the
+    // stock five-second refresh passes none.
     g.set(
         "RequestRealmList",
         lua.create_function(|lua, args: MultiValue| {
@@ -540,9 +531,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // `0x46b810`: the current glue screen (`[0xb41478]`, `SetCurrentScreen`'s buffer) against
-    // "login" (`0x82e3e0`, `SStrCmpI`); anywhere else a no-op, on login `CLoginMgr::Cancel`
-    // (`0x5b3320`).
+    // The current glue screen (`SetCurrentScreen`'s buffer) against "login" (`SStrCmpI`); anywhere
+    // else a no-op, on login `CLoginMgr::Cancel`.
     g.set(
         "RealmListDialogCancelled",
         lua.create_function(|lua, _: MultiValue| {
@@ -554,8 +544,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // One numeric argument counts one category, 0 off the end (`0x46ed94`); none, or a
-    // non-number, sums every category (`0x46ed47`).
+    // One numeric argument counts one category, 0 off the end; none, or a non-number, sums every
+    // category.
     g.set(
         "GetNumRealms",
         lua.create_function(|lua, args: MultiValue| {
@@ -590,9 +580,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x4defb0`: the pair leg stores the category (`0x46f188`) before its range check; a realm
-    // found marks the session's choice (`0x46f1d1`) and reaches `ConnectToRealm` (`0x46b210`),
-    // whose first act sets `realmName` (`0x5ab7b0`).
+    // `0x4defb0`: the pair leg stores the category before its range check; a realm found marks the
+    // session's choice and reaches `ConnectToRealm`, whose first act sets `realmName`.
     g.set(
         "ChangeRealm",
         lua.create_function(|lua, args: MultiValue| {
@@ -628,8 +617,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The names of the categories holding a realm (`0x46f1f0`); with none, the first category's
-    // name alone (`0x46f255`). A category with no row reads "UNKNOWN" (`0x838044`).
+    // The names of the categories holding a realm; with none, the first category's name alone. A
+    // category with no row reads "UNKNOWN".
     g.set(
         "GetRealmCategories",
         lua.create_function(|lua, _: MultiValue| {
@@ -654,9 +643,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x4df3a0`: the category through `0x46edf0`, the two flags through `0x6f1c10` with default
-    // 0, then `realm_select` (`0x46ea20`), which fires `SUGGEST_REALM` with `"%d%d"` or, with no
-    // realm to suggest, `OPEN_REALM_LIST` (`0x46ec21`).
+    // `0x4df3a0`: the category, the two flags through the reference with default 0, then
+    // `realm_select`, which fires `SUGGEST_REALM` with `"%d%d"` or, with no realm to suggest,
+    // `OPEN_REALM_LIST`.
     g.set(
         "SetPreferredInfo",
         lua.create_function(|lua, args: MultiValue| {
@@ -688,7 +677,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // `0x4df420`: a string (or number) argument, matched case-insensitively; anything else sorts by
-    // name. The usage string is the binary's own spelling (`0x838098`).
+    // name. The usage string is the binary's own spelling.
     g.set(
         "SortRealms",
         lua.create_function(|lua, args: MultiValue| {
@@ -708,14 +697,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             .find(|(k, _)| cmp_folded(&s, k).is_eq())
             .map_or(RealmSortKey::Name, |(_, key)| key);
             model(lua).glue.realms.set_primary(key);
-            // Both exits of `0x46e9b0` tail-jump the event (`0x46e9cb`, `0x46ea1a`).
+            // Both exits of the reference tail-jump the event.
             super::tick::fire_event_into(lua, "OPEN_REALM_LIST", Vec::new());
             Ok(())
         })?,
     )?;
 
-    // `0x46f400`: the ordinal of the first category holding a realm at or past the stored index
-    // (a signed compare, so -1 reads the first), else 1.
+    // The ordinal of the first category holding a realm at or past the stored index (a signed
+    // compare, so -1 reads the first), else 1.
     g.set(
         "GetSelectedCategory",
         lua.create_function(|lua, _: MultiValue| {
@@ -732,8 +721,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `RealmListUpdateRate` (`0x4de440`): 5 seconds for a realm server's grunt logon (4 is a
-    // Battle.net logon's).
+    // `RealmListUpdateRate`: 5 seconds for a realm server's grunt logon (4 is a Battle.net
+    // logon's).
     g.set(
         "RealmListUpdateRate",
         lua.create_function(|_, _: MultiValue| Ok(5.0))?,
@@ -885,7 +874,7 @@ mod tests {
     }
 
     /// The rebuild fires `GET_PREFERRED_REALM_INFO` for a fresh account with no choice made, and
-    /// `OPEN_REALM_LIST` once it has characters or has chosen (`0x46e718`-`0x46e73d`).
+    /// `OPEN_REALM_LIST` once it has characters or has chosen.
     #[test]
     fn the_rebuild_asks_for_a_preference_only_with_no_characters_and_no_choice() {
         let mut s = vm(vec![realm("Alpha", 1, 0, 0, 0, 1.0)]);
@@ -998,8 +987,8 @@ mod tests {
         );
     }
 
-    /// The default order is characters, load, name, mode; a click moves its column to the front
-    /// and fires `OPEN_REALM_LIST`; mode sorts RP ahead of PvP (`0x46e92c`).
+    /// The default order is characters, load, name, mode; a click moves its column to the front and
+    /// fires `OPEN_REALM_LIST`; mode sorts RP ahead of PvP.
     #[test]
     fn sort_realms_rotates_the_keys_and_fires_the_list() {
         let mut s = vm(vec![
@@ -1181,8 +1170,8 @@ mod tests {
     }
 
     /// The flat leg keeps walking after a hit and stores each later hit unconditionally, a NULL
-    /// from `GetRealm` included (`0x46eed3`): a holder that lost the realm since the rebuild
-    /// answers nil, not the earlier hit.
+    /// from `GetRealm` included: a holder that lost the realm since the rebuild answers nil, not
+    /// the earlier hit.
     #[test]
     fn the_flat_leg_keeps_the_last_hit_even_when_it_is_gone() {
         let mut s = vm(vec![

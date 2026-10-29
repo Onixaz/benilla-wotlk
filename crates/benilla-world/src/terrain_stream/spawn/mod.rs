@@ -343,8 +343,8 @@ pub(super) fn spawn_loaded_placements(
                     // origin as the reference does, whatever tile registered it. An ADT doodad is
                     // the fixed 1.0 family, one class with the exterior WMO prop: its
                     // `CMapDoodadDef` `[+0xa4]` is only ever 0.0, 0.5 or 1.0. The 2.5 boost and its
-                    // 3.3333/s ramp (`0x69e770`) belong to the entity light node (vtable
-                    // `0x810810`), which a doodad lacks; the 2.5's one reader is `0x69e4ad`.
+                    // 3.3333/s ramp belong to the entity light node, which a doodad lacks; the
+                    // 2.5's one reader.
                     let shade =
                         match doodad_ground_shade(&streamer, &adt_tiles, p.transform.translation) {
                             ShadeResolve::Ready(true) => ShadeSel::Shaded,
@@ -600,10 +600,9 @@ pub(super) fn spawn_loaded_placements(
                             );
                         }
                     }
-                    // A world WMO is exterior scene too (`0x6856c0`, fed by the same walk
-                    // `0x682fa0`): from inside one building, another draws only through a portal
-                    // window. The tag is unconditional; the camera's own building is exempted per
-                    // frame from `CameraInteriorClaim`.
+                    // A world WMO is exterior scene too: from inside one building, another draws
+                    // only through a portal window. The tag is unconditional; the camera's own
+                    // building is exempted per frame from `CameraInteriorClaim`.
                     for e in &ents {
                         commands
                             .entity(*e)
@@ -658,9 +657,9 @@ pub(super) fn spawn_loaded_placements(
                             &m.material_diff_color,
                             &mut ents,
                         );
-                        // Another building's pool is exterior scene like its walls (`0x6856c0`),
-                        // tagged unconditionally: an instance-less placement is never the camera's
-                        // room, so the tag alone is right for it.
+                        // Another building's pool is exterior scene like its walls, tagged
+                        // unconditionally: an instance-less placement is never the camera's room,
+                        // so the tag alone is right for it.
                         for &e in &ents[first..] {
                             commands
                                 .entity(e)
@@ -760,8 +759,8 @@ pub(super) fn spawn_loaded_placements(
                 continue;
             }
             // An exterior prop samples the MCSH at its footprint, as the reference's per-frame
-            // refresh `0x698c50` does: matte on lit ground, shaded under MCSH shadow, never the
-            // 2.5 boost (its one reader, `0x69e4ad`, is unreachable from the WMO render band).
+            // refresh does: matte on lit ground, shaded under MCSH shadow, never the 2.5 boost (its
+            // one reader, is unreachable from the WMO render band).
             let shade = if matches!(d.light, PropLight::Interior { .. }) {
                 ShadeSel::Matte // interior lane; the selector is unread
             } else {
@@ -784,7 +783,7 @@ pub(super) fn spawn_loaded_placements(
             );
             // An interior prop's light, folded once into its SH probe: the reference refolds at
             // each light commit, but every input here is static. The reference point is the placed
-            // M2 box centre, the `[def+0x5c]` anchor of `0x6952a0`/`0x713680`.
+            // M2 box centre, the `[def+0x5c]` anchor.
             let interior_slot = match &d.light {
                 PropLight::Exterior => None,
                 PropLight::Interior {
@@ -898,10 +897,9 @@ pub(super) fn spawn_loaded_placements(
                 commands.entity(owner).insert(PropProbeSlot(slot));
             }
             // Cull the prop with the rooms that name it: the reference admits a WMO's doodads to
-            // the frame per group its portal walk reaches (`0x685d70` → `0x6838f0` over the
-            // group's MODR list), so a prop is drawn from any of them. Exterior scene with its
-            // building, exempt in the camera's own; a prop no group names has no instance key, so
-            // it stays untagged.
+            // the frame per group its portal walk reaches (over the group's MODR list), so a prop
+            // is drawn from any of them. Exterior scene with its building, exempt in the camera's
+            // own; a prop no group names has no instance key, so it stays untagged.
             let tag = prop_tag(portal_instance, &d.groups);
             if !matches!(mode, SpawnMode::DivertOnly) {
                 entity_tail(
@@ -1120,9 +1118,8 @@ fn tag_world_object(commands: &mut Commands, ents: &[Entity], object: &Arc<World
 /// An animated M2 placement's cull bound: the authored header box, its extent over every animation
 /// (Bevy model-local), as the joints carry the vertices off the bind-pose bound.
 ///
-/// Deviation: the box, where the reference tests its circumsphere (`0x683700` → `0x682ef0` →
-/// `0x686b80` on the `[rec+0x5c]` centre and `[rec+0x68]` radius × scale), because Bevy culls by
-/// box and the box is tighter.
+/// Deviation: the box, where the reference tests its circumsphere (on the `[rec+0x5c]` centre and
+/// `[rec+0x68]` radius × scale), because Bevy culls by box and the box is tighter.
 pub fn m2_anim_bound(bounds: &Option<M2Bounds>) -> Option<Aabb> {
     let b = bounds.as_ref()?;
     // The basis swap permutes and negates axes, so min/max have to be re-derived, not mapped.

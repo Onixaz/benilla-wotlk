@@ -388,9 +388,9 @@ fn build_raid(model: &mut Model) -> u32 {
     count
 }
 
-/// `SetCurrentActiveDisplayChannel` (`0x504490`): a new selection drops the roster and the own
-/// flags and, for a channel, watches it; the current one does nothing. The pending name count
-/// stays, as in the reference.
+/// `SetCurrentActiveDisplayChannel`: a new selection drops the roster and the own flags and, for a
+/// channel, watches it; the current one does nothing. The pending name count stays, as in the
+/// reference.
 fn select(model: &mut Model, kind: Kind, name: &str) {
     let pane = &mut model.channel_pane;
     if pane.is_selected(kind, name) {

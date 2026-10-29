@@ -29,9 +29,9 @@ pub fn register_shaders(app: &mut App) {
 /// The WDL far-band shader's source, for the tests that live beside the renderer (`wdl.rs`).
 pub const WDL_WGSL: &str = include_str!("shaders/wdl.wgsl");
 
-/// Alpha-test reference for blend mode 1 (`Blend_AlphaKey`): 224 in the reference's
-/// per-blend-mode table at `0x85ad20`, `{0, 224, 1, 1, 1, 1, 1, 0, 0, 0, 0}`. Must stay in sync
-/// with `VANILLA_ALPHA_KEY` in `shaders/wow_model.wgsl`.
+/// Alpha-test reference for blend mode 1 (`Blend_AlphaKey`): 224 in the reference's per-blend-mode
+/// table, `{0, 224, 1, 1, 1, 1, 1, 0, 0, 0, 0}`. Must stay in sync with `VANILLA_ALPHA_KEY` in
+/// `shaders/wow_model.wgsl`.
 pub const VANILLA_ALPHA_KEY_REF: f32 = 224.0 / 255.0;
 
 /// `StandardMaterial` plus the per-tile layer-blend extension.
@@ -65,7 +65,7 @@ pub struct WowModelKey {
     /// because only this model's depth is pinned.
     sky_depth: bool,
     // The WMO batch order is deliberately not a key axis (a pipeline per batch index stalls a
-    // city's first sight): the file-order layering (`0x6b4f10`/`0x6b5190`) rides `sun_scale.y`.
+    // city's first sight): the file-order layering rides `sun_scale.y`.
 }
 
 impl From<&WowModelExt> for WowModelKey {
@@ -104,11 +104,11 @@ pub struct WowModelExt {
     #[uniform(100)]
     pub sun_scale: Vec4,
     /// `xyz` = the M2Color tint of a batch whose colour track animates, identity otherwise; `w` =
-    /// the WMO interior batch class (`0x6b5190`): `0` exterior, `1` INT, `2` TRANS.
+    /// the WMO interior batch class: `0` exterior, `1` INT, `2` TRANS.
     #[uniform(100)]
     pub tint: Vec4,
-    /// WMO glass, `0` on M2: `xyz` = the MOMT SIDN night emissive (ramp `0x6b4090`), `w` = the MOMT
-    /// WINDOW flag, the brighter interior light (`0x6d37e0`, ambient +16/255).
+    /// WMO glass, `0` on M2: `xyz` = the MOMT SIDN night emissive, `w` = the MOMT WINDOW flag, the
+    /// brighter interior light (ambient +16/255).
     #[uniform(100)]
     pub sidn: Vec4,
     /// Rows of the shared light buffer's `matanim` region, `0` = identity: `x` = UV scroll, `y` =
@@ -149,7 +149,7 @@ impl MaterialExtension for WowModelExt {
     }
 
     /// The reference writes depth for every M2 batch, transparent ones too, and tests `LEQUAL`,
-    /// unless render flag 0x10 (no write) or 0x08 (no test) clears it (`0x70c190`).
+    /// unless render flag 0x10 (no write) or 0x08 (no test) clears it.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
@@ -273,9 +273,9 @@ impl MaterialExtension for WowModelExt {
             }
         }
         if key.bind_group_data.zfill {
-            // The reference's `M2UseZFill` pre-pass (`0x707f7d`-`0x708072`): depth only, so a
-            // translucent model shows one blended layer. The colour is computed and masked, not
-            // skipped by an early return, which naga's MSL backend miscompiles.
+            // The reference's `M2UseZFill` pre-pass: depth only, so a translucent model shows one
+            // blended layer. The colour is computed and masked, not skipped by an early return,
+            // which naga's MSL backend miscompiles.
             if let Some(frag) = descriptor.fragment.as_mut() {
                 if let Some(target) = frag.targets.get_mut(0).and_then(|t| t.as_mut()) {
                     target.blend = None;
@@ -298,7 +298,7 @@ impl MaterialExtension for WowModelExt {
         }
         let key = &key.bind_group_data;
         if key.modulate || key.modulate2x {
-            // `0x70c190`: Mod (M2 mode 5, WMO 4) is `DST_COLOR/ZERO`, Mod2x (M2 6, WMO 5)
+            // Mod (M2 mode 5, WMO 4) is `DST_COLOR/ZERO`, Mod2x (M2 6, WMO 5)
             // `DST_COLOR/SRC_COLOR`; on a gamma framebuffer this is the reference's byte math.
             if let Some(target) = descriptor
                 .fragment
@@ -365,8 +365,7 @@ pub struct LiquidExt {
     /// - `x` = fullbright (magma, slime): the sheet is the opaque body.
     /// - `y` = ocean: rows 15/16 (`Light.dbc` IntBand 14/15), else rows 13/14 (IntBand 16/17).
     /// - `z` = a WMO interior group's liquid, fogged with the interior block (rows 18/19): the
-    ///   reference gates its fog (`0x6b6323`-`0x6b6342`) on the same `[0xca7f00]` as the group's
-    ///   geometry (`0x6b51d9`/`0x6b51ea`).
+    ///   reference gates its fog on the same as the group's geometry.
     /// - `w` = the sun-sheen shininess (`lighting::WATER_SHININESS`).
     #[uniform(102)]
     pub kind: Vec4,
@@ -437,7 +436,7 @@ pub struct TerrainExtension {
 }
 
 impl MaterialExtension for TerrainExtension {
-    // The sun specular is per vertex (the reference's light flush `0x59c820`).
+    // The sun specular is per vertex.
     fn vertex_shader() -> ShaderRef {
         "embedded://benilla_assets/shaders/terrain.wgsl".into()
     }
@@ -471,14 +470,14 @@ mod tests {
     }
 
     /// The WGSL carries the reference's swatch row arithmetic, and a Rust mirror of it reproduces
-    /// the row fill `0x68a830` on `Light.dbc` id 4, map 0, t = 1440, ocean `LightIntBand` 14 to 15.
+    /// the row fill on `Light.dbc` id 4, map 0, t = 1440, ocean `LightIntBand` 14 to 15.
     #[test]
     fn liquid_swatch_reproduces_the_reference_row_ramp() {
         let src = include_str!("shaders/liquid.wgsl");
         // The row accumulator `c0 + floor(i*(c1 - c0)/64)`, not a lerp to the deep endpoint.
         assert!(
             src.contains("let row = c0 + floor(i * (c1 - c0) / 64.0);"),
-            "the swatch stopped building its rows the way `0x68a830` does: a plain lerp to the \
+            "the swatch stopped building its rows the way does: a plain lerp to the \
              deep endpoint runs a 64th of a ramp that does not exist"
         );
         // The ocean-only tail: floor(0.9*byte) on the last row, alpha forced opaque.

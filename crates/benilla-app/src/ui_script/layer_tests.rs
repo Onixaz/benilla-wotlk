@@ -767,8 +767,8 @@ const LINE_H: f64 = 12.0;
 const DETAIL_INSETS: (f64, f64, f64, f64) = (6.0, 20.0, 6.0, 20.0);
 const DETAIL_WIDTH: f64 = 296.0;
 
-/// The height the reference gives a multi-line box (`0x77d4d0` @`0x77d8ad`): its insets plus its
-/// text, wrapped at the box's width less its side insets, one line when short or empty.
+/// The height the reference gives a multi-line box: its insets plus its text, wrapped at the box's
+/// width less its side insets, one line when short or empty.
 fn detail_box_height(chars: usize) -> f64 {
     let wrap = DETAIL_WIDTH - (DETAIL_INSETS.0 + DETAIL_INSETS.1);
     let natural = chars as f64 * CHAR_W;
@@ -950,9 +950,9 @@ fn a_click_on_the_detail_selects_all_and_copy_returns_the_whole_error() {
     assert_eq!(s.editbox_copy().as_deref(), Some("another error"));
 }
 
-/// Typing, pasting, Enter, Backspace and cut leave the text as it was, the selection is put back
-/// so a copy still takes it all, and the restore's own change stops after one more round, bar the
-/// box's resize, whose re-seat fires once more with the text unchanged (`0x77ba7f`).
+/// Typing, pasting, Enter, Backspace and cut leave the text as it was, the selection is put back so
+/// a copy still takes it all, and the restore's own change stops after one more round, bar the
+/// box's resize, whose re-seat fires once more with the text unchanged.
 #[test]
 fn an_edit_of_the_detail_box_is_undone() {
     benilla_formats::wow_data_or_skip!();

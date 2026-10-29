@@ -88,11 +88,11 @@ fn inspect_slot_view(
         quality: quality as i32,
         name,
         link,
-        // `0x5da2c0` reads an item object's `ITEM_FIELD_FLAGS`, which inspected gear lacks, so the
-        // tooltip prints the template's bind line, as the reference's does.
+        // The reference reads an item object's `ITEM_FIELD_FLAGS`, which inspected gear lacks, so
+        // the tooltip prints the template's bind line, as the reference's does.
         already_bound: false,
-        // All 7 slots, as the reference's inspect leg copies them (`0x533354`), with no charges
-        // and no countdown: there is no item object.
+        // All 7 slots, as the reference's inspect leg copies them, with no charges and no
+        // countdown: there is no item object.
         enchants: crate::items::enchant_lines(
             (0..7).map(|j| {
                 let id = store.0.player_visible_item_enchant(slot0, j).unwrap_or(0);

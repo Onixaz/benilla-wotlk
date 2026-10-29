@@ -53,7 +53,7 @@ fn next_list(events: &crossbeam_channel::Receiver<SessionEvent>) -> (Vec<RealmIn
     }
 }
 
-/// The reference builds `CMSG_CHAR_CREATE` in one place (`0x5aac50`), reached only from the glue's
+/// The reference builds `CMSG_CHAR_CREATE` in one place, reached only from the glue's
 /// `CreateCharacter`, which the stock glue calls only from the create screen's Okay; so a login to
 /// an account with no characters parks at select on the empty list and creates nothing.
 #[test]
@@ -136,7 +136,7 @@ fn an_empty_account_parks_at_select_without_creating_a_character() {
 
 /// Under the stock screen's policy the park fetches no roster: the world connect ends with the
 /// authentication, and the one `CMSG_CHAR_ENUM` goes out when the screen asks, its reply tagged as
-/// asked for (`0x5aabb0`).
+/// asked for.
 #[test]
 fn the_stock_policy_enumerates_only_when_asked() {
     let (realmd, world) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);
@@ -254,8 +254,8 @@ fn a_query_without_a_logon_fails_at_once() {
     assert!(failed && realms.is_empty());
 }
 
-/// A query on a link realmd has closed dials again and answers (`0x5b2200`), so a list left up
-/// past vmangos's `MaxSessionDuration` still refreshes.
+/// A query on a link realmd has closed dials again and answers, so a list left up past vmangos's
+/// `MaxSessionDuration` still refreshes.
 #[test]
 fn a_query_on_a_closed_link_dials_again() {
     let (realmd, _) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);
@@ -304,8 +304,8 @@ fn an_empty_realm_list_is_published_and_parked() {
     assert_eq!(realmd.lists(), 2);
 }
 
-/// Change Realm with the world up drops the session first (`0x46b22b`) and returns to the logon
-/// park, realmd still up: the world socket closes before any query.
+/// Change Realm with the world up drops the session first and returns to the logon park, realmd
+/// still up: the world socket closes before any query.
 #[test]
 fn leave_drops_the_world_session_and_keeps_the_logon() {
     let (realmd, world) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);
@@ -338,10 +338,10 @@ fn leave_drops_the_world_session_and_keeps_the_logon() {
 }
 
 /// The character park's requests and the realm list's are met in the order the app made them, on
-/// one channel. Two roster asks and a `Leave` queue while the IO thread is held in an earlier
-/// ask's slow reply: both asks go out on the old link before it leaves, none is dropped, and the
-/// leave is honored after them. The reference sends `CMSG_CHAR_ENUM` at the verb (`0x46b880`) and
-/// `ConnectToRealm` only then closes the link (`0x46b22b`).
+/// one channel. Two roster asks and a `Leave` queue while the IO thread is held in an earlier ask's
+/// slow reply: both asks go out on the old link before it leaves, none is dropped, and the leave is
+/// honored after them. The reference sends `CMSG_CHAR_ENUM` at the verb and `ConnectToRealm` only
+/// then closes the link.
 #[test]
 fn the_park_serves_its_requests_in_the_order_they_were_made() {
     let (realmd, world) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);
@@ -445,8 +445,8 @@ fn a_warden_demand_at_the_asked_roster_is_a_terminal_login_failure() {
     assert_eq!(realmd.open(), 1, "the realmd link is kept");
 }
 
-/// A roster ask that fails on the stream (the server cut the connection) tells the screen its
-/// query failed (`0x5ab300`'s failure leg) before the session ends as a dropped socket does.
+/// A roster ask that fails on the stream (the server cut the connection) tells the screen its query
+/// failed before the session ends as a dropped socket does.
 #[test]
 fn a_roster_ask_cut_on_the_stream_reports_its_failure_then_the_loss() {
     let (realmd, world) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);
@@ -471,7 +471,7 @@ fn a_roster_ask_cut_on_the_stream_reports_its_failure_then_the_loss() {
 }
 
 /// After a create the native policy re-emits the roster before the result; the stock screen asks
-/// again itself (`0x46c1a7`), so the IO thread sends it nothing and enumerates nothing.
+/// again itself, so the IO thread sends it nothing and enumerates nothing.
 #[test]
 fn only_the_native_policy_re_enumerates_after_a_create() {
     let req = benilla_protocol::CharCreateReq {
@@ -576,10 +576,10 @@ fn expect_back(
     }
 }
 
-/// A logout returns to character select on the world link it entered by (`SMSG_LOGOUT_COMPLETE`
-/// → `0x5aaeb0` → `0x401ee0(1, 1, 0)`, then `CharacterSelect_OnShow` → `0x46b880`): one more
-/// `CMSG_CHAR_ENUM` on the same session, with no realmd logon and no second `CMSG_AUTH_SESSION`.
-/// With no stock glue VM the park enumerates; the stock screen's comes when it asks.
+/// A logout returns to character select on the world link it entered by (`SMSG_LOGOUT_COMPLETE`,
+/// then `CharacterSelect_OnShow`): one more `CMSG_CHAR_ENUM` on the same session, with no realmd
+/// logon and no second `CMSG_AUTH_SESSION`. With no stock glue VM the park enumerates; the stock
+/// screen's comes when it asks.
 #[test]
 fn a_logout_returns_to_character_select_on_the_same_link() {
     for asking in [false, true] {
@@ -634,9 +634,8 @@ fn a_logout_returns_to_character_select_on_the_same_link() {
     }
 }
 
-/// A refused character login returns the same way (`SMSG_CHARACTER_LOGIN_FAILED` → `0x5aad70` →
-/// `0x401ee0(1, 1, 1)`, then the dialog's `StatusDialogClick` → `0x46b880`): the session is kept,
-/// and the native policy enumerates once on it.
+/// A refused character login returns the same way (`SMSG_CHARACTER_LOGIN_FAILED`, then the dialog's
+/// `StatusDialogClick`): the session is kept, and the native policy enumerates once on it.
 #[test]
 fn a_refused_login_returns_to_character_select_on_the_same_link() {
     let (realmd, world) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);
@@ -667,8 +666,8 @@ fn a_refused_login_returns_to_character_select_on_the_same_link() {
     assert_eq!(world.authentications(), 1);
 }
 
-/// `EnterWorld` closes the realmd link (`CLoginMgr::Cancel`, `0x46b70c` → `0x5b3320`); it stays up
-/// at character select until then.
+/// `EnterWorld` closes the realmd link (`CLoginMgr::Cancel`); it stays up at character select until
+/// then.
 #[test]
 fn entering_the_world_closes_the_realmd_link() {
     let (realmd, _world) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);
@@ -694,8 +693,7 @@ fn entering_the_world_closes_the_realmd_link() {
 }
 
 /// Change Realm after a logout finds the realmd link closed since Enter World and dials it again
-/// (`0x46b8d0` → `0x5ab840` → `0x5b2200`), then dials the realm with the new logon's key: a second
-/// world session.
+/// (`0x5ab840`), then dials the realm with the new logon's key: a second world session.
 #[test]
 fn change_realm_after_a_logout_dials_realmd_again() {
     let (realmd, world) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);
@@ -833,9 +831,8 @@ fn a_command_ready_with_an_install_goes_out_on_the_new_writer() {
     }
 }
 
-/// Under the stock screens a refused login returns the same way, and the roster comes only when
-/// the screen asks (in the reference from the refusal dialog's `StatusDialogClick`, `0x46b767` →
-/// `0x46b880`), on the same link.
+/// Under the stock screens a refused login returns the same way, and the roster comes only when the
+/// screen asks (in the reference from the refusal dialog's `StatusDialogClick`), on the same link.
 #[test]
 fn a_refused_login_under_the_stock_screens_waits_for_the_screens_ask() {
     let (realmd, world) = fake::servers(|world| vec![FakeRealm::new(REALM, world)]);

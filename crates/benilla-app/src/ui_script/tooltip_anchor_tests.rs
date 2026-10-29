@@ -145,8 +145,7 @@ fn unit_frame_hover_takes_the_default_corner_and_drops_on_leave() {
 }
 
 /// While the creature query is in flight a world hover is titled `UNKNOWNOBJECT`, read from the
-/// chain's GlobalStrings (`0x703bf0`) so a translated install translates it; the answer then
-/// replaces it.
+/// chain's GlobalStrings so a translated install translates it; the answer then replaces it.
 #[test]
 fn a_pending_name_hover_titles_the_chains_unknownobject() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -252,8 +251,8 @@ fn your_own_portrait_explains_the_menu_instead_of_showing_your_health() {
 }
 
 /// Action-bar hovers take the default corner: `ActionButton_SetTooltip` branches on `UberTooltips`
-/// (`ActionButton.lua:366-372`), whose stock default is "1" (`0x48fdd9`, string `0x82e748`). An
-/// empty slot draws nothing, so the anchor is read through `GetPoint`.
+/// (`ActionButton.lua:366-372`), whose stock default is "1". An empty slot draws nothing, so the
+/// anchor is read through `GetPoint`.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn action_button_hover_takes_the_default_corner() {
@@ -452,8 +451,8 @@ fn buff_hover_hangs_below_left_of_the_button() {
     // The event the stock buff buttons register (`BuffFrame.lua:113`).
     s.fire_event("PLAYER_AURAS_CHANGED", vec![]);
     s.resolve();
-    // The template's inline `<OnEnter>`, called directly: the engine sets `this` only when it
-    // fires a handler (`0x704d50`), so it is set by hand.
+    // The template's inline `<OnEnter>`, called directly: the engine sets `this` only when it fires
+    // a handler, so it is set by hand.
     s.run("this = BuffButton0; BuffButton0:GetScript(\"OnEnter\")(BuffButton0)")
         .unwrap();
     assert!(s.errors().is_empty(), "hover errors: {:?}", s.errors());
@@ -471,8 +470,8 @@ fn buff_hover_hangs_below_left_of_the_button() {
 }
 
 /// The cursor-seated GameObject plate is owned: the reference's publisher sets the owner through
-/// the SetOwner core (`0x492a01` calls `0x52ffe0(owner, 6, 0, 0)`, whose `0x53000c` writes
-/// `+0x314`). The cursor arm fires no `OnTooltipSetDefaultAnchor`, so no Lua sets it.
+/// the SetOwner core (the reference calls `(owner, 6, 0, 0)`, whose the reference writes `+0x314`).
+/// The cursor arm fires no `OnTooltipSetDefaultAnchor`, so no Lua sets it.
 #[test]
 fn a_cursor_seated_gameobject_plate_is_owned() {
     benilla_formats::wow_data_or_skip!();
@@ -487,8 +486,8 @@ fn a_cursor_seated_gameobject_plate_is_owned() {
 }
 
 /// An addon `OnShow` hook that calls `GameTooltip:Show()` (as `!Questie`'s does) leaves the plate
-/// up: `:Show()` is the existence gate `0x530a80`, which hides a plate with no owner or no lines
-/// (`0x530a60`), and the publisher sets the owner before the plate shows.
+/// up: `:Show()` is the existence gate, which hides a plate with no owner or no lines, and the
+/// publisher sets the owner before the plate shows.
 #[test]
 fn a_cursor_seated_gameobject_plate_survives_an_addons_on_show_hook() {
     benilla_formats::wow_data_or_skip!();
@@ -507,10 +506,9 @@ fn a_cursor_seated_gameobject_plate_survives_an_addons_on_show_hook() {
     );
 }
 
-/// The corner arm (`0x492a42`) writes no owner itself: its `+0x444` handler,
-/// `OnTooltipSetDefaultAnchor`, sets it through `GameTooltip_SetDefaultAnchor`'s
-/// `SetOwner(UIParent, "ANCHOR_NONE")`. Every hover starts unowned, since `Tooltip::Hide`
-/// (`0x530a60`) is `SetOwner(NULL, 0, 0, 0)`.
+/// The corner arm writes no owner itself: its `+0x444` handler, `OnTooltipSetDefaultAnchor`, sets
+/// it through `GameTooltip_SetDefaultAnchor`'s `SetOwner(UIParent, "ANCHOR_NONE")`. Every hover
+/// starts unowned, since `Tooltip::Hide` is `SetOwner(NULL, 0, 0, 0)`.
 #[test]
 fn a_corner_seated_gameobject_plate_is_owned_and_shown() {
     benilla_formats::wow_data_or_skip!();
@@ -524,7 +522,7 @@ fn a_corner_seated_gameobject_plate_is_owned_and_shown() {
     assert!(shown, "and it is on screen; errors: {:?}", s.errors());
 }
 
-/// The corner plate survives the same `OnShow` hook through the existence gate `0x530a80`.
+/// The corner plate survives the same `OnShow` hook through the existence gate.
 #[test]
 fn a_corner_seated_gameobject_plate_survives_an_addons_on_show_hook() {
     benilla_formats::wow_data_or_skip!();

@@ -72,7 +72,7 @@ fn hunter_pet_stats() -> PetStats {
     }
 }
 
-/// An emptied line reads back nil: `FontString:GetText` (`0x79d690`) returns nil for "".
+/// An emptied line reads back nil: `FontString:GetText` returns nil for "".
 fn level_text(s: &UiScript) -> Option<String> {
     s.eval::<Option<String>>("return PetStableLevelText:GetText()")
         .unwrap()

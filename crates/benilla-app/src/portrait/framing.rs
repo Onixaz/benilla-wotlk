@@ -1,9 +1,9 @@
 //! Booth camera placement. Both families use the model's own authored camera and fit nothing:
 //!
-//! - [`frame`]: a round portrait, `cameraLookup[0]` verbatim (`0x713540`); a camera-less model
-//!   gets a heuristic head closeup at [`head_anchor`].
+//! - [`frame`]: a round portrait, `cameraLookup[0]` verbatim; a camera-less model gets a heuristic
+//!   head closeup at [`head_anchor`].
 //! - [`body_frame`]: a `<PlayerModel>` pane, raw `cameras[1]` verbatim, else the client's fixed
-//!   rig (`0x505890`).
+//!   rig.
 
 use bevy::camera::{CameraProjection, PerspectiveProjection, Projection, SubCameraView};
 use bevy::math::Vec3A;
@@ -12,28 +12,28 @@ use bevy::prelude::*;
 /// Vertical FOV (radians, about 29°) of the heuristic camera for a camera-less model.
 pub(super) const PORTRAIT_FOV: f32 = 0.5;
 
-/// The aspect the client's portrait bake feeds `0x5c3cc0`: exactly 1.0 on every screen, so
-/// `fovy = fov/√2`. `0x524f60` builds it as `(G44/G48)·(H/W)`, where `[0x832a44]/[0x832a48]` is the
-/// live screen aspect, so the two cancel; the bake viewport is a square 64×64 box (`0x41ade0`).
-/// The "fov × 0.6" figure is the 4/3 value, which the bake never uses.
+/// The aspect the client's portrait bake feeds: exactly 1.0 on every screen, so `fovy = fov/√2`.
+/// The reference builds it as `(G44/G48)·(H/W)`, where the reference is the live screen aspect, so
+/// the two cancel; the bake viewport is a square 64×64 box. The "fov × 0.6" figure is the 4/3
+/// value, which the bake never uses.
 pub(super) const PORTRAIT_ASPECT: f32 = 1.0;
 
-/// A camera record's diagonal fov to the vertical opening at `aspect`: `fov/√(a²+1)`, the
-/// client's `0x5c3cc0` relation. `aspect` is the same one that sets the squeeze, never a second
-/// number: [`PORTRAIT_ASPECT`] for the round bake, the pane's own rect for a `<PlayerModel>`.
+/// A camera record's diagonal fov to the vertical opening at `aspect`: `fov/√(a²+1)`, the client's
+/// relation. `aspect` is the same one that sets the squeeze, never a second number:
+/// [`PORTRAIT_ASPECT`] for the round bake, the pane's own rect for a `<PlayerModel>`.
 pub(super) fn diag_to_vert(fov: f32, aspect: f32) -> f32 {
     fov / (aspect * aspect + 1.0).sqrt()
 }
 
 /// The authored aspect of every 1.12 glue composition, 4/3: the Lua screen is `768a × 768`
-/// (`GetScreenWidth 0x48b480`, `GetScreenHeight 0x48b4d0`), so the design space is 1024×768.
+/// (`GetScreenWidth`, `GetScreenHeight`), so the design space is 1024×768.
 pub(super) use benilla_formats::{ArtExtent, GLUE_AUTHORED_ASPECT};
 
 /// The glue scene's vertical opening angle.
 ///
-/// The reference's glue `<ModelFFX>` fills the screen, so `0x5c3cc0`'s aspect is the display's
-/// (`0x76d42d`) and the diagonal angle is the invariant: `0.600·fov` at 4:3, `0.492·fov` at 16:9,
-/// `0.386·fov` at 21:9, where the character's head and feet leave the frame.
+/// The reference's glue `<ModelFFX>` fills the screen, so the reference's aspect is the display's
+/// and the diagonal angle is the invariant: `0.600·fov` at 4:3, `0.492·fov` at 16:9, `0.386·fov` at
+/// 21:9, where the character's head and feet leave the frame.
 ///
 /// Deviation: the authored 4:3 box is held instead, because the reference's diagonal law crops
 /// the character on wide panels and the GlueXML chrome holds its height at every width. From 4/3
@@ -71,11 +71,11 @@ pub(super) fn glue_scene_framing(fov: f32, window_aspect: f32, art: Option<ArtEx
 /// A stock glue `ModelFFX` pane's view of its scene, in the booth's window-sized target.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) struct PaneView {
-    /// The viewport, the pane's rect in physical pixels (`0x76d5d7`).
+    /// The viewport, the pane's rect in physical pixels.
     pub(super) position: UVec2,
     pub(super) size: UVec2,
-    /// The projection's aspect, the viewport's `w/h` (`0x7ada40`), which also turns the camera
-    /// record's diagonal fov into the vertical opening (`0x5c3cc0`, [`diag_to_vert`]).
+    /// The projection's aspect, the viewport's `w/h`, which also turns the camera record's diagonal
+    /// fov into the vertical opening ([`diag_to_vert`]).
     pub(super) aspect: f32,
 }
 
@@ -133,28 +133,28 @@ pub(crate) fn glue_box_physical(
     Some(((full_w - box_w) / 2, box_w))
 }
 
-/// The client's portrait and model projection, `0x5c3cc0`: a diagonal-FOV perspective with
-/// half-angle `θ = (fov/2)/√(aspect²+1)`, `m11 = 1/tan θ`, `m00 = m11/aspect`.
+/// The client's portrait and model projection: a diagonal-FOV perspective with half-angle
+/// `θ = (fov/2)/√(aspect²+1)`, `m11 = 1/tan θ`, `m00 = m11/aspect`.
 ///
-/// One `aspect` sets both the squeeze and the crop, as in `0x5c3cc0`: 1.0 for the round portrait
+/// One `aspect` sets both the squeeze and the crop, as the reference: 1.0 for the round portrait
 /// ([`PORTRAIT_ASPECT`]), the pane's width÷height for a model pane (318×224 gives 0.576·fov). A
-/// custom [`CameraProjection`] because Bevy re-derives `aspect_ratio` from the square render
-/// target on every write; `update` is a no-op, as the client's bake emits the same matrix at any
-/// window size.
+/// custom [`CameraProjection`] because Bevy re-derives `aspect_ratio` from the square render target
+/// on every write; `update` is a no-op, as the client's bake emits the same matrix at any window
+/// size.
 #[derive(Debug, Clone)]
 pub(crate) struct WowPortraitProjection {
     /// The M2 record's fov (radians), a diagonal angle, not fovy.
     pub(super) fov: f32,
     pub(super) near: f32,
     pub(super) far: f32,
-    /// `0x5c3cc0`'s one aspect: the squeeze (`m00 = m11/aspect`) and the crop
+    /// The reference's one aspect: the squeeze (`m00 = m11/aspect`) and the crop
     /// (`fovy = fov/√(aspect²+1)`). It must be the destination's aspect, because the booth's square
     /// target is stretched by the UI onto that rect.
     pub(super) aspect: f32,
 }
 
 impl WowPortraitProjection {
-    /// Full vertical opening angle, `2θ`: `0x5c3cc0` has `tan(fovy/2) = tan θ` exactly.
+    /// Full vertical opening angle, `2θ`: the reference has `tan(fovy/2) = tan θ` exactly.
     fn fovy(&self) -> f32 {
         diag_to_vert(self.fov, self.aspect)
     }
@@ -198,7 +198,7 @@ impl CameraProjection for WowPortraitProjection {
 }
 
 /// A display id's framing inputs ([`Creatures::display_anchors`]), model-local at scale 1: the
-/// reference bakes with the root scale reset (`0x47a230`).
+/// reference bakes with the root scale reset.
 pub(crate) struct PortraitAnchors {
     /// The round portrait's authored camera, `cameraLookup[0]`; `None` uses the heuristic fields.
     pub(crate) camera: Option<benilla_assets::PortraitCamera>,
@@ -308,22 +308,21 @@ pub(super) fn frame(a: &PortraitAnchors) -> (Transform, Projection) {
     )
 }
 
-/// The client's renormalize-to-4:3 model-root factor, `G48·(5/3)` with `G48 = [0x832a48] =
-/// 1/√(a²+1)` (`0x41ad10`) and `5/3` the literal at `[0x80655c]`, which equals `√((4/3)²+1)`:
-/// 1.0 at 4:3, 0.8171 at 16:9. `a` is `gxResolution`'s width/height, or 4/3 when the `widescreen`
-/// CVar (default 1, `0x63a74f`) is 0 (`0x46ab40`).
+/// The client's renormalize-to-4:3 model-root factor, `G48·(5/3)` with `G48 = 1/√(a²+1)` and `5/3`
+/// the literal, which equals `√((4/3)²+1)`: 1.0 at 4:3, 0.8171 at 16:9. `a` is `gxResolution`'s
+/// width/height, or 4/3 when the `widescreen` CVar (default 1) is 0.
 ///
-/// It only shows on the fixed-camera path: `0x71439b` publishes an authored camera through the
-/// same scaled root (`0x718960`), so there it cancels, while the fixed rig's `CCamera`
-/// (`0x7ac930`) is outside the model and sees the geometry shrink and sit low by `(1−s)·centre.y`.
+/// It only shows on the fixed-camera path: the reference publishes an authored camera through the
+/// same scaled root, so there it cancels, while the fixed rig's `CCamera` is outside the model and
+/// sees the geometry shrink and sit low by `(1−s)·centre.y`.
 pub(super) fn pane_model_scale(display_aspect: f32) -> f32 {
     const REF: f32 = 4.0 / 3.0;
     ((REF * REF + 1.0) / (display_aspect * display_aspect + 1.0)).sqrt()
 }
 
 /// The eye (WoW model space) of the client's fixed pane camera for a model with fewer than two
-/// cameras (`0x505890`): the literals 5.5555558 and 2.4166667, aimed at the bbox centre with no
-/// normalization, so a small model renders small.
+/// cameras: the literals 5.5555558 and 2.4166667, aimed at the bbox centre with no normalization,
+/// so a small model renders small.
 const PANE_FIXED_EYE_WOW: [f32; 3] = [200.0 / 36.0, 0.0, 87.0 / 36.0];
 /// The fixed camera's diagonal fov (radians); also the fov the pipeline-warm pass compiles with.
 pub(super) const PANE_FIXED_FOV: f32 = 0.5;
@@ -331,10 +330,10 @@ pub(super) const PANE_FIXED_FOV: f32 = 0.5;
 const PANE_FIXED_NEAR: f32 = 1.0 / 36.0;
 const PANE_FIXED_FAR: f32 = 5000.0;
 
-/// A `<PlayerModel>` pane's camera rig, the widget's own (`0x505890`): the model's raw camera
-/// index 1 (the "characterinfo" camera), else the fixed rig; no fit, no bone, no normalization.
-/// Panes look normalized only because each model's standoff is authored (eye x: GnomeFemale 2.16,
-/// HumanMale 3.66, TaurenMale 4.43, Boar 4.86). Yaw is the caller's, on the model root, as
+/// A `<PlayerModel>` pane's camera rig, the widget's own: the model's raw camera index 1 (the
+/// "characterinfo" camera), else the fixed rig; no fit, no bone, no normalization. Panes look
+/// normalized only because each model's standoff is authored (eye x: GnomeFemale 2.16, HumanMale
+/// 3.66, TaurenMale 4.43, Boar 4.86). Yaw is the caller's, on the model root, as
 /// `Model:SetRotation` sets the facing; the root scale is [`pane_root_scale`]. `aspect` is the
 /// pane's width÷height.
 pub(super) fn body_frame(a: &PortraitAnchors, aspect: f32) -> (Transform, Projection) {
@@ -372,10 +371,9 @@ pub(super) fn pane_camera(a: &PortraitAnchors) -> benilla_assets::PortraitCamera
 }
 
 /// A pane camera's projection: the record's scalars at the pane's own aspect, not the bake's 1.0.
-/// Both paths build through `0x7ada40`/`0x7ac640`, but the widget (`0x76d42d`) passes the frame's
-/// cached layout rect (`0x768320`), so `aspect = (W/H)·(a/a_screen)`, which is `W/H` in every
-/// state the client reaches; the `0x41ade0` unscales (`0x76d45b`/`0x76d46e`) serve the viewport
-/// only.
+/// Both paths build, but the widget passes the frame's cached layout rect, so
+/// `aspect = (W/H)·(a/a_screen)`, which is `W/H` in every state the client reaches; the unscales
+/// serve the viewport only.
 pub(crate) fn pane_projection(
     cam: &benilla_assets::PortraitCamera,
     aspect: f32,

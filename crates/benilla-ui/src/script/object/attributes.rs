@@ -1,10 +1,10 @@
 //! 3.3.5a's frame attributes: `SetAttribute(name, value)` and `GetAttribute(name)` on every frame.
 //!
-//! The store is a hash table at frame `+0x1cc` keyed through `SStrHash` (`0x76f640`), so a name is
-//! matched case-insensitively (`0x55f4d0`); the value is a Lua registry reference. A store calls
-//! the notifier `0x48ec10`, which, when the frame has an `OnAttributeChanged` handler, copies the
-//! caller's name, lowercases it (`0x76f6e0`) and calls the handler with `(self, name, value)`. No
-//! 1.12.1 method table binds either verb, so they exist only where the target has them.
+//! The store is a hash table at frame `+0x1cc` keyed through `SStrHash`, so a name is matched
+//! case-insensitively; the value is a Lua registry reference. A store calls the notifier, which,
+//! when the frame has an `OnAttributeChanged` handler, copies the caller's name, lowercases it and
+//! calls the handler with `(self, name, value)`. No 1.12.1 method table binds either verb, so they
+//! exist only where the target has them.
 
 use mlua::{Lua, Table, Value};
 
@@ -74,8 +74,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The usage error, `Usage: %s:<call>` with the frame's name or `<unnamed>` (`0x9ece20`,
-/// `0x9ece00`, `0x9ea280`).
+/// The usage error, `Usage: %s:<call>` with the frame's name or `<unnamed>`.
 fn usage(this: &Table, call: &str) -> mlua::Error {
     use mlua::ObjectLike;
     let name = this
@@ -111,8 +110,8 @@ fn attributes_of(lua: &Lua, id: u32, create: bool) -> mlua::Result<Option<Table>
 }
 
 /// Store `value` under `name` without the notifier, as an XML `<Attribute>` does: 12340's
-/// `CSimpleFrame::LoadXML_Attributes` (`0x492f70`) writes the hash table directly, so no
-/// `OnAttributeChanged` fires.
+/// `CSimpleFrame::LoadXML_Attributes` writes the hash table directly, so no `OnAttributeChanged`
+/// fires.
 pub(crate) fn store_from_xml(
     lua: &Lua,
     this: &Table,

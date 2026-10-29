@@ -1,6 +1,6 @@
-//! `ItemSet.dbc`: the item sets behind the item tooltip's set block (builder `0x52b650`), laid out
-//! as TrinityCore 3.3.5's `ItemSetEntry`: the name over sixteen locales and a mask, 17 item ids,
-//! then 8 spells and each one's required equipped count.
+//! `ItemSet.dbc`: the item sets behind the item tooltip's set block, laid out as TrinityCore
+//! 3.3.5's `ItemSetEntry`: the name over sixteen locales and a mask, 17 item ids, then 8 spells and
+//! each one's required equipped count.
 
 use std::collections::HashMap;
 
@@ -13,7 +13,7 @@ use crate::Chain;
 const ITEM_SET: &str = "DBFilesClient\\ItemSet.dbc";
 
 /// One set. `bonuses` is `(required equipped count, spell id)` in stored slot order; the tooltip
-/// sorts it by count at print time, as the client's qsort `0x52e5c0` does.
+/// sorts it by count at print time, as the client's qsort does.
 #[derive(Debug, Clone)]
 pub struct ItemSetInfo {
     pub name: String,

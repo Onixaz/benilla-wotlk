@@ -23,9 +23,9 @@ pub(super) enum ItemRoute {
     Nowhere,
 }
 
-/// The reference's equip-or-use decision for an item action (`0x4e5fdd`-`0x4e5ff7`):
-/// `InventoryType` 0 always uses; otherwise a worn copy (equipment slots 0..18) uses in place and
-/// a carried one equips. `find` is the inventory walk with the entry already bound.
+/// The reference's equip-or-use decision for an item action: `InventoryType` 0 always uses;
+/// otherwise a worn copy (equipment slots 0..18) uses in place and a carried one equips. `find` is
+/// the inventory walk with the entry already bound.
 pub(super) fn item_action_route(
     template: &benilla_protocol::ItemInfo,
     find: impl Fn(crate::ui_items::ItemSearch) -> Option<(u8, u8, u64)>,
@@ -35,7 +35,7 @@ pub(super) fn item_action_route(
         live_charges_only,
     };
     if template.inventory_type == 0 {
-        // The use leg's charge filter (`0x4e603a`): spent copies are skipped for finite charges.
+        // The use leg's charge filter: spent copies are skipped for finite charges.
         return match find(anywhere(template.has_finite_charges())) {
             Some(pos) => ItemRoute::Use(pos),
             None => ItemRoute::Nowhere,
@@ -64,8 +64,8 @@ pub(crate) fn attack_nearest_probe(
     }
 }
 
-/// What the player's Attack reads and writes: `AttackTarget` (`0x489b50`), the ATTACKTARGET
-/// binding and `UseAction`'s Attack slot (through `TryCast`, `0x6e4c90`) all run `0x6131a0`.
+/// What the player's Attack reads and writes: `AttackTarget`, the ATTACKTARGET binding and
+/// `UseAction`'s Attack slot (through `TryCast`) all run.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttackPress<'w, 's> {
     pick: crate::target::AttackPick<'w, 's>,
@@ -75,11 +75,10 @@ pub(crate) struct AttackPress<'w, 's> {
 }
 
 impl AttackPress<'_, '_> {
-    /// `0x6131a0`: the attack validator `0x612df0` (`0x6131aa`) runs first, its actor checks then
-    /// its target pick, which may move the selection; a refusal ends the press. Then the toggle:
-    /// attacking (`0x60ecb0`) stops (`0x5ecac0`), else it starts at the validator's target
-    /// (`0x5ecb70`). Only the start cancels auto-repeat (`0x5ecd8c`), so stopping melee leaves
-    /// Auto Shot running.
+    /// The attack validator runs first, its actor checks then its target pick, which may move the
+    /// selection; a refusal ends the press. Then the toggle: attacking stops, else it starts at the
+    /// validator's target. Only the start cancels auto-repeat, so stopping melee leaves Auto Shot
+    /// running.
     pub(crate) fn attack_target(&mut self) {
         let Some(guid) = self.validate(None) else {
             return;
@@ -105,14 +104,14 @@ impl AttackPress<'_, '_> {
         );
     }
 
-    /// TryCast's attack pick (`0x6e4efb`) for a spell press held there
-    /// ([`crate::spell::HeldForPick`]): the validator alone, with no swing after it. Whether the
-    /// cast goes on, at the unit the pick left selected.
+    /// TryCast's attack pick for a spell press held there ([`crate::spell::HeldForPick`]): the
+    /// validator alone, with no swing after it. Whether the cast goes on, at the unit the pick left
+    /// selected.
     pub(crate) fn pick_for_cast(&mut self, held: crate::spell::HeldCast) -> bool {
         self.validate(held.passed).is_some()
     }
 
-    /// The attack validator `0x612df0`: its actor checks, then its target pick.
+    /// The attack validator: its actor checks, then its target pick.
     fn validate(&mut self, passed: Option<u64>) -> Option<u64> {
         let Self {
             pick,
@@ -129,8 +128,8 @@ impl AttackPress<'_, '_> {
 }
 
 /// Sends the queued GameObject openers through the cast ladder. The reference reaches `TryCast`
-/// from a right-click as from a button (`0x5f35c0`, `0x6e5a90`, `0x6e4b60`), so every rung
-/// applies: a second click on a chest mid-cast is `0x6e4d43`'s silent same-spell bail.
+/// from a right-click as from a button, so every rung applies: a second click on a chest mid-cast
+/// is the reference's silent same-spell bail.
 pub(super) fn drain_go_openers(
     mut queue: ResMut<crate::ui_action::GoOpenerCasts>,
     script: Option<NonSendMut<UiScript>>,
@@ -197,10 +196,10 @@ pub(crate) enum UseOutcome {
     Attack,
 }
 
-/// `UseAction` (`0x4e5ee0`) on the pressed slot: a cast, an item use or a macro run, at the
-/// selection as the calls before it left it, or the Attack slot, which it hands back for the
-/// player's Attack to run. A macro's lines run inside it (`0x4e6098 call 0x4f1460`), so the calls
-/// they make queue for [`crate::script_calls`] to apply next.
+/// `UseAction` on the pressed slot: a cast, an item use or a macro run, at the selection as the
+/// calls before it left it, or the Attack slot, which it hands back for the player's Attack to run.
+/// A macro's lines run inside it, so the calls they make queue for [`crate::script_calls`] to apply
+/// next.
 pub(crate) fn use_action(
     p: &mut ActionPress,
     script: &mut UiScript,
@@ -223,17 +222,17 @@ pub(crate) fn use_action(
     match actions.buttons.get(&slot) {
         Some(b) if b.kind == ACTION_KIND_SPELL && b.action == SPELL_ATTACK => {
             // `UseAction` casts Attack through TryCast, so its dead rung comes first: "You are
-            // dead", where the binding, which skips TryCast, reads "Can't attack while dead."
-            // Then TryCast's effect-0x4e short-circuit runs the Attack toggle (`0x6e4c90`).
+            // dead", where the binding, which skips TryCast, reads "Can't attack while dead." Then
+            // TryCast's effect-0x4e short-circuit runs the Attack toggle.
             if ladder.dead_refusal(SPELL_ATTACK, targeting.self_store.iter().next()) {
                 return UseOutcome::Done;
             }
             return UseOutcome::Attack;
         }
         Some(b) if b.kind == ACTION_KIND_SPELL => {
-            // In `UseAction 0x4e5ee0` only: re-pressing the spell whose targeting cursor is
-            // up cancels it before `TryCast` (`GetTargetingSpellId 0x6e48e0`,
-            // `StopTargeting 0x6e4900`). A spellbook re-press aborts and re-enters.
+            // In `UseAction` only: re-pressing the spell whose targeting cursor is up cancels it
+            // before `TryCast` (`GetTargetingSpellId`, `StopTargeting`). A spellbook re-press
+            // aborts and re-enters.
             if ladder.ground.spell() == Some(b.action) {
                 debug!(
                     "ui_action: cast {} re-pressed — targeting toggles off",
@@ -242,8 +241,8 @@ pub(crate) fn use_action(
                 ladder.ground.clear();
                 return UseOutcome::Done;
             }
-            // A live `ActiveIconID` spell re-pressed cancels its aura (`0x4e55f0`, cancel
-            // `0x4e60c1`). The form-match toggle is `CastSpell`'s alone, not `UseAction`'s.
+            // A live `ActiveIconID` spell re-pressed cancels its aura. The form-match toggle is
+            // `CastSpell`'s alone, not `UseAction`'s.
             if let Some(d) = ladder.spells.as_ref().and_then(|s| s.catalog.get(b.action)) {
                 let auras = targeting.self_auras.iter().next();
                 if super::toggle::active_action_toggle(b.action, d, auras) {
@@ -299,8 +298,8 @@ pub(crate) fn use_action(
                 }
             };
             if equip {
-                // No quest guard: the bar tests only `InventoryType` (`0x4e5fdd`), unlike
-                // the bag click (`StartQuest`, `0x4fa3c4`), so a quest-starter equips.
+                // No quest guard: the bar tests only `InventoryType`, unlike the bag click
+                // (`StartQuest`), so a quest-starter equips.
                 debug!("ui_action: item action {action} auto-equip (wire {bag_index}/{slot0})");
                 // The shared auto-equip sender, so a BoE asks before binding, as from a bag.
                 crate::ui_items::send_auto_equip(
@@ -315,8 +314,8 @@ pub(crate) fn use_action(
                     false,
                 );
             } else {
-                // The shared `CGItem::Use` fork (called at `0x4e607b`): a quest-starter offers
-                // its quest, and the use runs the whole cast ladder.
+                // The shared `CGItem::Use` fork: a quest-starter offers its quest, and the use runs
+                // the whole cast ladder.
                 debug!("ui_action: item action {action} use (wire {bag_index}/{slot0})");
                 crate::ui_items::send_item_use(
                     crate::ui_items::ItemUse {
@@ -339,8 +338,7 @@ pub(crate) fn use_action(
                 );
             }
         }
-        // The macro arm (`0x4e5ee0` calls `0x4f1460`): each body line goes through the chat
-        // input, as if typed.
+        // The macro arm: each body line goes through the chat input, as if typed.
         Some(b) if b.kind == ACTION_KIND_MACRO => {
             if !crate::ui_macro::run_macro(script, b.action) {
                 debug!(

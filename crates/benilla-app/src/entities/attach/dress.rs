@@ -302,8 +302,8 @@ pub(super) fn spawn_part(
             kind: dress.kind,
             blend: part.blend,
         },
-        // The portrait booth's mirror: both mesh twins (the booth poses the skinned one at Stand,
-        // as the reference's bake `0x524f60` does) and the steady material, never a fade variant.
+        // The portrait booth's mirror: both mesh twins (the booth poses the skinned one at Stand)
+        // and the steady material, never a fade variant.
         crate::portrait::PortraitPart {
             static_mesh: part.mesh.clone(),
             skinned_mesh: part.skinned_mesh.clone(),
@@ -338,11 +338,11 @@ pub(super) fn spawn_part(
         child.insert(benilla_world::rig_palette::RigPart(dress.unit));
     }
     if dress.rigged && part.skinned_mesh.is_some() {
-        // The reference elects one sphere per object each frame, never one per batch
-        // (`0x683340`), so the root's election owns the view cull (`exterior_cull`) and
-        // `NoFrustumCulling` keeps Bevy's per-part test away. The `Aabb` then serves only the
-        // picker: the idle's authored CAaBox, else the build-time bind box, which
-        // `calculate_bounds` leaves alone on a `NoFrustumCulling` entity.
+        // The reference elects one sphere per object each frame, never one per batch, so the root's
+        // election owns the view cull (`exterior_cull`) and `NoFrustumCulling` keeps Bevy's
+        // per-part test away. The `Aabb` then serves only the picker: the idle's authored CAaBox,
+        // else the build-time bind box, which `calculate_bounds` leaves alone on a
+        // `NoFrustumCulling` entity.
         let picker_aabb = dress.idle_aabb.or(part.aabb);
         if let Some(aabb) = picker_aabb {
             child.insert((aabb, NoFrustumCulling));
@@ -353,7 +353,7 @@ pub(super) fn spawn_part(
         child.insert(aabb);
     }
     // Indoor lighting, anchored at the unit root so every part shares its verdict: the footprint
-    // MOCV bake (`0x69e4c0`, `0x6a7300`), with the matte ×1.0 as the bake's miss fallback.
+    // MOCV bake, with the matte ×1.0 as the bake's miss fallback.
     if let Some(lit) = part_interior_lit(
         mats.steady,
         mats.interior,
@@ -363,8 +363,8 @@ pub(super) fn spawn_part(
     ) {
         child.insert(lit);
     }
-    // Animated material alpha (`0x707680`), authored per sequence: it samples the unit's own
-    // `AnimationPlayer`, in phase with the pose.
+    // Animated material alpha, authored per sequence: it samples the unit's own `AnimationPlayer`,
+    // in phase with the pose.
     if let Some(anim) = &part.alpha_anim {
         child.insert(benilla_world::doodad_anim::MatAnim::following(
             anim.clone(),

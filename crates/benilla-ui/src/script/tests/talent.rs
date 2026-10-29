@@ -137,10 +137,10 @@ fn passive_body(description: &str) -> SpellTooltipView {
     }
 }
 
-/// `SetTalent` on a passive talent is the talent builder `0x52b0a0`: name, `TOOLTIP_TALENT_RANK`
-/// (white), the gold description, a `" "` spacer, `TOOLTIP_TALENT_NEXT_RANK` and the next rank's
-/// gold description, green `TOOLTIP_TALENT_LEARN`; no cost, range, cast, requirement, reagent or
-/// chance line.
+/// `SetTalent` on a passive talent is the talent builder: name, `TOOLTIP_TALENT_RANK` (white), the
+/// gold description, a `" "` spacer, `TOOLTIP_TALENT_NEXT_RANK` and the next rank's gold
+/// description, green `TOOLTIP_TALENT_LEARN`; no cost, range, cast, requirement, reagent or chance
+/// line.
 #[test]
 fn set_talent_on_a_passive_talent_is_the_talent_builder() {
     let mut s = script();
@@ -183,7 +183,7 @@ fn set_talent_on_a_passive_talent_is_the_talent_builder() {
             if t == "[LEARN]" && c[0] < 1e-6 && (c[1] - 1.0).abs() < 1e-6)
     });
     assert!(green, "the learn hint is green");
-    // The spacer is `0x530380`'s gold, not `0x5303b0`'s caller colour.
+    // The spacer is the reference's gold, not the reference's caller colour.
     let gold_spacer = quads.iter().any(|q| {
         matches!(&q.content, QuadContent::Text { text: Some(t), color: Some(c), .. }
             if t == " " && (c[0] - 1.0).abs() < 1e-6 && (c[1] - 210.0 / 255.0).abs() < 1e-3 && c[2] < 1e-6)
@@ -192,8 +192,8 @@ fn set_talent_on_a_passive_talent_is_the_talent_builder() {
     assert!(s.take_errors().is_empty());
 }
 
-/// An exceptional talent (`Talent.dbc` Flags bit 0) is the spell builder `0x52e610` instead, whose
-/// cost, cast and required-item lines stay: Holy Shield's "Requires Shields".
+/// An exceptional talent (`Talent.dbc` Flags bit 0) is the spell builder instead, whose cost, cast
+/// and required-item lines stay: Holy Shield's "Requires Shields".
 #[test]
 fn set_talent_on_an_exceptional_talent_keeps_the_spell_body() {
     let mut s = script();

@@ -1,11 +1,11 @@
 //! The snapshot of a held unit that a token names other than the player, and the per-guid feed of
 //! the units a `target` chain ends on.
 //!
-//! The reference resolves a token to a guid (`0x515970`) and reads that guid's object, so a unit it
-//! holds answers a `Unit*` getter however the token spelled it. The app pushes a snapshot
-//! for each base token by name ([`UiScript::set_unit`]); a chain such as `party1target` names a
-//! unit no base does, so the VM resolves it to a guid and reads that guid's snapshot, which
-//! [`feed_chain_units`] pushes for the guids [`UiScript::chain_end_guids`] lists.
+//! The reference resolves a token to a guid and reads that guid's object, so a unit it holds
+//! answers a `Unit*` getter however the token spelled it. The app pushes a snapshot for each base
+//! token by name ([`UiScript::set_unit`]); a chain such as `party1target` names a unit no base
+//! does, so the VM resolves it to a guid and reads that guid's snapshot, which [`feed_chain_units`]
+//! pushes for the guids [`UiScript::chain_end_guids`] lists.
 
 use std::collections::HashMap;
 
@@ -37,7 +37,7 @@ pub(super) struct HeldUnits<'a> {
 impl HeldUnits<'_> {
     /// The snapshot of the held unit `guid`, whose descriptor is `store`, as a token naming a unit
     /// other than the player carries it. It has no guild leg, so `GetGuildInfo` on a chain answers
-    /// nothing, where the reference resolves the token and reads the object's guild (`0x4c9330`).
+    /// nothing, where the reference resolves the token and reads the object's guild.
     pub(super) fn state(&self, store: &ObjectStore, guid: u64) -> UnitState {
         let name = self
             .names
@@ -70,7 +70,7 @@ impl HeldUnits<'_> {
         s.raid_target = self.group.raid_target_index(guid);
         s.faction_group = faction_group(store, self.factions);
         s.faction_group_localized = faction_group_localized(store, self.factions);
-        // `CanAttack` (`0x606980`); `UnitCanAttack` gates the target frame's level colour.
+        // `CanAttack`; `UnitCanAttack` gates the target frame's level colour.
         s.can_attack = crate::target::can_attack(
             Some(store),
             self.factions,
@@ -111,18 +111,17 @@ pub(super) struct ChainMemo {
 
 /// Push the snapshot of each held unit a `target` chain can end on, by guid, so `UnitName`,
 /// `UnitHealth` and the other getters answer for `party1target`, `raid3target` and `pettarget`
-/// (`0x515970` resolves the token, then each getter reads the guid's object, `0x468460`). The
-/// guids are the resolver's own inputs ([`UiScript::chain_end_guids`]), which the aura feed pushes
-/// each frame, so this runs after it. A guid the object manager does not hold, or holds as
-/// anything but a unit, gets no snapshot. The reference still answers such a guid: `UnitExists`
-/// from the roster (`0x491900`), `UnitHealth` from the roster or pet record (`0x496400`,
-/// `0x496420`), and `UnitName` from the pet record or the name cache, else `UNKNOWNOBJECT`
-/// (`0x5171da`-`0x517216`); those legs are not built for a chain's end. A token without a hop reads its own push, not these.
+/// (then each getter reads the guid's object). The guids are the resolver's own inputs
+/// ([`UiScript::chain_end_guids`]), which the aura feed pushes each frame, so this runs after it. A
+/// guid the object manager does not hold, or holds as anything but a unit, gets no snapshot. The
+/// reference still answers such a guid: `UnitExists` from the roster, `UnitHealth` from the roster
+/// or pet record, and `UnitName` from the pet record or the name cache, else `UNKNOWNOBJECT`; those
+/// legs are not built for a chain's end. A token without a hop reads its own push, not these.
 pub(super) fn feed_chain_units(
     script: Option<NonSendMut<UiScript>>,
     tables: super::SnapshotTables,
-    // The object manager's lookup (`0x468460`) on its own, not through [`super::UnitTokens`],
-    // whose pet-bar read would order this feed against the pet feed it does not depend on.
+    // The object manager's lookup on its own, not through [`super::UnitTokens`], whose pet-bar read
+    // would order this feed against the pet feed it does not depend on.
     index: Option<Res<crate::net::GuidIndex>>,
     stores: Query<&ObjectStore>,
     names: Res<NameCache>,
@@ -424,8 +423,8 @@ mod tests {
             &app,
             r#"UnitIsUnit("raid2target", "raid3target") == nil"#
         ));
-        // `BOSS` targets `GONE`, which nobody holds: 0 and nil, and a name the unbuilt name-cache leg
-        // would give (`0x5171eb`), so it is not asserted.
+        // `BOSS` targets `GONE`, which nobody holds: 0 and nil, and a name the unbuilt name-cache
+        // leg would give, so it is not asserted.
         assert_eq!(health(&app, "party1targettarget"), 0);
         assert!(holds(&app, r#"UnitExists("party1targettarget") == nil"#));
         // `C` targets nobody; party4 is nobody.
@@ -489,7 +488,7 @@ mod tests {
         let add = app.world_mut().resource_mut::<GuidIndex>().0.remove(&ADD);
         app.world_mut().despawn(add.unwrap());
         app.update();
-        // The name would be the name cache's (`0x5171eb`), which a chain's end does not read yet.
+        // The name would be the name cache's, which a chain's end does not read yet.
         assert_eq!(health(&app, "raid3target"), 0);
     }
 

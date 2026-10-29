@@ -2,15 +2,15 @@
 //! bit, `0x8000` (Resurrection, Redemption, Rebirth) or `0x200`. A dead player who has not released
 //! is a unit, and the unit leg takes him.
 //!
-//! - The pick ([`pick_admits`]): `0x480816` admits a corpse only with pick flag `0x40`, which while
-//!   targeting only a word in `0x8600` sets (`0x6e6230`), and then only a corpse `0x6e6260` passes.
-//! - The cursor ([`super::SpellTargeting::can_target_corpse`]): `0x6e6460`'s corpse leg
-//!   (`6e6719`–`6e676d`), then its range tail.
-//! - The click ([`bind_target_corpse`]): `BindTarget 0x6e5b40`'s corpse arm (`6e5f89`–`6e6020`),
-//!   then the merge's range test, as for a unit.
+//! - The pick ([`pick_admits`]): the reference admits a corpse only with pick flag `0x40`, which
+//!   while targeting only a word in `0x8600` sets, and then only a corpse passes.
+//! - The cursor ([`super::SpellTargeting::can_target_corpse`]): the reference's corpse leg, then
+//!   its range tail.
+//! - The click ([`bind_target_corpse`]): `BindTarget`'s corpse arm, then the merge's range test, as
+//!   for a unit.
 //!
 //! All three read two facts of the corpse, [`CorpseFacts`]: bones are never a spell target, and the
-//! reaction gate `0x6067d0` splits the ally bit from the enemy bit.
+//! reaction gate splits the ally bit from the enemy bit.
 
 use bevy::prelude::*;
 
@@ -29,7 +29,7 @@ const WORD_ENEMY: u32 = 0x0200;
 pub(crate) struct CorpseFacts {
     /// `CORPSE_FIELD_FLAGS & 1`, `CORPSE_FLAG_BONES` (`[desc+0x74]`).
     pub(crate) bones: bool,
-    /// `0x6067d0(caster, corpse)`, [`crate::target::corpse_friendly`].
+    /// `(caster, corpse)`, [`crate::target::corpse_friendly`].
     pub(crate) friendly: bool,
 }
 
@@ -56,10 +56,10 @@ pub(crate) fn corpse_pick_admits(
     pick_admits(word, CorpseFacts::of(store, factions, self_store))
 }
 
-/// `0x6e6260`, the pick's corpse filter while targeting: a word with the ally bit takes a corpse
-/// that is not bones and that `0x6067d0` passes (`6e6291`–`6e62a7`); only a word without it tries
-/// the enemy bit, on a corpse that is not bones and that `0x6067d0` fails (`6e62ad`–`6e62c6`).
-/// Both bits are inside `0x8600`, so a corpse this admits was already a candidate (`0x6e6230`).
+/// The pick's corpse filter while targeting: a word with the ally bit takes a corpse that is not
+/// bones and that the reference passes; only a word without it tries the enemy bit, on a corpse
+/// that is not bones and that the reference fails. Both bits are inside `0x8600`, so a corpse this
+/// admits was already a candidate.
 fn pick_admits(word: u32, f: CorpseFacts) -> bool {
     if word & WORD_ALLY != 0 {
         !f.bones && f.friendly
@@ -68,11 +68,10 @@ fn pick_admits(word: u32, f: CorpseFacts) -> bool {
     }
 }
 
-/// `BindTarget 0x6e5b40`'s corpse arm: the ally arm (`6e5f97`–`6e5fda`) binds a corpse that is not
-/// bones and that `0x6067d0` passes, then the enemy arm (`6e5fdc`–`6e6020`) one it fails. Each
-/// writes its bit to the wire mask (`6e5fc7`, `6e600c`), parks the corpse's guid and clears its bit
-/// from the word. `None` binds nothing, silently, and the cursor stays (`6e6026`). The read-only
-/// mirror `0x6e6460` (`6e6719`–`6e676d`) passes exactly the corpses this binds.
+/// `BindTarget`'s corpse arm: the ally arm binds a corpse that is not bones and that the reference
+/// passes, then the enemy arm one it fails. Each writes its bit to the wire mask, parks the
+/// corpse's guid and clears its bit from the word. `None` binds nothing, silently, and the cursor
+/// stays. The read-only mirror passes exactly the corpses this binds.
 fn bind_arm(word: u32, f: CorpseFacts) -> Option<CorpseTarget> {
     if f.bones {
         None
@@ -87,7 +86,7 @@ fn bind_arm(word: u32, f: CorpseFacts) -> Option<CorpseTarget> {
 
 /// The world pick's corpse admission as the frame began, which [`crate::target`]'s hover reads:
 /// `None` outside targeting, where the pick flags carry `0x5c` and so `0x40`, and every corpse is a
-/// candidate (`0x480816`); while targeting, the standing word, through [`pick_admits`].
+/// candidate; while targeting, the standing word, through [`pick_admits`].
 #[derive(Resource, Default)]
 pub(crate) struct CorpsePick(pub(crate) Option<u32>);
 
@@ -103,8 +102,8 @@ pub(crate) fn publish_corpse_pick(
 }
 
 impl super::SpellTargeting {
-    /// `0x6e6460`'s corpse leg with the range flag the hover passes (`48290b`): [`bind_arm`]'s
-    /// test, then min² ≤ d² ≤ max² (`6e668c`).
+    /// The reference's corpse leg with the range flag the hover passes: [`bind_arm`]'s test, then
+    /// min² ≤ d² ≤ max².
     pub(crate) fn can_target_corpse(&self, entity: Entity, checks: &super::BindChecks) -> bool {
         self.0.as_ref().is_some_and(|t| {
             checks
@@ -115,14 +114,14 @@ impl super::SpellTargeting {
     }
 }
 
-/// `BindTarget 0x6e5b40`'s corpse arm for the world click (`0x493540` at `4935d5`): a corpse no
-/// arm binds leaves the cursor up; otherwise the merge's range test and the commit, with the
-/// corpse's guid and its bit (`0x7e4e10` writes the guid for any mask bit in `0x8a02`).
+/// `BindTarget`'s corpse arm for the world click: a corpse no arm binds leaves the cursor up;
+/// otherwise the merge's range test and the commit, with the corpse's guid and its bit (the
+/// reference writes the guid for any mask bit in `0x8a02`).
 ///
-/// The reference sends only once the word is empty (`6e60c1`), so a word the corpse bit does not
-/// empty waits for another click with the corpse parked. No player spell has one (every shipped
-/// `0x8000` word with another bit is an NPC or test spell), and as the unit arm does, this binds
-/// only a click that empties the word.
+/// The reference sends only once the word is empty, so a word the corpse bit does not empty waits
+/// for another click with the corpse parked. No player spell has one (every shipped `0x8000` word
+/// with another bit is an NPC or test spell), and as the unit arm does, this binds only a click
+/// that empties the word.
 pub(super) fn bind_target_corpse(
     ladder: &mut crate::spell::CastLadder,
     checks: &super::BindChecks,
@@ -239,8 +238,8 @@ mod tests {
         friendly: false,
     };
 
-    /// `0x6e6260`: bones never, the ally bit only a friendly corpse, the enemy bit only an
-    /// unfriendly one, and only on a word without the ally bit.
+    /// Bones never, the ally bit only a friendly corpse, the enemy bit only an unfriendly one, and
+    /// only on a word without the ally bit.
     #[test]
     fn the_pick_admits_a_corpse_as_0x6e6260_does() {
         assert!(pick_admits(0x8000, ALLY), "Resurrection over a friend");
@@ -255,7 +254,7 @@ mod tests {
                 friendly: false
             }
         ));
-        // Both bits: the ally arm decides alone (`6e6291 jns`), so no enemy corpse.
+        // Both bits: the ally arm decides alone, so no enemy corpse.
         assert!(pick_admits(0x8200, ALLY));
         assert!(!pick_admits(0x8200, ENEMY));
         // A word with no corpse bit admits none, `0x400` inside `0x8600` included.
@@ -265,7 +264,7 @@ mod tests {
         }
     }
 
-    /// `BindTarget`'s corpse arm, which `0x6e6460`'s corpse leg mirrors: the ally arm then the
+    /// `BindTarget`'s corpse arm, which the reference's corpse leg mirrors: the ally arm then the
     /// enemy arm, each on a corpse that is not bones.
     #[test]
     fn the_bind_takes_the_arm_the_reaction_picks() {

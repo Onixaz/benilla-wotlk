@@ -1,9 +1,9 @@
 //! WMO files whose top-level chunk stream does not tile exactly, a chunk's declared size running
-//! past EOF, and whether our loader still reads them. The reference clamps the last chunk to EOF
-//! (`0x6c3a60`, `0x6c3f80`: chunks are read while the 8-byte header is in bounds), so
-//! `Undercity_144.wmo`'s MOGP one byte past EOF loads, and a file our loader loses is a bug.
-//! `cargo run -p benilla-formats --example wmo_chunk_census -- <root.wmo> | --all`
-//! Output is Blizzard data: never commit it.
+//! past EOF, and whether our loader still reads them. The reference clamps the last chunk to EOF (:
+//! chunks are read while the 8-byte header is in bounds), so `Undercity_144.wmo`'s MOGP one byte
+//! past EOF loads, and a file our loader loses is a bug.
+//! `cargo run -p benilla-formats --example wmo_chunk_census -- <root.wmo> | --all` Output is
+//! Blizzard data: never commit it.
 
 /// The first chunk declaring more bytes than the file holds, as `(tag, declared_end, file_len)`.
 fn overrun(b: &[u8]) -> Option<(String, usize, usize)> {

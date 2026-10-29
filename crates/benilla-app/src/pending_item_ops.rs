@@ -2,9 +2,9 @@
 //! ends, and the resolving field update or a nonzero `SMSG_INVENTORY_CHANGE_FAILURE` clears it.
 //! Engine-free bookkeeping; `ui_items::feed_containers` reads it into `ContainerSlot::locked`.
 //!
-//! The reference keys the lock on the item and its watcher (`0x5ddcf0`) clears on a slot's guid
-//! change alone; here the baseline is `(guid, stack count)` per slot, since a partial split-merge
-//! or a partial destroy settles by changing a slot's count while its guid stays the same.
+//! The reference keys the lock on the item and its watcher clears on a slot's guid change alone;
+//! here the baseline is `(guid, stack count)` per slot, since a partial split-merge or a partial
+//! destroy settles by changing a slot's count while its guid stays the same.
 
 use bevy::prelude::Resource;
 
@@ -49,8 +49,8 @@ impl PendingItemOps {
             .any(|e| e.iter().any(|&(pos, _)| pos == (bag, slot)))
     }
 
-    /// The resolving clear (the field-update watcher, `0x5ddcf0`): a whole entry clears once any
-    /// of its slots' current `(guid, count)` differs from its baseline. Returns the unlocked slots.
+    /// The resolving clear (the field-update watcher): a whole entry clears once any of its slots'
+    /// current `(guid, count)` differs from its baseline. Returns the unlocked slots.
     pub(crate) fn resolve(&mut self, current: impl Fn(i64, u32) -> (u64, u32)) -> Vec<(i64, u32)> {
         let mut unlocked = Vec::new();
         self.entries.retain(|entry| {
@@ -73,7 +73,7 @@ impl PendingItemOps {
     /// A nonzero-reason `SMSG_INVENTORY_CHANGE_FAILURE` (reason 0 is filtered upstream and clears
     /// nothing): clears the entries naming `item_guid`, or every entry when the guid is 0 or
     /// unrecorded, since the failure names an item, not the operation. The reference unlocks both
-    /// guids the packet carries (`0x5e3ac0`, `0x5e3ad3`). Returns the unlocked slots.
+    /// guids the packet carries. Returns the unlocked slots.
     pub(crate) fn clear_by_failure(&mut self, item_guid: u64) -> Vec<(i64, u32)> {
         let matched = item_guid != 0
             && self
@@ -86,10 +86,9 @@ impl PendingItemOps {
         self.clear_by_guid(item_guid)
     }
 
-    /// `UnlockItem` (`0x495420`): clears the entries naming `item_guid`; a non-item guid or 0
-    /// clears nothing, as the reference's resolve-as-item finds nothing. The loot close calls it
-    /// (`0x48f200` at `0x48f299`): an opened lockbox closed with loot left never changes its slot.
-    /// Returns the unlocked slots.
+    /// `UnlockItem`: clears the entries naming `item_guid`; a non-item guid or 0 clears nothing, as
+    /// the reference's resolve-as-item finds nothing. The loot close calls it: an opened lockbox
+    /// closed with loot left never changes its slot. Returns the unlocked slots.
     pub(crate) fn clear_by_guid(&mut self, item_guid: u64) -> Vec<(i64, u32)> {
         let mut unlocked = Vec::new();
         if item_guid == 0 {

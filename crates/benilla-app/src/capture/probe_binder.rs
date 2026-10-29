@@ -137,8 +137,8 @@ fn last_event(script: &UiScript) -> String {
         .unwrap_or_default()
 }
 
-/// The `CHAT_MSG_SYSTEM` lines seen since the hook went in, newest last. `SMSG_PLAYERBOUND`
-/// prints `ERR_DEATHBIND_SUCCESS_S` there (`0x5e3d3f` → `DisplayError(0x138)`, chat type 238).
+/// The `CHAT_MSG_SYSTEM` lines seen since the hook went in, newest last. `SMSG_PLAYERBOUND` prints
+/// `ERR_DEATHBIND_SUCCESS_S` there (`DisplayError(0x138)`, chat type 238).
 fn system_lines(script: &UiScript) -> Vec<String> {
     script
         .eval::<Vec<String>>("return ProbeBinderSystemLines or {}")
@@ -391,7 +391,7 @@ fn binder_probe(
             }
         }
         Phase::Line { since } => {
-            // `SMSG_PLAYERBOUND` prints `ERR_DEATHBIND_SUCCESS_S` as a system line (`0x5e3d3f`).
+            // `SMSG_PLAYERBOUND` prints `ERR_DEATHBIND_SUCCESS_S` as a system line.
             let want = bound_line(&probe.bound_name);
             let lines = system_lines(&script);
             if lines.iter().any(|l| l == &want) {

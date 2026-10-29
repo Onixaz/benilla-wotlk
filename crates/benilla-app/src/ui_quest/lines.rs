@@ -16,14 +16,14 @@ use crate::ui_quest_log::QuestLog;
 /// One quest chat line, raised in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum QuestLine {
-    /// `ERR_QUEST_ACCEPTED_S` (`0x89`) with the quest's title (`0x5dde66`).
+    /// `ERR_QUEST_ACCEPTED_S` (`0x89`) with the quest's title.
     Accepted(u32),
     /// `ERR_QUEST_COMPLETE_S` with the title, for every turn-in; the next quest in the chain only
     /// decides whether the window stays (`0x6d10ca`).
     Completed(u32),
-    /// `ERR_QUEST_REWARD_EXP_I` (`0x95`, `0x5dc4f9`).
+    /// `ERR_QUEST_REWARD_EXP_I` (`0x95`).
     Experience(u32),
-    /// `ERR_QUEST_REWARD_MONEY_S` (`0x97`, `0x5dc609`) with the coin string.
+    /// `ERR_QUEST_REWARD_MONEY_S` (`0x97`) with the coin string.
     Money(u32),
     /// `ERR_QUEST_REWARD_ITEM_S` with the item's link.
     Item(u32),

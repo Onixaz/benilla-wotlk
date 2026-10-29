@@ -10,7 +10,7 @@ use benilla_formats::{
     CharSections, CharacterGeosets, EmblemLayer, EquipGeosets, GuildEmblem, ItemDisplay,
 };
 
-/// The body's ten fixed tiles in its 256² atlas (the reference's bbox table `0xb42450`).
+/// The body's ten fixed tiles in its 256² atlas.
 const TILES: [(&str, u32, u32, u32, u32); 10] = [
     ("g0 ArmUpper", 0, 0, 128, 64),
     ("g1 ArmLower", 0, 64, 128, 64),

@@ -257,9 +257,9 @@ pub fn parse_m2_render_submeshes(
     };
 
     // A split card turns rigidly about its pivot, while the reference skins every vertex through
-    // the palette (`0x71a460`), a billboard bone's camera-replaced matrix (`0x7151f9`) one more
-    // weight. The two agree only for a rigidly separable bone; the rest stay whole, skinned on a
-    // rigged spawn (`billboard_joint_palette`).
+    // the palette, a billboard bone's camera-replaced matrix one more weight. The two agree only
+    // for a rigidly separable bone; the rest stay whole, skinned on a rigged spawn
+    // (`billboard_joint_palette`).
     let separable = separable_billboard_bones(model, tris, lookup);
 
     // Every sequence's (anim id, absolute band, loops). The loop flag is the baked loop's clock
@@ -356,8 +356,8 @@ pub fn parse_m2_render_submeshes(
         let blend = match material.map(|m| m.blend_mode.bits()) {
             Some(0) | None => ModelBlend::Opaque,
             Some(1) => ModelBlend::AlphaTest,
-            // Modes 5/6 multiply (the `0x811fe0` remap): 5 Mod is `DST_COLOR/ZERO`, 6 Mod2x
-            // `DST_COLOR/SRC_COLOR`, the ARMORREFLECT sheen layers.
+            // Modes 5/6 multiply: 5 Mod is `DST_COLOR/ZERO`, 6 Mod2x `DST_COLOR/SRC_COLOR`, the
+            // ARMORREFLECT sheen layers.
             Some(5) => ModelBlend::Mod,
             Some(6) => ModelBlend::Mod2x,
             Some(_) => ModelBlend::Blend,
@@ -371,17 +371,16 @@ pub fn parse_m2_render_submeshes(
         // Render flag 0x04: two-sided; without it the reference culls back faces.
         let two_sided = material.is_some_and(|m| m.flags.bits() & 0x04 != 0);
         // `texCoordSet (+0x12) → texture_unit_lookup (0x9c)` above 2 is a generated environment
-        // coordinate, as the reference gates it at `0x70b8bd`; stage 0 only, one texture a batch.
+        // coordinate, as the reference gates it; stage 0 only, one texture a batch.
         let env_map = model.stage_is_env_mapped(batch, 0);
         // Render flag 0x01, unlit: full texture brightness (lamp glass, glow cards).
         let emissive = material.is_some_and(|m| m.flags.bits() & 0x01 != 0);
         // Render flags 0x10 (no depth write) and 0x08 (no depth test): the reference keys depth
-        // state on these bits, not on the blend mode (`0x70c190`).
+        // state on these bits, not on the blend mode.
         let no_depth_write = material.is_some_and(|m| m.flags.bits() & 0x10 != 0);
         let no_depth_test = material.is_some_and(|m| m.flags.bits() & 0x08 != 0);
-        // Fog colour (setter `0x70baf0`): off under render flag 0x02 (`0x70bb24`), else by blend
-        // mode from `DAT_811fc4 = {1,1,1,2,2,3,4}` (`0x70bddf`, jump table `0x70c17c`): modes
-        // 0/1/2 the scene colour, 3/4 black, 5 white, 6 grey.
+        // Fog colour: off under render flag 0x02, else by blend mode from
+        // `DAT_811fc4 = {1,1,1,2,2,3,4}`: modes 0/1/2 the scene colour, 3/4 black, 5 white, 6 grey.
         let fog_policy = match material {
             Some(m) if m.flags.bits() & 0x02 != 0 => FogPolicy::Off,
             Some(m) => match m.blend_mode.bits() {
@@ -392,7 +391,7 @@ pub fn parse_m2_render_submeshes(
             },
             None => FogPolicy::Scene,
         };
-        // Static cull (`0x707b3a`): the reference skips any batch, opaque too, whose
+        // Static cull: the reference skips any batch, opaque too, whose
         // `instanceAlpha · colorAlpha · transparencyWeight ≤ 0`; a constant-0 track is dropped here
         // (`OrgrimmarFloatingEmbers`' box), as instance alpha is 1 at build.
         let color_alpha = if (batch.color_index as usize) < model.color_alpha_tracks.len() {
@@ -497,8 +496,8 @@ pub fn parse_m2_render_submeshes(
         // bonfire's `GenericGlow_Alpha_128`).
         let color_tint: Option<[f32; 4]> = match &rgb_anim {
             Some(_) => None,
-            // Mod and Mod2x discard the M2Color RGB (`0x70c507`/`0x70c5b8` zero the tint·M2Color
-            // term), so their vertex colours stay untinted.
+            // Mod and Mod2x discard the M2Color RGB (zero the tint·M2Color term), so their vertex
+            // colours stay untinted.
             None if matches!(blend, ModelBlend::Mod | ModelBlend::Mod2x) => None,
             None => model
                 .color_rgb_tracks
@@ -884,7 +883,7 @@ mod tests {
     }
 
     /// The questgiver `?` bobs z 0.000 → −0.089 in anim 0 and +0.517 → +0.427 in anim 190, the
-    /// raised bob the client arms under an overhead name (`0x6076c0`).
+    /// raised bob the client arms under an overhead name.
     #[test]
     fn questionmark_marker_batch_carries_both_bob_loops() {
         let data = crate::wow_data_or_skip!();

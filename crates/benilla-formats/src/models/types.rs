@@ -11,8 +11,8 @@ pub enum ModelBlend {
     AlphaTest,
     /// Alpha-blended or additive.
     Blend,
-    /// `out = src·dst` (GL `DST_COLOR/ZERO`; `0x811fe0`: M2 mode 5 → EGxBlend 4; WMO MOMT mode 4).
-    /// The equation reads no alpha, so these batches cannot alpha-fade.
+    /// `out = src·dst` (GL `DST_COLOR/ZERO`: M2 mode 5 → EGxBlend 4; WMO MOMT mode 4). The equation
+    /// reads no alpha, so these batches cannot alpha-fade.
     Mod,
     /// `out = 2·src·dst` (GL `DST_COLOR/SRC_COLOR`; M2 mode 6 → EGxBlend 5; WMO mode 5), neutral at
     /// mid-grey: the ARMORREFLECT sheen. No alpha either.
@@ -64,9 +64,8 @@ impl BillboardKind {
 }
 
 /// Bone flags `0x1/0x2/0x4`, ignore parent translate/scale/rotate: for a non-root bone with
-/// `flags & 7` (`0x714961`) the reference rebuilds the parent matrix from the model root, pivot
-/// kept (`0x71496d..0x714d0c`), then billboards as usual. Legs: `0x1` at `0x714c92`, `0x2` at
-/// `0x714bdb`, `0x4` at `0x714a6e` alone and `0x714a18` with `0x2`.
+/// `flags & 7` the reference rebuilds the parent matrix from the model root, pivot kept, then
+/// billboards as usual. Legs: `0x1`, `0x2`, `0x4` alone and the reference with `0x2`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParentArm {
     /// `0x1`: the frame sits at the model root's origin, not the animated parent's pivot.
@@ -81,15 +80,15 @@ pub enum ParentBasis {
     Keep,
     /// `flags & 6 == 2`, ignore parent scale: each basis vector normalized.
     UnitNormalize,
-    /// `flags & 6 == 4`, ignore parent rotation: root directions, parent lengths (`0x714a6e`).
+    /// `flags & 6 == 4`, ignore parent rotation: root directions, parent lengths.
     RootDirection,
-    /// `flags & 6 == 6`: the root's basis (`0x714a18`). Every player mount's rider seat is this or
+    /// `flags & 6 == 6`: the root's basis. Every player mount's rider seat is this or
     /// [`Self::RootDirection`], so the saddle never rotates.
     RootBasis,
 }
 
 impl ParentArm {
-    /// The arm a bone's flags author; `None` goes straight to the billboard selector (`0x714d0f`).
+    /// The arm a bone's flags author; `None` goes straight to the billboard selector.
     pub fn from_bone_flags(bits: u32) -> Option<Self> {
         if bits & 0x7 == 0 {
             return None;
@@ -108,7 +107,7 @@ impl ParentArm {
 
 /// A bone scale track on a global sequence, the pulse a glow card rides (the lamppost's
 /// `0.86..1.04` over 1333 ms), sampled at the scene clock less the instance's attach time, mod the
-/// duration (`0x714352`).
+/// duration.
 #[derive(Debug, Clone)]
 pub struct BoneScaleAnim {
     pub duration_ms: u32,
@@ -119,7 +118,7 @@ pub struct BoneScaleAnim {
 }
 
 impl BoneScaleAnim {
-    /// The scale at `time_ms` mod the duration, by the key search `0x713d50` and its linear leg.
+    /// The scale at `time_ms` mod the duration, by the key search and its linear leg.
     pub fn sample(&self, time_ms: u32) -> [f32; 3] {
         let n = self.keys.len();
         if n == 0 {
@@ -235,7 +234,7 @@ pub struct Billboard {
     pub kind: BillboardKind,
     pub scale_anim: Option<BoneScaleAnim>,
     /// Translation loops `(anim id, band keys)`: anim 0 the questgiver bob, 190 its raised form
-    /// under an overhead name (`0x6076c0`). Only the marker spawn site arms them.
+    /// under an overhead name. Only the marker spawn site arms them.
     pub seq_translations: Vec<(u16, BoneScaleAnim)>,
 }
 
@@ -249,9 +248,8 @@ pub enum WmoBatchClass {
     Ext,
 }
 
-/// The fog colour of the batch state setter (`0x70baf0`, table `DAT_811fc4` at `0x70bddf`): the
-/// scene's, black for Add, white for Mod, grey for Mod2x, off under render flag 0x02 (`0x70bb24`).
-/// Discriminants are the shader encoding.
+/// The fog colour of the batch state setter (table `DAT_811fc4`): the scene's, black for Add, white
+/// for Mod, grey for Mod2x, off under render flag 0x02. Discriminants are the shader encoding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum FogPolicy {
     #[default]
@@ -294,23 +292,21 @@ pub struct RenderSubmesh {
     /// indoors ([`Self::interior`]), its alpha lighting data on interior TRANS/INT batches and 1
     /// elsewhere. M2: the constant M2Color tint. Empty is untinted.
     pub vertex_colors: Vec<[f32; 4]>,
-    /// A WMO interior-group batch: with neither exterior bit of `groupFlags & 0x48` (`0x6b3f90`),
-    /// lit by its MOCV with the sun off. The combine is matched to captures; its gx layer is
-    /// untraced.
+    /// A WMO interior-group batch: with neither exterior bit of `groupFlags & 0x48`, lit by its
+    /// MOCV with the sun off. The combine is matched to captures; its gx layer is untraced.
     pub interior: bool,
     /// Unlit: M2 material flag `0x01`, or MOMT `0x01` on exterior WMO batches only; the interior
-    /// drawer (`0x6b5190`) ignores it and lights by section, the exterior one (`0x6b4f10`) per
-    /// material.
+    /// drawer ignores it and lights by section, the exterior one per material.
     pub emissive: bool,
-    /// Texture type 14, filled by `Model:ReplaceIconTexture` (`0x710ec0`), as on the bag buttons'
-    /// item-push card `ForcedBackpackItem.m2`.
+    /// Texture type 14, filled by `Model:ReplaceIconTexture`, as on the bag buttons' item-push card
+    /// `ForcedBackpackItem.m2`.
     pub icon_slot: bool,
     /// MOMT SIDN (`0x10`) colour, RGB gamma bytes: the windows' night glow. The reference scales it
     /// by the night fraction (ramping 20:30→21:30 and 06:00→07:00) into the GL emission inside the
-    /// lit sum, `tex × (lit + sidn·night)`, so lit batches only (`0x6b4090`).
+    /// lit sum, `tex × (lit + sidn·night)`, so lit batches only.
     pub sidn: Option<[u8; 3]>,
     /// MOMT WINDOW (`0x20`): the interior drawer lights the batch by the midpoint of the Direct and
-    /// Ambient bands (ambient +16/255), per batch (`0x6d37e0`).
+    /// Ambient bands (ambient +16/255), per batch.
     pub window: bool,
     /// A WMO batch under its root's MOHD `0x2`, the unified drawer (`0x7a9380`): the MOHD ambient
     /// (RGB bytes) its interior light is, its [`Self::vertex_colors`] light added rather than a
@@ -318,7 +314,7 @@ pub struct RenderSubmesh {
     pub wmo_unified: Option<[u8; 3]>,
     /// M2 blend mode 3 or 4 (glow cards); alpha-blended instead, the background mutes the hue.
     pub additive: bool,
-    /// M2 render flag `0x10`; without it the reference writes depth for every batch (`0x70c190`).
+    /// M2 render flag `0x10`; without it the reference writes depth for every batch.
     pub no_depth_write: bool,
     /// M2 render flag `0x08`: drawn over everything.
     pub no_depth_test: bool,
@@ -328,7 +324,7 @@ pub struct RenderSubmesh {
     /// only a skinned draw bends it.
     pub welded_billboard: bool,
     /// Time-varying colour-alpha and transparency-weight loops ([`mat_anim`](super::mat_anim)),
-    /// multiplied into the render alpha as the reference combines them (`0x707680`).
+    /// multiplied into the render alpha as the reference combines them.
     pub alpha_anim: Option<AlphaAnim>,
     /// The texture transform's translation loop ([`tex_anim`](super::tex_anim)), raw `(x, y)`.
     pub uv_anim: Option<UvAnim>,
@@ -348,7 +344,7 @@ pub struct RenderSubmesh {
     pub wmo_batch: Option<WmoBatchClass>,
     /// The M2 skin section drawn. Two batches on one section rasterize the same triangles (a sheen
     /// over its base); the reference draws both from one vertex array under LEQUAL, the later
-    /// winning exactly (`0x70c190`), so consolidators refuse a section they cannot take whole.
+    /// winning exactly, so consolidators refuse a section they cannot take whole.
     pub section: Option<u16>,
     /// Stage 0's texture coordinates generated as a view-space sphere map, not read from
     /// [`Self::uvs`] (`texture_unit_lookup[texCoordSet] > 2`; `Diffuse_Env`). Such a mesh parks
@@ -561,10 +557,10 @@ impl Default for RenderSubmesh {
 
 impl RenderSubmesh {
     /// A billboard card authored back to front: one plane with its normal in the −X half-space,
-    /// away from the viewer the billboard arm aims bone-local +X at (`0x71547c`; M2 bones have no
-    /// bind rotation, so bone-local is model space). The reference skins that normal unflipped
-    /// through the same palette row (`0x71a460`). Deviation: consumers light such a card off the
-    /// side it presents, because the reference's shading of it is inverted and follows the camera.
+    /// away from the viewer the billboard arm aims bone-local +X at (M2 bones have no bind
+    /// rotation, so bone-local is model space). The reference skins that normal unflipped through
+    /// the same palette row. Deviation: consumers light such a card off the side it presents,
+    /// because the reference's shading of it is inverted and follows the camera.
     pub fn billboard_card_faces_away(&self) -> bool {
         self.billboard.is_some() && self.plane_normal().is_some_and(|n| n[0] < -Self::EDGE_ON_X)
     }

@@ -30,7 +30,7 @@ pub(super) struct PetUnitMemory {
 }
 
 /// `UNIT_FIELD_FLAGS` `0x800`, the server-written in-combat flag: the whole trigger for
-/// `PET_ATTACK_START`/`PET_ATTACK_STOP` (`0x5ff75e`).
+/// `PET_ATTACK_START`/`PET_ATTACK_STOP`.
 pub(super) const UNIT_FLAG_PET_IN_COMBAT: u32 = 0x0000_0800;
 
 /// Feed the `"pet"` token and the pet frame's events. The token follows the bar's guid, as
@@ -137,8 +137,7 @@ pub(super) fn feed_pet_unit(
     }
 
     // PET_ATTACK_START/STOP (334/335), the pet frame's attack glow, fire on the pet's
-    // `UNIT_FIELD_FLAGS & 0x800` edge: a field callback (`0x5ff580`, at `0x5ff793`/`0x5ff79a`,
-    // registered by offset at `0x6042e2`), not the Attack button's latch.
+    // `UNIT_FIELD_FLAGS & 0x800` edge: a field callback, not the Attack button's latch.
     let in_combat = fresh
         .as_ref()
         .and_then(|_| pet_combat_flag(pet.store(pet_guid)?, pet.self_guid.0));
@@ -157,15 +156,15 @@ pub(super) fn feed_pet_unit(
             );
         }
     } else {
-        // No pet, or not ours: forget the edge; `0x5ff580` is not called when a unit leaves.
+        // No pet, or not ours: forget the edge; the reference is not called when a unit leaves.
         memory.in_combat = None;
     }
 }
 
-/// Drop our pet's cached name when its name timestamp moves, as `0x604aa0` does from the field
-/// callback on offset `0x218` (`0x604400`), and fire `LOCALPLAYER_PET_RENAMED`, which stock 1.12
-/// registers (`UIParent.lua:95`) but never handles. The reference watches every unit; this
-/// watches only our pet, so another player's renamed pet keeps its old name.
+/// Drop our pet's cached name when its name timestamp moves, as the reference does from the field
+/// callback on offset `0x218`, and fire `LOCALPLAYER_PET_RENAMED`, which stock 1.12 registers
+/// (`UIParent.lua:95`) but never handles. The reference watches every unit; this watches only our
+/// pet, so another player's renamed pet keeps its old name.
 fn watch_name_timestamp(
     pet_guid: u64,
     script: &mut UiScript,
@@ -186,7 +185,7 @@ fn watch_name_timestamp(
         debug!("ui_pet: pet {pet_guid:#x} was renamed (stamp → {now:?}) — re-asking its name");
         names.forget_pet(pet_number);
     }
-    // `0x604aa0` evicts for any owner but fires the event only for our charm or summon.
+    // The reference evicts for any owner but fires the event only for our charm or summon.
     if store
         .0
         .unit_owner(benilla_protocol::OwnerFallback::SummonedBy)
@@ -201,8 +200,8 @@ pub(super) fn was_renamed(previous: Option<(u64, Option<u32>)>, now: (u64, Optio
     previous.is_some_and(|(guid, stamp)| guid == now.0 && stamp != now.1)
 }
 
-/// The in-combat flag as `0x5ff580` sees it: `None` unless the unit is ours by CHARMEDBY, else
-/// SUMMONEDBY (`0x5ff780`, not `0x5ee5a0`'s CREATEDBY fallback); then the flag (`0x5ff78d`).
+/// The in-combat flag as the reference sees it: `None` unless the unit is ours by CHARMEDBY, else
+/// SUMMONEDBY (not the reference's CREATEDBY fallback); then the flag.
 pub(super) fn pet_combat_flag(store: &ObjectStore, self_guid: Option<u64>) -> Option<bool> {
     (store
         .0

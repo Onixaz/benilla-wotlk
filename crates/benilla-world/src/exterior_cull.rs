@@ -823,8 +823,8 @@ mod tests {
         )
     }
 
-    /// A sealed room never runs the exterior walk, the only path to the ADT liquid producer
-    /// `0x683ab0`, so the lake overhead is not drawn; the counters prove the cull reached it.
+    /// A sealed room never runs the exterior walk, the only path to the ADT liquid producer, so the
+    /// lake overhead is not drawn; the counters prove the cull reached it.
     #[test]
     fn a_sealed_room_hides_the_lake_overhead() {
         let overhead = Vec3::new(0.0, 30.0, -60.0);
@@ -842,7 +842,7 @@ mod tests {
         );
     }
 
-    /// Outdoors the gate is `Open` (`0x6811ca`) and liquid has no other owner, so no lake hides.
+    /// Outdoors the gate is `Open` and liquid has no other owner, so no lake hides.
     #[test]
     fn outdoors_every_lake_is_admitted() {
         let (vis, verdict) = run_liquid(

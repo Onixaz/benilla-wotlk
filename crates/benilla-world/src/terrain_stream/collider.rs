@@ -206,13 +206,12 @@ pub(super) fn terrain_collider_data(
 }
 
 /// How far an impassable chunk's fence rises from the chunk AABB's min z (`chunk+0x4c`): the
-/// reference's `(0, 0, 32000.0)` (`0x46fa0000` at `0x6ab599`, emitter `0x6ab530`). Nothing extends
-/// below, so a mover under the chunk floor (a mine, the sea bed) passes beneath.
+/// reference's `(0, 0, 32000.0)` (`0x46fa0000`). Nothing extends below, so a mover under the chunk
+/// floor (a mine, the sea bed) passes beneath.
 const FENCE_REACH: f32 = 32000.0;
 
-/// A tile's impassable-chunk fences as `(vertices, triangles)`, the reference's emitter
-/// `0x6ab530` reached from the movement box gather `0x6721b0 → 0x6aa8b0 → 0x6aadc0`. The flag is
-/// `CMapChunk+0xc & 0x40` (set at `0x6af5f0` from MCNK header bit 1, read only at `0x6aae2a`),
+/// A tile's impassable-chunk fences as `(vertices, triangles)`, the reference's emitter reached
+/// from the movement box gather. The flag is `CMapChunk+0xc & 0x40` (set from MCNK header bit 1),
 /// tested once per chunk.
 ///
 /// - Additive: the terrain under a flagged chunk stays walkable; the flag only adds a fence.
@@ -230,7 +229,7 @@ pub(super) fn impassable_wall_data(
     let mut verts: Vec<Vec3> = Vec::new();
     let mut tris: Vec<[u32; 3]> = Vec::new();
     for chunk in chunks.iter().filter(|c| c.impassable) {
-        // `chunk+0x4c`: the min corner of the AABB over the chunk's 145 vertices (`0x6b0e50`).
+        // `chunk+0x4c`: the min corner of the AABB over the chunk's 145 vertices.
         let Some(floor) = chunk.positions.iter().map(|p| p[2]).reduce(f32::min) else {
             continue; // a chunk with no vertices has no AABB to stand a fence on
         };

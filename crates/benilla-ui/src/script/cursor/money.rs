@@ -8,8 +8,8 @@ use super::{queue_cursor_update, CursorMoney, CursorPayload};
 use crate::script::binding_abi::{flag, number_arg};
 use crate::script::Model;
 
-/// The coin icon for an amount of copper: `GetCoinIcon`'s table (`0x48d4e0`), thresholds signed.
-/// The loot window's coin slot and the money cursor use it too.
+/// The coin icon for an amount of copper: `GetCoinIcon`'s table, thresholds signed. The loot
+/// window's coin slot and the money cursor use it too.
 pub fn coin_icon(copper: i64) -> &'static str {
     if copper < 10 {
         "Interface\\Icons\\INV_Misc_Coin_05"
@@ -41,7 +41,7 @@ fn queue_player_money(model: &mut Model) {
         .push(("PLAYER_MONEY".to_string(), Vec::new()));
 }
 
-/// Put coins on the cursor as `0x494cc0` does: the inner clear's `CURSOR_UPDATE`, after its own
+/// Put coins on the cursor as the reference does: the inner clear's `CURSOR_UPDATE`, after its own
 /// `PLAYER_MONEY` if coins were already held, then the payload and `PLAYER_MONEY`.
 fn install_money(model: &mut Model, copper: u32) {
     if matches!(model.cursor, Some(CursorPayload::Money(_))) {
@@ -113,7 +113,7 @@ pub(crate) fn pickup_trade_money(model: &mut Model, amount: i32) -> bool {
 }
 
 impl crate::script::UiScript {
-    /// The trade window's open (`SetTradePartner`, `0x4bf4e0`) folds held coins into the offer.
+    /// The trade window's open (`SetTradePartner`) folds held coins into the offer.
     pub fn fold_cursor_money_into_trade(&mut self) -> Option<u32> {
         let mut model = self.model_mut();
         add_trade_money(&mut model).then(|| model.trade.as_ref().map_or(0, |t| t.player.gold))

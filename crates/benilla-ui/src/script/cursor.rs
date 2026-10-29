@@ -1,7 +1,7 @@
-//! The cursor payload: the client's payload-mode global `[0xb4d900]` as a typed enum, and the drag
-//! gestures ([`drag`]) that change it. Bags, the paper doll ([`doll`]), the action bars ([`bar`])
-//! and the spellbook all transition it through [`queue_cursor_update`] and [`queue_lock_changed`],
-//! so sounds, `CURSOR_UPDATE`, grid events and lock display fire from one place.
+//! The cursor payload: the client's payload-mode global as a typed enum, and the drag gestures
+//! ([`drag`]) that change it. Bags, the paper doll ([`doll`]), the action bars ([`bar`]) and the
+//! spellbook all transition it through [`queue_cursor_update`] and [`queue_lock_changed`], so
+//! sounds, `CURSOR_UPDATE`, grid events and lock display fire from one place.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -28,8 +28,8 @@ pub const EQUIPMENT_BAG: i64 = -100;
 // The payload
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/// What the cursor carries, by the client's payload mode `[0xb4d900]`: 1 item, 2 money, 3 spell,
-/// 4 pet action, 5 vendor row, 8 macro, 10 stabled pet; `Action` is the bar-slot pickup.
+/// What the cursor carries, by the client's payload mode: 1 item, 2 money, 3 spell, 4 pet action, 5
+/// vendor row, 8 macro, 10 stabled pet; `Action` is the bar-slot pickup.
 #[derive(Clone, Debug, PartialEq)]
 pub enum CursorPayload {
     Item(CursorItem),
@@ -39,10 +39,10 @@ pub enum CursorPayload {
     /// Mode 13, a saved equipment set (`SetCursorEquipmentSet` `0x520dc0`), placeable on a bar.
     EquipmentSet(CursorEquipmentSet),
     PetAction(CursorPetAction),
-    /// Mode 5, a vendor row. Not an `Item`: `CursorHasItem` (`0x4895d0`) is true for modes 1 and 9
-    /// only, so all thirteen stock `CursorHasItem()` gates stay shut while one is held.
+    /// Mode 5, a vendor row. Not an `Item`: `CursorHasItem` is true for modes 1 and 9 only, so all
+    /// thirteen stock `CursorHasItem()` gates stay shut while one is held.
     Merchant(CursorMerchantItem),
-    /// Mode 10, a pet taken from the stable; its grab `0x495010` is the only writer of mode 10.
+    /// Mode 10, a pet taken from the stable; its grab is the only writer of mode 10.
     StablePet(CursorStablePet),
     /// Mode 2, coins taken off a money frame.
     Money(CursorMoney),
@@ -65,33 +65,33 @@ pub struct CursorGuildBankItem {
     pub split: Option<u32>,
 }
 
-/// Copper held on the cursor, mode 2 (`[0xb4e2f0]`, set by `PickupPlayerMoney`, `0x48abc0`). The
-/// purse is not debited; the stock money frame subtracts `GetCursorMoney()` (`MoneyFrame.lua:17`).
+/// Copper held on the cursor, mode 2 (set by `PickupPlayerMoney`). The purse is not debited; the
+/// stock money frame subtracts `GetCursorMoney()` (`MoneyFrame.lua:17`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CursorMoney {
     pub copper: u32,
 }
 
-/// A vendor row held on the cursor, mode 5, set by `PickupMerchantItem` (`0x4fb760`). A drop on a
-/// bag slot is the buy (`CMSG_BUY_ITEM_IN_SLOT`, `0x1a3`); in the reference a drop on the world,
-/// ESC or the vendor closing clears it with no packet. No registered binding reports mode 5 to Lua.
+/// A vendor row held on the cursor, mode 5, set by `PickupMerchantItem`. A drop on a bag slot is
+/// the buy (`CMSG_BUY_ITEM_IN_SLOT`, `0x1a3`); in the reference a drop on the world, ESC or the
+/// vendor closing clears it with no packet. No registered binding reports mode 5 to Lua.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CursorMerchantItem {
-    /// The row's item entry (`0xb4b41c`), which the buy names.
+    /// The row's item entry, which the buy names.
     pub item_id: u32,
-    /// The 0-based vendor row (`0xb4b420` = `trunc(arg) - 1`): a second `PickupMerchantItem` on the
-    /// same row drops the grab.
+    /// The 0-based vendor row (= `trunc(arg) - 1`): a second `PickupMerchantItem` on the same row
+    /// drops the grab.
     pub row: u32,
-    /// The icon at the mouse, resolved from the display id the reference stores (`0xb4d8ec`).
+    /// The icon at the mouse, resolved from the display id the reference stores.
     pub texture: Option<String>,
 }
 
-/// A pet held on the cursor from the stable window, mode 10, set by the grab `0x495010`.
+/// A pet held on the cursor from the stable window, mode 10, set by the grab.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CursorStablePet {
-    /// `[0xb4e300]`, in `PickupStablePet`'s index space: 0 the summoned pet, 1..=2 a stable slot.
+    /// In `PickupStablePet`'s index space: 0 the summoned pet, 1..=2 a stable slot.
     pub slot: u8,
-    /// The family icon at the mouse, never empty: the grab refuses a pet without one (`0x495010`).
+    /// The family icon at the mouse, never empty: the grab refuses a pet without one.
     pub texture: String,
 }
 
@@ -138,7 +138,7 @@ pub struct CursorSpell {
     pub book_type: String,
     pub spell_id: u32,
     pub texture: Option<String>,
-    /// `Attributes & 0x40` (`SPELL_ATTR_PASSIVE`): `PlaceAction` refuses a passive (`0x4e63ad`).
+    /// `Attributes & 0x40` (`SPELL_ATTR_PASSIVE`): `PlaceAction` refuses a passive.
     pub passive: bool,
 }
 
@@ -153,15 +153,15 @@ pub struct CursorAction {
 }
 
 /// A pet-bar payload, mode 4, from `PickupPetAction` or the pet spellbook: the packed action word
-/// copied verbatim into `[0xb4e2f8]` (`0x494f0c`) and dropped undecoded (`0x4bce00`). Pet bar
-/// only: `PlaceAction` refuses it (`0x4e62e0`).
+/// copied verbatim into the reference and dropped undecoded. Pet bar only: `PlaceAction` refuses
+/// it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CursorPetAction {
     /// The 1-based pet bar slot it came from, 0 from the spellbook.
     pub src_slot: u32,
     /// The packed action word, verbatim.
     pub packed: u32,
-    /// `Attributes & 0x40` of a spell word, tested at the drop, not the pickup (`0x4bc9f8`).
+    /// `Attributes & 0x40` of a spell word, tested at the drop, not the pickup.
     pub passive: bool,
     pub texture: Option<String>,
 }
@@ -173,8 +173,8 @@ pub struct CursorEquipmentSet {
     pub texture: Option<String>,
 }
 
-/// A macro payload from `PickupMacro`, mode 8: the bare macro id (`[0xb4e2fc]`), which
-/// `PlaceAction` accepts (`0x4e62e0`). It has no source slot, so a refused place leaves it held.
+/// A macro payload from `PickupMacro`, mode 8: the bare macro id, which `PlaceAction` accepts. It
+/// has no source slot, so a refused place leaves it held.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CursorMacro {
     /// The 1-based macro index: 1..=36 account, 37..=54 character.
@@ -193,11 +193,10 @@ pub(crate) fn queue_cursor_update(model: &mut Model) {
     model
         .pending_events
         .push(("CURSOR_UPDATE".to_string(), Vec::new()));
-    // The action bar's grid shows for any payload but a pet action, which `PlaceAction` refuses,
-    // or a vendor row, whose grab `0x4950f0` fires `ACTIONBAR_SHOWGRID` for mode 7 only
-    // (`0x495106`, `0x49513a`). The reference fires it (`0x4e58c0`) only from the item, spell and
-    // macro setters and that mode-7 grab, so coins and a stabled pet show it here and not there.
-    // The pet bar's follows the pet action alone (`0x494f28`).
+    // The action bar's grid shows for any payload but a pet action, which `PlaceAction` refuses, or
+    // a vendor row, whose grab fires `ACTIONBAR_SHOWGRID` for mode 7 only. The reference fires it
+    // only from the item, spell and macro setters and that mode-7 grab, so coins and a stabled pet
+    // show it here and not there. The pet bar's follows the pet action alone.
     let pet_held = matches!(model.cursor, Some(CursorPayload::PetAction(_)));
     let bar_held = model.cursor.is_some()
         && !pet_held
@@ -263,18 +262,17 @@ pub(super) fn item_link_name(link: Option<&str>) -> String {
         .unwrap_or_default()
 }
 
-/// `ClearCursor()` (`0x495190`): drops any payload and frees an item's source slot, then signals
-/// `CURSOR_UPDATE` from its shared tail (`0x49529b`) on every call, an empty cursor included.
+/// `ClearCursor()`: drops any payload and frees an item's source slot, then signals `CURSOR_UPDATE`
+/// from its shared tail on every call, an empty cursor included.
 pub(crate) fn clear_cursor(model: &mut Model) {
-    // Any clear first cancels an armed gift wrap, whatever its parameters (`0x495190` opens with
-    // `0x5edf10`): the wrapping paper unlocks and the cursor mode returns to the base.
+    // Any clear first cancels an armed gift wrap, whatever its parameters: the wrapping paper
+    // unlocks and the cursor mode returns to the base.
     if let Some(wrap) = model.pending_wrap.take() {
         queue_lock_changed(model, wrap.bag, wrap.slot);
         model.ui_cursor = None;
         model.ui_cursor_dirty = true;
     }
-    // Coins go back to nothing, as the purse was never debited; a vendor row clears with no
-    // packet (`0x49525f`).
+    // Coins go back to nothing, as the purse was never debited; a vendor row clears with no packet.
     let taken = model.cursor.take();
     queue_cursor_update(model);
     match taken {
@@ -288,10 +286,9 @@ pub(crate) fn clear_cursor(model: &mut Model) {
     }
 }
 
-/// The sell fork's clear, `SetCursorItem(0, …)` (`0x494b60`), shared by `PickupMerchantItem`
-/// (`0x4fb760`) and the interact ladder's vendor arm (`0x5df5d0`): unlike [`clear_cursor`] it
-/// leaves the source slot locked, grey until the server removes the item (the mode-1 arm skips
-/// `0x495420`). Any other payload is no sale and stays held (`GetCursorItem`, `0x494c60`).
+/// The sell fork's clear, `SetCursorItem(0, …)`, shared by `PickupMerchantItem` and the interact
+/// ladder's vendor arm: unlike [`clear_cursor`] it leaves the source slot locked, grey until the
+/// server removes the item. Any other payload is no sale and stays held (`GetCursorItem`).
 pub(crate) fn take_cursor_item_for_sale(model: &mut Model) -> Option<CursorItem> {
     let item = match model.cursor.take() {
         Some(CursorPayload::Item(item)) => item,
@@ -305,7 +302,7 @@ pub(crate) fn take_cursor_item_for_sale(model: &mut Model) -> Option<CursorItem>
 }
 
 /// What is under the cursor in the world this frame: the reference's click-time pick state
-/// `[this+0x350]` (`0x481f60`). The app feeds it; tests and captures leave it `Nothing`.
+/// `[this+0x350]`. The app feeds it; tests and captures leave it `Nothing`.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum WorldPick {
     /// State 0: no world hit (the sky).
@@ -318,12 +315,11 @@ pub enum WorldPick {
 }
 
 /// A left click on the world with a payload held, press and release both over the world and no
-/// drag (`0x495300`); returns whether it was consumed. Over an `Object` (`0x492ce0`) nothing
-/// drops and the click selects. Over `Terrain` (`0x492c90`) or `Nothing` (`0x492d30`) an item
-/// raises `DELETE_ITEM_CONFIRM(name, quality)` (`0x5e0320`) and stays held for the popup to clear;
-/// a spell, action, macro or pet action clears. Coins, a vendor row and a stabled pet stay held
-/// here, where the reference puts a vendor row down on every leg and clears any non-item payload
-/// over `Nothing` (`0x492e04`).
+/// drag; returns whether it was consumed. Over an `Object` nothing drops and the click selects.
+/// Over `Terrain` or `Nothing` an item raises `DELETE_ITEM_CONFIRM(name, quality)` and stays held
+/// for the popup to clear; a spell, action, macro or pet action clears. Coins, a vendor row and a
+/// stabled pet stay held here, where the reference puts a vendor row down on every leg and clears
+/// any non-item payload over `Nothing`.
 ///
 /// Deviation: on `Terrain` the reference keeps a spell, action, macro or pet action on the left
 /// button; we clear them, because otherwise a spell has no left-click way off the cursor.
@@ -427,7 +423,7 @@ impl super::UiScript {
     }
 
     /// `ClearCursor()` from Rust, which the app calls on a right-click over empty world: both
-    /// reference legs there (`0x492c90`, `0x492d30`) call `ClearCursor(1, 1)` (`0x495190`).
+    /// reference legs there call `ClearCursor(1, 1)`.
     pub fn clear_cursor_payload(&mut self) {
         clear_cursor(&mut self.model_mut());
     }
@@ -443,15 +439,15 @@ impl super::UiScript {
 // The targeting cursor's item pick and the enchant confirms
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 impl super::UiScript {
-    /// Arm or disarm the targeting cursor's item half (`TargetingWantsItem`, `0x6e6330`): while
-    /// armed, a bag or paper-doll click queues its `(bag, slot)` as a pick instead of picking up,
-    /// as the reference's two pickups do (`0x4f9b30` at `0x4f9c54`, `0x4c7300` at `0x4c76df`).
+    /// Arm or disarm the targeting cursor's item half (`TargetingWantsItem`): while armed, a bag or
+    /// paper-doll click queues its `(bag, slot)` as a pick instead of picking up, as the
+    /// reference's two pickups do.
     pub fn set_item_pick_armed(&mut self, armed: bool) {
         set_field!(self, item_pick_armed, armed);
     }
 
     /// Push the guids of the units for which the armed word's unit checks all pass.
-    /// `SpellCanTargetUnit` resolves its token to a guid, as `0x515970` does, and asks this set,
+    /// `SpellCanTargetUnit` resolves its token to a guid, as the reference does, and asks this set,
     /// so a chain such as `"party1target"` reads the unit it ends on.
     pub fn set_spell_targetable_units(&mut self, guids: impl IntoIterator<Item = u64>) {
         set_field!(self, spell_targetable_units, guids.into_iter().collect());
@@ -469,15 +465,15 @@ impl super::UiScript {
     }
 }
 
-/// A Yes on an enchant-apply confirm (`StaticPopup.lua:1245`, `:1257`); the app holds the item
-/// guid it answers for (the reference's `0xb4e3c0`/`0xb4e3c4`).
+/// A Yes on an enchant-apply confirm (`StaticPopup.lua:1245`, `:1257`); the app holds the item guid
+/// it answers for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EnchantConfirm {
-    /// `BindEnchant()` (`0x48d2e0`): reruns the enchant-apply gate `0x495d60` as already
-    /// confirmed, so it may raise the replace popup next rather than cast.
+    /// `BindEnchant()`: reruns the enchant-apply gate as already confirmed, so it may raise the
+    /// replace popup next rather than cast.
     Bind,
-    /// `ReplaceEnchant()` (`0x48d300`): binds the parked guid through `0x6e5b40`, skipping the
-    /// gate. There is no replace packet: the popup only gates the same cast.
+    /// `ReplaceEnchant()`: binds the parked guid, skipping the gate. There is no replace packet:
+    /// the popup only gates the same cast.
     Replace,
 }
 
@@ -708,8 +704,7 @@ mod tests {
         }
     }
 
-    /// `SetCursorItem(0, …)` (`0x494b60`) skips `ClearCursor`'s unlock (`0x495420`) and takes only
-    /// a held item.
+    /// `SetCursorItem(0, …)` skips `ClearCursor`'s unlock and takes only a held item.
     #[test]
     fn the_sell_clear_keeps_the_source_slot_locked() {
         let mut s = UiScript::new().unwrap();
@@ -817,8 +812,8 @@ mod tests {
         assert!(s.cursor_payload().is_none());
     }
 
-    /// The clear's shared tail (`0x49529b`) signals on every call: with nothing held, one
-    /// `CURSOR_UPDATE` and no grid event.
+    /// The clear's shared tail signals on every call: with nothing held, one `CURSOR_UPDATE` and no
+    /// grid event.
     #[test]
     fn clear_cursor_with_nothing_held_still_signals() {
         let s = UiScript::new().unwrap();

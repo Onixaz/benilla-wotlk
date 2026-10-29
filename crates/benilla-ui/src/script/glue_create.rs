@@ -1,7 +1,6 @@
-//! The character create verbs (table `0xac4228`, registered by `0x4dfd00`) and the state they keep,
-//! `CCharacterCreation`'s: the creatable races (`0x4e1c20`), the selected race index, class and
-//! sex, the five appearance dials, the dials each (race, sex) last held, the facing, and the name
-//! generator's dictionary.
+//! The character create verbs (table `0xac4228`) and the state they keep, `CCharacterCreation`'s:
+//! the creatable races (`0x4e1c20`), the selected race index, class and sex, the five appearance
+//! dials, the dials each (race, sex) last held, the facing, and the name generator's dictionary.
 //!
 //! The host seeds the tables ([`GlueCreateCatalog`]) from the DBCs; the character itself is the
 //! host's scene drive, which reads [`super::UiScript::glue_create_look`]. Indices are 1-based in Lua

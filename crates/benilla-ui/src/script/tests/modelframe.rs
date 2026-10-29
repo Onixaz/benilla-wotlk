@@ -29,7 +29,7 @@ fn the_model_pane_holds_the_scene_it_was_given() {
         r"Interface\Buttons\UI-AutoCastButton.mdx"
     );
 
-    // `SetFacing` is the `Model` yaw verb (`0x878948[4]`).
+    // `SetFacing` is the `Model` yaw verb.
     s.run("MPane:SetFacing(-0.25)").unwrap();
     assert_eq!(s.eval::<f64>("return MPane:GetFacing()").unwrap(), -0.25);
 
@@ -54,8 +54,8 @@ fn the_model_pane_holds_the_scene_it_was_given() {
 }
 
 /// Each model-pane type has its own method table and reaches its base's through the miss leg of
-/// `vtable+0x8` (`0x7020b0`): `PlayerModel`'s three (`0x84f1fc`) sit over `Model`'s 23
-/// (`0x878948`), and `CSimpleModel`'s lookup `0x76f870` has no leg into `0x506260`.
+/// `vtable+0x8`: `PlayerModel`'s three sit over `Model`'s 23, and `CSimpleModel`'s lookup has no
+/// leg.
 #[test]
 fn a_player_model_is_a_model_plus_three_and_the_chain_runs_one_way() {
     let mut s = script();
@@ -100,7 +100,7 @@ fn a_player_model_is_a_model_plus_three_and_the_chain_runs_one_way() {
         "...and back the other way, the direction an addon reskinning a paper doll takes"
     );
 
-    // `SetRotation` (`0x505bb0`) and `SetFacing` (`0x76dce0`) write the same yaw field, `+0x39c`.
+    // `SetRotation` and `SetFacing` write the same yaw field, `+0x39c`.
     s.run("PMPane:SetRotation(1.5)").unwrap();
     assert_eq!(s.eval::<f64>("return PMPane:GetFacing()").unwrap(), 1.5);
     s.run("PMPane:SetFacing(-0.25)").unwrap();
@@ -124,8 +124,8 @@ fn a_player_model_is_a_model_plus_three_and_the_chain_runs_one_way() {
     );
 }
 
-/// `SetModel` (`0x76d950`) and `ReplaceIconTexture` (`0x76ed70`) gate on `lua_isstring`, raising
-/// their usage string on anything but a string or a number; `ClearModel` (`0x76db20`) is the clear.
+/// `SetModel` and `ReplaceIconTexture` gate on `lua_isstring`, raising their usage string on
+/// anything but a string or a number; `ClearModel` is the clear.
 #[test]
 fn the_string_setters_gate_their_argument_and_a_number_is_a_string() {
     let mut s = script();
@@ -183,11 +183,11 @@ fn the_string_setters_gate_their_argument_and_a_number_is_a_string() {
     );
 }
 
-/// The reference's own method tables, entry for entry (`Model` `0x878948`, `PlayerModel`
-/// `0x84f1fc`), checked both ways: every name resolves, and a name a table lacks does not.
+/// The reference's own method tables, entry for entry (`Model`, `PlayerModel`), checked both ways:
+/// every name resolves, and a name a table lacks does not.
 #[test]
 fn the_two_model_tables_are_the_references_own() {
-    /// `Model`, `CSimpleModel`'s table `0x878948`, in table order.
+    /// `Model`, `CSimpleModel`'s table, in table order.
     const MODEL_23: [&str; 23] = [
         "SetModel",
         "GetModel",
@@ -213,7 +213,7 @@ fn the_two_model_tables_are_the_references_own() {
         "GetFogFar",
         "ClearFog",
     ];
-    /// `PlayerModel`, `CGCharacterModelBase`'s table `0x84f1fc`, in table order.
+    /// `PlayerModel`, `CGCharacterModelBase`'s table, in table order.
     const PLAYERMODEL_3: [&str; 3] = ["SetUnit", "RefreshUnit", "SetRotation"];
     /// The names in [`MODEL_23`] this client leaves unbuilt, absent rather than stubbed: none.
     const UNBUILT: [&str; 0] = [];
@@ -240,18 +240,18 @@ fn the_two_model_tables_are_the_references_own() {
             assert_eq!(
                 is_fn(&s, frame, name),
                 want,
-                "{frame}.{name}: table 0x878948 has it; built = {want}"
+                "{frame}.{name}: table has it; built = {want}"
             );
         }
     }
     for name in PLAYERMODEL_3 {
         assert!(
             is_fn(&s, "GuardPM", name),
-            "GuardPM.{name}: table 0x84f1fc entry, all three are built"
+            "GuardPM.{name}: table entry, all three are built"
         );
         assert!(
             !is_fn(&s, "GuardM", name),
-            "GuardM.{name}: 0x84f1fc is NOT reachable from CSimpleModel's lookup"
+            "GuardM.{name}: the reference is NOT reachable from CSimpleModel's lookup"
         );
     }
     // `SetCreature` is `CharacterModelBase`'s (table `0xacf514`), never plain `Model`'s.
@@ -259,8 +259,8 @@ fn the_two_model_tables_are_the_references_own() {
     assert!(!is_fn(&s, "GuardM", "SetCreature"));
 }
 
-/// `SetSequence` and `SetSequenceTime` share one arm (`0x7121a0`): each interrupts what plays and
-/// anchors the new sequence's cursor, at 0 or at the caller's `ms`, on the pane's own clock.
+/// `SetSequence` and `SetSequenceTime` share one arm: each interrupts what plays and anchors the
+/// new sequence's cursor, at 0 or at the caller's `ms`, on the pane's own clock.
 #[test]
 fn the_two_sequence_verbs_arm_the_pane_on_its_own_clock() {
     let mut s = script();
@@ -305,8 +305,8 @@ fn the_two_sequence_verbs_arm_the_pane_on_its_own_clock() {
     assert_eq!(armed(&s).1, None);
 }
 
-/// `SetLight` writes the pane's `CGLight` by the reference's argument walk (`0x76e1e0`), folding
-/// intensities into colours and normalising the direction; `GetLight` answers 7, 10 or 13 values.
+/// `SetLight` writes the pane's `CGLight` by the reference's argument walk, folding intensities
+/// into colours and normalising the direction; `GetLight` answers 7, 10 or 13 values.
 #[test]
 fn the_light_tuple_is_opaque_and_survives_the_round_trip() {
     let mut s = script();
@@ -328,7 +328,7 @@ fn the_light_tuple_is_opaque_and_survives_the_round_trip() {
     let l: Vec<f64> = s.eval("return { MLight:GetLight() }").unwrap();
     assert_eq!(l.len(), 13);
     assert_eq!((l[0], l[1]), (1.0, 0.0), "enabled, directional");
-    // The direction is normalised on write (`0x71b6a0`).
+    // The direction is normalised on write.
     let dir = [l[2], l[3], l[4]];
     let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt();
     assert!((len - 1.0).abs() < 1e-5, "normalised on write: {dir:?}");
@@ -398,8 +398,8 @@ fn the_light_tuple_is_opaque_and_survives_the_round_trip() {
 }
 
 /// `SetCamera(n)` picks by raw index, checked against the file's camera count once the file is
-/// known, and the pane waits to draw until then (`0x76cec0`, `0x76ce80`, `0x76ce00`, `0x76d5f0`).
-/// A camera draws in perspective; none, or an index past the count, draws orthographic.
+/// known, and the pane waits to draw until then. A camera draws in perspective; none, or an index
+/// past the count, draws orthographic.
 #[test]
 fn set_camera_is_a_raw_index_bounds_checked_against_the_file() {
     use super::model_clock::pane;
@@ -424,7 +424,8 @@ fn set_camera_is_a_raw_index_bounds_checked_against_the_file() {
     s.set_screen_size(800.0, 600.0);
     s.run(r#"m = CreateFrame("Model", "MCam", UIParent) m:SetModel("Creature\\Wolf\\Wolf.mdx")"#)
         .unwrap();
-    // The constructor's request for camera 0 (`0x76c910` writes `+0x320 = 0`) waits for the file.
+    // The constructor's request for camera 0 (the reference writes `+0x320 = 0`) waits for the
+    // file.
     assert_eq!(state(&s, "MCam"), (Some(0), None));
     assert!(s.visible_model_panes().is_empty(), "the draw gate holds");
 
@@ -465,8 +466,8 @@ fn set_camera_is_a_raw_index_bounds_checked_against_the_file() {
     assert_eq!(state(&s, "MLate"), (None, Some(1)));
 }
 
-/// `SetFogColor` arms the fog, `ClearFog` clears bit 0 alone (`0x76f5c5`), and the Lua setters
-/// store near and far raw (`0x76ee60`/`0x76f540`).
+/// `SetFogColor` arms the fog, `ClearFog` clears bit 0 alone, and the Lua setters store near and
+/// far raw.
 #[test]
 fn the_fog_block_arms_on_colour_and_clears_only_its_bit() {
     use super::model_clock::pane;
@@ -480,7 +481,7 @@ fn the_fog_block_arms_on_colour_and_clears_only_its_bit() {
     s.set_screen_size(800.0, 600.0);
     s.run(r#"m = CreateFrame("Model", "MFog", UIParent)"#)
         .unwrap();
-    // The constructor's fog: off, near 0, far 1 (`0x76c950`).
+    // The constructor's fog: off, near 0, far 1.
     assert_eq!(fog(&s), (false, 0.0, 1.0));
     assert_eq!(
         s.eval::<(f64, f64)>("return MFog:GetFogNear(), MFog:GetFogFar()")

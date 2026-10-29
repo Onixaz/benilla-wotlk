@@ -1,12 +1,12 @@
 //! Floating combat text, the reference's WORLDTEXTSTRING engine.
 //!
 //! A combat-log handler picks a category 0-9 and submits a string over the recipient. The text is
-//! world-anchored: the unit's overhead anchor is snapshotted at spawn (`0x6c73f0` to `0x608640`:
-//! the PlayerName attachment, slot 18, else `feet + scale × bbox_z × 1.25`), moved `z − 1/3`, and
-//! re-projected every frame (`0x483ee0`), rising and fading per its row of `0xce8828`. Numbers
-//! are bare `"%d"`, misses localized words; at most 4 texts per unit, a hard drop (`0x6c73f0`).
-//! Damage over yourself is suppressed at the emitters (Gate A, `0x71f990`/`0x722340`); the XP
-//! emitter (category 4) is self-anchored and skips it. Your own heals float green (`0x722440`).
+//! world-anchored: the unit's overhead anchor is snapshotted at spawn (slot 18, else
+//! `feet + scale × bbox_z × 1.25`), moved `z − 1/3`, and re-projected every frame, rising and
+//! fading per its row. Numbers are bare `"%d"`, misses localized words; at most 4 texts per unit, a
+//! hard drop. Damage over yourself is suppressed at the emitters (Gate A, `0x71f990`/`0x722340`);
+//! the XP emitter (category 4) is self-anchored and skips it. Your own heals float green
+//! (`0x722440`).
 //!
 //! Colour: the emitters key `B` (no spell record, or `AttributesEx3` bit 15, the sign of byte
 //! `SpellRec+0x25`) and `K` (the `0x7190a0` source class). Under the `CombatDamage` master, self
@@ -14,27 +14,25 @@
 //! pet spell gold (`PetSpellDamage`), and any other source floats nothing. Crit does not recolour
 //! and there is no school colour. Bit 15 is [`melee_styled`]'s (vmangos
 //! `SPELL_ATTR_EX3_NORMAL_RANGED_ATTACK`), set on exactly 8 rows of the real DBC, the basic ranged
-//! shots, so a Throw or Auto Shot
-//! floats white off `SMSG_SPELLNONMELEEDAMAGELOG`. The word emitter `0x607140` runs the same law
-//! and gates, so a spell's miss word is gold like its number.
+//! shots, so a Throw or Auto Shot floats white off `SMSG_SPELLNONMELEEDAMAGELOG`. The word emitter
+//! runs the same law and gates, so a spell's miss word is gold like its number.
 //!
 //! A travelling spell's word waits for the projectile: `SMSG_SPELL_GO`'s inline emit is skipped
 //! when `Spell.dbc` Speed is nonzero, and the arrival calls the same emitter (`0x702fc0`).
 //!
 //! The rise is added to world z before projection; the block is h-centred with its bottom at the
 //! projected point and clamped on-screen, but a point the projector rejects destroys the text and
-//! frees its slot (`6c7d9d` to `6c6dda` to `0x6c86a0`). The size is constant with distance,
-//! `round_half_away(v × √(W²+H²))` ([`text_px`], `0x5c6fa0`): at 1024×768 a number is 23 px, a
-//! crit settles at 35 and pops to ~70. The face is [`DamageTextFont`], created with flags 0
-//! (`6c8493`): no outline.
+//! frees its slot. The size is constant with distance, `round_half_away(v × √(W²+H²))`
+//! ([`text_px`]): at 1024×768 a number is 23 px, a crit settles at 35 and pops to ~70. The face is
+//! [`DamageTextFont`], created with flags 0: no outline.
 //!
-//! The fade `0x6c82e0` replaces the colour's alpha byte every tick, so the table's packed alpha
-//! never renders. The shadow is black, offset per axis by the viewport fraction at `0xce8804`
-//! (`0x5c8710`), drawn down-right before the text, its alpha capped to the text's by `0x5cd650`.
+//! The fade replaces the colour's alpha byte every tick, so the table's packed alpha never renders.
+//! The shadow is black, offset per axis by the viewport fraction, drawn down-right before the text,
+//! its alpha capped to the text's.
 //!
 //! Each frame every live string claims bucket 1 of the shared SmartScreenRect solver
-//! ([`crate::smart_rect`], `0x6c7cc0` to `0x509520`), each unit's slots walked descending
-//! (`0x6c6e00`): the newest number seats first and the older one moves, re-derived every frame.
+//! ([`crate::smart_rect`]), each unit's slots walked descending: the newest number seats first and
+//! the older one moves, re-derived every frame.
 //!
 //! The combat-log and spell handlers feed the spawns; the quads append to [`UiQuads`] after the
 //! script extract ([`crate::ui_pass::UiQuadAppend`]).
@@ -83,7 +81,7 @@ struct WorldText {
     category: u8,
     /// Resolved at spawn: the emitter override, else the category row's default.
     color: u32,
-    /// The unit slot, 0-3, first free (`0x6c73f0`); seats walk slots descending (`0x6c6e00`).
+    /// The unit slot, 0-3, first free; seats walk slots descending.
     slot: u8,
 }
 
@@ -92,18 +90,17 @@ struct WorldText {
 pub(crate) struct WorldTexts(Vec<WorldText>);
 
 /// The face of the floating numbers: the Lua global `DAMAGE_TEXT_FONT`, resolved once per world
-/// session. `0x6c8470` reads its value (`0x6c847c`, the only read) through `FrameScript_GetText`
-/// (`0x703bf0`) and `GetGlobalString` (`0x704350`), a plain `lua_gettable`. It is called at
-/// `0x401620`, inside `0x401570` and after the UI load `0x401602`, so after `Fonts.xml` and every
-/// non-LoadOnDemand addon's `ADDON_LOADED`, where addons assign it. The handle `[0xce8820]` has one
-/// writer and `/reloadui` does not re-run `0x6c8470` (it sets `[0xb4b3f4]` for `0x48fbf0`), so a
-/// later assignment lands at the next world entry. `None` draws in the default face; the
-/// reference has no fallback face and draws nothing.
+/// session. The reference reads its value (the only read) through `FrameScript_GetText` and
+/// `GetGlobalString`, a plain `lua_gettable`. It is called, and after the UI load, so after
+/// `Fonts.xml` and every non-LoadOnDemand addon's `ADDON_LOADED`, where addons assign it. The
+/// handle has one writer and `/reloadui` does not re-run, so a later assignment lands at the next
+/// world entry. `None` draws in the default face; the reference has no fallback face and draws
+/// nothing.
 #[derive(Resource, Default)]
 pub(crate) struct DamageTextFont(pub(crate) Option<String>);
 
-/// Read `DAMAGE_TEXT_FONT` at the tail of the world-entry UI load (`0x6c8481`). `0x704350` takes
-/// a string or number and leaves `""` otherwise, which the font factory rejects; empty is `None`.
+/// Read `DAMAGE_TEXT_FONT` at the tail of the world-entry UI load. The reference takes a string or
+/// number and leaves `""` otherwise, which the font factory rejects; empty is `None`.
 pub(crate) fn read_damage_text_font(script: &benilla_ui::script::UiScript) -> DamageTextFont {
     let value: Option<String> = script.lua().globals().get("DAMAGE_TEXT_FONT").ok();
     DamageTextFont(value.filter(|v| !v.is_empty()))
@@ -117,8 +114,8 @@ const MAX_PER_UNIT: usize = 4;
 /// lane's bottom band ([`crate::ui_pass::overlay_z`]).
 const Z_WORLD_TEXT: u64 = overlay_z::WORLD_TEXT;
 
-/// The first free of the unit's 4 slots; `None` is a hard drop, no eviction (`0x6c73f0`). The
-/// slot is also the seat-order key.
+/// The first free of the unit's 4 slots; `None` is a hard drop, no eviction. The slot is also the
+/// seat-order key.
 fn free_slot(texts: &[WorldText], anchor: Entity) -> Option<u8> {
     (0..MAX_PER_UNIT as u8).find(|s| !texts.iter().any(|t| t.anchor == anchor && t.slot == *s))
 }
@@ -136,7 +133,7 @@ pub(crate) fn float_combat_text(
     camera: Query<(&Camera, &Transform), With<WorldCamera>>,
     mut atlas: Option<ResMut<UiFontAtlas>>,
     mut quads: ResMut<UiQuads>,
-    // The overhead anchor (`0x608640`): the PlayerName attachment, else the bbox fallback.
+    // The overhead anchor: the PlayerName attachment, else the bbox fallback.
     anchors: Query<&BoneAttach>,
     poses: Query<&benilla_world::rig_anim::RigPose>,
     fallbacks: Query<&OverheadFallback>,
@@ -161,7 +158,7 @@ pub(crate) fn float_combat_text(
         let Ok(tf) = transforms.get(spawn.anchor) else {
             continue; // anchor despawned before the spawn landed
         };
-        // The spawn snapshot (`0x6c73f0`): the overhead anchor (`0x608640`), then `z − 1/3`.
+        // The spawn snapshot: the overhead anchor, then `z − 1/3`.
         let overhead = overhead_anchor(
             spawn.anchor,
             tf,
@@ -218,20 +215,20 @@ pub(crate) fn float_combat_text(
     let Some(viewport) = viewport else {
         return;
     };
-    // The per-frame reset (`0x509500`), then seats per unit in creation order (the anchor id
-    // here), slots descending (`0x6c6e00`): the newest number seats first, the older is pushed.
+    // The per-frame reset, then seats per unit in creation order (the anchor id here), slots
+    // descending: the newest number seats first, the older is pushed.
     bucket.clear();
     let mut order: Vec<usize> = (0..texts.0.len()).collect();
     order.sort_by_key(|&i| (texts.0[i].anchor, std::cmp::Reverse(texts.0[i].slot)));
-    // A rejected anchor destroys the text and frees its slot (`6c7d9d` to `6c6dda` to
-    // `0x6c86a0`); reaped after the walk, which holds the list.
+    // A rejected anchor destroys the text and frees its slot; reaped after the walk, which holds
+    // the list.
     let mut culled: Vec<usize> = Vec::new();
     for i in order {
         let t = &texts.0[i];
         let cat = &CATEGORIES[t.category as usize];
         let elapsed_ms = ((now - t.born) * 1000.0) as f32;
         let life = elapsed_ms / cat.dur_ms;
-        // The rise enters world z before projection (`6c7d29`, projected at `6c7d96`).
+        // The rise enters world z before projection.
         let world = t.pos + Vec3::Y * (cat.rise * life);
         let Some(screen) = crate::ui_pass::project_overlay(cam, &cam_tf, world, viewport) else {
             culled.push(i); // behind the camera or off the viewport
@@ -272,10 +269,10 @@ pub(crate) fn float_combat_text(
             q.color[3] = f32::from(alpha_text) / 255.0;
             bounds = Some(bounds.map_or(q.rect, |b| b.union(q.rect)));
         }
-        // The seat (`0x6c7cc0` tail to `0x509520`): clamp the centre inside the viewport, claim
-        // through bucket 1 ([`crate::smart_rect`]), and put the ink h-centred with its bottom at
-        // the solved centre. The string is created bottom-justified (`6c8254 push 0x2`, through
-        // `0x5cdf70`), so the ink rises above the point the claimed rect brackets.
+        // The seat: clamp the centre inside the viewport, claim through bucket 1
+        // ([`crate::smart_rect`]), and put the ink h-centred with its bottom at the solved centre.
+        // The string is created bottom-justified, so the ink rises above the point the claimed rect
+        // brackets.
         if let Some(b) = bounds {
             // Claimed box: 1/G48 taller and 1/G44 wider than the glyphs ([`claimed_box_px`]).
             let claim = claimed_box_px(b.width(), size_value, viewport);
@@ -300,8 +297,8 @@ pub(crate) fn float_combat_text(
                 }
             }
         }
-        // The shadow (`0x5c27a0`, offset `0xce8804`): black, the fade's shadow lane. Pushed first
-        // so the stable z-sort keeps it behind the fill, as `0x5c8710` draws shadow before main.
+        // The shadow: black, the fade's shadow lane. Pushed first so the stable z-sort keeps it
+        // behind the fill, as the reference draws shadow before main.
         if alpha_shadow > 0 {
             let off = shadow_offset_px(viewport);
             quads.overlays.extend(glyphs.iter().map(|q| {
@@ -358,8 +355,8 @@ pub(crate) fn owned_by_active_player<'a>(
     (owner == me || up == Some(me)).then_some(DamageSource::Pet)
 }
 
-/// The melee number or word, floated on [`SwingImpact`], the swing's impact keyframe (the
-/// reference's `0x6247d0` to `0x624530` deferral), so it lands with the blow. Gate A and `K` apply.
+/// The melee number or word, floated on [`SwingImpact`], the swing's impact keyframe, so it lands
+/// with the blow. Gate A and `K` apply.
 fn melee_impact_text(
     mut impacts: MessageReader<crate::creature_anim::SwingImpact>,
     self_player: Query<(), With<crate::net::SelfPlayer>>,
@@ -372,8 +369,7 @@ fn melee_impact_text(
 ) {
     let store_of = |g: u64| index.0.get(&g).and_then(|&e| stores.get(e).ok());
     for crate::creature_anim::SwingImpact { swing: s, .. } in impacts.read() {
-        // `0x62440d`, first in `0x6243e0`: a swing the `0x625e40` verdict hides floats nothing;
-        // the flinch, blood and sounds still fire.
+        // First: a swing the verdict hides floats nothing; the flinch, blood and sounds still fire.
         if !s.displayed {
             continue;
         }

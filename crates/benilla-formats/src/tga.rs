@@ -1,7 +1,7 @@
 //! TGA decoding, the other half of the reference's UI texture lookup: `TextureCreate` tries
-//! `{".tga", ".blp"}` (`0x835248`), and while 1.12 ships its UI art as BLP, addons ship TGAs. The
-//! reference's `0x5a3a30` dispatches on `imageType`: 1 and 9 (colour-mapped, raw or RLE) to
-//! `0x5a39d0` through the palette at `0x5a3820`, 2 to `0x5a3c80`, 10 to `0x5a3d70`.
+//! `{".tga", ".blp"}`, and while 1.12 ships its UI art as BLP, addons ship TGAs. The reference's
+//! dispatches on `imageType`: 1 and 9 (colour-mapped, raw or RLE) to the reference through the
+//! palette, 2, 10.
 //!
 //! Deviation: grayscale types 3 and 11 decode where the reference refuses them, because no shipped
 //! or addon file is one and removing working code would buy nothing.
@@ -34,7 +34,7 @@ pub fn tga_to_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
     };
     let paletted = matches!(image_type, 1 | 9);
     let grayscale = matches!(image_type, 3 | 11);
-    // A colour-mapped pixel is an index, its palette entry a width of its own (`0x5a3b40`).
+    // A colour-mapped pixel is an index, its palette entry a width of its own.
     let bytes_per_pixel = match (bpp, paletted, grayscale) {
         (8, true, _) => 1,
         (24, false, false) => 3,
@@ -53,8 +53,8 @@ pub fn tga_to_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
         bail!("TGA: implausible dimensions {width}x{height}");
     }
 
-    // The pixels start after the id field and any colour map, which a colour-mapped image reads
-    // on the way (`0x5a3b40`: `entryBytes * colorMapLength + idLength + 0x12`).
+    // The pixels start after the id field and any colour map, which a colour-mapped image reads on
+    // the way (: `entryBytes * colorMapLength + idLength + 0x12`).
     let map_bytes = if color_map_type == 1 {
         color_map_len * map_entry_bytes
     } else {
@@ -127,8 +127,8 @@ pub fn tga_to_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
             let s = (src_y * width as usize + src_x) * bytes_per_pixel;
             let d = (y * width as usize + x) * 4;
             if paletted {
-                // `0x5a3820`: `palette + (index - firstIndex) * entryBytes`, `firstIndex` being
-                // the header's colour-map origin (almost always 0).
+                // `palette + (index - firstIndex) * entryBytes`, `firstIndex` being the header's
+                // colour-map origin (almost always 0).
                 let idx = (pixels[s] as usize).wrapping_sub(color_map_origin);
                 let e = idx * map_entry_bytes;
                 let Some(entry) = palette.get(e..e + map_entry_bytes) else {
@@ -205,8 +205,8 @@ mod tests {
         out
     }
 
-    /// Types 1 and 9, which the reference sends to `0x5a39d0`, in the addons' shape: 8-bit
-    /// indices into a 24-bit palette.
+    /// Types 1 and 9, which the reference sends, in the addons' shape: 8-bit indices into a 24-bit
+    /// palette.
     #[test]
     fn colour_mapped_images_decode_through_the_palette() {
         // Palette as BGR: entry 0 red, entry 1 green, entry 2 blue.

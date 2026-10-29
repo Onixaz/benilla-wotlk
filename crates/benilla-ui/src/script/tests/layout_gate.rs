@@ -303,10 +303,10 @@ impl crate::script::TextMeasure for TooltipFont {
     }
 }
 
-/// A drag onto an empty bag slot re-owns the tooltip while its rows are blank, and the resolve
-/// that follows lays them at the one-unit floor (`0x772a60`). The item then lands and
-/// `ContainerFrame_Update` rebuilds the same text: nothing re-measures and the plate keeps its
-/// size, yet the rows must stack again rather than pile onto the first (#315).
+/// A drag onto an empty bag slot re-owns the tooltip while its rows are blank, and the resolve that
+/// follows lays them at the one-unit floor. The item then lands and `ContainerFrame_Update`
+/// rebuilds the same text: nothing re-measures and the plate keeps its size, yet the rows must
+/// stack again rather than pile onto the first (#315).
 #[test]
 fn a_row_laid_while_blank_stacks_again_when_the_same_text_returns() {
     let mut s = script();

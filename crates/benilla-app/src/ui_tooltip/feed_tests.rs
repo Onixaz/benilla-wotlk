@@ -279,9 +279,9 @@ fn a_modifier_change_rebuilds_only_the_matching_familys_views() {
     );
 }
 
-/// The melee range cell reads the two units' motion (`0x6e3648`-`0x6e36a2`): the caster and its
-/// auto-attack target both running at run speed, or ceasing to, rebuilds the views on the melee
-/// row and no other, and a change that leaves the bonus where it was rebuilds nothing.
+/// The melee range cell reads the two units' motion: the caster and its auto-attack target both
+/// running at run speed, or ceasing to, rebuilds the views on the melee row and no other, and a
+/// change that leaves the bonus where it was rebuilds nothing.
 #[test]
 fn a_units_run_rebuilds_only_the_melee_range_views() {
     use crate::creature_anim::{move_flags, Engaged};

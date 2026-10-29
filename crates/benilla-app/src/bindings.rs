@@ -5,7 +5,7 @@
 //! the table's generation moves, and runs a pressed chord's command.
 //!
 //! Dispatch ([`latch_and_dispatch`], in [`crate::ui_script::UiInput`] after the UI key feed), as
-//! `CBindings::ExecuteBinding` (`0x4b7990`) and `RunCommand` (`0x4b7b50`) do:
+//! `CBindings::ExecuteBinding` and `RunCommand` do:
 //! - a press probes its exact chord, then once more with its leftmost modifier dropped
 //!   ([`Chord::fallback`]);
 //! - the resolved command's body runs with `keystate = "down"`, and the base key's release runs a
@@ -18,7 +18,7 @@
 //! Deviation: a press with Super (Cmd) held runs no binding, so a system chord such as Cmd+Tab or
 //! Cmd+Q never acts in game. The reference has no such modifier and runs the bare key's binding:
 //! the Mac enqueues the key with Command held and skips only its text (`0x8a519`), and Windows
-//! hands `VK_LWIN`/`VK_RWIN` to the layout arm (`0x42da39`) like any key.
+//! hands `VK_LWIN`/`VK_RWIN` to the layout arm like any key.
 //!
 //! Persistence: `bindings-cache.wtf` in account-data slots 2 and 3 ([`wtf`]); a character slot
 //! that holds anything is the character-set state, as in the reference.
@@ -54,8 +54,8 @@ struct BindingDispatch {
 }
 
 impl BindingDispatch {
-    /// Resolve a press as the reference's `CBindings::ExecuteBinding` (`0x4b7990`) does: the exact
-    /// chord, then one retry with the leftmost modifier dropped ([`Chord::fallback`]).
+    /// Resolve a press as the reference's `CBindings::ExecuteBinding` does: the exact chord, then
+    /// one retry with the leftmost modifier dropped ([`Chord::fallback`]).
     ///
     /// Deviation, dev builds only: `dev_plane` suppresses the keyboard retry, because
     /// `Ctrl`+`Shift` is the dev overlays' plane ([`benilla_world::modkeys::DEV_CHORD`]) and
@@ -77,8 +77,8 @@ impl BindingDispatch {
 #[derive(Resource, Default)]
 pub(crate) struct BindingsState {
     /// Live latches, (base input, command): a press not yet released, whose release runs the
-    /// command's `runOnUp` half. The reference replays the press-time chord at key-up (`0x483bd0`);
-    /// latching the resolved command is equivalent.
+    /// command's `runOnUp` half. The reference replays the press-time chord at key-up; latching the
+    /// resolved command is equivalent.
     latched: Vec<(Held, String)>,
     /// The held bits a Start set and no Stop has cleared.
     held: Vec<Input>,
@@ -93,10 +93,10 @@ pub(crate) struct BindingsState {
     /// channels (`0x5fbbc0`).
     control_changed: bool,
     /// The keys we believe are down: a press of one is a repeat. The reference classifies
-    /// auto-repeat off its own list (`0x4248b3`), never the Win32 `lParam` repeat bit.
-    /// Normalized like [`latched`](Self::latched) and reconciled against `ButtonInput` every
-    /// pass, so a window deactivate empties it and a key held across an alt-tab resumes, as in
-    /// the reference. Keyboard only: mouse edges cannot repeat.
+    /// auto-repeat off its own list, never the Win32 `lParam` repeat bit. Normalized like
+    /// [`latched`](Self::latched) and reconciled against `ButtonInput` every pass, so a window
+    /// deactivate empties it and a key held across an alt-tab resumes, as in the reference.
+    /// Keyboard only: mouse edges cannot repeat.
     down: Vec<KeyCode>,
     /// The last bit-clearing Stop's keep-smoothing argument: `CameraOrSelectOrMoveStop`'s sticky
     /// flag, false from every other Stop.
@@ -383,10 +383,10 @@ fn latch_and_dispatch(
             state.held.clear();
         }
     }
-    // The reference's two bulk clears: the window deactivate (`0x514490`'s `and eax,0xfffff00f`,
+    // The reference's two bulk clears: the window deactivate (the reference's `and eax,0xfffff00f`,
     // the direction bits only, so the mouse pair and autorun survive) and the world enter behind
-    // the loading cover (`0x5144c0`), which clears every bit. A key's latch meets them in the
-    // stuck-latch sweep too, whose up-half runs the Stop.
+    // the loading cover, which clears every bit. A key's latch meets them in the stuck-latch sweep
+    // too, whose up-half runs the Stop.
     if cover.is_some_and(|c| c.covering()) {
         state.held.clear();
     } else if focus_lost.read().count() > 0 {
@@ -413,13 +413,13 @@ fn latch_and_dispatch(
     // ── Who owns this frame's keys ── a focused EditBox eats every key while it holds focus; a
     // shown keyboard frame ate the keys in `capture.consumed`. Both suppress a press and nothing
     // else: in the reference a focused box makes the movement handlers no-ops, so the direction
-    // bits are frozen, not cleared. `0x514490`, which does clear them, is the OS window-deactivate
-    // handler (sole caller `0x493058`, off the root's WM_ACTIVATE slot `[root+0x1134]`); here
-    // bevy's `KeyboardFocusLost` and `ButtonInput::release_all` reach the stuck-latch sweep below.
+    // bits are frozen, not cleared. Which does clear them, is the OS window-deactivate handler (off
+    // the root's WM_ACTIVATE slot `[root+0x1134]`); here bevy's `KeyboardFocusLost` and
+    // `ButtonInput::release_all` reach the stuck-latch sweep below.
     //
-    // ── The pressed-key reconcile ── against bevy's button planes, before this frame's messages:
-    // a release the window never saw drops off the list, and a window deactivate empties it, the
-    // reference's `0x424790` wipe, so a key held across an alt-tab re-latches on its next repeat.
+    // ── The pressed-key reconcile ── against bevy's button planes, before this frame's messages: a
+    // release the window never saw drops off the list, and a window deactivate empties it, the
+    // reference's wipe, so a key held across an alt-tab re-latches on its next repeat.
     state
         .down
         .retain(|&kc| physically_down(Held::Key(kc), &keys, &buttons));
@@ -509,9 +509,9 @@ fn latch_and_dispatch(
     }
 
     // ── Wheel ── each notch is a press and its release, back to back: the reference hands one
-    // chord to `CBindings::ExecuteBinding` with `isDown=1` (`0x483d6f`) then `isDown=0`
-    // (`0x483d82`) per wheel message. A `runOnUp` command runs both halves; a plain one's up leg is
-    // the `RunCommand` (`0x4b7bf1`) no-op. A trackpad's fractional lines carry to whole notches.
+    // chord to `CBindings::ExecuteBinding` with `isDown=1` then `isDown=0` per wheel message. A
+    // `runOnUp` command runs both halves; a plain one's up leg is the `RunCommand` no-op. A
+    // trackpad's fractional lines carry to whole notches.
     let wheel = wheel_lines(scroll.unit, scroll.delta.y);
     // Over chrome only (`PointerOverUiPanel`): the wheel still zooms with the cursor on a
     // nameplate, a mouse-enabled widget but not a panel.
@@ -550,8 +550,8 @@ fn latch_and_dispatch(
         release(&mut state, &mut script, k);
     }
 
-    // The calls this pass's binding bodies made act this frame, as the reference's return from
-    // `0x515090` has already moved the bit.
+    // The calls this pass's binding bodies made act this frame, as the reference's return from the
+    // reference has already moved the bit.
     if let Some(s) = script.as_mut() {
         let inputs = s.take_binding_input();
         state.apply_script_input(inputs);
@@ -836,14 +836,13 @@ mod tests {
         assert!(state(&app).pressed(Input::MoveForward));
         assert_eq!(lua_count(&app, "PROBE_DOWN"), 1, "W is nobody else's");
 
-        // `keystate` does not outlive the call: `RunCommand` sets it to nil (`0x4b7c42`).
+        // `keystate` does not outlive the call: `RunCommand` sets it to nil.
         assert_eq!(lua_str(&app, "tostring(keystate)"), "nil");
     }
 
-    /// A focused EditBox swallows every key (the reference's handler returns 1 on every path,
-    /// `0x77b35e`), except that in alt-arrow mode (`ignoreArrows`, `SetAltArrowKeyMode`) with ALT
-    /// up it returns 0 for the four arrows (`0x77b1c4`) and their bindings run. The stock chat box
-    /// ships the flag.
+    /// A focused EditBox swallows every key (the reference's handler returns 1 on every path),
+    /// except that in alt-arrow mode (`ignoreArrows`, `SetAltArrowKeyMode`) with ALT up it returns
+    /// 0 for the four arrows and their bindings run. The stock chat box ships the flag.
     #[test]
     fn a_flagged_editbox_lets_the_arrow_keys_through_to_their_bindings() {
         let mut app = harness();
@@ -880,7 +879,7 @@ mod tests {
     }
 
     /// A box taking focus releases nothing already held: the reference's focused box freezes the
-    /// direction bits rather than clearing them (`0x514490` is the OS window-deactivate clear).
+    /// direction bits rather than clearing them (the reference is the OS window-deactivate clear).
     #[test]
     fn a_held_latch_rides_out_a_box_taking_focus_and_still_releases() {
         let script = with_addon(PROBE_BINDINGS);
@@ -921,8 +920,8 @@ mod tests {
         );
     }
 
-    /// A notch is a press and its release (`0x483d6f`, `0x483d82`), so a `runOnUp` binding on the
-    /// wheel runs both halves in one frame.
+    /// A notch is a press and its release, so a `runOnUp` binding on the wheel runs both halves in
+    /// one frame.
     #[test]
     fn a_wheel_notch_runs_both_halves_of_a_press_and_release_binding() {
         let mut script = with_addon(PROBE_BINDINGS);
@@ -946,12 +945,11 @@ mod tests {
         assert!(app.world().resource::<BindingsState>().latched.is_empty());
     }
 
-    /// Auto-repeat is classified off our pressed-key set, as the reference's (`0x4248b3`), not the
-    /// OS bit:
+    /// Auto-repeat is classified off our pressed-key set, as the reference's, not the OS bit:
     /// 1. a repeat of a key we have down does not re-run its binding (a held SPACE jumps once);
     /// 2. a flagged repeat of a key we do not have down is a fresh press;
-    /// 3. so after a window deactivate (`0x514490` and `0x424790`), the first repeat of a key
-    ///    still held re-latches, and running resumes without lifting the key.
+    /// 3. so after a window deactivate, the first repeat of a key still held re-latches, and
+    ///    running resumes without lifting the key.
     #[test]
     fn a_repeat_is_a_key_we_already_have_down_so_a_held_key_resumes_after_an_alt_tab() {
         let mut app = harness();
@@ -980,7 +978,7 @@ mod tests {
         app.update();
         assert!(
             !state(&app).pressed(Input::MoveForward),
-            "the deactivate releases the direction bits (0x514490)"
+            "the deactivate releases the direction bits"
         );
 
         // (2) and (3): back in the window, still holding W. The OS calls this a repeat; we do not
@@ -999,9 +997,9 @@ mod tests {
         <Binding name="PROBESTOP">MoveForwardStop()</Binding>
     </Bindings>"#;
 
-    /// `MoveForwardStart`/`Stop` set and clear the bit the W key's body does (`0x515090(0x10, …)`):
-    /// a Start with no Stop keeps moving, a Stop clears it whoever set it, and outside a binding
-    /// body the gate (`0x494a50`) refuses the call.
+    /// `MoveForwardStart`/`Stop` set and clear the bit the W key's body does: a Start with no Stop
+    /// keeps moving, a Stop clears it whoever set it, and outside a binding body the gate refuses
+    /// the call.
     #[test]
     fn the_movement_functions_drive_the_held_state_as_the_key_does() {
         let script = with_addon(MOVE_BINDINGS);
@@ -1099,8 +1097,7 @@ mod tests {
     }
 
     /// The ungated one-shots fire as the keys do: `CameraZoomIn(yards)` carries its amount to the
-    /// zoom (1.0 when absent, `0x50b42d`), `SitStandOrDescendStart`'s stand toggle and
-    /// `ToggleSheath` fire.
+    /// zoom (1.0 when absent), `SitStandOrDescendStart`'s stand toggle and `ToggleSheath` fire.
     #[test]
     fn the_one_shot_functions_fire_their_inputs() {
         let mut app = harness();
@@ -1129,8 +1126,7 @@ mod tests {
     }
 
     /// Two keys on one command share its one bit: W and UP both run MOVEFORWARD's body, so the
-    /// second Start is no new edge (`0x514840`) and either release's Stop clears the bit whoever
-    /// set it (`0x514b70`).
+    /// second Start is no new edge and either release's Stop clears the bit whoever set it.
     #[test]
     fn two_keys_on_one_command_share_its_bit_so_either_release_stops_it() {
         let mut app = harness();
@@ -1168,7 +1164,7 @@ mod tests {
     #[test]
     fn a_press_probes_its_chord_then_falls_back_once() {
         // Shift held, W pressed: `SHIFT-W` is unbound, so the retry drops SHIFT and MOVEFORWARD
-        // runs (the reference's `strchr` step, `0x4b7990`).
+        // runs (the reference's `strchr` step).
         let mut app = harness();
         press_key(&mut app, KeyCode::ShiftLeft);
         press_key(&mut app, KeyCode::KeyW);
@@ -1178,7 +1174,7 @@ mod tests {
             "an unbound SHIFT-W falls back to W, the modifier dropped"
         );
         // It releases on the base key with the modifier still down (the reference replays the
-        // press-time chord at key-up, `0x483bd0`).
+        // press-time chord at key-up).
         release_key(&mut app, KeyCode::KeyW);
         app.update();
         assert!(!state(&app).pressed(Input::MoveForward));
@@ -1522,8 +1518,7 @@ mod tests {
         assert_eq!(state(&app).amount(Input::CameraZoomIn), 0.0);
     }
 
-    /// The window deactivate (`0x514490`) clears the direction bits a Lua Start set and keeps the
-    /// mouse pair.
+    /// The window deactivate clears the direction bits a Lua Start set and keeps the mouse pair.
     #[test]
     fn focus_loss_clears_the_direction_bits_and_keeps_the_mouse_pair() {
         let mut app = harness();
@@ -1545,7 +1540,7 @@ mod tests {
             .write_message(bevy::input::keyboard::KeyboardFocusLost);
         app.update();
         assert!(!state(&app).pressed(Input::MoveForward));
-        assert!(state(&app).steering(), "0x514490 masks 0xfffff00f");
+        assert!(state(&app).steering(), "the reference masks 0xfffff00f");
     }
 
     /// B opens the backpack and SHIFT-B opens every bag, end to end: a real key event, the

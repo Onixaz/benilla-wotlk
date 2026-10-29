@@ -42,7 +42,7 @@ pub fn blendscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
 }
 
 /// List the models whose batch visibility changes between sequences through the alpha combine
-/// (`A = colourAlpha × weight`, `A ≤ 0` culls; `0x707680`), which a single-sequence bake misses.
+/// (`A = colourAlpha × weight`, `A ≤ 0` culls), which a single-sequence bake misses.
 pub fn alphascan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let names = super::m2_names(chain, prefix)?;
     let (mut scanned, mut hits) = (0u32, 0u32);
@@ -241,9 +241,9 @@ pub fn texmodescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
 }
 
 /// List the batches whose texture coordinates are generated, not authored: the sphere-map
-/// environment stages (`texture_unit_lookup[texCoordSet] > 2`, gated at `0x70b8bd`). A
-/// `DEGENERATE` batch's authored UVs collapse to one point, so reading them draws one flat texel
-/// (`GnomeSubwayGlass.m2`: `AKGNOMEREFLECT.BLP` texel 0,0, doubled by Mod2x).
+/// environment stages (`texture_unit_lookup[texCoordSet] > 2`). A `DEGENERATE` batch's authored UVs
+/// collapse to one point, so reading them draws one flat texel (`GnomeSubwayGlass.m2`:
+/// `AKGNOMEREFLECT.BLP` texel 0,0, doubled by Mod2x).
 pub fn envmapscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let names = super::m2_names(chain, prefix)?;
     let (mut scanned, mut batches, mut hits, mut models, mut degenerate) =
@@ -1745,7 +1745,7 @@ fn entity_corpus(chain: &mut Chain) -> Result<EntityCorpus> {
                         .player_bodies
                         .push(format!("{file}{sex_name}"));
                 }
-                // `0x5d673c`'s format string: the corpse lane's own model, named by no table.
+                // The reference's format string: the corpse lane's own model, named by no table.
                 let bones = format!(
                     "World\\Generic\\PassiveDoodads\\DeathSkeletons\\{file}{sex_name}DeathSkeleton.mdx"
                 );
@@ -1855,7 +1855,7 @@ fn entity_corpus(chain: &mut Chain) -> Result<EntityCorpus> {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum UvClock {
     /// Every live loop runs on a global sequence, a free-running clock the reference anchors once
-    /// per instance at attach (`0x70eae1`, `CM2Model+0x68`), so one shared uniform serves it.
+    /// per instance at attach (`CM2Model+0x68`), so one shared uniform serves it.
     Gseq,
     /// Every live loop runs on its sequence band, the host's play head, which no shared uniform
     /// serves.

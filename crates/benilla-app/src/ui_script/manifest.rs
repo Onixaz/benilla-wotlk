@@ -103,12 +103,11 @@ if UpperBlackBar and LowerBlackBar then
 end
 "#;
 
-/// Runs a UI load in the counted sound-suppression scope, as `CGGameUI::Initialize` (`0x48fbf0`,
-/// called at login `0x48f681` and `/reloadui` `0x495669`) runs its own: enter (`0x458f50`) at
-/// `0x48fbfa`, leave (`0x458f60`) at `0x49016d`, and `PlaySoundByName` (`0x458030`) drops every
-/// call in between. `PLAYER_LOGIN` fires inside it only on `/reloadui` (`0x490168`); a fresh login
-/// fires it from the player's create (`0x5deb60` to `0x4908c0`), a cascade with its own scope
-/// (`0x4908d5` to `0x490a56`). The stock `TargetFrame_OnHide` at load is one sound it swallows.
+/// Runs a UI load in the counted sound-suppression scope, as `CGGameUI::Initialize` (called at
+/// login and `/reloadui`) runs its own: enter, leave, and `PlaySoundByName` drops every call in
+/// between. `PLAYER_LOGIN` fires inside it only on `/reloadui`; a fresh login fires it from the
+/// player's create, a cascade with its own scope. The stock `TargetFrame_OnHide` at load is one
+/// sound it swallows.
 pub(super) fn silenced_ui_load<S: std::borrow::Borrow<UiScript>, R>(
     script: &mut S,
     body: impl FnOnce(&mut S) -> R,
@@ -148,14 +147,13 @@ pub(crate) fn load_default_ui(script: &UiScript) -> Vec<String> {
 
 /// The core: every row of the chain's `FrameXML.toc`, in its order, each file in document order,
 /// then the chain's `Bindings.xml`. A chain without the toc builds no stock interface: the runner
-/// reports `"Couldn't open %s"` (`0x846ff4`) at severity 2 (`0x6edc3f`) and returns 0, which
-/// `UI_Init` never reads (`0x48fff2`), going on to `Bindings.xml` and the addons. benilla goes on
-/// the same way and reports it as a load failure, an `ERROR` line and a row in `/errors`.
+/// reports `"Couldn't open %s"` at severity 2 and returns 0, which `UI_Init` never reads, going on
+/// to `Bindings.xml` and the addons. benilla goes on the same way and reports it as a load failure,
+/// an `ERROR` line and a row in `/errors`.
 ///
 /// Deviation: no `FrameXML.toc` signature check, where `UI_Init` loads on a failed one and then
-/// quits (`0x401560(0xa)` at `0x48ff90`), because the check verifies Blizzard's signature with a key
-/// carried in the client binary, which benilla does not ship, and a modified interface file is
-/// loaded rather than refused.
+/// quits, because the check verifies Blizzard's signature with a key carried in the client binary,
+/// which benilla does not ship, and a modified interface file is loaded rather than refused.
 pub(super) fn load_core(script: &UiScript) -> Vec<String> {
     let Some(core) = reference_ui::core() else {
         let e = format!(
@@ -164,7 +162,7 @@ pub(super) fn load_core(script: &UiScript) -> Vec<String> {
         );
         error!("ui_script: {e}");
         script.report_load_failure(&e);
-        // Into the UI load's own record, before any banner (`0x6edc3f`).
+        // Into the UI load's own record, before any banner.
         let mut log = benilla_ui::status::Status::default();
         log.report(
             benilla_ui::status::FAILURE,
@@ -186,9 +184,8 @@ pub(super) fn load_core(script: &UiScript) -> Vec<String> {
 }
 
 /// The stock key-binding commands, `UI_Init`'s next step after the toc walk: the chain's
-/// `Interface\FrameXML\Bindings.xml` (`0x842f9c`), when the chain has it (`0x48fff9`), through
-/// the loader addons' files go through (`0x4b6f70`, called at `0x490018` here and `0x51f443` for
-/// an addon). Every command benilla has is a row of this file, its body the file's own Lua.
+/// `Interface\FrameXML\Bindings.xml`, when the chain has it, through the loader addons' files go
+/// through. Every command benilla has is a row of this file, its body the file's own Lua.
 pub(super) fn load_core_bindings(script: &UiScript) -> Vec<String> {
     let Some(bytes) = reference_ui::read(reference_ui::BINDINGS) else {
         warn!(
@@ -212,7 +209,7 @@ pub(super) fn load_core_bindings(script: &UiScript) -> Vec<String> {
             );
             Vec::new()
         }
-        // `"Couldn't parse XML in %s"` (`0x846fd8`) at severity 2 (`0x4b700c`).
+        // `"Couldn't parse XML in %s"` at severity 2.
         Err(e) => {
             let e = format!("{}: {e}", reference_ui::BINDINGS);
             error!("ui_script: {e}");
@@ -222,8 +219,8 @@ pub(super) fn load_core_bindings(script: &UiScript) -> Vec<String> {
     }
 }
 
-/// The defaults, set 0, off the player's chain: `WTF\DefaultBindings.wtf` (`0x846e44`), which
-/// `0x4b62b0` reads line by line (`0x4b6140`); empty when the chain lacks it.
+/// The defaults, set 0, off the player's chain: `WTF\DefaultBindings.wtf`, which the reference
+/// reads line by line; empty when the chain lacks it.
 pub(crate) fn default_bindings() -> Vec<benilla_ui::script::keybind::KeyBinding> {
     match reference_ui::read(reference_ui::DEFAULT_BINDINGS) {
         Some(bytes) => {
@@ -259,16 +256,15 @@ pub(crate) fn load_stock_bindings(script: &mut UiScript) {
 }
 
 /// Every [`LAYER_MANIFEST`] entry, in order, after the whole core: the layer loads as more of the
-/// stock load, with no `ADDON_LOADED` and no registry row, as FrameXML does (`0x48ffed`).
+/// stock load, with no `ADDON_LOADED` and no registry row, as FrameXML does.
 fn load_layer(script: &UiScript) -> Vec<String> {
     let layer = Addon::layer();
     layer.load_files(script, &layer.toc.files)
 }
 
 /// The in-game UI, the core, then the layer unless [`layer_enabled`] says no, then every
-/// third-party addon, on entering the world. The reference loads both in `CGGameUI::Initialize`
-/// (`0x48fbf0`), reached only from world entry (`0x401570` from `0x46c236`): `FrameXML.toc` at
-/// `0x48ffed`, its addons at `0x4900a3` (`0x51f600`).
+/// third-party addon, on entering the world. The reference loads both in `CGGameUI::Initialize`,
+/// reached only from world entry: `FrameXML.toc`, its addons.
 ///
 /// `identity`, `(realm, character)`, names the character's AddOn enable-state file, as the
 /// reference keys `AddOns.txt` per character; `roster`, the realm's characters, decides an addon
@@ -299,7 +295,7 @@ pub(super) fn load_ingame_ui_with(
         failures.extend(load_layer(script));
     }
     failures.extend(bootstrap_positions(script));
-    // Each addon's `ADDON_LOADED` fires as that addon finishes, as the reference does (`0x51f5ad`).
+    // Each addon's `ADDON_LOADED` fires as that addon finishes, as the reference does.
     failures.extend(super::addons::load_third_party(
         script,
         identity,
@@ -368,7 +364,7 @@ mod tests {
     }
 
     /// A chain without `FrameXML.toc` builds no stock interface and says so, once, as a load
-    /// failure: the reference's runner reports `"Couldn't open %s"` at severity 2 (`0x6edc3f`).
+    /// failure: the reference's runner reports `"Couldn't open %s"` at severity 2.
     #[test]
     fn a_chain_without_the_toc_builds_no_core_and_says_so() {
         let _chain = fixture::lay(&[(reference_ui::TOC, None)]);
@@ -443,7 +439,7 @@ mod tests {
     }
 
     /// Order shows: the frames registered for one event run in registration order (`SignalEvent`,
-    /// `0x703e50`, walks its tail-appended list), so the toc's row order is their handlers' order.
+    /// walks its tail-appended list), so the toc's row order is their handlers' order.
     /// `ExhaustionTick` (`MainMenuBar.lua:13`) and `PlayerFrame` (`PlayerFrame.lua:17`) both take
     /// `PLAYER_UPDATE_RESTING`, and the toc lists `MainMenuBar.xml` above `PlayerFrame.xml`.
     #[test]
@@ -515,10 +511,10 @@ mod tests {
     <Binding name="ITUNES_PLAYPAUSE" header="ITUNES_REMOTE" platform="mac">Probe("mac")</Binding>
 </Bindings>"#;
 
-    /// The core's commands are the chain's `Bindings.xml`, loaded after the toc's files (which
-    /// see none) as `UI_Init` does (`0x48ffed`, then `0x490018`): its order, its headers and its
-    /// bodies are what registers and runs, the defaults are the chain's `DefaultBindings.wtf`, and
-    /// a debug, an empty, a nested and a Mac row are no commands.
+    /// The core's commands are the chain's `Bindings.xml`, loaded after the toc's files (which see
+    /// none) as `UI_Init` does: its order, its headers and its bodies are what registers and runs,
+    /// the defaults are the chain's `DefaultBindings.wtf`, and a debug, an empty, a nested and a
+    /// Mac row are no commands.
     #[test]
     fn the_cores_commands_are_the_chain_bindings_xml() {
         const TOC_LUA: &[u8] =
@@ -571,7 +567,7 @@ mod tests {
         );
     }
 
-    /// A chain without `Bindings.xml` loads no command and fails nothing (`0x48fff9` skips it).
+    /// A chain without `Bindings.xml` loads no command and fails nothing.
     #[test]
     fn a_chain_without_bindings_xml_declares_no_command() {
         let _chain = fixture::lay(&[

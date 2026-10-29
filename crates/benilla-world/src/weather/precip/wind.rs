@@ -1,22 +1,21 @@
-//! The weather wind (`0x67c150`) and the rotations it drives: the streak apex tilt, the
-//! spawn-slab tilt and the mist spawn yaw.
+//! The weather wind and the rotations it drives: the streak apex tilt, the spawn-slab tilt and the
+//! mist spawn yaw.
 
 use bevy::prelude::*;
 
-/// Streak tilt `lerp(0°, 45°, sat(|wind|/30))` (`0x674a70`; 30 at `0x8680f0`, 45 at `0x8680f4`),
-/// applied to the streak's apex vertex only.
+/// Streak tilt `lerp(0°, 45°, sat(|wind|/30))`, applied to the streak's apex vertex only.
 const WIND_TILT_DIV: f32 = 30.0;
 const WIND_TILT_MAX_DEG: f32 = 45.0;
 
-/// Spawn-slab tilt `lerp(0°, 65°, sat(speed/18))` (`0x677965`–`0x677a55`): the streak tilt's
-/// axis, but a separate rotation with its own ramp.
+/// Spawn-slab tilt `lerp(0°, 65°, sat(speed/18))`: the streak tilt's axis, but a separate rotation
+/// with its own ramp.
 const SLAB_TILT_DIV: f32 = 18.0;
 const SLAB_TILT_MAX_DEG: f32 = 65.0;
 
-/// The player's trailing-average velocity over ~149 ms in yd/s (`0x67c150`), from its own
-/// position deltas, so orbiting the camera does not stir it. The slab tilt keys on `mgr+0x7c`
-/// instead (`0x67bf91`): a ridden transport's averaged speed when `|mgr+0x5c|² > 2`, else the
-/// player's live speed, the only source here.
+/// The player's trailing-average velocity over ~149 ms in yd/s, from its own position deltas, so
+/// orbiting the camera does not stir it. The slab tilt keys on `mgr+0x7c` instead: a ridden
+/// transport's averaged speed when `|mgr+0x5c|² > 2`, else the player's live speed, the only source
+/// here.
 #[derive(Resource)]
 pub(crate) struct WeatherWind {
     pub(super) last_pos: Option<Vec3>,
@@ -29,10 +28,9 @@ pub(crate) struct WeatherWind {
     /// The heading as a Bevy planar direction: `heading` is `atan2(y, x)` but
     /// [`wow_azimuth_to_bevy`] reads `atan2(x, y)`, a quarter turn apart.
     heading_dir: Vec3,
-    /// The streak apex tilt, leaning the fall axis toward the motion (`0x674a70`).
+    /// The streak apex tilt, leaning the fall axis toward the motion.
     pub(super) tilt: Quat,
-    /// The spawn-slab tilt: linear from zero with no dead zone (`0x674ba0`,
-    /// `0x677965`–`0x677a41`), identity at rest on the same frame.
+    /// The spawn-slab tilt: linear from zero with no dead zone, identity at rest on the same frame.
     pub(super) slab: Quat,
 }
 
@@ -86,8 +84,8 @@ impl WeatherWind {
         self.vel = sum_dpos / (total.mul_add(1000.0, 1.0) * 0.001);
 
         let mag2 = self.vel.length_squared();
-        // `mgr+0x78` (`0x67be40`): `|W| ≥ 1` picks the heading's source and every leg stores it
-        // (`0x67bee0`, `0x67bef6`, `0x67bf02`); below 1 yd/s it is the unit's facing (`0x67beff`).
+        // `mgr+0x78`: `|W| ≥ 1` picks the heading's source and every leg stores it; below 1 yd/s it
+        // is the unit's facing.
         self.heading_dir = if mag2 >= 1.0 {
             self.vel / mag2.sqrt()
         } else {
@@ -110,7 +108,7 @@ impl WeatherWind {
                     )
                 })
         };
-        // The streak apex keys on the averaged wind and dies below `|wind|² < 0.001` (`0x674a70`).
+        // The streak apex keys on the averaged wind and dies below `|wind|² < 0.001`.
         self.tilt = if mag2 < 0.001 {
             Quat::IDENTITY
         } else {
@@ -130,8 +128,8 @@ impl WeatherWind {
         self.heading
     }
 
-    /// The mist spawn yaw, `+heading`: `0x67a990` passes `−heading` to `0x7bdd60`, whose core
-    /// `0x7bdb00` negates it, so the −1.57 stream blows into a moving player's face.
+    /// The mist spawn yaw, `+heading`: the reference passes `−heading`, whose core negates it, so
+    /// the −1.57 stream blows into a moving player's face.
     pub(crate) fn mist_yaw(&self) -> Quat {
         Quat::from_rotation_y(self.heading_wow())
     }

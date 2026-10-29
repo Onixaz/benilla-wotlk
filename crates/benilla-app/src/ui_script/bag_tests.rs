@@ -1708,8 +1708,8 @@ fn a_key_dropped_on_the_button_files_itself() {
         "the reference's own dangling string name prints nothing — un-quirking it is a decision, \
          not a default"
     );
-    // Nor does it raise: `AddMessage` reads its text through `lua_isstring` (`0x6f3510`), whose
-    // failure edge jumps to the function's epilogue (`0x79562c`).
+    // Nor does it raise: `AddMessage` reads its text through `lua_isstring`, whose failure edge
+    // jumps to the function's epilogue.
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 

@@ -41,7 +41,8 @@ fn item_line_law_and_red_requirements() {
             "[DMG 68 - 103]",
             "[+DMGS 2 - 4 [SCHOOL5]]",
             "[DPS 25.3]",
-            // Display order, not field order: `0x808e88` prints STR, AGI, STA, INT, SPI, HP, MANA.
+            // Display order, not field order: the reference prints STR, AGI, STA, INT, SPI, HP,
+            // MANA.
             "[MOD_STRENGTH +9]",
             "[MOD_STAMINA +12]",
             "[RESIST_SINGLE +10 [SCHOOL5]]",
@@ -111,10 +112,10 @@ fn red_lines_track_player_state() {
     assert!(s.take_errors().is_empty());
 }
 
-/// The gated families (`0x52b650`): SIGNABLE green, UNIQUE before STARTS_QUEST, LOCKED red, six
-/// equal resistances as one ALL line (Holy never prints alone), a known taught spell's red
-/// "Already known", the gold description, and no openable line: the openable, readable and creator
-/// tail needs an item object (`0x52e1c7`, `0x52e2e0`), and a template has none.
+/// The gated families: SIGNABLE green, UNIQUE before STARTS_QUEST, LOCKED red, six equal
+/// resistances as one ALL line (Holy never prints alone), a known taught spell's red "Already
+/// known", the gold description, and no openable line: the openable, readable and creator tail
+/// needs an item object, and a template has none.
 #[test]
 fn verified_families_signable_locked_resists_known() {
     let mut s = script();
@@ -202,7 +203,7 @@ fn verified_families_signable_locked_resists_known() {
     "#,
     )
     .unwrap();
-    // The five that print follow the builder, not the fields: `0x52c8ad` runs `edi` 1..5 reading
+    // The five that print follow the builder, not the fields: the reference runs `edi` 1..5 reading
     // school `(edi == 1) ? 6 : edi`, so Arcane leads.
     s.set_item_template(
         5520,
@@ -231,10 +232,10 @@ fn verified_families_signable_locked_resists_known() {
     assert!(s.take_errors().is_empty());
 }
 
-/// The slot and type cells red separately: a hard proficiency miss (`0xc4d4a0[class]` bit
-/// `1 << subclass`) reds the type; usable only through the alternate subclass, or an off-hand
-/// weapon without Dual Wield (`0x5eab70`), reds the slot. The reputation line takes the red
-/// (`0xc0d390`) below the required rank, and a hidden subclass prints no type cell.
+/// The slot and type cells red separately: a hard proficiency miss (`[class]` bit `1 << subclass`)
+/// reds the type; usable only through the alternate subclass, or an off-hand weapon without Dual
+/// Wield, reds the slot. The reputation line takes the red below the required rank, and a hidden
+/// subclass prints no type cell.
 #[test]
 fn proficiency_and_reputation_reds() {
     let mut s = script();
@@ -406,8 +407,8 @@ fn proficiency_and_reputation_reds() {
     assert!(s.take_errors().is_empty());
 }
 
-/// `ITEM_MIN_LEVEL` prints only above 1 (`0x52d2cf`): a level-1 requirement, as starter food and
-/// water carry, prints nothing.
+/// `ITEM_MIN_LEVEL` prints only above 1: a level-1 requirement, as starter food and water carry,
+/// prints nothing.
 #[test]
 fn required_level_one_is_hidden() {
     let mut s = script();
@@ -439,9 +440,9 @@ fn required_level_one_is_hidden() {
     assert!(s.take_errors().is_empty());
 }
 
-/// A charter's guild name and master sit between the item name and the green `ITEM_SIGNABLE`
-/// (`0x52b650` emits the name, the petition lines, then SIGNABLE). A plain petition takes the
-/// "Petition:" and "Created by" keys, and an owner still in flight withholds only its own line.
+/// A charter's guild name and master sit between the item name and the green `ITEM_SIGNABLE` (the
+/// petition lines, then SIGNABLE). A plain petition takes the "Petition:" and "Created by" keys,
+/// and an owner still in flight withholds only its own line.
 #[test]
 fn charter_lines_sit_between_the_name_and_the_signable_line() {
     let mut s = script();
@@ -651,8 +652,7 @@ fn instance_tail_creator_and_readable() {
     );
     assert_eq!(lines[1].1, [1.0, 1.0, 1.0, 1.0], "WRITTEN_BY is white");
     assert_eq!(lines[2].1, [0.0, 1.0, 0.0, 1.0], "READABLE is green");
-    // The instance tail (`0x52e1b1`-`0x52e358`): a creator still in flight prints no writer line,
-    // and READABLE stays.
+    // The instance tail: a creator still in flight prints no writer line, and READABLE stays.
     s.run(r#"TT:SetOwner(getglobal("SlotL"), "ANCHOR_RIGHT"); TT:SetBagItem(0, 2)"#)
         .unwrap();
     let texts: Vec<String> = lines_of(&mut s).into_iter().map(|(t, _)| t).collect();
@@ -680,8 +680,8 @@ fn instance_tail_creator_and_readable() {
         .unwrap();
     let texts: Vec<String> = lines_of(&mut s).into_iter().map(|(t, _)| t).collect();
     assert_eq!(texts, vec!["Small Barnacled Clam", "[ITEM_OPENABLE]"]);
-    // Mid-cooldown the clam takes `SetBagItem`'s other leg (p6 = 1, picked at `0x6e2ed0`), which
-    // skips the openable tree; the reference prints `ITEM_COOLDOWN_TIME` there, unfed here.
+    // Mid-cooldown the clam takes `SetBagItem`'s other leg (p6 = 1), which skips the openable tree;
+    // the reference prints `ITEM_COOLDOWN_TIME` there, unfed here.
     let has_cd: bool = s
         .eval(r#"TT:SetOwner(getglobal("SlotL"), "ANCHOR_RIGHT"); return TT:SetBagItem(0, 6)"#)
         .unwrap();
@@ -696,9 +696,8 @@ fn instance_tail_creator_and_readable() {
 }
 
 /// Bonding `[record+0x194]` in 1..5 decides whether a bind line prints; a runtime-bound instance
-/// (`0x5da2c0`: the soulbound flag, or a live enchant slot that binds) prints `ITEM_SOULBOUND`,
-/// or `ITEM_BIND_QUEST` for the quest kinds; else the jump table `0x52e4fc` picks 1 picked up,
-/// 2 equipped, 3 used, 4 and 5 Quest Item.
+/// (or a live enchant slot that binds) prints `ITEM_SOULBOUND`, or `ITEM_BIND_QUEST` for the quest
+/// kinds; else the jump table picks 1 picked up, 2 equipped, 3 used, 4 and 5 Quest Item.
 #[test]
 fn a_runtime_bound_instance_overrides_the_bind_line_to_soulbound() {
     let mut s = script();
@@ -785,9 +784,9 @@ fn a_runtime_bound_instance_overrides_the_bind_line_to_soulbound() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The damage templates (`0x52c22b`): the school arm goes by the slot's school number, the ammo
-/// arm by `ItemClass == 6` alone, the single arm by equal rounded bounds, and the first/`PLUS_`
-/// flag is per item, kept past a skipped slot. Bounds round as `floor(min)`, `ceil(max)`.
+/// The damage templates: the school arm goes by the slot's school number, the ammo arm by
+/// `ItemClass == 6` alone, the single arm by equal rounded bounds, and the first/`PLUS_` flag is
+/// per item, kept past a skipped slot. Bounds round as `floor(min)`, `ceil(max)`.
 #[test]
 fn damage_matrix_arms_and_the_first_flag() {
     let mut s = script();
@@ -859,8 +858,8 @@ fn damage_matrix_arms_and_the_first_flag() {
         ..Default::default()
     };
     let lines = show(&mut s, 904, arrow.clone());
-    // The type line reads "Projectile | Arrow": the left cell is the DBC name (`0x52c0bc`),
-    // never a GlobalString such as the absent `INVTYPE_AMMO`.
+    // The type line reads "Projectile | Arrow": the left cell is the DBC name, never a GlobalString
+    // such as the absent `INVTYPE_AMMO`.
     assert_eq!(lines[1], "Projectile", "{lines:?}");
     let ty: String = s
         .eval("return TTTextRight2:GetText() or ''")
@@ -914,8 +913,8 @@ fn damage_matrix_arms_and_the_first_flag() {
     );
 }
 
-/// The bag line (`0x52b754`) gates on `InventoryType == 0x12` alone, and its noun is the
-/// subclass's DisplayName; a row with no name prints no line.
+/// The bag line gates on `InventoryType == 0x12` alone, and its noun is the subclass's DisplayName;
+/// a row with no name prints no line.
 #[test]
 fn container_slots_line_names_its_subclass() {
     let mut s = script();

@@ -1,16 +1,14 @@
 //! The ranged weapon prop's own animation: a bow's limbs bend, a gun fires its muzzle blast.
 //!
-//! The reference keeps the equipped ranged weapon's M2 instance at `[CGUnit+0xd24]` (written by
-//! `0x611e10` at `0x611eca` on any sheath to 2) and arms that model's own animation from two keys
-//! on the body clip:
+//! The reference keeps the equipped ranged weapon's M2 instance at `[CGUnit+0xd24]` and arms that
+//! model's own animation from two keys on the body clip:
 //!
-//! - `$BWP` (LoadBow 105 at 0.434 s, LoadRifle 106 at 0.433 s) goes to `0x624cc0`: if the prop
-//!   owns 160 BowPull (`0x624cee push 0xa0; call 0x711960`, a presence test it bails on), play it
-//!   at a rate that fits its length into the body clip's remaining time (`0x624e31`).
-//! - `$BWR` (AttackBow 46 at 0.033 s, AttackRifle 49 at 0.000 s) goes to `0x600159`, which forks on
-//!   the body clip's family: a bow clip (`0x5fcfb0`: 46, 105, 109) arms 0 Stand (`0x600209`), the
-//!   drawn limbs relaxing; a rifle clip (`0x5fcfd0`: 49, 106, 110, guns and crossbows) arms 161
-//!   BowRelease (`0x600273`, `push 0xa1`).
+//! - `$BWP` (LoadBow 105 at 0.434 s, LoadRifle 106 at 0.433 s) goes: if the prop owns 160 BowPull
+//!   (a presence test it bails on), play it at a rate that fits its length into the body clip's
+//!   remaining time.
+//! - `$BWR` (AttackBow 46 at 0.033 s, AttackRifle 49 at 0.000 s) goes, which forks on the body
+//!   clip's family: a bow clip (105, 109) arms 0 Stand, the drawn limbs relaxing; a rifle clip
+//!   (106, 110, guns and crossbows) arms 161 BowRelease (`push 0xa1`).
 //!
 //! The rifle arm is the gun's muzzle blast. A firearm M2 authors only Stand and BowRelease:
 //! `Firearm_2H_Rifle_A_01.m2`'s seven emitters hold a flat rate in every sequence and key only
@@ -19,13 +17,12 @@
 //! aiming the blast down the barrel. 21 of the 22 firearms author 161, 25 bows and crossbows author
 //! 160 and 161, and no other weapon model authors either.
 //!
-//! Only four sites arm `[+0xd24]`: those three and the un-nock reset (`0x60f59d`). Thrown and wand
-//! (`0x5fcf90`: 107, 111, 112) match neither `$BWR` arm, so they get no prop animation.
+//! Only four sites arm `[+0xd24]`: those three and the un-nock reset. Thrown and wand (111, 112)
+//! match neither `$BWR` arm, so they get no prop animation.
 //!
 //! Both `$BWR` arms are gated by `[CGUnit+0xac]`, the queue of `CMissile` nodes awaiting release
-//! ([`crate::entities::PendingMissiles`]): `$BWR` reads it (`0x600182`) before draining it
-//! (`0x600294` into `0x60c940`, the launcher), so no queued missile means no flex, and the flex
-//! runs ahead of the drain.
+//! ([`crate::entities::PendingMissiles`]): `$BWR` reads it before draining it (the launcher), so no
+//! queued missile means no flex, and the flex runs ahead of the drain.
 
 use bevy::prelude::*;
 
@@ -33,23 +30,22 @@ use benilla_assets::ModelAnimations;
 
 use crate::creature_anim::AnimSoundEvent;
 
-/// `AnimationData.dbc` 160 BowPull, the prop clip `$BWP` arms (`0x624e2a push 0xa0`).
+/// `AnimationData.dbc` 160 BowPull, the prop clip `$BWP` arms.
 pub(crate) const BOW_PULL: u16 = 160;
-/// `AnimationData.dbc` 161 BowRelease, the prop clip the rifle arm of `$BWR` plays (`0x60026c push
-/// 0xa1`): a firearm's muzzle blast. A bow authors it but never reaches it from here.
+/// `AnimationData.dbc` 161 BowRelease, the prop clip the rifle arm of `$BWR` plays: a firearm's
+/// muzzle blast. A bow authors it but never reaches it from here.
 pub(crate) const BOW_RELEASE: u16 = 161;
-/// Animation 0 Stand, the model-load default: what the bow arm of `$BWR` plays (`0x600205 push
-/// 0x0`) and the un-nock reset re-arms (`0x60f59d`).
+/// Animation 0 Stand, the model-load default: what the bow arm of `$BWR` plays and the un-nock
+/// reset re-arms.
 const STAND: u16 = 0;
 
-/// `0x5fcfb0`: the body clips of a bow shooter.
+/// The body clips of a bow shooter.
 const BOW_FAMILY: [u16; 3] = [46, 105, 109]; // AttackBow · LoadBow · HoldBow
-/// `0x5fcfd0`: the body clips of a rifle shooter (guns and crossbows).
+/// The body clips of a rifle shooter (guns and crossbows).
 const RIFLE_FAMILY: [u16; 3] = [49, 106, 110]; // AttackRifle · LoadRifle · HoldRifle
 
 /// The unit's equipped ranged weapon prop, benilla's `[CGUnit+0xd24]`: on the prop root when the
-/// ranged display's model authors 160 or 161, absent for every other held item (nothing else
-/// reaches `0x624cc0`/`0x600209`/`0x600273`).
+/// ranged display's model authors 160 or 161, absent for every other held item.
 #[derive(Component)]
 pub(crate) struct RangedProp {
     /// The wearer: the `$BWP`/`$BWR` keys arrive on its timeline, not the prop's.
@@ -58,8 +54,8 @@ pub(crate) struct RangedProp {
 
 /// Arms the prop's clip from the wearer's `$BWP`/`$BWR` keys. Runs right after
 /// [`crate::creature_anim::drive_nock_latch`], the other half of the same reference handlers
-/// (`$BWP`: prop arm, then ammo attach `0x624b2f`; `$BWR`: prop arm, then detach `0x600299`), and
-/// before the rider lane composes the prop's palette rows.
+/// (`$BWP`: prop arm, `$BWR`: prop arm), and before the rider lane composes the prop's palette
+/// rows.
 pub(crate) fn flex_ranged_props(
     mut events: MessageReader<AnimSoundEvent>,
     props: Query<(Entity, &RangedProp)>,
@@ -67,16 +63,15 @@ pub(crate) fn flex_ranged_props(
     wearers: Query<(&AnimationPlayer, &ModelAnimations), Without<RangedProp>>,
     mut props_mut: Query<(&mut AnimationPlayer, &ModelAnimations), With<RangedProp>>,
     // The `[+0xac]` gate, drained by `entities::missile::spawn_missiles` on the same key. The
-    // creature-anim chain runs `.before(EntityVisualsSet)`, so this read precedes the drain as
-    // `0x600182` precedes `0x600294`.
+    // creature-anim chain runs `.before(EntityVisualsSet)`, so this read precedes the drain as the
+    // reference precedes.
     pending: Res<crate::entities::PendingMissiles>,
 ) {
     for ev in events.read() {
         let want = match &ev.ident {
             b"$BWP" => Some(BOW_PULL),
-            // `0x60018a je 0x600299`: no projectile waiting, no prop block. Only `$BWR` is gated;
-            // the nock-latch clear (`0x60016c`) and the ammo detach (`0x600299`) sit outside the
-            // skip, so `drive_nock_latch` stays ungated.
+            // No projectile waiting, no prop block. Only `$BWR` is gated; the nock-latch clear and
+            // the ammo detach sit outside the skip, so `drive_nock_latch` stays ungated.
             b"$BWR" if !pending.releasing(ev.entity) => None,
             b"$BWR" => {
                 if BOW_FAMILY.contains(&ev.anim_id) {
@@ -84,7 +79,7 @@ pub(crate) fn flex_ranged_props(
                 } else if RIFLE_FAMILY.contains(&ev.anim_id) {
                     Some(BOW_RELEASE)
                 } else {
-                    // Neither family: the reference falls through to `0x60027a` and touches no
+                    // Neither family: the reference falls through to the reference and touches no
                     // prop. No shipped character model keys `$BWR` outside 46/49.
                     None
                 }
@@ -99,12 +94,11 @@ pub(crate) fn flex_ranged_props(
         let Ok((mut player, anims)) = props_mut.get_mut(prop) else {
             continue;
         };
-        // `$BWP` is guarded by `0x711960`, the direct "does the model author this id" test, and
-        // bails on a miss, confining BowPull to its 25 models. The `$BWR` arms have no guard:
-        // `0x7121a0` first substitutes through the model's `PlayableAnimationLookup` (`0x711bf0`),
-        // and weapon models that author neither flex clip bake both ids to Stand (571 of 571
-        // shipped weapon models resolve), so a rifle-family body holding a model without 161
-        // re-arms Stand.
+        // `$BWP` is guarded, the direct "does the model author this id" test, and bails on a miss,
+        // confining BowPull to its 25 models. The `$BWR` arms have no guard: the reference first
+        // substitutes through the model's `PlayableAnimationLookup`, and weapon models that author
+        // neither flex clip bake both ids to Stand (571 of 571 shipped weapon models resolve), so a
+        // rifle-family body holding a model without 161 re-arms Stand.
         let want = if want == BOW_PULL {
             if !anims.owns(BOW_PULL) {
                 continue;
@@ -119,11 +113,11 @@ pub(crate) fn flex_ranged_props(
         let Some(clip) = anims.clips.iter().find(|c| c.anim_id == want) else {
             continue;
         };
-        // `$BWP` fits BowPull into the body clip's remaining time (`0x624e31`), so the draw ends
-        // with the Load clip; read as `duration − seek` off the wearer's player. Both `$BWR` arms
-        // push a literal 1.0 (`0x3f800000`).
+        // `$BWP` fits BowPull into the body clip's remaining time, so the draw ends with the Load
+        // clip; read as `duration − seek` off the wearer's player. Both `$BWR` arms push a literal
+        // 1.0 (`0x3f800000`).
         let speed = if want == BOW_PULL {
-            // No time left means no flex that shot, not a flex at 1.0 (`0x624d91 jle`).
+            // No time left means no flex that shot, not a flex at 1.0.
             let Some(left) = wearers
                 .get(ev.entity)
                 .ok()
@@ -166,18 +160,18 @@ pub(crate) fn flex_ranged_props(
     }
 }
 
-/// The un-nock's reset (`0x60f59d`): re-arms Stand unless the prop is releasing.
+/// The un-nock's reset: re-arms Stand unless the prop is releasing.
 ///
 /// ```text
-/// 60f578  push -1 ; call 0x712090   ; the prop's CURRENT requested animation id
-/// 60f57f  cmp eax,0xa1              ; 161 BowRelease
-/// 60f584  je 0x60f5a2               ; …then SKIP the reset
+/// The reference push -1 ; call; the prop's CURRENT requested animation id
+/// The reference cmp eax,0xa1              ; 161 BowRelease
+/// The reference je; …then SKIP the reset
 /// ```
 ///
-/// It sits in the un-nock `0x60f530`, which `$BWR` reaches every shot (`0x600294`, `0x60c940`,
-/// `0x60c951`) after its arm at `0x600273`, so the guard keeps a gun's blast alive. Here the
-/// un-nock is [`NockLatch`] leaving the wearer, on every `$BWR` and every cancel path, seen a frame
-/// later. Its real use is a cancel mid-draw: BowPull clamps, so this relaxes limbs at full draw.
+/// It sits in the un-nock, which `$BWR` reaches every shot after its arm, so the guard keeps a
+/// gun's blast alive. Here the un-nock is [`NockLatch`] leaving the wearer, on every `$BWR` and
+/// every cancel path, seen a frame later. Its real use is a cancel mid-draw: BowPull clamps, so
+/// this relaxes limbs at full draw.
 pub(crate) fn reset_ranged_props_on_unnock(
     mut unnocked: RemovedComponents<crate::creature_anim::NockLatch>,
     props: Query<(Entity, &RangedProp)>,
@@ -190,8 +184,8 @@ pub(crate) fn reset_ranged_props_on_unnock(
         let Ok((mut player, anims)) = players.get_mut(prop) else {
             continue;
         };
-        // `0x60f57f cmp eax,0xa1` reads the current requested id, not clip time: a finished
-        // BowRelease still reads 161 and is skipped.
+        // The reference reads the current requested id, not clip time: a finished BowRelease still
+        // reads 161 and is skipped.
         let releasing = player
             .playing_animations()
             .filter_map(|(node, _)| anims.clips.iter().find(|c| c.node == *node))
@@ -252,10 +246,9 @@ mod tests {
         }
     }
 
-    /// A model's animation table with both lookups a real M2 carries: `animation_lookup` (the
-    /// direct `0x711960` test) and `playable_animation_lookup` (the `0x711bf0` substitution, every
-    /// unauthored id resolving to Stand). With either empty, `owns()` answers `false` for an
-    /// authored clip.
+    /// A model's animation table with both lookups a real M2 carries: `animation_lookup` and
+    /// `playable_animation_lookup` (every unauthored id resolving to Stand). With either empty,
+    /// `owns()` answers `false` for an authored clip.
     fn anims(clips: Vec<AnimClip>) -> ModelAnimations {
         let top = clips.iter().map(|c| c.anim_id).max().unwrap_or(0) as usize;
         let mut animation_lookup = vec![0xffffu16; top + 1];
@@ -348,7 +341,7 @@ mod tests {
         armed
     }
 
-    /// `$BWR` forks on the body's weapon family (`0x600159`): a gun plays BowRelease, a bow Stand.
+    /// `$BWR` forks on the body's weapon family: a gun plays BowRelease, a bow Stand.
     #[test]
     fn bwr_forks_the_prop_clip_on_the_bodys_weapon_family() {
         // AttackRifle(49) → 161 on the gun.
@@ -363,7 +356,7 @@ mod tests {
             Some(AnimationNodeIndex::new(1)),
             "a bow-family body clip relaxes the prop to Stand, NOT to its authored 161"
         );
-        // The Load/Hold ids are in the same two sets (`0x5fcfb0`/`0x5fcfd0` each test three).
+        // The Load/Hold ids are in the same two sets.
         assert_eq!(
             fire(gun(), 106, None, b"$BWR").map(|(n, _)| n),
             Some(AnimationNodeIndex::new(2)),
@@ -377,8 +370,8 @@ mod tests {
         );
     }
 
-    /// No projectile queued, no arm (`0x600182`/`0x60018a`): the same key and rifle body clip, with
-    /// and without a queued shot.
+    /// No projectile queued, no arm: the same key and rifle body clip, with and without a queued
+    /// shot.
     #[test]
     fn a_bwr_with_no_projectile_queued_arms_nothing() {
         let mut app = App::new();
@@ -419,8 +412,7 @@ mod tests {
         );
     }
 
-    /// `$BWP` arms BowPull only on a model that authors it (`0x624cee push 0xa0; call 0x711960`);
-    /// no shipped firearm authors 160.
+    /// `$BWP` arms BowPull only on a model that authors it; no shipped firearm authors 160.
     #[test]
     fn bwp_pulls_only_a_prop_that_owns_bowpull() {
         // Both legs have time left in the body clip, so the firearm's `None` is the presence test.
@@ -435,7 +427,7 @@ mod tests {
             None,
             "a firearm owns no BowPull — the pull key arms nothing on it"
         );
-        // `0x624d91 jle`: no time left in the body clip ⇒ no flex that shot, not a flex at 1.0.
+        // No time left in the body clip ⇒ no flex that shot, not a flex at 1.0.
         assert_eq!(
             fire(bow(), 105, Some((clip(105, 9, 1.0, false), 1.0)), b"$BWP"),
             None,
@@ -456,8 +448,8 @@ mod tests {
         );
     }
 
-    /// The un-nock re-arms Stand unless the prop is releasing (`0x60f584 je`); the other way round,
-    /// a gun's blast would die the frame it starts.
+    /// The un-nock re-arms Stand unless the prop is releasing; the other way round, a gun's blast
+    /// would die the frame it starts.
     #[test]
     fn the_unnock_resets_a_drawn_prop_but_never_a_releasing_one() {
         fn unnock(prop_anims: ModelAnimations, armed: u16) -> Option<AnimationNodeIndex> {

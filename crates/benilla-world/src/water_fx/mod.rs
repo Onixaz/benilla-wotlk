@@ -6,13 +6,12 @@
 //! which clips foam at banks. Growth is texgen only: each frame the stencil maps `centre ± size(t)`
 //! to UV [0, 1] at the heading, clamped to its transparent border.
 //!
-//! The driver (`0x5fa760`) emits a wake when translating, a ring when turning or standing, and a
-//! full ring on crossing the wade depth (`0x6030c0`).
+//! The driver emits a wake when translating, a ring when turning or standing, and a full ring on
+//! crossing the wade depth.
 //!
 //! The patch is the liquid mesh's own triangles through the same `clip_from_world`, so the depth
 //! test settles its tie with the water; a lift would overshoot onto dry sand on a beach. The
-//! reference also lays foam at the MCLQ height, with only a depth bias (`0x68fd0f`):
-//! `0.125 × [0x810390]`, D3D `DEPTHBIAS` −1/8192.
+//! reference also lays foam at the MCLQ height, with only a depth bias, D3D `DEPTHBIAS` −1/8192.
 
 mod params;
 
@@ -42,13 +41,13 @@ use params::{wake_cooldown, RING_INTERVAL};
 const RING_TEXTURE: &str = "xtextures/splash/splash.blp";
 const WAKE_TEXTURE: &str = "xtextures/splash/wake.blp";
 
-/// The record pool (`0x68f8b0`, `0x68f9f0`): the active mover allocates from `[0, 32)` and
-/// everyone else from `[32, 128)`, so others never evict its records.
+/// The record pool: the active mover allocates from `[0, 32)` and everyone else from `[32, 128)`,
+/// so others never evict its records.
 const POOL_SIZE: usize = 128;
 const SELF_SLOTS: usize = 32;
 
 /// The step-in and step-out one-shot depth as a fraction of the unit's own collision height
-/// (`0x6030c0`, CMovement+0xb4), latched either way: about 0.81 yd for a human.
+/// (CMovement+0xb4), latched either way: about 0.81 yd for a human.
 const ONESHOT_DEPTH_FRAC: f32 = 0.4;
 
 /// The emission depth gate, `max(2 × collision height, 1.0)`: about 4.06 yd for a human, so a
@@ -129,23 +128,23 @@ impl Default for WaterFoam {
     }
 }
 
-/// The next slot in a partition, its oldest record (counters `0xc7f3b0` self, `0xc81d48` others).
+/// The next slot in a partition, its oldest record.
 fn alloc_slot(cursor: &mut usize, base: usize, len: usize) -> usize {
     let i = base + *cursor;
     *cursor = (*cursor + 1) % len;
     i
 }
 
-/// The two foam stencils. Their draws carry the reference's foam render state (`0x68fae0`):
-/// additive, fog off, depth-tested `LEQUAL` without depth write, and a depth bias (`0x68fd0f`).
+/// The two foam stencils. Their draws carry the reference's foam render state: additive, fog off,
+/// depth-tested `LEQUAL` without depth write, and a depth bias.
 #[derive(Resource)]
 struct FoamAssets {
     ring: Handle<Image>,
     wake: Handle<Image>,
 }
 
-/// A rung over the whole water band, not an epsilon over one surface: the reference draws foam
-/// once per frame, after all liquid (`0x6816d0` tail-jumps to `0x68fae0` on both branches).
+/// A rung over the whole water band, not an epsilon over one surface: the reference draws foam once
+/// per frame, after all liquid.
 use crate::sky_order::FOAM_BIAS;
 
 /// Loads the stencils raw, clamped and without mips, the reference's sampler state.
@@ -244,7 +243,7 @@ fn build_patch(
     }
 }
 
-/// The driver (`0x5fa760`) for one unit this frame: classify, gate and emit, paced by its cooldown.
+/// The driver for one unit this frame: classify, gate and emit, paced by its cooldown.
 fn drive_unit(
     foam_state: &mut UnitFoam,
     alloc: &mut dyn FnMut(FoamRecord),
@@ -272,8 +271,8 @@ fn drive_unit(
     };
     let depth = surface - wow[2];
 
-    // The one-shot fires on crossing the wade depth either way (`0x6030c0`, latch `[+0x269]`);
-    // the driver's mode-0xC9 call also clears the cooldown.
+    // The one-shot fires on crossing the wade depth either way (latch `[+0x269]`); the driver's
+    // mode-0xC9 call also clears the cooldown.
     let wading_now = depth > ONESHOT_DEPTH_FRAC * h;
     let oneshot = wading_now != foam_state.wading;
     foam_state.wading = wading_now;
@@ -360,7 +359,8 @@ fn emit_water_foam(
             let vel = prev.map_or(Vec3::ZERO, |p| (body - p) / dt);
             let w = bevy_to_wow(vel);
             let speed = (w[0] * w[0] + w[1] * w[1]).sqrt();
-            // Selection off our own movement flags, as `0x5fa760` does; the masks live on `Viewer`.
+            // Selection off our own movement flags, as the reference does; the masks live on
+            // `Viewer`.
             let state = if viewer.translating() {
                 WadeState::Translating {
                     speed,
@@ -505,9 +505,9 @@ fn push_water_foam(
                     assets.wake.id()
                 },
                 blend: EffectBlend::Add,
-                // The reference's foam render sets fog off (`0x68fcd0`, `0x68fcd2`, `0x68fcd7`).
+                // The reference's foam render sets fog off.
                 fog: EffectFog::Off,
-                // The foam's own additive path (`0x68fae0`) sets no GL_LIGHTING.
+                // The foam's own additive path sets no GL_LIGHTING.
                 lighting: crate::particles::buffer::EffectLighting::None,
                 anchor: centroid / n as f32,
                 bias: FOAM_BIAS,

@@ -44,12 +44,11 @@ pub(super) fn tag_self_player(
     }
 }
 
-/// Our own player's create, the reference's `0x5dea50` (reached `0x465dbc` → `0x5debe0` →
-/// `0x5dec7b`): `SetActiveMover` (`0x6006e0`, sending `CMSG_SET_ACTIVE_MOVER` at `0x6007ae`), then
-/// the world-enter cascade (`0x5deb60 call 0x4908c0`). `SMSG_LOGIN_VERIFY_WORLD` and
-/// `SMSG_NEW_WORLD` purge the streamed world (`session::worldport`), so a login, a reconnect and
-/// every cross-map worldport create us afresh and tag us again; a same-map teleport creates
-/// nothing. The server has seated the player by then, so nothing sent here is dropped.
+/// Our own player's create, the reference's: `SetActiveMover` (sending `CMSG_SET_ACTIVE_MOVER`),
+/// then the world-enter cascade. `SMSG_LOGIN_VERIFY_WORLD` and `SMSG_NEW_WORLD` purge the streamed
+/// world (`session::worldport`), so a login, a reconnect and every cross-map worldport create us
+/// afresh and tag us again; a same-map teleport creates nothing. The server has seated the player
+/// by then, so nothing sent here is dropped.
 pub(crate) fn enter_world_on_self_create(
     created: Query<&Guid, Added<SelfPlayer>>,
     net: Res<NetCommands>,

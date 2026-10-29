@@ -3,8 +3,8 @@
 //! - Raw3: uncompressed BGRA8.
 //! - DXTC: S3TC blocks, `alpha_type` selecting DXT1 (0), DXT3 (1) or DXT5 (7).
 //!
-//! [`decode`] yields gamma-encoded `Rgba8Unorm`, never linearized; [`decode_native`] keeps the
-//! DXTC blocks, which the reference uploads untouched (`glCompressedTexImage2DARB` in `0x59f270`).
+//! [`decode`] yields gamma-encoded `Rgba8Unorm`, never linearized; [`decode_native`] keeps the DXTC
+//! blocks, which the reference uploads untouched (`glCompressedTexImage2DARB`).
 
 use benilla_bytes::ByteExt;
 
@@ -230,11 +230,10 @@ impl Header<'_> {
     }
 
     /// DXTC level `level` as the reference reads it: `bpp·max(4,w)·max(4,h)/8` bytes from the
-    /// level's offset, never the header's size (`0x5a8555` points each level into the file;
-    /// OpenGL sizes the read at `0x59f4e6`–`0x59f515`, Direct3D copies `max(4,w)·max(4,h)` bytes
-    /// via `0x5a5780`). The encoder stores `max(1, (w/4)·(h/4))` blocks, one for a 2×16 level
-    /// whose grid needs four, so a short level takes the next levels' bytes. Deviation: past the
-    /// file's end [`pad_to`] zero-fills, because the reference reads stale buffer bytes there.
+    /// level's offset, never the header's size (points each level into the file; Direct3D copies
+    /// `max(4,w)·max(4,h)` bytes). The encoder stores `max(1, (w/4)·(h/4))` blocks, one for a 2×16
+    /// level whose grid needs four, so a short level takes the next levels' bytes. Deviation: past
+    /// the file's end [`pad_to`] zero-fills, because the reference reads stale buffer bytes there.
     fn dxt_level_span<'b>(
         &self,
         bytes: &'b [u8],
@@ -583,8 +582,8 @@ mod tests {
         );
     }
 
-    /// The reference reads `bpp·max(4,w)·max(4,h)/8` bytes from the level's offset
-    /// (`0x59f4e6`–`0x59f515`), whatever the header records.
+    /// The reference reads `bpp·max(4,w)·max(4,h)/8` bytes from the level's offset, whatever the
+    /// header records.
     #[test]
     fn a_short_level_is_completed_from_the_bytes_that_follow_it() {
         let mut b = dxt_blp(0, 8);

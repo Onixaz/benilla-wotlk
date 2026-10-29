@@ -14,9 +14,9 @@ use crate::ui_items::{count_of, InventoryScope};
 #[derive(Resource, Default)]
 pub(crate) struct CastErrors(pub Vec<CastFail>);
 
-/// One queued cast failure. `arg` fills the message's `%s` (the arm table `0x6e1d8e`); the
-/// reference raises its local refusals with none, except the crowd-control `0x8d` (`0x6094f0`),
-/// which names the blocking aura's `SpellMechanic.dbc` id.
+/// One queued cast failure. `arg` fills the message's `%s`; the reference raises its local refusals
+/// with none, except the crowd-control `0x8d`, which names the blocking aura's `SpellMechanic.dbc`
+/// id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CastFail {
     pub spell_id: u32,
@@ -26,16 +26,15 @@ pub(crate) struct CastFail {
     pub arg2: Option<u32>,
     /// Whose refusal this is, which picks the reference's message table ([`Caster`]).
     pub caster: Caster,
-    /// A retry after the item template landed (the `0x78`/`0x5c` cache miss). The reference's
-    /// first pass exits past both the line and the log (`0x6e1eab`, `0x6e1efc`); its retry, the
-    /// cache callback `0x6e29b0`, calls `DisplayError` directly and never `0x62c360`, so a
-    /// redisplay is not logged.
+    /// A retry after the item template landed (the `0x78`/`0x5c` cache miss). The reference's first
+    /// pass exits past both the line and the log; its retry, the cache callback, calls
+    /// `DisplayError` directly and never, so a redisplay is not logged.
     pub redisplay: bool,
 }
 
-/// Who failed to cast, which picks the reference's handler: `SMSG_CAST_RESULT` lands in
-/// `0x6e1a00` and `SMSG_PET_CAST_FAILED` in `0x6e8eb0`, each with its own reason-to-errorId map;
-/// the rest of [`super::cast_fail::cast_fail_text`] is shared.
+/// Who failed to cast, which picks the reference's handler: `SMSG_CAST_RESULT` lands and
+/// `SMSG_PET_CAST_FAILED`, each with its own reason-to-errorId map; the rest of
+/// [`super::cast_fail::cast_fail_text`] is shared.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum Caster {
     /// Ours: `SMSG_CAST_RESULT` and every local refusal.
@@ -106,9 +105,9 @@ impl CastErrors {
 #[derive(Resource, Default)]
 pub(crate) struct MountErrors(pub Vec<(bool, u32)>);
 
-/// Taming refusals as the raw `SMSG_PET_TAME_FAILURE` reason. The reference (`0x6e6a20`) resolves
-/// the reason's `PETTAME_*` string through the VM (`0x703bf0`) and passes it as `ERR_TAME_FAILED`'s
-/// `%s` (`DisplayError(0xee)`), so both lookups wait for the VM at the drain.
+/// Taming refusals as the raw `SMSG_PET_TAME_FAILURE` reason. The reference resolves the reason's
+/// `PETTAME_*` string through the VM and passes it as `ERR_TAME_FAILED`'s `%s`
+/// (`DisplayError(0xee)`), so both lookups wait for the VM at the drain.
 #[derive(Resource, Default)]
 pub(crate) struct PetTameFailures(pub Vec<u8>);
 
@@ -117,7 +116,7 @@ pub(crate) struct PetTameFailures(pub Vec<u8>);
 pub(crate) use benilla_ui::messages::MsgKind;
 
 /// One argText argument; the list is ordered and mixed because a template's specifiers are:
-/// `ERR_USE_LOCKED_WITH_SPELL_KNOWN_SI` takes a string then an integer (`0x5f34a9`).
+/// `ERR_USE_LOCKED_WITH_SPELL_KNOWN_SI` takes a string then an integer.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum FillArg {
     S(String),
@@ -127,10 +126,9 @@ pub(crate) enum FillArg {
     Global(String),
 }
 
-/// One `DisplayError` (`0x496720`) message, whatever its surface: a GlobalStrings key and the
-/// argText the reference pushes after the id, at most three strings (the guild event tail
-/// `0x5e745f`). Extra arguments are ignored and a starved specifier shows verbatim, as
-/// `SStrPrintf` does, so a short list is passed short.
+/// One `DisplayError` message, whatever its surface: a GlobalStrings key and the argText the
+/// reference pushes after the id, at most three strings. Extra arguments are ignored and a starved
+/// specifier shows verbatim, as `SStrPrintf` does, so a short list is passed short.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct UiError {
     pub key: &'static str,
@@ -192,19 +190,18 @@ impl UiError {
 pub(crate) struct UiErrorKeys(pub Vec<UiError>);
 
 /// Lines that arrive already resolved, with no key and no catalog record: they reach the
-/// reference's sink `0x4945b0(text, flag)` without `DisplayError`, flag 1 firing
-/// `UI_ERROR_MESSAGE` and 0 `UI_INFO_MESSAGE`. `SMSG_NOTIFICATION` (`0x401800`) passes 1,
-/// `SMSG_AREA_TRIGGER_MESSAGE` (`0x48f8ff`) passes 0.
+/// reference's sink `(text, flag)` without `DisplayError`, flag 1 firing `UI_ERROR_MESSAGE` and 0
+/// `UI_INFO_MESSAGE`. `SMSG_NOTIFICATION` passes 1, `SMSG_AREA_TRIGGER_MESSAGE` passes 0.
 #[derive(Resource, Default)]
 pub(crate) struct UiErrorTexts(pub Vec<(String, MsgKind)>);
 
 impl UiErrorTexts {
-    /// The red `UI_ERROR_MESSAGE` arm (`0x4945b0(text, 1)`).
+    /// The red `UI_ERROR_MESSAGE` arm (`(text, 1)`).
     pub(crate) fn error(&mut self, text: String) {
         self.0.push((text, MsgKind::Error));
     }
 
-    /// The yellow `UI_INFO_MESSAGE` arm (`0x4945b0(text, 0)`).
+    /// The yellow `UI_INFO_MESSAGE` arm (`(text, 0)`).
     pub(crate) fn info(&mut self, text: String) {
         self.0.push((text, MsgKind::Info));
     }
@@ -212,8 +209,7 @@ impl UiErrorTexts {
 
 /// Resolve a [`UiError`] to its text, the template filled in push order. Deviation: an absent or
 /// empty result shows nothing, where the reference shows an empty line (no test of the string
-/// between `0x4967d7` and `0x496842`), because a blank line is worse than none; only a chain
-/// missing a stock key reaches it.
+/// between), because a blank line is worse than none; only a chain missing a stock key reaches it.
 pub(crate) fn ui_error_text(e: &UiError, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     let globals: Vec<Option<String>> = e
         .args
@@ -268,7 +264,7 @@ impl Shown {
     }
 
     /// A line with no catalog row, the wire's own text ([`UiErrorTexts`]), which reaches the sink
-    /// `0x4945b0` without a record and so makes no sound.
+    /// without a record and so makes no sound.
     pub(crate) fn unkeyed(kind: MsgKind, text: String) -> Self {
         Self {
             record: None,
@@ -338,8 +334,8 @@ pub(crate) struct MessageSink<'w> {
 }
 
 /// The `UNIT_FIELD_FLAGS` crowd-control bits the attack-start validator refuses on, in its test
-/// order (`0x612eec`). The reference can raise `ERR_ATTACK_PREVENTED_BY_MECHANIC_S` (`0xa9`) with a
-/// mechanic name instead, by a choice not yet traced; only the plain form is raised here.
+/// order. The reference can raise `ERR_ATTACK_PREVENTED_BY_MECHANIC_S` (`0xa9`) with a mechanic
+/// name instead, by a choice not yet traced; only the plain form is raised here.
 const ATTACK_FLAG_REFUSALS: [(u32, &str); 4] = [
     (0x0004_0000, "ERR_ATTACK_STUNNED"),
     (0x0002_0000, "ERR_ATTACK_PACIFIED"),
@@ -347,9 +343,9 @@ const ATTACK_FLAG_REFUSALS: [(u32, &str); 4] = [
     (0x0040_0000, "ERR_ATTACK_CONFUSED"),
 ];
 
-/// Phase A of the attack-start validator `0x612df0`, the actor's own eligibility: the first
-/// failing gate raises its `ERR_ATTACK_*` line and returns `true`, and no packet is sent. The
-/// actor is the player for Attack (`0x6131aa`) and the pet for the pet bar (`0x4bd40d`).
+/// Phase A of the attack-start validator, the actor's own eligibility: the first failing gate
+/// raises its `ERR_ATTACK_*` line and returns `true`, and no packet is sent. The actor is the
+/// player for Attack and the pet for the pet bar.
 pub(crate) fn attack_actor_refusal(
     actor: Option<&ObjectStore>,
     self_guid: Option<u64>,
@@ -363,18 +359,17 @@ pub(crate) fn attack_actor_refusal(
     true
 }
 
-/// The same ladder without the message, in the reference's gate order. The world right-click
-/// asks this: its path (`0x60bea0` to `0x5ecb70`) shows no error text and never reaches
-/// `0x612df0`, whose callers are the pet bar, Attack and TryCast (`0x6e4efb`). That path's own
-/// gate set overlaps this one but is not transcribed.
+/// The same ladder without the message, in the reference's gate order. The world right-click asks
+/// this: its path shows no error text and never reaches, whose callers are the pet bar, Attack and
+/// TryCast. That path's own gate set overlaps this one but is not transcribed.
 pub(crate) fn attack_actor_blocked(
     actor: Option<&ObjectStore>,
     self_guid: Option<u64>,
 ) -> Option<&'static str> {
-    // An unresolved actor skips the chain, as in the reference (`0x4bd403`), though the pet bar's
-    // own gate (`0x4bd1f2`) never lets an unresolved pet reach it.
+    // An unresolved actor skips the chain, as in the reference, though the pet bar's own gate never
+    // lets an unresolved pet reach it.
     let fields = &actor?.0;
-    // `0x605f30` (`0x612e10`): dead, or a player's ghost flag, since a ghost has health 1.
+    // Dead, or a player's ghost flag, since a ghost has health 1.
     let key = if fields.is_dead_or_ghost() {
         "ERR_ATTACK_DEAD"
     } else if fields
@@ -464,7 +459,7 @@ fn first_missing_tool(
     required.find(|&c| !tools.categories.covered_by(c, carried.iter().copied()))
 }
 
-/// The first totem item absent from our bags: `0x6e4000`'s failing slot.
+/// The first totem item absent from our bags: the reference's failing slot.
 pub(super) fn first_missing_totem(
     d: &benilla_formats::SpellDisplay,
     store: &ObjectStore,
@@ -477,7 +472,7 @@ pub(super) fn first_missing_totem(
         .find(|&t| count_of(&store.0, objects, t, InventoryScope::CARRIED) == 0)
 }
 
-/// The first reagent we hold too few of: `0x6e4000`'s failing slot.
+/// The first reagent we hold too few of: the reference's failing slot.
 pub(super) fn first_short_reagent(
     d: &benilla_formats::SpellDisplay,
     store: &ObjectStore,
@@ -659,7 +654,7 @@ mod ui_error_tests {
         assert_eq!(t(&UiError::key("ABSENT")), None);
     }
 
-    /// The lock-refusal keys (the use sender `0x5f33e0`) against the shipped file.
+    /// The lock-refusal keys against the shipped file.
     #[test]
     fn every_lock_refusal_key_resolves_in_the_real_global_strings() {
         let data = benilla_formats::wow_data_or_skip!();
@@ -740,7 +735,7 @@ mod attack_actor_tests {
         errors.0.first().map(|e| e.key)
     }
 
-    /// Every gate of `0x612df0`'s Phase A, each on its own, against an otherwise-healthy actor.
+    /// Every gate of the reference's Phase A, each on its own, against an otherwise-healthy actor.
     #[test]
     fn each_actor_gate_raises_its_own_error() {
         assert_eq!(
@@ -752,7 +747,7 @@ mod attack_actor_tests {
             refusal(Some(&actor(&[(HEALTH, 0)])), Some(7)),
             Some("ERR_ATTACK_DEAD")
         );
-        // A released ghost has health 1; `0x605f30`'s ghost-flag leg refuses it.
+        // A released ghost has health 1; the reference's ghost-flag leg refuses it.
         assert_eq!(
             refusal(Some(&actor(&[(HEALTH, 1), (PLAYER_FLAGS, 0x10)])), Some(7)),
             Some("ERR_ATTACK_DEAD")
@@ -772,7 +767,7 @@ mod attack_actor_tests {
         assert_eq!(refusal(Some(&actor(&[(FLAGS, 0x1000)])), Some(7)), None);
     }
 
-    /// `0x612e33` compares the charmer with the active player's guid.
+    /// The reference compares the charmer with the active player's guid.
     #[test]
     fn charmed_by_us_still_swings_and_charmed_away_does_not() {
         let mine = actor(&[(CHARMEDBY, 7), (CHARMEDBY + 1, 0)]);

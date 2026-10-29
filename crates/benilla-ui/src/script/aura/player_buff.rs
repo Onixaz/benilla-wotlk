@@ -1,20 +1,19 @@
 //! The 1.12 aura verbs: `GetPlayerBuff`, which returns a cache position, and the five that take
 //! one. A position is a 0-based index into the pushed `"player"` list, which is the reference's
-//! insertion-ordered cache (`0xbc6040`).
+//! insertion-ordered cache.
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::{cancel_authorized, AuraState};
 
-/// `GetPlayerBuff`'s filter mask: no filter argument means
-/// `HELPFUL|HARMFUL` (`0x4e4618`), and a filter string starts the mask at zero (`0x4e4639`), so a
-/// bare `"CANCELABLE"` matches nothing.
+/// `GetPlayerBuff`'s filter mask: no filter argument means `HELPFUL|HARMFUL`, and a filter string
+/// starts the mask at zero, so a bare `"CANCELABLE"` matches nothing.
 #[derive(Clone, Copy)]
 struct PlayerBuffFilter(u32);
 
 impl PlayerBuffFilter {
-    /// Case-insensitive match against the four tokens (`0x4e4661`-`0x4e46cf`); anything else,
-    /// `"PASSIVE"` included, sets no bit. Space and pipe both delimit, runs collapsed (`0x84bc3c`).
+    /// Case-insensitive match against the four tokens; anything else, `"PASSIVE"` included, sets no
+    /// bit. Space and pipe both delimit, runs collapsed.
     fn parse(spec: Option<&str>) -> Self {
         const HELPFUL: u32 = 0x1;
         const HARMFUL: u32 = 0x2;
@@ -40,8 +39,8 @@ impl PlayerBuffFilter {
         Self(mask)
     }
 
-    /// The enumerator's per-record test (`0x4e43c9`-`0x4e43f7`): the record's sign bit, then any
-    /// named `CANCELABLE`/`NOT_CANCELABLE` against `record+0xa & 1`.
+    /// The enumerator's per-record test: the record's sign bit, then any named
+    /// `CANCELABLE`/`NOT_CANCELABLE` against `record+0xa & 1`.
     fn matches(self, a: &AuraState) -> bool {
         const HELPFUL: u32 = 0x1;
         const HARMFUL: u32 = 0x2;
@@ -55,9 +54,8 @@ impl PlayerBuffFilter {
     }
 }
 
-/// The family's index argument, as every verb opens (`0x4e45d6`, `0x4e4748`, `0x4e4808`,
-/// `0x4e48bc`, `0x4e493e`, `0x4e49a8`): a number or numeric string, truncated; anything else raises
-/// the reference's usage line through `luaL_error` (`0x6f4940`).
+/// The family's index argument, as every verb opens: a number or numeric string, truncated;
+/// anything else raises the reference's usage line through `luaL_error`.
 fn buff_index_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<i64> {
     match lua.coerce_number(v)? {
         // `__ftol` truncates toward zero, as `as i64` does.
@@ -67,7 +65,7 @@ fn buff_index_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<i64>
 }
 
 /// The record at cache position `pos`, or `None` past the packed prefix, where the reference has
-/// NULL outside `0..0x30` (`0x4e4430`) and cleared records its siblings treat as absent. Deviation:
+/// NULL outside `0..0x30` and cleared records its siblings treat as absent. Deviation:
 /// `GetPlayerBuffApplications` answers 1 for a cleared record where the reference reads its stale
 /// `+0x9`, the previous occupant's count, because no guarded caller reaches it.
 fn player_buff_record(lua: &Lua, pos: i64) -> Option<AuraState> {
@@ -78,8 +76,8 @@ fn player_buff_record(lua: &Lua, pos: i64) -> Option<AuraState> {
     model.player_auras.get(pos).cloned()
 }
 
-/// The enumerator (`0x4e43b0`): the `index`-th record passing `filter`, by ascending position,
-/// with that position. A negative `index` never matches the counter, which counts up from 0.
+/// The enumerator: the `index`-th record passing `filter`, by ascending position, with that
+/// position. A negative `index` never matches the counter, which counts up from 0.
 fn enumerate_player_buff(
     lua: &Lua,
     index: i64,
@@ -104,12 +102,11 @@ fn enumerate_player_buff(
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // GetPlayerBuff(index [, "filter"]) (`0x4e45d0`) returns two numbers on both paths
-    // (`0x4e471e`, `0x4e4733`): the position, -1 past the end and never nil, as addons loop while
-    // it is `>= 0`; and untilCancelled as the number 0 or 1, which stock `BuffFrame.lua:124`
-    // compares with `1`. The index is 0-based, used without `UnitBuff`'s `dec` (`0x4e460a`,
-    // `0x519579`). Unfiltered, every record passes, so `GetPlayerBuff(i)` is `i`, which addons use
-    // to cancel by the counter.
+    // GetPlayerBuff(index [, "filter"]) returns two numbers on both paths: the position, -1 past
+    // the end and never nil, as addons loop while it is `>= 0`; and untilCancelled as the number 0
+    // or 1, which stock `BuffFrame.lua:124` compares with `1`. The index is 0-based, used without
+    // `UnitBuff`'s `dec`. Unfiltered, every record passes, so `GetPlayerBuff(i)` is `i`, which
+    // addons use to cancel by the counter.
     g.set(
         "GetPlayerBuff",
         lua.create_function(|lua, (index, filter): (Value, Option<String>)| {
@@ -126,9 +123,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPlayerBuffTexture(buffIndex) (`0x4e4740`): the icon path, or nil for an absent position or
-    // a missing spell or icon row; addons loop until the nil. A surplus argument is ignored, as the
-    // reference reads only the first.
+    // GetPlayerBuffTexture(buffIndex): the icon path, or nil for an absent position or a missing
+    // spell or icon row; addons loop until the nil. A surplus argument is ignored, as the reference
+    // reads only the first.
     g.set(
         "GetPlayerBuffTexture",
         lua.create_function(|lua, index: Value| {
@@ -137,9 +134,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPlayerBuffDispelType(buffIndex) (`0x4e4800`): the `SpellDispelType.dbc` name of the
-    // spell's `Dispel`, or nil for dispel 0 or a missing row (`0x4e485e`); never `""`, which Lua
-    // takes as true. Stock `BuffFrame.lua:83` passes it `GetPlayerBuff`'s result unguarded, -1 too.
+    // GetPlayerBuffDispelType(buffIndex): the `SpellDispelType.dbc` name of the spell's `Dispel`,
+    // or nil for dispel 0 or a missing row; never `""`, which Lua takes as true. Stock
+    // `BuffFrame.lua:83` passes it `GetPlayerBuff`'s result unguarded, -1 too.
     g.set(
         "GetPlayerBuffDispelType",
         lua.create_function(|lua, index: Value| {
@@ -148,10 +145,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPlayerBuffApplications(buffIndex) (`0x4e48b0`): the stack count, and 1 for an absent
-    // position (`0x4e4917`), never nil, as addons test `count > 1` unguarded. Deviation: the
-    // reference's usage line names `GetPlayerBuffTimeLeft` (`0x84bcc0`, shared with `0x4e4930`);
-    // ours names this verb, because nothing can depend on the wrong name.
+    // GetPlayerBuffApplications(buffIndex): the stack count, and 1 for an absent position, never
+    // nil, as addons test `count > 1` unguarded. Deviation: the reference's usage line names
+    // `GetPlayerBuffTimeLeft`; ours names this verb, because nothing can depend on the wrong name.
     g.set(
         "GetPlayerBuffApplications",
         lua.create_function(|lua, index: Value| {
@@ -160,10 +156,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetPlayerBuffTimeLeft(buffIndex) (`0x4e4930`, reader `0x4e4450`): seconds, the reader's ms
-    // times the 0.001 at `0x801608` (`0x4e4986`), as `max(0, expiry - now)`, and 0 for an absent,
-    // cleared or permanent aura, never nil, as addons do arithmetic on it unguarded. It is computed
-    // per call against `GetTime()`, as stock `BuffFrame.lua:130` re-reads it every frame.
+    // GetPlayerBuffTimeLeft(buffIndex): seconds, the reader's ms times the 0.001, as
+    // `max(0, expiry - now)`, and 0 for an absent, cleared or permanent aura, never nil, as addons
+    // do arithmetic on it unguarded. It is computed per call against `GetTime()`, as stock
+    // `BuffFrame.lua:130` re-reads it every frame.
     g.set(
         "GetPlayerBuffTimeLeft",
         lua.create_function(|lua, index: Value| {
@@ -174,9 +170,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // CancelPlayerBuff(buffIndex) (`0x4e49a0`): no return values on any path. It queues the spell
-    // id, the one `u32` of `CMSG_CANCEL_AURA` (0x136, `Spell_C::CancelAura` `0x6e7040`), on the
-    // queue `SetTracking` uses; a refused or absent aura is a silent no-op.
+    // CancelPlayerBuff(buffIndex): no return values on any path. It queues the spell id, the one
+    // `u32` of `CMSG_CANCEL_AURA` (0x136, `Spell_C::CancelAura`), on the queue `SetTracking` uses;
+    // a refused or absent aura is a silent no-op.
     g.set(
         "CancelPlayerBuff",
         lua.create_function(|lua, index: Value| {
@@ -242,13 +238,13 @@ mod tests {
         assert_eq!(
             s.arity("GetPlayerBuff(0)").unwrap(),
             2,
-            "1.12 pushes exactly two values (`mov eax,0x2` at 0x4e471e) — a hit must not be a tuple \
+            "1.12 pushes exactly two values (`mov eax,0x2`) — a hit must not be a tuple \
              of aura fields, which is a later client's aura shape"
         );
         assert_eq!(
             s.arity("GetPlayerBuff(99)").unwrap(),
             2,
-            "and a MISS pushes two as well (0x4e4733), not zero and not nil"
+            "and a MISS pushes two as well, not zero and not nil"
         );
 
         // 0-based: position 0 is the first aura.
@@ -541,7 +537,7 @@ mod tests {
         }
         assert!(s.take_cancel_aura_requests().is_empty());
 
-        // The channeled arm (`AttributesEx & 0x4`, `0x4e4a10`) cancels a negative aura.
+        // The channeled arm (`AttributesEx & 0x4`) cancels a negative aura.
         let mut channeled = aura(689, "Drain Life", false, false);
         channeled.channeled = true;
         s.set_player_auras(vec![channeled]);

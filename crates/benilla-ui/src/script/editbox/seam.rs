@@ -37,8 +37,8 @@ impl UiScript {
     }
 
     /// The focused EditBox's text geometry this frame: its text quad, the scroll window and the
-    /// caret and selection spans in it, after scrolling the caret into view (`0x77da80`). `None`
-    /// until the advance table is answered: the text draws, without caret or highlight.
+    /// caret and selection spans in it, after scrolling the caret into view. `None` until the
+    /// advance table is answered: the text draws, without caret or highlight.
     pub fn focused_editbox_text_ui(&mut self) -> Option<types::EditBoxTextUi> {
         let h = {
             let model = self.model_ref();
@@ -123,7 +123,7 @@ impl UiScript {
     }
 
     /// Ctrl/Cmd+C: the focused EditBox's selection for the OS clipboard; a password box yields its
-    /// mask run, never the text, where the client copies the empty string (`0x882748`).
+    /// mask run, never the text, where the client copies the empty string.
     pub fn editbox_copy(&mut self) -> Option<String> {
         super::copy_selection(self.lua())
     }
@@ -224,9 +224,9 @@ fn store_advances(eb: &mut EditBoxState, key: u64, cum: Vec<f32>, rows: Vec<usiz
     eb.advances_key = key;
 }
 
-/// Whether box `h`'s advance table is current, measured here by the installed font engine when
-/// its text or font moved, as the caret leg measures in the call (`0x772ae0`). `false` with no
-/// engine, or one that leaves the table to the host's round trip.
+/// Whether box `h`'s advance table is current, measured here by the installed font engine when its
+/// text or font moved, as the caret leg measures in the call. `false` with no engine, or one that
+/// leaves the table to the host's round trip.
 pub(super) fn advances_current(lua: &Lua, h: FrameHandle) -> bool {
     let Some(rh) = super::ensure_text_region(lua, h) else {
         return false;

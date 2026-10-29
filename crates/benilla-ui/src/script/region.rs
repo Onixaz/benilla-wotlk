@@ -28,10 +28,10 @@ pub(super) fn region_handle_of(lua: &Lua, this: &Table) -> mlua::Result<RegionHa
         .ok_or_else(|| mlua::Error::runtime("stale or invalid region handle"))
 }
 
-/// Argument 1 of a global that takes a Texture as its `this` (`SetLootPortrait` `0x4c2b40`,
-/// `SetInventoryPortaitTexture` `0x4c9150`), with the member prologue's three raises: a non-table
-/// (`0x847ef8`), a table with no object at `[0]` (`0x847ec0`), and any object but a Texture, the
-/// `IsA` test against the Texture class token `[0xcf4cdc]` (`0x847e98`).
+/// Argument 1 of a global that takes a Texture as its `this` (`SetLootPortrait`,
+/// `SetInventoryPortaitTexture`), with the member prologue's three raises: a non-table, a table
+/// with no object at `[0]`, and any object but a Texture, the `IsA` test against the Texture class
+/// token.
 pub(super) fn this_texture(lua: &Lua, this: &Value) -> mlua::Result<RegionHandle> {
     let Value::Table(t) = this else {
         return Err(mlua::Error::runtime(
@@ -54,8 +54,8 @@ pub(super) fn this_texture(lua: &Lua, this: &Value) -> mlua::Result<RegionHandle
     Ok(rh)
 }
 
-/// `CSimpleTexture::SetTexture(NULL)` (`0x770300` with 0): the texture slot emptied, a file, a
-/// solid fill and a baked unit portrait alike; the shader slot, and so the desaturation, stays.
+/// `CSimpleTexture::SetTexture(NULL)`: the texture slot emptied, a file, a solid fill and a baked
+/// unit portrait alike; the shader slot, and so the desaturation, stays.
 pub(super) fn clear_texture(model: &mut Model, rh: RegionHandle) {
     let data = model.region_data.entry(rh).or_default();
     data.texture = None;
@@ -77,10 +77,10 @@ fn set_region_hidden(lua: &Lua, rh: RegionHandle, hidden: bool) {
     }
 }
 
-/// Apply the font parts an XML element supplies (`font=`, `<FontHeight>`, `outline=`), any of
-/// which may be absent. Not the `SetFont` binding: the reference applies XML fonts in `LoadXML`,
-/// and its `SetFont` requires a path and a height (`0x87c69c`). Each part is an explicit set, so it
-/// survives a change to the inherited font object; an empty `font=` keeps the inherited face.
+/// Apply the font parts an XML element supplies (`font=`, `<FontHeight>`, `outline=`), any of which
+/// may be absent. Not the `SetFont` binding: the reference applies XML fonts in `LoadXML`, and its
+/// `SetFont` requires a path and a height. Each part is an explicit set, so it survives a change to
+/// the inherited font object; an empty `font=` keeps the inherited face.
 pub(crate) fn apply_font_parts(
     lua: &Lua,
     this: &Table,
@@ -115,8 +115,8 @@ pub(super) fn region_wrapper(lua: &Lua, id: u32) -> mlua::Result<Table> {
     }
     let t = lua.create_table()?;
     t.raw_set(0, Value::LightUserData(id_to_lud(id)))?;
-    // The metatable is chosen once, here, not per call: a title region
-    // (`CreateTitleRegion 0x773910`) answers only the Region-map methods.
+    // The metatable is chosen once, here, not per call: a title region (`CreateTitleRegion`)
+    // answers only the Region-map methods.
     let kind = {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
@@ -154,8 +154,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The two portrait globals, which only the in-game state registers (`SetPortraitTexture` in
-/// table `0x850438`, `SetPortraitToTexture` in `0x83de68`).
+/// The two portrait globals, which only the in-game state registers (`SetPortraitTexture` in table,
+/// `SetPortraitToTexture`).
 pub(super) fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     // SetPortraitTexture(texture, unit) (`UnitFrame.lua:26`): binds the region to a unit whose
     // model the app bakes off-screen, drawn masked to its inscribed circle; a later `SetTexture`
@@ -163,9 +163,8 @@ pub(super) fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "SetPortraitTexture",
         lua.create_function(|lua, (region, unit): (Table, Value)| {
-            // A non-string unit raises this exact error (`0x519fb4`, `0x8513b8`), which stock
-            // `Blizzard_InspectUI.lua:49` hits on a re-open; a token that resolves to nothing only
-            // blanks the portrait.
+            // A non-string unit raises this exact error, which stock `Blizzard_InspectUI.lua:49`
+            // hits on a re-open; a token that resolves to nothing only blanks the portrait.
             let unit = crate::script::binding_abi::string_arg(
                 lua,
                 unit,
@@ -174,9 +173,8 @@ pub(super) fn install_in_game(lua: &Lua) -> mlua::Result<()> {
             let rh = region_handle_of(lua, &region)?;
             let mut model = crate::script::model_mut_of(lua);
             let data = model.region_data.entry(rh).or_default();
-            // Lowercased: the reference resolves the token case-insensitively (`0x519ef0` →
-            // `0x515970`), stock `MerchantFrame.lua:68` passes `"NPC"`, and the app's bakes are
-            // keyed lowercase.
+            // Lowercased: the reference resolves the token case-insensitively, stock
+            // `MerchantFrame.lua:68` passes `"NPC"`, and the app's bakes are keyed lowercase.
             data.portrait_unit = Some(unit.to_ascii_lowercase());
             data.texture = None;
             data.fill = None;
@@ -233,8 +231,8 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
 
     // ── GetObjectType / IsObjectType ─────────────────────────────────────────────────────────
     //
-    // GetObjectType: a per-class string through `vtable[+0x1c]` (Texture `0x773480`, FontString
-    // `0x7735d0`), one value, extra arguments ignored.
+    // GetObjectType: a per-class string through `vtable[+0x1c]`, one value, extra arguments
+    // ignored.
     set_shared(
         lua,
         &m,
@@ -249,10 +247,10 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
         },
     )?;
 
-    // IsObjectType(name) (`0x7a1290`): a case-insensitive whole-string match (`0x64a4c0`) against
-    // the leaf or "Region" only, as 1.12 has no LayoutFrame, ScriptObject or Object type; a hit is
-    // the number 1, a miss nil. A number is stringified and compared; anything else raises the
-    // usage error, naming the region or `<unnamed>`.
+    // IsObjectType(name): a case-insensitive whole-string match against the leaf or "Region" only,
+    // as 1.12 has no LayoutFrame, ScriptObject or Object type; a hit is the number 1, a miss nil. A
+    // number is stringified and compared; anything else raises the usage error, naming the region
+    // or `<unnamed>`.
     set_shared(
         lua,
         &m,
@@ -281,10 +279,9 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
         },
     )?;
 
-    // SetParent(frame) lives in the Region table (`0x7a1550`), which Texture and FontString
-    // lookups fall back to (`0x79c650`, `0x79ee50`); `FuBar_FuXPFu.lua:210` calls it on a texture.
-    // A non-frame raises (`0x7a16ea`, `0x87cb78`); no argument raises (`0x87cb48`) where nil
-    // detaches, hence the `MultiValue`. Anchors are untouched, and nothing is returned.
+    // SetParent(frame) lives in the Region table, which Texture and FontString lookups fall back
+    // to; `FuBar_FuXPFu.lua:210` calls it on a texture. A non-frame raises; no argument raises
+    // where nil detaches, hence the `MultiValue`. Anchors are untouched, and nothing is returned.
     set_shared(
         lua,
         &m,
@@ -303,7 +300,7 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
             };
             let wrong_type =
                 || mlua::Error::runtime("SetParent(): Wrong parent object type, expected frame");
-            // `_G[name]` is read before the model borrow, with no `$parent` expansion (`0x76c760`).
+            // `_G[name]` is read before the model borrow, with no `$parent` expansion.
             let named = match &parent {
                 Value::String(s) => Some(match s.to_str() {
                     Ok(n) => super::object::prefetch_named_target(lua, n.as_ref(), None),
@@ -321,7 +318,7 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
                         .and_then(|id| model.id_to_frame.get(&id).copied())
                         .ok_or_else(wrong_type)?,
                 ),
-                // A name resolves through `_G[name]` and the Frame tag check (`[0xcf0c10]`).
+                // A name resolves through `_G[name]` and the Frame tag check.
                 Value::String(_) => {
                     let nt = named.as_ref().expect("a String argument is prefetched");
                     let hit = super::object::resolve_named_target(&model, nt)
@@ -413,10 +410,9 @@ fn install_region_methods(lua: &Lua) -> mlua::Result<()> {
     }
     // ── The leaf tables ──────────────────────────────────────────────────────────────────────
     //
-    // Texture's map (`0x87c128`, 22 entries, lookup `0x79c620`) and FontString's (`0xcf5400`, 32,
-    // lookup `0x79ee20`) each fall back to the Region map and nothing else. Copied from the full
-    // table; a name both leaves list (one `const char*` in the client, e.g. `GetDrawLayer` at
-    // `0x87c41c`) goes into both.
+    // Texture's map (22 entries) and FontString's (32) each fall back to the Region map and nothing
+    // else. Copied from the full table; a name both leaves list (one `const char*` in the client,
+    // e.g. `GetDrawLayer`) goes into both.
     for (key, extra) in [
         (REG_TEXTURE_METHODS, &super::TEXTURE_ONLY_METHODS[..]),
         (REG_FONTSTRING_METHODS, &super::FONTSTRING_ONLY_METHODS[..]),
@@ -474,7 +470,7 @@ pub(super) fn region_type_name(model: &Model, rh: RegionHandle) -> &'static str 
     match model.arena.region(rh).map(|r| r.kind) {
         Some(RegionKind::Texture) => "Texture",
         Some(RegionKind::FontString) => "FontString",
-        // A title region is a bare Region (`CreateTitleRegion 0x773910`).
+        // A title region is a bare Region (`CreateTitleRegion`).
         Some(RegionKind::Title) => "Region",
         None => "Region",
     }
@@ -523,11 +519,11 @@ pub(super) fn region_owner_id(model: &mut Model, rh: RegionHandle) -> u32 {
 }
 
 /// The reference's implicit anchor for a region with a parent and no anchors, run after its XML
-/// loads (texture `0x7701c0`, fontstring `0x771480`), and from Lua `CreateTexture` or
-/// `CreateFontString` only on a template hit. A Texture gets `SetAllPoints(parent)`, so an
-/// authored `<Size>` goes unread; a FontString gets one middle-row point picked by its justify
-/// word (`[+0x120]`, our [`RegionData::justify`]) and keeps its size; a title region gets none.
-/// They are ordinary anchors after: re-applying authored ones needs `ClearAllPoints` first.
+/// loads, and from Lua `CreateTexture` or `CreateFontString` only on a template hit. A Texture gets
+/// `SetAllPoints(parent)`, so an authored `<Size>` goes unread; a FontString gets one middle-row
+/// point picked by its justify word (`[+0x120]`, our [`RegionData::justify`]) and keeps its size; a
+/// title region gets none. They are ordinary anchors after: re-applying authored ones needs
+/// `ClearAllPoints` first.
 pub(crate) fn implicit_creation_anchor(model: &mut Model, rh: RegionHandle) {
     let Some((kind, owner)) = model.arena.region(rh).map(|r| (r.kind, r.owner)) else {
         return;
@@ -628,8 +624,8 @@ pub(super) fn size_bits_eq(a: Option<(f32, f32)>, b: Option<(f32, f32)>) -> bool
     }
 }
 
-/// `Region:SetPoint`, the same binding as the frame's (`0x7a2540`, on `CScriptRegion`): the shared
-/// argument ladder ([`super::object::anchor_args`]), with the owner as layout parent.
+/// `Region:SetPoint`, the same binding as the frame's (on `CScriptRegion`): the shared argument
+/// ladder ([`super::object::anchor_args`]), with the owner as layout parent.
 pub(super) fn region_set_point(lua: &Lua, this: &Table, args: &MultiValue) -> mlua::Result<()> {
     let rh = region_handle_of(lua, this)?;
     let (who, base) = region_ladder_context(lua, rh);
@@ -676,13 +672,11 @@ pub(super) fn region_set_point(lua: &Lua, this: &Table, args: &MultiValue) -> ml
     Ok(())
 }
 
-/// `Region:GetWidth()`/`GetHeight()` (`0x7a1e00`, `0x7a2030`): the geometry-vtable call the rect
-/// resolver also makes (`0x767579`), so the Lua size is the rect's. Per axis, a Texture answers
-/// its authored size unless exactly 0, else its texel extent (`0x770720`, `0x770790`). A
-/// FontString answers its authored size unless 0 (`0x77294a`), else its measure, either floored
-/// at one unit (`0x772930`, `0x772a60`); the width is unwrapped, as `GetStringWidth` gives it
-/// (`0x772890`, `0x79e510`), the height wrapped (`0x7729b0`). A title region answers its field
-/// (`0x768420`, `0x768410`).
+/// `Region:GetWidth()`/`GetHeight()`: the geometry-vtable call the rect resolver also makes, so the
+/// Lua size is the rect's. Per axis, a Texture answers its authored size unless exactly 0, else its
+/// texel extent. A FontString answers its authored size unless 0, else its measure, either floored
+/// at one unit; the width is unwrapped, as `GetStringWidth` gives it, the height wrapped. A title
+/// region answers its field.
 pub(super) fn measured_wh(lua: &Lua, this: &Table) -> mlua::Result<(f32, f32)> {
     let rh = region_handle_of(lua, this)?;
     // Measures this tick when a host font engine is installed; a no-op for a Texture or a
@@ -752,7 +746,7 @@ pub(super) fn virtual_span(model: &Model, rh: RegionHandle) -> (f32, f32) {
                 },
             )
         }
-        // A title region: the flat field, like a frame (vtable `0x81c9c8`, `+0x1c` = `0x768420`).
+        // A title region: the flat field, like a frame (`+0x1c` =).
         _ => (aw, ah),
     }
 }

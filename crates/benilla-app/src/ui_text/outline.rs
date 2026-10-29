@@ -1,8 +1,7 @@
 //! The outline blit recipe, byte for byte. The reference composites an outlined font's ring and
 //! fill (`outline="NORMAL"`/`"THICK"`, the Number* fonts) into one atlas cell and blits it once
-//! (the AA-outline blit `0x5cea30`, dispatched by `0x5cf310` off the font flags at
-//! `[CGxFont+0x180]`), so ring and fill fade together at one alpha; a ring stamped behind a fill
-//! would blacken mid-fade on the `α(1−α)` term.
+//! (dispatched by the reference off the font flags at `[CGxFont+0x180]`), so ring and fill fade
+//! together at one alpha; a ring stamped behind a fill would blacken mid-fade on the `α(1−α)` term.
 
 /// An outline flag's ring reach in logical px (NORMAL 1, THICK 2), also the cache key's radius.
 pub(super) fn radius_of(outline: benilla_ui::script::Outline) -> u8 {
@@ -13,8 +12,8 @@ pub(super) fn radius_of(outline: benilla_ui::script::Outline) -> u8 {
     }
 }
 
-/// The reference's neighbour-count to outline-alpha table (`0x80a8ec`), indexed by the marked
-/// texels in the in-bounds 3×3 box, centre included; its 4-bit alphas are widened × 17.
+/// The reference's neighbour-count to outline-alpha table, indexed by the marked texels in the
+/// in-bounds 3×3 box, centre included; its 4-bit alphas are widened × 17.
 const AA_NEIGHBOUR_LUT: [u8; 10] = [0, 17, 17, 51, 85, 119, 153, 187, 221, 255];
 
 /// Composite one glyph's coverage into an outlined cell, the reference's AA-outline blit:
@@ -29,9 +28,9 @@ const AA_NEIGHBOUR_LUT: [u8; 10] = [0, 17, 17, 51, 85, 119, 153, 187, 221, 255];
 /// Deviation: `r × round(dpi)` passes, so the ring keeps its logical weight on a high-DPI raster,
 /// and 8-bit texels where the reference packs ARGB4444, so nothing bands.
 ///
-/// It draws as one quad per glyph (`0x5ccbe0`) whose vertex colour tints the fill and leaves the
-/// ring black. Returns `(rgba, out_w, out_h, pad)`: the cell grows `pad` texels each side (the
-/// reference's `em+2`/`em+4`); the caller shifts the bearings by `pad`, and the advance stays.
+/// It draws as one quad per glyph whose vertex colour tints the fill and leaves the ring black.
+/// Returns `(rgba, out_w, out_h, pad)`: the cell grows `pad` texels each side (the reference's
+/// `em+2`/`em+4`); the caller shifts the bearings by `pad`, and the advance stays.
 pub(super) fn outlined_cell(
     cov: &[u8],
     w: u32,

@@ -1,8 +1,7 @@
-//! The dressing room: the `DressUpModel` verbs (table `0x84f190`) and the intent queue behind them
-//! and behind `SetUnit`/`RefreshUnit` on a dressing-room pane. The reference edits a clone of the
-//! unit's model (`0x5059a0`, `0x504350`); here the app composes the look from the intents in
-//! order, which matters: on a closed window `DressUpItem` resets, then tries on
-//! (`DressUpFrame.lua:3-7`).
+//! The dressing room: the `DressUpModel` verbs and the intent queue behind them and behind
+//! `SetUnit`/`RefreshUnit` on a dressing-room pane. The reference edits a clone of the unit's
+//! model; here the app composes the look from the intents in order, which matters: on a closed
+//! window `DressUpItem` resets, then tries on (`DressUpFrame.lua:3-7`).
 
 use mlua::{Lua, Table, Value};
 
@@ -16,10 +15,10 @@ pub(super) const REG_DRESSUPMODEL_METHODS: &str = "__benilla_dressupmodel_method
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DressUpIntent {
     /// `SetUnit`, `RefreshUnit` and `Dress` (the Reset button): the reference's rebuild from the
-    /// unit (`0x505b50`), dropping every substitution.
+    /// unit, dropping every substitution.
     Dress,
     /// `Undress()`: bodyslots `0..0xb` cleared, worn and tried-on alike; the hands keep what they
-    /// hold (`0x504490`).
+    /// hold.
     Undress,
     /// `TryOn(item)`: the item in its `InventoryType`'s slot, with no class, level or proficiency
     /// check (`DressUpFrame.lua:2-16`).
@@ -60,7 +59,7 @@ pub(super) fn redress_if_dressup(lua: &Lua, this: &Table) -> mlua::Result<()> {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let m = lua.create_table()?;
 
-    // `0x504c00`.
+    // .
     m.set(
         "Undress",
         lua.create_function(|lua, this: Table| {
@@ -70,7 +69,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x504cd0`, the Reset button (`DressUpFrame.xml:182`).
+    // The Reset button (`DressUpFrame.xml:182`).
     m.set(
         "Dress",
         lua.create_function(|lua, this: Table| {

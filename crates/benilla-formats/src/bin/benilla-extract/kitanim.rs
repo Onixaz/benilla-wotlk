@@ -19,7 +19,7 @@ const STAGES: [(&str, StagePick); 5] = [
 ];
 
 /// Ids 8-10 (`StandWound`, `CombatWound`, `CombatCritical`): the kit player hands them to the
-/// severity-0 flinch instead of playing them (`0x60f3b8: push 0; call 0x60ea70`).
+/// severity-0 flinch instead of playing them.
 fn is_wound_id(id: u16) -> bool {
     (8..=10).contains(&id)
 }

@@ -1,6 +1,6 @@
 //! `EnvironmentalDamage.dbc`: the `SpellVisualKit` played on the victim of
-//! `SMSG_ENVIRONMENTALDAMAGELOG` (read at `0x624fcc` in `0x624f30`), by the wire's `damage_type`:
-//! 0 exhausted, 1 drowning, 2 fall, 3 lava, 4 slime, 5 fire.
+//! `SMSG_ENVIRONMENTALDAMAGELOG`, by the wire's `damage_type`: 0 exhausted, 1 drowning, 2 fall, 3
+//! lava, 4 slime, 5 fire.
 
 use crate::Chain;
 use anyhow::{Context, Result};
@@ -10,7 +10,7 @@ use crate::dbc::{parse, u32_at};
 
 const ENVIRONMENTAL_DAMAGE: &str = "DBFilesClient\\EnvironmentalDamage.dbc";
 
-/// The client's 6-slot damage type → kit table (`[0xc4d8e4]`).
+/// The client's 6-slot damage type → kit table.
 pub struct EnvironmentalDamageTable {
     kits: [u32; 6],
 }
@@ -33,8 +33,8 @@ pub(crate) fn schema() -> Schema {
     s
 }
 
-/// Load the table as the client's init `0x603900` fills it: zeroed, then
-/// `slot[DamageType] = VisualKit` for each row whose type is below 6.
+/// Load the table as the client's init fills it: zeroed, then `slot[DamageType] = VisualKit` for
+/// each row whose type is below 6.
 pub fn load_environmental_damage(chain: &mut Chain) -> Result<EnvironmentalDamageTable> {
     let bytes = chain
         .read_file(ENVIRONMENTAL_DAMAGE)

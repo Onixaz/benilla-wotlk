@@ -1,9 +1,8 @@
-//! The reference's software single-precision arithmetic, which `GetEffectPoints 0x6e3800` and its
-//! modifier applier `0x6e6c30` run on instead of the FPU: an int-to-float (`0x761260`), an add
-//! (`0x760e20`) and a multiply (`0x760be0`) that truncate where IEEE rounds, and a floor
-//! (`0x760fb0`) and ceil (`0x761040`). Values are `f32` bit patterns throughout.
+//! The reference's software single-precision arithmetic, which `GetEffectPoints` and its modifier
+//! applier run on instead of the FPU: an int-to-float, an add and a multiply that truncate where
+//! IEEE rounds, and a floor and ceil. Values are `f32` bit patterns throughout.
 
-/// `0x761260`: an integer's float; exact below 2^24, the low bits shifted out above it.
+/// An integer's float; exact below 2^24, the low bits shifted out above it.
 fn from_int(v: i32) -> u32 {
     if v == 0 {
         return 0;
@@ -17,9 +16,9 @@ fn from_int(v: i32) -> u32 {
     sign | exp << 23 | mant & 0x7f_ffff
 }
 
-/// `0x760be0`: multiply the 24-bit significands and keep the high word, truncating. A power of
-/// two on either side (a zero fraction) adds exponents and keeps the other fraction exactly; a
-/// zero exponent on either side, or an exponent sum at or below zero, is 0.
+/// Multiply the 24-bit significands and keep the high word, truncating. A power of two on either
+/// side (a zero fraction) adds exponents and keeps the other fraction exactly; a zero exponent on
+/// either side, or an exponent sum at or below zero, is 0.
 fn mul(a: u32, b: u32) -> u32 {
     let sign = (a ^ b) & 0x8000_0000;
     let (ae, be) = (a & 0x7f80_0000, b & 0x7f80_0000);
@@ -42,9 +41,9 @@ fn mul(a: u32, b: u32) -> u32 {
     (hi >> 7) & 0x7f_ffff | (carry << 23).wrapping_add(exp) | sign
 }
 
-/// `0x760e20`: align the two-guard-bit significands by an arithmetic shift, add, renormalise by
-/// shifting out, truncating. A zero exponent returns the other operand; an exponent gap of 23 or
-/// more returns the larger.
+/// Align the two-guard-bit significands by an arithmetic shift, add, renormalise by shifting out,
+/// truncating. A zero exponent returns the other operand; an exponent gap of 23 or more returns the
+/// larger.
 fn add(a: u32, b: u32) -> u32 {
     let ae = a & 0x7f80_0000;
     if ae == 0 {
@@ -92,8 +91,7 @@ fn add(a: u32, b: u32) -> u32 {
     (((shift - 1) << 23) as u32).wrapping_add(exp) | sign | mant & 0x7f_ffff
 }
 
-/// `0x760fb0`: floor; under one in magnitude a negative nonzero value is -1.0 and anything else
-/// +0.0.
+/// Floor; under one in magnitude a negative nonzero value is -1.0 and anything else +0.0.
 fn floor(x: u32) -> u32 {
     let v = f32::from_bits(x);
     if v.abs() < 1.0 {
@@ -102,8 +100,8 @@ fn floor(x: u32) -> u32 {
     v.floor().to_bits()
 }
 
-/// `0x761040`: ceil; under one in magnitude a negative nonzero value is +0.0 and anything else
-/// 1.0, zero included (`76105d`: the sign mask of a zero tests clear).
+/// Ceil; under one in magnitude a negative nonzero value is +0.0 and anything else 1.0, zero
+/// included (: the sign mask of a zero tests clear).
 fn ceil(x: u32) -> u32 {
     let v = f32::from_bits(x);
     if v.abs() < 1.0 {
@@ -112,31 +110,30 @@ fn ceil(x: u32) -> u32 {
     v.ceil().to_bits()
 }
 
-/// The applier `0x6e6c30`: `((value + flat) × pct) × 0.01`, each step in the soft arithmetic,
-/// the 0.01 the single-precision constant `0xcf0b0c` (`0x3c23d70a`).
+/// The applier: `((value + flat) × pct) × 0.01`, each step in the soft arithmetic, the 0.01 the
+/// single-precision constant (`0x3c23d70a`).
 pub fn modify(value: f32, flat: i32, pct: i32) -> f32 {
     let sum = add(value.to_bits(), from_int(flat));
     f32::from_bits(mul(mul(sum, from_int(pct)), 0x3c23_d70a))
 }
 
-/// An integer's float as `0x761260` builds it.
+/// An integer's float as the reference builds it.
 pub(crate) fn int_to_float(v: i32) -> f32 {
     f32::from_bits(from_int(v))
 }
 
-/// `0x760e20` over floats.
+/// The reference over floats.
 pub(crate) fn add_f32(a: f32, b: f32) -> f32 {
     f32::from_bits(add(a.to_bits(), b.to_bits()))
 }
 
-/// `0x760be0` over floats.
+/// The reference over floats.
 pub(crate) fn mul_f32(a: f32, b: f32) -> f32 {
     f32::from_bits(mul(a.to_bits(), b.to_bits()))
 }
 
-/// `GetEffectPoints`' tail (`6e39ee`-`6e3a65`): to the nearest 1/128, as `floor(x·128 + 0.5) /
-/// 128` with the ×128 and ÷128 done on the exponent field and the add and floor in the soft
-/// arithmetic (`0x761160`, its 0.5 at `0xcf0b2c`).
+/// `GetEffectPoints`' tail: to the nearest 1/128, as `floor(x·128 + 0.5) / 128` with the ×128 and
+/// ÷128 done on the exponent field and the add and floor in the soft arithmetic.
 pub(crate) fn quantize(x: f32) -> f32 {
     let bits = x.to_bits();
     let scaled = if bits & 0x7f80_0000 != 0 {
@@ -151,7 +148,7 @@ pub(crate) fn quantize(x: f32) -> f32 {
     f32::from_bits(if flips { 0 } else { shrunk })
 }
 
-/// The integral bounds `GetEffectPoints` hands a rounding effect (`6e3a71`-`6e3a89`).
+/// The integral bounds `GetEffectPoints` hands a rounding effect.
 pub(crate) fn floor_ceil(min: f32, max: f32) -> (f32, f32) {
     (
         f32::from_bits(floor(min.to_bits())),

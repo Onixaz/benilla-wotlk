@@ -1,11 +1,11 @@
 //! The doodad animation host: placed M2 doodads (ADT MDDF and WMO MODD props) animate.
 //!
 //! The reference arms a doodad at load (bone 0, animation id 0, `linkFlag=1`) and re-arms it every
-//! play-window with a fresh weighted variation: the watchdog `0x719370` fires on `now ≥ windowHi`
-//! and runs the callback `0x6951b0` that `0x695100` installed at `[model+0x70]`, which re-arms
-//! with `variationIdx = -1`. Global sequences loop with no arming. The walk `0x7074b0` advances
-//! only the models the doodad drain `0x683f80` links each frame from the drawn and faded set, and
-//! sampling is clock-indexed (`cursor = clock − startOffset`), so pausing drifts nothing.
+//! play-window with a fresh weighted variation: the watchdog fires on `now ≥ windowHi` and runs the
+//! callback that the reference installed at `[model+0x70]`, which re-arms with `variationIdx = -1`.
+//! Global sequences loop with no arming. The walk advances only the models the doodad drain links
+//! each frame from the drawn and faded set, and sampling is clock-indexed
+//! (`cursor = clock − startOffset`), so pausing drifts nothing.
 
 use bevy::animation::graph::AnimationNodeIndex;
 use bevy::app::AnimationSystems;
@@ -41,13 +41,13 @@ pub enum DoodadAnimTier<'a> {
 
 /// The animation-event tags that make a placed doodad sound: `$DSL` (a looping emitter), `$DSO` (a
 /// positioned one-shot), `$DSE` (the stop that releases a `$DSL`) and `$SND`, the markers the
-/// reference's doodad event callback `0x6951e0` routes on.
+/// reference's doodad event callback routes on.
 pub(crate) const SOUND_EVENT_TAGS: [&[u8; 4]; 4] = [b"$DSL", b"$DSO", b"$DSE", b"$SND"];
 
 /// Whether the model's arm chain (the loader-idle seed and its variations, the only sequences a
 /// placed doodad plays) carries a sound-event marker. Kept out of [`classify`], which answers what
-/// the model renders: the reference arms every placed doodad (`0x695100` → `0x7121a0`), and its
-/// event track runs on that clock even when no bone moves (`KalidarStreetLamp01.m2`'s `$DSL`).
+/// the model renders: the reference arms every placed doodad, and its event track runs on that
+/// clock even when no bone moves (`KalidarStreetLamp01.m2`'s `$DSL`).
 pub(crate) fn arms_for_sound(anims: &ModelAnimations) -> bool {
     let Some(idle) = anims.idle_clip() else {
         return false;
@@ -93,8 +93,8 @@ pub struct AnimHostSpawn {
     /// The armed clip's node and duration, `None` on the gseq-only tier.
     pub(crate) clip: Option<(AnimationNodeIndex, f32)>,
     /// The file sequence slot the load arm seeded ([`AnimClip::seq_index`]); the first re-roll
-    /// replaces it, as the holder's `0x695100` arm does, so the current slot is read off the host's
-    /// player ([`crate::particles::EmitClock::Host`]). `None` on the gseq-only tier.
+    /// replaces it, as the holder's arm does, so the current slot is read off the host's player
+    /// ([`crate::particles::EmitClock::Host`]). `None` on the gseq-only tier.
     pub(crate) seq: Option<usize>,
     /// The animation id the arm rolls variations over; `None` on the gseq-only tier.
     pub(crate) anim_id: Option<u16>,
@@ -130,10 +130,10 @@ pub fn wants_rig(m: &M2Model) -> bool {
         )
 }
 
-/// Spawn the animation host for one placed M2 that animates: a root at the placement transform
-/// with the collapsed [`RigPose`] and, per tier, an `AnimationPlayer` looping the loader-idle seed
-/// (the reference's load arm `0x70ebd0` → `0x7121a0(bone 0, animation id 0, linkFlag=1)`) and/or
-/// a [`GlobalSeqDrive`]. `None` keeps the static path.
+/// Spawn the animation host for one placed M2 that animates: a root at the placement transform with
+/// the collapsed [`RigPose`] and, per tier, an `AnimationPlayer` looping the loader-idle seed (the
+/// reference's load arm → `(bone 0, animation id 0, linkFlag=1)`) and/or a [`GlobalSeqDrive`].
+/// `None` keeps the static path.
 pub fn spawn_anim_host(
     commands: &mut Commands,
     m: &M2Model,
@@ -165,9 +165,9 @@ pub fn spawn_anim_host(
     let mut armed_seq = None;
     let mut arm_id = None;
     if let DoodadAnimTier::FirstSeq(head) = tier {
-        // The loader's var-0 seed only (`0x70ebd0`). The effective arm is the holder's
-        // `variationIdx = -1` op4 (`0x695100`), here `reroll_doodad_variation`'s first pass, the
-        // same frame, since the host is born with an expired window.
+        // The loader's var-0 seed only. The effective arm is the holder's `variationIdx = -1` op4,
+        // here `reroll_doodad_variation`'s first pass, the same frame, since the host is born with
+        // an expired window.
         let mut player = AnimationPlayer::default();
         player.play(head.node).repeat();
         commands.entity(root).insert((
@@ -244,14 +244,13 @@ impl DoodadAnimHost {
 }
 
 /// The doodad's self-sustaining re-arm: when the armed play-window ends, roll a fresh
-/// frequency-weighted variation of the same animation id, snap to it (`blendFlag = 0` at
-/// `0x6951c8`, no cross-fade) and write the next window. An undrawn host only updates
-/// [`DoodadAnimHost::clip`], for [`gate_doodad_anim`]'s resume to arm.
+/// frequency-weighted variation of the same animation id, snap to it (`blendFlag = 0`, no
+/// cross-fade) and write the next window. An undrawn host only updates [`DoodadAnimHost::clip`],
+/// for [`gate_doodad_anim`]'s resume to arm.
 ///
-/// Deviation: this runs for every resident host, where the reference stops a doodad culled out
-/// of its scene list (`[CM2Scene+0x20]`) and re-arms it at once on re-link (`0x7074b0`,
-/// `0x683f80`), because gating it so would re-roll the whole field on the frame the camera turns
-/// back.
+/// Deviation: this runs for every resident host, where the reference stops a doodad culled out of
+/// its scene list (`[CM2Scene+0x20]`) and re-arms it at once on re-link, because gating it so would
+/// re-roll the whole field on the frame the camera turns back.
 fn reroll_doodad_variation(
     time: Res<Time>,
     mut rng: ResMut<benilla_assets::AnimRng>,
@@ -386,7 +385,7 @@ fn gate_doodad_anim(
         } else {
             // Meshed: the fade and cull authorities' `Hidden` carries their verdicts, and the
             // frustum term is the one Bevy's culling (`ViewVisibility`) never writes here; the
-            // reference animates only the worklist, which passes the 6-plane test (`0x683700`).
+            // reference animates only the worklist, which passes the 6-plane test.
             host.meshes
                 .iter()
                 .any(|&e| vis.get(e).is_ok_and(|v| *v != Visibility::Hidden))
@@ -457,7 +456,7 @@ impl Plugin for DoodadAnimPlugin {
         app.init_resource::<UvAnimMaterials>();
         app.init_resource::<TintAnimMaterials>();
         // The one `rand()` stream: the reference seeds it once per process before `WinMain`
-        // (`srand(GetTickCount())`, `0x5d1c70`); a capture leaves it unseeded.
+        // (`srand(GetTickCount())`); a capture leaves it unseeded.
         app.init_resource::<benilla_assets::AnimRng>();
         let deterministic = crate::dev_state::deterministic_run();
         app.world_mut()

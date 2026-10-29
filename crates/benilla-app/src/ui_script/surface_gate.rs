@@ -42,9 +42,9 @@ fn globals_of(s: &UiScript) -> BTreeSet<String> {
     .collect()
 }
 
-/// Every `(class, method)` a VM answers, as `Class:Method`. The WorldFrame type is one-shot
-/// (`0x6ee439`), spent once the stock `WorldFrame` exists, so a loaded VM cannot make a second;
-/// its methods are a Frame's, which the census asks of a Frame.
+/// Every `(class, method)` a VM answers, as `Class:Method`. The WorldFrame type is one-shot, spent
+/// once the stock `WorldFrame` exists, so a loaded VM cannot make a second; its methods are a
+/// Frame's, which the census asks of a Frame.
 fn methods_of(s: &UiScript) -> BTreeSet<String> {
     widget_method_census(s)
         .expect("the widget census")

@@ -1,9 +1,8 @@
 //! The guild system lines: `ERR_GUILD_*` message ids the engine composes, not the FrameXML. The
-//! event and decline handlers (1.12.1's `0x5e7180`, `0x5e6f9a`) and 12340's invite and
-//! command-result handlers (`0x6cc3b0`, `0x6cc590`) pass them to the message display
-//! (`0x5216f0`), and the catalog row picks the surface and the sound. The `GUILD_MOTD` line is the
-//! FrameXML's (`ChatFrame.lua:1335-1340`) and `/ginfo`'s are not catalog rows (built in
-//! [`super::feed`]), so neither is here.
+//! event and decline handlers and 12340's invite and command-result handlers (`0x6cc3b0`,
+//! `0x6cc590`) pass them to the message display (`0x5216f0`), and the catalog row picks the surface
+//! and the sound. The `GUILD_MOTD` line is the FrameXML's (`ChatFrame.lua:1335-1340`) and
+//! `/ginfo`'s are not catalog rows (built in [`super::feed`]), so neither is here.
 
 use benilla_protocol::messages::{
     guild_command, guild_command_error, guild_event, GuildCommandResult, GuildEventNotice,
@@ -12,9 +11,9 @@ use benilla_ui::names::NameError;
 
 use crate::ui_action::UiError;
 
-/// The strings the event handler's shared tail passes to `0x496720`: one to three as they arrived,
-/// none for a count of 0 or 4 and up (`0x5e745f`). Never padded: `SStrPrintf` copies a starved
-/// `%s` through as written, so a two-string promotion ends "to %s.".
+/// The strings the event handler's shared tail passes: one to three as they arrived, none for a
+/// count of 0 or 4 and up. Never padded: `SStrPrintf` copies a starved `%s` through as written, so
+/// a two-string promotion ends "to %s.".
 fn emitted_params(notice: &GuildEventNotice) -> Vec<&str> {
     match notice.params.len() {
         1..=3 => notice.params.iter().map(String::as_str).collect(),
@@ -22,9 +21,9 @@ fn emitted_params(notice: &GuildEventNotice) -> Vec<&str> {
     }
 }
 
-/// The line one `SMSG_GUILD_EVENT` prints, if any; ids map to keys as the handler's case arms do
-/// (`0x5e720a` to `0x5e745a`). `announce_signon` is the sign-on/sign-off pair's whole display
-/// condition, decided in `super::net::event`; no other arm has one.
+/// The line one `SMSG_GUILD_EVENT` prints, if any; ids map to keys as the handler's case arms do.
+/// `announce_signon` is the sign-on/sign-off pair's whole display condition, decided in
+/// `super::net::event`; no other arm has one.
 pub(super) fn event_line(notice: &GuildEventNotice, announce_signon: bool) -> Option<UiError> {
     let args = emitted_params(notice);
     let shared = |key: &'static str| Some(UiError::strings(key, &args));
@@ -60,7 +59,7 @@ pub(super) fn event_line(notice: &GuildEventNotice, announce_signon: bool) -> Op
         guild_event::MOTD | guild_event::UPDATE_RANK_NAME | guild_event::UPDATE_ROSTER => None,
         guild_event::SIGNED_ON | guild_event::SIGNED_OFF => None,
         // `0x09` and every id past `0x0d` share the default arm, which prints `0x69`,
-        // `ERR_GUILD_INTERNAL`, through the shared tail (`0x5e745a`).
+        // `ERR_GUILD_INTERNAL`, through the shared tail.
         _ => shared("ERR_GUILD_INTERNAL"),
     }
 }

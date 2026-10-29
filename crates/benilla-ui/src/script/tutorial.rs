@@ -44,8 +44,8 @@ impl super::UiScript {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `TutorialsEnabled()` (`0x4b5960`): 1 if any of the bank's `[0xb711ec] * 4` bytes is not
-    // 0xFF, the whole bank and not just the fifty ids; else nil, as with no bank.
+    // `TutorialsEnabled()`: 1 if any of the bank's bytes is not 0xFF, the whole bank and not just
+    // the fifty ids; else nil, as with no bank.
     g.set(
         "TutorialsEnabled",
         lua.create_function(|lua, ()| {
@@ -75,8 +75,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `FlagTutorial(n)` (`0x4b59b0`): a non-number raises the reference's usage text, which asks
-    // for a string; truncated, an `n − 1` outside `0..0x32` is a silent no-op.
+    // `FlagTutorial(n)`: a non-number raises the reference's usage text, which asks for a string;
+    // truncated, an `n − 1` outside `0..0x32` is a silent no-op.
     g.set(
         "FlagTutorial",
         lua.create_function(|lua, n: Value| {

@@ -1,7 +1,7 @@
-//! `OnSizeChanged`, the base-map layout script (`0x76a0d0` `+0x120`). `ApplyRect 0x76b580` fires
-//! it only when width or height moves by `ε = _DAT_008029d4` ([`crate::layout::SIZE_EPS`]).
-//! Deviation: the client fires per rect application; we fire once per resolve on the size before
-//! and after, because our solver settles the whole graph to a fixpoint.
+//! `OnSizeChanged`, the base-map layout script (`+0x120`). `ApplyRect` fires it only when width or
+//! height moves by `ε = _DAT_008029d4` ([`crate::layout::SIZE_EPS`]). Deviation: the client fires
+//! per rect application; we fire once per resolve on the size before and after, because our solver
+//! settles the whole graph to a fixpoint.
 
 use super::common::script;
 

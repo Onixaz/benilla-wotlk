@@ -64,9 +64,9 @@ pub(crate) const SPELL_ATTACK: u32 = 6603;
 pub(crate) struct PlayerActions {
     /// Wire slot (0-based) to its packed action; the Lua action id is slot + 1.
     pub buttons: HashMap<u8, ActionButton>,
-    /// The spell book (`SMSG_INITIAL_SPELLS`), ordered on purpose: the reference's first-hit
-    /// scans (the lock resolver `0x5f83d0`) pick between equal spells, 6478 and 22810 "Opening",
-    /// by array order, which is ascending id: the server sends the book from a `std::map`.
+    /// The spell book (`SMSG_INITIAL_SPELLS`), ordered on purpose: the reference's first-hit scans
+    /// pick between equal spells, 6478 and 22810 "Opening", by array order, which is ascending id:
+    /// the server sends the book from a `std::map`.
     pub spells: BTreeSet<u32>,
     /// The saved equipment sets (`SMSG_EQUIPMENT_SET_LIST`), which a set slot names by id.
     pub equipment_sets: Vec<benilla_protocol::messages::EquipmentSet>,
@@ -106,7 +106,7 @@ impl PlayerActions {
 
 /// The world right-click's GameObject openers, queued one frame for the cast ladder: the click
 /// system cannot also hold the ladder's resources, and only the ladder sends a cast, so a chest
-/// right-clicked mid-cast takes the reference's silent same-spell bail (`0x6e4d43`).
+/// right-clicked mid-cast takes the reference's silent same-spell bail.
 #[derive(Resource, Default)]
 pub(crate) struct GoOpenerCasts(pub(crate) Vec<GoOpener>);
 
@@ -125,23 +125,23 @@ pub(crate) enum GoOpener {
 pub(crate) struct Spells {
     pub(crate) catalog: SpellCatalog,
     /// Form id to its `SpellShapeshiftForm.dbc` row: `BonusActionBar` pages the bar
-    /// (`GetBonusBarOffset 0x4e7620`), `flags1` holds the stance and cancel bits.
+    /// (`GetBonusBarOffset`), `flags1` holds the stance and cancel bits.
     pub(crate) forms: std::collections::HashMap<u32, benilla_formats::ShapeshiftForm>,
-    /// `SpellRange.dbc`, the `GetMinMaxRange 0x6e3480` inputs; empty on a failed load.
+    /// `SpellRange.dbc`, the `GetMinMaxRange` inputs; empty on a failed load.
     pub(crate) ranges: benilla_formats::SpellRangeCatalog,
-    /// `SpellCastTimes.dbc`, read through `CastingTimeIndex` (`GetCastTime 0x6e3340`).
+    /// `SpellCastTimes.dbc`, read through `CastingTimeIndex` (`GetCastTime`).
     pub(crate) cast_times: benilla_formats::SpellCastTimeCatalog,
-    /// `SpellDuration.dbc`: the `$d`/`$o` tokens' source (`GetDuration 0x6ea000`).
+    /// `SpellDuration.dbc`: the `$d`/`$o` tokens' source (`GetDuration`).
     pub(crate) durations: benilla_formats::SpellDurationCatalog,
     /// `SpellRadius.dbc`: the `$a` token's yards.
     pub(crate) radii: benilla_formats::SpellRadiusCatalog,
 }
 
 impl Spells {
-    /// The cast time in ms as `GetCastTime 0x6e3340` returns it for argument 1, the tooltip's
-    /// (`52eb4b`): the level-scaled `CastingTimeIndex` row, then spell-mod op 10 (`0x6e33b7`),
-    /// with no clamp, so row 18's negative time survives. A missing row returns 0 before the
-    /// modifier (`0x6e338a`). The cast-speed multiply (`0x6e3422`) is not applied.
+    /// The cast time in ms as `GetCastTime` returns it for argument 1, the tooltip's: the
+    /// level-scaled `CastingTimeIndex` row, then spell-mod op 10, with no clamp, so row 18's
+    /// negative time survives. A missing row returns 0 before the modifier. The cast-speed multiply
+    /// is not applied.
     pub(crate) fn cast_time_unclamped_ms(
         &self,
         def: &benilla_formats::SpellDisplay,
@@ -156,8 +156,8 @@ impl Spells {
             })
     }
 
-    /// [`Self::cast_time_unclamped_ms`] for argument 0, the cast validator's (`0x609e16`): a
-    /// result at or below zero reads 0 (`0x6e3461`-`0x6e3470`).
+    /// [`Self::cast_time_unclamped_ms`] for argument 0, the cast validator's: a result at or below
+    /// zero reads 0.
     pub(crate) fn cast_time_ms(
         &self,
         def: &benilla_formats::SpellDisplay,
@@ -221,8 +221,8 @@ pub(crate) struct LearnedAbilities {
     /// `[0xbe5d7c]` (`0x5420d6`): the known `SPELL_EFFECT_SKIN_PLAYER_CORPSE` spell, Remove
     /// Insignia, the slot a player or corpse reads.
     pub(crate) skin_player_corpse: Option<u32>,
-    /// `[0xcecad8]`: the known `SPELL_EFFECT_FEED_PET` spell, latched by `0x6ea1d0` (from
-    /// `0x5e9e49`); gate 3 of [`drop_item::drop_item_on_unit`] and the spell it casts.
+    /// The known `SPELL_EFFECT_FEED_PET` spell, latched; gate 3 of [`drop_item::drop_item_on_unit`]
+    /// and the spell it casts.
     pub(crate) feed_pet: Option<u32>,
 }
 
@@ -294,7 +294,7 @@ impl LearnedAbilities {
 /// The "Remove Insignia" effect, latched into `[0xbe5d7c]` (`0x5420d6`).
 const SPELL_EFFECT_SKIN_PLAYER_CORPSE: u32 = 0x74;
 
-/// The effect latched into `[0xcecad8]` at learn time (`0x5e9e42`); only Feed Pet 6991 has it.
+/// The effect latched into the reference at learn time; only Feed Pet 6991 has it.
 const SPELL_EFFECT_FEED_PET: u32 = 0x65;
 
 /// Re-derives [`LearnedAbilities`] whenever the book changes, standing in for learn-time writes.

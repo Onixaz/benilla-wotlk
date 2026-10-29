@@ -1,4 +1,4 @@
-//! `thudcensus`: the death thud a corpse makes as it lands (`$DTH`, `0x6236e0`): the full
+//! `thudcensus`: the death thud a corpse makes as it lands (`$DTH`): the full
 //! `DeathThudLookups.dbc` grid, `SizeClass × TerrainTypeSoundID` to land and water `SoundEntries`
 //! kits, and the creature models that key a `$DTH`. An empty cell is authored silence (Sand and
 //! Soggy have no water column), as is a model with no `$DTH`.

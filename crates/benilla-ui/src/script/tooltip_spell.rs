@@ -1,18 +1,17 @@
-//! The spell and aura tooltip content, in the line order of the spell builder `0x52e610` and the
-//! aura builder `0x52f880`: name and rank; cost and range; cast time and cooldown (omitted for a
-//! passive spell, with no "Passive" line); the required item class, then form, white when met and
-//! red when not; reagents, a missing one inline red; the description, gold (white on an aura).
-//! `SetPlayerBuff`, and `SetUnitAura` and its siblings on a timed aura, add the gold
-//! time-remaining line.
+//! The spell and aura tooltip content, in the line order of the spell builder and the aura builder:
+//! name and rank; cost and range; cast time and cooldown (omitted for a passive spell, with no
+//! "Passive" line); the required item class, then form, white when met and red when not; reagents,
+//! a missing one inline red; the description, gold (white on an aura). `SetPlayerBuff`, and
+//! `SetUnitAura` and its siblings on a timed aura, add the gold time-remaining line.
 //!
 //! The app resolves each spell into a [`SpellTooltipView`] (`$`-tokens, cast, range and duration
 //! text), kept in an ask-once store by spell id and pushed ahead of a hover: one store for the
-//! views built against the player and one for those built against its pet, which the builder's
-//! unit selector asks for. A miss records the id; a `set_spell_by_id` miss also waits, and the
-//! app's answer re-renders that tooltip a frame after the hover. That frame is a known difference
-//! from the reference, which builds every spell tooltip at the call (`0x52e610`); a spell no
-//! pushed set names, such as an `enchant:` link's, always meets it. A talent or tracking miss shows
-//! its view on the next hover.
+//! views built against the player and one for those built against its pet, which the builder's unit
+//! selector asks for. A miss records the id; a `set_spell_by_id` miss also waits, and the app's
+//! answer re-renders that tooltip a frame after the hover. That frame is a known difference from
+//! the reference, which builds every spell tooltip at the call; a spell no pushed set names, such
+//! as an `enchant:` link's, always meets it. A talent or tracking miss shows its view on the next
+//! hover.
 
 use mlua::{Lua, MultiValue, Table, Value};
 
@@ -33,8 +32,8 @@ pub struct SpellTooltipView {
     pub name: String,
     /// "Rank N", the name line's gray right column on the spell variant.
     pub rank: Option<String>,
-    /// The aura variant's gold right column (`0x52f8e5`): the `SpellDispelType.dbc` name, such as
-    /// "Magic", when that row's `[+0x28]` flag is set, so Stealth has none.
+    /// The aura variant's gold right column: the `SpellDispelType.dbc` name, such as "Magic", when
+    /// that row's `[+0x28]` flag is set, so Stealth has none.
     pub dispel_type: Option<String>,
     /// The cost cell, such as "35 Mana" or "11 Health, plus 5 per sec": the resolved cost through
     /// the power-type keys, falling back to health.
@@ -43,25 +42,25 @@ pub struct SpellTooltipView {
     /// The cast cell ("1.5 sec cast", "Instant", "Next melee", "Channeled"); `None` is a passive
     /// spell, whose cast and cooldown line is omitted.
     pub cast_time: Option<String>,
-    /// The cooldown cell (`SPELL_RECAST_TIME_SEC 0x854ed4`): `max(RecoveryTime,
-    /// CategoryRecoveryTime)`, as Charge's 15 s is in the category column.
+    /// The cooldown cell (`SPELL_RECAST_TIME_SEC`): `max(RecoveryTime, CategoryRecoveryTime)`, as
+    /// Charge's 15 s is in the category column.
     pub cooldown: Option<String>,
-    /// "Requires Wands" (`SPELL_EQUIPPED_ITEM 0x854e94`), from `EquippedItemClass` and
+    /// "Requires Wands" (`SPELL_EQUIPPED_ITEM`), from `EquippedItemClass` and
     /// `EquippedItemSubClassMask`.
     pub requires_item: Option<String>,
     /// A worn item matches the class and subclass mask; re-pushed on an equipment change.
     pub item_met: bool,
-    /// "Requires Battle Stance" (`SPELL_REQUIRED_FORM 0x854e64`), from the `Stances` mask.
+    /// "Requires Battle Stance" (`SPELL_REQUIRED_FORM`), from the `Stances` mask.
     pub requires_form: Option<String>,
     /// The current shapeshift form matches the mask; the app re-pushes on a form change.
     pub form_met: bool,
-    /// "Reagents: Light Feather" (`SPELL_REAGENTS 0x854e54` and the eight reagent slots); the app
-    /// writes a missing reagent's inline `|cffff2020` escape.
+    /// "Reagents: Light Feather" (`SPELL_REAGENTS` and the eight reagent slots); the app writes a
+    /// missing reagent's inline `|cffff2020` escape.
     pub reagents: Option<String>,
     /// Every reagent is carried, so the brief tooltip leaves the line out (`0x6238a0`).
     pub reagents_met: bool,
-    /// "2.62% chance to dodge" (`CHANCE_TO_DODGE 0x854e44` and its siblings, by `Effect[0]`),
-    /// from the player's live stat, which the app re-pushes as it moves.
+    /// "2.62% chance to dodge" (`CHANCE_TO_DODGE` and its siblings, by `Effect[0]`), from the
+    /// player's live stat, which the app re-pushes as it moves.
     pub chance: Option<String>,
     /// The `$`-substituted description.
     pub description: String,
@@ -73,7 +72,7 @@ pub struct SpellTooltipView {
 impl super::UiScript {
     /// Store or replace a spell's view built against the player, answering its ask: a tooltip
     /// waiting on it re-renders now, a frame after its hover, where the reference builds it whole
-    /// at the call (`0x52e610`).
+    /// at the call.
     pub fn set_spell_tooltip(&mut self, spell_id: u32, view: SpellTooltipView) {
         self.store_spell_view(false, spell_id, view);
     }
@@ -115,8 +114,7 @@ impl super::UiScript {
     }
 
     /// The spells whose pet view a hover reads from the VM's own state: the pet's bar and book,
-    /// whose setters pass the builder's unit selector (`0x532888`, `0x532e23`). The app pushes
-    /// their views ahead of a hover.
+    /// whose setters pass the builder's unit selector. The app pushes their views ahead of a hover.
     pub fn pet_spell_tooltip_subjects(&self) -> Vec<u32> {
         let model = self.model_ref();
         let pet_bar = model
@@ -278,14 +276,14 @@ pub(super) fn spell_view_of(
     v
 }
 
-/// The talent lines [`render_spell`] interleaves (`TOOLTIP_TALENT_RANK 0x854a2c`,
-/// `TOOLTIP_TALENT_LEARN 0x8549f8`): the white "Rank r/m" after the name, the red requirements
-/// while locked, the next-rank block and the green learn hint.
+/// The talent lines [`render_spell`] interleaves (`TOOLTIP_TALENT_RANK`, `TOOLTIP_TALENT_LEARN`):
+/// the white "Rank r/m" after the name, the red requirements while locked, the next-rank block and
+/// the green learn hint.
 #[derive(Clone, Debug, Default)]
 pub(super) struct TalentLines {
-    /// `Talent.dbc` Flags bit 0: `SetTalent` hands an exceptional talent to the spell builder
-    /// `0x52e610` (`0x5352ab`) and any other to the talent builder `0x52b0a0`, which writes no
-    /// cost, range, cast, required-item, form, reagent or chance line.
+    /// `Talent.dbc` Flags bit 0: `SetTalent` hands an exceptional talent to the spell builder and
+    /// any other to the talent builder, which writes no cost, range, cast, required-item, form,
+    /// reagent or chance line.
     pub exceptional: bool,
     /// `TOOLTIP_TALENT_RANK` ("Rank %d/%d") filled from the player's strings; `None` when they
     /// lack the key, and no rank row shows.
@@ -311,20 +309,19 @@ pub(super) enum TalentHint {
 
 /// The talent learn hint's green, `0xff00ff00`.
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
-/// The unmet-requirement red, `0xffff2020` (`0xc0d390`, the item builder's red).
+/// The unmet-requirement red, `0xffff2020` (the item builder's red).
 const RED: [f32; 4] = [1.0, 32.0 / 255.0, 32.0 / 255.0, 1.0];
 
-/// The spell builder's options (`0x52e610`'s parameters); `Default` is the plain spell hover.
+/// The spell builder's options; `Default` is the plain spell hover.
 #[derive(Clone, Copy, Default)]
 pub(super) struct SpellRenderOpts {
-    /// The aura builder (`0x52f880`): gold name, white description, the dispel class at right.
+    /// The aura builder: gold name, white description, the dispel class at right.
     pub(super) aura: bool,
     /// `param6` showRank, the gray "Rank N" column: `SetSpell` passes 0, `SetAction` 1.
     pub(super) show_rank: bool,
-    /// `param5` altCaster, the unit selector: the view is the one built against the player's
-    /// charm, else its summon (`0x6e3130`, `0x6e31b0`, `0x6e3340`), and the totem and reagent
-    /// lines drop (`0x52ed43`, `0x52f393`). `SetPetAction` sets it (`0x532888`), `SetSpell` on the
-    /// pet book (`0x532e23`) and `SetTrainerService` for a `LEARN_PET_SPELL` service (`0x533a7f`).
+    /// `param5` altCaster, the unit selector: the view is the one built against the player's charm,
+    /// else its summon, and the totem and reagent lines drop. `SetPetAction` sets it, `SetSpell` on
+    /// the pet book and `SetTrainerService` for a `LEARN_PET_SPELL` service.
     pub(super) alt_caster: bool,
     /// `SetSpell`'s `brief` (`0x6238a0`), which `SetAction`, `SetShapeshift` and `SetPossession`
     /// pass while `UberTooltips` is off: the name and rank, the cooldown and only the unmet
@@ -356,7 +353,7 @@ fn render_spell(
         alt_caster,
         brief,
     } = opts;
-    // The spell builder writes the name white (`0x530270`), the aura builder gold (`0x530380`).
+    // The spell builder writes the name white, the aura builder gold.
     let name_color = if aura { GOLD } else { WHITE };
     let right = if aura {
         v.dispel_type.clone().map(|t| (t, GOLD))
@@ -436,17 +433,17 @@ fn render_spell(
         let color = if aura { WHITE } else { GOLD };
         append_line(lua, this, (desc.clone(), color), None, true)?;
     }
-    // The talent tail: the white `TOOLTIP_TALENT_NEXT_RANK` header (`0x854a10`, pushed at
-    // `0x52b2cd`) over the next rank's gold description, then the green `TOOLTIP_TALENT_LEARN`
-    // hint (`0x52b362`). Both are the player's own strings; without them the line is skipped.
+    // The talent tail: the white `TOOLTIP_TALENT_NEXT_RANK` header over the next rank's gold
+    // description, then the green `TOOLTIP_TALENT_LEARN` hint. Both are the player's own strings;
+    // without them the line is skipped.
     if let Some(t) = talent {
-        // The talent builder skips a rank with an empty description, header and all (`0x52b294`).
+        // The talent builder skips a rank with an empty description, header and all.
         let next = t
             .next_desc
             .as_ref()
             .filter(|n| !talent_builder || !n.is_empty());
         if let Some(next) = next {
-            // The talent builder's gold `" "` spacer (`0x82ee00`, `0x52b2a8`) after a description.
+            // The talent builder's gold `" "` spacer after a description.
             if talent_builder && !desc.is_empty() {
                 append_line(lua, this, (" ".into(), GOLD), None, false)?;
             }
@@ -587,14 +584,13 @@ fn fill_spell(
 
 /// Register the spell and aura content methods on the GameTooltip method table.
 pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
-    // GameTooltip:SetSpell(bookId, bookType): the spellbook hover. `SetSpell 0x532d10` bounds the
-    // 1-based slot to `[0, 0x400)` (`0x532dd4`) and reads the pet book (`0xb6f098`) when `bookType`
-    // is "pet" (`0x532e13`), else the player's (`0xb700f0`); the pet flag also picks the cooldown
-    // bank it passes to `0x6e2ea0` (`0x532e50`).
+    // GameTooltip:SetSpell(bookId, bookType): the spellbook hover. `SetSpell` bounds the 1-based
+    // slot to `[0, 0x400)` and reads the pet book when `bookType` is "pet", else the player's; the
+    // pet flag also picks the cooldown bank it passes.
     m.set(
         "SetSpell",
         lua.create_function(|lua, (this, book_id, book_type): (Table, u32, Value)| {
-            // A non-string `bookType` bails (`0x532dc0`) rather than meaning the player's book.
+            // A non-string `bookType` bails rather than meaning the player's book.
             let Some(book_type) = book_type.as_string().and_then(|s| s.to_str().ok()) else {
                 return Ok(());
             };
@@ -605,7 +601,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     None => return Ok(()),
                 }
             };
-            // The pet book's flag is also the builder's unit selector (`0x532e70`).
+            // The pet book's flag is also the builder's unit selector.
             let opts = SpellRenderOpts {
                 alt_caster: super::spellbook::is_pet_book(&book_type),
                 ..Default::default()
@@ -632,9 +628,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
     // GameTooltip:SetPetAction(index): the pet-bar hover for a spell slot, built against the pet
-    // (the unit selector, pushed at `0x532888` and `0x5328d0`); the stock
-    // `PetActionButton_OnEnter` builds a token's tooltip itself (`PetActionBarFrame.lua:290`). A
-    // slot with no spell is a no-op.
+    // (the unit selector); the stock `PetActionButton_OnEnter` builds a token's tooltip itself
+    // (`PetActionBarFrame.lua:290`). A slot with no spell is a no-op.
     m.set(
         "SetPetAction",
         lua.create_function(|lua, (this, index): (Table, usize)| {
@@ -701,11 +696,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             }
         })?,
     )?;
-    // GameTooltip:SetPlayerBuff(buffIndex): the aura variant plus the time-remaining line only
-    // this entry appends, its text `0x52fa50`'s (`tooltip::duration_text`). The argument is the
-    // 0-based cache position `GetPlayerBuff` returns (`BuffFrame.lua:105`), not a filtered
-    // ordinal. A miss, negative included, clears and hides the plate as `SetUnitBuff`'s does; a
-    // surplus argument is ignored, as in the reference.
+    // GameTooltip:SetPlayerBuff(buffIndex): the aura variant plus the time-remaining line only this
+    // entry appends, its text the reference's (`tooltip::duration_text`). The argument is the
+    // 0-based cache position `GetPlayerBuff` returns (`BuffFrame.lua:105`), not a filtered ordinal.
+    // A miss, negative included, clears and hides the plate as `SetUnitBuff`'s does; a surplus
+    // argument is ignored, as in the reference.
     m.set(
         "SetPlayerBuff",
         lua.create_function(|lua, (this, index): (Table, i64)| {
@@ -717,10 +712,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     .and_then(|pos| model.player_auras.get(pos));
                 match hit {
                     Some(a) => {
-                        // The gate is `untilCancelled`, not a known duration: `0x532b00` skips
-                        // the line when the record's `+0xc` is set (`0x532bdf`), a DBC flag that
-                        // holds before any `SMSG_UPDATE_AURA_DURATION` lands; a lapsed aura shows
-                        // "0 seconds remaining".
+                        // The gate is `untilCancelled`, not a known duration: the reference skips
+                        // the line when the record's `+0xc` is set, a DBC flag that holds before
+                        // any `SMSG_UPDATE_AURA_DURATION` lands; a lapsed aura shows "0 seconds
+                        // remaining".
                         let ms = (!a.until_cancelled).then(|| {
                             // The reference counts integer milliseconds off `GetTickCount`;
                             // this rounds the float clock to the nearest one.
@@ -735,7 +730,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     None => (0, None, None),
                 }
             };
-            // `0x52fa50`'s text from the player's own strings; without them the line is skipped.
+            // The reference's text from the player's own strings; without them the line is skipped.
             let remaining = remaining_ms.and_then(|ms| {
                 let g = lua.globals();
                 super::tooltip::duration_text(ms, "SPELL_TIME_REMAINING", true, &|key| {
@@ -871,9 +866,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // GameTooltip:SetQuestRewardSpell() / SetQuestLogRewardSpell() (`0x535bb0`, `0x535c60`): the
-    // hover of a reward slot whose `rewardType` is "spell" (`QuestFrameTemplates.xml:150`,
-    // `QuestLogFrame.xml:115`), the quest's reward spell or an empty tooltip.
+    // GameTooltip:SetQuestRewardSpell() / SetQuestLogRewardSpell(): the hover of a reward slot
+    // whose `rewardType` is "spell" (`QuestFrameTemplates.xml:150`, `QuestLogFrame.xml:115`), the
+    // quest's reward spell or an empty tooltip.
     m.set(
         "SetQuestRewardSpell",
         lua.create_function(|lua, this: Table| {
@@ -905,10 +900,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             set_reward_spell(lua, &this, id)
         })?,
     )?;
-    // GameTooltip:SetAction(slot): the action-bar hover by payload kind (`0x5322a0`): a spell
-    // (0x00) to the spell builder `0x52e610`, an item (0x80) to the item builder `0x52b650`, a
-    // macro (0x40) to `0x52b040`, which fetches it (`0x4f0f40`) and renders only its name, white
-    // (`0x5303b0` in colour `0xc0cf60`), or hides with none; 1.12 has no `#showtooltip`.
+    // GameTooltip:SetAction(slot): the action-bar hover by payload kind: a spell (0x00) to the
+    // spell builder, an item (0x80) to the item builder, a macro (0x40), which fetches it and
+    // renders only its name, white, or hides with none; 1.12 has no `#showtooltip`.
     m.set(
         "SetAction",
         lua.create_function(|lua, (this, slot): (Table, u32)| {

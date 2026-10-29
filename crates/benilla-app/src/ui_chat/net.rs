@@ -180,11 +180,9 @@ fn chat(
     server_said: &mut MessageWriter<ServerSaidMessage>,
 ) {
     // Addon traffic: 1.12 has no addon opcode or chat type, so `LANG_ADDON` on any lane is the
-    // whole test (`0x49a89e`, in the display function `0x49a870`). The line never renders
-    // (`0x49a970`); it fires `CHAT_MSG_ADDON` once the sender's name resolves (`0x49d7ba`,
-    // `0x49ccc0`). An ignored sender's fires nothing, as the reference drops ignored lines first
-    // (`0x49d72d`), and needs no `CMSG_CHAT_IGNORED`: vmangos refuses addon whispers
-    // (`ChatHandler.cpp:84-103`).
+    // whole test. The line never renders; it fires `CHAT_MSG_ADDON` once the sender's name
+    // resolves. An ignored sender's fires nothing, as the reference drops ignored lines first, and
+    // needs no `CMSG_CHAT_IGNORED`: vmangos refuses addon whispers (`ChatHandler.cpp:84-103`).
     if m.is_addon() {
         if !social.is_ignored(m.sender_guid) {
             debug!(
@@ -218,8 +216,8 @@ fn chat(
             &format!("[{:#04x}] {}", m.chat_type, m.text.replace('\n', " ⏎ ")),
         );
     }
-    // An ignored speaker is dropped silently (`FriendList::IsIgnored`, `0x5ae5a0`); a dropped
-    // whisper also sends `CMSG_CHAT_IGNORED`, so the sender hears "is ignoring you".
+    // An ignored speaker is dropped silently (`FriendList::IsIgnored`); a dropped whisper also
+    // sends `CMSG_CHAT_IGNORED`, so the sender hears "is ignoring you".
     if social.is_ignored(m.sender_guid) {
         if m.chat_type == CHAT_MSG_WHISPER {
             let _ = net_commands.0.send(ClientCommand::ChatIgnored {
@@ -231,8 +229,8 @@ fn chat(
     chat_log.push_wire(m);
 }
 
-/// The `/chatlist` roster (`SMSG_CHANNEL_LIST`). Members arrive as guids and are not resolved,
-/// so the line gives their count where the reference lists their names (`0x49c690`).
+/// The `/chatlist` roster (`SMSG_CHANNEL_LIST`). Members arrive as guids and are not resolved, so
+/// the line gives their count where the reference lists their names.
 fn channel_list(channel: String, members: &[(u64, u8)], chat_log: &mut ChatLog) {
     let mut ev = ChatEvent::text_only(
         ChatEventKind::ChannelList,
@@ -258,17 +256,17 @@ fn chat_wrong_faction(errors: &mut crate::ui_action::UiErrorKeys) {
         .push(crate::ui_action::UiError::key("ERR_CHAT_WRONG_FACTION"));
 }
 
-/// `SMSG_NOTIFICATION` (`0x1cb`, handler `0x401800`): the red `UIErrorsFrame` line,
-/// `UI_ERROR_MESSAGE` from `0x4945b0(text, 1)`, never a chat line. vmangos sends `.gm on` as both
-/// a system line and a notification (`Objects/Player.cpp:2676-2677`).
+/// `SMSG_NOTIFICATION` (`0x1cb`): the red `UIErrorsFrame` line, `UI_ERROR_MESSAGE` from
+/// `(text, 1)`, never a chat line. vmangos sends `.gm on` as both a system line and a notification
+/// (`Objects/Player.cpp:2676-2677`).
 fn notification(text: String, errors: &mut UiErrorTexts) {
-    // The reference also logs it to the console (`0x63cd00`).
+    // The reference also logs it to the console.
     info!("net: notification — {text}");
     errors.error(text);
 }
 
-/// An area trigger's refusal (`SMSG_AREA_TRIGGER_MESSAGE`, `0x2b8`, arm `0x48f8ff` of
-/// `0x48f690`): the yellow `UIErrorsFrame` line, `UI_INFO_MESSAGE` from `0x4945b0(text, 0)`.
+/// An area trigger's refusal (`SMSG_AREA_TRIGGER_MESSAGE`, `0x2b8`): the yellow `UIErrorsFrame`
+/// line, `UI_INFO_MESSAGE` from `(text, 0)`.
 fn area_trigger_message(text: String, errors: &mut UiErrorTexts) {
     info!("net: area-trigger message — {text}");
     errors.info(text);
@@ -437,7 +435,7 @@ mod tests {
                 "GM mode is ON".to_string(),
                 benilla_ui::messages::MsgKind::Error
             )],
-            "the SendNotification half is the RED toast (0x4945b0's flag 1), never a second line"
+            "the SendNotification half is the RED toast, never a second line"
         );
     }
 

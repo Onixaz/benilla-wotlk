@@ -16,13 +16,13 @@ const MAP: &str = "DBFilesClient\\Map.dbc";
 /// `Map.dbc`'s per-map data, keyed by map id.
 pub struct MapCatalog {
     dirs: HashMap<u32, String>,
-    /// `MapName_Lang[enUS]` (field 4, `+0x10`, read by `0x4a65a0`). The continent dropdown shows
-    /// this ("Eastern Kingdoms"), not the art folder ("Azeroth") (`GetMapContinents` `0x4a7ce0`).
+    /// `MapName_Lang[enUS]` (field 4, `+0x10`). The continent dropdown shows this ("Eastern
+    /// Kingdoms"), not the art folder ("Azeroth") (`GetMapContinents`).
     names: HashMap<u32, String>,
     /// `LoadingScreenID`, for maps with a non-zero one.
     loading_screens: HashMap<u32, u32>,
-    /// `InstanceType` (field 2, `+0x8`, read at `0x48a772`, `0x495cb9`, `0x495d33`): 0 none,
-    /// 1 party, 2 raid, 3 battleground, as `IsInInstance` spells them (`0x83de58`, guarded `< 4`).
+    /// `InstanceType` (field 2, `+0x8`): 0 none, 1 party, 2 raid, 3 battleground, as `IsInInstance`
+    /// spells them (guarded `< 4`).
     instance_types: HashMap<u32, u32>,
     /// `Flags` (column 3, `+0xc`), for maps with a non-zero one.
     flags: HashMap<u32, u32>,

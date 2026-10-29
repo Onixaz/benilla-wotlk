@@ -6,7 +6,7 @@
 //! - Read (`CVar::Load` `0x766400`): a UTF-8 BOM skipped, lines split at CR or LF, blank ones
 //!   skipped, and only a line opening `SET ` (any case) runs; `SetCommandHandler` (`0x7681f0`)
 //!   tokenizes name and value on ` ,;\t"\r\n`, a value that opens with `"` running to the next `"`
-//!   (`SStrTokenize` `0x76f1e0`), so no value can hold a quote.
+//!   (`SStrTokenize`), so no value can hold a quote.
 
 /// Longest name and value the tokenizer keeps (`0x7681f0`'s 64- and 2048-byte buffers).
 const NAME_MAX: usize = 63;

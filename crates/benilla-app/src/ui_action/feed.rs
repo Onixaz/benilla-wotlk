@@ -1,7 +1,7 @@
 //! The action bar's identity feed: each of the action slots' icon and count, pushed to the VM with
-//! `ACTIONBAR_SLOT_CHANGED` per changed slot. [`feed_actions`] also drains the UI error queues
-//! and feeds the stance page (`GetBonusBarOffset`: the form's `SpellShapeshiftForm.dbc`
-//! BonusActionBar column, `0x4e4fc0`).
+//! `ACTIONBAR_SLOT_CHANGED` per changed slot. [`feed_actions`] also drains the UI error queues and
+//! feeds the stance page (`GetBonusBarOffset`: the form's `SpellShapeshiftForm.dbc` BonusActionBar
+//! column).
 
 use crate::ui_items::{count_of, InventoryScope};
 use std::collections::{HashMap, HashSet};
@@ -25,7 +25,7 @@ use super::{
 };
 
 /// An item action's icon when its template has not answered or its display id has no
-/// `ItemDisplayInfo` row: the reference's literal `0x847fe4`, from the resolver's `0x5d8927`.
+/// `ItemDisplayInfo` row: the reference's literal, from the resolver's.
 pub(super) const MISSING_ITEM_ICON: &str = "Interface\\Icons\\INV_Misc_QuestionMark";
 
 /// The feed's memory of what it last pushed, for per-slot change events.
@@ -109,10 +109,10 @@ pub(super) fn feed_actions(
     let (mut ui_error_keys, mut ui_error_texts, mut cast_fail_log) = ui_errors;
     let memory = memory.get(&script);
 
-    // Cast failures become error lines through [`cast_fail`], all resolved before any event
-    // fires. The drain owns the arms that need our bags or the item cache: `0x78` and `0x5c`
-    // (`0x6e1e7f`) name the failing slot's item, found as the pre-send check finds it. On a cache
-    // miss the entry stays queued, as the reference's callback `0x6e29b0` redisplays on the answer.
+    // Cast failures become error lines through [`cast_fail`], all resolved before any event fires.
+    // The drain owns the arms that need our bags or the item cache: `0x78` and `0x5c` name the
+    // failing slot's item, found as the pre-send check finds it. On a cache miss the entry stays
+    // queued, as the reference's callback redisplays on the answer.
     let self_store = self_q.iter().next().map(|(s, _)| s);
     let mut await_template: Vec<crate::ui_action::CastFail> = Vec::new();
     // The same failures for the combat log: `0x808200` calls both `DisplayError` and
@@ -134,10 +134,9 @@ pub(super) fn feed_actions(
             let get = |key: &str| script.lua().globals().get::<String>(key).ok();
             // The displayed line first and the log line from it, the reference's order.
             let line = (|| -> Option<cast_fail::CastFailLine> {
-                // `0x19`-`0x1b` (`0x6e1db7`, through `0x6e2380`): the singular subclass name,
-                // "Must have a Wand equipped"; a multi-bit mask names its `ItemSubClassMask.dbc`
-                // group, else the first subclass, where the tooltip (`0x52eea7`) uses the plural
-                // and joins. The pet's table fills it too (`0x6e904d`).
+                // `0x19`-`0x1b`: the singular subclass name, "Must have a Wand equipped"; a
+                // multi-bit mask names its `ItemSubClassMask.dbc` group, else the first subclass,
+                // where the tooltip uses the plural and joins. The pet's table fills it too.
                 if let (0x19..=0x1b, Some(d), Some(subs)) = (reason, d, sub_classes.as_deref()) {
                     if let Some(name) = (d.equipped_item_class >= 0)
                         .then(|| {
@@ -154,10 +153,10 @@ pub(super) fn feed_actions(
                             .map(|t| cast_fail::CastFailLine::passthrough(t.replace("%s", &name)));
                     }
                 }
-                // `0x31` (`0x6e1e54`): the same helper for class 6 (Projectile), mask `1 << arg`,
-                // the shift masked to five bits as x86 `shl` masks it (`0x6e1e5c`). The player's
-                // arm only: the pet's table (`0x6e93d0`) has no `0x31` entry. vmangos never sends
-                // the word (`Spell.cpp:4419-4443`), so against it this declines to the stem.
+                // `0x31`: the same helper for class 6 (Projectile), mask `1 << arg`, the shift
+                // masked to five bits as x86 `shl` masks it. The player's arm only: the pet's table
+                // has no `0x31` entry. vmangos never sends the word (`Spell.cpp:4419-4443`), so
+                // against it this declines to the stem.
                 if let (false, 0x31, Some(arg), Some(subs)) =
                     (pet, reason, fail.arg, sub_classes.as_deref())
                 {
@@ -191,7 +190,7 @@ pub(super) fn feed_actions(
                         .map(|i| i.name.clone());
                     let name = match cached {
                         Some(name) => name,
-                        // Answered unknown: the reference's callback literal (`0x838044`).
+                        // Answered unknown: the reference's callback literal.
                         None if items.template_answered_unknown(failing) => "UNKNOWN".to_string(),
                         None => {
                             // Pending: requeued as a redisplay, which is not logged.
@@ -322,7 +321,7 @@ pub(super) fn feed_actions(
         .collect();
     show_messages(&mut script, &mut sink, "ui_action", key_lines);
 
-    // Already-resolved lines ([`UiErrorTexts`]); the queued kind is the `0x4945b0` flag.
+    // Already-resolved lines ([`UiErrorTexts`]); the queued kind is the flag.
     let resolved: Vec<Shown> = ui_error_texts
         .0
         .drain(..)
@@ -427,8 +426,8 @@ pub(super) fn feed_actions(
                     (icon, 0, false, false)
                 }
                 ACTION_KIND_ITEM => {
-                    // Never nil: the reference's resolver `0x5d88b0` returns the question mark,
-                    // and the stock `ActionButton.lua:158` hides the icon on a nil texture.
+                    // Never nil: the reference's resolver returns the question mark, and the stock
+                    // `ActionButton.lua:158` hides the icon on a nil texture.
                     let template = items.template(button.action, 0, &commands).cloned();
                     let texture = template
                         .as_ref()
@@ -437,15 +436,15 @@ pub(super) fn feed_actions(
                     let count = store
                         .map(|s| count_of(&s.0, &objects, button.action, InventoryScope::CARRIED))
                         .unwrap_or(0);
-                    // The Count gate (`0x4e5250`, [`ItemInfo::is_consumable`]) reads the icon's
-                    // template, so it rides the same push.
+                    // The Count gate ([`ItemInfo::is_consumable`]) reads the icon's template, so it
+                    // rides the same push.
                     let consumable = template.as_ref().is_some_and(|t| t.is_consumable());
                     // `IsStackableAction` (`0x5a8470`): the same template stacks past one.
                     let stackable = template.as_ref().is_some_and(|t| t.stackable > 1);
                     (Some(texture), count, consumable, stackable)
                 }
-                // A macro slot shows the macro's own icon (`0x4e6bf9` calls `0x4f0fd0`), never its
-                // bound spell's, though its state follows the bound spell.
+                // A macro slot shows the macro's own icon, never its bound spell's, though its
+                // state follows the bound spell.
                 ACTION_KIND_MACRO => (
                     macros
                         .get(button.action as usize)
@@ -524,8 +523,8 @@ pub(super) fn feed_actions(
                     }
                     changed
                 }
-                // Live icons: a weapon face follows the equipped weapon and form (Attack's
-                // `0x4e6870`), and a toggle's `ActiveIconID` follows its own aura (`0x4e6bbd`).
+                // Live icons: a weapon face follows the equipped weapon and form, and a toggle's
+                // `ActiveIconID` follows its own aura.
                 ACTION_KIND_SPELL => {
                     let d = spells
                         .as_ref()
@@ -570,11 +569,10 @@ pub(super) fn feed_actions(
     }
 }
 
-/// A spell slot's icon, by the reference's `GetActionTexture` resolver `0x4e6a50` in order: the
-/// auto-attack faces ([`auto_attack_icon`], `0x4e6870`, `0x4e6990`), then `ActiveIconID` while
-/// the spell's own aura is live and cancelable (`0x4e6bbd`, the `0x4e55f0` predicate of
-/// [`super::toggle::active_action_toggle`]), then the spell's icon. The spellbook's
-/// `GetSpellTexture` (`0x4b3f50`) never serves `ActiveIconID`.
+/// A spell slot's icon, by the reference's `GetActionTexture` resolver in order: the auto-attack
+/// faces ([`auto_attack_icon`]), then `ActiveIconID` while the spell's own aura is live and
+/// cancelable (the predicate of [`super::toggle::active_action_toggle`]), then the spell's icon.
+/// The spellbook's `GetSpellTexture` never serves `ActiveIconID`.
 fn spell_action_icon(
     spell_id: u32,
     d: &benilla_formats::SpellDisplay,

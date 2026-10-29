@@ -1,8 +1,8 @@
-//! A unit's creature type as the reference resolves it (`0x605570`), which the spell bind's
-//! creature-type gate and the tracking dots read: the shapeshift form's type when above 0
-//! (`SpellShapeshiftForm.dbc` column 12, `0x60559a`), else the cached creature template's
-//! (`[unit+0xb30] + 0x18`, `0x6055a8`), else the race's (`ChrRaces.dbc` column 9, `0x6055ca`).
-//! 0 is a unit with no type, which a creature-type-limited spell refuses.
+//! A unit's creature type as the reference resolves it, which the spell bind's creature-type gate
+//! and the tracking dots read: the shapeshift form's type when above 0 (`SpellShapeshiftForm.dbc`
+//! column 12), else the cached creature template's (`[unit+0xb30] + 0x18`), else the race's
+//! (`ChrRaces.dbc` column 9). 0 is a unit with no type, which a creature-type-limited spell
+//! refuses.
 
 use std::collections::HashMap;
 

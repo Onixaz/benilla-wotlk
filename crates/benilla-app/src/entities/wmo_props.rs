@@ -156,7 +156,7 @@ pub(super) fn spawn_wmo_gameobject_props(
     mut tint_reg: ResMut<benilla_world::doodad_anim::TintAnimMaterials>,
     mut anim_table: ResMut<benilla_world::mat_anim_table::MatAnimTable>,
     mut probes: ResMut<PropProbes>,
-    // An exterior prop's one-shot MCSH sample, as the reference's queue drain `0x698c50` takes it.
+    // An exterior prop's one-shot MCSH sample, as the reference's queue drain takes it.
     streamer: Option<Res<TerrainStreamer>>,
     adt_tiles: Res<Assets<benilla_assets::AdtTile>>,
     time: Res<Time>,
@@ -195,9 +195,9 @@ pub(super) fn spawn_wmo_gameobject_props(
                 anchor
             });
             // An exterior prop's sun scale is its own doodad's, not its host's: the reference
-            // samples MCSH once at the doodad's footprint as its pending queue drains it
-            // (`0x698c50`) and freezes 1.0 lit or 0.5 shadowed. A tile not resident answers lit, as
-            // the reference's null-tile legs do; the interior lane never reads the selector.
+            // samples MCSH once at the doodad's footprint as its pending queue drains it and
+            // freezes 1.0 lit or 0.5 shadowed. A tile not resident answers lit, as the reference's
+            // null-tile legs do; the interior lane never reads the selector.
             let shade = if prop.interior.is_some() {
                 ShadeSel::Matte
             } else {
@@ -341,9 +341,9 @@ pub(super) fn spawn_wmo_gameobject_props(
                             anchor: Some(root),
                             // A placed prop's model is destroyed when its placement unloads.
                             on_owner_loss: particles::OwnerLoss::Free,
-                            // A WMO prop is lit by the `CMapDoodadDef` provider (`0x6a8050`), not
-                            // the `WENTITY` one this edge feeds; its interior words, folded at
-                            // spawn, do not reach its emitters.
+                            // A WMO prop is lit by the `CMapDoodadDef` provider, not the `WENTITY`
+                            // one this edge feeds; its interior words, folded at spawn, do not
+                            // reach its emitters.
                             light_node: None,
                             alpha: None,
                         },

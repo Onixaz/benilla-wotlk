@@ -186,8 +186,8 @@ mod tests {
         }
     }
 
-    /// The reference packs a 4-bit weight into an RGBA4444 texel (64×64 `0x6b03d0`, 32×32
-    /// `0x6b08d0`), read as `n / 15`, so nibble 15 is full coverage.
+    /// The reference packs a 4-bit weight into an RGBA4444 texel, read as `n / 15`, so nibble 15 is
+    /// full coverage.
     #[test]
     fn four_bit_alpha_reads_as_n_over_15() {
         let mut m = blank();

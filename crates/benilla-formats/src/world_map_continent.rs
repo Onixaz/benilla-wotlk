@@ -1,6 +1,5 @@
 //! `WorldMapContinent.dbc`: each continent's ADT tile bounds and its place on the world map sheet,
-//! read by the builder `0x4a5d00` and the world-mode projections `0x4a72b0` and `0x4a7360`.
-//! vmangos does not load it.
+//! read by the builder and the world-mode projections. vmangos does not load it.
 
 use std::collections::HashMap;
 
@@ -17,14 +16,14 @@ const WORLD_MAP_CONTINENT: &str = "DBFilesClient\\WorldMapContinent.dbc";
 pub struct WorldMapContinent {
     /// `Map.dbc` id: 0 Azeroth, 1 Kalimdor.
     pub map_id: u32,
-    /// ADT tile column bounds, which `0x4a5d00` turns into the continent's sheet rect.
+    /// ADT tile column bounds, which the reference turns into the continent's sheet rect.
     pub left_boundary: u32,
     pub right_boundary: u32,
     /// ADT tile row bounds.
     pub top_boundary: u32,
     pub bottom_boundary: u32,
-    /// World-sheet offsets, x on the u axis and y on v
-    /// (`0x4a7360`: `u = offset_x/62.625 + 0.5 - wy·k·scale`).
+    /// World-sheet offsets, x on the u axis and y on v (:
+    /// `u = offset_x/62.625 + 0.5 - wy·k·scale`).
     pub offset_x: f32,
     pub offset_y: f32,
     /// The world-sheet scale, 0.75 on both rows; there is no separate world zoom.

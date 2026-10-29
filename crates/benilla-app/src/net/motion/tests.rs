@@ -64,8 +64,7 @@ fn motion(flags: u32, orientation: f32) -> RemoteMotion {
     }
 }
 
-/// The swim body-pitch render law (`0x60a110`) on a relayed swimmer, and the three cases that
-/// render level.
+/// The swim body-pitch render law on a relayed swimmer, and the three cases that render level.
 #[test]
 fn a_relayed_swimmer_renders_pitched_and_the_gates_render_level() {
     use bevy::ecs::system::RunSystemOnce;
@@ -141,7 +140,7 @@ fn a_relayed_swimmer_renders_pitched_and_the_gates_render_level() {
 
 #[test]
 fn swim_dead_reckon_folds_the_pitch_into_the_travel() {
-    // `0x7c5880`: vertical sin(pitch) * swim speed, horizontal scaled by cos(pitch).
+    // Vertical sin(pitch) * swim speed, horizontal scaled by cos(pitch).
     let pitch = 0.5_f32;
     let mut rm = motion(move_flags::SWIMMING | move_flags::FORWARD, 0.0);
     rm.pitch = pitch;
@@ -233,8 +232,8 @@ fn remote_motion_backpedal_uses_run_back_speed() {
     assert_eq!(speed, 4.5);
 }
 
-/// The walk arm (`0x7c4d11` to `0x7c4d4d`) comes before the run arm's backward min (`0x7c4d1d`),
-/// so a walk is `min(walk, run)` in both directions.
+/// The walk arm comes before the run arm's backward min, so a walk is `min(walk, run)` in both
+/// directions.
 #[test]
 fn a_walking_remote_backpedals_at_walk_speed_not_run_back() {
     let s = speeds();
@@ -267,7 +266,7 @@ fn a_walking_remote_backpedals_at_walk_speed_not_run_back() {
 
 #[test]
 fn remote_motion_swim_backpedal_takes_min_of_the_swim_pair() {
-    // `0x7c4c90`'s backward arms: `min(back, forward)` for both pairs.
+    // The reference's backward arms: `min(back, forward)` for both pairs.
     let mut s = speeds();
     s.swim_back = 2.5;
     let (pos, _o, _vz, speed) =
@@ -468,8 +467,8 @@ fn monster_move_carries_every_waypoint() {
     );
 }
 
-/// `MSG_MOVE_TIME_SKIPPED` is `[CMovement+0xac] += lag` (`0x603b40` to `0x61ab90`): the next
-/// packet schedules as if nothing were skipped.
+/// `MSG_MOVE_TIME_SKIPPED` is `[CMovement+0xac] += lag`: the next packet schedules as if nothing
+/// were skipped.
 #[test]
 fn a_reported_skip_keeps_the_relay_chain_level_with_the_sender() {
     let step = |chain: &mut RelayChain, wire_ms: u32, now_ms: f64| {
@@ -572,7 +571,7 @@ fn monster_move_without_a_travelable_path_clears_the_spline() {
 /// Any `0x20ff` bit makes the chain treat a mover as mid-motion.
 const MOVING: u32 = move_flags::FORWARD;
 
-/// `0x618c30`: stamps 500 ms apart arriving late and in a burst still fire 500 ms apart.
+/// Stamps 500 ms apart arriving late and in a burst still fire 500 ms apart.
 #[test]
 fn relay_chain_replays_on_the_senders_cadence() {
     let mut chain = RelayChain::default();
@@ -588,8 +587,8 @@ fn relay_chain_replays_on_the_senders_cadence() {
     );
 }
 
-/// The first packet fires at arrival, a stale stamp adds no step (`@0x618cb8`), and the `u32`
-/// clock's wrap is a forward step.
+/// The first packet fires at arrival, a stale stamp adds no step, and the `u32` clock's wrap is a
+/// forward step.
 #[test]
 fn relay_chain_seeds_holds_stale_stamps_and_survives_the_clock_wrap() {
     let mut chain = RelayChain::default();
@@ -637,8 +636,8 @@ fn the_chain_paces_a_server_authored_self_move_and_would_hold_an_early_one() {
     );
 }
 
-/// Only a standing mover with an empty queue re-bases (`@0x618ce4`, `@0x618cf3`), by the window's
-/// worst lateness (`0x618b50`), and an absorbed spike is not charged again.
+/// Only a standing mover with an empty queue re-bases, by the window's worst lateness, and an
+/// absorbed spike is not charged again.
 #[test]
 fn relay_chain_rebases_the_buffer_only_when_idle_and_unqueued() {
     // A packet 200 ms late while moving.
@@ -670,8 +669,7 @@ fn relay_chain_rebases_the_buffer_only_when_idle_and_unqueued() {
     );
 }
 
-/// The skew clamp (`@0x618d0d`, `@0x618d49`): a fire lands within 500 ms before and 1000 ms after
-/// arrival.
+/// The skew clamp: a fire lands within 500 ms before and 1000 ms after arrival.
 #[test]
 fn relay_chain_holds_the_offset_inside_the_reference_clamp() {
     // A 2 s wire step 100 ms after the last fire would be 1.9 s out.
@@ -721,7 +719,7 @@ fn relay_chain_stays_monotone_and_bounded_under_scripted_jitter() {
     }
 }
 
-/// The pre-fire reconcile (`0x619090`, `0x6191c0`): Z joins the arm test only while swimming.
+/// The pre-fire reconcile: Z joins the arm test only while swimming.
 #[test]
 fn reconcile_lerp_lands_on_the_event_at_its_fire_time() {
     let target = [10.0, 0.0, 0.0];
@@ -755,7 +753,7 @@ fn reconcile_lerp_lands_on_the_event_at_its_fire_time() {
     assert_ne!(wet, [0.0; 3], "swimming: Z arms the correction");
 }
 
-/// The pre-fire facing interp (`0x618f80`, `0x7c4f30`) takes the short way round.
+/// The pre-fire facing interp takes the short way round.
 #[test]
 fn facing_lerp_turns_the_short_way_and_lands_at_fire_time() {
     use std::f32::consts::TAU;
@@ -975,8 +973,7 @@ fn a_gameobject_without_a_usable_quaternion_falls_back_to_its_facing() {
     }
 }
 
-/// A mover with no `0x20ff` bit is not integrated (`0x616e20`, `0x6166f5`): its pose is the
-/// last packet's.
+/// A mover with no `0x20ff` bit is not integrated: its pose is the last packet's.
 #[test]
 fn a_flag_still_remote_is_left_where_the_wire_put_it() {
     use avian3d::prelude::{Collider, RigidBody};
@@ -1105,8 +1102,8 @@ fn apply_observed(before: RemoteMotion, mv: &super::relay::RelayMove) -> RemoteM
         .expect("the one-shot apply runs")
 }
 
-/// The rooted client wipes its direction bits (`0x7c7340`, `& 0xffe07f00`) and acks the wiped
-/// word, which vmangos stores (`MovementHandler.cpp:1067`) and relays as `MSG_MOVE_ROOT`.
+/// The rooted client wipes its direction bits (`& 0xffe07f00`) and acks the wiped word, which
+/// vmangos stores (`MovementHandler.cpp:1067`) and relays as `MSG_MOVE_ROOT`.
 #[test]
 fn an_observed_root_lands_the_wiped_word_and_stops_the_dead_reckon() {
     let walking = motion(move_flags::FORWARD, 0.0);
@@ -1150,9 +1147,8 @@ fn an_observed_levitate_lands_all_three_granted_bits() {
     assert_eq!(landed.flags, 0, "the revoke is the absence of the bits");
 }
 
-/// Tag `0x26`, skipped by `0x619030` and `0x619090`, is the teleport's: `push 0x26` occurs only at
-/// `0x6186bd` and `0x618736`, reached only from the teleport arms (`0x602fb0` sends
-/// `MSG_MOVE_TELEPORT_ACK` on its other branch).
+/// Tag `0x26`, skipped, is the teleport's: `push 0x26` occurs only, reached only from the teleport
+/// arms (the reference sends `MSG_MOVE_TELEPORT_ACK` on its other branch).
 #[test]
 fn the_teleport_is_the_only_relay_the_reconcile_skips() {
     let dest = [20.0, 5.0, 3.0];
@@ -1291,9 +1287,8 @@ fn a_relayed_ascent_lands_integrates_and_a_root_ends_it() {
     );
 }
 
-/// After the merge the client runs `SetRoot` (`0x7c7340`) unconditionally, so the opcode roots
-/// the mover even when the word disagrees; vmangos always sends a wiped word, so no live run
-/// would catch this.
+/// After the merge the client runs `SetRoot` unconditionally, so the opcode roots the mover even
+/// when the word disagrees; vmangos always sends a wiped word, so no live run would catch this.
 #[test]
 fn the_root_opcode_wins_over_a_word_that_disagrees_with_it() {
     // The opcode says root, the word says running forward.
@@ -1306,7 +1301,7 @@ fn the_root_opcode_wins_over_a_word_that_disagrees_with_it() {
         "and the one-shot wipe took the direction bits with it — this is what stops the slide"
     );
 
-    // `ClearRoot` (`0x7c7370`) is `and ~0x1000`.
+    // `ClearRoot` is `and ~0x1000`.
     let freed = apply_observed(rooted, &observed(0, [0.0; 3], RelayVerb::Root(false)));
     assert_eq!(freed.flags, 0, "cleared, and still not moving");
 }

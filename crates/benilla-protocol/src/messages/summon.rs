@@ -1,6 +1,5 @@
-//! The player summon: `SMSG_SUMMON_REQUEST` (0x2ab, client `0x5e6140`) and the accept,
-//! `CMSG_SUMMON_RESPONSE` (0x2ac, `ConfirmSummon` `0x48b770`). There is no decline packet: the
-//! server declines on its own timer.
+//! The player summon: `SMSG_SUMMON_REQUEST` (0x2ab) and the accept, `CMSG_SUMMON_RESPONSE` (0x2ac,
+//! `ConfirmSummon`). There is no decline packet: the server declines on its own timer.
 
 use std::io;
 

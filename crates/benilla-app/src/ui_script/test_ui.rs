@@ -308,7 +308,7 @@ pub(super) const UIPARENT_STAND_INS: &str = r#"
     PETACTIONBAR_XPOS = PETACTIONBAR_XPOS or 36
 
     -- The frames these three read UNGUARDED, seated on the call rather than at load: a frame's
-    -- publish to _G is non-overwriting (0x701bd0), so a stand-in seated before the real file loads
+    -- publish to _G is non-overwriting, so a stand-in seated before the real file loads
     -- would shadow the real window for good.
     local function benilla_seat(names)
         for _, name in ipairs(names) do
@@ -417,8 +417,8 @@ pub(super) const MULTI_ACTION_BAR_STAND_INS: &str = r#"
 /// What a kit owes the stock micro-button row: `UpdateMicroButtons`
 /// (`MainMenuBarMicroButtons.lua:20-84`) reads ten panels, `KeyRingButton` and `IsBagOpen`
 /// unguarded. Hidden, unnamed stand-ins are seated on its first call, not at load: a named frame's
-/// publish never overwrites (`0x701bd0`), so an early one would shadow the real frame.
-/// `tests/common/mod.rs` carries the same chunk.
+/// publish never overwrites, so an early one would shadow the real frame. `tests/common/mod.rs`
+/// carries the same chunk.
 pub(super) const MICRO_BUTTON_STAND_INS: &str = r#"
     local real = UpdateMicroButtons
     function UpdateMicroButtons()

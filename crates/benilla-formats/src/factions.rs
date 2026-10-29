@@ -1,12 +1,12 @@
 //! Unit reaction: the `FactionTemplate.dbc` catalog and the 1.12 client's reaction comparator.
 //!
 //! A unit's `UNIT_FIELD_FACTIONTEMPLATE` indexes `FactionTemplate.dbc`, and the reference's
-//! comparator `0x606640` turns two rows into hostile, neutral or friendly; every `UnitReaction`,
-//! `CanAttack` and `CanAssist` bottoms out in it. It is only the DBC half of `UnitReaction`
-//! (`0x6061e0`), whose group, charm, PvP-flag and sanctuary overrides need session state.
+//! comparator turns two rows into hostile, neutral or friendly; every `UnitReaction`, `CanAttack`
+//! and `CanAssist` bottoms out in it. It is only the DBC half of `UnitReaction`, whose group,
+//! charm, PvP-flag and sanctuary overrides need session state.
 //!
 //! Also `Faction.dbc`'s reputation identity: the reference checks `FactionHasReputation` before the
-//! comparator (`0x606530`), so a reputation faction's NPCs colour by the player's rank.
+//! comparator, so a reputation faction's NPCs colour by the player's rank.
 
 use std::collections::HashMap;
 
@@ -36,8 +36,8 @@ pub struct FactionTemplate {
     pub friends: [u32; 4],
 }
 
-/// A unit's base reaction toward another on the reference's scale: `0x606640` returns these three,
-/// and the reputation path widens the scale to 0..=6, hence the gaps.
+/// A unit's base reaction toward another on the reference's scale: the reference returns these
+/// three, and the reputation path widens the scale to 0..=6, hence the gaps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Reaction {
     Hostile = 1,
@@ -46,9 +46,9 @@ pub enum Reaction {
 }
 
 impl FactionTemplate {
-    /// `self`'s reaction toward `other`, branch for branch `0x606640`. Hostility is only ever
-    /// `self`'s, so colour by the unit's reaction toward the player, as the nameplate resolver
-    /// `0x7cbaa0` does: a player template is enemy-masked against the whole Monster group.
+    /// `self`'s reaction toward `other`, branch for branch. Hostility is only ever `self`'s, so
+    /// colour by the unit's reaction toward the player, as the nameplate resolver does: a player
+    /// template is enemy-masked against the whole Monster group.
     pub fn reaction_toward(&self, other: &FactionTemplate) -> Reaction {
         if self.enemy_group_mask & other.group_mask != 0 {
             return Reaction::Hostile;
@@ -114,10 +114,10 @@ pub struct FactionInfo {
 }
 
 impl FactionInfo {
-    /// The slot the reference (`0x4d5500`..`0x4d5564`) picks for a `race`/`class`, both 1-based.
-    /// `None` also keeps the faction out of the reputation pane, whose list build adds a faction
-    /// only in this loop's accept block (`0x4d5555`). Unlike vmangos's `GetIndexFitTo`, a slot
-    /// with both masks zero is rejected (`0x4d550b`), and the last matching slot wins.
+    /// The slot the reference picks for a `race`/`class`, both 1-based. `None` also keeps the
+    /// faction out of the reputation pane, whose list build adds a faction only in this loop's
+    /// accept block. Unlike vmangos's `GetIndexFitTo`, a slot with both masks zero is rejected, and
+    /// the last matching slot wins.
     pub fn slot_for(&self, race: u8, class: u8) -> Option<usize> {
         let race_mask = 1u32 << (race.max(1) - 1);
         let class_mask = 1u32 << (class.max(1) - 1);
@@ -130,7 +130,7 @@ impl FactionInfo {
     }
 
     /// The base reputation for a player of `race`/`class`, 0 if no slot fits. The wire standing
-    /// excludes it: a rank is taken from `wire + base` (`0x4d6370`).
+    /// excludes it: a rank is taken from `wire + base`.
     pub fn base_for(&self, race: u8, class: u8) -> i32 {
         self.slot_for(race, class).map_or(0, |i| self.base[i])
     }
@@ -163,8 +163,8 @@ impl FactionInfo {
     }
 
     /// Whether the unit tooltip shows this faction's name to a player of `race`/`class`: the unit
-    /// builder `0x529fe0` takes the first matching slot, not the last, and shows the line unless
-    /// its flags carry `0x4`. A zero race mask matches on the class mask instead.
+    /// builder takes the first matching slot, not the last, and shows the line unless its flags
+    /// carry `0x4`. A zero race mask matches on the class mask instead.
     pub fn tooltip_shows_for(&self, race: u8, class: u8) -> bool {
         let race_bit = 1u32 << (race.max(1) - 1);
         let class_bit = 1u32 << (class.max(1) - 1);
@@ -183,9 +183,9 @@ impl FactionInfo {
     }
 }
 
-/// Total standing (base + wire) to rank 0..=7, hated to exalted, the reference's ladder
-/// (`0x4d63a0`); the unit reaction takes it capped at 6, Revered (`0x606439`). Widths from −42000:
-/// 36000, 3000, 3000, 3000, 6000, 12000, 21000, 1000 (vmangos `PointsInRank`).
+/// Total standing (base + wire) to rank 0..=7, hated to exalted, the reference's ladder; the unit
+/// reaction takes it capped at 6, Revered. Widths from −42000: 36000, 3000, 3000, 3000, 6000,
+/// 12000, 21000, 1000 (vmangos `PointsInRank`).
 pub fn reputation_rank(total_standing: i32) -> u8 {
     match total_standing {
         i32::MIN..=-6001 => 0, // hated
@@ -200,8 +200,8 @@ pub fn reputation_rank(total_standing: i32) -> u8 {
 }
 
 /// The per-faction flag byte, the first field of each `SMSG_INITIALIZE_FACTIONS` entry, named from
-/// the reference's own reads of its store (`0xb73294`), not from the emulators' enum. The reference
-/// writes [`AT_WAR`] and [`INACTIVE`] itself, optimistically, since neither send is acked.
+/// the reference's own reads of its store, not from the emulators' enum. The reference writes
+/// [`AT_WAR`] and [`INACTIVE`] itself, optimistically, since neither send is acked.
 pub mod faction_flags {
     /// Listed in the reputation pane, the only flag that gates membership; the server sets it on
     /// first contact and sends `SMSG_SET_FACTION_VISIBLE`.
@@ -210,8 +210,8 @@ pub mod faction_flags {
     pub const AT_WAR: u8 = 0x02;
     /// Suppresses the standing-change auto-reveal and rank-change chat line; the row stays listed.
     pub const HIDDEN: u8 = 0x04;
-    /// The row is a header (`(flags >> 3) & 1`, `0x4d5acb`), a bit the emulators name
-    /// `INVISIBLE_FORCED`. The five factions carrying it are the pane's header rows.
+    /// The row is a header (`(flags >> 3) & 1`), a bit the emulators name `INVISIBLE_FORCED`. The
+    /// five factions carrying it are the pane's header rows.
     pub const HEADER: u8 = 0x08;
     /// Overrides [`AT_WAR`]: war can never be declared; your own side's cities carry it.
     pub const PEACE_FORCED: u8 = 0x10;
@@ -222,8 +222,8 @@ pub mod faction_flags {
 }
 
 impl Reaction {
-    /// A rank (0..=7) collapsed to three, as the nameplate palette `0x7cbaa0` does. The selection
-    /// ring's palette (`0x605960`) keys the raw rank instead, with its own orange at 2.
+    /// A rank (0..=7) collapsed to three, as the nameplate palette does. The selection ring's
+    /// palette keys the raw rank instead, with its own orange at 2.
     pub fn from_rank(rank: u8) -> Reaction {
         match rank {
             0..=1 => Reaction::Hostile,
@@ -237,11 +237,11 @@ impl Reaction {
 /// `ChrRaces.dbc` race's template.
 pub struct FactionCatalog {
     templates: HashMap<u32, FactionTemplate>,
-    /// Race id to `ChrRaces.dbc` column 2, `FactionID`, a template id: what a corpse's reaction
-    /// (`0x5d7120`) and a unit's PvP team (`0x5efe00`) read for a race.
+    /// Race id to `ChrRaces.dbc` column 2, `FactionID`, a template id: what a corpse's reaction and
+    /// a unit's PvP team read for a race.
     race_templates: HashMap<u8, u32>,
     factions: HashMap<u32, FactionInfo>,
-    /// `1 << MaskID` to the localized group name, `GetZonePVPInfo`'s territory line (`0x48d540`).
+    /// `1 << MaskID` to the localized group name, `GetZonePVPInfo`'s territory line.
     group_names: HashMap<u32, String>,
     /// The same key to `InternalName` (field 2), English on every locale: `UnitFactionGroup`'s
     /// first return, which stock FrameXML concatenates into texture paths (`PlayerFrame.lua:68`).
@@ -302,7 +302,7 @@ impl FactionCatalog {
     }
 
     /// A `Faction.dbc` id's reputation identity, `Some` only with a reputation slot: the
-    /// reference's `FactionHasReputation` (`0x605fc0`), tested before the comparator (`0x606530`).
+    /// reference's `FactionHasReputation`, tested before the comparator.
     pub fn reputation_faction(&self, faction_id: u32) -> Option<&FactionInfo> {
         self.factions.get(&faction_id).filter(|f| f.rep_index >= 0)
     }
@@ -354,7 +354,7 @@ impl FactionCatalog {
     }
 }
 
-/// `FactionTemplate.dbc`: 14 fields, 56-byte rows at the offsets `0x606640` reads (vmangos
+/// `FactionTemplate.dbc`: 14 fields, 56-byte rows at the offsets reads (vmangos
 /// `FactionTemplateEntry`).
 pub(crate) fn faction_template_schema() -> Schema {
     let mut s = Schema::new("FactionTemplate");
@@ -554,7 +554,7 @@ mod tests {
         }
     }
 
-    /// Every branch, in the order `0x606640` tests them, and enemy-beats-friend precedence.
+    /// Every branch, in the order tests them, and enemy-beats-friend precedence.
     #[test]
     fn comparator_branch_domain() {
         let b = FactionTemplate {
@@ -623,8 +623,8 @@ mod tests {
         assert_eq!(a.reaction_toward(&b_names_a), Reaction::Hostile);
     }
 
-    /// Unit templates toward a human player (template 1), the direction `0x7cbaa0` colours by;
-    /// ids from vmangos `creature_template.faction`, expected colours from a reference capture.
+    /// Unit templates toward a human player (template 1), the direction colours by; ids from
+    /// vmangos `creature_template.faction`, expected colours from a reference capture.
     #[test]
     fn real_dbc_reactions_match_reference_capture() {
         let data = crate::wow_data_or_skip!();
@@ -675,7 +675,7 @@ mod tests {
         assert_eq!(stormwind.base_for(2, 1), -42000);
         assert_eq!(reputation_rank(stormwind.base_for(2, 1)), 0);
 
-        // The unit tooltip (`0x529fe0`) shows "Stormwind" under a Stormwind guard to a human.
+        // The unit tooltip shows "Stormwind" under a Stormwind guard to a human.
         assert_eq!(cat.faction_name(72), Some("Stormwind"));
         assert!(
             stormwind.tooltip_shows_for(1, 1),

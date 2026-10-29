@@ -1,18 +1,16 @@
 //! The font engine: an on-demand glyph cache keyed by exact integer device-pixel size. The
 //! reference keeps a `CGxFont` per face, flags and size `min(32, round(H · max(reqSize, 2/H)))`
-//! (`0x5ca030` → `[CGxFont+0x24c]`), rasterizes each glyph on first use (`NewCodeDesc`,
-//! `0x5cabd0`) into up to 8 pages (`[CGxFont+0x18c]`; cell setter `0x5cf360`, free-slot search
-//! `0x5cf5a0`) with no subpixel phase, and draws it 1:1, as `CSimpleFontString` sets the
-//! one-to-one bit (`+0x120 & 0x200`, `0x770dd3`): a string lays out at its raster size.
+//! (`[CGxFont+0x24c]`), rasterizes each glyph on first use (`NewCodeDesc`) into up to 8 pages
+//! (`[CGxFont+0x18c]`) with no subpixel phase, and draws it 1:1, as `CSimpleFontString` sets the
+//! one-to-one bit (`+0x120 & 0x200`): a string lays out at its raster size.
 //!
 //! Deviation: text the reference magnifies from a smaller raster is rasterized at its true size
-//! here: a `SetTextHeight` size (the bit cleared at `0x771600`), an em past 32 px, and 3-D unit
-//! names (`UNIT_NAME_FONT`, em 32, string flag `0x80`), because the 32 px cap is a raster-memory
-//! budget that blurs big text on a modern display ([`super::FONTSTRING_EM_CAP`]).
+//! here: a `SetTextHeight` size, an em past 32 px, and 3-D unit names (`UNIT_NAME_FONT`, em 32,
+//! string flag `0x80`), because the 32 px cap is a raster-memory budget that blurs big text on a
+//! modern display ([`super::FONTSTRING_EM_CAP`]).
 //!
-//! Deviation: the reference flushes every glyph cache on a window resize (`0x5c2b50` →
-//! `0x5ca6f0`); this keeps the old cells, because nameplate meshes bake UVs and a flush would
-//! rebuild them every resize frame.
+//! Deviation: the reference flushes every glyph cache on a window resize; this keeps the old cells,
+//! because nameplate meshes bake UVs and a flush would rebuild them every resize frame.
 //!
 //! Lock discipline: the render path and the script VM's measurer share this engine behind one lock,
 //! so nothing may hold it across a call into the VM; a leaf entry point releases it on return.
@@ -38,7 +36,7 @@ pub(crate) use gpu::{ensure_atlas, UiTextPlugin};
 use super::outline::outlined_cell;
 use super::pack::{Cell, Sheet};
 
-/// The raster size floor in device pixels, the reference's `max(2, …)` (`0x5ca030`).
+/// The raster size floor in device pixels, the reference's `max(2, …)`.
 const MIN_PPEM: u16 = 2;
 
 /// The raster size ceiling in device pixels, a backstop: reaching it is an upstream bug. The
@@ -313,8 +311,8 @@ impl TextEngine {
     }
 
     /// Shape and rasterize whatever `text` lacks at this `(face, ppem, radius)`, so every lookup
-    /// after it hits; the reference does this per character in its layout kernels (`0x5cabd0`).
-    /// `AllGlyphsCached` (`0x5c9fa0`) is not this: it gates geometry invalidation after eviction.
+    /// after it hits; the reference does this per character in its layout kernels.
+    /// `AllGlyphsCached` is not this: it gates geometry invalidation after eviction.
     pub(super) fn ensure_str(&mut self, face: usize, ppem: u16, radius: u8, text: &str) {
         for ch in text.chars() {
             self.ensure_char(face, ppem, Some(radius), ch);
@@ -323,8 +321,8 @@ impl TextEngine {
 
     /// [`Self::ensure_str`] without the raster: shape what is missing, so a string that is measured
     /// and never drawn never touches the sheet. Deviation: the reference's measure kernels
-    /// (`0x5c6940`, `0x5c6b70`, `0x5c6c50`, `0x5c7300`, `0x5c7470`) rasterize each character, but
-    /// the step law reads only the advance, so skipping the bitmap changes no width.
+    /// rasterize each character, but the step law reads only the advance, so skipping the bitmap
+    /// changes no width.
     pub(super) fn ensure_metrics(&mut self, face: usize, ppem: u16, text: &str) {
         for ch in text.chars() {
             self.ensure_char(face, ppem, None, ch);
@@ -516,9 +514,9 @@ impl TextEngine {
     /// The sheet could not fit a cell: record it empty, so the glyph is missing for at most one
     /// frame, and ask for a reset at the frame boundary, not here, where glyphs already pushed this
     /// frame hold UVs into the sheet. Deviation: the reference evicts the least recently used glyph
-    /// and repacks its hole (`0x5cad2b`, over `[CGxFont+0x64..0x6c]`); this drops every cell,
-    /// because a shelf allocator cannot reclaim an interior cell and the sheet is far larger than
-    /// the reference's 256×256 pages.
+    /// and repacks its hole (over `[CGxFont+0x64..0x6c]`); this drops every cell, because a shelf
+    /// allocator cannot reclaim an interior cell and the sheet is far larger than the reference's
+    /// 256×256 pages.
     fn note_exhausted(&mut self, key: GlyphKey) {
         self.cells.insert(key, None);
         if !self.reset_pending {
@@ -726,7 +724,7 @@ mod differential_tests {
 
     /// The width is the sum of per-glyph steps off each glyph's own advance, and differs from
     /// whole-string shaping, which kerns: the reference kerns only negative pairs, rounded up
-    /// (`ComputeStep`, `0x5ca2d0`), and this drops even those, so shaping whole runs is no fix.
+    /// (`ComputeStep`), and this drops even those, so shaping whole runs is no fix.
     #[test]
     fn the_width_is_the_unkerned_per_character_sum() {
         let Some(mut e) = test_engine(1.0) else {

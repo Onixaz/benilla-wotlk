@@ -92,8 +92,8 @@ pub(crate) struct UiQuad {
     pub gamma_texel: bool,
     /// Alpha test against this value on `texel.a × tint.a` instead of blending: a pass writes
     /// opaque, a fail discards. `Some(224.0 / 255.0)` is the WMO-interior minimap tile, drawn by
-    /// the reference with EGxBlend 1 (blending off) and `glAlphaFunc(GL_GEQUAL, 0.87843144)`
-    /// (`0x85ad20[1] = 224`); blended, two tiles' seam keeps `(1−a)(1−b)` of the black clear.
+    /// the reference with EGxBlend 1 (blending off) and `glAlphaFunc(GL_GEQUAL, 0.87843144)`;
+    /// blended, two tiles' seam keeps `(1−a)(1−b)` of the black clear.
     pub alpha_test: Option<f32>,
     /// The half-texel-inset window `[u_min, v_min, u_max, v_max]` sampled, so an atlas cell clamps
     /// at its own edge instead of filtering in its neighbour (`ClampToEdge` stops at the image's).
@@ -307,12 +307,11 @@ pub(crate) struct UiQuadMaterial {
 
 /// A run's one colour for the batch entity's [`MeshTag`], unpacked by `ui_quad.wgsl`'s vertex
 /// stage, so a colour pulse is a component write, never a mesh or material write. One byte per
-/// channel, `×255 + 0.5`, as the reference packs a vertex colour (`CImVector`; `SetVertexColor`
-/// at `0x79abd0`, the frame-alpha fold at `0x77fac0`). Complemented, so an entity with no tag
-/// (the minimap's interior tiles) unpacks to opaque white.
+/// channel, `×255 + 0.5`, as the reference packs a vertex colour (`CImVector`; `SetVertexColor`).
+/// Complemented, so an entity with no tag (the minimap's interior tiles) unpacks to opaque white.
 fn tint_tag(color: [f32; 4]) -> u32 {
     let byte = |v: f32| {
-        // `0x40a2b0`: `×255.0 + 0.5`, truncated, after the binding's `[0, 1]` clamp; no overflow.
+        // `×255.0 + 0.5`, truncated, after the binding's `[0, 1]` clamp; no overflow.
         #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let b = (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u32;
         b
@@ -398,19 +397,19 @@ impl Material2d for UiQuadMaterial {
 pub(crate) struct UiQuadAppend;
 
 /// Project a world point for a world-anchored overlay, with the reference projector's verdict:
-/// `None` does not draw. `0x483ee0` rejects a point behind the near plane (`0x483f7a`) or outside
-/// the WorldFrame's region (`[0xb4b2bc]`; `0x484075`, `0x484086`, `0x484096`, `0x4840a6`), which
-/// `0x483970` mirrors ÷G44/÷G48 so the aspect cancels: exactly the viewport, inclusive. A viewport
-/// rejection has already written a plausible out-param (`0x484065`, `0x484067`), so the verdict
-/// must be honoured; plate and world-text callers destroy what they were placing. The chat bubble
-/// does not call this: its seat ignores the verdict, and a bubble slides off with its speaker.
+/// `None` does not draw. The reference rejects a point behind the near plane or outside the
+/// WorldFrame's region, which the reference mirrors ÷G44/÷G48 so the aspect cancels: exactly the
+/// viewport, inclusive. A viewport rejection has already written a plausible out-param, so the
+/// verdict must be honoured; plate and world-text callers destroy what they were placing. The chat
+/// bubble does not call this: its seat ignores the verdict, and a bubble slides off with its
+/// speaker.
 pub(crate) fn project_overlay(
     cam: &Camera,
     cam_tf: &GlobalTransform,
     world: Vec3,
     viewport: Vec2,
 ) -> Option<Vec2> {
-    // Bevy's `Err` is the near-plane half (`0x483f7a`); `accepts` is the viewport half.
+    // Bevy's `Err` is the near-plane half; `accepts` is the viewport half.
     let p = cam.world_to_viewport(cam_tf, world).ok()?;
     accepts(p, viewport).then_some(p)
 }
@@ -1460,8 +1459,8 @@ mod tests {
         app
     }
 
-    /// The WorldFrame's region mirrored ÷G44/÷G48 (`0x483970`) is the viewport, inclusive. The
-    /// last row is a measured unit two thirds of a screen below the bottom edge.
+    /// The WorldFrame's region mirrored ÷G44/÷G48 is the viewport, inclusive. The last row is a
+    /// measured unit two thirds of a screen below the bottom edge.
     #[test]
     fn the_accept_region_is_the_viewport_inclusive() {
         let vp = Vec2::new(1440.0, 810.0);
@@ -1757,7 +1756,7 @@ mod tests {
         );
     }
 
-    /// `SetVertexColor` quantises `×255 + 0.5` into one byte per channel (`0x79abd0`).
+    /// `SetVertexColor` quantises `×255 + 0.5` into one byte per channel.
     #[test]
     fn tint_tag_is_the_reference_byte_colour_complemented() {
         assert_eq!(tint_tag([1.0; 4]), 0, "white is the untagged default");
@@ -1992,8 +1991,8 @@ mod tests {
         assert_eq!(cuv.corners[3][1], 0.78125); // BL.v
     }
 
-    // A backdrop top edge maps atlas u to screen Y and v to screen X reversed (`0x77f0c0`), so
-    // clipping the left half reprojects v and leaves u.
+    // A backdrop top edge maps atlas u to screen Y and v to screen X reversed, so clipping the left
+    // half reprojects v and leaves u.
     #[test]
     fn clip_reprojects_rotated_uv() {
         // Top edge with widthRun = 4.

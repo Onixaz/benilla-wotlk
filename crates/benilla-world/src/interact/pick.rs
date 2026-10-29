@@ -167,12 +167,12 @@ pub fn cast_pick_ray(
         .collect()
 }
 
-/// [`cast_pick_ray`]'s generous second pass, mouse pick only (the reference's resolve `0x7089c0`,
-/// pass 2): every vertex moves out along its authored normal, raw, a halo of 1 model-unit times
-/// the part's scale; a part without normals stays exact-only, and a [`PickBox`] grows by the same
-/// unit. Returns every hit, for the caller to rank by the reference's pass-2 priority, not
-/// distance. Deviation: the broad bound is the mesh `Aabb` grown by 1 unit, not the reference's
-/// sequence-bounds sphere, because it can only err permissive.
+/// [`cast_pick_ray`]'s generous second pass, mouse pick only (pass 2): every vertex moves out along
+/// its authored normal, raw, a halo of 1 model-unit times the part's scale; a part without normals
+/// stays exact-only, and a [`PickBox`] grows by the same unit. Returns every hit, for the caller to
+/// rank by the reference's pass-2 priority, not distance. Deviation: the broad bound is the mesh
+/// `Aabb` grown by 1 unit, not the reference's sequence-bounds sphere, because it can only err
+/// permissive.
 pub fn cast_pick_ray_inflated(
     ray: Ray3d,
     pickable: &HashSet<Entity>,

@@ -428,7 +428,7 @@ pub(super) fn cull_cells(
     let own = claim.0.map(|c| c.room.instance);
     // The dev doodad kind toggle hides every cell at once; the blend-layer toggles do not reach
     // this lane. Cells and prop regions, both the M2 scene, sort near-first as one list: the 1.12
-    // client's front-to-back band walk (32 bands of 33⅓ yd, `0xc7bd40`) at cell grain.
+    // client's front-to-back band walk (32 bands of 33⅓ yd) at cell grain.
     if doodads_on {
         let mut admitted: Vec<(u32, GxDoodadVis)> = Vec::new();
         for (&cell, draw) in &world.cells {

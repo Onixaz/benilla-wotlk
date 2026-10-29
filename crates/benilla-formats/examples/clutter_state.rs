@@ -1,8 +1,7 @@
 //! Every ground-clutter model's batch render state and each detail texture's alpha per mip, the
-//! inputs to the ~70 yd clutter fade. The reference's detail pass (`0x6b2b80`) ignores the batches'
-//! blend and two-sidedness and forces one state for every tuft; the fade multiplies the texture
-//! alpha, so its per-mip distribution is the fade's shape.
-//! `cargo run -p benilla-formats --example clutter_state`
+//! inputs to the ~70 yd clutter fade. The reference's detail pass ignores the batches' blend and
+//! two-sidedness and forces one state for every tuft; the fade multiplies the texture alpha, so its
+//! per-mip distribution is the fade's shape. `cargo run -p benilla-formats --example clutter_state`
 
 use std::collections::{BTreeMap, BTreeSet};
 

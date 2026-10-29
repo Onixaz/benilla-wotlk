@@ -120,7 +120,7 @@ impl Roster {
     }
 
     /// The pending pick's level: the reference suppresses the loading tip when it arrived as 0 in
-    /// `SMSG_CHAR_ENUM` (`0x5b42a0` sets `[selChar+0x10a]`); vmangos always sends a real level.
+    /// `SMSG_CHAR_ENUM` (the reference sets `[selChar+0x10a]`); vmangos always sends a real level.
     pub(crate) fn pending_level(&self) -> Option<u8> {
         self.pending_row().map(|c| c.level)
     }
@@ -149,20 +149,20 @@ impl Roster {
 
 // ── The remembered character (`lastCharacterIndex`) ───────────────────────────────
 
-/// The 1.12 CVar the select screen remembers by: registered at `0x402d93` (name `0x82e8f8`,
-/// default `"0"`, pointer at `[0x882674]`), written engine-side, named by no GlueXML.
+/// The 1.12 CVar the select screen remembers by: registered (default `"0"`), written engine-side,
+/// named by no GlueXML.
 pub(crate) const CVAR_LAST_CHARACTER: &str = "lastCharacterIndex";
 
-/// The stored index is 0-based, `"0"` the first character: the engine's selection cell
-/// `[0x83856c]` printed with `"%d"` (`0x473470` decrements the Lua's 1-based row).
-/// `CVar::SaveConfig` (`0x63d980`) skips a value equal to the default, so row 0 writes no line.
+/// The stored index is 0-based, `"0"` the first character: the engine's selection cell printed with
+/// `"%d"` (decrements the Lua's 1-based row). `CVar::SaveConfig` skips a value equal to the
+/// default, so row 0 writes no line.
 fn last_character_value(row: usize) -> String {
     row.to_string()
 }
 
-/// Mirror the character entering the world into [`CVAR_LAST_CHARACTER`], at Enter World, not on
-/// a click: `CGlueMgr::EnterWorld` (`0x46b500`) writes the CVar at `0x46b5fa`. The reference
-/// flushes `Config.wtf` in the same call (`0x46b6f6`); this reaches disk on exit with every CVar.
+/// Mirror the character entering the world into [`CVAR_LAST_CHARACTER`], at Enter World, not on a
+/// click: `CGlueMgr::EnterWorld` writes the CVar. The reference flushes `Config.wtf` in the same
+/// call; this reaches disk on exit with every CVar.
 fn persist_last_character(
     roster: Res<Roster>,
     mut cvars: ResMut<crate::cvars::Cvars>,
@@ -579,7 +579,7 @@ mod tests {
         }
     }
 
-    /// The write is at Enter World, not at selection (`0x46b500`).
+    /// The write is at Enter World, not at selection.
     #[test]
     fn only_entering_the_world_writes_the_cvar() {
         let (tx, _rx) = crossbeam_channel::unbounded();

@@ -1,7 +1,7 @@
-//! The group packet handlers. [`GroupState`] names the messages each packet implies and these
-//! queue them by key, as the reference's `DisplayError` (`0x496720`) takes a message id: the
-//! catalog row gives the text, the surface and the sound. [`member_deactivated`] and
-//! [`roster_deactivated`] are the object layer's hooks on a roster member's stream-out.
+//! The group packet handlers. [`GroupState`] names the messages each packet implies and these queue
+//! them by key, as the reference's `DisplayError` takes a message id: the catalog row gives the
+//! text, the surface and the sound. [`member_deactivated`] and [`roster_deactivated`] are the
+//! object layer's hooks on a roster member's stream-out.
 
 use benilla_protocol::messages::{GroupLootInfo, GroupMemberEntry, PartyMemberStatsInfo};
 use bevy::prelude::*;
@@ -17,7 +17,7 @@ use crate::ui_action::{UiError, UiErrorKeys};
 use crate::ui_quest::QuestGiver;
 use crate::unit_auras::UnitAuras;
 
-/// The join chime, played by name (`0x840404` through `0x458030`).
+/// The join chime, played by name.
 const INVITE_ACCEPT_SOUND: &str = "igPlayerInviteAccept";
 
 /// One handler per group kind, plus the session-end listener.
@@ -277,7 +277,7 @@ fn push_group_lines(errors: &mut UiErrorKeys, lines: Vec<UiError>) {
     errors.0.extend(lines);
 }
 
-/// We lead when our guid is the leader's, the reference's test at `0x4ba3a0`.
+/// We lead when our guid is the leader's, the reference's test.
 fn ready_check_request(group: &mut GroupState, errors: &mut UiErrorKeys, self_guid: &SelfGuid) {
     let we_lead = self_guid.0 == Some(group.leader);
     push_group_lines(errors, group.apply_ready_check_request(we_lead));
@@ -315,11 +315,10 @@ fn leader_changed(
 }
 
 /// `SMSG_GROUP_LIST`: apply the roster, seat new members' records and re-ask the questgiver sweep
-/// (shared-quest availability follows the roster). Every member is name-queried once: the
-/// answer's race, class and gender are the only source of them for a member we never see streamed.
-/// A raid's rebuild counts the rows whose name is still to come (`0x4ba9b6`-`0x4ba9d0`), ours
-/// among them once others are listed (`0x5e6e73`), and signals `RAID_ROSTER_UPDATE` only with none
-/// (`0x4babdf`-`0x4babef`).
+/// (shared-quest availability follows the roster). Every member is name-queried once: the answer's
+/// race, class and gender are the only source of them for a member we never see streamed. A raid's
+/// rebuild counts the rows whose name is still to come, ours among them once others are listed, and
+/// signals `RAID_ROSTER_UPDATE` only with none.
 fn list(
     group: &mut GroupState,
     errors: &mut UiErrorKeys,
@@ -367,11 +366,10 @@ fn list(
     quest.bump_reask();
 }
 
-/// `SMSG_GROUP_LIST`'s record leg (`0x4e82d0`, raid twin `0x4ba5f0`): a known member's record
-/// carries over, its online bit rewritten by [`GroupState::apply_list`], and nothing is sent; a new
-/// member gets the 1/1 placeholder and, when we hold no object for them, a stats request
-/// (`0x4e83f1`, raid `0x4bab6e`). A listed member therefore owns a record, so an unseen one shows
-/// full bars, not 0/0, until their stats land.
+/// `SMSG_GROUP_LIST`'s record leg: a known member's record carries over, its online bit rewritten
+/// by [`GroupState::apply_list`], and nothing is sent; a new member gets the 1/1 placeholder and,
+/// when we hold no object for them, a stats request. A listed member therefore owns a record, so an
+/// unseen one shows full bars, not 0/0, until their stats land.
 fn seat_new_records(
     group: &mut GroupState,
     seats: &[(u64, bool)],
@@ -558,8 +556,8 @@ mod tests {
         assert_eq!(names.player_traits(leader), Some((1, 4, 1)));
     }
 
-    /// The rebuild counts the rows whose name has not landed (`0x4ba9b6`-`0x4ba9d0`), ours among
-    /// them once others are listed (`0x5e6e73`), and the roster event waits for none (`0x4babdf`).
+    /// The rebuild counts the rows whose name has not landed, ours among them once others are
+    /// listed, and the roster event waits for none.
     #[test]
     fn a_raid_list_signals_the_roster_only_once_every_name_is_held() {
         let (tx, _rx) = crossbeam_channel::unbounded();
@@ -895,7 +893,7 @@ mod tests {
     }
 
     /// A re-sent list that moves only a member's status rewrites the online bit of the record the
-    /// member already owns (`0x4e82d0`), asks nothing, and leaves the rest of the record.
+    /// member already owns, asks nothing, and leaves the rest of the record.
     #[test]
     fn a_resent_list_moves_a_known_members_online_bit_and_keeps_its_record() {
         let (tx, rx) = crossbeam_channel::unbounded();

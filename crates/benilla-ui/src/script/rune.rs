@@ -33,7 +33,7 @@ pub struct RuneState {
     pub kinds: [u8; MAX_RUNES],
     /// The kinds the last resync set, `m_baseRunes`.
     pub base_kinds: [u8; MAX_RUNES],
-    /// How many slots are live; 0 makes every slot valid (`0x5edfc0`).
+    /// How many slots are live; 0 makes every slot valid.
     pub count: u32,
     /// The ready-rune mask (`0xc24388`), all set until a cast reports otherwise.
     pub ready: u32,
@@ -74,7 +74,7 @@ fn started_ago(now_ms: u32, share: f32) -> u32 {
 }
 
 impl RuneState {
-    /// `0x5edfc0`: a slot below the live count, or any of the eight while none is set.
+    /// A slot below the live count, or any of the eight while none is set.
     pub fn valid(&self, index: usize) -> bool {
         index < MAX_RUNES && (self.count == 0 || index < self.count as usize)
     }

@@ -74,14 +74,13 @@ impl SendType {
     }
 }
 
-/// The client refuses an eleventh channel (`0x49b9c0: cmp ecx,0xa`); the boot-seeded
-/// `CHANNEL1`-`CHANNEL10` colour rows are the same ten (`0x4982c0`).
+/// The client refuses an eleventh channel; the boot-seeded `CHANNEL1`-`CHANNEL10` colour rows are
+/// the same ten.
 pub(crate) const MAX_CHANNELS: usize = 10;
 
-/// The joined channels as the reference's slot array at `[0xb4fe04]` (stride `0xa0`, number at
-/// `+0x00`): `/N` is slot N. The allocator `0x49b980` reuses the first free entry before growing,
-/// and a leave zeroes the number in place (`0x49bbd0`), so no other channel is renumbered and a
-/// hole answers "not joined" (`0x49bf30`).
+/// The joined channels as the reference's slot array (stride `0xa0`, number at `+0x00`): `/N` is
+/// slot N. The allocator reuses the first free entry before growing, and a leave zeroes the number
+/// in place, so no other channel is renumbered and a hole answers "not joined".
 #[derive(Resource, Default)]
 pub(crate) struct ChannelState {
     /// Slot `i` is channel number `i + 1`; `None` is a freed slot, kept so the numbers above it
@@ -90,21 +89,19 @@ pub(crate) struct ChannelState {
     /// `ChatChannels.dbc`: it composes the auto-join names and resolves a chat event's arg7 from a
     /// name, as the server does. Empty without an install.
     pub channels: benilla_formats::ChatChannelsCatalog,
-    /// The `ZONECHANNELS` mask, the reference's `ds:0xb6e5e0`, bit `1 << (ChannelID - 1)`: seeded
-    /// from the chat cache (`0x498d83`) or the `INITIAL` rows (`0x4997fc`), set by a confirmed join
-    /// (`0x49bbaf`) and cleared only by an explicit leave (`0x49f10a`), never the walk's LEAVE.
-    /// Never derive it from the roster: each saved window's channel bits are ANDed with it, so an
-    /// empty roster would save every window without its channels.
+    /// The `ZONECHANNELS` mask, the reference's `ds:`, bit `1 << (ChannelID - 1)`: seeded from the
+    /// chat cache or the `INITIAL` rows, set by a confirmed join and cleared only by an explicit
+    /// leave, never the walk's LEAVE. Never derive it from the roster: each saved window's channel
+    /// bits are ANDed with it, so an empty roster would save every window without its channels.
     ///
-    /// `None` until the login reads the file: the reference's ready flag `ds:0xb6e5c8`, set by the
-    /// cache loader (`0x499a18`) and tested first by the walk (`0x49a219`); the saver writes
-    /// nothing from `None`.
+    /// `None` until the login reads the file: the reference's ready flag `ds:`, set by the cache
+    /// loader and tested first by the walk; the saver writes nothing from `None`.
     pub zone_mask: Option<u32>,
     /// The custom channels to re-join at the next login, the chat cache's `CHANNELS` list. The
-    /// reference writes it from its live slots at teardown (`0x499b90`-`0x499bb1`); ours are
-    /// cleared before the flush, so the list is kept here: seated from the file, grown by a
-    /// confirmed custom join, shrunk by an explicit leave. A channel whose re-join is refused, or
-    /// that kicks the player, stays listed until a `/leave`, where the reference's file drops it.
+    /// reference writes it from its live slots at teardown; ours are cleared before the flush, so
+    /// the list is kept here: seated from the file, grown by a confirmed custom join, shrunk by an
+    /// explicit leave. A channel whose re-join is refused, or that kicks the player, stays listed
+    /// until a `/leave`, where the reference's file drops it.
     pub custom: Vec<SavedChannel>,
 }
 
@@ -117,7 +114,7 @@ pub(crate) struct SavedChannel {
     pub(crate) number: u32,
 }
 
-/// One slot, the reference's `[0xb4fe04] + n*0xa0` record, in the fields this client uses.
+/// One slot, the reference's `+ n*0xa0` record, in the fields this client uses.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ChannelSlot {
     /// `+0x04`, the current name; the zone walk renames it in place.
@@ -134,12 +131,12 @@ pub(crate) enum SlotState {
     /// so an unconfirmed slot here sends one the server answers "Not on channel".
     #[default]
     Joined,
-    /// `2`, renamed with its re-join pending (`0x49bcd3`, in the rename `0x49bc50`): the confirming
-    /// `YOU_JOINED` carries the `YOU_CHANGED` token, "Changed Channel: [%s]".
+    /// `2`, renamed with its re-join pending: the confirming `YOU_JOINED` carries the `YOU_CHANGED`
+    /// token, "Changed Channel: [%s]".
     Renamed,
-    /// `3`, suspended (`0x49bcf0`): the row stopped applying, in 1.12 data a city-only channel
-    /// outside a capital. The record and number survive, and `YOU_LEFT` carries the `SUSPENDED`
-    /// token (`0x49c0e0`), which keeps the window's registration.
+    /// `3`, suspended: the row stopped applying, in 1.12 data a city-only channel outside a
+    /// capital. The record and number survive, and `YOU_LEFT` carries the `SUSPENDED` token, which
+    /// keeps the window's registration.
     Suspended,
 }
 
@@ -190,7 +187,7 @@ impl ChannelState {
         }
     }
 
-    /// A confirmed join sets the channel's mask bit (`0x49bbaf`, in the `YOU_JOINED` arm).
+    /// A confirmed join sets the channel's mask bit (in the `YOU_JOINED` arm).
     pub(crate) fn note_zone_channel_joined(&mut self, name: &str) {
         let bit = zone_bit(self.channels.zone_channel_id(name));
         match &mut self.zone_mask {
@@ -203,8 +200,8 @@ impl ChannelState {
         }
     }
 
-    /// An explicit leave clears the bit (`0x49f10a`/`0x49f11a` in leave-by-name `0x49ee70`), found
-    /// as the reference finds it (`0x49f0f4`): by the slot carrying the wire name.
+    /// An explicit leave clears the bit, found as the reference finds it: by the slot carrying the
+    /// wire name.
     pub(crate) fn note_zone_channel_left(&mut self, name: &str) {
         if self.number_of(name).is_none() {
             return;
@@ -241,14 +238,14 @@ impl ChannelState {
         self.custom.retain(|c| !c.name.eq_ignore_ascii_case(name));
     }
 
-    /// Whether the mask carries `id`'s bit, the walk's live predicate `0x49a494`.
+    /// Whether the mask carries `id`'s bit, the walk's live predicate.
     pub(crate) fn zone_row_wanted(&self, id: u32) -> bool {
         self.zone_mask.is_some_and(|mask| mask & zone_bit(id) != 0)
     }
 
-    /// The numeric leg of leave-by-name (`0x49ee70`): a nonzero `SStrToInt` names a confirmed slot
-    /// (`0x49be50`), and a hole, an out-of-range number or a suspended slot make the whole call a
-    /// no-op (`None`). Anything else is already the wire name.
+    /// The numeric leg of leave-by-name: a nonzero `SStrToInt` names a confirmed slot, and a hole,
+    /// an out-of-range number or a suspended slot make the whole call a no-op (`None`). Anything
+    /// else is already the wire name.
     pub(crate) fn leave_target(&self, arg: &str) -> Option<String> {
         match sstr_to_int(arg) {
             0 => Some(arg.to_string()),
@@ -256,17 +253,16 @@ impl ChannelState {
         }
     }
 
-    /// `SendChatMessage`'s channel target (`0x49f4d9`-`0x49f4ea`): `SStrToInt` straight into
-    /// `0x49be50`, with no name leg, so only a number naming a confirmed slot sends, and the
-    /// packet carries that slot's name. Anything else, a name included, sends nothing.
+    /// `SendChatMessage`'s channel target: `SStrToInt` straight, with no name leg, so only a number
+    /// naming a confirmed slot sends, and the packet carries that slot's name. Anything else, a
+    /// name included, sends nothing.
     pub(crate) fn send_target(&self, arg: &str) -> Option<String> {
         self.confirmed_slot_name(sstr_to_int(arg))
             .map(str::to_string)
     }
 
-    /// The by-number getter `0x49be50`: slot `n`'s name when it is in range, not a hole, and in
-    /// state 0 (here [`SlotState::Joined`]); below 1, past the end, a hole or another state is
-    /// `None`.
+    /// The by-number getter: slot `n`'s name when it is in range, not a hole, and in state 0 (here
+    /// [`SlotState::Joined`]); below 1, past the end, a hole or another state is `None`.
     fn confirmed_slot_name(&self, n: i32) -> Option<&str> {
         usize::try_from(n)
             .ok()
@@ -277,16 +273,16 @@ impl ChannelState {
             .map(|slot| slot.name.as_str())
     }
 
-    /// Rename a slot in place at send time, the reference's `0x49bc50` from the walk (`0x49a3dc`):
-    /// the server's `YOU_LEFT` for the old name then finds no slot (`0x49be90`), its args default
-    /// (`0x49b12f`), and the stock `ChatFrame_OnEvent` returns before its `YOU_LEFT` arm deletes
-    /// the window's channel registration (`ChatFrame.lua:1382-1384`), which nothing re-adds.
+    /// Rename a slot in place at send time, the reference's from the walk: the server's `YOU_LEFT`
+    /// for the old name then finds no slot, its args default, and the stock `ChatFrame_OnEvent`
+    /// returns before its `YOU_LEFT` arm deletes the window's channel registration
+    /// (`ChatFrame.lua:1382-1384`), which nothing re-adds.
     pub(crate) fn rename_slot(&mut self, old: &str, new: &str) -> Option<u32> {
         let n = self.number_of(old)?;
         let slot = self.joined[n as usize - 1].as_mut()?;
         slot.name = new.to_string();
-        // `0x49bcd3`: `(old == 3) ? 1 : 2`. A suspended slot comes back as a pending join, our
-        // `Joined`, so its notice reads `YOU_JOINED`; any other is a rename awaiting its re-join.
+        // `(old == 3) ? 1 : 2`. A suspended slot comes back as a pending join, our `Joined`, so its
+        // notice reads `YOU_JOINED`; any other is a rename awaiting its re-join.
         slot.state = if slot.state == SlotState::Suspended {
             SlotState::Joined
         } else {
@@ -295,15 +291,15 @@ impl ChannelState {
         Some(n)
     }
 
-    /// Suspend the slot holding `name` (`0x49bcf0`): the LEAVE has gone, and keeping the record
-    /// makes the returning notice `SUSPENDED`, so the window keeps its registration.
+    /// Suspend the slot holding `name`: the LEAVE has gone, and keeping the record makes the
+    /// returning notice `SUSPENDED`, so the window keeps its registration.
     pub(crate) fn suspend_slot(&mut self, name: &str) -> Option<u32> {
         let n = self.number_of(name)?;
         self.joined[n as usize - 1].as_mut()?.state = SlotState::Suspended;
         Some(n)
     }
 
-    /// The confirming `YOU_JOINED` writes state 0 unconditionally (`0x49bb20`); separate from
+    /// The confirming `YOU_JOINED` writes state 0 unconditionally; separate from
     /// [`Self::claim_slot`], as a renamed slot is already numbered.
     pub(crate) fn confirm_slot(&mut self, name: &str) {
         if let Some(n) = self.number_of(name) {
@@ -363,14 +359,13 @@ impl ChannelState {
             .map(|i| i as u32 + 1)
     }
 
-    /// Give `name` the first free slot, else a new one under [`MAX_CHANNELS`] (`0x49b980`); a name
-    /// already held keeps its number. With all ten taken, the reference prints
-    /// `ERR_TOO_MANY_CHAT_CHANNELS` (`0x199`, `0x49b9c5` via `0x496720`) and still sends the join;
-    /// here the callers only log it.
+    /// Give `name` the first free slot, else a new one under [`MAX_CHANNELS`]; a name already held
+    /// keeps its number. With all ten taken, the reference prints `ERR_TOO_MANY_CHAT_CHANNELS`
+    /// (`0x199`) and still sends the join; here the callers only log it.
     pub(crate) fn claim_slot(&mut self, name: &str) -> Option<u32> {
         if let Some(n) = self.number_of(name) {
-            // A confirmed join on a held slot clears its suspension (`0x49bb20` writes state 0
-            // unconditionally): the other half of the state-3 bypass.
+            // A confirmed join on a held slot clears its suspension: the other half of the state-3
+            // bypass.
             if let Some(slot) = self.joined[n as usize - 1].as_mut() {
                 slot.state = SlotState::Joined;
             }
@@ -387,7 +382,7 @@ impl ChannelState {
         Some(self.joined.len() as u32)
     }
 
-    /// Free the slot holding `name` in place (`0x49bbd0`), so no other channel renumbers.
+    /// Free the slot holding `name` in place, so no other channel renumbers.
     pub(crate) fn free_slot(&mut self, name: &str) -> Option<u32> {
         let n = self.number_of(name)?;
         self.joined[n as usize - 1] = None;
@@ -396,9 +391,9 @@ impl ChannelState {
 
     /// Stamp an event's channel args from our slot, as the reference reads them off one record
     /// (`+0x00` number, `+0x04` name, `+0x94` ChannelID, `+0x98` split index): held, arg4 becomes
-    /// `"N. Name"` (`0x8445c8`, the hit leg `0x49aa48`), arg8 the number, arg9 the name with its
-    /// zone tail and arg7 the ChannelID; not held, nothing is stamped (`0x49aa86`, `0x49b12f`).
-    /// arg7 comes from the name, as vmangos resolves it (`DBCStores.cpp:531`).
+    /// `"N. Name"`, arg8 the number, arg9 the name with its zone tail and arg7 the ChannelID; not
+    /// held, nothing is stamped. arg7 comes from the name, as vmangos resolves it
+    /// (`DBCStores.cpp:531`).
     pub(crate) fn stamp_channel(&self, event: &mut super::event::ChatEvent) {
         // A miss stamps nothing: the four args are one record.
         let Some(n) = self

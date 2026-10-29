@@ -1,7 +1,7 @@
 //! The `Minimap` methods: zoom, the mask, the ping, the player texture and the model attributes.
-//! The reference has six levels (`0x6da9a0`), a live index per mode (`0x86f698` outdoor, `0x86f69c` indoor) and the
-//! `minimapZoom`/`minimapInsideZoom` CVars (default `"3"`) that re-seed it (`0x6d9008`); the app
-//! maps the index to a radius (`0x6da9b0`) and holds the ping as a world point.
+//! The reference has six levels, a live index per mode and the `minimapZoom`/`minimapInsideZoom`
+//! CVars (default `"3"`) that re-seed it; the app maps the index to a radius and holds the ping as
+//! a world point.
 
 use mlua::{Lua, Table};
 
@@ -30,9 +30,9 @@ fn with_minimap<T>(
     }
 }
 
-/// The model half of `CMinimap::LoadXML` (`0x4ee2b0`): `minimapArrowModel` to engine children 1
-/// to 8 (`0x4ee170`), `minimapPlayerModel` to child 9 alone (`0x4ee260`). Runs before the
-/// `<Frames>` descent, as the reference chains to `CSimpleFrame::LoadXML` (`0x76a2f0`) after.
+/// The model half of `CMinimap::LoadXML`: `minimapArrowModel` to engine children 1 to 8,
+/// `minimapPlayerModel` to child 9 alone. Runs before the `<Frames>` descent, as the reference
+/// chains to `CSimpleFrame::LoadXML` after.
 pub(crate) fn apply_model_attrs(
     lua: &Lua,
     this: &Table,
@@ -74,7 +74,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "SetZoom",
         lua.create_function(|lua, (this, zoom): (Table, f64)| {
-            // Truncated and clamped to 0..=5 (`0x6daa10`), into the current mode's index.
+            // Truncated and clamped to 0..=5, into the current mode's index.
             let clamped = (zoom.max(0.0) as u8).min(MINIMAP_ZOOM_LEVELS - 1);
             let inside = with_minimap(lua, &this, |m| {
                 m.set_active_zoom(clamped);
@@ -95,9 +95,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     m.set(
-        // The disc's mask art, write-only as in the reference. An absent or empty path restores
-        // the default circle rather than unmasking the map; what the reference's `0x4ee4a0` does
-        // with one is untraced.
+        // The disc's mask art, write-only as in the reference. An absent or empty path restores the
+        // default circle rather than unmasking the map; what the reference's does with one is
+        // untraced.
         "SetMaskTexture",
         lua.create_function(|lua, (this, path): (Table, Option<String>)| {
             let path = path.filter(|p| !p.is_empty());
@@ -124,8 +124,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "GetPingPosition",
         // Fractions of the widget side from its centre (`MINIMAP_PING`'s arg2/arg3 space), which
-        // the app recomputes from the world point each frame. Always two numbers (`0x4eefd0`): the
-        // stock `Minimap_OnUpdate` multiplies them for 5 s, so a nil would error every frame.
+        // the app recomputes from the world point each frame. Always two numbers: the stock
+        // `Minimap_OnUpdate` multiplies them for 5 s, so a nil would error every frame.
         lua.create_function(|lua, this: Table| {
             with_minimap(lua, &this, |_| ())?;
             let (x, y) = lua

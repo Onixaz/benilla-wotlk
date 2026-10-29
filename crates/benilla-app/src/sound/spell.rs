@@ -1,8 +1,8 @@
 //! Spell-visual kit sounds: [`SpellKitSound`] (the kit's `SoundEntries.dbc` id, `SpellVisualKit`
-//! column 15) played at the casting unit, split as the reference's looping test (`0x458830`)
-//! splits it. A plain kit is a positioned one-shot (`0x458870`); a looping kit (Fireball's
-//! buildup 702, Arcane Missiles' hum 3136) is a channel tracked to the caster (`0x61fec0`),
-//! reaped by [`SpellKitSound::StopHold`] as the reference kills the effect's sound at `0x614150`.
+//! column 15) played at the casting unit, split as the reference's looping test splits it. A plain
+//! kit is a positioned one-shot; a looping kit (Fireball's buildup 702, Arcane Missiles' hum 3136)
+//! is a channel tracked to the caster, reaped by [`SpellKitSound::StopHold`] as the reference kills
+//! the effect's sound.
 
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;

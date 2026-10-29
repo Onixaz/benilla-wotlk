@@ -298,8 +298,8 @@ fn inn_corridor_light_probe() {
                 "exterior".to_string()
             };
             // The terrain MCSH bit under the point, which sets the exterior intensity only over
-            // open terrain (on a WMO face the skip-shadow bit, `0x6a8bc7`, forces 2.5), and the
-            // world coords for a live `.go` to stand here.
+            // open terrain (on a WMO face the skip-shadow bit, forces 2.5), and the world coords
+            // for a live `.go` to stand here.
             let (mcsh, world) = match subject.placed.as_ref() {
                 Some(p) => {
                     let w = bevy_to_wow(p.world_from_local.transform_point3(wow_to_bevy(probe)));

@@ -1,13 +1,12 @@
 //! Entity ground shade: a unit, player or GameObject re-samples the terrain MCSH under it as it
 //! moves, rather than baking it at spawn, and ramps its light node's intensity between the
-//! reference's 2.5 lit and 0.5 shadowed (`0x69e770`, step `[0x810808]` = 3.3333/s).
+//! reference's 2.5 lit and 0.5 shadowed (step3.3333/s).
 //!
-//! The reference lights a unit through the node only once registered (`0x672a20`, `[model+0x3c0]`;
-//! `0x6a7300` scales the diffuse by `[+0xa4]`), which a model-set does (`0x6716f0` from
-//! `0x613cf0`/`0x613d80`: equip, display id, shapeshift); a unit born unregistered (`0x670db0`,
-//! from `0x613e10`) commits the raw day/night pair at ×1.0. Every drawn unit has had its display
-//! model set, so only the registered state is modelled; which units stay unregistered is untraced
-//! (reference frames show a standing player at ×2.5 and a running one at ×1.0).
+//! The reference lights a unit through the node only once registered (`[model+0x3c0]`; scales the
+//! diffuse by `[+0xa4]`), which a model-set does (display id, shapeshift); a unit born unregistered
+//! commits the raw day/night pair at ×1.0. Every drawn unit has had its display model set, so only
+//! the registered state is modelled; which units stay unregistered is untraced (reference frames
+//! show a standing player at ×2.5 and a running one at ×1.0).
 //!
 //! [`GroundShade`] sits on the net entity root (the `[obj+0xe0]` node) and its byte goes to every
 //! M2 part below it, so a held weapon dims with its wielder: the reference lights attachments from
@@ -21,18 +20,18 @@ use crate::interior::{classify_entity_interior, InteriorLit};
 use crate::mesh_tag::{exterior_payload, shade_of, with_shade, InteriorProbePayload};
 use crate::terrain_stream::{doodad_ground_shade, ShadeResolve, TerrainStreamer};
 
-/// The rate of `t` (0 = intensity 2.5, 1 = 0.5): the reference's linear step `[0x810808]` =
-/// 3.3333 intensity units/s over the mix's 2.0-wide span.
+/// The rate of `t` (0 = intensity 2.5, 1 = 0.5): the reference's linear step3.3333 intensity
+/// units/s over the mix's 2.0-wide span.
 const SHADE_RAMP_PER_SEC: f32 = 3.3333 / 2.0;
 
 /// Squared distance (yd²) a root moves before the MCSH bit is re-sampled, about one MCSH texel.
 const RESAMPLE_DIST_SQ: f32 = 0.25;
 
-/// The ambient word's rate, `[0x810804]` = 2.0 colour units/s (`[+0x9c]` → `[+0xf4]`).
+/// The ambient word's rate,2.0 colour units/s (`[+0x9c]` → `[+0xf4]`).
 const AMBIENT_RAMP_PER_SEC: f32 = 2.0;
 
-/// `t` at the day/night intensity 1.0, an indoor node's target (`[+0xf8]` = 1.0 at `0x69e36b`,
-/// behind the `[+0xc] & 2` interior gate). The unregistered fallback's ×1.0 is another law.
+/// `t` at the day/night intensity 1.0, an indoor node's target (`[+0xf8]` = 1.0, behind the
+/// `[+0xc] & 2` interior gate). The unregistered fallback's ×1.0 is another law.
 const DAYNIGHT_T: f32 = 0.75;
 
 /// Deviation: the lit outdoor target is intensity 1.0, not the reference's 2.5, because
@@ -43,8 +42,8 @@ const LIT_T: f32 = 0.75;
 /// The settled-ramp epsilon on `t` and each ambient channel, under half a byte.
 const RAMP_EPS: f32 = 1.0 / 640.0;
 
-/// An entity root's light node, the chase pair `0x69e770` steps each frame: intensity
-/// (`[+0xa4]` → `[+0xf8]`, held as `t`) and the ambient word (`[+0x9c]` → `[+0xf4]`).
+/// An entity root's light node, the chase pair steps each frame: intensity (`[+0xa4]` → `[+0xf8]`,
+/// held as `t`) and the ambient word (`[+0x9c]` → `[+0xf4]`).
 #[derive(Component)]
 pub struct GroundShade {
     /// The mix, 1 being intensity 0.5: the parts' tag byte and the bake fold's diffuse scale.
@@ -58,8 +57,8 @@ pub struct GroundShade {
     /// The interior classifier's verdict; indoors [`DAYNIGHT_T`] overrides the MCSH sample.
     pub(crate) indoor: bool,
     /// On an outdoor-class WMO surface (`MOGI & 0x48`), the lit target overrides the MCSH: the
-    /// reference's WMO down-ray sets skip-shadow `[node+0xd] |= 0x2` (`0x6a8bc7`, cleared on
-    /// terrain at `0x6a8bed`), and the exterior leg then commits 2.5 (`0x69e483` → `0x69e4ad`).
+    /// reference's WMO down-ray sets skip-shadow `[node+0xd] |= 0x2`, and the exterior leg then
+    /// commits 2.5.
     pub(crate) on_wmo: bool,
     /// The ramped ambient word (0..1 per channel), the bake fold's input; the classifier seeds it.
     pub(crate) ambient: Vec3,
@@ -95,7 +94,7 @@ impl GroundShade {
     }
 
     /// The chase's target: day/night indoors, lit on a WMO surface, else the kept MCSH sample, for
-    /// a unit as for a GameObject (one law, `0x69e4ad`/`0x69e496`).
+    /// a unit as for a GameObject (one law).
     fn effective_target(&self) -> f32 {
         if self.indoor {
             DAYNIGHT_T
@@ -120,11 +119,10 @@ impl GroundShade {
     }
 }
 
-/// A WMO doodad prop on a streamed GameObject (a transport's cargo), lit by its own `CMapDoodadDef`
-/// (`0x6a8050`), never the host's light node, so the walk passes it by. In the reference a
-/// transport's WMO is in the global map-object list (`0xca7d98`), and a def's `[def+0xa4]` has four
-/// writers, none the node: `0x6a7d73` (0.0), `0x695bb3` and `0x6b01bb` (1.0), and `0x698cb4`
-/// (0.5), an MCSH sample taken once at residency (`0x698c50`).
+/// A WMO doodad prop on a streamed GameObject (a transport's cargo), lit by its own
+/// `CMapDoodadDef`, never the host's light node, so the walk passes it by. In the reference a
+/// transport's WMO is in the global map-object list, and a def's `[def+0xa4]` has four writers,
+/// none the node: (0.0), (1.0), and (0.5), an MCSH sample taken once at residency.
 #[derive(Component)]
 pub struct DoodadDefLit;
 
@@ -350,7 +348,7 @@ pub(crate) fn update_ground_shade(
             );
             shade.logged_target = target;
         }
-        // Linear toward the target, never past it (`0x69e770`).
+        // Linear toward the target, never past it.
         shade.t = if shade.t < target {
             (shade.t + step).min(target)
         } else {

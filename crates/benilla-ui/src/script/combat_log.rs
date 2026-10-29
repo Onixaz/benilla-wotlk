@@ -589,7 +589,7 @@ fn unknown_text(lua: &Lua) -> String {
         .unwrap_or_else(|| UNKNOWN_OBJECT.to_string())
 }
 
-/// `0x74d0d0`: `0x` and sixteen upper-case hex digits.
+/// `0x` and sixteen upper-case hex digits.
 fn guid_text(guid: u64) -> String {
     format!("0x{guid:016X}")
 }

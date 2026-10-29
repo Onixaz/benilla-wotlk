@@ -51,7 +51,7 @@ pub(super) fn resolve_char_look(
 ) -> Option<CharLook> {
     // The look follows the display, not the entity kind: the display's own appearance row first,
     // the wire's only for a character body without one, as the reference's race and sex getters
-    // answer (`0x60c690`). A druid form is a plain creature model and has no look.
+    // answer. A druid form is a plain creature model and has no look.
     let d = dm?;
     // A clone's caster look comes first, ahead of the display's own row (`0x73014a`).
     if let Some(m) = mirror.and_then(|m| m.for_display(net.display_id)) {
@@ -92,8 +92,8 @@ pub(super) fn resolve_char_look(
             },
         });
     }
-    // A corpse's look is its own `CORPSE_FIELD_BYTES_1/_2` snapshot from death, never the
-    // owner's `PLAYER_BYTES` (`0x5d6260`); a bone pile has none, `0x5d6291`'s early skip.
+    // A corpse's look is its own `CORPSE_FIELD_BYTES_1/_2` snapshot from death, never the owner's
+    // `PLAYER_BYTES`; a bone pile has none, the reference's early skip.
     if net.kind == EntityKind::Corpse && d.is_character_body {
         let look = super::super::corpse::corpse_char_look(stores.get(entity).ok())?;
         // The corpse's fields carry no class, and its component keeps 0 (`0x4dfda0`).
@@ -215,9 +215,9 @@ pub(super) fn resolve_worn_equip(
     }
 }
 
-/// The worn geoset selectors for a set of display ids, the inputs of `0x477520`'s branches B1 to
-/// B8: each row's geoset columns, the cloak group and the helm's hide-mask rows (`0x4799a0`).
-/// `tabard_preview` (B6) is set only while the tabard designer is open, as in the reference.
+/// The worn geoset selectors for a set of display ids, the inputs of the reference's branches B1 to
+/// B8: each row's geoset columns, the cloak group and the helm's hide-mask rows. `tabard_preview`
+/// (B6) is set only while the tabard designer is open, as in the reference.
 pub(in crate::entities) fn equip_geosets(
     displays: Option<&super::super::ItemDisplays>,
     bodyslots: &[u32; 8],
@@ -351,9 +351,9 @@ pub(in crate::entities) fn composite_plan(
     )
 }
 
-/// A world body's atlas. A baked NPC skin loads as is and is never waited on (the fork at
-/// `0x477866`); a composited one is cached, or running off the main thread, started here on a
-/// miss. Without the tables the body stays untextured.
+/// A world body's atlas. A baked NPC skin loads as is and is never waited on; a composited one is
+/// cached, or running off the main thread, started here on a miss. Without the tables the body
+/// stays untextured.
 pub(super) fn body_atlas(
     look: &CharLook,
     key: Option<SkinKey>,

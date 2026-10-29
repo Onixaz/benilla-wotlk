@@ -63,8 +63,8 @@ pub struct MoverState {
 pub struct MovementBlock {
     pub position: Option<(Vector3d, f32)>,
     /// A `LIVING` block's mover state. The reference merges these flags under the relay's
-    /// `0x75a07dff` mask (`0x618c30`) and commits the pitch at once (`0x7c6420`), so a unit
-    /// streaming in mid-swim is pitched on its first frame.
+    /// `0x75a07dff` mask and commits the pitch at once, so a unit streaming in mid-swim is pitched
+    /// on its first frame.
     pub mover: Option<MoverState>,
     /// A `LIVING` block's nine speeds in wire order: walk, run, run back, swim, swim back, flight,
     /// flight back, turn rate, pitch rate.

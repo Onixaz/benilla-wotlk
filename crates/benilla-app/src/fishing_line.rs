@@ -1,18 +1,18 @@
 //! The engine-drawn fishing line, rod tip to bobber, while a unit channels Fishing.
 //!
-//! The reference keeps one line per unit (`[unit+0xb4c]`, ctor `0x61f490`) while its
-//! `UNIT_FIELD_CHANNEL_OBJECT` is a live FISHINGNODE GameObject, `UNIT_CHANNEL_SPELL` is nonzero
-//! and the mainhand is a loaded fishing pole, for every visible fisher, not only the player. Here
-//! it is drawn each frame those conditions hold.
+//! The reference keeps one line per unit (`[unit+0xb4c]`) while its `UNIT_FIELD_CHANNEL_OBJECT` is
+//! a live FISHINGNODE GameObject, `UNIT_CHANNEL_SPELL` is nonzero and the mainhand is a loaded
+//! fishing pole, for every visible fisher, not only the player. Here it is drawn each frame those
+//! conditions hold.
 //!
-//! The geometry (`0x61f780`): 65 vertices lerped near to far with a fixed sag of
-//! `0.5 * sin(pi * t)` world units, not scaled by length. Near is the pole's `$CCH` marker (the
-//! bobber's own `$CCH` is never read); far is the bobber's position plus half its scaled bbox
-//! height. One flat color, the pole's light-collector ambient, opaque and unlit.
+//! The geometry: 65 vertices lerped near to far with a fixed sag of `0.5 * sin(pi * t)` world
+//! units, not scaled by length. Near is the pole's `$CCH` marker (the bobber's own `$CCH` is never
+//! read); far is the bobber's position plus half its scaled bbox height. One flat color, the pole's
+//! light-collector ambient, opaque and unlit.
 //!
 //! Here the anchor rides the unposed prop frame, the color is the scene ambient rather than the
-//! pole's light collector, and the line is unfogged. The sheathe trigger (`0x60d2f0`) and the
-//! FishingCast to FishingLoop handoff (`0x5fc3f0` case 0x85) belong to the channel animations.
+//! pole's light collector, and the line is unfogged. The sheathe trigger and the FishingCast to
+//! FishingLoop handoff belong to the channel animations.
 
 use bevy::prelude::*;
 
@@ -31,9 +31,9 @@ pub(crate) struct FishingPoleTip {
     pub(crate) tip: Vec3,
 }
 
-/// 64 segments, 65 vertices: `t = i/64` (const `0x80a92c` = 0.015625).
+/// 64 segments, 65 vertices: `t = i/64` (const0.015625).
 const SEGMENTS: usize = 64;
-/// The half-sine sag amplitude (const `0x80c9a8` = -0.5, applied to `sin(pi * t)`).
+/// The half-sine sag amplitude (const-0.5, applied to `sin(pi * t)`).
 const SAG: f32 = 0.5;
 
 /// Draws every visible fisher's line from this frame's prop frame.
@@ -54,7 +54,7 @@ fn draw_fishing_lines(
         if !vis.get() {
             continue;
         }
-        // The create conditions (`0x612650`): a channel spell aimed at a streamed FISHINGNODE.
+        // The create conditions: a channel spell aimed at a streamed FISHINGNODE.
         let Ok(store) = owners.get(pole.owner) else {
             continue;
         };
@@ -77,7 +77,7 @@ fn draw_fishing_lines(
             continue;
         }
         let near = prop.transform_point(pole.tip);
-        // Bobber base plus half its scaled bbox height (`0x5f9f50`).
+        // Bobber base plus half its scaled bbox height.
         let far = go_tf.translation() + Vec3::Y * (net.scale * height.map_or(0.0, |h| h.0) * 0.5);
         // The scene ambient clamped to [0, 1], opaque.
         let color = lighting.as_deref().map_or(Color::srgb(0.5, 0.5, 0.5), |l| {
@@ -113,8 +113,7 @@ impl Plugin for FishingLinePlugin {
 mod tests {
     use super::*;
 
-    /// The reference's polyline (`0x61f780`): zero sag at both ends, -0.5 in world Z (Bevy Y) at
-    /// the midpoint.
+    /// The reference's polyline: zero sag at both ends, -0.5 in world Z (Bevy Y) at the midpoint.
     #[test]
     fn the_sag_is_a_fixed_half_sine() {
         let near = Vec3::new(0.0, 5.0, 0.0);

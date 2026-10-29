@@ -64,8 +64,7 @@ fn combat_stat_indices_chain_to_the_tested_anchors() {
         "far sight closes the 32-slot keyring array"
     );
     assert_eq!(FIELD_PLAYER_FARSIGHT + 2, FIELD_PLAYER_FIELD_COMBO_TARGET);
-    // `GetComboPoints` (`0x51a190`) reads the combo target at `[player+0xe68]+0x838`, and
-    // 0x838 / 4 = 0x20E.
+    // `GetComboPoints` reads the combo target at `[player+0xe68]+0x838`, and 0x838 / 4 = 0x20E.
     assert_eq!(FIELD_PLAYER_FIELD_COMBO_TARGET, UNIT_END + 0x20E);
     assert_eq!(FIELD_PLAYER_FIELD_COMBO_TARGET + 2, FIELD_PLAYER_XP);
     // The skill array is 128 slots of 3 dwords.
@@ -742,8 +741,8 @@ fn dynamicobject_fields_read_the_live_blizzard_capture() {
     );
 }
 
-/// `0x605f30`: health 0 (`0x605f3b`), or `PLAYER_FLAGS & 0x10` (`0x605f59`); a released ghost has
-/// health 1, so only the flag catches it, and feign death is neither.
+/// Health 0, or `PLAYER_FLAGS & 0x10`; a released ghost has health 1, so only the flag catches it,
+/// and feign death is neither.
 #[test]
 fn dead_or_ghost_is_health_zero_or_the_ghost_flag() {
     let unit = |pairs: &[(u16, u32)]| ObjectFields::from_pairs(pairs);
@@ -765,12 +764,12 @@ fn dead_or_ghost_is_health_zero_or_the_ghost_flag() {
     assert!(ghost.is_dead_or_ghost(), "the ghost-flag leg");
     assert!(
         !feigning.is_dead_or_ghost(),
-        "feign death is 0x605f90's, not this"
+        "feign death is the reference's, not this"
     );
 }
 
 /// `Unit::SetFeignDeath` sets only `UNIT_DYNFLAG_DEAD`: the raw predicates stay false, the
-/// reads-dead ones (`0x605f90`, `UnitHealth`, `UnitMana`) flip, and the maxima stay.
+/// reads-dead ones (`UnitHealth`, `UnitMana`) flip, and the maxima stay.
 #[test]
 fn feign_death_reads_dead_without_touching_the_raw_health_field() {
     const MANA: u8 = 0;
@@ -798,7 +797,7 @@ fn feign_death_reads_dead_without_touching_the_raw_health_field() {
 
     // The reads-dead predicate flips for both, plus the stand-state leg.
     assert!(!alive.unit_reads_dead());
-    assert!(feigning.unit_reads_dead(), "0x605f9d — the dynflag leg");
+    assert!(feigning.unit_reads_dead(), "— the dynflag leg");
     assert!(corpse.unit_reads_dead());
     assert!(
         unit(&[
@@ -807,7 +806,7 @@ fn feign_death_reads_dead_without_touching_the_raw_health_field() {
             (FIELD_UNIT_BYTES_1, 7),
         ])
         .unit_reads_dead(),
-        "0x605faa — stand state 7 (inert against vmangos, kept as the reference has it)"
+        "— stand state 7 (inert against vmangos, kept as the reference has it)"
     );
 
     // Current values go to 0 and the maxima stay, so the bar shows empty.
@@ -825,8 +824,8 @@ fn feign_death_reads_dead_without_touching_the_raw_health_field() {
     assert_eq!(ObjectFields::default().unit_shown_health(), None);
 }
 
-/// vmangos sends rage max 1000 and happiness max 1050000 (`GetCreatePowers`); the table at
-/// `0x86f978` divides them to the 100 and 1050 the reference shows.
+/// vmangos sends rage max 1000 and happiness max 1050000 (`GetCreatePowers`); the table divides
+/// them to the 100 and 1050 the reference shows.
 #[test]
 fn rage_and_happiness_divide_for_display_but_not_for_the_raw_readers() {
     const RAGE: u8 = 1;
@@ -879,7 +878,7 @@ fn rage_and_happiness_divide_for_display_but_not_for_the_raw_readers() {
 }
 
 /// `UNIT_FIELD_BASE_MANA` and `UNIT_FIELD_BASE_HEALTH` are fields 162 and 163
-/// (`UpdateFields_1_12_1.h:101-102`), the unit block's `+0x270` and `+0x274` `0x612c50` reads.
+/// (`UpdateFields_1_12_1.h:101-102`), the unit block's `+0x270` and `+0x274` reads.
 #[test]
 fn base_mana_and_base_health_read_fields_162_and_163() {
     let unit = ObjectFields::from_pairs(&[(162, 1500), (163, 1689)]);

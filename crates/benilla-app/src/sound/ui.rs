@@ -3,12 +3,12 @@
 //!
 //! - [`drain_ui_sounds`] plays the [`SoundRequest`]s the script queues, as the client's
 //!   `PlaySoundById`/`ByName` path.
-//! - A cursor payload change is the pickup or put-down gesture, played engine-side by the
-//!   reference from `SetCursorItem` (`0x494c4a`) and `ClearCursor` (`0x49520a`). An item resolves
-//!   `ItemGroupSounds[ItemDisplayInfo[displayId].group_sounds].kit[gesture]` (`0x457ff0`); other
-//!   payloads play the generic grab/drop pair; never both. A bag swap plays one sound, the held
-//!   item's put-down: the place branch never calls `SetCursorItem` (`0x5e0c40`).
-//! - Taking a loot row plays that item's pickup kit at the click, before the send (`0x4c2790`).
+//! - A cursor payload change is the pickup or put-down gesture, played engine-side by the reference
+//!   from `SetCursorItem` and `ClearCursor`. An item resolves
+//!   `ItemGroupSounds[ItemDisplayInfo[displayId].group_sounds].kit[gesture]`; other payloads play
+//!   the generic grab/drop pair; never both. A bag swap plays one sound, the held item's put-down:
+//!   the place branch never calls `SetCursorItem`.
+//! - Taking a loot row plays that item's pickup kit at the click, before the send.
 //! - The Sound panel's side of the engine ([`super::engine`]): the cached device list into the VM,
 //!   and its restart out.
 
@@ -103,7 +103,7 @@ fn load_item_sounds(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
 }
 
 /// `INTERFACESOUND_CURSORGRABOBJECT`/`DROPOBJECT`: the generic cursor gesture pair for a non-item
-/// payload, by kit id (`0x495190`).
+/// payload, by kit id.
 const INTERFACESOUND_CURSORGRABOBJECT: u32 = 902;
 /// `LOOTWINDOWCOINSOUND`: kit 895, the coin a money pickup plays.
 const LOOTWINDOWCOINSOUND: u32 = 895;
@@ -117,11 +117,11 @@ enum CursorGesture {
     Loss,
 }
 
-/// Play the cursor-payload gesture sound on every transition: an item lands through
-/// `SetCursorItem` → `SndInterfacePlayItemSound(ecx=0)` and leaves through `ClearCursor` →
-/// `(ecx=1)`. Another Some → Some change plays the outgoing loss then the incoming gain, as a
-/// displaced action lands on the cursor (`PlaceAction`, `0x4e62e0`); the same item is no change.
-/// A missing link (template, display, group 0, kit 0) is silent, as in the client.
+/// Play the cursor-payload gesture sound on every transition: an item lands through `SetCursorItem`
+/// → `SndInterfacePlayItemSound(ecx=0)` and leaves through `ClearCursor` → `(ecx=1)`. Another Some
+/// → Some change plays the outgoing loss then the incoming gain, as a displaced action lands on the
+/// cursor (`PlaceAction`); the same item is no change. A missing link (template, display, group 0,
+/// kit 0) is silent, as in the client.
 fn play_item_gesture_sounds(
     script: Option<NonSend<UiScript>>,
     mut prev: Local<crate::ui_script::VmMemo<Option<CursorPayload>>>,
@@ -147,9 +147,9 @@ fn play_item_gesture_sounds(
     };
 
     let mut play = |payload: &CursorPayload, gesture: CursorGesture| match payload {
-        // Mode 5 takes the item arm: the vendor grab `0x4950f0` is handed the row's
-        // `ItemDisplayInfo` id, so it plays the item's own pickup and put-down.
-        // Mode 11 too: `SetCursorVirtualItem` and its clear play the item's sounds (`0x520d30`).
+        // Mode 5 takes the item arm: the vendor grab is handed the row's `ItemDisplayInfo` id, so
+        // it plays the item's own pickup and put-down. Mode 11 too: `SetCursorVirtualItem` and its
+        // clear play the item's sounds (`0x520d30`).
         CursorPayload::Item(_) | CursorPayload::Merchant(_) | CursorPayload::GuildBankItem(_) => {
             let item_id = match payload {
                 CursorPayload::Item(i) => i.item_id,
@@ -183,17 +183,17 @@ fn play_item_gesture_sounds(
                 &config,
             );
         }
-        // The generic pair: the macro grab (mode 8, `0x494f60`/`0x494f80`) reaches the same
-        // pair as spells and actions, and the pet-action builder `0x494e20` names it outright.
+        // The generic pair: the macro grab (mode 8) reaches the same pair as spells and actions,
+        // and the pet-action builder names it outright.
         CursorPayload::Spell(_)
         | CursorPayload::Action(_)
         | CursorPayload::Macro(_)
         | CursorPayload::EquipmentSet(_)
         | CursorPayload::PetAction(_)
-        // Mode 10: the stabled-pet grab `0x495010` calls the same generic path.
+        // Mode 10: the stabled-pet grab calls the same generic path.
         | CursorPayload::StablePet(_)
         // Mode 2: money pickup and drop both play `LOOTWINDOWCOINSOUND`, never the generic drop
-        // kit (`0x494cfe`/`0x49523a`); mode 12, bank money, likewise (`0x5208f0`).
+        // kit; mode 12, bank money, likewise (`0x5208f0`).
         | CursorPayload::Money(_)
         | CursorPayload::GuildBankMoney(_) => {
             let kit_id = match (&payload, gesture) {
@@ -264,8 +264,7 @@ fn play_item_gesture(
 }
 
 /// A looted row's pickup sound, written by [`crate::ui_loot::drain_loot`]. The client plays it at
-/// the loot-slot click (`0x4c2790`); `SMSG_ITEM_PUSH` itself is silent, so a purchase makes no
-/// pickup sound.
+/// the loot-slot click; `SMSG_ITEM_PUSH` itself is silent, so a purchase makes no pickup sound.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct LootPickupSound {
     pub(crate) display_id: u32,
@@ -304,10 +303,10 @@ fn play_loot_pickup_sounds(
     }
 }
 
-/// The auto-equip gesture pair, written by [`crate::ui_items`] when a right-click auto-equips a
-/// bag item. The client's `UseContainerItem` (`0x4fa0e0`) runs a synthetic `SetCursorItem` then
-/// `ClearCursor` (`0x494c4a`, `0x49520a`), so pickup then put-down play; benilla's right-click
-/// never touches the cursor, so the pair is emitted here.
+/// The auto-equip gesture pair, written by [`crate::ui_items`] when a right-click auto-equips a bag
+/// item. The client's `UseContainerItem` runs a synthetic `SetCursorItem` then `ClearCursor`, so
+/// pickup then put-down play; benilla's right-click never touches the cursor, so the pair is
+/// emitted here.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct AutoEquipSound {
     pub(crate) display_id: u32,

@@ -1,36 +1,35 @@
-//! `BindTarget 0x6e5b40`'s gates: the five silent exits a unit meets before any relation arm
-//! (`6e5bd8`-`6e5ca2`). A refused unit binds nothing, so `ArmCast` falls to its next candidate,
-//! the player behind `autoSelfCast`, and then to the enemy-word refusal or the targeting cursor.
-//! The read-only mirror `SpellCanTargetUnit 0x6e6460` runs the same five (`6e6507`-`6e65ab`), so
-//! the press, the cursor's click, `SpellTargetUnit` and the hover verdict share this one gate
-//! through [`super::cast_target::unit_binds`].
+//! `BindTarget`'s gates: the five silent exits a unit meets before any relation arm. A refused unit
+//! binds nothing, so `ArmCast` falls to its next candidate, the player behind `autoSelfCast`, and
+//! then to the enemy-word refusal or the targeting cursor. The read-only mirror
+//! `SpellCanTargetUnit` runs the same five, so the press, the cursor's click, `SpellTargetUnit` and
+//! the hover verdict share this one gate through [`super::cast_target::unit_binds`].
 
 use benilla_formats::SpellDisplay;
 use benilla_protocol::ObjectFields;
 
 use super::cast_target::{TargetRelations, CORPSE_WORD_BITS, TF_EXPLICIT_GATE};
 
-/// `UNIT_FIELD_FLAGS & 0x10000` (vmangos `UNIT_FLAG_NON_ATTACKABLE_2`, `UnitDefines.h:561`), tested
-/// at `6e5c16`-`6e5c1d`.
+/// `UNIT_FIELD_FLAGS & 0x10000` (vmangos `UNIT_FLAG_NON_ATTACKABLE_2`, `UnitDefines.h:561`),
+/// tested.
 const UNIT_FLAG_NON_ATTACKABLE_2: u32 = 0x0001_0000;
 
-/// The bind's alive test (`6e5c5f`, `6e5e55`) and the world pick's (`4806fd`, `480713 setg`,
+/// The bind's alive test and the world pick's (`480713 setg`,
 /// [`super::targeting::PickFlags::admits`]): signed `UNIT_FIELD_HEALTH` above 0. An absent field
 /// reads 0, as the reference's descriptor does, so a dead unit whose create sent no health is dead.
 pub(super) fn unit_alive(fields: &ObjectFields) -> bool {
     fields.unit_health().unwrap_or(0) as i32 > 0
 }
 
-/// Whether `unit` passes the gates for `word`. `is_caster` is the unit being the cast's caster
-/// (`6e5bd8`-`6e5bee`); the unit's own fields come from `rel.target_store`, and a candidate with
-/// no streamed store has none to read, so the relation arms alone decide it. Refused when:
+/// Whether `unit` passes the gates for `word`. `is_caster` is the unit being the cast's caster; the
+/// unit's own fields come from `rel.target_store`, and a candidate with no streamed store has none
+/// to read, so the relation arms alone decide it. Refused when:
 ///
-/// - the unit is the caster and the spell has `AttributesEx & 0x80000` (`6e5bf7`);
-/// - the unit has `UNIT_FIELD_FLAGS & 0x10000` (`6e5c1d`);
-/// - the spell's `TargetCreatureType` mask excludes the unit's creature type (`6e5c36`, `6e5c53`);
+/// - the unit is the caster and the spell has `AttributesEx & 0x80000`;
+/// - the unit has `UNIT_FIELD_FLAGS & 0x10000`;
+/// - the spell's `TargetCreatureType` mask excludes the unit's creature type;
 /// - the unit is dead and neither `UNIT_DYNAMIC_FLAGS & 0x20`, a word in `0x8600` nor
-///   `AttributesEx2 & 1` admits it (`6e5c8b`);
-/// - the unit is alive and the word has `0x400` (`6e5ca2`).
+///   `AttributesEx2 & 1` admits it;
+/// - the unit is alive and the word has `0x400`.
 pub(super) fn bind_gates(
     def: &SpellDisplay,
     word: u32,
@@ -121,7 +120,7 @@ mod tests {
         assert!(passes(&spell(), WORD_ASSIST, true, &unit(&[])));
     }
 
-    /// `6e5bf7`: the caster, and only the caster, under `AttributesEx & 0x80000`.
+    /// The caster, and only the caster, under `AttributesEx & 0x80000`.
     #[test]
     fn the_caster_is_refused_under_a_self_excluding_spell() {
         let excluding = SpellDisplay {
@@ -145,7 +144,7 @@ mod tests {
         assert!(bind_gates(&excluding, WORD_ASSIST, false, &rel));
     }
 
-    /// `6e5c1d`: bit 16 of `UNIT_FIELD_FLAGS`, and only that bit.
+    /// Bit 16 of `UNIT_FIELD_FLAGS`, and only that bit.
     #[test]
     fn a_unit_flagged_0x10000_is_refused() {
         assert!(!passes(
@@ -168,8 +167,8 @@ mod tests {
         }
     }
 
-    /// `6e5c26`-`6e5c53`: a mask excludes a unit of another type, a unit of no type, and lets
-    /// the right type through, the type read the reference's way.
+    /// A mask excludes a unit of another type, a unit of no type, and lets the right type through,
+    /// the type read the reference's way.
     #[test]
     fn a_creature_type_mask_refuses_the_wrong_type() {
         let hibernate = SpellDisplay {
@@ -220,8 +219,8 @@ mod tests {
         assert!(check(&mind_control, &player));
     }
 
-    /// `6e5c6a`-`6e5c8b`: a dead unit is refused unless the dynamic flag, a corpse word or
-    /// `AttributesEx2 & 1` admits it; health is the signed field, and absent reads 0.
+    /// A dead unit is refused unless the dynamic flag, a corpse word or `AttributesEx2 & 1` admits
+    /// it; health is the signed field, and absent reads 0.
     #[test]
     fn a_dead_unit_is_refused_unless_something_admits_it() {
         let dead = unit(&[(HEALTH, 0)]);
@@ -266,7 +265,7 @@ mod tests {
         ));
     }
 
-    /// `6e5c9a`-`6e5ca2`: a live unit is refused when the word has `0x400`, whatever else it has.
+    /// A live unit is refused when the word has `0x400`, whatever else it has.
     #[test]
     fn a_living_unit_is_refused_under_the_0x400_word() {
         let alive = unit(&[]);

@@ -122,14 +122,14 @@ pub(super) struct InspectStores<'w, 's> {
     /// The GO template cache: a TEXT object's page and the tooltip ladder's highlight column
     /// and name.
     go_templates: Res<'w, crate::go_templates::GameObjectTemplates>,
-    /// The meeting-stone queue (`[0xb72038]`), part of MEETINGSTONE(23)'s highlightable term, so
-    /// the card's `interact` verdict reads the same predicate as the cursor.
+    /// The meeting-stone queue, part of MEETINGSTONE(23)'s highlightable term, so the card's
+    /// `interact` verdict reads the same predicate as the cursor.
     stone: Option<Res<'w, crate::ui_dialog_verbs::MeetingStone>>,
     /// The published GameObject mouseover the tooltip reads; the card's own dev pick bypasses the
     /// publish, so this shows when the two differ.
     hovered_go: Res<'w, crate::target::HoveredObject>,
-    /// What the GameObject state machine's arm (`0x5f3930`) is playing, for the `anim` line. Its
-    /// own query: a GO whose model has no skeleton is a static mesh without these components.
+    /// What the GameObject state machine's arm is playing, for the `anim` line. Its own query: a GO
+    /// whose model has no skeleton is a static mesh without these components.
     go_anims: Query<
         'w,
         's,
@@ -340,9 +340,9 @@ pub(super) fn inspect_ui(
             } else {
                 format!(" [{}]", named.join("|"))
             };
-            // The interact gate (`0x5f2f80`): the strategy vtable's `+0x14` highlightable slot is
-            // the one predicate behind the cursor, the +64 brighten, right-click USE and pick
-            // priority. SPELL_FOCUS's slot is a constant `xor al,al`, so an anvil reads `✗`.
+            // The interact gate: the strategy vtable's `+0x14` highlightable slot is the one
+            // predicate behind the cursor, the +64 brighten, right-click USE and pick priority.
+            // SPELL_FOCUS's slot is a constant `xor al,al`, so an anvil reads `✗`.
             let reaction =
                 crate::target::cursor_mode::go_reaction(factions, s.0.gameobject_faction(), self_store);
             let go_guid = net_entity.and_then(|p| guids.get(p).ok()).map(|g| g.0);
@@ -447,11 +447,11 @@ pub(super) fn inspect_ui(
             3 => "neutral",
             4 => "friendly",
             5 => "honored",
-            // `0x606439` caps the rank at 6: Exalted reads here too.
+            // The reference caps the rank at 6: Exalted reads here too.
             _ => "revered+",
         };
-        // A faction with a reputation slot reacts by our standing (`0x605fc0` -> `0x4d63a0`),
-        // before any template comparison; everything else by the template comparator.
+        // A faction with a reputation slot reacts by our standing, before any template comparison;
+        // everything else by the template comparator.
         let branch = s
             .0
             .unit_faction_template()
@@ -578,9 +578,9 @@ pub(super) fn inspect_ui(
             None => format!("anim {base}{rate}"),
         }
     });
-    // A GameObject's line, from `GoAnim`: the sequence the state machine's arm (`0x5f3930`) plays,
-    // a transient one the completion advance `0x5f4120` must end or the held rest pose, and its
-    // repeat. `transition · loops` is a door stuck mid-motion.
+    // A GameObject's line, from `GoAnim`: the sequence the state machine's arm plays, a transient
+    // one the completion advance must end or the held rest pose, and its repeat.
+    // `transition · loops` is a door stuck mid-motion.
     let anim_line = anim_line.or_else(|| {
         let (id, transient, repeat) = net_entity
             .and_then(|p| go_anims.get(p).ok())

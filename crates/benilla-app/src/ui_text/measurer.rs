@@ -22,18 +22,17 @@ pub(crate) fn measure_request(
     let rs = seam * r.scale;
     let spec = || super::FontSpec {
         path: r.font.as_deref(),
-        // The render pass's drawn px: `GetStringWidth` and `GetStringHeight` report the drawn
-        // size (`0x772890`).
+        // The render pass's drawn px: `GetStringWidth` and `GetStringHeight` report the drawn size.
         height: super::drawn_px(r.height, r.text_height, rs),
-        // THICK adds 1 px per glyph to the step law (`0x5ca2b0`), so the measure needs it.
+        // THICK adds 1 px per glyph to the step law, so the measure needs it.
         outline: r.outline,
         alpha_gradient: None, // alpha never changes metrics
         spacing: r.spacing * rs,
     };
     let wrap = r.wrap_width.map(|w| w * rs);
     let (w, h) = super::measure_text(e, &r.text, wrap, spec());
-    // `GetStringWidth` answers the unwrapped width (the extent measure `0x5c6940`), which only a
-    // wrapped region needs a second pass for.
+    // `GetStringWidth` answers the unwrapped width, which only a wrapped region needs a second pass
+    // for.
     let natural = if wrap.is_some() {
         super::measure_text(e, &r.text, None, spec()).0
     } else {
@@ -114,9 +113,9 @@ mod tests {
 
     use super::AtlasMeasurer;
 
-    /// A multi-line EditBox is its text's measured height tall (`0x77d4d0` @`0x77d8ad`), one
-    /// line's when empty, and the line law the host measures by (`0x5c2070`) folds a trailing
-    /// break into the line it ends, so the break alone adds no line.
+    /// A multi-line EditBox is its text's measured height tall, one line's when empty, and the line
+    /// law the host measures by folds a trailing break into the line it ends, so the break alone
+    /// adds no line.
     #[test]
     fn a_multi_line_boxs_trailing_newline_adds_no_line() {
         benilla_formats::wow_data_or_skip!();

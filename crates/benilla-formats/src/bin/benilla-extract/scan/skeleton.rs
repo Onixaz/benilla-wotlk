@@ -8,8 +8,8 @@ use benilla_formats::Chain;
 use crate::model_key;
 
 /// List the models where a table scan for an attachment id and the reference's `lookup[id]`
-/// (`0x710310`) disagree: `+id` only the lookup reaches, `-id` only the scan reaches (the
-/// reference cannot address it), `id:a→b` a different record.
+/// disagree: `+id` only the lookup reaches, `-id` only the scan reaches (the reference cannot
+/// address it), `id:a→b` a different record.
 pub fn attachscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let names = super::m2_names(chain, prefix)?;
     let (mut scanned, mut with_points, mut divergent) = (0u32, 0u32, 0u32);
@@ -110,17 +110,17 @@ impl RawBoneTrack {
         })
     }
 
-    /// The reference's sample at absolute `t_ms` for file slot `slot`: `0x713d50`'s key search,
-    /// then the lerp or step of `0x713ea0`/`0x71af20`.
+    /// The reference's sample at absolute `t_ms` for file slot `slot`: the reference's key search,
+    /// then the lerp or step.
     fn reference(&self, slot: usize, t_ms: u32) -> Option<[f32; 4]> {
         let last = self.ts.len().checked_sub(1)?;
-        // `0x713d59`: the window is `ranges[slot]` when present, else the whole key list.
+        // The window is `ranges[slot]` when present, else the whole key list.
         let (lo, hi) = match self.ranges.get(slot) {
             Some(&(lo, hi)) => (lo as usize, hi as usize),
             None => (0, last),
         };
         let (lo, hi) = (lo.min(last), hi.min(last));
-        // `0x713d7b`: a collapsed window resolves to `keys[lo]` outright.
+        // A collapsed window resolves to `keys[lo]` outright.
         if lo >= hi {
             return Some(self.vals[lo]);
         }
@@ -132,7 +132,7 @@ impl RawBoneTrack {
                 break;
             }
         }
-        // `0x713e45`: `k1 = k0 + 1`, bounded by the total key count, not the window's `hi`.
+        // `k1 = k0 + 1`, bounded by the total key count, not the window's `hi`.
         if self.interp == 0 || k0 + 1 > last {
             return Some(self.vals[k0]);
         }
@@ -203,10 +203,10 @@ impl RawBoneTrack {
 }
 
 /// Measure, per bone track and sequence band, how far a plain key hold sits from the reference's
-/// sampler (`0x713d50`): an empty band samples the `ranges[slot]` window, past a band's last key
-/// the reference keeps lerping toward `k0 + 1` (bounded by the total key count, not the window),
-/// and a step track (`interp == 0`) copies `keys[k0]` where the emitted clips glide. It also
-/// checks that no band's keys fall outside its own window, which makes reading the window safe.
+/// sampler: an empty band samples the `ranges[slot]` window, past a band's last key the reference
+/// keeps lerping toward `k0 + 1` (bounded by the total key count, not the window), and a step track
+/// (`interp == 0`) copies `keys[k0]` where the emitted clips glide. It also checks that no band's
+/// keys fall outside its own window, which makes reading the window safe.
 pub fn bonescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let names = super::m2_names(chain, prefix)?;
     // Two orders above the angle formula's f32 noise (about 1e-4°), far below what shows.
@@ -277,9 +277,9 @@ pub fn bonescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
                     }
                 }
                 // A global-sequence track runs on its own clock: one key is a constant in every
-                // clip, more go to `parse_m2_global_sequence_bones`, which needs a non-zero
-                // period, so a multi-key track on a zero period plays nowhere. `0x713d50` picks
-                // the `ranges` window before the gseq clock, so a narrow window clips the loop.
+                // clip, more go to `parse_m2_global_sequence_bones`, which needs a non-zero period,
+                // so a multi-key track on a zero period plays nowhere. The reference picks the
+                // `ranges` window before the gseq clock, so a narrow window clips the loop.
                 if tr.gseq != 0xffff {
                     gseq_tracks += 1;
                     if tr.ts.len() > 1 {
@@ -489,10 +489,10 @@ pub fn bonescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// Census each 4CC's `M2Event` records by `bone` and `position`. The reference hands an event's
-/// arm its own world point, the model-space rest `position` moved by its bone's live matrix and the
-/// placement (`0x5f3e20`'s `[ebp+0x10]`), which differs from the model root only for a record off
-/// the origin or on a bone whose chain any sequence keys.
+/// Census each 4CC's `M2Event` records by `bone` and `position`. The reference hands an event's arm
+/// its own world point, the model-space rest `position` moved by its bone's live matrix and the
+/// placement (the reference's `[ebp+0x10]`), which differs from the model root only for a record
+/// off the origin or on a bone whose chain any sequence keys.
 pub fn eventmarkerscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     /// Yards from the model origin past which a marker counts as off it: a presence threshold.
     const OFF_ORIGIN: f32 = 0.01;

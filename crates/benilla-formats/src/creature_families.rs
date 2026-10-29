@@ -1,13 +1,13 @@
-//! `CreatureFamily.dbc` and `ItemPetFood.dbc`: a pet's family word (`UnitCreatureFamily`,
-//! `0x51a310`) and the diet its food mask names (`GetPetFoodTypes`, `0x4bea10`).
+//! `CreatureFamily.dbc` and `ItemPetFood.dbc`: a pet's family word (`UnitCreatureFamily`) and the
+//! diet its food mask names (`GetPetFoodTypes`).
 //!
 //! `CreatureFamily.dbc` is 28 fields in 0x70-byte records in 12340, 40 rows with ids 1..46: the
 //! scale ramp, two skill lines, the food mask, the pet-talent type and category, the name over
 //! sixteen locales and a mask, then the icon. `ItemPetFood.dbc` is 18 fields, 8 rows. Mask bit `b` names food row `b + 1`,
 //! low bit first, which is the client's record order (vmangos `Objects/Pet.cpp:1503-1504`).
 //!
-//! `GetPetFoodTypes`' gate (the pet is ours and we are a Hunter, `0x6116e0`) is live state, applied
-//! at the feed (`benilla_app::ui_pet_stats`): a charmed boar under a priest has no diet.
+//! `GetPetFoodTypes`' gate (the pet is ours and we are a Hunter) is live state, applied at the feed
+//! (`benilla_app::ui_pet_stats`): a charmed boar under a priest has no diet.
 
 use std::collections::HashMap;
 
@@ -71,9 +71,9 @@ impl CreatureFamily {
     /// range = maxScaleLevel − minScaleLevel
     /// ```
     ///
-    /// The reference overwrites the `modelScale × scale` product with it (`0x472e87`), so the
-    /// product survives only a family lookup miss. Deviation: a zero range (row 28 only) is `None`,
-    /// the lookup-miss fallback, because the reference divides by zero there into a NaN scale.
+    /// The reference overwrites the `modelScale × scale` product with it, so the product survives
+    /// only a family lookup miss. Deviation: a zero range (row 28 only) is `None`, the lookup-miss
+    /// fallback, because the reference divides by zero there into a NaN scale.
     pub fn scale_at(&self, level: u32) -> Option<f32> {
         let range = self.max_scale_level.checked_sub(self.min_scale_level)?;
         if range == 0 {
@@ -133,7 +133,7 @@ impl PetFoodNames {
     }
 
     /// The food names a [`CreatureFamily::pet_food_mask`] selects, bit `b` naming row `b + 1` in
-    /// the reference's record order (`0x4bea10`). The `0x6116e0` gate is the caller's.
+    /// the reference's record order. The gate is the caller's.
     pub fn for_mask(&self, mask: u32) -> Vec<&str> {
         (0..MAX_FOOD_BITS)
             .filter(|b| mask & (1 << b) != 0)
@@ -369,7 +369,7 @@ mod tests {
         assert_eq!(n.name(9), None);
     }
 
-    /// Wolf, Bear, Boar and Turtle are 5875's own cases (`0x4bea10`); the rest are 12340's masks.
+    /// Wolf, Bear, Boar and Turtle are 5875's own cases; the rest are 12340's masks.
     #[test]
     fn the_shipped_masks_expand_to_their_diets() {
         let Some(mut chain) = chain() else { return };

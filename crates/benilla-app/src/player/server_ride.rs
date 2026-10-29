@@ -24,11 +24,11 @@ fn ride_ground(world: &benilla_world::collision::WorldCollision, pos: Vec3) -> O
 }
 
 /// The Z the ride stands at: the ground under the spline's XZ, not its vertical. The reference
-/// treats every mover alike: `0x616de0` hands the spline's displacement to `0x616cb0`, which zeroes
-/// the vertical for `0x634040`'s swept resolve. It keeps the vertical (`0x616cec`-`0x616d03`) for
-/// a flying spline (`MI.flags & 0x200`) and a swimmer (`[CMovement+0x40] & 0x200000`); the other
-/// bit it tests at `0x616cfa`, `0x800`, has no counterpart, as a knockback is not a spline here.
-/// Hover and water walking come from our [`super::state::MoveModes`], not the wire's mode word.
+/// treats every mover alike: the reference hands the spline's displacement, which zeroes the
+/// vertical for the reference's swept resolve. It keeps the vertical for a flying spline
+/// (`MI.flags & 0x200`) and a swimmer (`[CMovement+0x40] & 0x200000`); the other bit it tests,
+/// `0x800`, has no counterpart, as a knockback is not a spline here. Hover and water walking come
+/// from our [`super::state::MoveModes`], not the wire's mode word.
 fn ride_z(
     player: &Player,
     points: &benilla_world::world_point::WorldPoint,
@@ -120,8 +120,8 @@ pub(super) fn drive_self_ride(
                     spline.duration.as_millis(),
                 );
                 // Each spline sets the walk gait from its `SPLINEFLAG_RUNMODE`, inverted: the
-                // reference passes the bit to `SetRunMode` (`0x7c6ac2` → `0x7c71c0`), whose
-                // argument is run. Once per spline, into the keybind's latch.
+                // reference passes the bit to `SetRunMode`, whose argument is run. Once per spline,
+                // into the keybind's latch.
                 player.walking = !spline.run_mode;
                 super::move_trace::gait("spline", player.walking, false, player.modes.rooted, true);
             }
@@ -132,8 +132,8 @@ pub(super) fn drive_self_ride(
             let y = ride_z(
                 &player,
                 &points,
-                // A deck path grounds like any other (the transport guid is in neither
-                // `0x616cb0`'s predicate nor `0x634040`'s dispatch); `transport::compose_riders`
+                // A deck path grounds like any other (the transport guid is in neither the
+                // reference's predicate nor the reference's dispatch); `transport::compose_riders`
                 // has already composed the world pose, and the probe admits GameObject meshes.
                 spline.grounded,
                 transform.translation,
@@ -357,7 +357,7 @@ mod tests {
             );
         }
 
-        /// The reference keeps a flying spline's vertical (`0x616cec`).
+        /// The reference keeps a flying spline's vertical.
         #[test]
         fn a_flying_ride_keeps_its_altitude() {
             let (mut app, entity) = world(true);
@@ -370,7 +370,7 @@ mod tests {
             assert_eq!(y_of(&app, entity), CHORD_Y, "a flight is not grounded");
         }
 
-        /// SWIMMING keeps the vertical (`0x616cfa`), so a feared swimmer stays off the lakebed.
+        /// SWIMMING keeps the vertical, so a feared swimmer stays off the lakebed.
         #[test]
         fn a_swimming_ride_keeps_its_depth() {
             let (mut app, entity) = world(true);
@@ -418,7 +418,7 @@ mod tests {
         }
     }
 
-    /// `SPLINEFLAG_RUNMODE` and `MOVEFLAG_WALK_MODE`, both `0x100`, are inverses (`0x7c6a50`).
+    /// `SPLINEFLAG_RUNMODE` and `MOVEFLAG_WALK_MODE`, both `0x100`, are inverses.
     #[test]
     fn a_spline_re_authors_the_walk_gait_from_its_inverted_runmode_bit() {
         let (mut app, _e, _rx) = ride_app_with(false, false);

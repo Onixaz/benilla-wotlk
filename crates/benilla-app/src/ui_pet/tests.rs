@@ -313,8 +313,8 @@ fn a_press_latches_the_state_the_server_never_echoes() {
     );
 }
 
-/// `OnClick`'s `SetChecked(0)` unlights every press; `0x4bc940`/`0x4bc960` relight it by
-/// signalling unconditionally, and a hunter's Attack skips the signal at `0x4bd429`.
+/// `OnClick`'s `SetChecked(0)` unlights every press; relight it by signalling unconditionally, and
+/// a hunter's Attack skips the signal.
 #[test]
 fn every_press_the_reference_signals_forces_a_repaint() {
     let mut bar = PetBar {
@@ -350,15 +350,15 @@ fn every_press_the_reference_signals_forces_a_repaint() {
     assert_eq!(
         signals(&bar),
         before,
-        "Dismiss, a spell and a pet's Attack all reach 0x4bd444 without signalling"
+        "Dismiss, a spell and a pet's Attack all reach without signalling"
     );
 
-    // A possessed unit's Attack signals (`0x4bd429`).
+    // A possessed unit's Attack signals.
     latch_press(&mut bar, packed(PET_COMMAND_ATTACK, PET_ACT_COMMAND), true);
     assert_ne!(signals(&bar), before);
 }
 
-/// The latch's possession gate is `0x4bd420`.
+/// The latch's possession gate.
 #[test]
 fn only_a_possessed_units_attack_press_raises_the_latch() {
     let mut bar = PetBar {
@@ -383,7 +383,7 @@ fn only_a_possessed_units_attack_press_raises_the_latch() {
     assert!(!bar.attacking, "only ATTACK raises it");
 }
 
-/// `0x5ee5a0` asks for the unit we possess, not the one we own.
+/// The reference asks for the unit we possess, not the one we own.
 #[test]
 fn the_latch_gate_is_possession_not_ownership() {
     const FLAGS: u16 = 46;
@@ -483,7 +483,7 @@ fn a_possessed_units_attack_button_does_light() {
     assert!(!called_off.attack_active);
 }
 
-/// The veto jumps past the send (`0x4bd414 je 0x4bd4c6`).
+/// The veto jumps past the send.
 #[test]
 fn a_refused_attack_neither_sends_nor_lights_the_button() {
     let mut bar = PetBar {
@@ -513,7 +513,7 @@ fn a_refused_attack_neither_sends_nor_lights_the_button() {
     assert!(view(attack, &bar.spells, None, None, bar.attacking).active);
 }
 
-/// The old-target clear's `PetStopAttack` (`0x493910`, at `0x493a18`).
+/// The old-target clear's `PetStopAttack`.
 #[test]
 fn touching_your_target_calls_the_pet_off() {
     let (tx, rx) = crossbeam_channel::unbounded();
@@ -527,12 +527,12 @@ fn touching_your_target_calls_the_pet_off() {
         ..Default::default()
     };
 
-    // Selecting from nothing is not a clear (`0x493937`).
+    // Selecting from nothing is not a clear.
     assert!(!old_target_cleared(None, Some(7)));
     // Replacing a selection is, and so is dropping it.
     assert!(old_target_cleared(Some(7), Some(9)));
     assert!(old_target_cleared(Some(7), None));
-    // A re-select never reaches the clear (`0x493540`).
+    // A re-select never reaches the clear.
     assert!(!old_target_cleared(Some(7), Some(7)));
 
     assert!(stop_pet_attack(&mut bar, &commands));
@@ -545,12 +545,12 @@ fn touching_your_target_calls_the_pet_off() {
     let attack = packed(PET_COMMAND_ATTACK, PET_ACT_COMMAND);
     assert!(!view(attack, &bar.spells, None, None, bar.attacking).active);
 
-    // With the latch down it sends nothing (`0x4bd65e`).
+    // With the latch down it sends nothing.
     assert!(!stop_pet_attack(&mut bar, &commands));
     assert!(rx.try_recv().is_err());
 }
 
-/// The owner test falls back to SUMMONEDBY, not `0x5ee5a0`'s CREATEDBY.
+/// The owner test falls back to SUMMONEDBY, not the reference's CREATEDBY.
 #[test]
 fn the_attack_events_read_the_pets_combat_flag_not_the_click_latch() {
     const FLAGS: u16 = 46;
@@ -617,7 +617,7 @@ fn only_the_attack_order_is_gated() {
     )));
 }
 
-/// A pet with one aura in slot 0, `cancelable` or not: `0x4bcea0` tests the cancelable bit.
+/// A pet with one aura in slot 0, `cancelable` or not: the reference tests the cancelable bit.
 fn pet_running(spell_id: u32, cancelable: bool) -> crate::unit_auras::UnitAuras {
     let flags = if cancelable {
         benilla_protocol::messages::AURA_UPDATE_FLAG_CANCELABLE | 1
@@ -686,7 +686,7 @@ fn an_active_pet_spell_draws_its_active_icon() {
     );
 }
 
-/// The reference pushes nil when the chosen icon is not in `SpellIcon.dbc` (`0x4bdd50`).
+/// The reference pushes nil when the chosen icon is not in `SpellIcon.dbc`.
 #[test]
 fn an_unresolvable_active_icon_hides_rather_than_falling_back() {
     let slot = packed(2645, benilla_protocol::messages::PET_TYPE_SPELL);
@@ -727,7 +727,7 @@ fn only_the_same_pets_moving_timestamp_reads_as_a_rename() {
     assert!(!was_renamed(Some((0xF14, Some(100))), (0xABC, Some(100))));
 }
 
-/// `PetDismiss` (`0x4be4d0`) stages `0x07000003` for the bar's dispatcher.
+/// `PetDismiss` stages `0x07000003` for the bar's dispatcher.
 #[test]
 fn the_dismiss_word_is_the_carved_literal() {
     assert_eq!(
@@ -741,7 +741,7 @@ fn the_dismiss_word_is_the_carved_literal() {
 }
 
 /// A cooldown moves no bar: the feed pushes the new triple and fires nothing, for its events are
-/// the list's flush (`0x4b31b0`, `0x4bce90`), which `flush_tests` covers.
+/// the list's flush, which `flush_tests` covers.
 #[test]
 fn a_cooldown_alone_is_pushed_with_no_event_from_the_bar_feed() {
     use bevy::prelude::*;
@@ -817,7 +817,7 @@ fn a_cooldown_alone_is_pushed_with_no_event_from_the_bar_feed() {
     assert_eq!(enable, 1);
 }
 
-/// `0x4bcc19` calls `0x4bd190`, which copies the toggled word into the pet spellbook.
+/// Which copies the toggled word into the pet spellbook.
 #[test]
 fn a_bar_autocast_toggle_reaches_the_pet_spellbook() {
     const CLAW: u32 = 16827;
@@ -851,7 +851,7 @@ fn a_bar_autocast_toggle_reaches_the_pet_spellbook() {
     toggle_slot_autocast(&mut bar, 4);
     assert!(bar.spells.spells[1].autocast_on());
 
-    // `0x4bcbf1`: a word without bit 31 aborts before any write, book included.
+    // A word without bit 31 aborts before any write, book included.
     bar.spells.bar[5] = packed(3025, PET_ACT_PASSIVE);
     bar.spells.spells.push(packed(3025, PET_ACT_PASSIVE));
     assert!(toggle_slot_autocast(&mut bar, 6).is_none());
@@ -884,10 +884,10 @@ fn the_session_end_tears_the_pet_bar_down() {
     assert!(bar.spells.bar[3].is_empty());
 }
 
-/// `UnitIsConnected` answers 1 for any unit the object manager holds (`0x517daf`), so the real
-/// `"pet"` feed's snapshot reads connected, and the stock pet frame's `UnitFrameManaBar_Update`
-/// takes its live leg: the pet's own power in its type's colour, not the disconnected leg's
-/// maximum in grey (UnitFrame.lua:214-216).
+/// `UnitIsConnected` answers 1 for any unit the object manager holds, so the real `"pet"` feed's
+/// snapshot reads connected, and the stock pet frame's `UnitFrameManaBar_Update` takes its live
+/// leg: the pet's own power in its type's colour, not the disconnected leg's maximum in grey
+/// (UnitFrame.lua:214-216).
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_held_pet_reads_connected_and_its_stock_power_bar_shows_its_power() {
@@ -970,8 +970,8 @@ fn a_held_pet_reads_connected_and_its_stock_power_bar_shows_its_power() {
     assert!(errors.is_empty(), "script errors: {errors:?}");
 }
 
-/// `UnitCreatureType("pet")` (`0x51a280`) names the pet's template through the resolver
-/// `0x605570`, keyed by the descriptor's `OBJECT_FIELD_ENTRY`: a held Imp is a Demon.
+/// `UnitCreatureType("pet")` names the pet's template through the resolver, keyed by the
+/// descriptor's `OBJECT_FIELD_ENTRY`: a held Imp is a Demon.
 #[test]
 fn a_held_pet_names_its_templates_creature_type() {
     use bevy::prelude::*;

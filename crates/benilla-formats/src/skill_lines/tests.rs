@@ -142,7 +142,7 @@ fn real_skill_up_announce_gate_matches_the_archives() {
         !cat.announces_skill_ups(473, HUMAN, WARRIOR),
         "Fist Weapons must be silent"
     );
-    // No admitting row (a mage line for a warrior): the reference skips too (`0x5de352`).
+    // No admitting row (a mage line for a warrior): the reference skips too.
     assert!(
         !cat.announces_skill_ups(6, HUMAN, WARRIOR),
         "a row-less line is silent"
@@ -401,7 +401,7 @@ fn the_lookup_takes_the_last_row_its_masks_admit() {
     assert_eq!(cat.spell_to_line(8, 1, 1), None);
 }
 
-/// `KnownHigherRank` (`0x60c8d0`) walks forward only; the spell itself does not count.
+/// `KnownHigherRank` walks forward only; the spell itself does not count.
 #[test]
 fn a_higher_rank_is_known_only_forward_along_the_chain() {
     use std::collections::BTreeSet;

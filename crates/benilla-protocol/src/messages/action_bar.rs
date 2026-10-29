@@ -59,11 +59,11 @@ pub fn set_action_button(button: u8, packed: u32) -> Vec<u8> {
     body
 }
 
-/// `CMSG_SET_ACTIONBAR_TOGGLES`: one `u8`, the whole body (`SetActionBarToggles 0x4e76e0`).
-/// The byte is server-owned: the reference never writes its copy (`PLAYER_FIELD_BYTES` byte 2),
-/// which changes only when `SMSG_UPDATE_OBJECT` echoes it, with no change event; read it with
-/// [`super::ObjectFields::player_action_bar_toggles`]. The reference packs only bits 0..3, so a
-/// set clears the high nibble; this encoder does not mask. Bits name bars only in FrameXML.
+/// `CMSG_SET_ACTIONBAR_TOGGLES`: one `u8`, the whole body (`SetActionBarToggles`). The byte is
+/// server-owned: the reference never writes its copy (`PLAYER_FIELD_BYTES` byte 2), which changes
+/// only when `SMSG_UPDATE_OBJECT` echoes it, with no change event; read it with
+/// [`super::ObjectFields::player_action_bar_toggles`]. The reference packs only bits 0..3, so a set
+/// clears the high nibble; this encoder does not mask. Bits name bars only in FrameXML.
 pub fn set_actionbar_toggles(toggles: u8) -> Vec<u8> {
     vec![toggles]
 }

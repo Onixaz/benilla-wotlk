@@ -48,9 +48,9 @@ pub struct AddOnInfo {
     pub loaded: bool,
     /// `## Interface`'s leading integer, 0 when absent: what the version gate compares.
     pub interface: u32,
-    /// Left out of the Lua index: `[rec+0x29]`, set by `0x51da70` for a `SMSG_ADDON_INFO` status of
-    /// 2 (`0x51db84`) and otherwise only zeroed (`0x52059f`), so an addon the reply skips stays
-    /// visible. A retail server answers 2 for all twelve `Blizzard_*` addons.
+    /// Left out of the Lua index: `[rec+0x29]`, set by the reference for a `SMSG_ADDON_INFO` status
+    /// of 2 and otherwise only zeroed, so an addon the reply skips stays visible. A retail server
+    /// answers 2 for all twelve `Blizzard_*` addons.
     pub hidden: bool,
     /// The files live in the patch chain, not the AddOns folder: Blizzard's twelve LoadOnDemand
     /// addons, read at `Interface/AddOns/<Name>/<file>` and loaded as a player's addon is.
@@ -58,21 +58,20 @@ pub struct AddOnInfo {
 }
 
 /// Each verb's `Usage:` string as the reference's `.data` holds it; an error handler prints it.
-const USAGE_INFO: &str = "Usage: GetAddOnInfo(index or \"name\")"; // 0x842d68
-const USAGE_METADATA: &str = "Usage: GetAddOnMetadata(index or \"name\", \"variable\")"; // 0x842d90
-const USAGE_DEPENDENCIES: &str = "Usage: GetAddOnDependencies(index or \"name\")"; // 0x842dc8
-const USAGE_ENABLE: &str = "Usage: EnableAddOn(index or \"name\")"; // 0x842df8
-const USAGE_DISABLE: &str = "Usage: DisableAddOn(index or \"name\")"; // 0x842e1c
-const USAGE_LOAD_ON_DEMAND: &str = "Usage: IsAddOnLoadOnDemand(index or \"name\")"; // 0x842e44
-const USAGE_LOADED: &str = "Usage: IsAddOnLoaded(index or \"name\")"; // 0x842e70
-const USAGE_LOAD: &str = "Usage: LoadAddOn(index or \"name\")"; // 0x842e98
+const USAGE_INFO: &str = "Usage: GetAddOnInfo(index or \"name\")"; //
+const USAGE_METADATA: &str = "Usage: GetAddOnMetadata(index or \"name\", \"variable\")"; //
+const USAGE_DEPENDENCIES: &str = "Usage: GetAddOnDependencies(index or \"name\")"; //
+const USAGE_ENABLE: &str = "Usage: EnableAddOn(index or \"name\")"; //
+const USAGE_DISABLE: &str = "Usage: DisableAddOn(index or \"name\")"; //
+const USAGE_LOAD_ON_DEMAND: &str = "Usage: IsAddOnLoadOnDemand(index or \"name\")"; //
+const USAGE_LOADED: &str = "Usage: IsAddOnLoaded(index or \"name\")"; //
+const USAGE_LOAD: &str = "Usage: LoadAddOn(index or \"name\")"; //
 
 /// The `index or "name"` argument, read by the prologue all eight in-game verbs share
-/// (`GetAddOnInfo 0x48e390`, `GetAddOnMetadata 0x48e530`, `GetAddOnDependencies 0x48e5e0`,
-/// `EnableAddOn 0x48e690`, `DisableAddOn 0x48e760`, `IsAddOnLoadOnDemand 0x48e840`,
-/// `IsAddOnLoaded 0x48e8e0`, `LoadAddOn 0x48e980`). A numeric string is an index. An index out of
-/// range, or a non-string, raises through `luaL_error` (`0x6f4940`), which does not return; a
-/// name passes unchecked, and each verb answers a miss its own way.
+/// (`GetAddOnInfo`, `GetAddOnMetadata`, `GetAddOnDependencies`, `EnableAddOn`, `DisableAddOn`,
+/// `IsAddOnLoadOnDemand`, `IsAddOnLoaded`, `LoadAddOn`). A numeric string is an index. An index out
+/// of range, or a non-string, raises through `luaL_error`, which does not return; a name passes
+/// unchecked, and each verb answers a miss its own way.
 enum AddonKey {
     /// A bounds-checked 0-based position in the registry.
     Index(usize),
@@ -81,12 +80,12 @@ enum AddonKey {
 
 /// The prologue; `usage` is the verb's own `.data` string.
 fn addon_key(lua: &Lua, model: &Model, key: &Value, usage: &'static str) -> mlua::Result<AddonKey> {
-    // `coerce_number` is `lua_isnumber` (`0x6f34d0`), numeric strings included.
+    // `coerce_number` is `lua_isnumber`, numeric strings included.
     if let Some(n) = lua.coerce_number(key.clone())? {
-        // `_ftol` (`0x40a2b0`) truncates; minus one, compared unsigned, so 0 raises like count + 1.
+        // `_ftol` truncates; minus one, compared unsigned, so 0 raises like count + 1.
         let index0 = (n as i64 as i32).wrapping_sub(1) as u32 as usize;
-        // An index into the sorted, filtered name array, not the registry (`0x51df00` reads
-        // `[[0xbe1b94] + 4*idx]`, bound `[0xbe1b90]`); the message is `0x837d70`'s.
+        // An index into the sorted, filtered name array, not the registry (the reference reads
+        // `[ + 4*idx]`); the message is the reference's.
         return match model.addon_index.get(index0) {
             Some(&row) => Ok(AddonKey::Index(row)),
             None => Err(mlua::Error::RuntimeError(format!(
@@ -95,18 +94,17 @@ fn addon_key(lua: &Lua, model: &Model, key: &Value, usage: &'static str) -> mlua
             ))),
         };
     }
-    // `lua_isstring`, `lua_tostring` (`0x6f3510`, `0x6f3690`); lossy, as a Lua string is bytes.
+    // `lua_isstring`, `lua_tostring`; lossy, as a Lua string is bytes.
     match key {
         Value::String(s) => Ok(AddonKey::Name(s.to_string_lossy())),
         _ => Err(mlua::Error::RuntimeError(usage.into())),
     }
 }
 
-/// Rebuild the Lua index array as `AddOn_ReadAddonInfoReply` (`0x51da70`) does in its tail,
-/// `[0x51dc30, 0x51dcdf)`, the array's only builder: hidden records dropped (`0x51dc4f`), the
-/// rest sorted case-insensitively by `## Title`, else folder name (`0x51deb0` through
-/// `AddOn_GetTitle 0x51df20`, `SStrCmpI`). Empty until the server replies. The reference's
-/// `qsort` (`0x73f727`) is unstable, which a stable sort refines.
+/// Rebuild the Lua index array as `AddOn_ReadAddonInfoReply` does in its tail, the array's only
+/// builder: hidden records dropped, the rest sorted case-insensitively by `## Title`, else folder
+/// name (through `AddOn_GetTitle`, `SStrCmpI`). Empty until the server replies. The reference's
+/// `qsort` is unstable, which a stable sort refines.
 fn rebuild_index(model: &mut Model) {
     let Some(hidden) = model.addon_info_hidden.as_ref() else {
         model.addon_index = Vec::new(); // no reply yet, as in the reference
@@ -142,9 +140,9 @@ fn row_of(model: &Model, key: &AddonKey) -> Option<usize> {
     }
 }
 
-/// The enable setter (`0x51ea20`), the one write every enable verb makes, for the current
-/// character's row: the registry bit the gate reads, and the character's enable hash, which the
-/// setter dirties only when the row changes or is new.
+/// The enable setter, the one write every enable verb makes, for the current character's row: the
+/// registry bit the gate reads, and the character's enable hash, which the setter dirties only when
+/// the row changes or is new.
 fn set_enabled(model: &mut Model, i: usize, on: bool) {
     model.addons[i].enabled = on;
     let name = model.addons[i].name.clone();
@@ -167,8 +165,8 @@ fn gate_rows(model: &Model) -> Vec<GateRow<'_>> {
         .collect()
 }
 
-/// `checkAddonVersion`, read per query as `IsAddonVersionCheckEnabled` (`0x51f180`) does; unset,
-/// it is the registered default `"1"`, check on.
+/// `checkAddonVersion`, read per query as `IsAddonVersionCheckEnabled` does; unset, it is the
+/// registered default `"1"`, check on.
 fn version_check(model: &Model) -> bool {
     model
         .cvars
@@ -176,9 +174,9 @@ fn version_check(model: &Model) -> bool {
         .is_none_or(|s| s.value != "0")
 }
 
-/// [`can_load`] in the in-game flavour, the demand arm skipped (`0x51138b`, `0x528a6d` push 1).
-/// A loaded addon is loadable before the gate runs, as in `0x48e390`, so disabling it
-/// mid-session does not mark it unloadable.
+/// [`can_load`] in the in-game flavour, the demand arm skipped (`0x51138b`, `0x528a6d` push 1). A
+/// loaded addon is loadable before the gate runs, as the reference, so disabling it mid-session
+/// does not mark it unloadable.
 fn verdict(model: &Model, i: usize) -> Verdict {
     if model.addons[i].loaded {
         return Verdict::Loadable;
@@ -203,7 +201,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "GetNumAddOns",
         lua.create_function(|lua, ()| {
-            // `0x51def0` returns `[0xbe1b90]`, the sorted array's count, not the registry's.
+            // The sorted array's count, not the registry's.
             Ok(lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model")
@@ -212,9 +210,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // In-game `0x48e390` returns seven: `name, title, notes, enabled, loadable, reason,
-    // security`, the flags the number 1 or nil (`lua_pushnumber` via `0x6f3810`). The glue's
-    // `0x46d460` returns eight, `url` fourth; in-game the URL is `GetAddOnMetadata(name, "URL")`.
+    // In-game returns seven: `name, title, notes, enabled, loadable, reason, security`, the flags
+    // the number 1 or nil (`lua_pushnumber`). The glue's returns eight, `url` fourth; in-game the
+    // URL is `GetAddOnMetadata(name, "URL")`.
     g.set(
         "GetAddOnInfo",
         lua.create_function(|lua, key: Value| {
@@ -225,8 +223,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 AddonKey::Index(i) => i,
                 AddonKey::Name(name) => match by_name(&model, &name) {
                     Some(i) => i,
-                    // An unknown name answers placeholders, the caller's own string first
-                    // (`0x48e401`).
+                    // An unknown name answers placeholders, the caller's own string first.
                     None => {
                         return Ok(MultiValue::from_vec(vec![
                             lua_str(lua, &name)?,
@@ -264,8 +261,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model");
             let key = addon_key(lua, &model, &key, USAGE_LOADED)?;
-            // `0x51e6f0` answers the record's loaded byte `[rec+0x18]`; an unknown name pushes nil
-            // (`0x48e95b`).
+            // The reference answers the record's loaded byte `[rec+0x18]`; an unknown name pushes
+            // nil.
             Ok(flag(
                 row_of(&model, &key).is_some_and(|i| model.addons[i].loaded),
             ))
@@ -293,7 +290,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model");
             let key = addon_key(lua, &model, &key, USAGE_DEPENDENCIES)?;
-            // An unknown name comes back NULL from `0x51e350` and answers nothing (`0x48e68a`).
+            // An unknown name comes back NULL from the reference and answers nothing.
             let Some(i) = row_of(&model, &key) else {
                 return Ok(MultiValue::new());
             };
@@ -313,7 +310,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model");
             let key = addon_key(lua, &model, &key, USAGE_METADATA)?;
-            // A missing or non-string argument 2 raises the same `Usage:` (`0x48e59c`, `0x48e5cb`).
+            // A missing or non-string argument 2 raises the same `Usage:`.
             let field = super::binding_abi::string_arg(lua, field, USAGE_METADATA)?;
             let Some(i) = row_of(&model, &key) else {
                 return Ok(Value::Nil);
@@ -329,10 +326,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // One argument, keyed on the logged-in character (`0x48e690`, `0x48e760`, via `0x5abdc0`);
-    // the `(character, index)` form is the glue's (`0x46d7b0`, `0x46d8a0`). Deviation: an unknown
-    // name is a no-op, where the reference adds an enable-hash entry for it, so that a typo leaves
-    // no row behind.
+    // One argument, keyed on the logged-in character; the `(character, index)` form is the glue's.
+    // Deviation: an unknown name is a no-op, where the reference adds an enable-hash entry for it,
+    // so that a typo leaves no row behind.
     for (name, on, usage) in [
         ("EnableAddOn", true, USAGE_ENABLE),
         ("DisableAddOn", false, USAGE_DISABLE),
@@ -350,10 +346,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // No arguments read (`0x48e720`, `0x48e7f0`). The loop runs over the Lua index array, not the
-    // registry: bound `0x51def0`, each name from `0x51df00`, into the setter `0x51ea20`. The array
-    // leaves out what `SMSG_ADDON_INFO` hid (`0x51dc4f`), which is every `Blizzard_*` addon on a
-    // server that hides them (vmangos `AddonHandler.cpp:129`), so their state is never touched.
+    // No arguments read. The loop runs over the Lua index array, not the registry: bound, each
+    // name, into the setter. The array leaves out what `SMSG_ADDON_INFO` hid, which is every
+    // `Blizzard_*` addon on a server that hides them (vmangos `AddonHandler.cpp:129`), so their
+    // state is never touched.
     for (name, on) in [("EnableAllAddOns", true), ("DisableAllAddOns", false)] {
         g.set(
             name,
@@ -368,8 +364,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // `0x48e830` reloads the enable hash from `AddOns.txt`, clean (`0x51ec59`), and the file is
-    // unchanged until the shutdown write, so reverting to the state as registered is the same.
+    // The reference reloads the enable hash from `AddOns.txt`, clean, and the file is unchanged
+    // until the shutdown write, so reverting to the state as registered is the same.
     g.set(
         "ResetDisabledAddOns",
         lua.create_function(|lua, ()| {
@@ -398,8 +394,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     lua_str(lua, "MISSING")?,
                 ]));
             };
-            // One record for the call and the calls inside it (`ds:0xb4e3e0` counts them,
-            // `0x48ea85`/`0x48ea9d`), drained when the outermost returns (`0x48eab4`).
+            // One record for the call and the calls inside it (`ds:` counts them), drained when the
+            // outermost returns.
             crate::script::model_mut_of(lua).load_log.demand_depth += 1;
             let result = load_addon(lua, i);
             {
@@ -424,8 +420,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// `AddOn_Load` (`0x51f240`), dependencies first; `Err` is the reason token. Synchronous inside
-/// the Lua call, as stock callers use the addon on the next line (`UIParent.lua:577`).
+/// `AddOn_Load`, dependencies first; `Err` is the reason token. Synchronous inside the Lua call, as
+/// stock callers use the addon on the next line (`UIParent.lua:577`).
 fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     let (name, root, files, deps, already, chain, chain_reader) = {
         let model = lua
@@ -445,8 +441,8 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     if already {
         return Ok(()); // a redundant load succeeds, as in the reference
     }
-    // `LoadAddOn` (`0x48e980`) refuses through `AddOn_CanLoad` and takes the reason from the same
-    // gate; an out-of-date addon loads only with the version check off (`0x48ea8c`).
+    // `LoadAddOn` refuses through `AddOn_CanLoad` and takes the reason from the same gate; an
+    // out-of-date addon loads only with the version check off.
     {
         let model = lua
             .app_data_ref::<crate::script::ModelCell>()
@@ -468,11 +464,11 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
         Box::new(move |req: &str| read_under(&root, req))
     };
 
-    // Loaded is stamped after the gate (`0x51f2fa`), so a refusal stays retryable, and before the
-    // dependencies, which is what ends a cycle: `AddOn_Load` has no re-entrancy guard, but its
-    // store `0x51f313` precedes both dependency loops (`0x51f320`, `0x51f343`), so a re-entry
-    // takes the loaded early-out (`0x51f2d6`). Inside a cycle, then, `IsAddOnLoaded("A")` is 1
-    // while B runs and `ADDON_LOADED` fires B before A, as in the reference.
+    // Loaded is stamped after the gate, so a refusal stays retryable, and before the dependencies,
+    // which is what ends a cycle: `AddOn_Load` has no re-entrancy guard, but its store precedes
+    // both dependency loops, so a re-entry takes the loaded early-out. Inside a cycle, then,
+    // `IsAddOnLoaded("A")` is 1 while B runs and `ADDON_LOADED` fires B before A, as in the
+    // reference.
     {
         let mut model = crate::script::model_mut_of(lua);
         model.addons[i].loaded = true;
@@ -501,7 +497,7 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
                 if !loaded {
                     load_addon(lua, d).map_err(|r| {
                         if r.starts_with("DEP_") {
-                            // `DEP_` applies once at any depth (`0x51e8ce`, `0x51e8cf`).
+                            // `DEP_` applies once at any depth.
                             r
                         } else {
                             format!("DEP_{r}")
@@ -514,7 +510,7 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
 
     let mut toc = crate::status::Status::default();
     run_files(lua, &name, &read, &files, &mut toc);
-    // The toc's record under its banner, then the add-on's (`0x6eddc8`, `0x51f464`).
+    // The toc's record under its banner, then the add-on's.
     let debug = framexml_debug(lua);
     let mut own = crate::status::Status::default();
     let toc_path = crate::status::addon_toc_path(&name);
@@ -527,14 +523,14 @@ fn load_addon(lua: &Lua, i: usize) -> Result<(), String> {
     // `Bindings.xml` loads between the files and the saved variables.
     load_bindings(lua, &name, &read);
     load_saved_variables(lua, i);
-    // `ADDON_LOADED` closes the addon's load (`0x51f5ad`).
+    // `ADDON_LOADED` closes the addon's load.
     super::event::fire_global(lua, "ADDON_LOADED", &[super::ScriptValue::Str(name)]);
     Ok(())
 }
 
-/// Register the addon's `Bindings.xml` where the reference loads it (`0x51f400`): after the
-/// addon's files, whose functions its bindings call, and before its saved variables. A missing
-/// file is the normal case and silent; it reads through the same sandbox as the other files.
+/// Register the addon's `Bindings.xml` where the reference loads it: after the addon's files, whose
+/// functions its bindings call, and before its saved variables. A missing file is the normal case
+/// and silent; it reads through the same sandbox as the other files.
 fn load_bindings(lua: &Lua, name: &str, read: &Reader) {
     let path = crate::loader::join_ref(name, "Bindings.xml");
     let Some(bytes) = read(&path) else {
@@ -552,9 +548,9 @@ fn load_bindings(lua: &Lua, name: &str, read: &Reader) {
     }
 }
 
-/// Run the addon's saved-variables files, account then per-character (`0x51f4b5`, `0x51f53b`),
-/// as chunks in the shared globals with no `setfenv` (`0x704bc0`, `0x704ae0`), between its files
-/// and `ADDON_LOADED` so saved values win; a missing file is skipped (`0x51f4a9`, `0x51f530`).
+/// Run the addon's saved-variables files, account then per-character, as chunks in the shared
+/// globals with no `setfenv`, between its files and `ADDON_LOADED` so saved values win; a missing
+/// file is skipped.
 fn load_saved_variables(lua: &Lua, i: usize) {
     let (name, account, character, has_account, has_character) = {
         let model = lua
@@ -620,9 +616,9 @@ fn framexml_debug(lua: &Lua) -> bool {
 /// Where the reader's paths sit in the install's, for the load log's lines.
 const ADDONS_ROOT: &str = "Interface/AddOns/";
 
-/// Run the addon's `.toc` files in order, by the startup walk's rules: `.lua` is a chunk,
-/// anything else FrameXML, each path resolved against the including file's directory. `toc` is
-/// the `.toc`'s load record (`0x6edb90`).
+/// Run the addon's `.toc` files in order, by the startup walk's rules: `.lua` is a chunk, anything
+/// else FrameXML, each path resolved against the including file's directory. `toc` is the `.toc`'s
+/// load record.
 fn run_files(lua: &Lua, name: &str, read: &Reader, files: &[String], toc: &mut Status) {
     let provider = |req: &str| -> Option<Vec<u8>> { read(req) };
     for file in files {
@@ -648,8 +644,8 @@ fn run_files(lua: &Lua, name: &str, read: &Reader, files: &[String], toc: &mut S
         let doc = match crate::framexml::parse(&crate::source::decode(&bytes)) {
             Ok(d) => d,
             Err(e) => {
-                // A document that will not parse is a load failure, not a raise: the reference
-                // logs `Couldn't parse XML in %s` (`0x846fd8`) to `FrameXML.log` and goes on.
+                // A document that will not parse is a load failure, not a raise: the reference logs
+                // `Couldn't parse XML in %s` to `FrameXML.log` and goes on.
                 toc.report(crate::status::FAILURE, crate::status::unparsed(&install));
                 load_failure(lua, &format!("{name}/{file}: {e}"));
                 continue;
@@ -859,8 +855,8 @@ impl super::UiScript {
     }
 
     /// Record the `SMSG_ADDON_INFO` (`0x2ef`) verdict, the addons answered status 2; the caller
-    /// pairs the nameless records with `CMSG_AUTH_SESSION`'s order (`0x51da70`). An empty slice
-    /// is a reply that hid nothing, unlike no call at all.
+    /// pairs the nameless records with `CMSG_AUTH_SESSION`'s order. An empty slice is a reply that
+    /// hid nothing, unlike no call at all.
     pub fn note_addon_info_reply(&mut self, hidden: &[String]) {
         let mut model = self.model_mut();
         model.addon_info_hidden = Some(hidden.iter().map(|n| n.to_ascii_lowercase()).collect());
@@ -908,16 +904,16 @@ impl super::UiScript {
         }
     }
 
-    /// Seat the current character's enable hash as the loader read it from `AddOns.txt`
-    /// (`0x51ebe0`, re-read at every UI boot, `0x48ff2a`).
+    /// Seat the current character's enable hash as the loader read it from `AddOns.txt` (re-read at
+    /// every UI boot).
     pub fn set_addon_enable_hash(&mut self, hash: super::EnableHash) {
         let mut model = self.model_mut();
         model.addon_enable_saved = hash.clone();
         model.addon_enable = hash;
     }
 
-    /// The shutdown writer's rows (`0x490c88` into `0x51ef20`): the current character's whole
-    /// enable hash when a verb changed it this session, else `None`, and nothing is written.
+    /// The shutdown writer's rows: the current character's whole enable hash when a verb changed it
+    /// this session, else `None`, and nothing is written.
     pub fn take_addon_enable_rows(&self) -> Option<Vec<(String, bool)>> {
         self.model_mut().addon_enable.take_dirty()
     }

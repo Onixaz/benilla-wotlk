@@ -30,11 +30,11 @@ struct StepEnv {
     lifespan_vary: f32,
 }
 
-/// One step of the reference integrator (`0x7b2680`): age and kill; the follow-delta add, skipped
-/// on a fresh particle (`0x7b2744`); `pos += dt·v` with gravity on the frame's up axis
-/// (`pos.up −= ½·g·dt²`, `v.up −= g·dt`); drag `v −= min(dt·drag, 1)·v`. A kill-outbound emitter
-/// (`rt 0x800`) kills once `dot(stepVelocity, pos − origin) > 0`, with the pre-gravity velocity
-/// and the emitter origin in the stored frame. False is dead.
+/// One step of the reference integrator: age and kill; the follow-delta add, skipped on a fresh
+/// particle; `pos += dt·v` with gravity on the frame's up axis (`pos.up −= ½·g·dt²`,
+/// `v.up −= g·dt`); drag `v −= min(dt·drag, 1)·v`. A kill-outbound emitter (`rt 0x800`) kills once
+/// `dot(stepVelocity, pos − origin) > 0`, with the pre-gravity velocity and the emitter origin in
+/// the stored frame. False is dead.
 fn integrate_particle(p: &mut Particle, env: &StepEnv) -> bool {
     let (dt, g) = (env.dt, env.gravity);
     p.age += dt;
@@ -43,13 +43,13 @@ fn integrate_particle(p: &mut Particle, env: &StepEnv) -> bool {
     if p.age >= p.life {
         return false;
     }
-    // Follow-delta (file 0x4000, `0x7b2744`), skipped on the first integrate (particle+0xd).
+    // Follow-delta (file 0x4000), skipped on the first integrate (particle+0xd).
     if p.fresh {
         p.fresh = false;
     } else {
         p.pos += env.follow;
     }
-    // Model-particle tumble (`0x7b28e0`): a body-frame Rodrigues step, skipped under 1e-4.
+    // Model-particle tumble: a body-frame Rodrigues step, skipped under 1e-4.
     let theta = p.angvel.length();
     if theta > 1e-4 {
         p.quat = (p.quat * Quat::from_axis_angle(p.angvel / theta, theta * dt)).normalize();
@@ -76,9 +76,9 @@ fn integrate_particle(p: &mut Particle, env: &StepEnv) -> bool {
 }
 
 /// The follow-delta fraction (file flag `0x4000`, rt `0x40000`): the share of the emitter's
-/// per-frame translation added to every live particle, keyed on `speed` = |Δ|/dt in yd/s; zero
-/// when unauthored or degenerate. The ride-vs-trail baseline is the storage space, not this term,
-/// which applies whatever `0x10` says (`0x7b5303` builds `rt+0x26c`, `0x7b2744` adds `rt+0x278`).
+/// per-frame translation added to every live particle, keyed on `speed` = |Δ|/dt in yd/s; zero when
+/// unauthored or degenerate. The ride-vs-trail baseline is the storage space, not this term, which
+/// applies whatever `0x10` says (the reference builds `rt+0x26c`, the reference adds `rt+0x278`).
 fn follow_fraction(def: &benilla_formats::ParticleEmitterDef, speed: f32) -> f32 {
     if !def.follow_emitter() {
         return 0.0;
@@ -88,8 +88,8 @@ fn follow_fraction(def: &benilla_formats::ParticleEmitterDef, speed: f32) -> f32
     })
 }
 
-/// The velocity-inherit trigger (`0x7b5230`, `0x7b53ce`..`0x7b54ca`): past 1/30 s of dt
-/// (`0x81d82c`), hold `oneFrameΔ · ((1/30)/accum) · scale`, zero with nothing live, and reset.
+/// The velocity-inherit trigger: past 1/30 s of dt, hold `oneFrameΔ · ((1/30)/accum) · scale`, zero
+/// with nothing live, and reset.
 fn inherit_trigger(accum: &mut f32, held: &mut Vec3, dt: f32, delta: Vec3, live: bool, scale: f32) {
     const INTERVAL: f32 = 1.0 / 30.0;
     *accum += dt;
@@ -103,10 +103,10 @@ fn inherit_trigger(accum: &mut f32, held: &mut Vec3, dt: f32, delta: Vec3, live:
     }
 }
 
-/// The child drive (`0x7b5b9f`): a child's `rate·dt` accumulation runs once per live parent
-/// particle, births landing at that particle through the parent's rotation (the child's record
-/// position never composes). Child flag 0x40 adds `(1 + S11·var)·v` of the parent particle's
-/// velocity (`0x7b5b5e`). A child never emits on its own.
+/// The child drive: a child's `rate·dt` accumulation runs once per live parent particle, births
+/// landing at that particle through the parent's rotation (the child's record position never
+/// composes). Child flag 0x40 adds `(1 + S11·var)·v` of the parent particle's velocity. A child
+/// never emits on its own.
 fn drive_child(
     child: &mut ChildEmitter,
     now: &benilla_formats::ParamsNow,
@@ -172,10 +172,9 @@ fn vary_rate(def: &benilla_formats::ParticleEmitterDef, rate: f32, rng: &mut u32
     (rate + rand_s11(rng) * def.rate_vary).max(0.0)
 }
 
-/// Birth age `U01 · w`, the kernels' third argument (`0x7b88c4`, `0x7b88c7`): `w` is 0 for a burst
-/// (`0x7b5600`) and the substep dt for a pour (`0x7b5779`, `0x7b57e2`), so a stream's same-frame
-/// births de-synchronise. Deviation: `w` is the frame dt clamped to 0.1 s, because we do not
-/// substep as the reference does at 0.1 s (`0x81d828`, `0x7b58e7`); they differ only on a hitch.
+/// Birth age `U01 · w`, the kernels' third argument: `w` is 0 for a burst and the substep dt for a
+/// pour, so a stream's same-frame births de-synchronise. Deviation: `w` is the frame dt clamped to
+/// 0.1 s, because we do not substep as the reference does at 0.1 s; they differ only on a hitch.
 fn birth_age(is_burst: bool, dt: f32, rng: &mut u32) -> f32 {
     if is_burst {
         return 0.0;
@@ -281,10 +280,9 @@ impl WaterInterleave<'_, '_> {
 }
 
 /// Is this draw on the eye's far side of its local water plane? The reference draws that side's
-/// transparents before the water pass (dry eye: below; submerged: above; `0x4836d6`). Above is
-/// `d ≥ −r` against the nearest admitted surface, and no surface counts as above (`+0x19c == 0`,
-/// `0x707a10`). `r` is the lane's slack: the model's bound radius for emitters and ribbons
-/// ([`model_far_side`]), 0 for meshes (`0x7079ed`).
+/// transparents before the water pass (dry eye: below; submerged: above). Above is `d ≥ −r` against
+/// the nearest admitted surface, and no surface counts as above (`+0x19c == 0`). `r` is the lane's
+/// slack: the model's bound radius for emitters and ribbons ([`model_far_side`]), 0 for meshes.
 pub(crate) fn far_side_of_water_at(
     w: &WaterInterleave,
     claim_seed: Option<Entity>,
@@ -341,7 +339,7 @@ pub(crate) fn far_side_of_water(
 
 /// The emitter and ribbon lanes' water side is the model's: the reference tests the plane once per
 /// model at `world_matrix × bound centre` with slack `|row 0| × sphere radius`, and every emitter
-/// reads that verdict (`0x7085fa`; ribbons `0x7081f1`). `model` is the instance root, `bound` its
+/// reads that verdict. `model` is the instance root, `bound` its
 /// [`benilla_assets::ModelEmitter::water_bound`]; with no matrix, r = 0 at `fallback_point`.
 pub(crate) fn model_far_side(
     w: &WaterInterleave,
@@ -360,7 +358,7 @@ pub(crate) fn model_far_side(
     }
 }
 
-/// `d ≥ −r` (`0x7084cf`): a tie is above, NaN below.
+/// `d ≥ −r`: a tie is above, NaN below.
 fn is_above(d: f32, r: f32) -> bool {
     d >= -r
 }
@@ -528,11 +526,11 @@ pub(super) fn simulate_particles(
                 }
                 None => (world_cam, cam_pos, cam_right, cam_up),
             };
-            // The draw-set gate: the reference ticks an emitter only while its owner doodad is in the
-            // frame's worklist, by frustum sphere and distance-fade cutoff (`0x683f80`; the sphere is
+            // The draw-set gate: the reference ticks an emitter only while its owner doodad is in
+            // the frame's worklist, by frustum sphere and distance-fade cutoff (the sphere is
             // `[rec+0x68]`). Outside it pool and age freeze (`[obj+0x88]` accumulates nothing) and
-            // resume with one frame's dt. The far-clip term is needed: our projection's far plane is
-            // past `farclip`, and a level-4 owner fades only past 1200 yd.
+            // resume with one frame's dt. The far-clip term is needed: our projection's far plane
+            // is past `farclip`, and a level-4 owner fades only past 1200 yd.
             if let Some(f) = fade.as_ref() {
                 if emitter.gated && gate_inputs_still && !f.is_changed() {
                     return;
@@ -713,8 +711,8 @@ pub(super) fn simulate_particles(
             {
                 return;
             }
-            // The model's render alpha (`emitter+0x1a8 = Model+0x19c`, `0x718960` at `0x719073`): an
-            // entity cloud's composed model alpha, or a placed doodad's distance fade.
+            // The model's render alpha (`emitter+0x1a8 = Model+0x19c`): an entity cloud's composed
+            // model alpha, or a placed doodad's distance fade.
             *alpha = alpha_src.map_or(1.0, |e| owner_mul.alpha(e))
                 * fade.as_ref().map_or(1.0, |f| f.distance_alpha(cam_pos));
             // The model's live translation, or the last known while the pool drains.
@@ -742,10 +740,10 @@ pub(super) fn simulate_particles(
                         .ok()
                         .map(|gt| (t, crate::ride_frame::ride_matrix(gt)))
                 })
-                // Model mode ignores the ride frame (`0x7b518e`, `0x7b3ef9`): it rides its host.
+                // Model mode ignores the ride frame: it rides its host.
                 .filter(|_| anchored);
-            // Boarding and leaving re-express every live particle (`0x7187f0` → `0x7b5e60`); a
-            // moving deck folds nothing, the draw's live `A` carries it.
+            // Boarding and leaving re-express every live particle; a moving deck folds nothing, the
+            // draw's live `A` carries it.
             if let Some(fold) = ride.retarget(deck) {
                 let rot = Quat::from_mat3a(&fold.matrix3);
                 for p in particles
@@ -755,13 +753,13 @@ pub(super) fn simulate_particles(
                     p.pos = fold.transform_point3(p.pos);
                     p.vel = rot * p.vel;
                 }
-                // The emitter-motion state crosses too, or the frame change reads as motion; whether
-                // the reference's `0x7b5e60` re-expresses `rt+0x248` is untraced.
+                // The emitter-motion state crosses too, or the frame change reads as motion;
+                // whether the reference's re-expresses `rt+0x248` is untraced.
                 *emitter_prev = emitter_prev.map(|prev| fold.transform_point3(prev));
                 *inherit_vel = rot * *inherit_vel;
             }
-            // Births bake through `rt+0x1fc = srcMx · A⁻¹` (`0x7b51b0`), so the stored-frame terms
-            // below are deck-relative; `placement` stays world for the LOD, water side and model draw.
+            // Births bake through `rt+0x1fc = srcMx · A⁻¹`, so the stored-frame terms below are
+            // deck-relative; `placement` stays world for the LOD, water side and model draw.
             let emit_place = match ride.matrix() {
                 Some(a) => {
                     let inv = a.inverse();
@@ -776,7 +774,7 @@ pub(super) fn simulate_particles(
 
             // 0b. The emitter-motion terms feed off the origin's one-frame Δ in the stored frame
             //     (`rt+0x22c`, the translation row of `rt+0x1fc`), refreshed every frame (`rt+0x248`,
-            //     `0x7b5265`). Deviation: in model mode the reference adds the raw world vector to
+            // ). Deviation: in model mode the reference adds the raw world vector to
             //     local coordinates; we fold it into the local frame, because our world axes are
             //     Bevy's, not WoW's.
             let emitter_world = emit_place.transform_point(wow_to_bevy(def.position));
@@ -813,9 +811,9 @@ pub(super) fn simulate_particles(
                 );
             }
 
-            // Every track samples per frame on the current sequence's clock (`0x714260`): a hosted
-            // emitter's host's playing sequence and clip time, else its slot on the spawn-age clock.
-            // Births read the frame's values (Frost Nova's radius grows with its ring).
+            // Every track samples per frame on the current sequence's clock: a hosted emitter's
+            // host's playing sequence and clip time, else its slot on the spawn-age clock. Births
+            // read the frame's values (Frost Nova's radius grows with its ring).
             let now = def.params.sample(clock_seq, elapsed_s, gseq_now);
 
             // 1. Integrate the live pool ([`integrate_particle`]): up is WoW +Z in model mode and Bevy
@@ -842,11 +840,11 @@ pub(super) fn simulate_particles(
             };
             particles.retain_mut(|p| integrate_particle(p, &env));
 
-            // 2. Emit: [`accumulate_emission`] owes births from a continuous pour or a burst's rising
-            //    edge (`0x718ec8`), at the rate track step-sampled on the clip clock; the enabled track
-            //    (file +0x1dc) gates new births only. The reference's one particle distance mechanism
-            //    is this emission LOD (`0x7b5550`): × clamp(1 − (camDist − 50)·0.02, 0.25, 1), then
-            //    × `particleDensity`.
+            // 2. Emit: [`accumulate_emission`] owes births from a continuous pour or a burst's
+            //    rising edge, at the rate track step-sampled on the clip clock; the enabled track
+            //    (file +0x1dc) gates new births only. The reference's one particle distance
+            //    mechanism is this emission LOD: × clamp(1 − (camDist − 50)·0.02, 0.25, 1), then ×
+            //    `particleDensity`.
             let emitting = !*draining && def.timing.emitting(clock_seq, elapsed_s, gseq_now);
             let rate = vary_rate(def, def.timing.rate(clock_seq, elapsed_s, gseq_now), rng);
             let dist_lod =
@@ -869,9 +867,8 @@ pub(super) fn simulate_particles(
                 let (base, dir) = emit_local(def, &now, rng);
                 let speed =
                     now.emission_speed * (1.0 + now.speed_variation * (rand01(rng) * 2.0 - 1.0));
-                // World mode (`0x10` clear) bakes a birth into world through the live emitter matrix
-                // (`0x7b8b0f` → `0x7bca80`, `0x7b8acf` → `0x7bcb40`); model mode stores it local and
-                // the draw re-applies the matrix (`0x7b8aa5`, `0x7b3efb`).
+                // World mode (`0x10` clear) bakes a birth into world through the live emitter
+                // matrix; model mode stores it local and the draw re-applies the matrix.
                 let (mut pos, vel) = if anchored {
                     (
                         emit_place.transform_point(wow_to_bevy(base.to_array())),
@@ -881,9 +878,9 @@ pub(super) fn simulate_particles(
                 } else {
                     (base, dir * speed)
                 };
-                // Ground snap (file 0x2000): at birth, in world mode, a 20 yd probe down against the
-                // walking collision (the reference's flags `0x100111`) sets a hit particle on the
-                // surface, lifted by its birth size.
+                // Ground snap (file 0x2000): at birth, in world mode, a 20 yd probe down against
+                // the walking collision sets a hit particle on the surface, lifted by its birth
+                // size.
                 if anchored && def.ground_snap() {
                     // Probed at the world point and stored back; a yaw-only `A` keeps world down.
                     let world = ride.to_world(pos);
@@ -901,7 +898,7 @@ pub(super) fn simulate_particles(
                 } else {
                     vel
                 };
-                // Model particles (`0x7b2420`): orientation from the birth basis; the tumble's X is
+                // Model particles: orientation from the birth basis; the tumble's X is
                 // `min + u·range`, but Y and Z are a [1, 2) mantissa times the range, their min
                 // unused, as the reference rolls them.
                 let (quat, angvel) = if def.geometry_model.is_some() {
@@ -944,7 +941,7 @@ pub(super) fn simulate_particles(
                 ));
             }
 
-            // 2b. Children (`0x7b5550`) drive off the post-birth pool on their own tracks, slot 0 on
+            // 2b. Children drive off the post-birth pool on their own tracks, slot 0 on
             //     the parent's age; a draining parent stops driving them.
             for child in children.iter_mut() {
                 // A child cloud is its own fresh instance: its gseq cursor is its own age.
@@ -1009,7 +1006,7 @@ pub(super) fn simulate_particles(
             // A geometry emitter draws instances ([`super::model`]), never quads.
             let want_quads = def.geometry_model.is_none() && images.contains(&*texture);
             // One rung for every effect of a model, plus the water interleave: a cloud on the eye's
-            // far side sorts under the water pass, classified once per model (`0x7084a0`).
+            // far side sorts under the water pass, classified once per model.
             let far = !is_booth
                 && model_far_side(
                     &interleave,
@@ -1399,7 +1396,7 @@ struct CommitJob {
 pub(crate) struct OwnerMultipliers<'w, 's> {
     /// The per-model render alpha, composed along the attached-model chain.
     alphas: crate::model_fade::ModelAlphas<'w, 's>,
-    /// A lit emitter's room light node inside a WMO, never the sun (`0x6a7300`); absent outdoors.
+    /// A lit emitter's room light node inside a WMO, never the sun; absent outdoors.
     lights: Query<'w, 's, &'static crate::interior::ParticleLight>,
 }
 
@@ -1428,8 +1425,8 @@ fn fold_committed_light(
         (true, Some(mul)) => {
             for v in verts {
                 for (c, m) in v.color.iter_mut().zip(mul) {
-                    // Clamp the product, not the light, which the reference leaves unclamped
-                    // (`0x71c2f0`, `0x4549a0`): GL clamps the lit vertex colour.
+                    // Clamp the product, not the light, which the reference leaves unclamped: GL
+                    // clamps the lit vertex colour.
                     *c = (*c * m).clamp(0.0, 1.0);
                 }
             }
@@ -1447,7 +1444,7 @@ mod tests {
     };
     use bevy::prelude::{Quat, Transform};
 
-    /// The burst loop passes `w = 0` (`0x7b5600`): the whole puff ages as one.
+    /// The burst loop passes `w = 0`: the whole puff ages as one.
     #[test]
     fn a_burst_births_every_particle_at_age_zero() {
         let mut rng = 0x1234_5678;
@@ -1520,7 +1517,7 @@ mod tests {
         }
     }
 
-    /// `0x7084cf`: a tie at `d == −r` is above, NaN below; r = 0 is the sign test, 0 above.
+    /// A tie at `d == −r` is above, NaN below; r = 0 is the sign test, 0 above.
     #[test]
     fn membership_is_d_at_least_minus_r() {
         // A model bobbing within its radius of the plane stays above.
@@ -1604,7 +1601,7 @@ mod tests {
         }
     }
 
-    /// `0x7b2680`: the pre-drag step velocity against the updated position.
+    /// The pre-drag step velocity against the updated position.
     #[test]
     fn kill_outbound_dies_at_the_centre_crossing() {
         let origin = Vec3::new(1.0, 2.0, 3.0);
@@ -1628,7 +1625,7 @@ mod tests {
         assert!(!integrate_particle(&mut out, &kill));
     }
 
-    /// Flag `0x10` sets the ride-vs-trail baseline (`0x7b8a9a`); `0x4000` adds the response.
+    /// Flag `0x10` sets the ride-vs-trail baseline; `0x4000` adds the response.
     #[test]
     fn follow_fraction_is_the_authored_response_and_nothing_else() {
         let plain = crate::particles::tests::plain_def(); // no flags
@@ -1673,7 +1670,7 @@ mod tests {
         assert_eq!(follow_fraction(&degenerate, 30.0), 0.0);
     }
 
-    /// The world-mode draw never folds `rt+0x1fc` back in (`0x7b3f48`).
+    /// The world-mode draw never folds `rt+0x1fc` back.
     #[test]
     fn a_world_mode_particle_ignores_everything_its_host_does_after_birth() {
         use crate::particles::quads::{particle_center, DrawFrame};
@@ -1702,7 +1699,7 @@ mod tests {
         }
     }
 
-    /// The store is the deck's frame, drawn through the deck's live pose (`A · T · S`, `0x7b3f4f`).
+    /// The store is the deck's frame, drawn through the deck's live pose (`A · T · S`).
     #[test]
     fn a_world_mode_particle_rides_the_transport_under_it() {
         use crate::particles::quads::{particle_center, DrawFrame};
@@ -1768,7 +1765,7 @@ mod tests {
         );
     }
 
-    /// `0x7b2744`: the fresh bit (particle+0xd) skips the first integrate's add.
+    /// The fresh bit (particle+0xd) skips the first integrate's add.
     #[test]
     fn follow_delta_skips_only_the_first_integrate() {
         let following = env(None, Vec3::X * 0.5);
@@ -1788,7 +1785,7 @@ mod tests {
         );
     }
 
-    /// `0x7b5230`: held `oneFrameΔ·((1/30)/accum)·scale` past 1/30 s, zero with nothing live.
+    /// Held `oneFrameΔ·((1/30)/accum)·scale` past 1/30 s, zero with nothing live.
     #[test]
     fn inherit_trigger_fires_at_thirty_hertz_with_the_exact_factor() {
         let (mut accum, mut held) = (0.0, Vec3::ZERO);
@@ -1811,7 +1808,7 @@ mod tests {
         assert_eq!(held, Vec3::ZERO);
     }
 
-    /// `0x7b5b9f`: one `rate·dt` per live parent particle, born at it with its velocity (0x40).
+    /// One `rate·dt` per live parent particle, born at it with its velocity (0x40).
     #[test]
     fn child_drive_scales_with_the_parent_pool() {
         let mut child = ChildEmitter::bare(benilla_formats::ParticleEmitterDef {

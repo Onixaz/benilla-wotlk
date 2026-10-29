@@ -142,8 +142,8 @@ mod tests {
     /// The ceiling is a flat plane either way; only the 1 s fade-in can soften it.
     #[test]
     fn the_column_profile_separates_a_faded_edge_from_a_cut_one() {
-        // Wire grade 0.6 through the knee `max(0, (g − 0.25)·4/3)` (`0x67bcc8`), at the base
-        // fall speed only: one speed for every flake keeps the alpha profile analytic.
+        // Wire grade 0.6 through the knee `max(0, (g − 0.25)·4/3)`, at the base fall speed only:
+        // one speed for every flake keeps the alpha profile analytic.
         let vz = SNOW_VZ_BASE + SNOW_VZ_W * ((0.6 - 0.25) * (4.0 / 3.0));
         let drops = steady_column(8000, vz);
 

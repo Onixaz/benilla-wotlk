@@ -198,8 +198,8 @@ impl SpellModifiers {
         self.modifiers(d, op).map_or(value, |m| m.apply(value))
     }
 
-    /// The reference applies op 11 separately to RecoveryTime and to CategoryRecoveryTime
-    /// after `0x6e2b60` adds the ranged attack time to the latter.
+    /// The reference applies op 11 separately to RecoveryTime and to CategoryRecoveryTime after the
+    /// reference adds the ranged attack time to the latter.
     pub(crate) fn spell_cooldowns(&self, d: &SpellDisplay, ranged_ms: u32) -> (u32, u32) {
         let recovery = self.apply(d, OP_COOLDOWN, d.recovery_ms as i32).max(0) as u32;
         let category_base = d.category_recovery_ms.saturating_add(ranged_ms);
@@ -223,9 +223,8 @@ impl SpellModifiers {
         })
     }
 
-    /// `GetMinMaxRange` modifies only the maximum at its common tail, after the moving bonus
-    /// (`0x6e3648`-`0x6e36a2`, then op 5 at `0x6e3746`). The on-next-swing `Attributes & 0x404` arm
-    /// returns before that tail (`0x6e350f`).
+    /// `GetMinMaxRange` modifies only the maximum at its common tail, after the moving bonus. The
+    /// on-next-swing `Attributes & 0x404` arm returns before that tail.
     pub(crate) fn min_max_range(
         &self,
         d: &SpellDisplay,
@@ -529,8 +528,8 @@ mod tests {
         );
     }
 
-    /// The moving bonus is part of the max before op 5 scales it (`0x6e3648`-`0x6e36a2`, then
-    /// `0x6e3746`): a +20% talent on the melee row of two running units scales 5 + 2.6667.
+    /// The moving bonus is part of the max before op 5 scales it: a +20% talent on the melee row of
+    /// two running units scales 5 + 2.6667.
     #[test]
     fn range_modifier_scales_the_moving_bonus() {
         let mut mods = mage_tables();

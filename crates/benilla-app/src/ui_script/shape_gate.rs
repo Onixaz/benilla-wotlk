@@ -1,11 +1,11 @@
 //! The return-shape gate: `reference/3.3.5a-shapes.tsv`, a harvest of every binding the 1.12 client
 //! registers, against what this client answers.
 //!
-//! A 1.12 predicate answers `1` or `nil`, never a boolean (`IsPetAttackActive` aside), so kinds
-//! are gated with arity. The table says per row what to trust: `arity_conf = exact`, kinds only
-//! where `kinds_conf = agree`, never `argc_conf`. Only query verbs are probed, a call that raises
-//! is skipped, and a name registered from several tables (`GetBuildInfo` is 5 in the glue table
-//! `0x8373b8`, 3 in-game at `0x83de68`) is read at its non-glue row.
+//! A 1.12 predicate answers `1` or `nil`, never a boolean (`IsPetAttackActive` aside), so kinds are
+//! gated with arity. The table says per row what to trust: `arity_conf = exact`, kinds only where
+//! `kinds_conf = agree`, never `argc_conf`. Only query verbs are probed, a call that raises is
+//! skipped, and a name registered from several tables (`GetBuildInfo` is 5 in the glue table) is
+//! read at its non-glue row.
 
 /// Globals known to answer the wrong arity: a name, the reference's arity and the reason. The
 /// list may only shrink.
@@ -37,8 +37,8 @@ fn rows() -> Vec<Row> {
     rows_of_kind("global")
 }
 
-/// The `arity_conf = exact` rows of one `table_kind`: `global` is the registrar surface,
-/// `baselib` the 36-entry Lua base array looped into `_G` at `0x811e28`.
+/// The `arity_conf = exact` rows of one `table_kind`: `global` is the registrar surface, `baselib`
+/// the 36-entry Lua base array looped into `_G`.
 fn rows_of_kind(kind: &str) -> Vec<Row> {
     let tsv = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -194,7 +194,7 @@ const BASELIB_PROBES: &[(&str, &str)] = &[
     ("collectgarbage", ""),
     ("date", ""),
     // `debugbreak`, `debugdump`, `debuginfo`, `debugload`, `debugprint` and `debugtimestamp` are
-    // the reference's six `xor eax,eax; ret` stubs (`0x7027e0` to `0x702830`), safe to call.
+    // the reference's six `xor eax,eax; ret` stubs, safe to call.
     ("debugbreak", ""),
     ("debugdump", ""),
     ("debuginfo", ""),
@@ -219,8 +219,8 @@ const BASELIB_PROBES: &[(&str, &str)] = &[
     ("rawget", "{}, 1"),
     ("rawset", "{}, 1, 1"),
     // These write, but namespaced or inert, so every later probe sees the same VM. The bare VM's
-    // handler slot is empty and takes a function alone (`0x702900`), so the probe hands it a no-op,
-    // which nothing here dispatches to.
+    // handler slot is empty and takes a function alone, so the probe hands it a no-op, which
+    // nothing here dispatches to.
     ("seterrorhandler", "function() end"),
     ("setglobal", "\"BenillaShapeGateProbe\", 1"),
     ("setmetatable", "{}, nil"),
@@ -334,35 +334,35 @@ fn the_base_library_answers_the_reference_s_return_arity_and_kinds() {
 /// several tables at different arities, so each method is probed on its own table's class; an
 /// unmapped table is skipped.
 const WIDGET_PROBES: &[(&str, &str, &str)] = &[
-    ("0x878ec0", "Frame", "PGFrame"),
-    ("0x879d00", "Button", "PGButton"),
-    ("0x87bf74", "CheckButton", "PGCheck"),
-    ("0x87bb68", "EditBox", "PGEdit"),
-    ("0x87b260", "Slider", "PGSlider"),
-    ("0x87b010", "StatusBar", "PGStatus"),
-    ("0x87b3c0", "ScrollFrame", "PGScroll"),
-    ("0x87ba80", "SimpleHTML", "PGHtml"),
-    ("0x87abb0", "ColorSelect", "PGColor"),
-    ("0x87b960", "MessageFrame", "PGMessage"),
-    ("0x87b5c0", "ScrollingMessageFrame", "PGScrollMsg"),
-    ("0x878948", "Model", "PGModel"),
-    ("0x854198", "GameTooltip", "PGTip"),
-    ("0x84c538", "Minimap", "PGMinimap"),
-    ("0x84ee40", "TabardModel", "PGTabard"),
-    ("0x84f190", "DressUpModel", "PGDress"),
+    ("", "Frame", "PGFrame"),
+    ("", "Button", "PGButton"),
+    ("", "CheckButton", "PGCheck"),
+    ("", "EditBox", "PGEdit"),
+    ("", "Slider", "PGSlider"),
+    ("", "StatusBar", "PGStatus"),
+    ("", "ScrollFrame", "PGScroll"),
+    ("", "SimpleHTML", "PGHtml"),
+    ("", "ColorSelect", "PGColor"),
+    ("", "MessageFrame", "PGMessage"),
+    ("", "ScrollingMessageFrame", "PGScrollMsg"),
+    ("", "Model", "PGModel"),
+    ("", "GameTooltip", "PGTip"),
+    ("", "Minimap", "PGMinimap"),
+    ("", "TabardModel", "PGTabard"),
+    ("", "DressUpModel", "PGDress"),
     // `PlayerModel` is `Model` plus three verbs, in a table of its own.
-    ("0x84f1fc", "PlayerModel", "PGPlayerModel"),
-    ("0x87ab4c", "MovieFrame", "PGMovie"),
+    ("", "PlayerModel", "PGPlayerModel"),
+    ("", "MovieFrame", "PGMovie"),
     // The base every widget falls back to (`REGION_MAP_METHODS`' 19 names), probed on a Frame.
-    ("0x87c9b8", "Frame", "PGRegionBase"),
+    ("", "Frame", "PGRegionBase"),
 ];
 
 /// The classes `CreateFrame` cannot make: the two regions, made by a frame, and the font object.
 const REGION_PROBES: &[(&str, &str)] = &[
-    ("0x87c128", "PGFrame:CreateTexture('PGTex')"),
-    ("0x87c1d8", "PGFrame:CreateFontString('PGFS')"),
+    ("", "PGFrame:CreateTexture('PGTex')"),
+    ("", "PGFrame:CreateFontString('PGFS')"),
     // The font object (`CreateFont`), not a FontString: 22 methods of its own.
-    ("0x87c7c8", "CreateFont('PGFontObject')"),
+    ("", "CreateFont('PGFontObject')"),
 ];
 
 /// The widget arity gate: the global gate's rules, with each method called on an instance of its
@@ -474,8 +474,8 @@ fn kind_alternatives(cell: &str) -> Vec<Vec<String>> {
 }
 
 /// Whether an observed Lua `type()` satisfies one reference slot. `string?` is string-or-nil:
-/// `lua_pushstring` (`0x6f3890`) pushes nil for a NULL pointer, and the harvest writes plain
-/// `string` only for a constant literal. `any` and `value` are slots the trace could not narrow.
+/// `lua_pushstring` pushes nil for a NULL pointer, and the harvest writes plain `string` only for a
+/// constant literal. `any` and `value` are slots the trace could not narrow.
 fn slot_accepts(want: &str, got: &str) -> bool {
     match want {
         "any" | "value" => true,

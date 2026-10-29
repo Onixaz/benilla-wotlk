@@ -1,16 +1,16 @@
 //! The CVar registry, host side: the reference's engine-side table (`ConsoleVar.cpp`, records of
-//! name, value, default, latch slot and the change callback handed to `CVar::Register`,
-//! `0x767fc0`). [`Cvars`] holds every registered row's live value, survives a VM replacement and is
-//! what the archives are composed from; the script VM keeps a mirror for Lua's synchronous
-//! `GetCVar`/`SetCVar` ([`benilla_ui::script::UiScript::seed_cvars`]) whose writes queue back here.
+//! name, value, default, latch slot and the change callback handed to `CVar::Register`). [`Cvars`]
+//! holds every registered row's live value, survives a VM replacement and is what the archives are
+//! composed from; the script VM keeps a mirror for Lua's synchronous `GetCVar`/`SetCVar`
+//! ([`benilla_ui::script::UiScript::seed_cvars`]) whose writes queue back here.
 //!
 //! - [`REGISTERED`] holds only vars something reads, a host knob or a Lua consumer. A row's default
 //!   is the reference's, and [`table::Registered::reference`] says where it stands against it.
 //! - The change callback is a Bevy observer on [`CvarChanged`], beside the knob it writes; the
 //!   registry applies nothing itself.
 //! - A latched row's write is staged in [`Row::pending`] until [`Cvars::commit_latched`], the
-//!   reference's `0x639ec0` inside `RestartGx`; the archive writes the stage, as
-//!   `CVar::IterateForArchive` (`0x767030`) prefers the latched value.
+//!   reference's inside `RestartGx`; the archive writes the stage, as `CVar::IterateForArchive`
+//!   (`0x767030`) prefers the latched value.
 //! - Each row is archived in one file by its [`table::Scope`]: `WTF\Config.wtf`, or the account's
 //!   or the character's `config-cache.wtf`, account-data slots 0 and 1 ([`crate::account_data`]).
 //!   All three are `SET name "value"` lines ([`wtf`]), every row off its default (compared
@@ -277,9 +277,9 @@ impl Cvars {
             return SetOutcome::Refused;
         }
         if row.latched {
-            // The reference's `Set 0x63df50` on flag bit1 stores `latchedValue` and skips
-            // `InternalSet`: no dirty, no callback. The stage lives here, not in the mirror, which
-            // only ever learns applied values.
+            // The reference's `Set` on flag bit1 stores `latchedValue` and skips `InternalSet`: no
+            // dirty, no callback. The stage lives here, not in the mirror, which only ever learns
+            // applied values.
             let staged = (value != row.value).then(|| value.to_string());
             if row.pending == staged {
                 return SetOutcome::Unchanged;
@@ -339,15 +339,13 @@ impl Cvars {
         true
     }
 
-    /// The latch boundary `RestartGx` crosses: the reference's `0x639ec0..0x639f5a`, which calls
-    /// `CVar::Commit` (`0x63e060`) on the fourteen gx records `[0xc4ea90]` … `[0xc4eab4]`. Each
-    /// staged `gx*` value is applied, fires, persists and reaches the mirror; returns how many
-    /// moved.
+    /// The latch boundary `RestartGx` crosses: the reference's, which calls `CVar::Commit` on the
+    /// fourteen gx records …. Each staged `gx*` value is applied, fires, persists and reaches the
+    /// mirror; returns how many moved.
     ///
-    /// Only `gx*` rows: `SoundBufferSize`'s register site (`0x4571ca`) discards its record, so
-    /// nothing commits it and its stage is lost at exit, as in the reference. The reference runs a
-    /// gx callback at `SetCVar` time (`0x63df50`); ours fire here, before the device rebuild reads
-    /// them.
+    /// Only `gx*` rows: `SoundBufferSize`'s register site discards its record, so nothing commits
+    /// it and its stage is lost at exit, as in the reference. The reference runs a gx callback at
+    /// `SetCVar` time; ours fire here, before the device rebuild reads them.
     pub(crate) fn commit_latched(&mut self) -> usize {
         let mut moved = 0;
         for row in &mut self.rows {
@@ -1403,19 +1401,15 @@ mod tests {
             "the old continents cap at 2375/3 yd"
         );
         assert_eq!(res::<ViewDistance>(&app).setting, 1277.0);
-        // `nearclip` clamps to the callback's `[0.01, 0.33]` (`0x688d90`).
+        // `nearclip` clamps to the callback's `[0.01, 0.33]`.
         apply(&mut app, "nearclip", "0.001");
         assert_eq!(
             res::<ViewDistance>(&app).nearclip,
             0.01,
-            "[0x8029d0], the callback's low bound"
+            "the callback's low bound"
         );
         apply(&mut app, "nearclip", "9");
-        assert_eq!(
-            res::<ViewDistance>(&app).nearclip,
-            0.33,
-            "[0x808300], its high bound"
-        );
+        assert_eq!(res::<ViewDistance>(&app).nearclip, 0.33, "its high bound");
         apply(&mut app, "nearclip", "0.3");
         assert_eq!(res::<ViewDistance>(&app).nearclip, 0.3);
         // A sample count, clamped to the reference's [1, 16]; 1 is none.
@@ -2200,8 +2194,8 @@ mod tests {
     }
 
     /// The string-valued rows, a closed list, each default checked on its own terms: `realmName`
-    /// (the reference's registered `""`, `0x882748`) and `gxApi` are empty until the session writes
-    /// them; `screenshotFormat` is `jpeg`; `gxResolution` and `realmList` pass their observers' parsers
+    /// (the reference's registered `""`) and `gxApi` are empty until the session writes them;
+    /// `screenshotFormat` is `jpeg`; `gxResolution` and `realmList` pass their observers' parsers
     /// ([`crate::video::parse_resolution`], [`crate::realmlist::normalize`]).
     #[test]
     fn the_string_valued_cvars_are_the_realm_and_the_windowed_size() {
@@ -2259,8 +2253,8 @@ mod tests {
     }
 
     /// A latched row's write is staged: the applied value stands and nothing fires or dirties (the
-    /// reference's `Set 0x63df50` stores `latchedValue` and skips `InternalSet`) until the commit
-    /// (`0x63e060`) applies, fires, persists and mirrors it.
+    /// reference's `Set` stores `latchedValue` and skips `InternalSet`) until the commit applies,
+    /// fires, persists and mirrors it.
     #[test]
     fn a_latched_row_stages_the_write_until_the_boundary_commits_it() {
         let mut cvars = Cvars::default();

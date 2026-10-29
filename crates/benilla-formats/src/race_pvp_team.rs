@@ -1,8 +1,7 @@
-//! `ChrRaces.dbc` → the PvP team digit, the second `%d` of `PVP_RANK_<rank>_<team>` (`0x5efe00`):
-//! race → `ChrRaces` column 2 (`[0xc0dee0]`) → that FactionTemplate's group mask (`[0xc0dd3c]`);
-//! mask & 4 is 0 (Horde), mask & 2 is 1 (Alliance), else -1. It reads the race, not the live
-//! template, so GM mode keeps the side. The runtime uses a frozen copy, `ui_unit::race_pvp_team`;
-//! this loader backs the test that pins it.
+//! `ChrRaces.dbc` → the PvP team digit, the second `%d` of `PVP_RANK_<rank>_<team>`: race →
+//! `ChrRaces` column 2 → that FactionTemplate's group mask; mask & 4 is 0 (Horde), mask & 2 is 1
+//! (Alliance), else -1. It reads the race, not the live template, so GM mode keeps the side. The
+//! runtime uses a frozen copy, `ui_unit::race_pvp_team`; this loader backs the test that pins it.
 
 use std::collections::HashMap;
 
@@ -16,7 +15,7 @@ pub fn load_race_pvp_teams(chain: &mut Chain) -> Result<HashMap<u8, i8>> {
     Ok(factions
         .race_templates()
         .map(|(race, template)| {
-            // The Horde bit is tested first (`0x5efe42`), so a row with both bits reads Horde.
+            // The Horde bit is tested first, so a row with both bits reads Horde.
             let team = match factions.template(template).map(|t| t.group_mask) {
                 Some(m) if m & 4 != 0 => 0,
                 Some(m) if m & 2 != 0 => 1,

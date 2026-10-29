@@ -5,20 +5,20 @@
 //! latch `[unit+0xb1c]`: a unit refuses a new line while its last one sounds
 //! ([`kit::source_playing`]).
 //!
-//! ## The select greeting (`0x60c270`, left-click)
+//! ## The select greeting (left-click)
 //!
-//! Left-clicking a unit ([`crate::target::select_on_click`], the reference's `0x4925d0`, before
-//! `SetTarget`) plays the cycling welcome ([`NpcGreetingRequest`]). A counter per NPC
-//! ([`GreetSeq`], `[0xc4d970]`, reset when the greeted NPC changes) steps `0x623910`
-//! ([`greet_line`]): five hello takes, then the pissed kit's takes in order, then a wrap.
+//! Left-clicking a unit ([`crate::target::select_on_click`], before `SetTarget`) plays the cycling
+//! welcome ([`NpcGreetingRequest`]). A counter per NPC ([`GreetSeq`], reset when the greeted NPC
+//! changes) steps ([`greet_line`]): five hello takes, then the pissed kit's takes in order, then a
+//! wrap.
 //!
-//! ## The window hello and goodbye (`0x60c3b0`, right-click)
+//! ## The window hello and goodbye (right-click)
 //!
-//! Opening any interaction window (`0x4930d0`, 14 call sites, none a mouseover) plays the NPC's
-//! hello once with a free-picked take (`0x60c464`), the same `+0x4` slot. Closing to nothing plays
-//! the goodbye (`+0x8`). A swap to another NPC's window plays the new hello and suppresses the old
-//! goodbye (`0x4930fd`: `dl = (new_guid != 0)`). The active NPC is the union of the window sessions
-//! ([`MerchantOpen`], [`GossipState`], [`QuestGiver`], [`TrainerOpen`]).
+//! Opening any interaction window (14 call sites, none a mouseover) plays the NPC's hello once with
+//! a free-picked take, the same `+0x4` slot. Closing to nothing plays the goodbye (`+0x8`). A swap
+//! to another NPC's window plays the new hello and suppresses the old goodbye (:
+//! `dl = (new_guid != 0)`). The active NPC is the union of the window sessions ([`MerchantOpen`],
+//! [`GossipState`], [`QuestGiver`], [`TrainerOpen`]).
 
 use bevy::prelude::*;
 
@@ -37,10 +37,10 @@ use benilla_world::view::WorldCamera;
 use super::kit::{self, play_kit_ext, KitRef, Latch, PlayExtras, SoundCategory, SoundKits};
 use super::{SoundConfig, SoundOutput};
 
-/// Hello takes before the select greeter steps into the pissed kit (`0x62394a: cmp ebx,5`).
+/// Hello takes before the select greeter steps into the pissed kit.
 const HELLO_TAKES: usize = 5;
 
-/// Plays an NPC's select greeting, sent by [`crate::target::select_on_click`] (`0x60c270`).
+/// Plays an NPC's select greeting, sent by [`crate::target::select_on_click`].
 #[derive(Message, Clone, Copy)]
 pub(crate) struct NpcGreetingRequest {
     pub(crate) npc: Entity,
@@ -50,15 +50,15 @@ pub(crate) struct NpcGreetingRequest {
 #[derive(Resource)]
 struct NpcGreetings(NpcGreetingCatalog);
 
-/// The select greeting's counter `[0xc4d970]`, keyed by the tracked NPC `[0xc4d908]` and reset
-/// when it changes; it advances only on a play that started (`0x60c28c`).
+/// The select greeting's counter, keyed by the tracked NPC and reset when it changes; it advances
+/// only on a play that started.
 #[derive(Default)]
 struct GreetSeq {
     tracked: Option<Entity>,
     seq: usize,
 }
 
-/// The line and take a select play produces (`0x623910`).
+/// The line and take a select play produces.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum GreetLine {
     /// HELLO (`+0x4`), free-pick take.
@@ -67,8 +67,8 @@ enum GreetLine {
     Pissed(usize),
 }
 
-/// `0x623910`: [`HELLO_TAKES`] hello free-picks, then the pissed kit's takes in order, then a
-/// hello that resets the counter. Returns the line and the next counter.
+/// [`HELLO_TAKES`] hello free-picks, then the pissed kit's takes in order, then a hello that resets
+/// the counter. Returns the line and the next counter.
 fn greet_line(seq: usize, pissed_variations: usize) -> (GreetLine, usize) {
     if seq < HELLO_TAKES {
         (GreetLine::Hello, seq + 1)
@@ -150,7 +150,7 @@ fn resolve(
 }
 
 /// Plays one line, kit 0 being none and `None` a free-picked take, gated on the unit's channel
-/// latch (`0x60c28c`).
+/// latch.
 fn play_line(
     npc: Entity,
     kit_id: u32,
@@ -211,7 +211,7 @@ fn play_select_greetings(
         let Some((row, pos)) = resolve(req.npc, &units, &greetings) else {
             continue;
         };
-        // A different NPC resets the sequence counter (`0x60c326`).
+        // A different NPC resets the sequence counter.
         if seq.tracked != Some(req.npc) {
             *seq = GreetSeq {
                 tracked: Some(req.npc),
@@ -219,7 +219,7 @@ fn play_select_greetings(
             };
         }
         // The latch gate precedes the counter: a re-click while the line sounds neither plays nor
-        // advances (`0x60c28c`).
+        // advances.
         if kit::source_playing(&out, req.npc) {
             continue;
         }
@@ -231,8 +231,8 @@ fn play_select_greetings(
         if kit_id == 0 {
             continue;
         }
-        // Commit the counter only if the play started (`0x60c398`); the channel was idle, so a
-        // live one now means it did.
+        // Commit the counter only if the play started; the channel was idle, so a live one now
+        // means it did.
         play_line(
             req.npc, kit_id, variant, pos, listener, &mut kits, &assets, &mut out, &config,
         );
@@ -270,7 +270,7 @@ fn play_window_greetings(
     };
     let listener = cam.single().map(|t| t.translation).unwrap_or(Vec3::ZERO);
 
-    // A despawned NPC resolves nothing: the reference's teardown clear is silent (`0x605950`).
+    // A despawned NPC resolves nothing: the reference's teardown clear is silent.
     let (guid, hello) = match vocal {
         WindowVocal::Hello(g) => (g, true),
         WindowVocal::Goodbye(g) => (g, false),
@@ -289,7 +289,7 @@ fn play_window_greetings(
     );
 }
 
-/// A despawning unit stops its greeting (`0x5fbb6c`).
+/// A despawning unit stops its greeting.
 fn stop_on_despawn(mut removed: RemovedComponents<NetEntity>, mut out: NonSendMut<SoundOutput>) {
     for entity in removed.read() {
         kit::stop_source(&mut out, entity);

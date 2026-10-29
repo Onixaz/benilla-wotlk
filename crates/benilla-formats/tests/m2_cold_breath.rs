@@ -47,7 +47,7 @@ fn the_idle_player_keys_bth_and_attaches_it_at_the_mouth() {
         stand.duration
     );
 
-    // The tag is an attachment id, never an index, resolved through the AttachLookup (`0x710310`).
+    // The tag is an attachment id, never an index, resolved through the AttachLookup.
     let attachments = parse_m2_attachments(&bytes);
     let breath = attachments
         .iter()

@@ -253,7 +253,7 @@ fn number_of(v: &Value) -> Option<f64> {
     }
 }
 
-/// A boolean argument as `0x815500` reads it: nil and false are false, anything else true.
+/// A boolean argument as the reference reads it: nil and false are false, anything else true.
 fn flag_arg(v: Option<&Value>) -> bool {
     !matches!(v, None | Some(Value::Nil) | Some(Value::Boolean(false)))
 }

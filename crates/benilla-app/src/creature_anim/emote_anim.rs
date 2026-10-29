@@ -4,8 +4,8 @@
 //! (vmangos `ChatHandler.cpp:738`, `Unit.cpp:1789-1792`), so only `SMSG_EMOTE` animates; a state
 //! emote sets `UNIT_NPC_EMOTESTATE` instead and plays as the gait layer's idle.
 //!
-//! The reference's `SMSG_EMOTE` handler (`0x5e66b0`) never reads `Emotes.dbc`: it suppresses only
-//! a sleeping (stand state 3) or swimming performer ([`receive_eligible`]). The send-side gate in
+//! The reference's `SMSG_EMOTE` handler never reads `Emotes.dbc`: it suppresses only a sleeping
+//! (stand state 3) or swimming performer ([`receive_eligible`]). The send-side gate in
 //! `crate::ui_chat` is a separate test, so do not add an `EmoteFlags` check here.
 
 use bevy::prelude::*;
@@ -58,18 +58,16 @@ pub(super) fn emote_to_anim(
     }
 }
 
-/// The posture half of the gate, which both producers apply (`SMSG_EMOTE` at
-/// `0x5e6706`/`0x5e66f7`, the gesture dispatcher at `0x60bb52`/`0x60bb61`): only sleep (stand
-/// state 3) or swimming suppresses; a seated performer plays, masked to waist-up downstream.
+/// The posture half of the gate, which both producers apply (`SMSG_EMOTE`): only sleep (stand state 3)
+/// or swimming suppresses; a seated performer plays, masked to waist-up downstream.
 pub(super) fn receive_eligible(stand_state: u8, swimming: bool) -> bool {
     stand_state != 3 && !swimming
 }
 
-/// The shared player's half, `0x5fcd20`: no play while channeling (`0x5fcd83`) or in combat
-/// (`0x5fcd9d`), and LiftOff (192) and Land (200) skip the combat test alone (`0x5fcd5f`/`0x5fcd67`
-/// set the flag that `0x5fcd90` branches past `0x60ecd0` on; the channel test at `0x5fcd83` runs
-/// first). Its already-armed test (`0x5fcd5d`) is the driver's `armed_id`, and its
-/// `[+0xd58] & 0x400` test (`0x5fcd8e`, the weapon-visual hold) is [`super::RangedHold`].
+/// The shared player's half: no play while channeling or in combat, and LiftOff (192) and Land
+/// (200) skip the combat test alone (the reference set the flag that the reference branches past
+/// on). Its already-armed test is the driver's `armed_id`, and its `[+0xd58] & 0x400` test (the
+/// weapon-visual hold) is [`super::RangedHold`].
 fn player_eligible(anim_id: u32, channeling: bool, in_combat: bool) -> bool {
     let exempt = anim_id == u32::from(select::LIFT_OFF) || anim_id == u32::from(select::LAND);
     !channeling && (exempt || !in_combat)
@@ -97,37 +95,35 @@ pub(super) fn play_eligible(
     receive_eligible(stand_state, swimming) && player_eligible(anim_id, channeling, in_combat)
 }
 
-/// Our own unit's inputs to `DoEmote`'s local-play gate `0x5fd680`.
+/// Our own unit's inputs to `DoEmote`'s local-play gate.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct LocalPlay {
-    /// The shared dead test `0x605f90`: health 0, `UNIT_DYNFLAG_DEAD` or stand state 7.
+    /// The shared dead test: health 0, `UNIT_DYNFLAG_DEAD` or stand state 7.
     pub(crate) reads_dead: bool,
     pub(crate) stand_state: u8,
     pub(crate) move_flags: u32,
     pub(crate) vertical_speed: f32,
-    /// On a flying server spline (a taxi), which exempts the turn-shuffle test (`0x5fce47`).
+    /// On a flying server spline (a taxi), which exempts the turn-shuffle test.
     pub(crate) flying: bool,
-    /// The loot-kneel latch with its kneeling target (`0x6126b0` and `0x612710`).
+    /// The loot-kneel latch with its kneeling target.
     pub(crate) loot_kneel: bool,
     pub(crate) channeling: bool,
-    /// The auto-attack target `[+0xc48]` alone (`0x60ecb0`), not the combat flag bit.
+    /// The auto-attack target `[+0xc48]` alone, not the combat flag bit.
     pub(crate) engaged: bool,
 }
 
-/// Move flags that void the turn-shuffle test: HOVER, SWIMMING and `0x800` (`0x5fce5d`).
+/// Move flags that void the turn-shuffle test: HOVER, SWIMMING and `0x800`.
 const SHUFFLE_VOID: u32 = move_flags::HOVER | move_flags::SWIMMING | 0x800;
 
-/// `0x5fd680`, the gate on `DoEmote`'s local play (`0x5ef660`, then `0x5fe2f0` at `0x5ef66f`): the emote plays at once only while
-/// a direction key is held, and every other case waits for the server's `SMSG_EMOTE`. It refuses
-/// the dead (`0x605f90`), a unit both jumping and falling far (`0x5fd6a9`), a jump with vertical
-/// speed (`0x5fd6c5`), a kneeling looter (`0x5fd6e7`), a channel (`0x5fd701`), an auto-attack
-/// target (`0x5fd721`), a turn shuffle (`0x5fd72c`, approximated) and any stand state but 0 (`0x5fd74d`, and
-/// the cached `[+0xc1c]` at `0x5fd757`, which tracks it). The `[+0xd58]` test at `0x5fd711` refuses
-/// only when both 0x400 ([`super::RangedHold`]) and 0x10000 (unmodelled) are set, and so is not
-/// tested here; the turn-shuffle test approximates `0x5fce30`, which also exempts on the armed id,
-/// exempts on `d58 & 0xc` and fires on the mouse-turn latch `d58 & 0x1800`. The ranged auto-repeat
-/// test (`0x5fd735`)
-/// needs sheath state 2, which the stow `DoEmote` runs first (`0x611cf0(0)`) has cleared.
+/// The gate on `DoEmote`'s local play: the emote plays at once only while a direction key is held,
+/// and every other case waits for the server's `SMSG_EMOTE`. It refuses the dead, a unit both
+/// jumping and falling far, a jump with vertical speed, a kneeling looter, a channel, an
+/// auto-attack target, a turn shuffle (approximated) and any stand state but 0 (and the cached
+/// `[+0xc1c]`, which tracks it). The `[+0xd58]` test refuses only when both 0x400
+/// ([`super::RangedHold`]) and 0x10000 (unmodelled) are set, and so is not tested here; the
+/// turn-shuffle test approximates, which also exempts on the armed id, exempts on `d58 & 0xc` and
+/// fires on the mouse-turn latch `d58 & 0x1800`. The ranged auto-repeat test needs sheath state 2,
+/// which the stow `DoEmote` runs first has cleared.
 pub(crate) fn local_play_eligible(i: &LocalPlay) -> bool {
     let f = i.move_flags;
     let turning = f & (move_flags::TURN_LEFT | move_flags::TURN_RIGHT) != 0;
@@ -143,9 +139,9 @@ pub(crate) fn local_play_eligible(i: &LocalPlay) -> bool {
         && i.stand_state == 0
 }
 
-/// The flag half of the in-combat test `0x60ecd0` (`UNIT_FIELD_FLAGS` bit 11); the other half is
-/// the auto-attack target (`0x60ecb0`). vmangos marks combat with `0x80000` and sets `0x800` only
-/// on a pet or charmed unit (`Unit.cpp:6170-6173`), so there the attack target carries the gate.
+/// The flag half of the in-combat test (`UNIT_FIELD_FLAGS` bit 11); the other half is the
+/// auto-attack target. vmangos marks combat with `0x80000` and sets `0x800` only on a pet or
+/// charmed unit (`Unit.cpp:6170-6173`), so there the attack target carries the gate.
 const UNIT_FLAGS_COMBAT_BIT: u32 = 0x800;
 
 /// A `Text` emote's animation arrives as its own `SMSG_EMOTE`.
@@ -190,7 +186,7 @@ mod tests {
         assert!(!player_eligible(66, false, true), "in combat suppresses");
     }
 
-    /// `0x5fcd5f`/`0x5fcd67`: LiftOff (192) and Land (200) skip the combat test, not the channel.
+    /// LiftOff (192) and Land (200) skip the combat test, not the channel.
     #[test]
     fn lift_off_and_land_play_in_combat_but_not_while_channeling() {
         assert!(player_eligible(192, false, true), "LiftOff in combat");
@@ -203,8 +199,8 @@ mod tests {
         );
     }
 
-    /// The attack-target half of `0x60ecd0` (`[+0xc48]`, from ATTACKSTART to ATTACKSTOP) refuses
-    /// on its own: on vmangos the flag half never fires for a fighting player or creature.
+    /// The attack-target half of (`[+0xc48]`, from ATTACKSTART to ATTACKSTOP) refuses on its own:
+    /// on vmangos the flag half never fires for a fighting player or creature.
     #[test]
     fn an_engaged_unit_refuses_the_play_without_the_flag_bit() {
         assert!(

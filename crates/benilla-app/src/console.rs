@@ -1,11 +1,11 @@
-//! The console command registry: the reference's `ConsoleCommand` table
-//! (`ConsoleCommandRegister` `0x63f9e0`, runtime `[0x63f880, 0x640c50)`). Subsystems register
-//! from their plugins; `/console <line>` reaches [`execute`] through the chat drain.
+//! The console command registry: the reference's `ConsoleCommand` table (`ConsoleCommandRegister`).
+//! Subsystems register from their plugins; `/console <line>` reaches [`execute`] through the chat
+//! drain.
 //!
-//! Each CVar is also a command under its own name (`0x63dde0`): a bare name prints
-//! `CVar "%s" is "%s"`, a name with a value sets it, looked up after the registered commands.
-//! The built-ins are `ConsoleVar.cpp`'s four (`set`, `cvar_reset`, `cvar_default`, `cvarlist`)
-//! plus the registry's `help`.
+//! Each CVar is also a command under its own name: a bare name prints `CVar "%s" is "%s"`, a name
+//! with a value sets it, looked up after the registered commands. The built-ins are
+//! `ConsoleVar.cpp`'s four (`set`, `cvar_reset`, `cvar_default`, `cvarlist`) plus the registry's
+//! `help`.
 //!
 //! The reference's drop-down console screen is not built: output is a system line in chat.
 
@@ -61,10 +61,10 @@ impl ConsoleCommandApp for App {
     }
 }
 
-/// Lines a CVar's change callback prints to the console (`0x63cb50`), such as `spellEffectLevel`'s
-/// "Spell effect level set to %d.". A console command's own write collects them into its output;
-/// any other write (a Lua `SetCVar`, the boot load) sends them to the log, as the reference's go
-/// to a console screen nobody has open.
+/// Lines a CVar's change callback prints to the console, such as `spellEffectLevel`'s "Spell effect
+/// level set to %d.". A console command's own write collects them into its output; any other write
+/// (a Lua `SetCVar`, the boot load) sends them to the log, as the reference's go to a console
+/// screen nobody has open.
 #[derive(Resource, Default)]
 pub(crate) struct ConsoleEcho {
     capture: Option<Vec<String>>,
@@ -132,8 +132,7 @@ pub(crate) fn execute(world: &mut World, line: &str) -> Vec<String> {
     )]
 }
 
-/// `CVar "%s" is "%s"`, the per-CVar command with no argument (`0x63dde0`), plus any staged
-/// value.
+/// `CVar "%s" is "%s"`, the per-CVar command with no argument, plus any staged value.
 fn print_cvar(world: &World, name: &str) -> String {
     let cvars = world.resource::<Cvars>();
     let Some(row) = cvars.row(name) else {
@@ -179,9 +178,9 @@ fn set_cvar(world: &mut World, name: &str, value: &str) -> Vec<String> {
     lines
 }
 
-/// `set <name> <value>` (`0x63d500`). Deviation: the reference registers an unknown name as a new
-/// category-5 record; this refuses it, because nothing would read the row and `Config.wtf`
-/// keeps an unknown key anyway.
+/// `set <name> <value>`. Deviation: the reference registers an unknown name as a new category-5
+/// record; this refuses it, because nothing would read the row and `Config.wtf` keeps an unknown
+/// key anyway.
 fn set(world: &mut World, args: &str) -> Vec<String> {
     let (name, value) = args
         .split_once(char::is_whitespace)
@@ -192,8 +191,8 @@ fn set(world: &mut World, args: &str) -> Vec<String> {
     set_cvar(world, name, value)
 }
 
-/// `cvar_reset` and `cvar_default` (`0x63d590`, `0x63d640`): one body, since a row has no reset
-/// value apart from its default.
+/// `cvar_reset` and `cvar_default`: one body, since a row has no reset value apart from its
+/// default.
 fn cvar_default(world: &mut World, args: &str) -> Vec<String> {
     let name = args.split_whitespace().next().unwrap_or("");
     if name.is_empty() {
@@ -209,9 +208,8 @@ fn cvar_default(world: &mut World, args: &str) -> Vec<String> {
     set_cvar(world, name, &default)
 }
 
-/// `cvarlist [match]` (`0x63d6f0`), one line per row: value, default when moved, staged value,
-/// and whether the session or an addon owns it. The reference's line format is untraced; this
-/// one is benilla's.
+/// `cvarlist [match]`, one line per row: value, default when moved, staged value, and whether the
+/// session or an addon owns it. The reference's line format is untraced; this one is benilla's.
 fn cvarlist(world: &mut World, args: &str) -> Vec<String> {
     let wanted = args.split_whitespace().next().map(str::to_ascii_lowercase);
     let cvars = world.resource::<Cvars>();

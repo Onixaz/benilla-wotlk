@@ -1,8 +1,7 @@
-//! The `StatusBar` methods (`CSimpleStatusBar`, factory `0x6eef20`, `LoadXML` `0x782ef0`,
-//! orientations `0x811b00`). The fill is a left-anchored crop, the art sliced and never squeezed:
-//! `SetValue` sets the UV's `u1` to the fill fraction and the right edge with it (`0x770410`),
-//! applied at extract.
-//! Only StatusBar frames answer these, so a duck-typing addon sees nil on every other kind.
+//! The `StatusBar` methods (`CSimpleStatusBar`, `LoadXML`). The fill is a left-anchored crop, the
+//! art sliced and never squeezed: `SetValue` sets the UV's `u1` to the fill fraction and the right
+//! edge with it, applied at extract. Only StatusBar frames answer these, so a duck-typing addon
+//! sees nil on every other kind.
 
 use mlua::{Lua, Table, Value};
 
@@ -205,7 +204,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             }
         })?,
     )?;
-    // `0x78fc20` reads r, g, b by a bare `lua_tonumber`, so nil, a table or a non-numeric string
+    // The reference reads r, g, b by a bare `lua_tonumber`, so nil, a table or a non-numeric string
     // is 0.0 and the call never raises (a numeric string also reads 0.0 here). Stock hands colour
     // setters nils: `QuestLogFrame.lua:337` passes three to `SetVertexColor`.
     m.set(
@@ -294,8 +293,8 @@ fn fire_value_changed(lua: &Lua, this: &Table, changed: Option<f32>) -> mlua::Re
 }
 
 /// `OnValueChanged` for a bar the engine moved, the nameplate health bars: the reference re-sets
-/// them from a GUID-watch callback (`0x7cc570`, registered at `0x467e70`) on every server update,
-/// and that `SetValue` fires the script as any other does.
+/// them from a GUID-watch callback on every server update, and that `SetValue` fires the script as
+/// any other does.
 pub(super) fn fire_engine_value_changed(lua: &Lua, bar: crate::widget::FrameHandle, value: f32) {
     let id = {
         let mut model = crate::script::model_mut_of(lua);

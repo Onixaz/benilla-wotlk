@@ -3,8 +3,8 @@
 use benilla_formats::{open_chain, parse_m2_particle_emitters, ParticleBlend};
 
 /// File `+0x188` and `+0x18c` are twinkleScale `{min, max}`, a per-frame size flicker skipped when
-/// the range is degenerate (`0x7b2a50`), not a spawn-time multiplier: the kobold candle authors
-/// `{0, 0}` and burns in the reference.
+/// the range is degenerate, not a spawn-time multiplier: the kobold candle authors `{0, 0}` and
+/// burns in the reference.
 #[test]
 fn twinkle_fields_gate_not_scale() {
     let data = benilla_formats::wow_data_or_skip!();

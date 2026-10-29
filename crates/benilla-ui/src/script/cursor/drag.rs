@@ -4,7 +4,7 @@ use crate::script::Model;
 use crate::widget::FrameHandle;
 
 /// The drag-start distance in pixels, exceeded strictly; the reference starts at 0.01 frame units
-/// or more from the press (`0x81c468`, squared by `0x76b300`).
+/// or more from the press.
 pub(crate) const DRAG_START_THRESHOLD: f32 = 4.0;
 
 /// A drag armed at a press on a [`Model::drag_registered`] frame, `started` past the threshold.
@@ -58,7 +58,7 @@ pub(crate) fn maybe_start_drag(model: &mut Model, pos: (f32, f32)) -> Option<(u3
     };
     model.drag.as_mut().expect("checked Some above").started = true;
     // A dragged button un-presses at the threshold, not on leaving its rect: `CSimpleButton`'s
-    // `+0x74` override (`0x7793f0`) un-presses (`0x779410`) before firing `OnDragStart`.
+    // `+0x74` override un-presses before firing `OnDragStart`.
     super::super::button::edge(model, source, crate::widget::ButtonState::on_drag_start);
     let id = model
         .arena
@@ -209,7 +209,7 @@ mod tests {
         assert!(s.errors().is_empty(), "{:?}", s.errors());
     }
 
-    /// The world drop (`0x495300`) runs on a world click's release, never on a drag release.
+    /// The world drop runs on a world click's release, never on a drag release.
     #[test]
     fn drag_release_over_nothing_keeps_carrying_no_popup() {
         let mut s = drag_script();
@@ -401,7 +401,7 @@ mod tests {
         );
     }
 
-    /// Over a world object the reference's object leg (`0x492ce0`) selects and keeps the payload.
+    /// Over a world object the reference's object leg selects and keeps the payload.
     #[test]
     fn world_click_over_a_world_object_is_not_a_world_drop() {
         let mut s = drag_script();
@@ -473,7 +473,7 @@ mod tests {
         assert!(s.cursor_item().is_some());
     }
 
-    /// A non-item payload's world click clears it silently (`0x495300`); a drag release keeps it.
+    /// A non-item payload's world click clears it silently; a drag release keeps it.
     #[test]
     fn world_click_with_a_spell_payload_clears_silently() {
         let mut s = drag_script();

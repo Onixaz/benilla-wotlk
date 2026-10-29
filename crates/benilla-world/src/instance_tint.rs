@@ -1,20 +1,19 @@
 //! The per-instance body tint: a unit's whole model multiplied by one colour, the render channel
 //! for the aura kits' CharProc 1 (`benilla-app`'s `aura_visual`).
 //!
-//! The reference's CM2 instance carries a modulate tint at `model+0x184..0x18c` (setter
-//! `0x710cf0`, default white) beside the additive highlight (`0x710d40`), which is
-//! [`crate::mesh_tag::HIGHLIGHT_BIT`] here. The animate kernel `0x714260` multiplies it by
-//! `inputColorA`, and the batcher clamps it to [0,1] and sets it as the GL ambient and diffuse
-//! material colour (`0x70c3a9`–`0x70c4d3`, `0x70c8ad`): it scales the light sum inside the clamp,
-//! not emission, where `wow_model.wgsl` applies a WMO batch's MOCV. An unlit batch adds the tinted
-//! M2Color and the highlight inside one clamp.
+//! The reference's CM2 instance carries a modulate tint at `model+0x184..0x18c` (default white)
+//! beside the additive highlight, which is [`crate::mesh_tag::HIGHLIGHT_BIT`] here. The animate
+//! kernel multiplies it by `inputColorA`, and the batcher clamps it to [0,1] and sets it as the GL
+//! ambient and diffuse material colour: it scales the light sum inside the clamp, not emission,
+//! where `wow_model.wgsl` applies a WMO batch's MOCV. An unlit batch adds the tinted M2Color and
+//! the highlight inside one clamp.
 //!
 //! The table is indexed by the `MeshTag` rig slot ([`crate::rig_palette`]), so it takes no tag
 //! bits; an unskinned mesh reads its slot safely, as skinning keys on the vertex layout, not the
 //! tag. Slot 0, the no-rig sentinel, is never written. A `0` word is identity: the reference packs
-//! an authored colour as `round(param) | 0xff000000` (`0x60d840`), so black (spell 27200, Defile)
-//! is `0xff000000`. The tint applies on change with no easing (`unit+0xd04` into `0x710cf0`),
-//! unlike the alpha's 1000 ms ramp (`0x614f80`).
+//! an authored colour as `round(param) | 0xff000000`, so black (spell 27200, Defile) is
+//! `0xff000000`. The tint applies on change with no easing (`unit+0xd04`), unlike the alpha's 1000
+//! ms ramp.
 
 use std::sync::Arc;
 
@@ -42,18 +41,16 @@ pub(crate) fn region_bytes() -> u64 {
     MAX_RIG_SLOTS as u64 * SLOT_BYTES
 }
 
-/// Packs RGB as the reference does (`0x60d840`: `param | 0xff000000`), so even black is never
-/// [`IDENTITY`].
+/// Packs RGB as the reference does (: `param | 0xff000000`), so even black is never [`IDENTITY`].
 pub fn pack(rgb: [u8; 3]) -> u32 {
     0xff00_0000 | (u32::from(rgb[0]) << 16) | (u32::from(rgb[1]) << 8) | u32::from(rgb[2])
 }
 
 /// Off-world `wow_light`-layout buffers that also carry the tint region, by key; deliberately not
 /// [`crate::rig_palette::RigPaletteMirrors`]' list. Portraits stay off it: the reference bakes one
-/// from a fresh CM2 with colour (1,1,1) and alpha 1 (`0x524f60`, ctor `0x70ea60`, set again at
-/// `0x525261` via `0x47a230`), so a ghost's portrait is untinted, and ours carry the world unit's
-/// rig slot. The glue scene is on it: its character is the instance the reference tints
-/// (`0x472939` into `0x710cf0`, the char-select ghost) and has a slot of its own.
+/// from a fresh CM2 with colour (1,1,1) and alpha 1, so a ghost's portrait is untinted, and ours
+/// carry the world unit's rig slot. The glue scene is on it: its character is the instance the
+/// reference tints (the char-select ghost) and has a slot of its own.
 #[derive(Resource, Clone, Default, ExtractResource)]
 pub struct InstanceTintMirrors(
     pub std::collections::HashMap<&'static str, bevy::render::render_resource::Buffer>,

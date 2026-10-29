@@ -1,8 +1,8 @@
 //! Where a welded billboard bone's geometry sits relative to its pivot: how far, and along which
 //! local axis. Distance decides the seam, since linear-blend skinning drags a partly weighted
 //! vertex toward the pivot. Direction decides whether the geometry moves at all: a spherical
-//! billboard (`0x71547c`) maps local axes onto fixed camera axes, so an offset along one axis only
-//! loses its roll and foreshortening, while one spread across the axes sweeps.
+//! billboard maps local axes onto fixed camera axes, so an offset along one axis only loses its
+//! roll and foreshortening, while one spread across the axes sweeps.
 //! `cargo run -p benilla-formats --example seamswing -- <WoW/Data> <internal\path.m2>`
 
 use benilla_formats::open_chain;

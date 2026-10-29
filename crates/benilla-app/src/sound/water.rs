@@ -1,7 +1,7 @@
-//! The water splash. The reference's per-frame water decision `0x6030c0` compares
-//! `surface − feet` against `0.4·collisionHeight` (`0x60314a`) and plays a positioned unit sound
-//! on a crossing in either direction, waist-deep and before swimming starts at `0.75·h`.
-//! Wading below the line makes only the footstep splashes.
+//! The water splash. The reference's per-frame water decision compares `surface − feet` against
+//! `0.4·collisionHeight` and plays a positioned unit sound on a crossing in either direction,
+//! waist-deep and before swimming starts at `0.75·h`. Wading below the line makes only the footstep
+//! splashes.
 //!
 //! The reference picks Small, Medium or Large through the unit's sound emitter
 //! (`[CGUnit+0xb18]`), whose selector is untraced; the Medium kit plays for everyone here.
@@ -22,8 +22,8 @@ use super::{AudioListener, SoundConfig, SoundOutput};
 /// SoundEntries 1096 `CharacterSplashSoundMedium`.
 const SPLASH_KIT: u32 = 1096;
 
-/// The splash line as a fraction of the unit's collision height, on depth below the surface
-/// from the feet (`0x60314a`).
+/// The splash line as a fraction of the unit's collision height, on depth below the surface from
+/// the feet.
 const SPLASH_DEPTH_FRAC: f32 = 0.4;
 
 /// What [`water_splashes`] reads per unit; `WorldPoint` looks up the unit's room by entity.

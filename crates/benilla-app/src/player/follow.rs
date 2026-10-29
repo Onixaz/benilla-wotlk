@@ -1,20 +1,17 @@
 //! `/follow`, the auto-follow movement mode. It synthesizes input through the setter the
-//! MoveForward binding drives (`0x60e790` sets move-forward `0x100000`, `0x60e7f0` clears it), so
-//! the controller moves the body and nothing goes on the wire (vmangos has no follow opcode). It
-//! beelines with no path (`0x610e40`; `0x670630` only reads click-to-move), ignores the followee's
-//! speed, and does not end on arrival.
+//! MoveForward binding drives (the reference sets move-forward `0x100000`), so the controller moves
+//! the body and nothing goes on the wire (vmangos has no follow opcode). It beelines with no path,
+//! ignores the followee's speed, and does not end on arrival.
 //!
-//! A player's movement start cancels it on the key-down edge: the start emitters call `0x60e990`,
-//! which cancels at `0x60e9b5` unless bit 0 of `ds:0xc4da48` is set, and only follow's own emitters
-//! (`0x60e790`, `0x60e7f0`, `0x60e8a0`, `0x60e940`) set it; ours is a flag,
-//! [`Player::auto_forward`], so it never reaches the cancel. Jump survives (`0x60e990(0, 0)` at
-//! `0x60dea8`), as do key releases, sitting, the walk toggle, damage, combat, mounting, casting and
-//! the followee leaving range (`0x6107e5` skips follow's mode at `0x610749`, `0x610752`).
+//! A player's movement start cancels it on the key-down edge: the start emitters call, which
+//! cancels unless bit 0 of `ds:` is set, and only follow's own emitters set it; ours is a flag,
+//! [`Player::auto_forward`], so it never reaches the cancel. Jump survives, as do key releases,
+//! sitting, the walk toggle, damage, combat, mounting, casting and the followee leaving range (the
+//! reference skips follow's mode).
 //!
-//! The reference's turn-away cancel (160°-220°, `0x80c604`, `0x80c600`) runs only while drunk,
-//! gated at `0x610a3d` on the drunk fraction, armed as the turn converges and disarmed at random
-//! (`0x61092e`); it is not built. The start gate (who may be followed) is
-//! [`crate::target::by_name`]'s.
+//! The reference's turn-away cancel (160°-220°) runs only while drunk, gated on the drunk fraction,
+//! armed as the turn converges and disarmed at random; it is not built. The start gate (who may be
+//! followed) is [`crate::target::by_name`]'s.
 
 use std::f32::consts::PI;
 
@@ -25,25 +22,25 @@ use crate::net::GuidIndex;
 use super::camera::{CameraControl, LookButton};
 use super::state::{MoveSpeed, Player};
 
-/// Follow's turn rate in rad/s, its own (`0xc4d93c`, seeded at `0x6111f9`), not the keyboard's.
+/// Follow's turn rate in rad/s, its own, not the keyboard's.
 const TURN_RATE: f32 = PI;
 
-/// Inside this many radians of the bearing, follow stops turning (`0x6108bb` → `0x60e920`).
+/// Inside this many radians of the bearing, follow stops turning.
 pub(super) const TURN_DEADZONE: f32 = 0.001;
 
-/// The speed the thresholds scale by (`0x80c4d0`), the base run speed.
+/// The speed the thresholds scale, the base run speed.
 pub(super) const SPEED_NORM: f32 = 7.0;
 
-/// The base stop distance (`0x80c4c0`), a constant, not a CVar.
+/// The base stop distance, a constant, not a CVar.
 const STOP_DISTANCE: f32 = 3.0;
 
 /// Resume sits at 1.5× the stop distance.
 const RESUME_FACTOR: f32 = 1.5;
 
-/// `cos 1°` (`0xc4d9d0`, from `0x80c5f8`), the vertical guard's threshold (`0x610d32`).
+/// `cos 1°`, the vertical guard's threshold.
 const VERTICAL_ALIGN_COS: f32 = 0.999_847_7;
 
-/// Who we follow; the reference's guid `0xc4d980` is set at `0x6111c9`, cleared at `0x60fc1e`.
+/// Who we follow; the reference's guid is set, cleared.
 #[derive(Resource, Default)]
 pub(crate) struct FollowState {
     pub(crate) guid: Option<u64>,
@@ -83,12 +80,12 @@ pub(crate) enum FollowRequest {
     Name { name: String, exact: bool },
 }
 
-/// Follow arrives and lets go of the key at this distance or closer (`0x610ad2`-`0x610b1b`).
+/// Follow arrives and lets go of the key at this distance or closer.
 fn arrive_distance(speed: f32) -> f32 {
     (speed / SPEED_NORM) * STOP_DISTANCE
 }
 
-/// A stopped follow resumes at this distance or beyond (`0x610bc4`-`0x610c2b`).
+/// A stopped follow resumes at this distance or beyond.
 fn resume_distance(speed: f32) -> f32 {
     STOP_DISTANCE * RESUME_FACTOR * (speed / SPEED_NORM).max(1.0)
 }
@@ -104,7 +101,7 @@ fn should_move(was_moving: bool, distance: f32, speed: f32) -> bool {
 }
 
 /// `move_start` and `autorun_engaged` are key-down edges (the stop emitters and autorun's off edge,
-/// `0x60dc90`, have no guard call); `mouse_look` is a level, re-entering the guard every frame.
+/// have no guard call); `mouse_look` is a level, re-entering the guard every frame.
 fn follow_cancelled(
     move_start: bool,
     autorun_engaged: bool,
@@ -128,13 +125,13 @@ pub(super) fn bearing_to(delta: Vec3) -> f32 {
     (-delta.x).atan2(-delta.z)
 }
 
-/// The followee is within 1° of straight up or down, where the bearing means nothing (`0x610d32`).
+/// The followee is within 1° of straight up or down, where the bearing means nothing.
 pub(super) fn vertically_degenerate(delta: Vec3) -> bool {
     let dist = delta.length();
     dist > f32::EPSILON && delta.y.abs() / dist > VERTICAL_ALIGN_COS
 }
 
-/// Turn toward `bearing` by at most `rate × dt`, not inside the deadzone (`0x6103d0`).
+/// Turn toward `bearing` by at most `rate × dt`, not inside the deadzone.
 pub(super) fn steer(face: f32, bearing: f32, rate: f32, dt: f32) -> f32 {
     let remaining = wrap_pi(bearing - face);
     if remaining.abs() <= TURN_DEADZONE {
@@ -176,8 +173,7 @@ impl FollowInput<'_, '_> {
         .any(|&c| self.binds.just_pressed(c))
     }
 
-    /// The cancel set, the start emitters' `0x60e990` and the input tick's teardown, which end any
-    /// auto-move.
+    /// The cancel set, the start emitters' and the input tick's teardown, which end any auto-move.
     pub(super) fn cancels(&self, player: &Player) -> bool {
         // The world's buttons, not the device's: the both-button run is two bindings held, and a
         // press a UI frame captured dispatches neither.
@@ -190,15 +186,15 @@ impl FollowInput<'_, '_> {
             both_engaged,
             self.rig.look == Some(LookButton::Right),
             // The teardown leg, or the body handed to a server spline; the ride term is not one of
-            // the reference's conjuncts (`0x5144e0`), and its reference side is untraced.
+            // the reference's conjuncts, and its reference side is untraced.
             self.input_torn_down(player.modes.rooted, player.foreign_mover.is_none())
                 || player.server_riding(),
         )
     }
 
     /// The input tick's teardown leg ([`super::state::MoverInput::torn_down`]), which the reference
-    /// takes (`0x5146d6 call 0x60fb60`) only with both predicates down (`0x5146c3`, `0x5146ce`):
-    /// death, far sight, or root and stun together end a follow, a root alone does not.
+    /// takes only with both predicates down: death, far sight, or root and stun together end a
+    /// follow, a root alone does not.
     fn input_torn_down(&self, rooted: bool, driving_own_body: bool) -> bool {
         self.mover.single().is_ok_and(|s| {
             super::state::MoverInput {
@@ -214,8 +210,7 @@ impl FollowInput<'_, '_> {
 }
 
 /// Cancel, re-resolve the followee, steer, and set [`Player::auto_forward`] for `control`. The
-/// cancel comes first, as the reference's start emitters run ahead of the axis math (`0x5150a7` vs
-/// the emitter tail `0x5151a0`).
+/// cancel comes first, as the reference's start emitters run ahead of the axis math.
 pub(super) fn steer_follow(
     time: Res<Time>,
     mut follow: ResMut<FollowState>,
@@ -235,7 +230,7 @@ pub(super) fn steer_follow(
         return;
     }
     let Some(guid) = follow.guid else { return };
-    // A followee that streams out ends the follow (`0x610e40` → `0x6106e7`).
+    // A followee that streams out ends the follow.
     let Some(target) = index
         .0
         .get(&guid)
@@ -318,7 +313,7 @@ mod tests {
     fn resume_scales_with_speed_but_never_below_the_base_band() {
         assert_eq!(arrive_distance(14.0), 6.0);
         assert_eq!(resume_distance(14.0), 9.0);
-        // Below base speed, resume's scale is floored at 1.0 (`0x610bfd`).
+        // Below base speed, resume's scale is floored at 1.0.
         assert!(arrive_distance(3.5) < 3.0);
         assert_eq!(resume_distance(3.5), 4.5);
     }

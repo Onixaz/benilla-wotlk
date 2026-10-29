@@ -1,9 +1,9 @@
 //! The NPC-service live probe (`WOW_PROBE_SERVICE=1`): does right-clicking a trainer or a quest
-//! giver open their window rather than a gossip menu? The click walks `UNIT_NPC_FLAGS` first
-//! match wins ([`crate::target::click::service_arm`]; `0x5f0130`), bit 0 (GOSSIP) first, so a
-//! trainer or questgiver that also carries GOSSIP opens a gossip menu. The probe hops to four real
-//! NPCs, calls the shipped `service_arm`/`service_action` on the wire's flags and
-//! [`QuestGiver::status`], and reports the arm, the opcode and the window that opened:
+//! giver open their window rather than a gossip menu? The click walks `UNIT_NPC_FLAGS` first match
+//! wins ([`crate::target::click::service_arm`]), bit 0 (GOSSIP) first, so a trainer or questgiver
+//! that also carries GOSSIP opens a gossip menu. The probe hops to four real NPCs, calls the
+//! shipped `service_arm`/`service_action` on the wire's flags and [`QuestGiver::status`], and
+//! reports the arm, the opcode and the window that opened:
 //!
 //! | NPC | `npc_flags` | arm | window |
 //! |---|---|---|---|
@@ -41,8 +41,8 @@ use crate::ui_session::InteractNpc;
 use crate::ui_trainer::TrainerOpen;
 
 /// How wide to look around a `.go` landing: the reference's service reach,
-/// [`crate::target::SERVICE_RANGE_SQ`] (5.5556 yd, `0xc4c28c`/`0xb4b32c`). Past it the cursor goes
-/// gray, the click sends nothing, and vmangos's `GetNPCIfCanInteractWith` refuses silently.
+/// [`crate::target::SERVICE_RANGE_SQ`] (5.5556 yd). Past it the cursor goes gray, the click sends
+/// nothing, and vmangos's `GetNPCIfCanInteractWith` refuses silently.
 const SCAN_RANGE_SQ: f32 = crate::target::SERVICE_RANGE_SQ;
 /// Let the hop land and the tile stream before the first scan.
 const SETTLE_SECS: f64 = 3.0;
@@ -291,7 +291,7 @@ fn service_probe(
     mut gossip: ResMut<GossipState>,
     mut giver: ResMut<QuestGiver>,
     mut trainer: ResMut<TrainerOpen>,
-    // `[0xb4e2d0]`'s mirror, what the re-click gate reads: armed by a window and only by one.
+    // The reference's mirror, what the re-click gate reads: armed by a window and only by one.
     interact: Res<InteractNpc>,
     // The vendor fork: the merchant window, the VM the held-cursor leg picks up in, and what
     // turns a (bag, slot) into the item guid.
@@ -411,8 +411,7 @@ fn service_probe(
                 error!(
                     "PROBE_SERVICE: FAIL ({}) — entry {entry} guid {guid:#x} flags {} \
                      status={status:?}: the ladder took {arm:?}, wanted {:?}. First-match-wins \
-                     low→high over UNIT_NPC_FLAGS is the reference's own order \
-                     (`0x5f0289`…`0x5f05bc`); a disagreement here is the dispatch, not the \
+                     low→high over UNIT_NPC_FLAGS is the reference's own order; a disagreement here is the dispatch, not the \
                      server.{note}",
                     leg.name,
                     flag_names(flags),
@@ -429,8 +428,8 @@ fn service_probe(
             giver.clear();
             trainer.clear();
 
-            // The first click must get through: nothing is open, and the reference arms
-            // `[0xb4e2d0]` only from window openers, so the gate must read disarmed at the send.
+            // The first click must get through: nothing is open, and the reference arms only from
+            // window openers, so the gate must read disarmed at the send.
             if interact.1.is_some() {
                 error!(
                     "PROBE_SERVICE: FAIL ({}) — the npc token is armed on {:#x} BEFORE the send; \
@@ -559,7 +558,7 @@ fn service_probe(
             if interact.1 == Some(guid) {
                 info!(
                     "PROBE_SERVICE: PASS ({}) — re-click gate armed on {guid:#x} {:.0} ms after \
-                     the window: a second right-click sends nothing (`0x5f0251`)",
+                     the window: a second right-click sends nothing",
                     leg.name,
                     (now - since) * 1000.0
                 );
@@ -630,7 +629,7 @@ fn service_probe(
                 _ => {
                     error!(
                         "PROBE_SERVICE: FAIL (vendor fork, empty cursor) — an EMPTY cursor took \
-                         the sale leg; `0x5df5e0 je` must fall to CMSG_LIST_INVENTORY"
+                         the sale leg; must fall to CMSG_LIST_INVENTORY"
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;
@@ -741,7 +740,7 @@ fn service_probe(
                     };
                     error!(
                         "PROBE_SERVICE: FAIL (vendor fork, held cursor) — an item is on the cursor \
-                         and the vendor arm still answered {what}; `0x5df5e0` must take the sale"
+                         and the vendor arm still answered {what}; must take the sale"
                     );
                     probe.fails += 1;
                     probe.phase = Phase::Done;

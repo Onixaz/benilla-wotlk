@@ -1,10 +1,9 @@
 //! `ChatProfanity.dbc` and `SpamMessages.dbc`, the lists behind 1.12's `profanityFilter` and
 //! `spamFilter`: an id and a plain-string pattern, one table for every language. The reference
-//! compiles each row once at startup as a PCRE (`0x402b7f` → `0x6c91a0`; `0x71fba0` →
-//! `pcre_compile` `0x720250`, CASELESS | UTF8 | NO_UTF8_CHECK) and skips one that fails, which no
-//! shipped row does; `benilla_app::text_filter` compiles and applies them. Both come through the
-//! patch chain: `dbc.MPQ` has 1512 `ChatProfanity` rows to `patch.MPQ`'s 2289 and no
-//! `SpamMessages`, and the names carry no locale (`0x858348`, `0x859a84`), so a locale build
+//! compiles each row once at startup as a PCRE (`pcre_compile`, CASELESS | UTF8 | NO_UTF8_CHECK)
+//! and skips one that fails, which no shipped row does; `benilla_app::text_filter` compiles and
+//! applies them. Both come through the patch chain: `dbc.MPQ` has 1512 `ChatProfanity` rows to
+//! `patch.MPQ`'s 2289 and no `SpamMessages`, and the names carry no locale, so a locale build
 //! overrides them at the archive.
 
 use anyhow::{Context, Result};
@@ -74,8 +73,8 @@ pub fn load_chat_profanity(chain: &mut Chain) -> Result<Vec<FilterPattern>> {
     load(chain, CHAT_PROFANITY, chat_profanity_schema())
 }
 
-/// `SpamMessages.dbc`, the spam predicate's list, in file order. The reference then scans a
-/// second list the server can push (SMSG `0x332`, handler `0x49e6e0`); vmangos never sends one.
+/// `SpamMessages.dbc`, the spam predicate's list, in file order. The reference then scans a second
+/// list the server can push (SMSG `0x332`); vmangos never sends one.
 pub fn load_spam_messages(chain: &mut Chain) -> Result<Vec<FilterPattern>> {
     load(chain, SPAM_MESSAGES, spam_messages_schema())
 }

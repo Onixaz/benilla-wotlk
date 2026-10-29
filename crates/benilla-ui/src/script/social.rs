@@ -186,8 +186,8 @@ fn friend_named(friends: &[FriendInfo], name: &str) -> Option<u32> {
         .map(|i| i as u32 + 1)
 }
 
-/// Is the player a name or unit token names on `names`? `ChatTokenToGUID` (`0x4fb580`'s caller)
-/// tries the argument as a cached name, then as a unit token.
+/// Is the player a name or unit token names on `names`? `ChatTokenToGUID` tries the argument as a
+/// cached name, then as a unit token.
 fn token_listed(model: &crate::script::Model, names: &[String], token: &str) -> bool {
     let listed = |name: &str| row_named(names, name).is_some();
     listed(token)
@@ -466,9 +466,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetMuteStatus(nameOrUnit[, channel]) (`0x4fcdf0`): 1 for a player on the ignore or mute list
-    // (`0x4fce5b`), the argument read as a cached name, else a unit token (`0x4fb580`); no value,
-    // not an error, without a string (`0x4fce0d`). A voice-channel squelch also answers 1, and
-    // benilla joins no voice channel.
+    // (`0x4fce5b`), the argument read as a cached name, else a unit token; no value, not an error,
+    // without a string (`0x4fce0d`). A voice-channel squelch also answers 1, and benilla joins no
+    // voice channel.
     g.set(
         "GetMuteStatus",
         lua.create_function(|lua, args: MultiValue| {
@@ -717,7 +717,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // SetWhoToUI(flag) (`0x6b3430`): the Who frame passes 1 on show and 0 on hide; the flag is
-    // `GetBoolOrDefault` with default 0 (`0x815500`).
+    // `GetBoolOrDefault` with default 0.
     g.set(
         "SetWhoToUI",
         lua.create_function(|lua, flag: Value| {

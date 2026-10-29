@@ -8,9 +8,9 @@ use crate::creature_anim::move_flags;
 /// A streamed unit's server-granted movement modes as `MOVEMENTFLAGS` bits: root, water-walk,
 /// feather-fall, hover, walk-mode and swim. The reference keeps one flags dword per unit
 /// (`CMovement` at `CGUnit+0x9a8`, word `+0x40`); the granted half is kept apart from
-/// [`super::RemoteMotion::flags`] because the relay merge rewrites that word from every pose and
-/// a creature sends none. Absent means no modes; once inserted it lives as long as the entity, as
-/// the reference's word lives as long as the unit (`0x7c4850`).
+/// [`super::RemoteMotion::flags`] because the relay merge rewrites that word from every pose and a
+/// creature sends none. Absent means no modes; once inserted it lives as long as the entity, as the
+/// reference's word lives as long as the unit.
 #[derive(Component, Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct UnitMoveModes(pub(crate) u32);
 
@@ -26,7 +26,7 @@ impl UnitMoveModes {
     }
 
     /// `MOVEFLAG_ROOT`: the unit cannot move, jump or be splined; the reference's server-position
-    /// apply `0x6187a0` refuses while the bit is set (`0x6187c2`).
+    /// apply refuses while the bit is set.
     pub(crate) fn rooted(self) -> bool {
         self.0 & move_flags::ROOT != 0
     }
@@ -45,10 +45,10 @@ impl UnitMoveModes {
 // `MOVEFLAG_SAFE_FALL` has no accessor: only our mover (`MoveModes::feather_fall`) and relayed
 // players (their own pose flags) fall; a creature rides its spline and never does.
 
-/// What `SetRoot` `0x7c7340` clears from the flags word at apply, as an AND mask: the direction,
-/// turn and pitch bits (`0xff`), the `0x8000` latch and the input latches (`0x1f0000`); `ROOT`
-/// survives. A one-shot wipe, not a gate: with no direction bits the unit fails the integration
-/// test (`0x616e20`, `move_flags::INTEGRATED`) and stops rather than coasting. 3.3.5a's apply
-/// (`0x9884b8`, `and 0xff203f00`) also clears ascending and descending.
+/// What `SetRoot` clears from the flags word at apply, as an AND mask: the direction, turn and
+/// pitch bits (`0xff`), the `0x8000` latch and the input latches (`0x1f0000`); `ROOT` survives. A
+/// one-shot wipe, not a gate: with no direction bits the unit fails the integration test
+/// (`move_flags::INTEGRATED`) and stops rather than coasting. 3.3.5a's apply (`0x9884b8`,
+/// `and 0xff203f00`) also clears ascending and descending.
 pub(crate) const ROOT_APPLY_WIPE: u32 =
     0xffe0_7f00 & !(move_flags::ASCENDING | move_flags::DESCENDING);

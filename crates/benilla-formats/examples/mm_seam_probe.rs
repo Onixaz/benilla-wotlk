@@ -403,8 +403,8 @@ fn main() -> anyhow::Result<()> {
             for row in 0..ny {
                 // Measured off the shipped art: image u runs along model +X from the bbox X-min,
                 // columns advancing with +X; v runs along model Y inverted. Cells stride `tw` and
-                // share interior edges; a boundary cell grows 1.0 yd on its outer side
-                // (`0x6a5270`), and `MM_NOBLEED` drops that, so neighbouring groups only abut.
+                // share interior edges; a boundary cell grows 1.0 yd on its outer side, and
+                // `MM_NOBLEED` drops that, so neighbouring groups only abut.
                 let bleed = if std::env::var("MM_NOBLEED").is_ok() {
                     0.0
                 } else {
@@ -458,7 +458,7 @@ fn main() -> anyhow::Result<()> {
         eprintln!("  MISS {}", k.0);
     }
     // Farthest group Z-mid first. The reference paints ascending by signed `Zmid - playerZ`, the
-    // player's own group last (`0x4ebeb0`).
+    // player's own group last.
     tiles.sort_by(|a, b| {
         (a.midz - pm[2])
             .abs()

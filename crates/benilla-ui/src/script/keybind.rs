@@ -1,11 +1,10 @@
 //! The key-binding table behind `GetBinding`, `SetBinding`, `LoadBindings` and their kin, in the
 //! reference's two halves. The commands are what `Bindings.xml` declared (the core's off the
-//! player's chain, then each addon's, through the one loader `0x4b6f70`): a name, its Lua body,
-//! `runOnUp`, and the one flat list `GetBinding` walks, whose section headers are rows of their
-//! own. The keys are a separate table of chord to command name, spelled
-//! `[ALT-][CTRL-][SHIFT-]<TOKEN>` and matched by string equality, which `SetBinding` writes without
-//! reading the command (`0x4b7490`): the live set the dispatcher probes, the stored account and
-//! character sets, and the defaults `WTF\DefaultBindings.wtf` fills (`0x4b62b0`).
+//! player's chain, then each addon's): a name, its Lua body, `runOnUp`, and the one flat list
+//! `GetBinding` walks, whose section headers are rows of their own. The keys are a separate table
+//! of chord to command name, spelled `[ALT-][CTRL-][SHIFT-]<TOKEN>` and matched by string equality,
+//! which `SetBinding` writes without reading the command: the live set the dispatcher probes, the
+//! stored account and character sets, and the defaults `WTF\DefaultBindings.wtf` fills.
 
 use std::collections::HashMap;
 
@@ -23,10 +22,10 @@ pub enum KeybindRequest {
 /// One key of a set: the chord and the command name it runs, as `SetBinding` stored it.
 pub type KeyBinding = (String, String);
 
-/// `SetBinding`'s only refusal: the alias step of `CBindings::SetBinding` (`0x4b7490`), then
-/// `IsValidBindingKeyString` (`0x4b7890`); no command is consulted. `Some` is the key to store,
-/// upper-cased because the table's hash and compare fold case (`0x64b3f0`, `0x64a4c0`). The alias
-/// step ignores case but the validator does not (`0x64a480`), so `"mousewheelup"` is refused.
+/// `SetBinding`'s only refusal: the alias step of `CBindings::SetBinding`, then
+/// `IsValidBindingKeyString`; no command is consulted. `Some` is the key to store, upper-cased
+/// because the table's hash and compare fold case. The alias step ignores case but the validator
+/// does not, so `"mousewheelup"` is refused.
 pub fn normalize_binding_key(key: &str) -> Option<String> {
     // Eleven punctuation names become their character on a whole-string match only, so
     // `SHIFT-LEFTBRACKET` is refused where `SHIFT-[` passes.
@@ -50,9 +49,9 @@ pub fn normalize_binding_key(key: &str) -> Option<String> {
     is_valid_binding_key(key).then(|| key.to_ascii_uppercase())
 }
 
-/// `IsValidBindingKeyString 0x4b7890`, arm for arm.
+/// `IsValidBindingKeyString`, arm for arm.
 fn is_valid_binding_key(key: &str) -> bool {
-    // 1. Modifier prefixes, in any order and any number of times (`0x4b78a0`-`0x4b78d0`).
+    // 1. Modifier prefixes, in any order and any number of times.
     let mut rest = key;
     while let Some(next) = ["SHIFT-", "CTRL-", "ALT-"]
         .iter()
@@ -60,11 +59,11 @@ fn is_valid_binding_key(key: &str) -> bool {
     {
         rest = next;
     }
-    // 2. One character or none passes (`0x4b78e6`): `SHIFT-` alone is a legal key.
+    // 2. One character or none passes: `SHIFT-` alone is a legal key.
     if rest.chars().count() <= 1 {
         return true;
     }
-    // 3. `F`, `NUMPAD` or `BUTTON` (`0x846c04`) followed by digits only.
+    // 3. `F`, `NUMPAD` or `BUTTON` followed by digits only.
     for prefix in ["F", "NUMPAD", "BUTTON"] {
         if let Some(digits) = rest.strip_prefix(prefix) {
             if !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()) {
@@ -72,7 +71,7 @@ fn is_valid_binding_key(key: &str) -> bool {
             }
         }
     }
-    // 4. The 26 names at `0x846c20`-`0x846c84`: no lone modifier, `SCROLLLOCK` or `PAUSE`.
+    // 4. The 26 names: no lone modifier, `SCROLLLOCK` or `PAUSE`.
     const NAMES: [&str; 26] = [
         "SPACE",
         "NUMPADPLUS",
@@ -108,7 +107,7 @@ fn is_valid_binding_key(key: &str) -> bool {
 #[derive(Clone, Debug)]
 struct Entry {
     name: String,
-    /// `runOnUp="true"`: the release runs the body again (`0x4b7bf1`).
+    /// `runOnUp="true"`: the release runs the body again.
     run_on_up: bool,
     /// `hidden="true"`: a full binding, left out of `GetNumBindings`/`GetBinding`.
     hidden: bool,
@@ -119,8 +118,8 @@ struct Entry {
 /// One row of the list `GetNumBindings`/`GetBinding` walk, in load order.
 #[derive(Clone, Debug)]
 enum Row {
-    /// A section header, `HEADER_<header>`: the reference stores `sprintf("HEADER_%s", header)`
-    /// (`0x846f58`) as a row of its own with a display ordinal and no script (`0x4b72f5`-`0x4b72fa`).
+    /// A section header, `HEADER_<header>`: the reference stores `sprintf("HEADER_%s", header)` as
+    /// a row of its own with a display ordinal and no script.
     Header(String),
     /// A command, an index into [`KeybindState::entries`].
     Command(usize),
@@ -151,7 +150,7 @@ pub(crate) struct KeybindState {
 }
 
 /// `SetBinding(set, key, command)` on one key list: unbind `key` everywhere, then bind it to the
-/// command unless that is empty (`0x4b7490`, where an empty action is the unbind). The key is one
+/// command unless that is empty (where an empty action is the unbind). The key is one
 /// [`normalize_binding_key`] accepted.
 fn bind_key(list: &mut Vec<KeyBinding>, key: String, command: Option<&str>) {
     list.retain(|(k, _)| k != &key);
@@ -161,7 +160,7 @@ fn bind_key(list: &mut Vec<KeyBinding>, key: String, command: Option<&str>) {
 }
 
 /// A list of `(key, command)` pairs applied in order through [`bind_key`], a key the validator
-/// refuses dropped: how the `.wtf` loader (`0x4b6140`) fills a set, line by line.
+/// refuses dropped: how the `.wtf` loader fills a set, line by line.
 fn key_list(pairs: impl IntoIterator<Item = KeyBinding>) -> Vec<KeyBinding> {
     let mut list = Vec::new();
     for (key, command) in pairs {
@@ -172,9 +171,9 @@ fn key_list(pairs: impl IntoIterator<Item = KeyBinding>) -> Vec<KeyBinding> {
     list
 }
 
-/// A `.wtf` bindings file as the reference's reader (`0x4b6140`) takes it: lines split on CR and
-/// LF, a line counted only when it opens with `bind ` in any case (`0x4b61ea`), then the key up to
-/// the next space and the rest of the line as the command (`0x4b620d`), handed to `SetBinding`.
+/// A `.wtf` bindings file as the reference's reader takes it: lines split on CR and LF, a line
+/// counted only when it opens with `bind ` in any case, then the key up to the next space and the
+/// rest of the line as the command, handed to `SetBinding`.
 pub fn parse_bindings_wtf(text: &str) -> Vec<KeyBinding> {
     text.split(['\r', '\n'])
         .filter_map(|line| {
@@ -190,9 +189,8 @@ pub fn parse_bindings_wtf(text: &str) -> Vec<KeyBinding> {
 
 impl KeybindState {
     /// The rows `GetNumBindings`/`GetBinding` enumerate: every header and every command but a
-    /// `hidden="true"` one, which the reference numbers from a second counter, negated
-    /// (`0x4b73da`-`0x4b73e5`), so `GetBinding`'s ordinal walk (`0x4b7c80`) never reaches it and
-    /// `GetNumBindings` (`0x4b7f40`) counts only the first.
+    /// `hidden="true"` one, which the reference numbers from a second counter, negated, so
+    /// `GetBinding`'s ordinal walk never reaches it and `GetNumBindings` counts only the first.
     fn visible(&self) -> impl Iterator<Item = &Row> {
         self.rows.iter().filter(|r| match r {
             Row::Header(_) => true,
@@ -200,8 +198,7 @@ impl KeybindState {
         })
     }
 
-    /// The live keys bound to `command`, in bind order; names compare case-insensitively
-    /// (`0x64a4c0`).
+    /// The live keys bound to `command`, in bind order; names compare case-insensitively.
     fn keys_of<'a>(&'a self, command: &'a str) -> impl Iterator<Item = &'a String> + 'a {
         self.live
             .iter()
@@ -210,7 +207,7 @@ impl KeybindState {
     }
 
     /// Open a section: a `HEADER_<header>` row, unless one of that name exists, which the reference
-    /// refuses (`0x4b71c9`-`0x4b7258`) and loads the binding under the section already open.
+    /// refuses and loads the binding under the section already open.
     fn open_header(&mut self, header: &str) {
         let name = format!("HEADER_{header}");
         if !self
@@ -223,8 +220,8 @@ impl KeybindState {
     }
 
     /// `SetBinding(key[, command])` on the live set: refused only for a key string the validator
-    /// rejects (`0x4b762c`). The command is never read (`0x4b7490`), so a name no `Bindings.xml`
-    /// declared is stored and answered like any other.
+    /// rejects. The command is never read, so a name no `Bindings.xml` declared is stored and
+    /// answered like any other.
     fn set_binding(&mut self, key: &str, command: Option<&str>) -> bool {
         let Some(key) = normalize_binding_key(key) else {
             return false;
@@ -275,10 +272,10 @@ impl KeybindState {
         self.requests.push(KeybindRequest::Save(which));
     }
 
-    /// Append one parsed `Bindings.xml`, as the loader `0x4b6f70` does: a foreign `platform` skips
-    /// the node (`0x4b70c3`-`0x4b70e5`); a name already defined skips it before its header is
-    /// read (`0x4b70f1`-`0x4b717e`), so the first definition keeps it and no handed-out index
-    /// moves; a `header` adds its `HEADER_<header>` row before the binding's own.
+    /// Append one parsed `Bindings.xml`, as the loader does: a foreign `platform` skips the node; a
+    /// name already defined skips it before its header is read, so the first definition keeps it
+    /// and no handed-out index moves; a `header` adds its `HEADER_<header>` row before the
+    /// binding's own.
     ///
     /// `fallback_header` is an addon's name. Deviation: an addon file whose first binding has no
     /// header opens a `HEADER_<addon>` row, where the reference files those rows under the
@@ -314,26 +311,26 @@ impl KeybindState {
     }
 }
 
-/// The `platform="…"` value that registers: `"windows"` (`0x846f98`), the PC build's, on every OS,
-/// since benilla answers as the PC build (`IsMacClient` nil, `client.rs`); the Mac build compares
-/// against `"mac"` (`0x4e28f8`) and so has the `ITUNES_*` rows.
+/// The `platform="…"` value that registers: `"windows"`, the PC build's, on every OS, since benilla
+/// answers as the PC build (`IsMacClient` nil, `client.rs`); the Mac build compares against `"mac"`
+/// and so has the `ITUNES_*` rows.
 const THIS_PLATFORM: &str = "windows";
 
 impl super::UiScript {
     /// Register the core's `Interface\FrameXML\Bindings.xml`, at the reference's point in the UI
-    /// load: after the `FrameXML.toc` walk (`0x48ffed`), before the addons (`0x490018`).
+    /// load: after the `FrameXML.toc` walk, before the addons.
     pub fn register_bindings(&self, bindings: &[Binding]) {
         self.model_mut().keybinds.register(None, bindings);
     }
 
     /// Register one addon's parsed `Bindings.xml`, at the reference's point in the addon load:
-    /// after its `.toc` files, before its saved variables (`0x51f443`).
+    /// after its `.toc` files, before its saved variables.
     pub fn register_addon_bindings(&mut self, addon: &str, bindings: &[Binding]) {
         self.model_mut().keybinds.register(Some(addon), bindings);
     }
 
-    /// Set 0, the defaults, from `WTF\DefaultBindings.wtf` ([`parse_bindings_wtf`]), as
-    /// `0x4b62b0` loads it: each pair through `SetBinding(0, key, command)`.
+    /// Set 0, the defaults, from `WTF\DefaultBindings.wtf` ([`parse_bindings_wtf`]), as the
+    /// reference loads it: each pair through `SetBinding(0, key, command)`.
     pub fn set_default_bindings(&mut self, pairs: Vec<KeyBinding>) {
         set_field!(self, keybinds.defaults, key_list(pairs));
     }
@@ -430,11 +427,10 @@ pub(crate) fn register_addon_bindings(lua: &Lua, addon: &str, bindings: &[Bindin
         .register(Some(addon), bindings);
 }
 
-/// `CBindings::RunCommand` (`0x4b7b50`): look the command up by name (`0x4b7b77`); on a release
-/// run nothing unless it is `runOnUp` (`0x4b7bf1`); else set the global `keystate` to `"down"` or
-/// `"up"` (`0x4b7c0f`), run the body, and set `keystate` to nil (`0x4b7c42`-`0x4b7c4e`), since the
-/// client's in-world `_G` has none (`reference/3.3.5a-globals.tsv`). `Ok(false)` when nothing
-/// ran.
+/// `CBindings::RunCommand`: look the command up by name; on a release run nothing unless it is
+/// `runOnUp`; else set the global `keystate` to `"down"` or `"up"`, run the body, and set
+/// `keystate` to nil, since the client's in-world `_G` has none (`reference/3.3.5a-globals.tsv`).
+/// `Ok(false)` when nothing ran.
 pub(crate) fn run_command(lua: &Lua, command: &str, down: bool) -> mlua::Result<bool> {
     let (name, body) = {
         let model = lua
@@ -489,10 +485,10 @@ fn reduced_keys(key: &str) -> Vec<String> {
         .collect()
 }
 
-/// The binding globals. `GetBinding(i)` answers the row's name and then every key bound to it
-/// (`0x4b7f60`: `1 + matches` values), so a `HEADER_*` row answers its name alone, which the stock
-/// window reads as three names (`Blizzard_BindingUI.lua:84`, `:87`). Only `GetNumBindings` and
-/// `GetBinding` skip hidden rows.
+/// The binding globals. `GetBinding(i)` answers the row's name and then every key bound to it (:
+/// `1 + matches` values), so a `HEADER_*` row answers its name alone, which the stock window reads
+/// as three names (`Blizzard_BindingUI.lua:84`, `:87`). Only `GetNumBindings` and `GetBinding` skip
+/// hidden rows.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "GetNumBindings",
@@ -531,10 +527,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(if ok { Some(1) } else { None })
         })?,
     )?;
-    // `RunBinding(command[, "up"])` (`0x4b8180`): the command's body through `RunCommand`
-    // (`0x4b81e0`), a release when the second argument is `"up"` in any case (`0x4b81c5`), else a
-    // press. Not a hardware event, so the movement functions' gate refuses unless a key's own
-    // body is already running.
+    // `RunBinding(command[, "up"])`: the command's body through `RunCommand`, a release when the
+    // second argument is `"up"` in any case, else a press. Not a hardware event, so the movement
+    // functions' gate refuses unless a key's own body is already running.
     lua.globals().set(
         "RunBinding",
         lua.create_function(|lua, (command, state): (Value, Option<Value>)| {
@@ -689,8 +684,7 @@ mod tests {
     #[test]
     fn the_list_reads_like_the_reference() {
         let s = script();
-        // A header row answers its name alone; a command, its name and then every key, no
-        // category (`0x4b7f60`).
+        // A header row answers its name alone; a command, its name and then every key, no category.
         assert_eq!(
             rows(&s),
             [
@@ -753,8 +747,7 @@ mod tests {
                 .unwrap(),
             ""
         );
-        // The command is never read (`0x4b7490`): a name no file declared is stored and
-        // answered.
+        // The command is never read: a name no file declared is stored and answered.
         assert!(s
             .eval::<bool>(r#"return SetBinding("CTRL-Y", "TOGGLESTATS") == 1"#)
             .unwrap());
@@ -763,14 +756,14 @@ mod tests {
                 .unwrap(),
             "TOGGLESTATS"
         );
-        // The wheel binds to a `runOnUp` command: `0x4b7490` never reads the command.
+        // The wheel binds to a `runOnUp` command: the reference never reads the command.
         assert!(s
             .eval::<bool>(r#"return SetBinding("SHIFT-MOUSEWHEELUP", "MOVEFORWARD") == 1"#)
             .unwrap());
         assert!(s
             .eval::<bool>(r#"return SetBinding("MOUSEWHEELDOWN", "CAMERAZOOMIN") == 1"#)
             .unwrap());
-        // Refused by `IsValidBindingKeyString` (`0x4b7890`), on the pure unbind too.
+        // Refused by `IsValidBindingKeyString`, on the pure unbind too.
         for bad in ["SHIFT", "ALT", "UNKNOWN", "SCROLLLOCK", "SHIFT-LEFTBRACKET"] {
             assert!(
                 s.eval::<bool>(&format!(r#"return SetBinding("{bad}", "JUMP") == nil"#))
@@ -911,9 +904,9 @@ mod tests {
             "PROBEHIDDEN"
         );
 
-        // A duplicate's header is never read (`0x4b70f1`-`0x4b717e`); a header already in the
-        // list is refused and the row files under the open one (`0x4b71c9`-`0x4b7258`); a hidden
-        // row's header is a row, since the header is written before the hidden test (`0x4b73bc`).
+        // A duplicate's header is never read; a header already in the list is refused and the row
+        // files under the open one; a hidden row's header is a row, since the header is written
+        // before the hidden test.
         let parsed = parse(
             r#"<Bindings>
                 <Binding name="JUMP" header="DUPLICATE">Dup();</Binding>
@@ -938,8 +931,8 @@ mod tests {
         );
     }
 
-    /// The PC build's filter on every OS (`0x4b70c3`-`0x4b70e5` against `"windows"`), so the
-    /// stock `platform="mac"` iTunes rows are never commands.
+    /// The PC build's filter on every OS (against `"windows"`), so the stock `platform="mac"`
+    /// iTunes rows are never commands.
     #[test]
     fn a_binding_for_another_platform_does_not_register() {
         let mut s = script();
@@ -985,9 +978,9 @@ mod tests {
         assert_eq!(snap[1], ("JUMP".to_string(), vec!["F".to_string()]));
     }
 
-    /// The `.wtf` reader (`0x4b6140`): CR or LF ends a line, `bind ` opens one in any case, the key
-    /// runs to the next space and the command is the rest; `SetBinding` then refuses a bad key and
-    /// a later line steals an earlier one's key.
+    /// The `.wtf` reader: CR or LF ends a line, `bind ` opens one in any case, the key runs to the
+    /// next space and the command is the rest; `SetBinding` then refuses a bad key and a later line
+    /// steals an earlier one's key.
     #[test]
     fn a_bindings_wtf_reads_as_the_reference_reads_it() {
         let pairs = parse_bindings_wtf(
@@ -1007,9 +1000,9 @@ mod tests {
         );
     }
 
-    /// `RunBinding(command[, "up"])` runs the body through `RunCommand` in the call
-    /// (`0x4b8180`-`0x4b81e0`): `keystate` set for the run and nil after (`0x4b7c42`), a release
-    /// only for a `runOnUp` command (`0x4b7bf1`), an unknown name a no-op, no name an error.
+    /// `RunBinding(command[, "up"])` runs the body through `RunCommand` in the call: `keystate` set
+    /// for the run and nil after, a release only for a `runOnUp` command, an unknown name a no-op,
+    /// no name an error.
     #[test]
     fn run_binding_runs_the_body_in_the_call() {
         let s = script();

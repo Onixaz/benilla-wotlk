@@ -1,12 +1,12 @@
 //! The reference's audio math, ported by behaviour in plain f32/f64 rather than its x87
 //! double-rounding; the differences sit below the 255-level quantum it fed FMOD.
 //!
-//! Deviation: the mantissa-bit volume curve (`0x7a5d70`, `(v·255+512.5).bits >> 14 & 0xff`) and
-//! the `__ftol` truncations are dropped, because they only quantized to FMOD's integer levels and
-//! our backend takes float amplitudes.
+//! Deviation: the mantissa-bit volume curve (`(v·255+512.5).bits >> 14 & 0xff`) and the `__ftol`
+//! truncations are dropped, because they only quantized to FMOD's integer levels and our backend
+//! takes float amplitudes.
 
-/// Per-shot volume variation (`0x458c60`): `(draw − 15)·0.01 + base`, or `base` with no draw,
-/// scaled by `mult` and clamped to `[0,1]`.
+/// Per-shot volume variation: `(draw − 15)·0.01 + base`, or `base` with no draw, scaled by `mult`
+/// and clamped to `[0,1]`.
 pub(crate) fn variation_volume(draw: Option<i32>, base: f32, mult: f32) -> f32 {
     let v = match draw {
         None => base as f64,
@@ -25,33 +25,33 @@ pub(crate) fn variation_volume(draw: Option<i32>, base: f32, mult: f32) -> f32 {
     }
 }
 
-/// Per-shot pitch variation (`0x458da0`): the absolute frequency in Hz handed to
-/// `FSOUND_SetFrequency`, `(22050 · (draw + 0x55)) / 100` in wrapping 32-bit integer math.
-/// Callers divide by the file's sample rate, so a 44.1 kHz file plays at half speed, as in FMOD.
+/// Per-shot pitch variation: the absolute frequency in Hz handed to `FSOUND_SetFrequency`,
+/// `(22050 · (draw + 0x55)) / 100` in wrapping 32-bit integer math. Callers divide by the file's
+/// sample rate, so a 44.1 kHz file plays at half speed, as in FMOD.
 pub(crate) fn variation_pitch_freq(draw: i32) -> i32 {
     22050i32.wrapping_mul(draw.wrapping_add(0x55)) / 100
 }
 
 /// The variation draw: a raw PRNG word scaled to `0..=30` by multiply-high, not a modulo
-/// (`mov ecx,0x1f` at `0x458d35`/`0x458e85` through the `0x455c70` mul-high helper).
+/// (`mov ecx,0x1f` through the mul-high helper).
 pub(crate) fn variation_draw(raw: u32) -> i32 {
     ((u64::from(raw) * 31) >> 32) as i32
 }
 
-/// Squared listener-to-source distance; every reference gate compares squared (`0x45ce16`).
+/// Squared listener-to-source distance; every reference gate compares squared.
 pub(crate) fn dist_sq(a: bevy::math::Vec3, b: bevy::math::Vec3) -> f32 {
     a.distance_squared(b)
 }
 
-/// Selection-time audibility (`0x45cdf0`): strictly `maxdist² > d²`, with `maxdist` the kit's
-/// `DistanceCutoff`. Callers skip the gate for a non-positional 0 (the `0x7a5ca0` sentinel).
+/// Selection-time audibility: strictly `maxdist² > d²`, with `maxdist` the kit's `DistanceCutoff`.
+/// Callers skip the gate for a non-positional 0.
 pub(crate) fn audible(d_sq: f32, maxdist: f32) -> bool {
     maxdist * maxdist > d_sq
 }
 
-/// The near-field attenuation layered on top of the rolloff (`0x7a5000`, channel `+0x78`): full
-/// inside 90% of `maxdist`, a linear ramp to 0 across the last 10%. Beyond `maxdist` callers
-/// virtualize the channel instead.
+/// The near-field attenuation layered on top of the rolloff (channel `+0x78`): full inside 90% of
+/// `maxdist`, a linear ramp to 0 across the last 10%. Beyond `maxdist` callers virtualize the
+/// channel instead.
 pub(crate) fn near_field_atten(d_sq: f32, maxdist: f32) -> f32 {
     let band = maxdist * 0.1;
     if band <= 0.0 {
@@ -62,17 +62,17 @@ pub(crate) fn near_field_atten(d_sq: f32, maxdist: f32) -> f32 {
     1.0 - clamped / band
 }
 
-// NOTE: `0x457960` is the SFX-bus auto-duck, not a music crossfade, and benilla does not model
+// NOTE: the reference is the SFX-bus auto-duck, not a music crossfade, and benilla does not model
 // it. The music transition is a 4.0 s backend fade-stop (`sound::zone`).
 
-/// The global 3D rolloff factor: `FSOUND_3D_SetRolloffFactor(4.0)` at device init (`0x7a47b1`,
-/// prefill `0x7a495a`), the `SoundRolloffFactor` CVar's default.
+/// The global 3D rolloff factor: `FSOUND_3D_SetRolloffFactor(4.0)` at device init, the
+/// `SoundRolloffFactor` CVar's default.
 pub(crate) const ROLLOFF_FACTOR: f32 = 4.0;
 
 /// FMOD 3.x's inverse rolloff from the kit's `MinDistance`: full inside it,
 /// `min_dist / (min_dist + factor·(d − min_dist))` beyond. The reference hands FMOD
-/// `Sample_SetMinMaxDistance(min_dist, 100000.0)` (`0x458ed0`); the backend's own attenuation is
-/// off, so the audible gain is `rolloff · near_field_atten`.
+/// `Sample_SetMinMaxDistance(min_dist, 100000.0)`; the backend's own attenuation is off, so the
+/// audible gain is `rolloff · near_field_atten`.
 pub(crate) fn fmod_rolloff(d_sq: f32, min_dist: f32) -> f32 {
     if min_dist <= 0.0 {
         return 1.0;

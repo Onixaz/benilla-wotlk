@@ -95,10 +95,9 @@ fn on_session_end(In(_): In<SessionEvent>, mut death_net: ResMut<DeathNet>) {
     *death_net = DeathNet::default();
 }
 
-/// Our corpse streaming in: latch its guid for the reclaim send. The reference's latch
-/// `[0xb4e328]` has one writer, `0x4920d0`, gated on `CORPSE_FIELD_OWNER == me` and
-/// `CORPSE_FIELD_FLAGS` bit 0 clear, so bones never arm it; `RetrieveCorpse` sends whatever is in
-/// the latch.
+/// Our corpse streaming in: latch its guid for the reclaim send. The reference's latch has one
+/// writer, gated on `CORPSE_FIELD_OWNER == me` and `CORPSE_FIELD_FLAGS` bit 0 clear, so bones never
+/// arm it; `RetrieveCorpse` sends whatever is in the latch.
 pub(crate) fn note_corpse(
     guid: u64,
     kind: EntityKind,
@@ -114,8 +113,8 @@ pub(crate) fn note_corpse(
     }
 }
 
-/// The same latch, re-asked when `CORPSE_FIELD_FLAGS` changes under a live guid, as the
-/// reference's `FLAGS` mirror handler `0x5d6d60` does, so an in-place flip to bones drops it.
+/// The same latch, re-asked when `CORPSE_FIELD_FLAGS` changes under a live guid, as the reference's
+/// `FLAGS` mirror handler does, so an in-place flip to bones drops it.
 pub(crate) fn recheck_corpse(
     guid: u64,
     fields: &ObjectFields,
@@ -162,7 +161,7 @@ fn corpse_query(
 }
 
 /// `SMSG_CORPSE_RECLAIM_DELAY`, anchored at arrival on the clock the feed reads. The 1.12 client
-/// re-fires the corpse-range events on each (`0x4962d0`), hence the generation bump.
+/// re-fires the corpse-range events on each, hence the generation bump.
 fn corpse_reclaim_delay(delay_ms: u32, now_secs: f64, death_net: &mut DeathNet) {
     death_net.reclaim_at = Some(now_secs + f64::from(delay_ms) / 1000.0);
     death_net.reclaim_generation = death_net.reclaim_generation.wrapping_add(1);

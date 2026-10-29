@@ -159,9 +159,9 @@ fn on_play_spell_visual(
     mut out: MessageWriter<KitPush>,
 ) {
     // `SMSG_PLAY_SPELL_IMPACT` plays at stage 1 (`0x8006c0`), the visual's at stage 0 (`0x800610`).
-    // Both are the same discrete play (`0x5fbf50`), so they share one push. The one difference is
-    // stage 0's flag `0x80`, which latches the kit's anim as the unit's special idle (`0x73b140`).
-    // Nothing here models that latch yet; the push that does takes a stage field.
+    // Both are the same discrete play, so they share one push. The one difference is stage 0's flag
+    // `0x80`, which latches the kit's anim as the unit's special idle (`0x73b140`). Nothing here
+    // models that latch yet; the push that does takes a stage field.
     if let SessionEvent::PlaySpellVisual { unit, kit_id }
     | SessionEvent::PlaySpellImpact { unit, kit_id } = ev
     {
@@ -174,8 +174,8 @@ fn attack_start(attacker: u64, victim: u64, commands: &mut Commands, index: &Gui
     // The Ready idle rides this window: the client's gate is the auto-attack target being set.
     debug!("net: attack start {attacker:#x} → {victim:#x}");
     if let Some(&e) = index.0.get(&attacker) {
-        // Melee start drops the `0x400` weapon-visual hold (`0x60fc50`): a shooter closing to
-        // melee leaves the drawn idle.
+        // Melee start drops the `0x400` weapon-visual hold: a shooter closing to melee leaves the
+        // drawn idle.
         commands
             .entity(e)
             .insert(Engaged(victim))
@@ -194,7 +194,7 @@ fn attack_stop(
     debug!("net: attack stop {attacker:#x} → {victim:#x}");
     if let Some(&e) = index.0.get(&attacker) {
         commands.entity(e).remove::<Engaged>();
-        // `0x624e40`: a pending swing flushes as text only; death and stun arrive as this packet.
+        // A pending swing flushes as text only; death and stun arrive as this packet.
         flushes.write(SwingFlush(e));
     }
 }
@@ -204,15 +204,15 @@ fn attack_swing_error(error: AttackSwingError, edges: &mut MessageWriter<SwingRe
     edges.write(SwingRefusalEdge::Refused(error));
 }
 
-/// `SMSG_CANCEL_COMBAT`: the server stopped our attack. The reference's handler `0x5e7dd0` is the
-/// refusal family's fourth arm verbatim.
+/// `SMSG_CANCEL_COMBAT`: the server stopped our attack. The reference's handler is the refusal
+/// family's fourth arm verbatim.
 fn cancel_combat(edges: &mut MessageWriter<SwingRefusalEdge>) {
     edges.write(SwingRefusalEdge::CombatCancelled);
 }
 
 /// `SMSG_FEIGN_DEATH_RESISTED`: one red "Resisted" line and nothing else. The reference's handler
-/// `0x6e9800` is a bare `DisplayError(421)` (`0x496720`), with no latch and no state. vmangos sends
-/// it together with `SMSG_CANCEL_COMBAT` (`Unit.cpp:9469-9470`).
+/// is a bare `DisplayError(421)`, with no latch and no state. vmangos sends it together with
+/// `SMSG_CANCEL_COMBAT` (`Unit.cpp:9469-9470`).
 fn feign_death_resisted(errors: &mut UiErrorKeys) {
     debug!("net: feign death resisted");
     errors.0.push(UiError::key("ERR_FEIGN_DEATH_RESISTED"));
@@ -225,7 +225,7 @@ fn ai_reaction(
     index: &GuidIndex,
     reactions: &mut MessageWriter<AiReactionMessage>,
 ) {
-    // Audio only (`0x6056e0`): 2 hostile and 0 alert flare; any other value does nothing.
+    // Audio only: 2 hostile and 0 alert flare; any other value does nothing.
     debug!("net: ai reaction {reaction} on {unit:#x}");
     if matches!(reaction, 0 | 2) {
         if let Some(&e) = index.0.get(&unit) {
@@ -238,8 +238,8 @@ fn ai_reaction(
 }
 
 /// One melee swing (`SMSG_ATTACKERSTATEUPDATE`): the attacker's swing plays now and the victim's
-/// feedback waits for the clip's attack-hit key (`0x6247d0`); the log entry and the centre text are
-/// the combat log's (`0x7512b0`).
+/// feedback waits for the clip's attack-hit key; the log entry and the centre text are the combat
+/// log's (`0x7512b0`).
 fn attacker_state(
     mut s: AttackerState,
     index: &GuidIndex,
@@ -252,8 +252,8 @@ fn attacker_state(
     seq: u64,
 ) {
     let victim = index.0.get(&s.victim).copied();
-    // Our landed swing clears the refusal latch (`0x6259b6` → `0x5ea800` → `0x5ecdb0(0)`) when we
-    // are the attacker (`0x5fa6d0`) and the victim resolves; sent from here to keep packet order.
+    // Our landed swing clears the refusal latch when we are the attacker and the victim resolves;
+    // sent from here to keep packet order.
     if self_guid.0 == Some(s.attacker) && victim.is_some() {
         edges.write(SwingRefusalEdge::Landed);
     }
@@ -266,8 +266,8 @@ fn attacker_state(
             ),
         );
     }
-    // The full-block synthesis (`0x625e20`): a resolved victim, no damage and a blocked amount
-    // read as state 5, BLOCK, before any consumer; a partial block stays state 1.
+    // The full-block synthesis: a resolved victim, no damage and a blocked amount read as state 5,
+    // BLOCK, before any consumer; a partial block stays state 1.
     if victim.is_some() && s.damage == 0 && s.blocked != 0 {
         s.victim_state = 5;
     }
@@ -281,9 +281,9 @@ fn attacker_state(
         seq,
     };
     if let Some(&e) = index.0.get(&s.attacker) {
-        // A resolved attacker draws melee (`0x625829` → `SetSheatheState(1)` at `0x62583a`) before
-        // any hit-info handling, even when `HitInfo & 0x10000` suppresses the swing's animation;
-        // the per-animation reconcile never forces melee over a drawn bow (`0x5fe0f9`/`0x5fe13b`).
+        // A resolved attacker draws melee (`SetSheatheState(1)`) before any hit-info handling, even
+        // when `HitInfo & 0x10000` suppresses the swing's animation; the per-animation reconcile
+        // never forces melee over a drawn bow.
         sheaths.write(SheathRequest {
             entity: e,
             state: 1,
@@ -294,8 +294,8 @@ fn attacker_state(
             ..swing
         });
     } else if swing.victim.is_some_and(|v| {
-        // The unresolved-attacker leg (`0x625823` → `0x625a3e`) calls the gated dispatcher
-        // (`0x625a6d` → `0x624530`), so the lootable gate applies here too.
+        // The unresolved-attacker leg calls the gated dispatcher, so the lootable gate applies here
+        // too.
         !stores.get(v).is_ok_and(|s| s.0.unit_lootable())
     }) {
         // An attacker we cannot resolve cannot swing, so the victim's feedback fires now, in
@@ -310,7 +310,7 @@ fn attacker_state(
 }
 
 /// `SMSG_TEXT_EMOTE`: the animation needs the performer streamed, the chat line only needs their
-/// name, so an off-screen emote still prints (reference: `0x49dbe0`).
+/// name, so an off-screen emote still prints.
 fn text_emote(
     guid: u64,
     text_emote: u32,
@@ -338,7 +338,7 @@ fn emote(guid: u64, emote_id: u32, index: &GuidIndex, out: &mut MessageWriter<Em
 
 /// `SMSG_PLAY_SPELL_VISUAL` (stage 0: eating, drinking, mid-channel swaps) and
 /// `SMSG_PLAY_SPELL_IMPACT` (stage 1: a trainer's learn effect): a kit play on the unit. Only a
-/// streamed unit takes a [`PlaySeq`] stamp (`0x468460`, unit typemask).
+/// streamed unit takes a [`PlaySeq`] stamp (unit typemask).
 fn play_spell_visual(
     unit: u64,
     kit_id: u32,
@@ -355,9 +355,9 @@ fn play_spell_visual(
     }
 }
 
-/// `SMSG_ENVIRONMENTALDAMAGELOG`'s visual (`0x624fcc` in `0x624f30`): the damage type's kit plays
-/// on the victim like any kit push (`0x60edf0`). The packet plays no sound: a fall's pain grunt
-/// is the client's own landing predictor (`0x602d00`, `creature_anim::env_damage`).
+/// `SMSG_ENVIRONMENTALDAMAGELOG`'s visual: the damage type's kit plays on the victim like any kit
+/// push. The packet plays no sound: a fall's pain grunt is the client's own landing predictor
+/// (`creature_anim::env_damage`).
 fn environmental_damage_log(
     e: EnvironmentalDamageLog,
     index: &GuidIndex,
@@ -429,8 +429,8 @@ mod tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
 
-    /// `0x8006c0` and `0x800610` both play on a streamed unit only (`0x468460`), and
-    /// AzerothCore's trainer buy sends kit 362 on the buyer through the impact.
+    /// `0x8006c0` and `0x800610` both play on a streamed unit only, and AzerothCore's trainer buy
+    /// sends kit 362 on the buyer through the impact.
     #[test]
     fn the_impact_and_the_visual_both_push_their_kit_on_a_streamed_unit() {
         const BUYER: u64 = 0x42;

@@ -1,5 +1,5 @@
 // The sky-dome gradient (`SkyExt`): the five Light.dbc SkyColor stops at the reference's ring
-// elevations, then the fog colour at and below the horizon (`0x6d0d10`, `0x6d0f50`), interpolated
+// elevations, then the fog colour at and below the horizon, interpolated
 // per fragment by elevation. Depth is the far pin in `sky_vertex.wgsl`; this writes colour only.
 #import bevy_pbr::{
     forward_io::VertexOutput,
@@ -17,8 +17,8 @@ struct SkyColors {
 };
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var<uniform> sky: SkyColors;
 
-// Glow `g` for a sun-relative azimuth phase, sampled linearly like `0x6d0f50` from the reference's
-// six-keyframe wrap-around table at `0xce9af8` (written by `0x6ce210`); 0.125 is the sun bearing.
+// Glow `g` for a sun-relative azimuth phase, sampled linearly like the reference from the reference's
+// six-keyframe wrap-around table; 0.125 is the sun bearing.
 fn azimuth_glow(phase: f32) -> f32 {
     let p = fract(phase);
     if (p < 0.125) { return mix(0.0, 1.0, (p + 0.125) / 0.25); } // wrap 0.875(g0)→1.125(g1)
@@ -30,8 +30,8 @@ fn azimuth_glow(phase: f32) -> f32 {
     else { return mix(0.0, 1.0, (p - 0.875) / 0.25); } // wrap 0.875(g0)→1.125(g1)
 }
 
-// One mid-ring's warped colour for glow `g` (`0x6d0f50`): `S^2` is the prepass S nested in the
-// per-segment S, and 0.7 is the constant at `0x7ffd7c`.
+// One mid-ring's warped colour for glow `g`: `S^2` is the prepass S nested in the
+// per-segment S, and 0.7 is the constant.
 fn warp_one(base: vec3<f32>, g: f32, s: f32) -> vec3<f32> {
     let s2 = s * s;
     if (g >= 0.0) {
@@ -45,7 +45,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let dir = normalize(in.world_position.xyz - view.world_position.xyz);
     let elev = degrees(asin(clamp(dir.y, -1.0, 1.0))); // −90..90, 0 = horizon
 
-    // Dawn/dusk warp (`0x6d0f50`): only the four mid rings, never the apex or the fog rim, and
+    // Dawn/dusk warp: only the four mid rings, never the apex or the fog rim, and
     // never brighter. The reference bakes it per vertex at 24 azimuth segments and interpolates,
     // hence the lerp of two segments; `+ 0.125` puts the sun bearing at glow phase 0.125.
     var s1 = sky.sky1.rgb;
@@ -82,7 +82,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
         col = mix(s1, sky.sky0.rgb, (elev - 16.8) / (90.0 - 16.8)); // warped ring1 to the raw apex
     }
 
-    // Raw gamma out: the reference draws the sky as raw DBC bytes, sRGB off (`0x6d4940`).
+    // Raw gamma out: the reference draws the sky as raw DBC bytes, sRGB off.
     let rgb = col;
     return vec4<f32>(rgb, 1.0);
 }

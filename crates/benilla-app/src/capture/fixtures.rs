@@ -707,8 +707,8 @@ pub(super) fn seed_ui_fixture(
                     ..Default::default()
                 },
             );
-            // The item-set block (`0x52b650`), Defias Leather with one of 5 equipped: the gold
-            // "(1/5)" header, the member ladder, a green (2) bonus and a gray (4) one.
+            // The item-set block, Defias Leather with one of 5 equipped: the gold "(1/5)" header,
+            // the member ladder, a green (2) bonus and a gray (4) one.
             let mut inv: benilla_ui::script::InventorySlots = Default::default();
             inv[4] = Some(benilla_ui::script::InvSlotView {
                 durability: None,
@@ -781,7 +781,7 @@ pub(super) fn seed_ui_fixture(
                 return;
             };
             // A ranked player under the cursor, pushed as the mouseover feed does, then the call
-            // `drive_mouseover_tooltip` makes: the title is `0x609370`'s rank leg over the name,
+            // `drive_mouseover_tooltip` makes: the title is the reference's rank leg over the name,
             // "Sergeant Bob".
             script.set_unit(
                 "mouseover",

@@ -1,17 +1,16 @@
-//! A `Bindings.xml`, its key-binding declarations, as the one loader both uses (`0x4b6f70`) reads
-//! it: the core's `Interface\FrameXML\Bindings.xml` off the player's chain, which `UI_Init`
-//! (`0x48fbf0`) loads at `0x490018` after the `FrameXML.toc` walk (`0x48ffed`), and each addon's,
-//! which `AddOn_Load` (`0x51f240`) loads at `0x51f443` after the addon's `.toc` files and before
-//! its saved variables. The stock file has 219 commands (94 `runOnUp`, 13 `header`, 3 `hidden`, 5
-//! `platform`) once its nine `debug` rows are skipped; the six `MOVEVIEW*` ones sit in an XML
-//! comment.
+//! A `Bindings.xml`, its key-binding declarations, as the one loader both uses reads it: the core's
+//! `Interface\FrameXML\Bindings.xml` off the player's chain, which `UI_Init` loads after the
+//! `FrameXML.toc` walk, and each addon's, which `AddOn_Load` loads after the addon's `.toc` files
+//! and before its saved variables. The stock file has 219 commands (94 `runOnUp`, 13 `header`, 3
+//! `hidden`, 5 `platform`) once its nine `debug` rows are skipped; the six `MOVEVIEW*` ones sit in
+//! an XML comment.
 //!
-//! A body is one Lua chunk; with `runOnUp="true"` it runs on press and again on release, the
-//! global `keystate` set to `"down"` or `"up"`. `header="X"` opens the section
-//! `BINDING_HEADER_X` that following header-less bindings join, in a flat list with `HEADER`
-//! pseudo-entries (`Blizzard_BindingUI.lua:87`). `hidden="true"` keeps a binding bindable but out
-//! of the Key Bindings window. `platform="mac"` marks the `ITUNES_REMOTE` rows; the loader skips
-//! another platform's row (`0x4b70c3`-`0x4b70e5`), here at registration.
+//! A body is one Lua chunk; with `runOnUp="true"` it runs on press and again on release, the global
+//! `keystate` set to `"down"` or `"up"`. `header="X"` opens the section `BINDING_HEADER_X` that
+//! following header-less bindings join, in a flat list with `HEADER` pseudo-entries
+//! (`Blizzard_BindingUI.lua:87`). `hidden="true"` keeps a binding bindable but out of the Key
+//! Bindings window. `platform="mac"` marks the `ITUNES_REMOTE` rows; the loader skips another
+//! platform's row, here at registration.
 
 use std::fmt;
 
@@ -56,12 +55,10 @@ impl std::error::Error for Error {
     }
 }
 
-/// Parse `Bindings.xml` text into its bindings, in document order, with the loader's own skips.
-/// It walks the root's children only (`0x4b701f`, then the sibling link at `0x4b745b`), so a
-/// nested `<Binding>` is never read; a child that is not a `<Binding>` (the tag matched
-/// case-insensitively, `0x64a4c0`) is skipped (`0x4b704c`). A row with no `name`
-/// (`0x4b7084`-`0x4b708d`), an empty body (`0x4b7093`-`0x4b709e`) or `debug="true"`
-/// (`0x4b70a4`-`0x4b70bd`) is skipped too, so the stock file's nine debug rows are not commands.
+/// Parse `Bindings.xml` text into its bindings, in document order, with the loader's own skips. It
+/// walks the root's children only, so a nested `<Binding>` is never read; a child that is not a
+/// `<Binding>` (the tag matched case-insensitively) is skipped. A row with no `name`, an empty body
+/// or `debug="true"` is skipped too, so the stock file's nine debug rows are not commands.
 pub fn parse(text: &str) -> Result<Vec<Binding>, Error> {
     // The reference's expat has no namespace processing, so an undeclared prefix is bound and the
     // text re-read rather than costing the file, as in `framexml::parse`.
@@ -134,14 +131,14 @@ pub fn parse_modified_clicks(text: &str) -> Result<Vec<ModifiedClick>, Error> {
         .collect())
 }
 
-/// Case-insensitive attribute lookup, as the reference's `GetAttribute 0x6f2cf0` folds case.
+/// Case-insensitive attribute lookup, as the reference's `GetAttribute` folds case.
 fn attr_ci(node: roxmltree::Node, name: &str) -> Option<String> {
     node.attributes()
         .find(|a| a.name().eq_ignore_ascii_case(name))
         .map(|a| a.value().to_string())
 }
 
-/// True only for a case-insensitive `"true"` (`0x6f1b30` has no `"false"` branch), so
+/// True only for a case-insensitive `"true"` (the reference has no `"false"` branch), so
 /// `runOnUp="1"` is false.
 fn attr_bool(node: roxmltree::Node, name: &str) -> bool {
     attr_ci(node, name).is_some_and(|v| v.eq_ignore_ascii_case("true"))
@@ -238,8 +235,8 @@ mod tests {
         );
     }
 
-    /// Registered under `""`, a nameless binding would shadow `GetBindingAction`'s empty answer
-    /// for an unbound key; the loader skips it (`0x4b7084`-`0x4b708d`).
+    /// Registered under `""`, a nameless binding would shadow `GetBindingAction`'s empty answer for
+    /// an unbound key; the loader skips it.
     #[test]
     fn nameless_bindings_are_skipped() {
         let binds = parse(
@@ -255,9 +252,8 @@ mod tests {
     }
 
     /// The loader's three skips beyond a missing name: a `<Binding>` below the root's children is
-    /// never walked (`0x4b701f`, the sibling link `0x4b745b`), an empty body is refused
-    /// (`0x4b7093`-`0x4b709e`), and a truthy `debug` skips the row (`0x4b70a4`-`0x4b70bd`), as
-    /// the stock file's nine debug rows are skipped. A whitespace body is not empty.
+    /// never walked, an empty body is refused, and a truthy `debug` skips the row, as the stock
+    /// file's nine debug rows are skipped. A whitespace body is not empty.
     #[test]
     fn nested_empty_and_debug_rows_are_not_bindings() {
         let binds = parse(

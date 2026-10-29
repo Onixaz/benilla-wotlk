@@ -455,8 +455,8 @@ fn the_fill_draws_beneath_the_border_art() {
     );
 }
 
-/// A StatusBar fill crops its texture rather than squeezing it (`0x770410`): at fraction f the
-/// quad is f of the width and samples u in [0, f].
+/// A StatusBar fill crops its texture rather than squeezing it: at fraction f the quad is f of the
+/// width and samples u in [0, f].
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_fill_crops_its_texture_rather_than_stretching_it() {

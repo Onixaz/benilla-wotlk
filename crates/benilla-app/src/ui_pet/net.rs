@@ -1,7 +1,7 @@
-//! The pet's packet handlers: `SMSG_PET_SPELLS` and `SMSG_PET_MODE` write [`PetBar`]; the
-//! refusals, the tame failure and the pet's sounds go to their queues. The pet's refusals share
-//! the player's red line but not its message tables: the reference maps them in their own handlers
-//! (`0x4bdb70`, `0x6e8eb0`) to say "your pet" where the player's say "you".
+//! The pet's packet handlers: `SMSG_PET_SPELLS` and `SMSG_PET_MODE` write [`PetBar`]; the refusals,
+//! the tame failure and the pet's sounds go to their queues. The pet's refusals share the player's
+//! red line but not its message tables: the reference maps them in their own handlers to say "your
+//! pet" where the player's say "you".
 
 use std::time::Instant;
 
@@ -110,7 +110,7 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
         bar.clear();
         return;
     }
-    // A new pet guid clears the attack latch (`0x4bc8ce`); a re-send from the same pet keeps it.
+    // A new pet guid clears the attack latch; a re-send from the same pet keeps it.
     if bar.spells.pet_guid != spells.pet_guid {
         bar.attacking = false;
     }
@@ -148,7 +148,7 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
             .collect::<Vec<_>>()
             .join(" ")
     );
-    // vmangos sends the pet's passives here too; the book skips `DO_NOT_DISPLAY` (`0x4b2f90`).
+    // vmangos sends the pet's passives here too; the book skips `DO_NOT_DISPLAY`.
     debug!(
         "net: pet spellbook — {}",
         spells
@@ -165,7 +165,7 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
             .join(" · ")
     );
     let now = Instant::now();
-    // `SetPet` (`0x4bc7e0`) re-arms the expiry on every packet, and a 0 duration clears it.
+    // `SetPet` re-arms the expiry on every packet, and a 0 duration clears it.
     bar.expires = (spells.duration_ms != 0)
         .then(|| now + std::time::Duration::from_millis(u64::from(spells.duration_ms)));
     bar.cooldowns.clear_silent();
@@ -174,8 +174,8 @@ fn pet_spells(spells: PetSpells, catalog: Option<&Spells>, bar: &mut PetBar) {
         bar.cooldowns.seed_pet(cd, display, now);
     }
     bar.spells = spells;
-    // `SetPet` (`0x4bc7e0`) ends in `SignalEvent(0x161)` on every packet (`0x4bc90c`), whatever
-    // changed: the one repaint a packet that moves only the pet's cooldowns gets.
+    // `SetPet` ends in `SignalEvent(0x161)` on every packet, whatever changed: the one repaint a
+    // packet that moves only the pet's cooldowns gets.
     bar.bar_signals = bar.bar_signals.wrapping_add(1);
 }
 
@@ -185,7 +185,7 @@ fn pet_mode(mode: PetMode, bar: &mut PetBar) {
         return;
     }
     debug!("net: pet mode — state {:#010x}", mode.state);
-    // The whole dword, as the client stores both packets' state (`0x4bc930`).
+    // The whole dword, as the client stores both packets' state.
     bar.spells.state = mode.state;
 }
 
@@ -197,10 +197,10 @@ fn pet_action_feedback(reason: u8, errors: &mut UiErrorKeys) {
     }
 }
 
-/// The reference's map (`0x4bdb70`, jump table `0x4bdbe8`): vmangos `FEEDBACK_PET_DEAD`,
-/// `FEEDBACK_NOTHING_TO_ATT`, `FEEDBACK_CANT_ATT_TARGET` and `FEEDBACK_NO_PATH_TO` (1-4) raise
-/// errorIds `0x150`, `0xa0`, `0xa1` and `0x151` through `0x496720`; other bytes show nothing.
-/// `ERR_PET_SPELL_NOPATH` has no 1.12 string, so a no-path order is silent in the reference too.
+/// The reference's map: vmangos `FEEDBACK_PET_DEAD`, `FEEDBACK_NOTHING_TO_ATT`,
+/// `FEEDBACK_CANT_ATT_TARGET` and `FEEDBACK_NO_PATH_TO` (1-4) raise errorIds `0x150`, `0xa0`,
+/// `0xa1` and `0x151`; other bytes show nothing. `ERR_PET_SPELL_NOPATH` has no 1.12 string, so a
+/// no-path order is silent in the reference too.
 fn pet_feedback_key(reason: u8) -> Option<&'static str> {
     Some(match reason {
         1 => "ERR_PET_SPELL_DEAD",
@@ -221,23 +221,23 @@ fn pet_tame_failure(reason: u8, failures: &mut PetTameFailures) {
     failures.0.push(reason);
 }
 
-/// `SMSG_PET_NAME_INVALID`: the server's name code through `DisplayNameError` (`0x6e2fc0`), as
-/// the client's own check would show it. No local name was applied, so nothing rolls back.
+/// `SMSG_PET_NAME_INVALID`: the server's name code through `DisplayNameError`, as the client's own
+/// check would show it. No local name was applied, so nothing rolls back.
 fn pet_name_invalid(code: u32, errors: &mut UiErrorKeys) {
     let key = NameError(code).key();
     debug!("net: pet name refused, code {code} ({key})");
     errors.0.push(UiError::key(key));
 }
 
-/// `SMSG_PET_BROKEN`, an empty body: loyalty hit zero; raise `ERR_PET_BROKEN` (`0x4bdc00`). The
-/// zero-guid `SMSG_PET_SPELLS` of the unsummon right after it clears the bar (`Pet.cpp:822`).
+/// `SMSG_PET_BROKEN`, an empty body: loyalty hit zero; raise `ERR_PET_BROKEN`. The zero-guid
+/// `SMSG_PET_SPELLS` of the unsummon right after it clears the bar (`Pet.cpp:822`).
 fn pet_broken(errors: &mut UiErrorKeys) {
     debug!("net: pet ran away");
     errors.0.push(UiError::key("ERR_PET_BROKEN"));
 }
 
-/// `SMSG_PET_ACTION_SOUND`: dropped when the pet is not streamed (`0x604101`); the sound layer
-/// checks the selector ([`crate::sound::creature`], `0x604106`/`0x60411c`).
+/// `SMSG_PET_ACTION_SOUND`: dropped when the pet is not streamed; the sound layer checks the
+/// selector ([`crate::sound::creature`]).
 fn pet_action_sound(
     pet_guid: u64,
     talk: u32,
@@ -250,8 +250,8 @@ fn pet_action_sound(
     }
 }
 
-/// `SMSG_PET_DISMISS_SOUND`: sounded a yard above the wire point (`0x6041d0 fadd [0x7ff9d8]`),
-/// in WoW space, so before the change to Bevy's.
+/// `SMSG_PET_DISMISS_SOUND`: sounded a yard above the wire point (`fadd`), in WoW space, so before
+/// the change to Bevy's.
 fn pet_dismiss_sound(
     model_id: u32,
     position: [f32; 3],
@@ -264,9 +264,9 @@ fn pet_dismiss_sound(
     });
 }
 
-/// `SMSG_PET_CAST_FAILED`: queued as the pet's, so the display uses the reference's pet table
-/// (`0x6e8eb0`, not the player's `0x6e1a00`). Our cast state is untouched, and unlike the
-/// player's it writes no combat-log line and plays no error sound (`0x62c360`, `0x458a50`).
+/// `SMSG_PET_CAST_FAILED`: queued as the pet's, so the display uses the reference's pet table. Our
+/// cast state is untouched, and unlike the player's it writes no combat-log line and plays no error
+/// sound.
 fn pet_cast_failed(spell_id: u32, reason: u8, arg: Option<u32>, errors: &mut CastErrors) {
     debug!("net: pet cast failed — spell {spell_id} reason {reason:#04x} arg {arg:?}");
     errors.push_pet(spell_id, reason, arg);
@@ -308,8 +308,8 @@ mod tests {
         assert!(!bar.has_bar());
     }
 
-    /// `SetPet` (`0x4bc7e0`): each packet re-arms the expiry from its own duration, 0 clears it,
-    /// and the teardown clears it too.
+    /// `SetPet`: each packet re-arms the expiry from its own duration, 0 clears it, and the
+    /// teardown clears it too.
     #[test]
     fn each_pet_packet_rearms_or_clears_the_expiry() {
         let mut bar = PetBar::default();
@@ -356,7 +356,7 @@ mod tests {
         assert_eq!(bar.spells.bar[0].action(), PET_COMMAND_ATTACK);
     }
 
-    /// The client's pet-guid writer clears the latch only on a change (`0x4bc8ce`).
+    /// The client's pet-guid writer clears the latch only on a change.
     #[test]
     fn the_attack_latch_survives_a_resend_and_dies_on_a_new_pet() {
         let mut bar = PetBar::default();

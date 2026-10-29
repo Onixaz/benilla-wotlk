@@ -17,7 +17,7 @@
 
 use benilla_ui::script::MacroView;
 
-/// The path prefix the client prepends to a stored icon basename (`0x84ca64`).
+/// The path prefix the client prepends to a stored icon basename.
 pub(super) const ICON_PREFIX: &str = "Interface\\Icons\\";
 
 /// The id base of the character set (`s_macroIDBase` `0xa0f834`); the account set's is 0.

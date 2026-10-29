@@ -29,7 +29,7 @@ pub(super) struct Frame {
     /// Feet height leaving the step (yd), after the slide and the step-down snap.
     pub y_out: f32,
     /// Horizontal distance this frame (yd). With the drop it is the descent slope, which the
-    /// reference bounds at [`super::STEP_SLOPE_RATIO`] per unit of travel (`0x636dda`).
+    /// reference bounds at [`super::STEP_SLOPE_RATIO`] per unit of travel.
     pub dx: f32,
     pub grounded: bool,
     pub on_walkable: bool,
@@ -79,7 +79,7 @@ pub(super) fn posture(what: &str, state: u8, from: u8, flags: u32) {
 }
 
 /// One `gait` line per walk/run toggle: `commit` or `REFUSED`, the gait asked for, and the three
-/// silent gates of the reference's chain (`0x513d8e`–`0x513dcd`) one by one.
+/// silent gates of the reference's chain one by one.
 pub(super) fn gait(what: &str, to: bool, dead: bool, rooted: bool, on_spline: bool) {
     if !trace::enabled() {
         return;

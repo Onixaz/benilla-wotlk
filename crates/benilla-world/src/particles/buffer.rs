@@ -154,13 +154,13 @@ pub enum EffectFog {
     Off,
     /// The scene fog (params.x = 1): Alpha and Opaque blends.
     Scene,
-    /// Toward black (params.x = 2), for Add blends, from M2's per-blend fog table (`0x70baf0`).
+    /// Toward black (params.x = 2), for Add blends, from M2's per-blend fog table.
     Black,
     /// Toward white (params.x = 3), the table's Mod policy: ground-fx `ModelBlend::Mod` decals.
     White,
     /// Toward grey 0.5 (params.x = 4), the table's Mod2x policy: ground-fx Mod2x decals.
     Grey,
-    /// Rain's forced grey fog (params.y = 1, zw 70..75), its Mod2x distance fade (`0x59d350`).
+    /// Rain's forced grey fog (params.y = 1, zw 70..75), its Mod2x distance fade.
     Rain,
 }
 
@@ -176,7 +176,7 @@ impl EffectFog {
         }
     }
 
-    /// The `0x70baf0` fog policy a model material packs in `clutter_fade.z` bits 4..7.
+    /// The fog policy a model material packs in `clutter_fade.z` bits 4..7.
     pub fn from_model_policy(policy: u32) -> Self {
         match policy {
             1 => EffectFog::Black,
@@ -201,7 +201,7 @@ impl EffectFog {
 }
 
 /// Where one draw's light comes from. The reference builds an `M2Material` from each emitter
-/// record, so a particle is lit like a submesh, by its model's own light node (`0x672a20`).
+/// record, so a particle is lit like a submesh, by its model's own light node.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 pub enum EffectLighting {
     /// Unlit: every family but M2 emitters, and the emitters that set the file's unlit bit 0x1.
@@ -210,8 +210,8 @@ pub enum EffectLighting {
     /// The scene's light, per view in the shader against world up (a booth's buffer overrides
     /// it): a lit emitter outdoors, mostly `World\` environment sheets.
     Scene,
-    /// The model's own committed light in a WMO room, never the sun (`0x6a7300`'s interior leg);
-    /// one normal per quad makes it one RGB, already folded into the vertex colours.
+    /// The model's own committed light in a WMO room, never the sun; one normal per quad makes it
+    /// one RGB, already folded into the vertex colours.
     Committed,
 }
 
@@ -282,27 +282,27 @@ pub struct EffectDrawSpec {
     pub texture: AssetId<Image>,
     pub blend: EffectBlend,
     pub fog: EffectFog,
-    /// The light the colour meets. The scene term is `clamp(ambient + diffuse·max(N·L, 0))` with
-    /// N world up: the reference uploads one normal per draw, world +Z (`0x7b3fd0`).
+    /// The light the colour meets. The scene term is `clamp(ambient + diffuse·max(N·L, 0))` with N
+    /// world up: the reference uploads one normal per draw, world +Z.
     pub lighting: EffectLighting,
     pub anchor: Vec3,
     pub bias: f32,
     pub raster_bias: i32,
     /// The rasterizer depth-bias slope scale. The reference uses none: its one slope term
-    /// (`0x59bf0a`, `glPolygonOffset` factor `0xc0800000` = −4.0) is in the GL arm, never built.
+    /// (`glPolygonOffset` factor `0xc0800000` = −4.0) is in the GL arm, never built.
     pub raster_slope: f32,
     /// The producer wrote camera-relative vertices, so the upload rebase skips this draw: the
     /// snow flake's sub-centimetre geometry, which absolute f32 world coordinates cannot hold.
     /// [`Self::anchor`] stays absolute.
     pub cam_relative: bool,
     /// Depth compare `Always`: the weapon swing trail, whose callback turns the depth test off
-    /// (EGxRs id `0x10` = 0, `0x6c686e`) so the swinger's shoulder never eats the arc.
+    /// (EGxRs id `0x10` = 0) so the swinger's shoulder never eats the arc.
     pub no_depth_test: bool,
     pub main_entity: Entity,
     pub light: Option<Buffer>,
     /// A target-pixel clip rect `(min.x, min.y, max.x, max.y)`; `None` is the whole target. UI
-    /// model tiles share one atlas where the reference gives each `<Model>` its own viewport
-    /// (`0x59c730`), so the fragment discards outside the pane's cell.
+    /// model tiles share one atlas where the reference gives each `<Model>` its own viewport, so
+    /// the fragment discards outside the pane's cell.
     pub clip: Option<Vec4>,
 }
 

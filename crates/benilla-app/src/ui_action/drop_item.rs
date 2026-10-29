@@ -1,9 +1,8 @@
-//! `DropItemOnUnit 0x48d960`: a held item dropped on a unit, which in 1.12 feeds the pet. On the
-//! pet (the guid global `[0xb714a0]`) the validator `0x6ea1e0` casts the learned Feed Pet with no
-//! cast item, so the wire is `CMSG_CAST_SPELL` with `TARGET_FLAG_ITEM` and the food's guid, never
-//! the pet's (`0x6e5513`-`0x6e55a7`). On a player the reference starts a trade (`0x5d3fb0`) or
-//! fills a trade slot; that leg is not built and refuses. Every refusal is silent and keeps the
-//! payload (`ClearCursor 0x495190` runs on success only), and the server alone judges range.
+//! `DropItemOnUnit`: a held item dropped on a unit, which in 1.12 feeds the pet. On the pet the
+//! validator casts the learned Feed Pet with no cast item, so the wire is `CMSG_CAST_SPELL` with
+//! `TARGET_FLAG_ITEM` and the food's guid, never the pet's. On a player the reference starts a
+//! trade or fills a trade slot; that leg is not built and refuses. Every refusal is silent and
+//! keeps the payload (`ClearCursor` runs on success only), and the server alone judges range.
 
 use bevy::prelude::*;
 
@@ -11,7 +10,7 @@ use benilla_ui::script::{CursorPayload, UiScript};
 
 use crate::spell::{CastCommit, TargetedBind};
 
-/// `0x6ea1e0`'s three gates, in order: is this a pet I can feed? The food is not checked here;
+/// The reference's three gates, in order: is this a pet I can feed? The food is not checked here;
 /// the server judges the diet (`Spell.cpp:5912`, `SPELL_FAILED_WRONG_PET_FOOD`).
 fn feedable_pet(
     pet: &benilla_protocol::ObjectFields,
@@ -22,13 +21,13 @@ fn feedable_pet(
     pet.unit_created_by_spell().is_some()
         // 2: `UNIT_FIELD_CREATEDBY` is my guid.
         && pet.unit_created_by() == Some(self_guid)
-        // 3: the Feed Pet latch `[0xcecad8]`: an imp passes 1 and 2, but only hunters learn it.
+        // 3: the Feed Pet latch: an imp passes 1 and 2, but only hunters learn it.
         && feed_pet_known
 }
 
-/// Runs the pet leg for both of the reference's entries into `0x6ea1e0`: `PetFrame_OnClick`'s
-/// `DropItemOnUnit("pet")`, and a left click on the pet's model with an item held (`0x4927e8`,
-/// in the world click's object leg `0x4925d0`, where the click still selects).
+/// Runs the pet leg for both of the reference's entries: `PetFrame_OnClick`'s
+/// `DropItemOnUnit("pet")`, and a left click on the pet's model with an item held (in the world
+/// click's object leg, where the click still selects).
 pub(crate) fn drop_item_on_unit(
     script: Option<NonSendMut<UiScript>>,
     self_q: Query<(&crate::net::Guid, &crate::net::ObjectStore), With<crate::net::SelfPlayer>>,
@@ -101,7 +100,7 @@ pub(crate) fn drop_item_on_unit(
 mod tests {
     use super::*;
 
-    /// `0x6ea1e0`'s three gates, each failed alone.
+    /// The reference's three gates, each failed alone.
     #[test]
     fn the_feed_gates_are_ownership_and_provenance() {
         use benilla_protocol::messages::ObjectFields;

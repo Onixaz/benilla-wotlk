@@ -3,26 +3,24 @@
 //! The MCLQ parse and flat mesh are `benilla_formats::liquid`; the shading is `liquid.wgsl`.
 //!
 //! The reference has three liquid renderers, each with its own arm in the shader: ADT MCLQ, WMO
-//! MLIQ water (`0x6b62e0` category 0, exterior `0x6b6630` or interior `0x6b6420` by the group's
-//! `MOGP.flags & 0x48`: one texture stage, no depth ramp, alpha from a per-vertex authored byte)
-//! and magma/slime.
+//! MLIQ water (exterior or interior by the group's `MOGP.flags & 0x48`: one texture stage, no depth
+//! ramp, alpha from a per-vertex authored byte) and magma/slime.
 //!
 //! The ADT combiner is the asset `Shaders\Pixel\ocean0_s.bls` in `patch.MPQ`:
 //! `rgb = primary·colorTex.rgb + detailTex.rgb + (secondary + 0.25)·detailTex.a`,
-//! `alpha = colorTex.a`. `primary` is the lit vertex colour `clamp(ambient + N·L·sun)`;
-//! `detailTex` is the animated `lake_a`/`ocean_h` frame, near-black RGB and a ripple alpha.
-//! `colorTex` is a 64-row swatch, RGB between the zone's raw `Light.dbc` water rows (IntBand 16/17
-//! river/lake, 14/15 ocean) and alpha between its `LightParams` shallow and deep alphas, filled by
-//! `0x68a830` as `row(i) = c0 + floor(i·(c1−c0)/64)`, so it never reaches the deep endpoint. The
+//! `alpha = colorTex.a`. `primary` is the lit vertex colour `clamp(ambient + N·L·sun)`; `detailTex`
+//! is the animated `lake_a`/`ocean_h` frame, near-black RGB and a ripple alpha. `colorTex` is a
+//! 64-row swatch, RGB between the zone's raw `Light.dbc` water rows (IntBand 16/17 river/lake,
+//! 14/15 ocean) and alpha between its `LightParams` shallow and deep alphas, filled by the
+//! reference as `row(i) = c0 + floor(i·(c1−c0)/64)`, so it never reaches the deep endpoint. The
 //! ocean's last row alone is darkened by an HSV `V ×= 0.9` and forced opaque; about 80% of ocean
-//! vertices sample it. The dirty flags `[0xc8117c]`/`[0xc81b70]` clear every world frame
-//! (`0x680b90`/`0x680b97`, refill `0x58acd0`), so colour and opacity track the zone and the clock.
+//! vertices sample it. The dirty flags clear every world frame, so colour and opacity track the
+//! zone and the clock.
 //!
-//! One per-vertex depth `V` indexes colour and alpha alike: `min(byte/42, 1)` on river/lake
-//! (`0xc81768`, read at `0x68d818` by `0x68d790`), `min(byte/255, 1)` on ocean (`0xc7fcd8`, read
-//! at `0x68d718` by `0x68d690`), both tables built by `0x68c4c0`. `0xc7fbc0`'s `1.6·(i/63)^8` is no
-//! water alpha: it fills the sky glare texture `[0xc7fbb8]` (`0x68c250` via `0x68c4a0`), whose one
-//! liquid binding, `0x685257`, sits in a branch that never runs (`[0xc800ec]` is only ever 0).
+//! One per-vertex depth `V` indexes colour and alpha alike: `min(byte/42, 1)` on river/lake,
+//! `min(byte/255, 1)` on ocean, both tables built. The reference's `1.6·(i/63)^8` is no water
+//! alpha: it fills the sky glare texture, whose one liquid binding, sits in a branch that never
+//! runs.
 
 use bevy::pbr::MaterialPlugin;
 use bevy::prelude::*;

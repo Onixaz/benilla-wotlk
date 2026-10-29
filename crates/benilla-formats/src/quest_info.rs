@@ -1,12 +1,11 @@
 //! Quest-log tag names: the quest template's `Type` → the suffix after a quest-log title.
 //! `QuestInfo.dbc` (`ID`, the `Name` loc-string) holds the sparse ids 1 Elite (not the later
 //! "Group"), 21 Life, 41 PvP, 62 Raid, 81 Dungeon, 82 World Event and 83 Legendary; `Type` 0, most
-//! quests, has no tag. `GetQuestLogTitle` (`0x4df930`) reads it through `0x4df2a0`: the cached
-//! template's `+0x10` (the 5th `u32` of `SMSG_QUEST_QUERY_RESPONSE`), bounds-checked against the
-//! max id (`0xc0d9d0`), indexes `0xc0d9cc` directly, and a missing row reaches Lua as `nil`. The
-//! full table ships in `patch-2.MPQ`; `dbc.MPQ` has only PvP, Life, Elite and Raid. `Type`'s one
-//! other reader, the `PLAYER_QUEST_LOG` watcher (`0x5dde6b`, `0x5ddf02`), fires tutorial 40 when an
-//! Elite quest is accepted.
+//! quests, has no tag. `GetQuestLogTitle` reads it: the cached template's `+0x10` (the 5th `u32` of
+//! `SMSG_QUEST_QUERY_RESPONSE`), bounds-checked against the max id, indexes directly, and a missing
+//! row reaches Lua as `nil`. The full table ships in `patch-2.MPQ`; `dbc.MPQ` has only PvP, Life,
+//! Elite and Raid. `Type`'s one other reader, the `PLAYER_QUEST_LOG` watcher, fires tutorial 40
+//! when an Elite quest is accepted.
 
 use std::collections::HashMap;
 

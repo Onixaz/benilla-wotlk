@@ -45,8 +45,8 @@ fn creature_anim_events_parse_within_sequences() {
 }
 
 /// A fired key carries its own record's bone and position, not the tag's first match: the event
-/// kernel `0x719370` snapshots `placementMatrix · (boneMatrix[event.bone] · event.position)` into
-/// the callback record. Every player model authors six `$CSD` records, one per emote clip.
+/// kernel snapshots `placementMatrix · (boneMatrix[event.bone] · event.position)` into the callback
+/// record. Every player model authors six `$CSD` records, one per emote clip.
 #[test]
 fn a_fired_key_carries_its_own_records_bone_and_point() {
     let data = benilla_formats::wow_data_or_skip!();

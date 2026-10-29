@@ -1,12 +1,11 @@
 //! The engine verbs stock `ChatFrame.lua`'s slash handlers call that are not sends, channels or
-//! window state: `DoEmote` (`0x49fd30`), `RandomRoll` (`0x48c7b0`), `AssistByName` (`0x489c40`),
-//! `ConsoleExec`, `LoggingChat` and `LoggingCombat`. Each is a
-//! queue or a flag the app drains.
+//! window state: `DoEmote`, `RandomRoll`, `AssistByName`, `ConsoleExec`, `LoggingChat` and
+//! `LoggingCombat`. Each is a queue or a flag the app drains.
 
 use mlua::{Lua, MultiValue, Value};
 
 /// `DoEmote(token [, target])`: the `EmotesText.dbc` name token (`"WAVE"`, not `/wave`) and an
-/// optional target string (`0x49fd30` reads arg 2 with `lua_tostring`): a player name, or a `%`
+/// optional target string (the reference reads arg 2 with `lua_tostring`): a player name, or a `%`
 /// word for the selection. A non-string, non-number second argument reads as none.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EmoteRequest {
@@ -68,13 +67,12 @@ impl super::UiScript {
     }
 }
 
-/// `ConsoleExec` (`0x608270`) is in the registrar both states call (`0x51bb20`, from the glue
-/// registrar `0x46abb0` and the in-game `0x51bb60`), so it installs apart from this file's in-game
-/// verbs.
+/// `ConsoleExec` (`0x608270`) is in the registrar both states call, so it installs apart from this
+/// file's in-game verbs.
 pub(super) fn install_console_exec(lua: &Lua) -> mlua::Result<()> {
     // `ConsoleExec("name value")`: a registered CVar with a value is written at once, as `SetCVar`
     // writes it; anything else, a bare CVar name included (the reference answers it with
-    // `CVar "%s" is "%s"`, `0x63dde0`), goes to the app's command registry.
+    // `CVar "%s" is "%s"`), goes to the app's command registry.
     lua.globals().set(
         "ConsoleExec",
         lua.create_function(|lua, line: Option<String>| {
@@ -203,7 +201,7 @@ mod tests {
     }
 
     /// The second argument is a string, never a unit token: `"target"` is a name like any other,
-    /// and `%t` reaches the app's selection arm untouched (`0x49fdb1`).
+    /// and `%t` reaches the app's selection arm untouched.
     #[test]
     fn do_emote_second_argument_is_passed_as_a_string() {
         let mut s = UiScript::new().unwrap();

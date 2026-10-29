@@ -4,8 +4,8 @@
 //!
 //! The reference never plays the stun (class 4, column 7) or jump-start (class 11, column 25)
 //! vocals: no call site dispatches them. Jump-end (class 12, column 26) is dispatched with force 1
-//! on landing (`0x602d00`, at `0x602dac` and `0x602dcb`), but columns 25 and 26 are empty in every
-//! `CreatureSoundData.dbc` row. None of the three is played here.
+//! on landing, but columns 25 and 26 are empty in every `CreatureSoundData.dbc` row. None of the
+//! three is played here.
 
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
@@ -45,15 +45,15 @@ fn load_creature_voices(mut commands: Commands, assets: Option<Res<WorldAssets>>
     }
 }
 
-/// `0x623a40`'s bark states in its jump table `0x623afc`; the number is the priority (higher
-/// wins, `0x623a82`). State 3 plays nothing and has no known caller.
+/// The reference's bark states in its jump table; the number is the priority (higher wins). State 3
+/// plays nothing and has no known caller.
 const BARK_AGGRO: u8 = 0;
 const BARK_PET_ORDER: u8 = 1;
 const BARK_PET_ATTACK: u8 = 2;
 const BARK_DEATH: u8 = 4;
 
-/// The priority test (`0x623a66`-`0x623a88`) against the sounding bark's state: a free slot
-/// admits every state, a held one only a strictly higher one (`jle`), so a burst plays once.
+/// The priority test against the sounding bark's state: a free slot admits every state, a held one
+/// only a strictly higher one (`jle`), so a burst plays once.
 const fn bark_admitted(latched: Option<u8>, state: u8) -> bool {
     match latched {
         None => true,
@@ -61,8 +61,7 @@ const fn bark_admitted(latched: Option<u8>, state: u8) -> bool {
     }
 }
 
-/// The jump table `0x623afc`; 0 plays nothing, for state 3 (`0x623af0`), a state past 4
-/// (`0x623aa0`) and an empty column alike.
+/// The jump table; 0 plays nothing, for state 3, a state past 4 and an empty column alike.
 const fn bark_kit(voice: &benilla_formats::CreatureVoice, state: u8) -> u32 {
     match state {
         BARK_AGGRO => voice.aggro,
@@ -78,18 +77,18 @@ const fn pet_bark_muted(pet_sounds: bool, pet: bool, state: u8) -> bool {
     !pet_sounds && pet && state <= BARK_PET_ATTACK
 }
 
-/// The creature bark dispatcher `0x623a40(unit, state)`: 0 the hostile aggro flare, 1 and 2 the
-/// pet's order and attack barks, 4 the death cry. Its order is the reference's:
+/// The creature bark dispatcher `(unit, state)`: 0 the hostile aggro flare, 1 and 2 the pet's order
+/// and attack barks, 4 the death cry. Its order is the reference's:
 ///
-/// 1. No voice row, no bark (`0x623a4a`).
-/// 2. A server-pushed object sound live on the unit mutes it (`0x623a59` → `0x4591f0`); a direct
-///    call, so unlike the class route `0x623490`/`0x62f880` players are not exempt.
+/// 1. No voice row, no bark.
+/// 2. A server-pushed object sound live on the unit mutes it; a direct call, so unlike the class
+///    route players are not exempt.
 /// 3. While `[unit+0xb20]` holds a live bark, a state at or below its own is dropped.
 /// 4. `Sound_EnablePetSounds` off silences a pet's aggro, order and attack barks
 ///    (`CGUnit_C::OnAiReaction 0x7474b0`, `UNIT_FIELD_PETNUMBER` nonzero); the death cry is not
 ///    gated.
-/// 5. Stop the old bark and latch the new (`0x623a8d`/`0x623a95`), before the column is read.
-/// 6. Resolve the column and play: a zero column still silences step 5's victim (`0x623aee`).
+/// 5. Stop the old bark and latch the new, before the column is read.
+/// 6. Resolve the column and play: a zero column still silences step 5's victim.
 fn play_bark(
     kits: &mut SoundKits,
     assets: &WorldAssets,
@@ -137,9 +136,8 @@ fn play_bark(
     }
 }
 
-/// The death cry `0x623a40(4)` on either edge: health falling to 0 (`0x6046f0` at `0x6047a3`, the
-/// death handler `0x605860`) or `UNIT_DYNFLAG_DEAD` set (`0x600543`), so a feign cries too. A
-/// unit that streams in dead cries nothing: create edges are suppressed.
+/// The death cry on either edge: health falling to 0 or `UNIT_DYNFLAG_DEAD` set, so a feign cries
+/// too. A unit that streams in dead cries nothing: create edges are suppressed.
 fn death_vocals(
     mut edges: MessageReader<FieldChanged>,
     units: Query<(&NetEntity, &Transform)>,
@@ -194,15 +192,14 @@ type ReactionUnit = (
     Has<SelfPlayer>,
 );
 
-/// `SMSG_AI_REACTION` vocals, audio only (`0x6056e0` plays no animation). HOSTILE is the aggro
+/// `SMSG_AI_REACTION` vocals, audio only (the reference plays no animation). HOSTILE is the aggro
 /// bark (column 10) through [`play_bark`], whose slot drops a repeat while one sounds: vmangos
-/// sends HOSTILE on every target acquisition (`Unit::Attack`) and every pet autocast or
-/// self-picked target (`Unit::SendPetAIReaction`), so a pet draws them in bursts.
+/// sends HOSTILE on every target acquisition (`Unit::Attack`) and every pet autocast or self-picked
+/// target (`Unit::SendPetAIReaction`), so a pet draws them in bursts.
 ///
-/// ALERT is the class-8 route (`vtable+0x88(8,0)` → `0x623490` → column 13): its roll threshold
-/// is 100, inclusive, so it always plays unless a server-pushed object sound
-/// (`SMSG_PLAY_OBJECT_SOUND`, registered as `Latch::ObjectSound`, tested by `0x4591f0`) is live on
-/// a non-player unit. It stores no latch.
+/// ALERT is the class-8 route (`vtable+0x88(8,0)` → → column 13): its roll threshold is 100,
+/// inclusive, so it always plays unless a server-pushed object sound (`SMSG_PLAY_OBJECT_SOUND`,
+/// registered as `Latch::ObjectSound`) is live on a non-player unit. It stores no latch.
 fn ai_reaction_vocals(
     mut reactions: MessageReader<crate::net::AiReactionMessage>,
     units: Query<ReactionUnit>,
@@ -225,8 +222,8 @@ fn ai_reaction_vocals(
         let Ok((net, transform, mount_child, store, is_you)) = units.get(r.unit) else {
             continue;
         };
-        // ALERT reads the mount-preferred row (`0x60c480`: `+0xb44 ?: +0xb40`), so a mounted unit
-        // alerts in its mount's voice; HOSTILE, like death, reads the rider's own row.
+        // ALERT reads the mount-preferred row (: `+0xb44 ?: +0xb40`), so a mounted unit alerts in
+        // its mount's voice; HOSTILE, like death, reads the rider's own row.
         let display = if r.hostile {
             net.display_id
         } else {
@@ -238,7 +235,7 @@ fn ai_reaction_vocals(
         let Some(voice) = display.and_then(|d| voices.0.for_display(d)) else {
             continue;
         };
-        // HOSTILE is the bark route `0x623a40(0)`.
+        // HOSTILE is the bark route.
         if r.hostile {
             // Your own bark takes your Death Knight voice (`0x7474b0`, the active mover).
             let voice_filter = is_you
@@ -259,8 +256,8 @@ fn ai_reaction_vocals(
             );
             continue;
         }
-        // ALERT neither tests nor stores the voice slot. Its object-sound mute (`0x6234cb` →
-        // `0x4591f0`) runs through a virtual whose CGPlayer twin `0x62f880` omits it.
+        // ALERT neither tests nor stores the voice slot. Its object-sound mute runs through a
+        // virtual whose CGPlayer twin omits it.
         if voice.alert == 0 {
             continue;
         }
@@ -291,7 +288,7 @@ fn ai_reaction_vocals(
     }
 }
 
-/// `SMSG_PET_ACTION_SOUND`: `0x6040c0` plays selector 0 as `0x623a40(1)`, 1 as `0x623a40(2)`,
+/// `SMSG_PET_ACTION_SOUND`: the reference plays selector 0 as the reference, 1 as the reference,
 /// and any other value not at all. Only the Imp, Succubus, Doomguard and Voidwalker voices carry
 /// these columns, and vmangos sends it only for a `SUMMON_PET`, on a 10% roll per order
 /// (`Unit.cpp:8960`, `PetHandler.cpp:522`, `PetAI.cpp:335`).
@@ -321,12 +318,11 @@ fn pet_talk_vocals(
         let Ok((net, transform, store)) = units.get(t.unit) else {
             continue;
         };
-        // `0x6040c0` resolves the guid with the `TYPEMASK_UNIT` test `0x468460(ecx = 8)`, which a
-        // player passes.
+        // The reference resolves the guid with the `TYPEMASK_UNIT` test, which a player passes.
         if !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
             continue;
         }
-        // The pet's own row: `0x623a40` reads the base `[unit+0xb40]`, not the mount redirect.
+        // The pet's own row: the reference reads the base `[unit+0xb40]`, not the mount redirect.
         let Some(voice) = net.display_id.and_then(|d| voices.0.for_display(d)) else {
             continue;
         };
@@ -346,8 +342,8 @@ fn pet_talk_vocals(
     }
 }
 
-/// `SMSG_PET_DISMISS_SOUND`: `CreatureSoundData` column 29 at the packet's point. Not a bark:
-/// `0x604140` resolves the row by model id (`CreatureModelData[id].SoundID`, no display step, no
+/// `SMSG_PET_DISMISS_SOUND`: `CreatureSoundData` column 29 at the packet's point. Not a bark: the
+/// reference resolves the row by model id (`CreatureModelData[id].SoundID`, no display step, no
 /// fallback), reads `[row+0x74]` and plays it with no unit, latch or mute. vmangos never sends it.
 fn pet_dismiss_sounds(
     mut dismissals: MessageReader<crate::net::PetDismissSoundMessage>,
@@ -390,10 +386,10 @@ fn pet_dismiss_sounds(
 }
 
 /// The body loop (column 23, an elemental's rumble, a shredder's engine) while alive, under the
-/// reference's `0x623800` gate: health > 0, `UNIT_DYNFLAG_DEAD` clear, the column nonzero, not
-/// already playing. Reconciled every frame, which also re-arms it after an out-of-range cull. It
-/// loops whatever the kit's `0x200` flag, which half the column's kits omit: `0x461d80` never
-/// reads the kit's flags.
+/// reference's gate: health > 0, `UNIT_DYNFLAG_DEAD` clear, the column nonzero, not already
+/// playing. Reconciled every frame, which also re-arms it after an out-of-range cull. It loops
+/// whatever the kit's `0x200` flag, which half the column's kits omit: the reference never reads
+/// the kit's flags.
 fn creature_body_loops(
     units: Query<(
         Entity,
@@ -427,7 +423,7 @@ fn creature_body_loops(
         if !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
             continue;
         }
-        // The mount-preferred row (`0x60c480`: `+0xb44 ?: +0xb40`): a mechanostrider's engine.
+        // The mount-preferred row (: `+0xb44 ?: +0xb40`): a mechanostrider's engine.
         let display = mount_child
             .and_then(|mc| mounts.get(mc.0).ok())
             .and_then(|m| m.display_id)
@@ -438,8 +434,8 @@ fn creature_body_loops(
             // A kit absent from SoundEntries is silent, as `0x4c6a40` returns 5 on it.
             .filter(|&k| kits.catalog().get(k).is_some())
             .unwrap_or(0);
-        // `0x623800`'s gate: raw health (`0x623817`), absent read as 0 so a unit awaiting its
-        // snapshot stays silent, and `UNIT_DYNFLAG_DEAD` (`0x62381e`, re-evaluated at `0x60053c`).
+        // The reference's gate: raw health, absent read as 0 so a unit awaiting its snapshot stays
+        // silent, and `UNIT_DYNFLAG_DEAD`.
         let alive = store.0.unit_health().unwrap_or(0) > 0 && !store.0.unit_reads_dead();
         let desired = if alive { kit } else { 0 };
         // Stop a superseded loop: death, or a mount swap that changed the row.
@@ -477,22 +473,22 @@ fn creature_body_loops(
 }
 
 /// Routes the CreatureSoundData anim tags. A mounted unit's tags fire on the mount child, which
-/// carries the mount's display, so they resolve the mount's voice (the reference's `0x60c480`).
+/// carries the mount's display, so they resolve the mount's voice.
 ///
-/// - `$FD1..$FD4`: fidget columns 1 to 4, ungated; `0x6232c0` → `0x623440` → `0x6230a0` reads
-///   `row[+0x38 + 4*(n-1)]`, and a zero column is silent. `$FD5..$FD9` are silent in the
-///   reference too, which reads only four fidget columns. The reference plays these and `$FDX`
-///   at the unit's origin + 2.0 z (`0x6232c0`); here they play at the origin.
-/// - `$WNG`/`$WGG`: wing flap and glide, on the class route (`0x5fff9c` class 7, `0x5fff78` class
-///   10) against a threshold of 100, so always played, outside the mute set {0, 1, 2, 3, 8}.
-/// - `$FDX`: the stand vocal, never the local player's (`0x6236c2`), then a [`STAND_CHANCE`] roll,
-///   then a [`STAND_COOLDOWN`] on one world-wide timestamp. `Crocodile.m2` keys it at t=0 of a
-///   looping Stand, so ungated it would croak every 4 s.
+/// - `$FD1..$FD4`: fidget columns 1 to 4, ungated; the reference reads `row[+0x38 + 4*(n-1)]`, and
+///   a zero column is silent. `$FD5..$FD9` are silent in the reference too, which reads only four
+///   fidget columns. The reference plays these and `$FDX` at the unit's origin + 2.0 z; here they
+///   play at the origin.
+/// - `$WNG`/`$WGG`: wing flap and glide, on the class route against a threshold of 100, so always
+///   played, outside the mute set {0, 1, 2, 3, 8}.
+/// - `$FDX`: the stand vocal, never the local player's, then a [`STAND_CHANCE`] roll, then a
+///   [`STAND_COOLDOWN`] on one world-wide timestamp. `Crocodile.m2` keys it at t=0 of a looping
+///   Stand, so ungated it would croak every 4 s.
 fn creature_anim_vocals(
     mut events: MessageReader<AnimSoundEvent>,
     // GlobalTransform: the mount child's local Transform is seat-relative.
     units: Query<(&NetEntity, &GlobalTransform, Has<SelfPlayer>)>,
-    // The class-5 window: one timestamp for the whole world, the reference's `[0xc4e0e4]`.
+    // The class-5 window: one timestamp for the whole world, the reference's.
     mut stand_window: Local<Option<std::time::Duration>>,
     time: Res<Time>,
     voices: Option<Res<CreatureVoices>>,
@@ -518,10 +514,10 @@ fn creature_anim_vocals(
             continue;
         };
         // `$FDX`'s gates run before the zero-column bail, and any allowed attempt stamps the
-        // window, even a silent or culled one (`0x623290`).
+        // window, even a silent or culled one.
         if ev.ident == *b"$FDX" {
             if is_self {
-                continue; // `0x6236c2`
+                continue; //
             }
             if !bark_chance_pass(STAND_CHANCE, kits.roll()) {
                 continue;
@@ -559,14 +555,13 @@ fn creature_anim_vocals(
     }
 }
 
-/// The hard-landing grunt: the reference's landing predictor `0x602d00` voices a landing past the
-/// hard threshold with the class-2 wound vocal (`0x602d84`, column `+0xc`, `injury[0]`), predicted
-/// client-side; `SMSG_ENVIRONMENTALDAMAGELOG` plays nothing. The dust in
-/// `creature_anim::env_damage` shares [`crate::creature_anim::HARD_LANDING_DESCENT`].
+/// The hard-landing grunt: the reference's landing predictor voices a landing past the hard
+/// threshold with the class-2 wound vocal (column `+0xc`, `injury[0]`), predicted client-side;
+/// `SMSG_ENVIRONMENTALDAMAGELOG` plays nothing. The dust in `creature_anim::env_damage` shares
+/// [`crate::creature_anim::HARD_LANDING_DESCENT`].
 ///
 /// This gates on fall height alone. The reference also sends a mover with SAFE_FALL, SWIMMING or
-/// FIXED_Z (`0x602d48`) to the soft landing at every height, and a dead or ghost unit
-/// (`0x605f30`, `0x602d71`) in the 13-70 yd band.
+/// FIXED_Z to the soft landing at every height, and a dead or ghost unit in the 13-70 yd band.
 fn fall_landing_vocals(
     mut landings: MessageReader<crate::creature_anim::HardLanding>,
     units: Query<(&NetEntity, &Transform)>,

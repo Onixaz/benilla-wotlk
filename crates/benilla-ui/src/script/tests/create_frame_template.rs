@@ -52,8 +52,7 @@ fn a_runtime_template_brings_size_anchors_regions_and_a_fired_onload() {
         "the template's <Size>"
     );
 
-    // A template's `$parent` in `<Anchors>` is the frame's first named ancestor, not the frame
-    // (`0x76c5b0`).
+    // A template's `$parent` in `<Anchors>` is the frame's first named ancestor, not the frame.
     let (point, rel, rel_point, x, y): (String, String, String, f32, f32) = s
         .eval(
             "local p, r, rp, ox, oy = Mine:GetPoint(1) \
@@ -171,8 +170,8 @@ fn a_comma_list_applies_each_name_and_a_single_name_still_chains() {
         .unwrap());
 }
 
-/// The lookup folds ASCII case: `SStrHash` (`0x64b3f0`) uppercases before hashing, so a mis-cased
-/// name lands in the same bucket, and the compare is `SStrCmpI`.
+/// The lookup folds ASCII case: `SStrHash` uppercases before hashing, so a mis-cased name lands in
+/// the same bucket, and the compare is `SStrCmpI`.
 #[test]
 fn a_template_name_is_matched_case_insensitively() {
     let mut s = script();
@@ -196,9 +195,9 @@ fn a_template_name_is_matched_case_insensitively() {
     assert!(s.take_warnings().is_empty());
 }
 
-/// A template name that misses the lookup raises at `0x7061dd`, before the frame is built or its
-/// name published (`0x706208`, `0x70622d`). The registry holds only `virtual="true"` elements, so
-/// a non-virtual name misses like an undeclared one.
+/// A template name that misses the lookup raises, before the frame is built or its name published.
+/// The registry holds only `virtual="true"` elements, so a non-virtual name misses like an
+/// undeclared one.
 #[test]
 fn an_unresolvable_template_raises_and_creates_nothing() {
     let s = script();
@@ -311,8 +310,8 @@ fn a_region_template_or_a_mismatched_kind_is_named_never_fatal() {
     );
 }
 
-/// `<ScrollChild>` builds its one child through the `<Frames>` path (`0x6ee280`) and stores it as
-/// the scroll child, which gives the frame its range.
+/// `<ScrollChild>` builds its one child through the `<Frames>` path and stores it as the scroll
+/// child, which gives the frame its range.
 #[test]
 fn a_scroll_child_element_gives_the_frame_a_real_scroll_range() {
     let mut s = script();
@@ -333,7 +332,7 @@ fn a_scroll_child_element_gives_the_frame_a_real_scroll_range() {
     );
     s.resolve();
 
-    // `$parent` names the child against the scroll frame (`0x76c5b0`).
+    // `$parent` names the child against the scroll frame.
     assert!(s.eval::<bool>("return RollerChild ~= nil").unwrap());
     assert!(s
         .eval::<bool>("return Roller:GetScrollChild() == RollerChild")
@@ -353,9 +352,9 @@ fn a_scroll_child_element_gives_the_frame_a_real_scroll_range() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The scroll range is the child's whole subtree, not its own height: `0x786e30` seeds a box and
-/// `0x786f80` walks the child's regions and child frames. The shape is `ItemTextPageScrollChild`,
-/// 10×10 around a 270×304 page (`ItemTextFrame.xml:198`).
+/// The scroll range is the child's whole subtree, not its own height: the reference seeds a box and
+/// the reference walks the child's regions and child frames. The shape is
+/// `ItemTextPageScrollChild`, 10×10 around a 270×304 page (`ItemTextFrame.xml:198`).
 #[test]
 fn the_scroll_range_is_the_childs_whole_subtree() {
     let mut s = script();

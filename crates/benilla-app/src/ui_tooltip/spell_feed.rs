@@ -1,5 +1,5 @@
-//! The spell tooltip views: the builder `0x52e610`'s cells resolved here where the catalogs live,
-//! and the feed that pushes a view for every spell the UI can hover before it is hovered. The
+//! The spell tooltip views: the builder the reference's cells resolved here where the catalogs
+//! live, and the feed that pushes a view for every spell the UI can hover before it is hovered. The
 //! reference builds at the hover and keeps nothing; the feed keeps what each pushed view read
 //! ([`super::spell_deps`]) and builds again only the views a change of the player's state reaches.
 
@@ -20,21 +20,20 @@ use crate::ui_action::{PlayerActions, Spells};
 use crate::ui_items::{count_of, InventoryScope};
 use crate::ui_trainer::TrainerTooltipSubjects;
 
-/// The unit a view's caster cells are computed against, the spell builder `0x52e610`'s fourth
+/// The unit a view's caster cells are computed against, the spell builder the reference's fourth
 /// argument: the level the `$`-tokens, the cost and the cast time scale by, and the cost's basis.
 #[derive(Clone, Copy)]
 pub(super) enum ViewCaster<'a> {
     /// The active player ([`ViewCtx::store`]), selector 0.
     Player,
-    /// Selector 1: the player's charm, else its summon (`0x6e3159`-`0x6e317f`, `0x6e31fe`-
-    /// `0x6e3228`), `None` when neither is streamed.
+    /// Selector 1: the player's charm, else its summon, `None` when neither is streamed.
     Pet(Option<&'a benilla_protocol::ObjectFields>),
 }
 
 impl ViewCaster<'_> {
-    /// The pet's `[vtbl+0xa8]`, `CGUnit`'s `0x60cd80`: `UNIT_FIELD_LEVEL × 5`, which
+    /// The pet's `[vtbl+0xa8]`, `CGUnit`'s: `UNIT_FIELD_LEVEL × 5`, which
     /// [`benilla_formats::SpellDisplay::skill_level`] caps at `maxLevel × 5` and divides by 5 as
-    /// `0x60cdb2`-`0x60cdb9` and `0x6e3195` do. No unit reads 0 (`0x6e31a4`).
+    /// the reference do. No unit reads 0.
     fn pet_skill_value(pet: Option<&benilla_protocol::ObjectFields>) -> u32 {
         pet.and_then(|p| p.unit_level())
             .unwrap_or(0)
@@ -42,21 +41,21 @@ impl ViewCaster<'_> {
     }
 }
 
-/// The caster-dependent inputs of a spell view: the worn set (`0x5f0c50`), the bags, the form and
-/// the bind point `$z` names.
+/// The caster-dependent inputs of a spell view: the worn set, the bags, the form and the bind point
+/// `$z` names.
 pub(super) struct ViewCtx<'a, 'w, 's> {
     pub(super) home_area: Option<&'a str>,
-    /// The caster's shapeshift form, which the required-form line's colour reads (`0x52f1f2`).
+    /// The caster's shapeshift form, which the required-form line's colour reads.
     pub(super) form: u8,
     /// The active player.
     pub(super) store: Option<&'a ObjectStore>,
     /// Whom the level terms and the cost read: the player or its pet. The form and the reaches
     /// are that same unit's.
     pub(super) caster: ViewCaster<'a>,
-    /// The caster as `0x6e3480` reads it: its `UNIT_FIELD_COMBATREACH` (1.5 is the descriptor
+    /// The caster as the reference reads it: its `UNIT_FIELD_COMBATREACH` (1.5 is the descriptor
     /// default) and its motion.
     pub(super) range_caster: benilla_formats::RangeUnit,
-    /// The caster's auto-attack target, which `0x6e3480` looks up itself (`[caster+0xc48]`) for
+    /// The caster's auto-attack target, which the reference looks up itself (`[caster+0xc48]`) for
     /// its melee arm alone, reading its reach and motion; with none, the caster's reach counts
     /// twice and there is no moving bonus.
     pub(super) attack_target: Option<benilla_formats::RangeUnit>,
@@ -95,7 +94,7 @@ pub(super) fn build_view(
     deps.borrow_mut().mod_bits |= vctx.spell_mods.read_bits(d);
     let form = vctx.form;
     let caster = vctx.caster;
-    // The `$`-tokens' level (`0x5075f0` hands the selector to `0x6e3130`, `507645`-`50764a`).
+    // The `$`-tokens' level (`507645`-).
     let skill = |id| match caster {
         ViewCaster::Player => {
             let (race, class) = crate::spell::race_class(vctx.store);
@@ -121,12 +120,12 @@ pub(super) fn build_view(
         deps.borrow_mut().home = true;
         home
     };
-    // `$g`/`$G` read the active player's gender byte (`0x508214`), a pet view's too.
+    // `$g`/`$G` read the active player's gender byte, a pet view's too.
     let gender = || {
         deps.borrow_mut().gender = true;
         vctx.store.and_then(|s| s.0.unit_gender()).unwrap_or(0)
     };
-    // `0x6e3130` for this spell: the level the cost's and the cast time's per-level terms read.
+    // The reference for this spell: the level the cost's and the cast time's per-level terms read.
     let pet_level = |pet| d.skill_level(ViewCaster::pet_skill_value(pet));
     // `$c` reads the view's caster's cost, as the cost cell does.
     let text_cost = |t: &benilla_formats::SpellDisplay| match caster {
@@ -173,15 +172,14 @@ pub(super) fn build_view(
         global: vctx.get,
         printf: &crate::ui_script::token_printf,
     };
-    // The aura tooltip `0x52f880` expands the aura text with the points' modifiers off (`52f940`).
+    // The aura tooltip expands the aura text with the points' modifiers off.
     let aura_ctx = benilla_formats::TokenContext {
         unmodified_points: true,
         ..ctx
     };
-    // The cost cell (`0x52e8ad`): the resolved `power_cost`, named by power type (keys at
-    // `0x85416c`) and Health for a type outside 0..=4 (`0x52e8fc`: Bloodrage's -2), never a
-    // percentage. Rage shows wire ÷ 10, a per-second column adds `_PER_TIME`, and no cost at all
-    // leaves the cell empty. A pet with no unit costs -1 (`0x6e3233`), which shows as none.
+    // The cost cell: the resolved `power_cost`, named by power type and Health for a type outside
+    // 0..=4, never a percentage. Rage shows wire ÷ 10, a per-second column adds `_PER_TIME`, and no
+    // cost at all leaves the cell empty. A pet with no unit costs -1, which shows as none.
     let resolved_cost = match caster {
         ViewCaster::Player => vctx
             .store
@@ -204,7 +202,7 @@ pub(super) fn build_view(
         }
     }
     let cost = {
-        // The shared per-type divisor (`0x6e7130`), never a local `power_type == 1` test.
+        // The shared per-type divisor, never a local `power_type == 1` test.
         let div = benilla_protocol::messages::power_display_scale(d.power_type);
         let unit = match d.power_type {
             0 => "Mana",
@@ -226,8 +224,8 @@ pub(super) fn build_view(
             Some(format!("{} {unit}", resolved_cost / div))
         }
     };
-    // The range cell: two attribute gates, `GetMinMaxRange` (`0x6e3480`, `0x52e9c2`), then
-    // `max <= 0`. There is no melee wording: the melee row (flags bit 0, row 2 only) resolves to
+    // The range cell: two attribute gates, `GetMinMaxRange`, then `max <= 0`. There is no melee
+    // wording: the melee row (flags bit 0, row 2 only) resolves to
     // `max(reach + casterReach + 1.3333334, 5.0)` and prints like any other, usually "5 yd range".
     let range = (!d.tooltip_omits_range_line())
         .then(|| {
@@ -238,8 +236,8 @@ pub(super) fn build_view(
             {
                 deps.borrow_mut().range_units = true;
             }
-            // The call passes a null target (`0x52e9c2`): the auto-attack target is the melee arm's
-            // own lookup, and the ranged arm, with no target, pads nothing.
+            // The call passes a null target: the auto-attack target is the melee arm's own lookup,
+            // and the ranged arm, with no target, pads nothing.
             let targets = benilla_formats::RangeTargets {
                 target: None,
                 attack_target: vctx.attack_target,
@@ -251,7 +249,7 @@ pub(super) fn build_view(
                 return None;
             }
             // `SPELL_RANGE`'s hole is a string: the number is composed first, `"%d"` or `"%d-%d"`
-            // (`0x854fb4`, Charge's 8-25), each a `fistp` conversion that rounds to nearest.
+            // (Charge's 8-25), each a `fistp` conversion that rounds to nearest.
             let yd = |v: f32| f64::from(v).round_ties_even() as i64;
             let yards = if min > 0.0 {
                 format!("{}-{}", yd(min), yd(max))
@@ -261,15 +259,14 @@ pub(super) fn build_view(
             keyed(vctx.get, "SPELL_RANGE", &[Arg::S(&yards)])
         })
         .flatten();
-    // The cast line: gate `0x52eb15` also omits it for a TRADE_SKILL or ATTACK `Effect[0]`; then
-    // the ladder `0x52eb45`-`0x52ec90` over `GetCastTime(1)` (`52eb4d`), unclamped, where a
-    // negative time is "Instant cast" (`0x52ebce`) and a zero one is "Instant cast" only for a
-    // mana spell with a cost (`0x52ec4b`).
+    // The cast line: gate also omits it for a TRADE_SKILL or ATTACK `Effect[0]`; then the ladder
+    // over `GetCastTime(1)`, unclamped, where a negative time is "Instant cast" and a zero one is
+    // "Instant cast" only for a mana spell with a cost.
     let cast_time = if d.tooltip_omits_cast_line() {
         None
     } else {
-        // `GetCastTime` takes the selector too (`52eb45`), and its level term is `0x6e3130`'s. The
-        // player's is its level only where the row scales by one.
+        // `GetCastTime` takes the selector too, and its level term is the reference's. The player's
+        // is its level only where the row scales by one.
         if matches!(caster, ViewCaster::Player)
             && spells
                 .cast_times
@@ -308,8 +305,8 @@ pub(super) fn build_view(
             keyed(vctx.get, key, &[])
         }
     };
-    // The larger recovery column (`0x52eada`): op 11 follows the ranged-speed category pad. The
-    // ranged attack time is the player's, a pet view's too.
+    // The larger recovery column: op 11 follows the ranged-speed category pad. The ranged attack
+    // time is the player's, a pet view's too.
     let ranged_ms = if d.ranged_speed_cooldown() {
         deps.borrow_mut().unit(UnitField::RangedTime);
         vctx.store
@@ -331,8 +328,8 @@ pub(super) fn build_view(
             keyed(vctx.get, key, &[Arg::F(v)])
         })
         .flatten();
-    // The required-form line (`0x52f10a`-`0x52f2ae`). With `AttributesEx2` bit 19 set the mask is
-    // permissive (Inner Fire in Shadowform), and the line is skipped (`0x52f115`).
+    // The required-form line. With `AttributesEx2` bit 19 set the mask is permissive (Inner Fire in
+    // Shadowform), and the line is skipped.
     let requires_form = (d.stances != 0 && !d.form_mask_is_permissive())
         .then(|| {
             let names: Vec<&str> = (0..32u32)
@@ -351,15 +348,15 @@ pub(super) fn build_view(
                 .flatten()
         })
         .flatten();
-    // No caster unit passes the form test (`0x52f1e8`). A spell with no stance mask fails it for
-    // every form, so only a stance mask reads the player's form; a pet's is its own input.
+    // No caster unit passes the form test. A spell with no stance mask fails it for every form, so
+    // only a stance mask reads the player's form; a pet's is its own input.
     if matches!(caster, ViewCaster::Player) && d.stances != 0 {
         deps.borrow_mut().form = true;
     }
     let form_met = matches!(caster, ViewCaster::Pet(None))
         || (form != 0 && d.stances & (1u32 << (u32::from(form) - 1)) != 0);
-    // The required-item line (`0x52eea7`-`0x52f10a`): a mask is named whole by
-    // `ItemSubClassMask.dbc` before its subclasses are joined; an empty mask or class < 0 skips it.
+    // The required-item line: a mask is named whole by `ItemSubClassMask.dbc` before its subclasses
+    // are joined; an empty mask or class < 0 skips it.
     let requires_item = (d.targets & TARGET_ITEM == 0 && d.equipped_item_class >= 0)
         .then(|| {
             vctx.sub_classes?
@@ -368,7 +365,7 @@ pub(super) fn build_view(
         .flatten()
         .and_then(|name| keyed(vctx.get, "SPELL_EQUIPPED_ITEM", &[Arg::S(&name)]));
     let chance = chance_line(d, vctx.store, &mut deps.borrow_mut());
-    // The unit selector passes the item test outright (`0x52f07f`).
+    // The unit selector passes the item test outright.
     if matches!(caster, ViewCaster::Player) {
         deps.borrow_mut().item_search(usable::worn_slots_read(d));
     }
@@ -376,8 +373,8 @@ pub(super) fn build_view(
         || vctx.store.is_none_or(|s| {
             usable::equipped_item_fits(d, s, vctx.objects, vctx.items, vctx.commands)
         });
-    // Reagents (`SPELL_REAGENTS`, `0x854e54`), red when short; one whose template has not
-    // streamed is absent until `feed_spell_tooltips` re-pushes on its arrival.
+    // Reagents (`SPELL_REAGENTS`), red when short; one whose template has not streamed is absent
+    // until `feed_spell_tooltips` re-pushes on its arrival.
     let mut reagents_met = true;
     let reagents = {
         let mut parts: Vec<String> = Vec::new();
@@ -410,7 +407,7 @@ pub(super) fn build_view(
     let view = benilla_ui::script::SpellTooltipView {
         name: d.name.clone(),
         rank: d.rank.clone(),
-        // The aura variant's right column (`0x52f8e5`), gated on `SpellDispelType.dbc` `[+0x28]`.
+        // The aura variant's right column, gated on `SpellDispelType.dbc` `[+0x28]`.
         dispel_type: spells.catalog.dispel_name(d).map(str::to_string),
         cost,
         range,
@@ -437,17 +434,17 @@ pub(super) fn build_view(
     Some((view, deps.into_inner()))
 }
 
-/// `Targets` bit `0x10` (name inferred): set, the required-item line is skipped (`0x52eeaa`).
+/// `Targets` bit `0x10` (name inferred): set, the required-item line is skipped.
 const TARGET_ITEM: u32 = 0x10;
 
-/// The four `Effect[0]` values that select a chance-to-X line (jump table `0x52f7c4`).
+/// The four `Effect[0]` values that select a chance-to-X line.
 const EFFECT_DODGE: u32 = 20;
 const EFFECT_PARRY: u32 = 22;
 const EFFECT_BLOCK: u32 = 23;
 const EFFECT_ATTACK: u32 = 78;
 
-/// The chance-to-X line (`0x52f5b1`-`0x52f697`): ATTACK skips the passive gate that dodge, parry
-/// and block need. The wire's values are already percents.
+/// The chance-to-X line: ATTACK skips the passive gate that dodge, parry and block need. The wire's
+/// values are already percents.
 fn chance_line(
     d: &benilla_formats::SpellDisplay,
     store: Option<&ObjectStore>,
@@ -529,8 +526,8 @@ pub(super) fn reagent_state(
     (owned, named)
 }
 
-/// The pet unit's fields a pet view reads (`0x52e610` with the unit selector set): its level, the
-/// cost bases `0x612c50` reads, its form, and its and its melee target's reach and motion.
+/// The pet unit's fields a pet view reads: its level, the cost bases reads, its form, and its and
+/// its melee target's reach and motion.
 #[derive(Clone, Copy, PartialEq, Default)]
 pub(super) struct PetInputs {
     guid: Option<u64>,

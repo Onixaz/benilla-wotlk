@@ -11,7 +11,7 @@ pub(super) struct Drop {
     pub(super) vel: Vec3,
     /// Ground height (Bevy y) of the drop's current grid cell, re-sampled on each new cell; the
     /// drop dies and may patter there. The reference instead bakes the death once at birth, where
-    /// the velocity ray meets the grid (`0x675174` rain, `0x677c2f` snow, both `0x67cb60`).
+    /// the velocity ray meets the grid.
     pub(super) land_y: f32,
     /// The grid cell `land_y` was sampled for.
     pub(super) cell: (i32, i32),
@@ -25,12 +25,12 @@ struct Pending {
     drop: Drop,
 }
 
-/// One drop packet (`Packet<Drop>`): `baseTime = now + 6144/rate`, stamped at open only
-/// (`0x67598c`), is when the batch replays. On the shader leg it draws only from a buffer baked
-/// at close (`0x6752b0`, called only from `0x675a97`). A sparse first packet stamps ~100 s out
-/// and still replays: the 60 s guard (`0x80ff6c`) bounds the replay span, not the delay.
+/// One drop packet (`Packet<Drop>`): `baseTime = now + 6144/rate`, stamped at open only, is when
+/// the batch replays. On the shader leg it draws only from a buffer baked at close. A sparse first
+/// packet stamps ~100 s out and still replays: the 60 s guard bounds the replay span, not the
+/// delay.
 struct Packet {
-    /// The eye at open, set once (`0x678598`, from `0xc7cf20`); [`RETIRE_DIST`] measures from it.
+    /// The eye at open, set once; [`RETIRE_DIST`] measures from it.
     anchor: Vec3,
     /// `buildTime`, when the packet opened; record offsets are relative to it.
     opened: f32,
@@ -68,8 +68,8 @@ impl Pool {
             + self.sealed.iter().map(|p| p.records.len()).sum::<usize>()
     }
 
-    /// Seals the open packet when full, `P/6144` old or past `baseTime` (`0x675a6d`), opens one at
-    /// the live rate, and returns its free space and the replay instant of a record made now.
+    /// Seals the open packet when full, `P/6144` old or past `baseTime`, opens one at the live
+    /// rate, and returns its free space and the replay instant of a record made now.
     fn open_for(&mut self, now: f32, rate: f32, close_age: f32, cam: Vec3) -> (usize, f32) {
         if let Some(pk) = &self.open {
             if pk.count >= PACKET_CAP as u32 || now - pk.opened >= close_age || now >= pk.visible_at
@@ -98,16 +98,16 @@ impl Pool {
         }
     }
 
-    /// The type-change cut (`0x67be40`): the open packet is discarded unbaked (`0x6756b2`) and
-    /// every sealed one not yet replaying is unlinked (`0x67575a`); replaying ones finish.
+    /// The type-change cut: the open packet is discarded unbaked and every sealed one not yet
+    /// replaying is unlinked; replaying ones finish.
     pub(super) fn cut(&mut self, now: f32) {
         self.open = None;
         self.sealed.retain(|p| now > p.visible_at);
     }
 
-    /// The anchor cull ([`RETIRE_DIST`]), run before emission like the active-list walk
-    /// (`0x677ff0`): sealed packets by their anchor in 3-D, active drops by their own distance
-    /// ([`RETIRE_DROP_SLACK`]). The open packet is not in that list. A discard: no patter is left.
+    /// The anchor cull ([`RETIRE_DIST`]), run before emission like the active-list walk: sealed
+    /// packets by their anchor in 3-D, active drops by their own distance ([`RETIRE_DROP_SLACK`]).
+    /// The open packet is not in that list. A discard: no patter is left.
     pub(super) fn retire_far(&mut self, cam: Vec3, kind: WeatherKind) {
         let anchor_r2 = RETIRE_DIST * RETIRE_DIST;
         self.sealed
@@ -120,19 +120,19 @@ impl Pool {
     }
 }
 
-/// A lazy cache of the weather ground oracle (`0x67c760` → `0x6b7070`), the max of terrain and
-/// the chunk's WMO and doodad hits (`CMapObj::IntersectSegment` `0x6a37b0`, `0x6b7237`), so drops
-/// land on roofs. Here one downward ray per cell from the spawn plane; cleared when that plane
-/// moves a story (the ray start decides which roofs it sees) or the cache outgrows its bound.
+/// A lazy cache of the weather ground oracle, the max of terrain and the chunk's WMO and doodad
+/// hits (`CMapObj::IntersectSegment`), so drops land on roofs. Here one downward ray per cell from
+/// the spawn plane; cleared when that plane moves a story (the ray start decides which roofs it
+/// sees) or the cache outgrows its bound.
 #[derive(Resource, Default)]
 pub(super) struct HeightCache {
     cells: HashMap<(i32, i32), f32>,
     cast_y: f32,
 }
 
-/// The reference's cell stride (`0x80ff98` = 1.0416666).
+/// The reference's cell stride (1.0416666).
 pub(super) const CELL: f32 = 1.041_666_6;
-/// A probe that hits nothing reports ground 200 below the query (`0x67c812`: `refZ − 200`).
+/// A probe that hits nothing reports ground 200 below the query (: `refZ − 200`).
 const MISS_DEPTH: f32 = 200.0;
 
 impl HeightCache {
@@ -254,9 +254,9 @@ const DRIFT_CHUNK: usize = 2048;
 /// dispatch; a flight's new cells a frame then split a few ways.
 const RAY_CHUNK: usize = 64;
 
-/// The per-frame record count, `fistp(min(space, quota) − 0.5)` under x87 round-to-nearest-even
-/// (`0x6754cc`). The parity is load-bearing: at `space = 1` it is `RNE(0.5) = 0` forever, so a
-/// 6143-record packet never fills and seals only at the `P/6144` age.
+/// The per-frame record count, `fistp(min(space, quota) − 0.5)` under x87 round-to-nearest-even.
+/// The parity is load-bearing: at `space = 1` it is `RNE(0.5) = 0` forever, so a 6143-record packet
+/// never fills and seals only at the `P/6144` age.
 fn frame_count(space: usize, quota: f32) -> usize {
     ((space as f32).min(quota) - 0.5).round_ties_even().max(0.0) as usize
 }
@@ -269,15 +269,15 @@ pub(super) const fn spawn_box(kind: WeatherKind) -> (f32, f32) {
     }
 }
 
-/// `(spawn, velocity)` from five random draws (`0x677750` snow, `0x674c50` rain), placed by:
+/// `(spawn, velocity)` from five random draws, placed by:
 ///
 /// ```text
 /// pos = R(α, ĥ×ŷ)·(O − T·V)  +  1.75·W  +  C
 /// ```
 ///
-/// `O` is the scatter on the eye plane where the particle arrives (its vertical draw is dead at
-/// `0x6777ce`), backed up its velocity by `T = z_off/|V.y|`. `R` ([`WeatherWind::slab`]) leans
-/// the offset but not the velocity (`0x677a41` copies position only), so drift is world-fixed.
+/// `O` is the scatter on the eye plane where the particle arrives (its vertical draw is dead),
+/// backed up its velocity by `T = z_off/|V.y|`. `R` ([`WeatherWind::slab`]) leans the offset but
+/// not the velocity, so drift is world-fixed.
 pub(super) fn spawn_particle(
     kind: WeatherKind,
     w: f32,
@@ -291,8 +291,8 @@ pub(super) fn spawn_particle(
         0.0,
         (r[1] - 0.5) * 2.0 * half_xy,
     );
-    // `w` is the density. The heading centres on the world-fixed −1.57 (`0x80ffbc`), spread by
-    // grade over its full width (`r − 0.5` halves it): rain ±7.5° at grade 1, calm snow 2π.
+    // `w` is the density. The heading centres on the world-fixed −1.57, spread by grade over its
+    // full width (`r − 0.5` halves it): rain ±7.5° at grade 1, calm snow 2π.
     let (vy, drift_mag, spread) = match kind {
         WeatherKind::Rain => (
             -(RAIN_VZ_BASE + RAIN_VZ_W * w + RAIN_VZ_RNG * w * r[2]),
@@ -338,9 +338,8 @@ pub(super) fn run_kind(
     // ===== retire =====
     pool.retire_far(cam_pos, kind);
 
-    // ===== record =====
-    // The emit gate (`0x6754a0`, `0x8015b8` = 1.0): a frame records only when its quota is over
-    // 1, so below ~60 drops/s nothing spawns. `REF_FPS_GAIN` is this path's one deviation.
+    // ===== record ===== The emit gate (1.0): a frame records only when its quota is over 1, so
+    // below ~60 drops/s nothing spawns. `REF_FPS_GAIN` is this path's one deviation.
     let rate = weather.density_gain() * p * density * REF_FPS_GAIN;
     let quota = rate * dt.min(DT_CAP);
     if quota > 1.0 {
@@ -372,7 +371,7 @@ pub(super) fn run_kind(
         for (spawn, vel) in spawns {
             let cell = HeightCache::key(spawn.x, spawn.z);
             let land_y = heights.cached(cell);
-            // Ground at or above the spawn kills it at birth (`0x675051`).
+            // Ground at or above the spawn kills it at birth.
             if land_y >= spawn.y {
                 continue;
             }
@@ -429,9 +428,9 @@ pub(super) fn run_kind(
         }
     }
 
-    // Rain leaves one patter per landing drop (`0x6754a0`). The reference skips it when the
-    // ridden transport's `|v|² > 2` (`0x6755c2`, `mgr+0x5c`), never for running; here the gate
-    // always passes, with no transport speed wired. Snow settles and fades over 0.25 s.
+    // Rain leaves one patter per landing drop. The reference skips it when the ridden transport's
+    // `|v|² > 2` (`mgr+0x5c`), never for running; here the gate always passes, with no transport
+    // speed wired. Snow settles and fades over 0.25 s.
     let ground_life = match kind {
         WeatherKind::Rain => PATTER_LIFE,
         _ => SNOW_SETTLE_LIFE,
@@ -514,7 +513,7 @@ mod tests {
         wind
     }
 
-    /// A wire grade through the knee (`0x67bcc8`): the density the spawn kernel sees.
+    /// A wire grade through the knee: the density the spawn kernel sees.
     fn grade(wire: f32) -> f32 {
         ((wire - 0.25) * (4.0 / 3.0)).max(0.0)
     }

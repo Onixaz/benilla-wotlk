@@ -44,7 +44,7 @@ impl Toc {
     }
 
     /// The directive matching `key` case-insensitively, the last one when a key repeats: the
-    /// reference's hash insert into `[rec+0x98]` (`0x51d580`) replaces the old value (`0x51d77b`).
+    /// reference's hash insert into `[rec+0x98]` replaces the old value.
     pub fn directive(&self, key: &str) -> Option<&str> {
         self.directives
             .iter()
@@ -60,8 +60,8 @@ impl Toc {
             .unwrap_or_default()
     }
 
-    /// `## Interface:` as the version gate reads it: `Toc_Parse 0x51c9b0` stores `SStrToInt` of
-    /// the value at `[rec+0x1c]` (else the ctor's `0`), so `11507, 11508` reads `11507`.
+    /// `## Interface:` as the version gate reads it: `Toc_Parse` stores `SStrToInt` of the value at
+    /// `[rec+0x1c]` (else the ctor's `0`), so `11507, 11508` reads `11507`.
     pub fn interface_version(&self) -> u32 {
         self.directive("Interface")
             .map(|v| {
@@ -72,9 +72,8 @@ impl Toc {
     }
 
     /// A list directive (`SavedVariables`, `OptionalDeps`, …) as the reference tokenizes it: a
-    /// repeated line appends (`0x64a620` into the array at `[rec+0x80]`, count at `[rec+0x7c]`),
-    /// and a space separates like a comma (`SStrTokenize 0x64ae50`, delimiters `" ,"` at
-    /// `0x8537c4`).
+    /// repeated line appends (into the array at `[rec+0x80]`, count at `[rec+0x7c]`), and a space
+    /// separates like a comma (`SStrTokenize`, delimiters `" ,"`).
     pub fn list(&self, key: &str) -> Vec<&str> {
         self.list_where(|k| k.eq_ignore_ascii_case(key))
     }
@@ -89,15 +88,14 @@ impl Toc {
     }
 
     /// Hard dependencies: every directive whose key starts with `Dep` or `RequiredDep`. The
-    /// reference stores these keys without a colon and prefix-compares them
-    /// (`0x51cd4e`-`0x51cd5f`), so `## Dependencies` and `## RequiredDependencies` both land in
-    /// its one array at `[rec+0x50]`.
+    /// reference stores these keys without a colon and prefix-compares them, so `## Dependencies`
+    /// and `## RequiredDependencies` both land in its one array at `[rec+0x50]`.
     pub fn dependencies(&self) -> Vec<&str> {
         self.list_where(|k| starts_with_ci(k, "RequiredDep") || starts_with_ci(k, "Dep"))
     }
 
     /// Soft dependencies: every directive whose key starts with `OptionalDep`, the long form
-    /// included. `AddOn_Load 0x51f240` loads them first and ignores their failures.
+    /// included. `AddOn_Load` loads them first and ignores their failures.
     pub fn optional_dependencies(&self) -> Vec<&str> {
         self.list_where(|k| starts_with_ci(k, "OptionalDep"))
     }
@@ -107,10 +105,9 @@ impl Toc {
         self.directive("LoadOnDemand").map(str::trim) == Some("1")
     }
 
-    /// `## DefaultState:`, the byte at `[rec+0x2b]` the enable query `0x51e470` falls back to when
-    /// characters disagree or none has chosen. `Toc_Parse` stores `"enabled"` (`0x853764`) as 1 and
-    /// `"disabled"` (`0x853758`) as 0 at `0x51d204` and any other value not at all (`0x51d21a`);
-    /// the ctor `0x520550` seeds 1 (`0x5205b9`), so only `disabled` disables.
+    /// `## DefaultState:`, the byte at `[rec+0x2b]` the enable query falls back to when characters
+    /// disagree or none has chosen. `Toc_Parse` stores `"enabled"` as 1 and `"disabled"` as 0 and
+    /// any other value not at all; the ctor seeds 1, so only `disabled` disables.
     pub fn default_state(&self) -> bool {
         !self
             .directive("DefaultState")

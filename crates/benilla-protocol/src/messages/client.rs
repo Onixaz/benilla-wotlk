@@ -4,7 +4,7 @@ use super::addons::{addon_tail, addon_tail_wotlk, SecureAddon};
 use super::{CharCreateReq, MovementInfo};
 
 /// `CMSG_AUTH_SESSION` body: build, server id, account, seed, proof, then the addon block's
-/// uncompressed size and zlib stream (`0x51d910`); stock sends [`super::STOCK_SECURE_ADDONS`].
+/// uncompressed size and zlib stream; stock sends [`super::STOCK_SECURE_ADDONS`].
 pub fn auth_session(
     build: u32,
     username: &str,
@@ -130,10 +130,10 @@ pub fn leave_channel(name: &str) -> Vec<u8> {
     cstrings_body(&[name])
 }
 
-/// 3.3.5a's `CMSG_JOIN_CHANNEL` body, as the 12340 client builds it (`0x507c58`): `u32` the
-/// `ChatChannels.dbc` id of a built-in channel (0 for a custom one), `u8` 1 when the client joins
-/// on its own (the zone walk and the login re-join, `0x508139`, `0x50819c`) and 0 for a Lua join,
-/// `u8` the voice flag, then the name and password.
+/// 3.3.5a's `CMSG_JOIN_CHANNEL` body, as the 12340 client builds it: `u32` the `ChatChannels.dbc`
+/// id of a built-in channel (0 for a custom one), `u8` 1 when the client joins on its own (the zone
+/// walk and the login re-join) and 0 for a Lua join, `u8` the voice flag, then the name and
+/// password.
 pub fn join_channel_wotlk(
     channel_id: u32,
     auto_joined: bool,
@@ -148,8 +148,7 @@ pub fn join_channel_wotlk(
     body
 }
 
-/// 3.3.5a's `CMSG_LEAVE_CHANNEL` body (`0x5095ca`): `u32` the channel's id (0 for a custom one),
-/// then its name.
+/// 3.3.5a's `CMSG_LEAVE_CHANNEL` body: `u32` the channel's id (0 for a custom one), then its name.
 pub fn leave_channel_wotlk(channel_id: u32, name: &str) -> Vec<u8> {
     let mut body = channel_id.to_le_bytes().to_vec();
     body.extend(cstrings_body(&[name]));
@@ -335,8 +334,8 @@ pub fn force_speed_ack(guid: u64, counter: u32, info: &MovementInfo, speed: f32)
     body
 }
 
-/// `CMSG_PING` body, the ~30 s keepalive (`0x537e10`): the sequence, then the last round trip in
-/// ms, which the server stores as our latency; it echoes the sequence in `SMSG_PONG`.
+/// `CMSG_PING` body, the ~30 s keepalive: the sequence, then the last round trip in ms, which the
+/// server stores as our latency; it echoes the sequence in `SMSG_PONG`.
 pub fn ping(sequence: u32, last_rtt_ms: u32) -> Vec<u8> {
     let mut body = Vec::with_capacity(8);
     body.extend_from_slice(&sequence.to_le_bytes());

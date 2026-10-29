@@ -1,61 +1,59 @@
 //! The markup parse of `CSimpleHTML::SetText`: a string in, a block list out, with no Lua or model.
 //!
-//! The markup is strict XML: `0x78a422` calls `XMLTree::Parse` (`0x6f2a30`), an embedded expat
-//! 1.95.5 (`0x882094`). An unclosed `<BR>`, a `</p>` closing a `<P>` (XML matching is
-//! case-sensitive, SimpleHTML's own name compares are not), a bare `&`, an entity such as `&nbsp;`,
-//! a duplicate attribute or text after `</HTML>` fails the parse, and the widget renders the raw
-//! string (`0x78a501`). [`roxmltree`] gives expat's outcome on each of those and on what passes
-//! (trailing whitespace, numeric references, comments, CDATA), and its interleaved children give
-//! the `<A>` and `<BR>` splice points directly. A DOCTYPE takes the fallback here; whether the
-//! reference's expat accepts one is untraced, and no `page_text` body carries one.
+//! The markup is strict XML: the reference calls `XMLTree::Parse`, an embedded expat 1.95.5. An
+//! unclosed `<BR>`, a `</p>` closing a `<P>` (XML matching is case-sensitive, SimpleHTML's own name
+//! compares are not), a bare `&`, an entity such as `&nbsp;`, a duplicate attribute or text after
+//! `</HTML>` fails the parse, and the widget renders the raw string. [`roxmltree`] gives expat's
+//! outcome on each of those and on what passes (trailing whitespace, numeric references, comments,
+//! CDATA), and its interleaved children give the `<A>` and `<BR>` splice points directly. A DOCTYPE
+//! takes the fallback here; whether the reference's expat accepts one is untraced, and no
+//! `page_text` body carries one.
 
 use crate::justify;
 
-/// The four block elements in the client's `elementFont` order (`+0x350`), the numbering the ctor
-/// (`0x789e3e`), the block builder (`0x78ae29`) and the Lua resolver (`0x795d80`) share.
+/// The four block elements in the client's `elementFont` order (`+0x350`), the numbering the ctor,
+/// the block builder and the Lua resolver share.
 pub(crate) const ELEMENT_NAMES: [&str; 4] = ["P", "H1", "H2", "H3"];
 
-/// `P`: the element of the fallback block (`0x78a503`), of `<BR/>`, and of a Lua call without a
-/// known element name (`0x795e50`).
+/// `P`: the element of the fallback block, of `<BR/>`, and of a Lua call without a known element
+/// name.
 pub(crate) const ELEM_P: usize = 0;
 
-/// The `align` default, set before the attribute is read (`0x78a7c8` for a block, `0x78ab59` for
-/// an `<IMG>`): LEFT, which `0x78ae78` writes over the FontString ctor's CENTER.
+/// The `align` default, set before the attribute is read (for an `<IMG>`): LEFT, which the
+/// reference writes over the FontString ctor's CENTER.
 pub(crate) const ALIGN_LEFT: u32 = 0x01;
-/// `align="center"`: the value `0x6f1990` writes from the shared enum table (`0x811ad0`).
+/// `align="center"`: the value writes from the shared enum table.
 pub(crate) const ALIGN_CENTER: u32 = 0x02;
 /// `align="right"`.
 pub(crate) const ALIGN_RIGHT: u32 = 0x04;
 
-/// The ctor's `hyperlinkFormat` (`0x87a838`, set at `0x789ea7` and `0x78a540`): `<A href="X">Y</A>`
-/// becomes `|HX|hY|h`, a hyperlink to the FontString, which never disables `|H` (`0x771d80`).
+/// The ctor's `hyperlinkFormat`: `<A href="X">Y</A>` becomes `|HX|hY|h`, a hyperlink to the
+/// FontString, which never disables `|H`.
 pub(crate) const DEFAULT_HYPERLINK_FORMAT: &str = "|H%s|h%s|h";
 
-/// One block, the arguments of `AddTextBlock` (`0x78adb0`) or `AddImage` (`0x78ab40`).
+/// One block, the arguments of `AddTextBlock` or `AddImage`.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Block {
     /// A text block: one `CSimpleFontString`, `SetWidth(frame width)`, no height.
     Text {
-        /// The spliced, collapsed string, or the raw input on the fallback path (`0x78a501`).
+        /// The spliced, collapsed string, or the raw input on the fallback path.
         text: String,
         /// The `elementFont[]` index this block draws with, before the empty-path fallback.
         elem: usize,
-        /// The `align` bits (`0x811ad0`'s values); masked `& 7` into the block's justifyH.
+        /// The `align` bits; masked `& 7` into the block's justifyH.
         align: u32,
     },
     /// An `<IMG>`: one `CSimpleTexture`, sized by `width`/`height` and anchored by `align`.
     Image {
-        /// `src=`, used verbatim as the texture path (`0x78ad02`).
+        /// `src=`, used verbatim as the texture path.
         src: Option<String>,
-        /// `width=` and `height=` in UI units, as `<AbsDimension>` (`0x78ab9e`, `0x78abd6`); 0
-        /// when absent.
+        /// `width=` and `height=` in UI units, as `<AbsDimension>`; 0 when absent.
         width: f32,
         height: f32,
         /// The `align` bits; selects which corner anchors to the previous block.
         align: u32,
-        /// Reserves no height, so the text after overlaps it (`0x78ab55`). Set only when `align`
-        /// is present, so `<IMG src=…/>` and `<IMG align="left" src=…/>` anchor alike but flow
-        /// differently.
+        /// Reserves no height, so the text after overlaps it. Set only when `align` is present, so
+        /// `<IMG src=…/>` and `<IMG align="left" src=…/>` anchor alike but flow differently.
         floated: bool,
     },
 }
@@ -64,28 +62,26 @@ pub(crate) enum Block {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Parse {
     pub(crate) blocks: Vec<Block>,
-    /// `SetText`'s return (`0x78a519`): whether the markup path ran. The Lua shim (`0x796a90`)
-    /// drops it.
+    /// `SetText`'s return: whether the markup path ran. The Lua shim drops it.
     pub(crate) used_markup: bool,
     /// The console lines the error sink received, formatted with the frame's name.
     pub(crate) errors: Vec<String>,
 }
 
-/// The parse half of `SetText` (`0x78a3a0`). `frame` names the widget in error lines;
-/// `hyperlink_format` is the current `+0x360`.
+/// The parse half of `SetText`. `frame` names the widget in error lines; `hyperlink_format` is the
+/// current `+0x360`.
 pub(crate) fn parse_markup(raw: &str, frame: &str, hyperlink_format: &str) -> Parse {
     let mut out = Parse {
         blocks: Vec::new(),
         used_markup: false,
         errors: Vec::new(),
     };
-    // `usedMarkup` is raised before the BODY walk (`0x78a4b6`), so an empty `<BODY/>` renders
-    // nothing rather than the raw string.
+    // `usedMarkup` is raised before the BODY walk, so an empty `<BODY/>` renders nothing rather
+    // than the raw string.
     if let Ok(doc) = roxmltree::Document::parse(raw) {
         let root = doc.root_element();
         if root.tag_name().name().eq_ignore_ascii_case("HTML") {
-            // Only the first `BODY` is walked, and a second never errors (`0x78a4bf` leaves the
-            // loop after `0x78a660` returns).
+            // Only the first `BODY` is walked, and a second never errors.
             for child in root.children().filter(roxmltree::Node::is_element) {
                 if child.tag_name().name().eq_ignore_ascii_case("BODY") {
                     out.used_markup = true;
@@ -105,9 +101,9 @@ pub(crate) fn parse_markup(raw: &str, frame: &str, hyperlink_format: &str) -> Pa
         }
     }
     if !out.used_markup {
-        // A failed parse, a non-`HTML` root or no `BODY` all land on `0x78a501`: the raw string
-        // as one LEFT `P` block, without the collapse, as `0x78a7b0` is never entered, so its `\n`
-        // stay line breaks, which stock `ItemTextFrame.lua` relies on.
+        // A failed parse, a non-`HTML` root or no `BODY` all land: the raw string as one LEFT `P`
+        // block, without the collapse, as the reference is never entered, so its `\n` stay line
+        // breaks, which stock `ItemTextFrame.lua` relies on.
         out.blocks.push(Block::Text {
             text: raw.to_string(),
             elem: ELEM_P,
@@ -117,8 +113,8 @@ pub(crate) fn parse_markup(raw: &str, frame: &str, hyperlink_format: &str) -> Pa
     out
 }
 
-/// The BODY walker (`0x78a660`), by child name, case-insensitively. BODY's own text is dropped, as
-/// nothing reads it (`+0x0c`), so the newlines between a `page_text` body's tags add nothing.
+/// The BODY walker, by child name, case-insensitively. BODY's own text is dropped, as nothing reads
+/// it (`+0x0c`), so the newlines between a `page_text` body's tags add nothing.
 fn walk_body(body: roxmltree::Node, frame: &str, hyperlink_format: &str, out: &mut Parse) {
     for node in body.children().filter(roxmltree::Node::is_element) {
         let tag = node.tag_name().name();
@@ -129,7 +125,7 @@ fn walk_body(body: roxmltree::Node, frame: &str, hyperlink_format: &str, out: &m
             let block = paragraph(node, elem, frame, hyperlink_format, &mut out.errors);
             out.blocks.push(block);
         } else if tag.eq_ignore_ascii_case("BR") {
-            // A `\n` block of its own (`0x78a726`), one blank line tall (`0x5c2070`).
+            // A `\n` block of its own, one blank line tall.
             out.blocks.push(Block::Text {
                 text: "\n".to_string(),
                 elem: ELEM_P,
@@ -138,14 +134,14 @@ fn walk_body(body: roxmltree::Node, frame: &str, hyperlink_format: &str, out: &m
         } else if tag.eq_ignore_ascii_case("IMG") {
             out.blocks.push(image(node));
         } else {
-            // Logged (`0x87a95c`) and skipped; the walk goes on (`0x78a762`-`0x78a796`).
+            // Logged and skipped; the walk goes on.
             out.errors
                 .push(format!("Frame {frame}: Unknown element type: {tag}"));
         }
     }
 }
 
-/// One `<P>`, `<H1>`, `<H2>` or `<H3>` into one block (`0x78a7b0`).
+/// One `<P>`, `<H1>`, `<H2>` or `<H3>` into one block.
 fn paragraph(
     node: roxmltree::Node,
     elem: usize,
@@ -168,19 +164,18 @@ fn paragraph(
         }
         let tag = child.tag_name().name();
         if tag.eq_ignore_ascii_case("BR") {
-            // An inline `<BR/>` is `|n`, a break inside this block (`0x78a86b`, `0x87a9a0`).
+            // An inline `<BR/>` is `|n`, a break inside this block.
             buf.push_str("|n");
         } else if tag.eq_ignore_ascii_case("A") {
-            // `<A>` needs a non-empty `href` and text, or adds nothing (`0x78a8f0`,
-            // `0x78a914`-`0x78a922`).
+            // `<A>` needs a non-empty `href` and text, or adds nothing.
             let href = attr_ci(child, "href").unwrap_or("");
             let inner = direct_text(child);
             if !href.is_empty() && !inner.is_empty() {
                 buf.push_str(&sprintf_two(hyperlink_format, href, &inner));
             }
         } else {
-            // Logged as at BODY level (`0x78a9f9`-`0x78aa2c`); its own text, which expat keeps on
-            // the child, is lost and the text around it kept.
+            // Logged as at BODY level; its own text, which expat keeps on the child, is lost and
+            // the text around it kept.
             errors.push(format!("Frame {frame}: Unknown element type: {tag}"));
         }
     }
@@ -191,14 +186,14 @@ fn paragraph(
     }
 }
 
-/// One `<IMG>` (`0x78ab40`).
+/// One `<IMG>`.
 fn image(node: roxmltree::Node) -> Block {
     let mut align = ALIGN_LEFT;
     let mut floated = false;
-    // Floating is decided only when `align` is present and non-empty (`0x78ab55`-`0x78ab6c`):
+    // Floating is decided only when `align` is present and non-empty:
     //   absent or empty: align 1, not floated     `left`, `right`: 1, 4, floated
     //   `center`: 2, not floated                  `top`, `middle`, `bottom`: 8, 16, 32, not floated
-    //   anything else: align stays 1, floated (`0x6f1990` leaves the default)
+    //   anything else: align stays 1, floated
     if let Some(v) = attr_ci(node, "align").filter(|v| !v.is_empty()) {
         if let Some(bits) = justify::parse_bits(v) {
             align = bits;
@@ -214,9 +209,9 @@ fn image(node: roxmltree::Node) -> Block {
     }
 }
 
-/// A block's `align` (`0x78a7cf`) through the shared enum (`0x811ad0`, [`justify::parse_bits`]):
-/// absent, empty or unknown stays LEFT, as `0x6f1990` writes only on a hit. `top`, `middle` and
-/// `bottom` give 8, 16 and 32, which leave no justifyH bit, in the reference too.
+/// A block's `align` through the shared enum ([`justify::parse_bits`]): absent, empty or unknown
+/// stays LEFT, as the reference writes only on a hit. `top`, `middle` and `bottom` give 8, 16 and
+/// 32, which leave no justifyH bit, in the reference too.
 fn align_of(node: roxmltree::Node) -> u32 {
     attr_ci(node, "align")
         .filter(|v| !v.is_empty())
@@ -224,8 +219,8 @@ fn align_of(node: roxmltree::Node) -> u32 {
         .unwrap_or(ALIGN_LEFT)
 }
 
-/// Case-insensitive attribute lookup, as the reference compares names (`0x64a4c0`, `SStrCmpI`
-/// `0x414310`); roxmltree's own lookup is case-sensitive.
+/// Case-insensitive attribute lookup, as the reference compares names (`SStrCmpI`); roxmltree's own
+/// lookup is case-sensitive.
 fn attr_ci<'a>(node: roxmltree::Node<'a, '_>, name: &str) -> Option<&'a str> {
     node.attributes()
         .find(|a| a.name().eq_ignore_ascii_case(name))
@@ -241,9 +236,9 @@ fn direct_text(node: roxmltree::Node) -> String {
         .collect()
 }
 
-/// `SStrPrintf` of the format with `href` and the inner text (`0x78a97b`, `0x64a7f0`). Deviation:
-/// only `%s` and `%%` are expanded and other specs copied, because the real `printf` would read the
-/// string pointers as other types.
+/// `SStrPrintf` of the format with `href` and the inner text. Deviation: only `%s` and `%%` are
+/// expanded and other specs copied, because the real `printf` would read the string pointers as
+/// other types.
 fn sprintf_two(fmt: &str, a: &str, b: &str) -> String {
     let mut out = String::with_capacity(fmt.len() + a.len() + b.len());
     let mut used = 0usize;
@@ -273,8 +268,8 @@ fn sprintf_two(fmt: &str, a: &str, b: &str) -> String {
     out
 }
 
-/// C's `atof` (`0x64aaa0`) for `width=` and `height=`: the longest numeric prefix after leading
-/// whitespace, 0 when there is none, so `"12px"` is 12.
+/// C's `atof` for `width=` and `height=`: the longest numeric prefix after leading whitespace, 0
+/// when there is none, so `"12px"` is 12.
 fn atof(s: &str) -> f32 {
     let b = s.as_bytes();
     let mut i = 0;
@@ -310,12 +305,10 @@ fn atof(s: &str) -> f32 {
     s[start..i].parse::<f32>().unwrap_or(0.0)
 }
 
-/// The whitespace collapse of markup blocks (`0x78a8af`-`0x78aa87`; the fallback at `0x78a501`
-/// skips it): leading and trailing whitespace dropped, each run of tabs, newlines, CRs and spaces
-/// made one space, and whitespace on either side of `|n` removed. Its arms: whitespace
-/// (`0x78aa34`), `|n` (`0x78aa46`, `0x78aa54`), any other byte (`0x78aa66`), and a tail that drops
-/// a pending space (`0x78aa7b`). A byte from `0x80` up widens negative (`0x78a8c5`) and takes the
-/// verbatim arm, so UTF-8 is never split.
+/// The whitespace collapse of markup blocks: leading and trailing whitespace dropped, each run of
+/// tabs, newlines, CRs and spaces made one space, and whitespace on either side of `|n` removed.
+/// Its arms: whitespace, `|n`, any other byte, and a tail that drops a pending space. A byte from
+/// `0x80` up widens negative and takes the verbatim arm, so UTF-8 is never split.
 fn collapse(buf: &str) -> String {
     let src = buf.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(src.len());
@@ -443,7 +436,7 @@ mod tests {
 
     #[test]
     fn an_empty_body_renders_nothing_at_all() {
-        // `usedMarkup` rises before the walk (`0x78a4b6`), so this does not fall back.
+        // `usedMarkup` rises before the walk, so this does not fall back.
         let p = parse_markup("<HTML><BODY/></HTML>", "F", DEFAULT_HYPERLINK_FORMAT);
         assert!(p.used_markup);
         assert!(p.blocks.is_empty());
@@ -615,8 +608,8 @@ mod tests {
         assert!(p.errors.is_empty());
     }
 
-    /// Stock `ItemTextFrame.lua` appends `From: <creator>` after `</HTML>`, expat error 9
-    /// (`0x881fec`), so a signed page renders as raw markup on the reference too.
+    /// Stock `ItemTextFrame.lua` appends `From: <creator>` after `</HTML>`, expat error 9, so a
+    /// signed page renders as raw markup on the reference too.
     #[test]
     fn a_signed_html_page_falls_back_exactly_as_the_reference_does() {
         let raw = "\n<HTML><BODY><P>The letter body.</P></BODY></HTML>\n\nFrom:\nMankrik\n\n";

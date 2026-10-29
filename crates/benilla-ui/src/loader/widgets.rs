@@ -5,8 +5,8 @@ use crate::framexml::{self, Element};
 use super::{abs_dim, abs_value, children_named, color_of, tex_coords_of, Loader};
 
 impl Loader<'_> {
-    /// `<StatusBar>` (`0x782ef0`): a reversed `minValue`/`maxValue` pair is swapped, as
-    /// `SetMinMaxValues` also does; `drawLayer` is the bar texture's layer, ARTWORK by default.
+    /// `<StatusBar>`: a reversed `minValue`/`maxValue` pair is swapped, as `SetMinMaxValues` also
+    /// does; `drawLayer` is the bar texture's layer, ARTWORK by default.
     pub(super) fn apply_statusbar(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         if !el.tag.eq_ignore_ascii_case("StatusBar") {
             return;
@@ -34,8 +34,8 @@ impl Loader<'_> {
                     (file.to_string(), layer.clone()),
                     dbg,
                 );
-                // A `<Color>` beside `file=` is discarded, as on any texture (`0x76fe20`);
-                // `<BarColor>` is the bar's tint.
+                // A `<Color>` beside `file=` is discarded, as on any texture; `<BarColor>` is the
+                // bar's tint.
             } else if let Some(c) = color {
                 self.call(
                     wrapper,
@@ -74,9 +74,9 @@ impl Loader<'_> {
                 // form (`UIPanelButtonUpTexture`); it expands like a `<Layers>` region.
                 let expanded = this.expand_region(raw);
                 let t = &expanded;
-                // The reference sends all four state textures through the `<Layers>` texture adder
-                // (`0x6f26f0`, from `0x778903`), so a `<Color>` is the region's own colour fill; the
-                // Lua setter has no colour form (`0x781970`). `""` creates the slot unpainted.
+                // The reference sends all four state textures through the `<Layers>` texture adder,
+                // so a `<Color>` is the region's own colour fill; the Lua setter has no colour
+                // form. `""` creates the slot unpainted.
                 let color = children_named(t, "Color").next().map(color_of);
                 match t.attr("file") {
                     Some(file) => this.call(wrapper, method, file.to_string(), dbg),
@@ -92,8 +92,8 @@ impl Loader<'_> {
                         this.call_region(&region, "SetBlendMode", mode.to_string(), dbg);
                     }
                     // The setter gave the region the runtime path's implicit anchors, but the XML
-                    // path places the authored ones first and the implicit step after (`0x778903`):
-                    // clear, lay out, then re-run it, or a leftover implicit corner would pin it.
+                    // path places the authored ones first and the implicit step after: clear, lay
+                    // out, then re-run it, or a leftover implicit corner would pin it.
                     this.call_region(&region, "ClearAllPoints", (), dbg);
                     this.apply_region_layout(t, &region, self_name, dbg);
                     if let Err(e) = crate::script::implicit_creation_anchor_lua(this.lua, &region) {
@@ -122,7 +122,7 @@ impl Loader<'_> {
         // 0x815fa0`); 3.3.5a has no `<NormalText>` spelling (`0x96ffe1`).
         for bt in children_named(el, "ButtonText") {
             // `SetText` creates the label even with no text, so its layout lands on a real region;
-            // `text=` is a global-string key (`0x703bf0`).
+            // `text=` is a global-string key.
             let label = match bt.attr("text") {
                 Some(raw) => self.resolve_text(raw, dbg),
                 None => String::new(),
@@ -206,7 +206,7 @@ impl Loader<'_> {
         // After the fonts, as the label is attached after the child loop (`0x970150`): a label
         // `text=` creates is anchored by the normal font's justify (`SetFontString 0x96f7b0`).
         if let Some(text) = el.attr("text") {
-            // A global-string key (`0x703bf0`): `text="DELETE"` reads "Delete".
+            // A global-string key: `text="DELETE"` reads "Delete".
             let text = self.resolve_text(text, dbg);
             self.call(wrapper, "SetText", text, dbg);
         }
@@ -228,10 +228,9 @@ impl Loader<'_> {
         }
     }
 
-    /// `<EditBox>` (`0x779fb0`). An absent flag keeps the ctor's, where `autoFocus` is on and the
-    /// rest off (`0x779a29`, `0x77a0b3`), so flags are read presence-aware: `autoFocus="false"`
-    /// clears. The reference also skips an empty `autoFocus` (`0x77a0b8`), which clears here.
-    /// `blinkSpeed` is the caret half-period (`E+0x370`).
+    /// `<EditBox>`. An absent flag keeps the ctor's, where `autoFocus` is on and the rest off, so
+    /// flags are read presence-aware: `autoFocus="false"` clears. The reference also skips an empty
+    /// `autoFocus`, which clears here. `blinkSpeed` is the caret half-period (`E+0x370`).
     pub(super) fn apply_editbox(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         if !el.tag.eq_ignore_ascii_case("EditBox") {
             return;
@@ -269,7 +268,7 @@ impl Loader<'_> {
             ("numeric", "SetNumeric"),
             ("password", "SetPassword"),
             ("multiLine", "SetMultiLine"),
-            // One flag behind both spellings (`0x77a6b0`, `0x7996e0`, bit 0x10).
+            // One flag behind both spellings (bit 0x10).
             ("ignoreArrows", "SetAltArrowKeyMode"),
         ] {
             if let Some(on) = el.attr_bool_opt(attr) {
@@ -278,8 +277,8 @@ impl Loader<'_> {
         }
     }
 
-    /// `<Minimap>` (`0x4ee2b0`): the two model files for the ctor's nine `Model` children, each
-    /// the stock model when the attribute is absent, as the reference reads a default string.
+    /// `<Minimap>`: the two model files for the ctor's nine `Model` children, each the stock model
+    /// when the attribute is absent, as the reference reads a default string.
     pub(super) fn apply_minimap(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         if !el.tag.eq_ignore_ascii_case("Minimap") {
             return;
@@ -300,10 +299,10 @@ impl Loader<'_> {
         }
     }
 
-    /// `<ScrollingMessageFrame>` and `<MessageFrame>`, two loaders (`0x787b20`, `0x785910`): both
-    /// take `displayDuration` and `fadeDuration` (only when > 0) and `fade`; only the scrolling one
-    /// has `maxLines` (> 0), only the plain one `insertMode`. The line font and its `justifyH` come
-    /// from the direct-child `<FontString>`.
+    /// `<ScrollingMessageFrame>` and `<MessageFrame>`, two loaders: both take `displayDuration` and
+    /// `fadeDuration` (only when > 0) and `fade`; only the scrolling one has `maxLines` (> 0), only
+    /// the plain one `insertMode`. The line font and its `justifyH` come from the direct-child
+    /// `<FontString>`.
     pub(super) fn apply_messageframe(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         let scrolling = el.tag.eq_ignore_ascii_case("ScrollingMessageFrame");
         let plain = el.tag.eq_ignore_ascii_case("MessageFrame");
@@ -347,9 +346,9 @@ impl Loader<'_> {
         }
     }
 
-    /// `<Slider>` (`0x789580`), VERTICAL from the ctor: the range, `valueStep` and `defaultValue`
-    /// apply only when both bounds are present, and a reversed pair is not swapped; `drawLayer` is
-    /// the thumb's layer, OVERLAY by default.
+    /// `<Slider>`, VERTICAL from the ctor: the range, `valueStep` and `defaultValue` apply only
+    /// when both bounds are present, and a reversed pair is not swapped; `drawLayer` is the thumb's
+    /// layer, OVERLAY by default.
     pub(super) fn apply_slider(
         &mut self,
         el: &Element,
@@ -412,9 +411,9 @@ impl Loader<'_> {
         }
     }
 
-    /// `<ColorSelect>`'s four textures (`0x78b580`, `0x78b850`, `0x78b8a0`, `0x78ba90`): the hue
-    /// wheel, the value strip and a thumb for each. The client generates the wheel and the strip,
-    /// so a file-less element still creates its region, for layout, hit tests and paint.
+    /// `<ColorSelect>`'s four textures: the hue wheel, the value strip and a thumb for each. The
+    /// client generates the wheel and the strip, so a file-less element still creates its region,
+    /// for layout, hit tests and paint.
     pub(super) fn apply_colorselect(
         &mut self,
         el: &Element,
@@ -482,11 +481,10 @@ impl Loader<'_> {
         }
     }
 
-    /// `<SimpleHTML>` (`0x78a130`): `font=` for all four element fonts (`0x78a17a`), the
-    /// `<FontString>` and `<FontStringHeader1..3>` children one each (`0x78a1fe`, through
-    /// `0x783c30`), `hyperlinkFormat` (`0x78a540`), and `file=`, a document whose whole text is
-    /// set as the frame's (`0x78a2a0` loads it through Storm, the attribute verbatim; `0x78a2b2`
-    /// sets it). A file that does not open leaves the frame empty.
+    /// `<SimpleHTML>`: `font=` for all four element fonts, the `<FontString>` and
+    /// `<FontStringHeader1..3>` children one each, `hyperlinkFormat`, and `file=`, a document whose
+    /// whole text is set as the frame's (the attribute verbatim). A file that does not open leaves
+    /// the frame empty.
     pub(super) fn apply_simplehtml(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         if !el.tag.eq_ignore_ascii_case("SimpleHTML") {
             return;
@@ -494,7 +492,7 @@ impl Loader<'_> {
         if let Some(fmt) = el.attr("hyperlinkFormat") {
             self.call(wrapper, "SetHyperlinkFormat", fmt.to_string(), dbg);
         }
-        // Read before the children (`0x78a152`), which may override it.
+        // Read before the children, which may override it.
         if let Some(name) = el.attr("font").filter(|n| !n.is_empty()) {
             if self.is_font_object(name) {
                 for elem in ["P", "H1", "H2", "H3"] {

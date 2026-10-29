@@ -1,11 +1,10 @@
 //! The mouseover and target model brighten, the reference's per-model highlight emissive.
 //!
-//! The reference sets it on a change, not per frame: `SetHighlight 0x614550` and `ClearHighlight
-//! 0x6144f0` keep a per-object reason mask (bit 0 target, bit 1 mouseover), and the glow drops when
-//! the last reason clears. `SetHighlight` samples the scene's committed ambient (`[0xce9cd8]`,
-//! `0x614576`..`0x6145bd`) into the model, and every batch adds it before the final clamp (`c29`),
-//! lit or unlit, attachments included; `0xff404040` is only the fallback before a map's light
-//! loads.
+//! The reference sets it on a change, not per frame: `SetHighlight` and `ClearHighlight` keep a
+//! per-object reason mask (bit 0 target, bit 1 mouseover), and the glow drops when the last reason
+//! clears. `SetHighlight` samples the scene's committed ambient into the model, and every batch
+//! adds it before the final clamp (`c29`), lit or unlit, attachments included; `0xff404040` is only
+//! the fallback before a map's light loads.
 //!
 //! benilla carries the flag in bit 31 of the per-instance `MeshTag` (`benilla_world::mesh_tag`),
 //! and `wow_model.wgsl` adds the scene ambient when it is set.
@@ -35,9 +34,8 @@ pub(super) fn apply_highlight(
         .target
         .filter(|_| hovered.any().is_none() || go_is_nearest(&hovered, &hovered_go));
     let unit_hover = hovered.target.filter(|_| go.is_none());
-    // A hovered corpse brightens too: the mouseover brighten (`0x49295e → 0x4945e0`) runs before
-    // the publisher's type switch. Gated like its name plate: a bone pile with nothing to take
-    // publishes no mouseover.
+    // A hovered corpse brightens too: the mouseover brighten runs before the publisher's type
+    // switch. Gated like its name plate: a bone pile with nothing to take publishes no mouseover.
     let corpse_hover = hovered
         .corpse
         .filter(|_| go.is_none())

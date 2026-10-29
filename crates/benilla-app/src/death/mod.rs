@@ -52,8 +52,8 @@ pub(crate) struct DeathNet {
     pub(crate) corpse: Option<CorpsePoint>,
     /// A pending resurrection offer; cleared when answered or when the popup times out.
     pub(crate) resurrect: Option<ResurrectOffer>,
-    /// Bumped per `SMSG_RESURRECT_REQUEST`: the offer announces per message (`0x5e7bc0` through
-    /// `0x5ded50`), because the stock UI can hide the popup without answering it.
+    /// Bumped per `SMSG_RESURRECT_REQUEST`: the offer announces per message, because the stock UI
+    /// can hide the popup without answering it.
     pub(crate) resurrect_generation: u32,
     /// Our streamed corpse object's guid, which `CMSG_RECLAIM_CORPSE` carries like the 1.12 client.
     pub(crate) corpse_guid: Option<u64>,
@@ -69,7 +69,7 @@ pub(crate) struct DeathNet {
 
 impl DeathNet {
     /// Arm the spirit healer's XP-loss question. The reference raises it on the click with no
-    /// packet (`0x5df730`), and vmangos also pushes `SMSG_SPIRIT_HEALER_CONFIRM`; both come here.
+    /// packet, and vmangos also pushes `SMSG_SPIRIT_HEALER_CONFIRM`; both come here.
     pub(crate) fn ask_spirit_healer(&mut self, npc: u64) {
         self.spirit_healer = Some(npc);
         self.confirm_generation = self.confirm_generation.wrapping_add(1);
@@ -77,13 +77,13 @@ impl DeathNet {
 }
 
 /// The feed's memory in two scopes: the body's state survives a `/reload`, as the reference's
-/// engine-side death mirror (`[0xb4e340]`) does, while what the VM was told dies with the VM.
+/// engine-side death mirror does, while what the VM was told dies with the VM.
 #[derive(Resource, Default)]
 struct DeathFeedState {
     /// World-scoped: the last `(guid, dead, ghost)` the self body showed.
     mirror: Option<(u64, bool, bool)>,
-    /// World-scoped: the death edge, anchoring the release window. The wire carries only the
-    /// timer bit; the 1.12 client arms `now + 360000 ms` at its own death edge (`0x5e9a30`).
+    /// World-scoped: the death edge, anchoring the release window. The wire carries only the timer
+    /// bit; the 1.12 client arms `now + 360000 ms` at its own death edge.
     died_at: Option<f64>,
     /// VM-scoped: the announce latches.
     vm: crate::ui_script::VmMemo<DeathAnnounced>,
@@ -97,8 +97,8 @@ struct DeathAnnounced {
     last: Option<(u64, bool, bool)>,
     /// The last corpse-range verdict announced.
     corpse_range: Option<CorpseRange>,
-    /// A fresh reclaim delay re-fires the range events, as the 1.12 client does (`0x4962d0`),
-    /// so RECOVER_CORPSE re-shows with the new delay.
+    /// A fresh reclaim delay re-fires the range events, as the 1.12 client does, so RECOVER_CORPSE
+    /// re-shows with the new delay.
     reclaim_generation: u32,
     /// Held back while a player caster's name is still resolving.
     offer_generation: u32,
@@ -117,12 +117,12 @@ enum CorpseRange {
 /// The forced-release window, vmangos `CORPSE_REPOP_TIME` (`Player.h:71`); never on the wire.
 const RELEASE_WINDOW_SECS: f64 = 360.0;
 
-/// The corpse-range dialog radius, 40 yd inclusive: the 1.12 client compares d² ≤ `[0xb4e2ac]`
-/// (1600.0) against the corpse-query position. The server's reclaim gate,
-/// `CORPSE_RECLAIM_RADIUS` 39 (`Corpse.h:40`), sits 1 yd inside it.
+/// The corpse-range dialog radius, 40 yd inclusive: the 1.12 client compares d² ≤ (1600.0) against
+/// the corpse-query position. The server's reclaim gate, `CORPSE_RECLAIM_RADIUS` 39
+/// (`Corpse.h:40`), sits 1 yd inside it.
 const CORPSE_RANGE_SQ: f32 = 40.0 * 40.0;
 
-/// The spirit-healer dialog range: `CheckSpiritHealerDist` compares d² ≤ `[0xc4c28c]` (30.864).
+/// The spirit-healer dialog range: `CheckSpiritHealerDist` compares d² ≤ (30.864).
 const SPIRIT_HEALER_RANGE_SQ: f32 = 5.5556 * 5.5556;
 
 /// `PLAYER_FLAGS_IS_OUT_OF_BOUNDS`, the bit `IsOutOfBounds` tests (`0x6123eb`).
@@ -267,10 +267,9 @@ fn feed_death(
         // Ghost to alive: reclaim, spirit healer or an accepted res.
         (Some((_, _, true)), false, false) => {
             feed.died_at = None;
-            // The not-found answer drops the map markers. The reference sends nothing on this
-            // edge: its ghost-bit watcher (`0x5ee990`) clears the corpse cache, and `0x491f50`
-            // queries only while a ghost. The server's own push needs a looter
-            // (`Map.cpp:3617-3629`).
+            // The not-found answer drops the map markers. The reference sends nothing on this edge:
+            // its ghost-bit watcher clears the corpse cache, and the reference queries only while a
+            // ghost. The server's own push needs a looter (`Map.cpp:3617-3629`).
             let _ = net.0.send(ClientCommand::CorpseQuery);
         }
         // Logging in a ghost: no edge, just the corpse ask.
@@ -311,9 +310,9 @@ fn feed_death(
     if death_net.spirit_healer.is_some() && memo.confirm_generation != death_net.confirm_generation
     {
         memo.confirm_generation = death_net.confirm_generation;
-        // `arg1` is the XP the res costs: `PLAYER_NEXT_LEVEL_XP` × 0.05, truncated (`0x5df837`),
-        // and 0 without the field, as `0x5df806` pushes 0 for a non-local object. No stock
-        // FrameXML reads it; `UIParent.lua:399` asks `GetResSicknessDuration()`.
+        // `arg1` is the XP the res costs: `PLAYER_NEXT_LEVEL_XP` × 0.05, truncated, and 0 without
+        // the field, as the reference pushes 0 for a non-local object. No stock FrameXML reads it;
+        // `UIParent.lua:399` asks `GetResSicknessDuration()`.
         let xp_cost = store
             .0
             .player_next_level_xp()
@@ -326,7 +325,7 @@ fn feed_death(
     let range = if ghost {
         death_net.corpse.map(|cp| {
             // Within range on the display map: IN_RANGE when it is the corpse's map, else
-            // IN_INSTANCE, at a dungeon's entrance (`0x492130`, `0x4920f0`).
+            // IN_INSTANCE, at a dungeon's entrance.
             let on_display_map = map
                 .as_ref()
                 .is_some_and(|m| m.0 == u32::try_from(cp.display_map).unwrap_or(u32::MAX));
@@ -360,11 +359,11 @@ fn feed_death(
     }
 }
 
-/// `SPELL_EFFECT_SELF_RESURRECT`, the `Spell.dbc` effect the item leg scans for (`0x5ed650`).
+/// `SPELL_EFFECT_SELF_RESURRECT`, the `Spell.dbc` effect the item leg scans for.
 const SPELL_EFFECT_SELF_RESURRECT: u32 = 94;
 
-/// What `UseSoulstone()` (`0x48ad70`) would spend now; resolved app-side, where the spell catalog
-/// and item cache live.
+/// What `UseSoulstone()` would spend now; resolved app-side, where the spell catalog and item cache
+/// live.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum SelfRes {
     /// `PLAYER_SELF_RES_SPELL` is non-zero: send `CMSG_SELF_RES` and the server casts it.
@@ -393,8 +392,8 @@ impl SelfRes {
     }
 }
 
-/// `HasSoulstone()`'s answer and `UseSoulstone()`'s routing, one predicate in the 1.12 client
-/// (`0x48ac80`, `0x48ad70`), with its gates in its order:
+/// `HasSoulstone()`'s answer and `UseSoulstone()`'s routing, one predicate in the 1.12 client, with
+/// its gates in its order:
 ///
 /// 1. Dead: nil while `UNIT_FIELD_HEALTH` is positive; a released ghost has health 1.
 /// 2. The field: non-zero is the spell leg, named from `Spell.dbc`, `"UNKNOWN"` when unresolved.
@@ -444,9 +443,9 @@ fn resolve_self_res(
     })
 }
 
-/// The sickness a spirit-healer res applies at `level`, per vmangos `Player::ResurrectPlayer`:
-/// none below 11, `level - 10` minutes through 19, 10 minutes from 20. Worded with `GENERIC_MIN`,
-/// the minute arm of the reference's formatter (`0x51a3a0` into `0x52fa50`).
+/// The sickness a spirit-healer res applies at `level`, per vmangos `Player::ResurrectPlayer`: none
+/// below 11, `level - 10` minutes through 19, 10 minutes from 20. Worded with `GENERIC_MIN`, the
+/// minute arm of the reference's formatter.
 ///
 /// Deviation: the minutes come from the server's table, not from spell 15007's `Spell.dbc`
 /// duration, because the aura the server applies is what the dialog must warn about.
@@ -464,8 +463,8 @@ fn sickness_duration(level: u32, get: &dyn Fn(&str) -> Option<String>) -> Option
     ))
 }
 
-/// Drive the FFXDeath screen pass off `PLAYER_FLAGS_GHOST`, instant both ways; in the reference
-/// the flag's watcher `0x5ee990` also drives the death light and ambience.
+/// Drive the FFXDeath screen pass off `PLAYER_FLAGS_GHOST`, instant both ways; in the reference the
+/// flag's watcher also drives the death light and ambience.
 fn drive_death_look(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     mut ffx: ResMut<benilla_world::ffx_glow::FfxDeathFade>,
@@ -498,7 +497,7 @@ fn drain_death(
     targeting: crate::spell::cast_target::CastTargeting,
     mut ladder: crate::spell::CastLadder,
     mut ui_errors: ResMut<crate::ui_action::UiErrorKeys>,
-    // The soulstone's item leg is an item use (`0x5d8d00`), so it carries the bind gate.
+    // The soulstone's item leg is an item use, so it carries the bind gate.
     mut gate: crate::ui_bind_confirm::BindGate,
 ) {
     let Some(mut script) = script else {
@@ -540,7 +539,7 @@ fn drain_death(
                     )
                 }) {
                     Some(SelfRes::Spell { .. }) => net.0.send(ClientCommand::SelfRes),
-                    // An ordinary item use, `0x5d8d00`, like every bag click.
+                    // An ordinary item use, like every bag click.
                     Some(SelfRes::Item {
                         bag_index,
                         slot,
@@ -613,8 +612,8 @@ impl Plugin for DeathPlugin {
     }
 }
 
-/// The name `RESURRECT_REQUEST` fires with this frame, if any. Per message, and only while dead
-/// or a ghost (`0x5ded50` gated on `0x605f30`); an unresolved name holds without consuming it.
+/// The name `RESURRECT_REQUEST` fires with this frame, if any. Per message, and only while dead or
+/// a ghost; an unresolved name holds without consuming it.
 fn offer_announcement(
     memo: &mut DeathAnnounced,
     death_net: &DeathNet,
@@ -770,8 +769,7 @@ mod self_res_tests {
         }
     }
 
-    /// `0x48acba`: nil while health is positive, including a released ghost's 1
-    /// (`BuildPlayerRepop`).
+    /// Nil while health is positive, including a released ghost's 1 (`BuildPlayerRepop`).
     #[test]
     fn the_dead_gate_precedes_the_field() {
         let (net, _rx) = commands();
@@ -817,7 +815,7 @@ mod self_res_tests {
         );
     }
 
-    /// The reference pushes the literal (`0x48ad1d`).
+    /// The reference pushes the literal.
     #[test]
     fn an_unresolvable_spell_id_reads_unknown_not_nil() {
         let (net, _rx) = commands();
@@ -838,8 +836,8 @@ mod self_res_tests {
         }
     }
 
-    /// The item leg (`0x5ed630`); the backpack holds a self-res on an equip trigger, an unrelated
-    /// on-use spell, and the real one.
+    /// The item leg; the backpack holds a self-res on an equip trigger, an unrelated on-use spell,
+    /// and the real one.
     #[test]
     fn a_zero_field_falls_through_to_a_carried_item() {
         let (net, _rx) = commands();

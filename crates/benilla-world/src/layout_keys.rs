@@ -1,19 +1,19 @@
-//! The keyboard layout's named keys. The Windows client reads a key as the virtual-key code the
-//! OS layout produced from the scancode (the WndProc's key arm `0x42d21e` hands `wParam` to the
-//! translator `0x42d800`, which never reads the scancode), so a layout that gives a key another
-//! named function (X11's `caps:escape`, `caps:swapescape`, `ctrl:nocaps`, Colemak's Caps Lock as
-//! Backspace) moves that function in 1.12; under Wine the same keysym becomes the same virtual
-//! key. Bevy's `KeyCode` is the physical key, which such a layout does not move: Caps Lock mapped
-//! to Escape arrives as `CapsLock` with the logical key `Escape`.
+//! The keyboard layout's named keys. The Windows client reads a key as the virtual-key code the OS
+//! layout produced from the scancode (the WndProc's key arm hands `wParam` to the translator, which
+//! never reads the scancode), so a layout that gives a key another named function (X11's
+//! `caps:escape`, `caps:swapescape`, `ctrl:nocaps`, Colemak's Caps Lock as Backspace) moves that
+//! function in 1.12; under Wine the same keysym becomes the same virtual key. Bevy's `KeyCode` is
+//! the physical key, which such a layout does not move: Caps Lock mapped to Escape arrives as
+//! `CapsLock` with the logical key `Escape`.
 //!
 //! Off macOS, each keyboard message whose logical key is a named key other than its physical one
-//! takes that named key's code, before Bevy's input collection, so every reader (the bindings,
-//! the text boxes, the glue screens, `ButtonInput<KeyCode>`) sees the layout's key. The Mac client
-//! reads its non-character keys off a fixed table on the physical keycode (`0x5bf320`), so macOS
-//! keeps them physical. A letter, digit or punctuation key keeps its code too: 1.12 names it by
-//! the virtual key the layout makes it, a digit as itself (`0x42d81c`) and a letter or punctuation
-//! key through `MapVirtualKeyA` (`0x42da39`), which the game's key namer reads, not by a named
-//! key. So do the numpad keys, whose Num Lock navigation meanings are not remaps.
+//! takes that named key's code, before Bevy's input collection, so every reader (the bindings, the
+//! text boxes, the glue screens, `ButtonInput<KeyCode>`) sees the layout's key. The Mac client
+//! reads its non-character keys off a fixed table on the physical keycode, so macOS keeps them
+//! physical. A letter, digit or punctuation key keeps its code too: 1.12 names it by the virtual
+//! key the layout makes it, a digit as itself and a letter or punctuation key through
+//! `MapVirtualKeyA`, which the game's key namer reads, not by a named key. So do the numpad keys,
+//! whose Num Lock navigation meanings are not remaps.
 
 #[cfg(any(not(target_os = "macos"), test))]
 use bevy::input::keyboard::{Key, KeyCode};

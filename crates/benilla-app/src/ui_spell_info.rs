@@ -165,7 +165,7 @@ impl SpellInfoSource for Source {
             Some(d.icon.clone().unwrap_or_default())
         };
         // `Spell_C_GetPowerCost` and `Spell_C_GetPowerCostPerSecond` (`0x7ff100`) over the shared
-        // display divisor (`0x6e7130`); a positive per-second cost is the funnel's.
+        // display divisor; a positive per-second cost is the funnel's.
         let cost = caster.map_or(d.mana_cost, |c| {
             usable::power_cost_at(d, &c.store.0, c.level, mods)
         });

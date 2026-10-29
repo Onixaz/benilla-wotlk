@@ -12,9 +12,8 @@ use super::Model;
 const PASS: u8 = 0;
 
 /// The quality `GetLootRollItemInfo` answers on an item-template miss, from the reference's miss
-/// tail `nil, nil, 1.0, 1.0, nil` (`0x4c31a3`): 1, not `GetLootSlotInfo`'s -1. Stock
-/// `GroupLootFrame_OnShow` indexes `ITEM_QUALITY_COLORS` with it unguarded
-/// (`LootFrame.lua:275-276`).
+/// tail `nil, nil, 1.0, 1.0, nil`: 1, not `GetLootSlotInfo`'s -1. Stock `GroupLootFrame_OnShow`
+/// indexes `ITEM_QUALITY_COLORS` with it unguarded (`LootFrame.lua:275-276`).
 const CACHE_MISS_QUALITY: i64 = 1;
 
 /// One open group loot roll, resolved by the app and pushed whole each frame.
@@ -27,7 +26,7 @@ pub struct LootRollEntry {
     /// Icon texture path (`Interface\Icons\…`). `None` only if the display catalog had no icon.
     pub texture: Option<String>,
     /// The stack size, answered as `GetLootRollItemInfo`'s `count`; the reference answers a literal
-    /// `1.0` there, a group roll being one stack (`0x4c3160`).
+    /// `1.0` there, a group roll being one stack.
     pub quantity: u32,
     /// Item quality 0..6; `None` while the template is in flight, answered as `CACHE_MISS_QUALITY`.
     pub quality: Option<u32>,
@@ -42,7 +41,7 @@ pub struct LootRollEntry {
     /// (`LootFrame.xml:353-361`); `None` until the item template lands, since it embeds the name.
     pub link: Option<String>,
     /// `SMSG_LOOT_START_ROLL`'s random suffix, 0 for none: the hover's only enchant source, as
-    /// `SetLootRollItem` (`0x5364a0`) copies it to the tooltip's `+0x424` with no item object.
+    /// `SetLootRollItem` copies it to the tooltip's `+0x424` with no item object.
     pub random_property_id: u32,
 }
 
@@ -78,8 +77,8 @@ fn find(model: &Model, roll_id: u32) -> Option<&LootRollEntry> {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `0x4c3050`, read at `LootFrame.lua:261`. An unknown id takes the reference's miss tail
-    // `nil, nil, 1.0, 1.0, nil` (`0x4c31a3`), as a roll with no item template does there.
+    // Read at `LootFrame.lua:261`. An unknown id takes the reference's miss tail
+    // `nil, nil, 1.0, 1.0, nil`, as a roll with no item template does there.
     g.set(
         "GetLootRollItemInfo",
         lua.create_function(|lua, roll_id: u32| {
@@ -139,8 +138,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // The server ignores a `rollType` of 3 or more (`GroupHandler.cpp:367`), so those and unknown
     // ids are dropped. Need or Greed on a bind-on-pickup item sends nothing and fires
-    // `CONFIRM_LOOT_ROLL` (`0x61bdf0`, `0x61be8b`); the gate is in the C function, so it holds for
-    // an addon's call too.
+    // `CONFIRM_LOOT_ROLL`; the gate is in the C function, so it holds for an addon's call too.
     g.set(
         "RollOnLoot",
         lua.create_function(|lua, (roll_id, roll_type): (u32, u8)| {
@@ -160,7 +158,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // The gate's bypass: `0x4c33e0` re-enters `0x61bdf0` with a third argument of 1.
+    // The gate's bypass: the reference re-enters with a third argument of 1.
     g.set(
         "ConfirmLootRoll",
         lua.create_function(|lua, (roll_id, roll_type): (u32, u8)| {
@@ -255,7 +253,7 @@ mod tests {
             .eval::<bool>("return GetLootRollItemLink(8) == nil")
             .unwrap());
 
-        // An unknown id: the reference's miss tail (`0x4c31a3`).
+        // An unknown id: the reference's miss tail.
         assert!(s
             .eval::<bool>("return GetLootRollItemInfo(99) == nil")
             .unwrap());

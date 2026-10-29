@@ -40,8 +40,8 @@ fn player() -> UnitState {
         name: Some("Benilla".into()),
         sex: 3, // female
         is_player: true,
-        // Both, and they differ: `faction_group` is the live faction template, `pvp_team` the
-        // race walk (`0x5efe00`) that keys every rank title.
+        // Both, and they differ: `faction_group` is the live faction template, `pvp_team` the race
+        // walk that keys every rank title.
         faction_group: Some("Alliance".into()),
         pvp_team: 1,
         pvp_rank: 9,
@@ -222,8 +222,8 @@ fn rank_zero_names_nothing_and_the_pane_falls_back_to_none() {
     );
 }
 
-/// `GetPVPRankInfo` passes gender 0 (`0x51aa0f`), so a female character gets the default title
-/// with the `_FEMALE` twin right there on `_G`.
+/// `GetPVPRankInfo` passes gender 0, so a female character gets the default title with the
+/// `_FEMALE` twin right there on `_G`.
 #[test]
 fn the_pane_title_is_keyed_by_team_and_is_never_gendered() {
     let mut s = seated();
@@ -260,8 +260,8 @@ fn the_pane_title_is_keyed_by_team_and_is_never_gendered() {
     );
 }
 
-/// The credit line's lookup resolves through `0x612bf0` with the local player's gender, where the
-/// binding passes 0, and has no range check, so rank 19 names "Leader" here.
+/// The credit line's lookup resolves through the reference with the local player's gender, where
+/// the binding passes 0, and has no range check, so rank 19 names "Leader" here.
 #[test]
 fn the_rust_side_title_lookup_is_gendered_where_the_binding_is_not() {
     let s = seated();
@@ -326,9 +326,9 @@ fn a_missing_rank_global_reads_nil_not_empty() {
     assert!(s.eval::<bool>("return GetPVPRankInfo(9) == nil").unwrap());
 }
 
-/// `UnitFactionGroup` reads the live faction template (`0x516630`) and the title's team digit the
-/// race (`0x5efe00`), so a vmangos GM (template 35, no side) keeps his title, in both the key and
-/// `UnitPVPName`'s decoration (`0x5efe60`).
+/// `UnitFactionGroup` reads the live faction template and the title's team digit the race, so a
+/// vmangos GM (template 35, no side) keeps his title, in both the key and `UnitPVPName`'s
+/// decoration.
 #[test]
 fn a_sideless_player_still_has_a_team_digit_because_his_race_has_one() {
     let mut s = seated();
@@ -371,8 +371,8 @@ fn a_sideless_player_still_has_a_team_digit_because_his_race_has_one() {
     );
 }
 
-/// `0x51aa38` subtracts 5 rather than negating, so rank 1 is -4 and rank 4 is -1, the opposite of
-/// vmangos's `visualRank` (`HonorMgr.cpp:991`).
+/// The reference subtracts 5 rather than negating, so rank 1 is -4 and rank 4 is -1, the opposite
+/// of vmangos's `visualRank` (`HonorMgr.cpp:991`).
 #[test]
 fn the_visual_rank_arithmetic_runs_backwards_through_the_dishonorable_ranks() {
     for (internal, visual) in [
@@ -530,7 +530,7 @@ fn get_pvp_rank_info_takes_a_second_argument_three_different_ways() {
         .unwrap());
 }
 
-/// `0x51a930` tests `lua_isnumber` and raises: not a `(nil, 0)` edge.
+/// The reference tests `lua_isnumber` and raises: not a `(nil, 0)` edge.
 #[test]
 fn get_pvp_rank_info_raises_without_a_numeric_first_argument() {
     let s = seated();
@@ -595,7 +595,7 @@ fn unit_pvp_rank_answers_for_a_foreign_unit() {
         0,
         "no snapshot reads 0, like every other numeric Unit* getter"
     );
-    // A non-string argument raises (`0x51a8ac`) rather than answering 0.
+    // A non-string argument raises rather than answering 0.
     assert!(s.eval::<i64>("return UnitPVPRank()").is_err());
     assert!(s.eval::<i64>("return UnitPVPRank({})").is_err());
 }
@@ -726,7 +726,7 @@ fn has_inspect_honor_data_latches_on_the_push_and_clears_with_it() {
     s.set_inspect_honor(Some(inspect_state()));
     assert!(s.eval::<bool>(held()).unwrap());
 
-    // `0x4c95e0` pushes the number 1 (`lua_pushnumber(1.0)`), not a boolean.
+    // The reference pushes the number 1 (`lua_pushnumber(1.0)`), not a boolean.
     assert_eq!(
         s.eval::<String>("return type(HasInspectHonorData())")
             .unwrap(),
@@ -800,7 +800,7 @@ fn get_inspect_arena_team_data_answers_eighteen_or_nothing() {
     assert_eq!(s.arity("GetInspectArenaTeamData(2)").unwrap(), 0);
 }
 
-/// `0x4c80a0` refuses a query while one is in flight and once data is held; `TogglePVP` has no
+/// The reference refuses a query while one is in flight and once data is held; `TogglePVP` has no
 /// latch.
 #[test]
 fn the_intent_queues_drain_and_the_honor_query_refuses_to_double_up() {
@@ -827,7 +827,7 @@ fn the_intent_queues_drain_and_the_honor_query_refuses_to_double_up() {
     s.eval::<()>("RequestInspectHonorData()").unwrap();
     assert_eq!(s.take_inspect_honor_requests(), 1);
 
-    // The binding answers zero Lua values on every one of those paths (`0x4c9610`).
+    // The binding answers zero Lua values on every one of those paths.
     assert_eq!(s.arity("RequestInspectHonorData()").unwrap(), 0);
 
     s.eval::<()>("TogglePVP() TogglePVP()").unwrap();

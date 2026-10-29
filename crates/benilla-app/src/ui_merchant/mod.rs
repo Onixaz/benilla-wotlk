@@ -941,9 +941,9 @@ pub(crate) mod purse_fixture {
         benilla_formats::DurabilityTables::from_rows([(20, row)], [(3, 1.0)])
     }
 
-    /// The sword's repair in full, and after the two honor steps (`0x612bcf`, `0x612bd7`) an honor
-    /// rank byte of 8 earns at this vendor; a test at the discounted price discriminates the
-    /// discount only while the two differ.
+    /// The sword's repair in full, and after the two honor steps an honor rank byte of 8 earns at
+    /// this vendor; a test at the discounted price discriminates the discount only while the two
+    /// differ.
     pub(crate) fn sword_prices() -> (u32, u32) {
         let t = tables();
         let steps = f64::from(0.05f32) + f64::from(0.05f32);
@@ -1092,9 +1092,9 @@ mod tests {
         ));
     }
 
-    /// `GetRepairAllCost` sums each item's cost after the open merchant's discount (`0x4faf8a`):
-    /// at Honored with a PvP-flagged vendor and honor rank byte 8, 0.2 comes off each item before
-    /// its rounding, and the undiscounted total is not what the VM reads.
+    /// `GetRepairAllCost` sums each item's cost after the open merchant's discount: at Honored with
+    /// a PvP-flagged vendor and honor rank byte 8, 0.2 comes off each item before its rounding, and
+    /// the undiscounted total is not what the VM reads.
     #[test]
     fn the_repair_all_total_takes_the_merchants_discount() {
         use benilla_protocol::field::{
@@ -1537,7 +1537,7 @@ mod tests {
         }
     }
 
-    /// The reference's cache write (`0x5dcdbf`), keyed by entry as vmangos fills the field.
+    /// The reference's cache write, keyed by entry as vmangos fills the field.
     #[test]
     fn a_sold_out_refusal_zeroes_only_that_rows_count() {
         let mut open = MerchantOpen::default();

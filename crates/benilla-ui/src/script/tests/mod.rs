@@ -309,7 +309,7 @@ fn a_second_error_files_the_error_its_handler_raises() {
 }
 
 /// A handler that raises on one error still receives the next: the reference calls it once per
-/// caught error (`0x703b40`), so one failed call drops nothing after it.
+/// caught error, so one failed call drops nothing after it.
 #[test]
 fn a_raising_handler_still_receives_the_next_error() {
     let mut s = crate::script::UiScript::new().unwrap();

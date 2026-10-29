@@ -76,9 +76,9 @@ impl WdlFile {
     }
 
     /// Present tiles within a Chebyshev `radius` of world `(x, y)`, the centre tile included, as
-    /// the reference's far walk (`0x683040`) visits a ±3-tile window. Below a tile of view distance
-    /// (vanilla goes down to 177) the camera's own tile draws the near horizon, and without it sky
-    /// shows through; the far band's near plane in `wdl.wgsl` alone bounds that side.
+    /// the reference's far walk visits a ±3-tile window. Below a tile of view distance (vanilla
+    /// goes down to 177) the camera's own tile draws the near horizon, and without it sky shows
+    /// through; the far band's near plane in `wdl.wgsl` alone bounds that side.
     pub fn tiles_in_ring(&self, world_x: f32, world_y: f32, radius: u32) -> Vec<(u32, u32)> {
         let (cx, cy) = benilla_wdt::world_to_tile(world_x, world_y);
         let r = radius as i32;

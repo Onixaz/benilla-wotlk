@@ -80,8 +80,8 @@ pub(super) fn emit(
         alpha_gradient: style.alpha_gradient,
         spacing: style.spacing * host.scale * host.font_scale,
     };
-    // The focused editbox draws windowed (`0x77da80`): the scroll window's substring from the
-    // line origin, unwrapped and clipped at the box edge, the selection behind, the caret after.
+    // The focused editbox draws windowed: the scroll window's substring from the line origin,
+    // unwrapped and clipped at the box edge, the selection behind, the caret after.
     let ebox = host.ebox.filter(|u| u.target == host.target);
     let mut draw_text: &str = text;
     let mut draw_rect = host.rect;
@@ -110,11 +110,10 @@ pub(super) fn emit(
         let (x0, top, cell_h, pitch) =
             crate::ui_text::line_origin(&mut atlas.lock(), drawn, host.rect, draw_justify, spec);
         ebox_geom = Some((x0, top, cell_h, pitch));
-        // A single-line box shows only what fits its text region (`0x77d858` sets the window's
-        // substring), so the whole string drawn here is cut at the region. A multi-line region is
-        // only as tall as its text, and the reference clips neither it nor the caret texture
-        // (`E+0x368`), which after a trailing break stands a line below it: only a ScrollFrame's
-        // clip applies.
+        // A single-line box shows only what fits its text region, so the whole string drawn here is
+        // cut at the region. A multi-line region is only as tall as its text, and the reference
+        // clips neither it nor the caret texture (`E+0x368`), which after a trailing break stands a
+        // line below it: only a ScrollFrame's clip applies.
         if !ui.multi_line {
             text_clip = Some(host.clip.map_or(host.rect, |c| c.intersect(host.rect)));
             draw_text = drawn;
@@ -157,8 +156,8 @@ pub(super) fn emit(
         }
     }
     // A region FontString whose wrapped text needs more lines than its rect holds draws
-    // `prefix + "..."` (`CSimpleFontString` `0x771ec0`); an editbox never truncates and a message
-    // line sizes to its text. Before the shadow, which the client draws from the same string.
+    // `prefix + "..."` (`CSimpleFontString`); an editbox never truncates and a message line sizes
+    // to its text. Before the shadow, which the client draws from the same string.
     let ellipsized = match host.target {
         ZTarget::Region(region) if ebox.is_none() => {
             crate::ui_text::ellipsize_to_fit(atlas, region, draw_text, draw_rect, spec)
@@ -273,7 +272,7 @@ pub(super) fn emit(
         q.clip = text_clip;
     }
     // The seat probe: the fill's ink rows relative to the rect top, to compare with the
-    // vertical-seat law's `d + ascender` (`0x5d1360`); the shadow's quads are not in `glyphs`.
+    // vertical-seat law's `d + ascender`; the shadow's quads are not in `glyphs`.
     let vpl = style.world_seat && benilla_assets::trace::enabled_for("vpl");
     if (probe || vpl) && !glyphs.is_empty() {
         let (mut y0, mut y1) = (f32::MAX, f32::MIN);
@@ -309,8 +308,8 @@ pub(super) fn emit(
     }
     out.extend(glyphs);
     // The caret: a 1 px bar in the constructor's white (`0xffffffff`), one line cell tall at the
-    // engine's x, pushed after the glyphs to draw on top. The reference's is 4 UI units wide
-    // (`0x77b8c0`) and takes the edit box's text colour on a font change (`0x77e2a0`).
+    // engine's x, pushed after the glyphs to draw on top. The reference's is 4 UI units wide and
+    // takes the edit box's text colour on a font change.
     if let (Some(ui), Some((x0, top, cell_h, pitch))) = (ebox, ebox_geom) {
         if host.caret_pinned || ui.caret_on {
             #[allow(clippy::cast_precision_loss)]

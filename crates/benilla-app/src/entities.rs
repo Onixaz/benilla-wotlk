@@ -105,13 +105,13 @@ pub(crate) use equipment::ItemModelKind;
 pub(crate) const ATTACH_OVERHEAD: u16 = 18;
 
 /// The mounted overhead attachment (`PlayerNameMounted`, id 29), on the rider's own model,
-/// preferred while a mount model is attached (`0x6074c0`, `0x608640`).
+/// preferred while a mount model is attached.
 pub(crate) const ATTACH_OVERHEAD_MOUNTED: u16 = 29;
 
-/// The overhead slot for a unit now, the marker attach's pick on the body model (`0x6074c0`): 29
-/// when a mount model exists (`unit+0xdc`) and the body authors it, else 18, else `None` (never
-/// parented). The mount handler re-picks on every mount and dismount (`0x5ffa50` at `0x5ffae7`),
-/// so a consumer parented at the slot must re-parent.
+/// The overhead slot for a unit now, the marker attach's pick on the body model: 29 when a mount
+/// model exists (`unit+0xdc`) and the body authors it, else 18, else `None` (never parented). The
+/// mount handler re-picks on every mount and dismount, so a consumer parented at the slot must
+/// re-parent.
 pub(crate) fn overhead_slot(attach: &BoneAttach, mounted: bool) -> Option<u16> {
     if mounted && attach.points.contains_key(&ATTACH_OVERHEAD_MOUNTED) {
         Some(ATTACH_OVERHEAD_MOUNTED)
@@ -122,13 +122,13 @@ pub(crate) fn overhead_slot(attach: &BoneAttach, mounted: bool) -> Option<u16> {
     }
 }
 
-/// The `0x608640` fallback multiplier (`0x80c5d0` = 1.25): a unit whose model has no PlayerName
-/// attachment anchors overhead content at `feet + scale × bbox_z × 1.25`.
+/// The fallback multiplier (1.25): a unit whose model has no PlayerName attachment anchors overhead
+/// content at `feet + scale × bbox_z × 1.25`.
 const OVERHEAD_FALLBACK_FACTOR: f32 = 1.25;
 
 /// The Stand sequence's box height (model-local, pre-scale), the chat bubble's anchor alone. The
-/// reference reads it from the model file's header with no pose (`0x711a20`), once per chat line
-/// (cached at bubble `+0x354`), while the name's anchor is the posed attachment (`0x608640`).
+/// reference reads it from the model file's header with no pose, once per chat line (cached at
+/// bubble `+0x354`), while the name's anchor is the posed attachment.
 #[derive(Component)]
 pub(crate) struct StandBoxHeight(pub(crate) f32);
 
@@ -137,17 +137,16 @@ pub(crate) struct StandBoxHeight(pub(crate) f32);
 #[derive(Component)]
 pub(crate) struct OverheadFallback(pub(crate) f32);
 
-/// The client's per-attachment z-bias table (`0x862708`, ids `0..=0x24`): how far above the unit's
-/// position a sound plays when its model lacks the attachment asked for.
+/// The client's per-attachment z-bias table (ids `0..=0x24`): how far above the unit's position a
+/// sound plays when its model lacks the attachment asked for.
 const ATTACH_Z_BIAS: [f32; 37] = [
     1.0, 1.0, 1.0, 1.5, 1.5, 1.8, 1.8, 0.5, 0.5, 1.0, 1.0, 2.0, 1.5, 1.0, 1.0, 1.0, 1.0, 2.0, 2.5,
     0.0, 2.0, 1.5, 1.5, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 3.0, 1.5, 1.5, 1.0, 1.0, 1.5, 1.0, 1.0,
 ];
 
-/// Where a unit-attached sound plays (`0x623b90`): the attachment's live world point when the
-/// model carries it (`0x712cb0`, `0x712d50`), else the unit's position raised by [`ATTACH_Z_BIAS`]
-/// (`0x623be2`). The emote voice `$CSD` asks for 17 (`0x623c3a`) and a whiffed swing's `$CSS` for
-/// 1 (`0x624bdd`), never the fired event's own point.
+/// Where a unit-attached sound plays: the attachment's live world point when the model carries it,
+/// else the unit's position raised by [`ATTACH_Z_BIAS`]. The emote voice `$CSD` asks for 17 and a
+/// whiffed swing's `$CSS` for 1, never the fired event's own point.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct AttachPoints<'w, 's> {
     anchors: Query<'w, 's, &'static BoneAttach>,
@@ -172,8 +171,8 @@ impl AttachPoints<'_, '_> {
     }
 }
 
-/// The unit's overhead anchor in world space (`0x608640`): the posed PlayerName attachment (29
-/// while a mount model is attached, else 18), else `feet + scale × bbox_z × 1.25`.
+/// The unit's overhead anchor in world space: the posed PlayerName attachment (29 while a mount
+/// model is attached, else 18), else `feet + scale × bbox_z × 1.25`.
 ///
 /// When the rig root is the unit itself its frame comes from `tf`, not the `GlobalTransform` Bevy
 /// propagates in `PostUpdate`, which an `Update` reader sees a frame late (the chat bubble slid
@@ -243,8 +242,8 @@ pub(crate) struct Creatures {
 }
 
 impl Creatures {
-    /// Whether a display id has a model row behind it (`CreatureDisplayInfo` → `CreatureModelData`),
-    /// the chain `0x5ec480` walks after the race row's id.
+    /// Whether a display id has a model row behind it (`CreatureDisplayInfo` →
+    /// `CreatureModelData`), the chain walks after the race row's id.
     pub(crate) fn resolves_model(&self, display_id: u32) -> bool {
         self.catalog.model(display_id).is_some()
     }
@@ -318,8 +317,8 @@ impl Creatures {
     }
 
     /// A built display's booth framing (model-local, pre-scale): its authored cameras, index 0 of
-    /// `cameraLookup` for the round portrait (`0x713540`) and raw index 1 for a `<PlayerModel>`
-    /// pane (`0x505890`), with each path's fallback for a model that has none.
+    /// `cameraLookup` for the round portrait and raw index 1 for a `<PlayerModel>` pane, with each
+    /// path's fallback for a model that has none.
     pub(crate) fn display_anchors(
         &self,
         display_id: u32,
@@ -370,7 +369,7 @@ impl Creatures {
     }
 
     /// A built display's rig, for the booth to pose a fresh instance at Stand as the reference's
-    /// bake does (`0x524f60`), not the unit's live pose; a WMO display's skeleton is empty.
+    /// bake does, not the unit's live pose; a WMO display's skeleton is empty.
     pub(crate) fn display_rig(&self, display_id: u32) -> Option<DisplayRig<'_>> {
         let dm = self.models.get(&display_id)?;
         dm.parts.as_ref()?; // not yet built
@@ -406,10 +405,9 @@ struct Characters(CharacterGeosets);
 pub(crate) struct CharCreate(pub(crate) CharCreateCatalog);
 
 /// When a net entity arrived, on the appear fade's clock: the reference stamps a unit's fade as its
-/// create block is processed (`0x465c50` → `0x5fb880`, a player's through `0x5debe0` →
-/// `0x613af0` at `0x5fb956` → `0x614f80`), before its model or composite is ready, so the ramp runs
-/// from here however long the visual waits. A mount child carries its rider's, as the reference
-/// writes the unit's one fade onto the mount model (`0x614ae6`–`0x614af4`, `0x614b9e`–`0x614bba`).
+/// create block is processed, before its model or composite is ready, so the ramp runs from here
+/// however long the visual waits. A mount child carries its rider's, as the reference writes the
+/// unit's one fade onto the mount model.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Arrival(pub(crate) f32);
 
@@ -619,8 +617,7 @@ impl Plugin for EntitiesPlugin {
         .add_message::<MissileSound>()
         .add_message::<MissileMiss>()
         .add_message::<dest_fx::GroundBurst>()
-        // A display swap's rebuild edge, for the impact-kit replay the reference runs at the end
-        // of `0x60abe0`.
+        // A display swap's rebuild edge, for the impact-kit replay the reference runs at the end.
         .add_message::<live_display::DisplaySwapped>()
         .add_systems(Startup, setup_entities.after(AssetSet::Open))
         .add_systems(
@@ -695,8 +692,8 @@ impl Plugin for EntitiesPlugin {
                 // alone as in the reference; a new corpse arms its Dead or Drowned pose.
                 (attach::redress_player_looks, corpse::pose_corpses),
                 // A mount change re-seats the rig on the mount's attachment 0 or back, as the
-                // reference re-parents the body model (`0x712f70`, `0x713020`).
-                // A clone asks for its caster's look once its model is in.
+                // reference re-parents the body model. A clone asks for its caster's look once its
+                // model is in.
                 (reseat_mounts, mirror_image::request_mirror_images).chain(),
                 // A display swap rebuilds, a scale change eases over the reference's 2 s, and a
                 // unit denied a palette rig rebuilds once the table has room.
@@ -729,8 +726,7 @@ impl Plugin for EntitiesPlugin {
                 .after(benilla_world::rig_anim::finalize_rig_worlds)
                 .after(benilla_world::particles::buffer::begin_effect_frame),
         )
-        // Terrain conform (`0x614cd0` → `0x7106c0`), before propagation so the globals carry this
-        // frame's tilt.
+        // Terrain conform, before propagation so the globals carry this frame's tilt.
         .add_systems(
             PostUpdate,
             conform::conform_units.before(bevy::transform::TransformSystems::Propagate),
@@ -750,8 +746,8 @@ impl Plugin for EntitiesPlugin {
         .add_systems(
             Update,
             (
-                // The display's base alpha first (`0x604990`'s leg of `0x60d180`), so a same-frame
-                // aura edge retargets from the new base.
+                // The display's base alpha first, so a same-frame aura edge retargets from the new
+                // base.
                 crate::aura_visual::refresh_base_alpha,
                 crate::aura_visual::drain_aura_procs,
                 // The tint publish needs only the drain ahead of it.
@@ -998,8 +994,8 @@ fn update_display_models(
     // The glue screens' body display, wanted with no wire entity.
     glue_preview: Option<Res<crate::portrait::GluePreview>>,
     char_create: Option<Res<CharCreate>>,
-    // The stable pane's pet (`SetPetStablePaperdoll`, `0x4cb870`) and the companion page's
-    // creature (`SetCreature`, `0x597960`), neither with a wire entity.
+    // The stable pane's pet (`SetPetStablePaperdoll`) and the companion page's creature
+    // (`SetCreature`, `0x597960`), neither with a wire entity.
     (stable_booth, companion_booth): (
         Option<Res<crate::portrait::StableBooth>>,
         Option<Res<crate::portrait::CompanionBooth>>,
@@ -1067,7 +1063,7 @@ fn update_display_models(
         match kind {
             // A player's body resolves through the creature chain (`CreatureDisplayInfo` →
             // `CreatureModelData` → a `Character\…` model), as does a flesh corpse's
-            // `CORPSE_FIELD_DISPLAY_ID` (`0x5d6759`).
+            // `CORPSE_FIELD_DISPLAY_ID`.
             EntityKind::Unit | EntityKind::Player | EntityKind::Corpse => {
                 // Peek through `&` first: `as_deref_mut` marks `Creatures` changed, and
                 // `resolve_equipment`'s skip gate reads that.
@@ -1221,9 +1217,9 @@ fn update_display_models(
 }
 
 /// Write a unit part's animated colour alpha into its `MeshTag` alpha field, the dimming factor of
-/// the per-batch `A = instanceAlpha × colourAlpha × weight` (`0x707680`); the `A ≤ 0` cull is the
-/// `Visibility` authority's. Written verbatim, never multiplied in, after the interior classifier;
-/// a part under an appear or despawn fade is `apply_render_fade`'s, which folds the factor in.
+/// the per-batch `A = instanceAlpha × colourAlpha × weight`; the `A ≤ 0` cull is the `Visibility`
+/// authority's. Written verbatim, never multiplied in, after the interior classifier; a part under
+/// an appear or despawn fade is `apply_render_fade`'s, which folds the factor in.
 #[allow(clippy::type_complexity)]
 fn apply_unit_mat_alpha(
     mut parts: Query<
@@ -1458,7 +1454,7 @@ mod overhead_slot_tests {
         }
     }
 
-    /// `0x6074c0`'s pick. A character body (HumanMale) authors both slots, a Kobold only 18.
+    /// The reference's pick. A character body (HumanMale) authors both slots, a Kobold only 18.
     #[test]
     fn twenty_nine_needs_both_a_mount_model_and_the_authored_point() {
         let both = body(&[ATTACH_OVERHEAD, ATTACH_OVERHEAD_MOUNTED]);
@@ -1492,7 +1488,7 @@ mod overhead_slot_tests {
 mod attach_bias_tests {
     use super::*;
 
-    /// The table at `0x862708`, verbatim; animation events reach it by ids 17 and 1.
+    /// The table, verbatim; animation events reach it by ids 17 and 1.
     #[test]
     fn the_z_bias_table_is_the_reference_row_for_ever_id() {
         assert_eq!(ATTACH_Z_BIAS.len(), 0x25, "ids 0..=0x24");

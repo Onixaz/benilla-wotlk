@@ -117,7 +117,7 @@ fn a_landed_item_template_redisplays_the_action_slot() {
     );
 }
 
-/// `IsConsumableAction 0x4e5250` reads only the item template, so it rides the icon's push: the
+/// `IsConsumableAction` reads only the item template, so it rides the icon's push: the
 /// `ACTIONBAR_SLOT_CHANGED` repaint reads both.
 #[test]
 fn a_landed_item_template_also_lands_the_consumable_gate() {
@@ -159,7 +159,7 @@ fn a_landed_item_template_also_lands_the_consumable_gate() {
     );
 }
 
-/// `IsConsumableAction 0x4e5250`'s two clauses; the item class is neither.
+/// `IsConsumableAction`'s two clauses; the item class is neither.
 #[test]
 fn is_consumable_is_ammo_thrown_or_a_negative_charge_use_block() {
     let block = |trigger: u32, charges: i32| ItemSpellEntry {
@@ -251,8 +251,8 @@ fn an_unknown_entry_answers_once_and_settles() {
     );
 }
 
-/// `GetActionTexture`'s macro arm (`0x4e6bf9`) shows the macro's own icon, never the bound
-/// spell's; the macro-table generation, beside `dirty` and the template epoch, re-resolves it.
+/// `GetActionTexture`'s macro arm shows the macro's own icon, never the bound spell's; the
+/// macro-table generation, beside `dirty` and the template epoch, re-resolves it.
 #[test]
 fn a_macro_slot_shows_the_macros_own_icon_and_follows_an_edit() {
     use benilla_protocol::messages::ACTION_KIND_MACRO;
@@ -580,7 +580,7 @@ fn need_more_items_and_min_skill_fill_both_argument_words() {
     );
 }
 
-/// `0x6e6a20` resolves `PETTAME_<reason>` first and passes the string to `DisplayError(0xee)`,
+/// The reference resolves `PETTAME_<reason>` first and passes the string to `DisplayError(0xee)`,
 /// so `ERR_TAME_FAILED` ("%s.") prints the sentence, not the key.
 #[test]
 fn a_tame_failure_composes_the_reason_string_into_err_tame_failed() {

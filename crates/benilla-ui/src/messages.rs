@@ -7,12 +7,11 @@ mod catalog;
 
 pub use catalog::CATALOG;
 
-/// Where a message is shown: the record's `+0x04`, as the jump at `0x496888` reads it. Its fourth
-/// arm, `3` (the console `0x63cd00`), has no row in this build's table (console lines call
-/// `0x63cb50` directly), and the generator refuses a kind it does not know.
+/// Where a message is shown: the record's `+0x04`, as the jump reads it. Its fourth arm, `3`, has
+/// no row in this build's table, and the generator refuses a kind it does not know.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MsgKind {
-    /// `0`: a chat-window line through the composer `0x49a870`, on the record's `chat_type`.
+    /// `0`: a chat-window line through the composer, on the record's `chat_type`.
     Chat,
     /// `1`: `AddErrorMessage(text, 0)`, `UI_INFO_MESSAGE` (`0xe1`), yellow in `UIErrorsFrame`.
     Info,
@@ -25,8 +24,7 @@ pub enum MsgKind {
 pub struct MessageRecord {
     /// The id `DisplayError` takes, and this row's index.
     pub id: u16,
-    /// `+0x00`, the `GlobalStrings.lua` key; an absent or empty string shows nothing
-    /// (`0x4967bd`/`0x4967c5`).
+    /// `+0x00`, the `GlobalStrings.lua` key; an absent or empty string shows nothing.
     pub key: &'static str,
     /// `+0x04`, where it is shown.
     pub kind: MsgKind,

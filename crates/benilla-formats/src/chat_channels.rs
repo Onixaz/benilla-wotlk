@@ -1,6 +1,6 @@
 //! `ChatChannels.dbc`, the six built-in chat channels. The zone-channel join is the client's
 //! (vmangos's `Player::UpdateLocalChannels`, `Objects/Player.cpp:5121`, is empty): at world entry
-//! and every zone change `0x49a210` sends `CMSG_JOIN_CHANNEL` for each auto-join row.
+//! and every zone change sends `CMSG_JOIN_CHANNEL` for each auto-join row.
 
 use crate::dbc_layout::ChatChannels as ChatChannelsLayout;
 use anyhow::{Context, Result};
@@ -59,26 +59,26 @@ impl ChatChannelRow {
     }
 
     /// Whether the row is joined only inside a capital; the client tests the zone's capital flag
-    /// under `CITY_ONLY` alone (`0x49a3b8`/`0x49a512`).
+    /// under `CITY_ONLY` alone.
     pub fn is_city_only(&self) -> bool {
         self.flags & flags::CITY_ONLY != 0
     }
 
-    /// Whether this is the guild-gated row (`GUILD_REQ`), which the client finds by that bit
-    /// (`0x49f140`); a manual join or leave on it turns its auto-join off (`0x49ed3d`/`0x49ef8f`).
+    /// Whether this is the guild-gated row (`GUILD_REQ`), which the client finds by that bit; a
+    /// manual join or leave on it turns its auto-join off.
     pub fn is_guild_recruitment(&self) -> bool {
         self.flags & flags::GUILD_REQ != 0
     }
 
     /// Whether the `%s` takes the city word, not the zone's name: `CITY_ONLY2`, tested apart from
-    /// [`Self::is_city_only`] (`0x49a308`/`0x49a4ea`) though 1.12 rows set both bits or neither.
+    /// [`Self::is_city_only`] though 1.12 rows set both bits or neither.
     pub fn takes_city_name(&self) -> bool {
         self.flags & flags::CITY_ONLY2 != 0
     }
 
     /// The joinable name in `zone_name`, or with `city_name` on a city-named row ("Trade - City").
-    /// The city word is data: `0x4985fd` stores at `0xb4e4f0` the name of the one `AreaTable.dbc`
-    /// row with `Flags & 0x200` (id 3459, "City").
+    /// The city word is data: the reference stores the name of the one `AreaTable.dbc` row with
+    /// `Flags & 0x200` (id 3459, "City").
     pub fn joinable_name(&self, zone_name: &str, city_name: &str) -> String {
         if !self.is_zone_dependent() {
             return self.pattern.clone();

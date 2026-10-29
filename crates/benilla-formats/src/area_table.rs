@@ -26,7 +26,7 @@ pub struct AreaTableRow {
     /// `FactionGroup.dbc` mask of the owner: 2 Alliance, 4 Horde, 0 contested or a subzone row.
     pub faction_group_mask: u32,
     /// `ExplorationLevel` (`AreaTable+0x28`), read for its sign: a world-map landmark on a row
-    /// `>= 0` stays hidden until the area is explored, `-1` exempts it (`0x4a6890`-`0x4a68f3`).
+    /// `>= 0` stays hidden until the area is explored, `-1` exempts it.
     pub exploration_level: i32,
     /// The localized display name ("Elwynn Forest").
     pub name: String,
@@ -67,9 +67,9 @@ impl AreaTableCatalog {
         None
     }
 
-    /// Whether a unit standing in `area_id` puffs visible breath (`0x67e9c0`): bit `0x1` of the
-    /// leaf's flags when it sets bit `0x2` or has no parent row, else of its parent's. One hop,
-    /// never a chain walk, and no weather or indoor input.
+    /// Whether a unit standing in `area_id` puffs visible breath: bit `0x1` of the leaf's flags
+    /// when it sets bit `0x2` or has no parent row, else of its parent's. One hop, never a chain
+    /// walk, and no weather or indoor input.
     pub fn is_cold(&self, area_id: u32) -> bool {
         let Some(leaf) = self.by_id.get(&area_id) else {
             return false;

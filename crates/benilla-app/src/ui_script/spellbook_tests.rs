@@ -251,9 +251,9 @@ fn shipped_spellbook_shows_the_cooldown_pie() {
 }
 
 /// An empty slot is a disabled button that keeps its `UI-Quickslot2` ring (whitened at
-/// `SpellBookFrame.lua:337`): created enabled (`0x7786a0` ends in `SetState(NORMAL)`), and
-/// `SetState` (`0x779790`) has no step that takes the ring off on `Disable()`. `SetChecked(0)`
-/// unchecks, so there is no `CheckButtonHilight` glow.
+/// `SpellBookFrame.lua:337`): created enabled (the reference ends in `SetState(NORMAL)`), and
+/// `SetState` has no step that takes the ring off on `Disable()`. `SetChecked(0)` unchecks, so
+/// there is no `CheckButtonHilight` glow.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn shipped_spellbook_empty_slot_draws_its_background_and_socket_ring() {

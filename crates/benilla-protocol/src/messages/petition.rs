@@ -291,8 +291,8 @@ pub fn petition_show_signatures(item: u64) -> Vec<u8> {
     item.to_le_bytes().to_vec()
 }
 
-/// Body of `CMSG_PETITION_SIGN` (vmangos `Packets/Petition.cpp:35-39`): the item guid, then an
-/// `i8` the server skips. `SignPetition` defaults it to 1 (`0x4f46d9`, sent at `0x4f4749`).
+/// Body of `CMSG_PETITION_SIGN` (vmangos `Packets/Petition.cpp:35-39`): the item guid, then an `i8`
+/// the server skips. `SignPetition` defaults it to 1.
 pub fn petition_sign(item: u64, arg: i8) -> Vec<u8> {
     let mut body = Vec::with_capacity(9);
     body.extend_from_slice(&item.to_le_bytes());

@@ -20,8 +20,8 @@ fn text_of(s: &UiScript, region: &str) -> String {
 }
 
 /// One raid row; `rank` is 2 leader, 1 assistant, 0 member. `subgroup` is the 1-based number the
-/// pane shows: the record stores it 0-based and the binding adds one (`0x4bb61a`), so a 1-based
-/// record would seat every row one group to the right.
+/// pane shows: the record stores it 0-based and the binding adds one, so a 1-based record would
+/// seat every row one group to the right.
 fn row(
     name: &str,
     rank: u32,

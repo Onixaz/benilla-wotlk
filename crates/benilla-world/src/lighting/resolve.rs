@@ -14,24 +14,23 @@ use benilla_formats::{Atmosphere, LightCatalog};
 
 use super::{daynight, quantize_glow, ClockSource, GameClock, LightSampler, WowLighting};
 
-/// The scene-fog stage (`0x6cee30`): the pushed pair `end = min(zone end, farclip)` and
-/// `start = frac × end`, unclamped. The storm's negative fraction (Elwynn −0.5) floors the near
-/// field at `1 − 1/(1−frac)`, about 33% fog at the eye: the constant storm veil.
+/// The scene-fog stage: the pushed pair `end = min(zone end, farclip)` and `start = frac × end`,
+/// unclamped. The storm's negative fraction (Elwynn −0.5) floors the near field at
+/// `1 − 1/(1−frac)`, about 33% fog at the eye: the constant storm veil.
 fn scene_fog(fog_end_raw: f32, fog_start_frac: f32, farclip: f32) -> (f32, f32) {
     let end = fog_end_raw.min(farclip);
     (fog_start_frac * end, end)
 }
 
-/// The camera-in-WMO fog crossfade rate, `[0x8115b0] = 0.25`/s: 4 s in and 4 s out
-/// (`0x6cefcb`–`0x6cf051`).
+/// The camera-in-WMO fog crossfade rate,/s: 4 s in and 4 s out.
 const WMO_FOG_RAMP_PER_SEC: f32 = 0.25;
 
-/// The camera-in-WMO interior crossfade, the reference's `[0xce9bdc]`, its fog target staged at
-/// `0x6cef43`–`0x6cef62`: in a WMO interior the scene fog, storm veil included, fades toward the
-/// building's MFOG fog over 4 s, and the same `t` is the WMO skybox's slot alpha (`crate::skybox`
-/// reads [`Self::t`]). The staged fog latches while the camera leaves, so the fade-out starts from
-/// the room's fog. A fog-record switch inside a building snaps the staged target; the reference
-/// re-arms a lerp there (`0x6cef92`) whose semantics are untraced.
+/// The camera-in-WMO interior crossfade, the reference's, its fog target staged: in a WMO interior
+/// the scene fog, storm veil included, fades toward the building's MFOG fog over 4 s, and the same
+/// `t` is the WMO skybox's slot alpha (`crate::skybox` reads [`Self::t`]). The staged fog latches
+/// while the camera leaves, so the fade-out starts from the room's fog. A fog-record switch inside
+/// a building snaps the staged target; the reference re-arms a lerp there whose semantics are
+/// untraced.
 #[derive(Resource, Default)]
 pub struct WmoCrossfade {
     t: f32,
@@ -44,7 +43,7 @@ impl WmoCrossfade {
         self.t
     }
     /// Advances the ramp by `dt` toward `target` and returns the committed `(color, start, end)`,
-    /// staged as `end = min(end, farclip)` and `start = end × start_scalar` (`0x6cef56`).
+    /// staged as `end = min(end, farclip)` and `start = end × start_scalar`.
     fn blend(
         &mut self,
         target: Option<crate::wmo_portal::WmoFogTarget>,
@@ -160,10 +159,9 @@ pub(super) fn setup_lighting(
     });
 }
 
-/// The reference's HSV value-only scale (`0x6d1620`: RGB to HSV `0x7bbc80`, V × f, HSV to RGB
-/// `0x7bbd60`), used by the ocean depth ramp. With H and S fixed it scales every channel by `f`,
-/// so it is exactly a plain multiply. Deviation: no 8-bit repack (`×255 + 512 >> 14`), because
-/// this light lane is float end to end.
+/// The reference's HSV value-only scale (V × f), used by the ocean depth ramp. With H and S fixed
+/// it scales every channel by `f`, so it is exactly a plain multiply. Deviation: no 8-bit repack
+/// (`×255 + 512 >> 14`), because this light lane is float end to end.
 fn hsv_value_scale(c: [f32; 3], f: f32) -> [f32; 3] {
     [c[0] * f, c[1] * f, c[2] * f]
 }
@@ -210,10 +208,10 @@ pub(super) fn update_time_lighting(
     clock.minute = minute;
     clock.source = source;
 
-    // The area-light blend samples the camera eye, not the character, every frame, as the
-    // reference does (`0x6d2d00` reads `DNState+0x18`, stamped from the camera eye at `0x482ea0`).
-    // No temporal smoothing, only the blend's spatial falloff; the spawn point stands in until the
-    // camera exists.
+    // The area-light blend samples the camera eye, not the character, every frame, as the reference
+    // does (the reference reads `DNState+0x18`, stamped from the camera eye). No temporal
+    // smoothing, only the blend's spatial falloff; the spawn point stands in until the camera
+    // exists.
     let wow_pos = match cam.single() {
         Ok(t) => bevy_to_wow(t.translation()),
         Err(_) => [SPAWN_XY.0, SPAWN_XY.1, 83.5],
@@ -224,10 +222,10 @@ pub(super) fn update_time_lighting(
     // Submerged, the underwater `LightParams` (slot 1) replaces the atmosphere for every consumer;
     // the reference switches the active param and draws no overlay.
     let submerged = eye_liquid.submersion();
-    // A ghost's atmosphere is `LightParams` slot 4, the death profile (`[0xce9bb0]`), at once.
+    // A ghost's atmosphere is `LightParams` slot 4, the death profile, at once.
     let ghost = viewer.ghost;
-    // The storm blend: `bcc = min(1, density·4)` (`0x6d4500`) lerps the storm `LightParams` over
-    // the clear one, every band at once; a zone without one falls back to its clear param.
+    // The storm blend: `bcc = min(1, density·4)` lerps the storm `LightParams` over the clear one,
+    // every band at once; a zone without one falls back to its clear param.
     let storm = weather
         .as_ref()
         .map_or(0.0, |w| crate::weather::storm_blend(w.sky_density));
@@ -248,13 +246,13 @@ pub(super) fn update_time_lighting(
     let sun_dir = daynight::sun_direction(minute_f);
     let celestial_dir = daynight::celestial_sun_direction(minute_f);
 
-    // Elwynn commits 125/500 clear and −139/278 at full storm (`0x6cee30`): the negative start is
-    // the near veil, and the short storm end whites out the middle distance.
+    // Elwynn commits 125/500 clear and −139/278 at full storm: the negative start is the near veil,
+    // and the short storm end whites out the middle distance.
     let (fog_start, fog_end) = scene_fog(atmo.fog_end, atmo.fog_start_frac, view.farclip);
     // The interior crossfade is its own triple; the scene fog stays untouched. Submerged, the
     // underwater param owns the fog and the ramp is bypassed, as the reference snaps it for magma
-    // and slime inside an MFOG interior (`0x6cef6f`); the reference's MFOG underwater block
-    // (`+0x24`, flags 0x100/0x10) is not applied.
+    // and slime inside an MFOG interior; the reference's MFOG underwater block (`+0x24`, flags
+    // 0x100/0x10) is not applied.
     let (wmo_fog_color, wmo_fog_start, wmo_fog_end) = if submerged.any() {
         (atmo.fog_color, fog_start, fog_end)
     } else {
@@ -268,9 +266,9 @@ pub(super) fn update_time_lighting(
         )
     };
     let moon02 = daynight::moon02_state(day_f);
-    // The ocean depth ramp, ocean only: ambient (`DNState+0x178`) × `fac1` down to 0.5 (`0x6d28e0`)
-    // and diffuse (`+0x174`) × `fac2` down to 0.75 (`0x6d28fe`) over the first 30 yd. The block's
-    // fog-colour commit is dead, overwritten from the bands.
+    // The ocean depth ramp, ocean only: ambient (`DNState+0x178`) × `fac1` down to 0.5 and diffuse
+    // (`+0x174`) × `fac2` down to 0.75 over the first 30 yd. The block's fog-colour commit is dead,
+    // overwritten from the bands.
     let (fac1, fac2) = submerged
         .ocean_depth_factors(eye_liquid.eye_z())
         .unwrap_or((1.0, 1.0));
@@ -287,8 +285,8 @@ pub(super) fn update_time_lighting(
         wmo_fog_start,
         wmo_fog_end,
         sky: atmo.sky,
-        // Area-blended like every band (`0x6d30e0` merges all 18 colour rows): a single-sphere pick
-        // snaps the tint where a sphere's weight reaches zero.
+        // Area-blended like every band (merges all 18 colour rows): a single-sphere pick snaps the
+        // tint where a sphere's weight reaches zero.
         water_river: atmo.water_river,
         water_ocean: atmo.water_ocean,
         water_river_alpha: atmo.water_river_alpha,
@@ -307,9 +305,9 @@ pub(super) fn update_time_lighting(
         celestial_tint: atmo.sun_color,
         cloud_density: atmo.cloud_density,
         cloud_colors: atmo.cloud_colors,
-        // The one `bcc` that also weighted the storm blend above (`0x6d4500`).
+        // The one `bcc` that also weighted the storm blend above.
         storm_bcc: storm,
-        // The sun by day, the white moon by night (`0x6cfb00`).
+        // The sun by day, the white moon by night.
         cloud_glow_dir: if daynight::cloud_glow_is_sun(minute_f) {
             celestial_dir
         } else {
@@ -412,7 +410,7 @@ mod ocean_ramp_tests {
         } else {
             60.0 * ((r - g) / (max - min) + 4.0)
         };
-        // V *= f, H and S untouched, as `0x6d1620` does.
+        // V *= f, H and S untouched, as the reference does.
         let v = v * f;
         // HSV -> RGB
         let cc = v * sat;
@@ -460,7 +458,7 @@ mod tests {
     use super::*;
     use crate::wmo_portal::WmoFogTarget;
 
-    /// The 4 s crossfade (`[0x8115b0]` = 0.25/s): the staged fog latches on exit and releases at 0.
+    /// The 4 s crossfade (0.25/s): the staged fog latches on exit and releases at 0.
     #[test]
     fn wmo_fog_ramp_fades_in_and_out_over_four_seconds() {
         let mut ramp = WmoCrossfade::default();
@@ -491,8 +489,7 @@ mod tests {
         assert!(ramp.staged.is_none(), "latch releases at t = 0");
     }
 
-    /// A record end past the farclip commits the farclip (`0x6cef43` against `[0xce9b94]`), and
-    /// the start scales off the clamped end.
+    /// A record end past the farclip commits the farclip, and the start scales off the clamped end.
     #[test]
     fn wmo_fog_staging_clamps_end_to_farclip() {
         let mut ramp = WmoCrossfade::default();

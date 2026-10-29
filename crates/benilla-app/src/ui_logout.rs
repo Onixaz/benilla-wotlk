@@ -7,11 +7,11 @@
 //! - otherwise a 20 s server timer runs (`WorldSession.h:284`), which the CAMP dialog counts down
 //!   and `CancelLogout()` calls off.
 //!
-//! The reference's handler (`0x5b4630`, then `0x5aaef0`) shows `ERR_LOGOUT_FAILED` for every
-//! refusal, does nothing for an instant logout, as the completion follows, and otherwise fires
-//! `PLAYER_CAMPING` or `PLAYER_QUITING` from the request's quit byte (stored at `0x5ab053`), which
-//! the stock dialogs hang off (`UIParent.lua:304-315`). Quit is a logout that exits the process on
-//! completion; the QUIT dialog has an "Exit now" button and CAMP has none.
+//! The reference's handler shows `ERR_LOGOUT_FAILED` for every refusal, does nothing for an instant
+//! logout, as the completion follows, and otherwise fires `PLAYER_CAMPING` or `PLAYER_QUITING` from
+//! the request's quit byte, which the stock dialogs hang off (`UIParent.lua:304-315`). Quit is a
+//! logout that exits the process on completion; the QUIT dialog has an "Exit now" button and CAMP
+//! has none.
 
 use benilla_ui::script::{SessionRequest, UiScript};
 use bevy::prelude::*;
@@ -20,7 +20,7 @@ use crate::net::{ClientCommand, LoggedOutMessage, NetCommands, SelfGuid};
 use crate::ui_script::{UiFeed, UiInput};
 
 /// The refusal line for every non-zero reason, never `PLAYER_LOGOUT_FAILED_ERROR`: message `0x180`
-/// of the `DisplayError` at `0x5aaf26`, a key so the player's `GlobalStrings.lua` supplies it.
+/// of the `DisplayError`, a key so the player's `GlobalStrings.lua` supplies it.
 const LOGOUT_FAILED_KEY: &str = "ERR_LOGOUT_FAILED";
 
 /// What the wire told us to say next, queued because a cancel can land in its response's frame.
@@ -42,15 +42,15 @@ enum LogoutSignal {
 #[derive(Resource, Default)]
 pub(crate) struct LogoutState {
     quitting: bool,
-    /// The reference's `[session+0x1b1d]`: a request is out and unanswered. `0x5ab000` drops a
-    /// second request silently while it is set, and the idle handler skips its thirty-minute leg
-    /// on it (`0x482ef5`); `ForceLogout` (`0x5aaff0`) bypasses it and does not set it.
+    /// The reference's `[session+0x1b1d]`: a request is out and unanswered. The reference drops a
+    /// second request silently while it is set, and the idle handler skips its thirty-minute leg on
+    /// it; `ForceLogout` bypasses it and does not set it.
     pending: bool,
     signals: Vec<LogoutSignal>,
 }
 
 impl LogoutState {
-    /// The pending byte, as `0x5ab0d0` returns it.
+    /// The pending byte, as the reference returns it.
     pub(crate) fn pending(&self) -> bool {
         self.pending
     }
@@ -61,7 +61,7 @@ impl LogoutState {
         info!("logout: server answered reason={reason} instant={instant}");
         if reason != 0 {
             self.quitting = false;
-            // `0x5aaf21`: the error line, and the pending flag clears so the player can retry.
+            // The error line, and the pending flag clears so the player can retry.
             self.pending = false;
             self.signals.push(LogoutSignal::Refused);
             return;
@@ -76,9 +76,8 @@ impl LogoutState {
         });
     }
 
-    /// `SMSG_LOGOUT_CANCEL_ACK`: fires `LOGOUT_CANCEL` on every ack. The reference (`0x5b4680`,
-    /// then `0x5aaf60`) fires it only while the pending byte is set (`0x5aaf6b`), and its own
-    /// `CancelLogout` clears that byte when it sends (`0x5aaf80`).
+    /// `SMSG_LOGOUT_CANCEL_ACK`: fires `LOGOUT_CANCEL` on every ack. The reference fires it only
+    /// while the pending byte is set, and its own `CancelLogout` clears that byte when it sends.
     pub(crate) fn apply_cancelled(&mut self) {
         self.quitting = false;
         self.pending = false;
@@ -125,8 +124,8 @@ pub(crate) fn drain_logout(
     for request in script.take_session_requests() {
         match request {
             SessionRequest::Logout | SessionRequest::Quit => {
-                // `0x5ab000` bails silently while a request is pending, before the quit byte is
-                // stored (`0x5ab053`), so a second ask cannot turn a camp into a quit.
+                // The reference bails silently while a request is pending, before the quit byte is
+                // stored, so a second ask cannot turn a camp into a quit.
                 if logout.pending {
                     continue;
                 }
@@ -162,8 +161,8 @@ pub(crate) fn drain_logout(
                 info!("logout: force quit");
                 exit.write(AppExit::Success);
             }
-            // `CMSG_PLAYER_LOGOUT`, only with a world session: `0x5aaff0` calls `0x5ab000` with
-            // force 1, which skips the pending bail and does not set the latch.
+            // `CMSG_PLAYER_LOGOUT`, only with a world session: the reference with force 1, which
+            // skips the pending bail and does not set the latch.
             SessionRequest::ForceLogout => {
                 if self_guid.0.is_some() {
                     info!("logout: forced");
@@ -208,8 +207,8 @@ impl Plugin for UiLogoutPlugin {
             Update,
             (
                 feed_logout.in_set(UiFeed),
-                // After the idle handler, which reads the pending byte: its request is drained
-                // and the byte set in the frame it was asked, as `0x5ab05b` sets it in the call.
+                // After the idle handler, which reads the pending byte: its request is drained and
+                // the byte set in the frame it was asked, as the reference sets it in the call.
                 (drain_logout, exit_on_logout_complete)
                     .after(UiInput)
                     .after(crate::ui_chat::idle::idle_handler),
@@ -282,7 +281,7 @@ mod tests {
         );
     }
 
-    /// Driven through [`drain_logout`], where the `0x5ab000` bail lives.
+    /// Driven through [`drain_logout`], where the bail lives.
     #[test]
     fn a_second_logout_while_one_is_pending_is_silent() {
         let (tx, rx) = crossbeam_channel::unbounded();
@@ -316,7 +315,7 @@ mod tests {
         }
         assert_eq!(sent(&rx), 0, "and not one more packet, nor any error line");
 
-        // `ForceLogout` bypasses the bail and does not set the latch (`0x5aaff0`, force 1).
+        // `ForceLogout` bypasses the bail and does not set the latch (force 1).
         ask(&mut app, SessionRequest::ForceLogout);
         assert_eq!(sent(&rx), 1, "the forced flavour is the escape hatch");
 

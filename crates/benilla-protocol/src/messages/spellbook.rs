@@ -91,22 +91,22 @@ pub(super) fn read_spell_cooldown(r: &mut &[u8]) -> io::Result<(u64, u8, Cooldow
 
 /// Read `SMSG_ITEM_COOLDOWN` (vmangos `Server/Packets/Item.cpp:229-233`): `(item_guid, spell_id)`,
 /// sent when an item with an on-use spell is equipped (`Player::ApplyEquipCooldown`,
-/// `Player.cpp:19358-19384`). The client (`0x6e95d0`) gives the item a hardcoded 30 s cooldown; no
-/// duration is on the wire.
+/// `Player.cpp:19358-19384`). The client gives the item a hardcoded 30 s cooldown; no duration is
+/// on the wire.
 pub(super) fn read_item_cooldown(r: &mut impl Read) -> io::Result<(u64, u32)> {
     Ok((read_u64_le(r)?, read_u32_le(r)?))
 }
 
 /// Read `SMSG_COOLDOWN_EVENT` or `SMSG_CLEAR_COOLDOWN` (vmangos
-/// `Server/Packets/Spell.cpp:152-167`, client `0x6e9670`): the `u32` spell id first, then the
-/// `u64` caster. EVENT starts the timers of an on-hold (`SPELL_ATTR_COOLDOWN_ON_EVENT`) cooldown;
-/// CLEAR removes the cooldown.
+/// `Server/Packets/Spell.cpp:152-167`): the `u32` spell id first, then the `u64` caster. EVENT
+/// starts the timers of an on-hold (`SPELL_ATTR_COOLDOWN_ON_EVENT`) cooldown; CLEAR removes the
+/// cooldown.
 pub(super) fn read_cooldown_event(r: &mut impl Read) -> io::Result<(u32, u64)> {
     Ok((read_u32_le(r)?, read_u64_le(r)?))
 }
 
-/// Read `SMSG_COOLDOWN_CHEAT`, the GM `.cooldown` reset. The client (`0x6e9730`) clears every
-/// cooldown of the self or pet the guid names.
+/// Read `SMSG_COOLDOWN_CHEAT`, the GM `.cooldown` reset. The client clears every cooldown of the
+/// self or pet the guid names.
 pub(super) fn read_cooldown_cheat(r: &mut impl Read) -> io::Result<u64> {
     read_u64_le(r)
 }

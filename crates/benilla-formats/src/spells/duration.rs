@@ -1,7 +1,7 @@
 //! `SpellDuration.dbc`: the duration a spell's `DurationIndex`
-//! ([`crate::spells::SpellDisplay::duration_index`]) resolves to in `Spell_C::GetSpellDuration`
-//! (`0x6ea000`), before spell-mod op 1 (`SPELLMOD_DURATION`). All three columns are signed: a few
-//! rows (427, Resurrection Sickness's) pair a negative base with a per-level term.
+//! ([`crate::spells::SpellDisplay::duration_index`]) resolves to in `Spell_C::GetSpellDuration`,
+//! before spell-mod op 1 (`SPELLMOD_DURATION`). All three columns are signed: a few rows (427,
+//! Resurrection Sickness's) pair a negative base with a per-level term.
 
 use std::collections::HashMap;
 
@@ -16,8 +16,8 @@ use crate::dbc::{i32_at, parse, u32_at};
 pub struct SpellDuration {
     /// The duration a level-independent tooltip shows; -1 is permanent.
     pub base_ms: i32,
-    /// Added per level of the spell's skill level (`0x6e3130`) above its `baseLevel`, below it
-    /// taken off (`0x6ea049`); 0 for most rows.
+    /// Added per level of the spell's skill level above its `baseLevel`, below it taken off; 0 for
+    /// most rows.
     pub per_level_ms: i32,
     /// The ceiling the level-scaled duration clamps to.
     pub max_ms: i32,
@@ -25,7 +25,7 @@ pub struct SpellDuration {
 
 impl SpellDuration {
     /// The permanent sentinel, `base_ms == -1`; the client tests `Duration < 0` and
-    /// `DurationPerLevel <= 0` (`0x4e456e`-`0x4e457a`), which agrees on the shipped rows only.
+    /// `DurationPerLevel <= 0`, which agrees on the shipped rows only.
     pub fn is_permanent(&self) -> bool {
         self.base_ms == -1
     }

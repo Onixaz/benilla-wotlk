@@ -1,12 +1,11 @@
 //! The melee impact frame. At receive a resolved attacker caches the swing record
-//! (`attacker+0xd70`, one slot, overwritten) and plays its clip (`0x5fe2f0`); the victim's
-//! feedback fires once, when the clip crosses a `$AH0`-`$AH3` or `$CAH` key (`0x6247d0` →
-//! `0x624530`). `$HIT` is no impact key: it re-fires only the flinch and rides hit-reaction clips.
-//! `$CPP` (`0x624a01`) plays the victim's defense clip and clears `HitInfo & 0x2` in the record,
-//! so no flinch or blood, unless an impact key consumed the record first. A whiff plays the rest
-//! of the attacker's swing at half speed (`0x624ca0` → `0x712910(bone 0, 0.5)`). A superseding
-//! swing or `SMSG_ATTACKSTOP` flushes the old record as floating text only, a `text_only`
-//! [`SwingImpact`]. A clip with no impact key never fires: there is no timer fallback.
+//! (`attacker+0xd70`, one slot, overwritten) and plays its clip; the victim's feedback fires once,
+//! when the clip crosses a `$AH0`-`$AH3` or `$CAH` key. `$HIT` is no impact key: it re-fires only
+//! the flinch and rides hit-reaction clips. `$CPP` plays the victim's defense clip and clears
+//! `HitInfo & 0x2` in the record, so no flinch or blood, unless an impact key consumed the record
+//! first. A whiff plays the rest of the attacker's swing at half speed (`(bone 0, 0.5)`). A
+//! superseding swing or `SMSG_ATTACKSTOP` flushes the old record as floating text only, a
+//! `text_only` [`SwingImpact`]. A clip with no impact key never fires: there is no timer fallback.
 
 use bevy::prelude::*;
 
@@ -14,11 +13,10 @@ use super::events::AnimSoundEvent;
 use super::SwingMessage;
 use crate::net::ObjectStore;
 
-/// The victim dispatcher's lootable gate (`0x624552`, `UNIT_DYNAMIC_FLAGS` bit `0x1`): `0x624530`
-/// bails before every consequence it owns, the floating number (`0x624566`) included, so a corpse
-/// you can loot shows no hits. The supersede and attack-stop flushes call the number emitter
-/// `0x6243e0` directly (`0x625893`, `0x624ea7`) and the whiff slow-down (`0x624ca0`) is outside
-/// the dispatcher, so only a full dispatch is gated.
+/// The victim dispatcher's lootable gate (`UNIT_DYNAMIC_FLAGS` bit `0x1`): the reference bails
+/// before every consequence it owns, the floating number included, so a corpse you can loot shows
+/// no hits. The supersede and attack-stop flushes call the number emitter directly and the whiff
+/// slow-down is outside the dispatcher, so only a full dispatch is gated.
 pub(crate) fn lootable_victim(stores: &Query<&ObjectStore>, victim: Option<Entity>) -> bool {
     victim.is_some_and(|v| stores.get(v).is_ok_and(|s| s.0.unit_lootable()))
 }
@@ -27,30 +25,30 @@ pub(crate) fn lootable_victim(stores: &Query<&ObjectStore>, victim: Option<Entit
 #[derive(Message, Clone, Copy)]
 pub(crate) struct SwingImpact {
     pub(crate) swing: SwingMessage,
-    /// A supersede or attack-stop flush (`0x624e40`, the `0x14a` overwrite): floating text only.
+    /// A supersede or attack-stop flush (the `0x14a` overwrite): floating text only.
     pub(crate) text_only: bool,
     /// The `$AH0`-`$AH3` digit: picks the attacker's `CreatureSoundData.CustomAttack` column and
-    /// latches `SWINGNOHITSOUND` in place of the weapon-impact sound (`0x6247d0`). `None` for
-    /// `$CAH`, the receive-time fallback and flushes.
+    /// latches `SWINGNOHITSOUND` in place of the weapon-impact sound. `None` for `$CAH`, the
+    /// receive-time fallback and flushes.
     pub(crate) natural: Option<u8>,
-    /// The firing tag's world point, which the reference carries from `0x624862` into both
-    /// weapon-sound legs (`0x6248ef`, `0x624950`); `None` when no tag fired.
+    /// The firing tag's world point, which the reference carries from the reference into both
+    /// weapon-sound legs; `None` when no tag fired.
     pub(crate) pos: Option<Vec3>,
 }
 
-/// `SMSG_ATTACKSTOP`'s flush of a pending record (`0x624e40`); death and stun arrive as it.
+/// `SMSG_ATTACKSTOP`'s flush of a pending record; death and stun arrive as it.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct SwingFlush(pub(crate) Entity);
 
-/// The victim's defense clip (`$CPP`, `0x624a01`), resolved in the driver by
-/// [`super::select::defense_anim`], which requires the victim alive, as the client does.
+/// The victim's defense clip (`$CPP`), resolved in the driver by [`super::select::defense_anim`],
+/// which requires the victim alive, as the client does.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct DefenseAnim {
     pub(crate) victim: Entity,
     pub(crate) victim_state: u32,
 }
 
-/// The whiff slow-down: the attacker's swing runs at half speed for its remainder (`0x712910`).
+/// The whiff slow-down: the attacker's swing runs at half speed for its remainder.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct SwingSlowdown(pub(crate) Entity);
 
@@ -65,7 +63,7 @@ pub(crate) struct PendingSwing {
 #[derive(Resource, Default)]
 pub(crate) struct PendingImpacts(pub(crate) bevy::ecs::entity::EntityHashMap<PendingSwing>);
 
-/// `0x6247d0`'s attack-hit tags: `$AH0`-`$AH3`, or `$CAH`, which every character attack clip
+/// The reference's attack-hit tags: `$AH0`-`$AH3`, or `$CAH`, which every character attack clip
 /// authors beside an inert `$HIT`; never `$HIT`. The inner value is [`SwingImpact::natural`].
 fn impact_tag(ident: &[u8; 4]) -> Option<Option<u8>> {
     match ident {
@@ -78,7 +76,7 @@ fn impact_tag(ident: &[u8; 4]) -> Option<Option<u8>> {
     }
 }
 
-/// The whiff gate `0x624ca0`: miss, dodge or evade; a parry or block still makes contact.
+/// The whiff gate: miss, dodge or evade; a parry or block still makes contact.
 fn is_whiff(victim_state: u32) -> bool {
     matches!(victim_state, 0 | 2 | 6)
 }
@@ -97,7 +95,7 @@ pub(super) fn route_swing_impacts(
     mut slows: MessageWriter<SwingSlowdown>,
 ) {
     for s in swings.read() {
-        // One slot per attacker: a superseded record flushes as text only (`0x6243e0` alone).
+        // One slot per attacker: a superseded record flushes as text only.
         if let Some(old) = pending.0.insert(
             s.attacker,
             PendingSwing {
@@ -124,7 +122,7 @@ pub(super) fn route_swing_impacts(
     }
     for ev in events.read() {
         if let Some(natural) = impact_tag(&ev.ident) {
-            // The key consumes the record (`0x6247d0` clears it after the dispatch).
+            // The key consumes the record.
             if let Some(p) = pending.0.remove(&ev.entity) {
                 if benilla_assets::trace::enabled() {
                     benilla_assets::trace::line(
@@ -141,8 +139,8 @@ pub(super) fn route_swing_impacts(
                     // Not behind the lootable gate: the slow-down is outside the dispatcher.
                     slows.write(SwingSlowdown(ev.entity));
                 }
-                // A lootable victim takes nothing, not even the number; the record is consumed
-                // all the same, as `0x6247d0` clears it whatever the dispatcher does.
+                // A lootable victim takes nothing, not even the number; the record is consumed all
+                // the same, as the reference clears it whatever the dispatcher does.
                 if lootable_victim(&stores, p.swing.victim) {
                     continue;
                 }
@@ -182,7 +180,7 @@ pub(super) fn route_swing_impacts(
         }
     }
     for SwingFlush(attacker) in flushes.read() {
-        // `0x624e40`: flush as text only and clear.
+        // Flush as text only and clear.
         if let Some(p) = pending.0.remove(attacker) {
             if benilla_assets::trace::enabled() {
                 benilla_assets::trace::line(
@@ -302,7 +300,7 @@ mod tests {
             ));
     }
 
-    /// The lootable gate (`0x624552`) drops the whole dispatch; the tag still consumes the record.
+    /// The lootable gate drops the whole dispatch; the tag still consumes the record.
     #[test]
     fn a_lootable_victim_takes_no_full_dispatch() {
         let mut app = app();
@@ -343,7 +341,7 @@ mod tests {
         assert_eq!(drain(&mut app, &mut cursor), vec![(0x2, 1, false, None)]);
     }
 
-    /// The flushes call the number emitter `0x6243e0` directly (`0x624ea7`, `0x625893`).
+    /// The flushes call the number emitter directly.
     #[test]
     fn a_lootable_victim_still_gets_the_supersede_and_stop_flushes() {
         let mut app = app();
@@ -371,7 +369,7 @@ mod tests {
         assert_eq!(drain(&mut app, &mut cursor), vec![(0x2, 1, true, None)]);
     }
 
-    /// The whiff slow-down (`0x624ca0`) is not the dispatcher's, so the gate does not stop it.
+    /// The whiff slow-down is not the dispatcher's, so the gate does not stop it.
     #[test]
     fn the_whiff_slowdown_survives_the_lootable_gate() {
         let mut app = app();

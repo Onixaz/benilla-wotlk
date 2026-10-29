@@ -1,6 +1,6 @@
 //! Bodies arriving together, against the real install: each composite runs off the main thread and
 //! its body is built only once it can draw dressed, as the reference withholds a unit whose first
-//! composite is pending (`0x607da0` → `0x477860`, `0x481749` → `0x710c50`).
+//! composite is pending.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -231,8 +231,8 @@ fn a_crowd_composites_off_the_main_thread_and_each_body_waits_for_its_atlas() {
 }
 
 /// A body that waited on its composite joins the appear ramp its arrival started: the reference's
-/// fade is stamped by the create block's appear handler (`0x613af0` → `0x614f80`) and ramps on the
-/// wall clock whatever ShouldRender answers (`0x614a90` at `0x60800c`).
+/// fade is stamped by the create block's appear handler and ramps on the wall clock whatever
+/// ShouldRender answers.
 #[test]
 fn a_body_that_waited_for_its_atlas_fades_from_its_arrival() {
     let Some(mut app) = app() else { return };
@@ -322,8 +322,8 @@ fn a_healed_rig_rebuilds_its_body_in_the_same_frame() {
     assert_eq!(app.world().resource::<SkinComposites>().running(), 0);
 }
 
-/// A creature display with a baked atlas loads it as is and is never waited on (`0x477866`); one
-/// without composites like a player and waits.
+/// A creature display with a baked atlas loads it as is and is never waited on; one without
+/// composites like a player and waits.
 #[test]
 fn a_baked_npc_skin_never_waits_on_the_compositor() {
     let Some(mut app) = app() else { return };

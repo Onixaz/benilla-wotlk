@@ -75,12 +75,12 @@ pub(crate) fn measure_line_width_for_test(
 }
 
 /// Greedy wrap of one markup line into rows no wider than `max_width` px, the reference's wrap
-/// kernel (`0x5c6c50`/`0x5c7780`): break at the last opportunity, else force-break at the last
-/// fitting glyph; inter-word whitespace stays verbatim and only the separator at a break drops.
+/// kernel: break at the last opportunity, else force-break at the last fitting glyph; inter-word
+/// whitespace stays verbatim and only the separator at a break drops.
 ///
-/// Break opportunities are whitespace only: the reference's classifier (`0x5c7780`) also breaks
-/// after `-`, `:` and `/` and by CJK kinsoku classes, and its `nonspacewrap` flag (ui `0x1000`) is
-/// not modelled; of the flag's three stock users, only `ScriptErrors_Message` wraps past one line.
+/// Break opportunities are whitespace only: the reference's classifier also breaks after `-`, `:`
+/// and `/` and by CJK kinsoku classes, and its `nonspacewrap` flag (ui `0x1000`) is not modelled;
+/// of the flag's three stock users, only `ScriptErrors_Message` wraps past one line.
 pub(super) fn wrap_line(
     e: &TextEngine,
     r: Resolved,
@@ -130,9 +130,8 @@ pub(crate) fn measure_text(
         max_w = max_w.max(w);
     }
     // Deviation: one pixel of headroom over the reference's measured width, kept because dropping
-    // it narrows every auto-sized FontString, a look change.
-    // Height: N lines at the font em with no outline pad (`0x5c2070`: `N·S + (N-1)·gap`); an
-    // outlined ring pokes past it, as in the reference.
+    // it narrows every auto-sized FontString, a look change. Height: N lines at the font em with no
+    // outline pad (: `N·S + (N-1)·gap`); an outlined ring pokes past it, as in the reference.
     (
         max_w.ceil() + 1.0,
         super::text_block_h(render_lines.len(), r.size, font.spacing),
@@ -159,7 +158,7 @@ fn wrapped_rows(e: &TextEngine, r: Resolved, text: &str, wrap_width: f32) -> usi
     wrapped_rows_capped(e, r, text, wrap_width, usize::MAX)
 }
 
-/// [`wrapped_rows`], stopping at `cap` as the reference's fit walk (`0x5c21c0`) lays out only
+/// [`wrapped_rows`], stopping at `cap` as the reference's fit walk lays out only
 /// `min(needed, fits + 1)` lines: an overflow test passes `allowed + 1`, the chat band's real count
 /// [`usize::MAX`].
 fn wrapped_rows_capped(
@@ -206,11 +205,11 @@ pub(super) fn wrapped_rows_capped_for_test(
     wrapped_rows_capped(e, r, text, wrap_width, cap)
 }
 
-/// The display string under the reference's height-gated ellipsis truncate (`CSimpleFontString`
-/// `0x771ec0`): wrapped past the box, the text backs off a char at a time behind `"..."` until it
-/// fits; `None` draws it raw. The gate is `boxW > 0 && boxH > 0` (`maxLines` is not modelled), so
-/// an auto-height rect never truncates. Region FontStrings only: edit boxes, message lines and
-/// world text never reach `0x771ec0` in the reference either.
+/// The display string under the reference's height-gated ellipsis truncate (`CSimpleFontString`):
+/// wrapped past the box, the text backs off a char at a time behind `"..."` until it fits; `None`
+/// draws it raw. The gate is `boxW > 0 && boxH > 0` (`maxLines` is not modelled), so an auto-height
+/// rect never truncates. Region FontStrings only: edit boxes, message lines and world text never
+/// reach in the reference either.
 pub(crate) fn ellipsize_to_fit(
     atlas: &mut UiFontAtlas,
     region: benilla_ui::widget::RegionHandle,

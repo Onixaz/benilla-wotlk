@@ -1,7 +1,7 @@
 //! Group session state: the `SMSG_GROUP_LIST` mirror and the party system lines. vmangos sends no
-//! text for party events, so, as the reference does through `DisplayError` (`0x496720`), each
-//! opcode composes its own line and `SMSG_GROUP_LIST` composes joins and leaves from what the list
-//! finds held: the party slots (`0x5e6a40`) and the raid roster (`0x4ba5f0`, `0x4ba550`).
+//! text for party events, so, as the reference does through `DisplayError`, each opcode composes
+//! its own line and `SMSG_GROUP_LIST` composes joins and leaves from what the list finds held: the
+//! party slots and the raid roster.
 
 use std::collections::HashMap;
 
@@ -57,18 +57,17 @@ pub struct GroupState {
     /// The other members in wire order; the list never contains the recipient.
     pub members: Vec<GroupMemberEntry>,
     /// How many `SMSG_GROUP_LIST`s landed, the all-zero and an unchanged one included. The
-    /// reference signals `PARTY_MEMBERS_CHANGED` after each (`0x5e6c61`), with no compare against
-    /// the roster it holds, and an empty list reaches it too (`0x5e6b3c`).
+    /// reference signals `PARTY_MEMBERS_CHANGED` after each, with no compare against the roster it
+    /// holds, and an empty list reaches it too.
     pub lists_applied: u32,
-    /// How many `RAID_ROSTER_UPDATE`s the lists signalled, which the feed answers one for one. A raid
-    /// list signals after its roster rebuild once no member name is pending (`0x4babef`), with no
-    /// compare against the roster it replaces; a list that is not a raid signals once for the roster
-    /// it drops (`0x4ba57b`). A raid list with a name pending signals nothing then, and the name
-    /// answer signals later (`0x4bada6`).
+    /// How many `RAID_ROSTER_UPDATE`s the lists signalled, which the feed answers one for one. A
+    /// raid list signals after its roster rebuild once no member name is pending, with no compare
+    /// against the roster it replaces; a list that is not a raid signals once for the roster it
+    /// drops. A raid list with a name pending signals nothing then, and the name answer signals
+    /// later.
     pub roster_updates: u32,
     /// The leave ack, `SMSG_GROUP_UNINVITE` and `SMSG_GROUP_DESTROYED` empty the reference's party
-    /// slots and leader (`0x4e84a0`, `0x4e8250(0)`) and keep its raid roster; the next list then
-    /// finds no slot held.
+    /// slots and leader and keep its raid roster; the next list then finds no slot held.
     pub slots_emptied: bool,
     pub leader: u64,
     /// The loot tail, present whenever the list has members.
@@ -85,13 +84,13 @@ pub struct GroupState {
     /// Our raid lockouts, the character's rather than the group's: leaving the group keeps them.
     pub saved_instances: Vec<benilla_protocol::messages::RaidInstanceEntry>,
     /// How many `SMSG_RAID_INSTANCE_INFO` answers arrived, empty ones included. The reference fires
-    /// `UPDATE_INSTANCE_INFO` once per packet (`0x49e1a7`, straight from `0x49e0d8` when empty)
-    /// and `RaidFrame.lua:43` ignores the first, so the Raid Info button is decided on the second.
+    /// `UPDATE_INSTANCE_INFO` once per packet and `RaidFrame.lua:43` ignores the first, so the Raid
+    /// Info button is decided on the second.
     pub saved_instances_answers: u32,
     /// Bumped by each ready check that pops for us; a count, so a second one still fires.
     pub ready_check: u32,
     /// Bumped by every ready-check open, ours as leader included, where [`Self::ready_check`] skips
-    /// the leader's (`0x4ba360`'s leader arm never reaches the `READY_CHECK` fire at `0x4ba53a`).
+    /// the leader's (the reference's leader arm never reaches the `READY_CHECK` fire).
     pub ready_check_requests: u32,
     /// The answers forwarded to us as leader, append-only until the next request clears them.
     pub ready_check_answers: Vec<(u64, bool)>,
@@ -109,8 +108,8 @@ pub struct GroupState {
     pub real_raid_members: u32,
 }
 
-/// What one `SMSG_GROUP_LIST` shows: its lines, and whether it plays `igPlayerInviteAccept`
-/// (`0x5e6c83`-`0x5e6c8f`), the join's only sound, since `ERR_JOINED_GROUP_S`'s row has none.
+/// What one `SMSG_GROUP_LIST` shows: its lines, and whether it plays `igPlayerInviteAccept`, the
+/// join's only sound, since `ERR_JOINED_GROUP_S`'s row has none.
 #[derive(Debug, Default, PartialEq)]
 pub struct ListOutcome {
     pub lines: Vec<UiError>,
@@ -120,8 +119,8 @@ pub struct ListOutcome {
 impl GroupState {
     /// Apply one `SMSG_GROUP_LIST` and return what it shows, in the reference's order: the party
     /// slots' joins, the new-group line, the party slots' leaves, then the raid roster's lines.
-    /// Kick, leave (`0x5e690b`) and disband lines come from their opcodes. Every name is taken as
-    /// held: [`Self::apply_list_awaiting`] is the one that says otherwise.
+    /// Kick, leave and disband lines come from their opcodes. Every name is taken as held:
+    /// [`Self::apply_list_awaiting`] is the one that says otherwise.
     pub fn apply_list(
         &mut self,
         group_type: u8,
@@ -137,8 +136,8 @@ impl GroupState {
     }
 
     /// [`Self::apply_list`] told what the name cache holds: `names_pending` when a row of a raid
-    /// list has no cached name yet, the reference's pending count (`[0xb713f0]`, raised at `0x4ba9d0`
-    /// for each row whose name lookup misses), which holds `RAID_ROSTER_UPDATE` back (`0x4babdf`).
+    /// list has no cached name yet, the reference's pending count (raised for each row whose name
+    /// lookup misses), which holds `RAID_ROSTER_UPDATE` back.
     pub fn apply_list_awaiting(
         &mut self,
         group_type: u8,
@@ -163,7 +162,7 @@ impl GroupState {
                 .collect()
         };
         let raid_held = self.group_type == GROUPTYPE_RAID;
-        // "Held a group" (`0x5e6aa9`): an occupied slot (`0x5e6afb`) or a raid roster (`0x5e6b29`).
+        // "Held a group": an occupied slot or a raid roster.
         let held = !held_slots.is_empty() || raid_held;
 
         let own = own_flags & 0x7f;
@@ -174,21 +173,21 @@ impl GroupState {
             .collect();
         for m in &seated {
             if !held {
-                // Seated into no group: no line, but the chime (`0x5e6dc6`).
+                // Seated into no group: no line, but the chime.
                 out.invite_accept = true;
             } else if !raid && !held_slots.iter().any(|(guid, _)| *guid == m.guid) {
-                // New to a party we held (`0x5e6c19`, `0x5e6c24`).
+                // New to a party we held.
                 out.lines.push(UiError::s("ERR_JOINED_GROUP_S", &m.name));
                 out.invite_accept = true;
             }
         }
-        // A new group we lead: one line, for the last member listed (`0x5e6c94`-`0x5e6cc1`).
+        // A new group we lead: one line, for the last member listed.
         if !held && self_guid.is_some_and(|me| me == leader) {
             if let Some(last) = members.last().filter(|m| !m.name.is_empty()) {
                 out.lines.push(UiError::s("ERR_JOINED_GROUP_S", &last.name));
             }
         }
-        // A party list's leaves: the held slots it no longer seats (`0x5e6cd7`-`0x5e6e09`).
+        // A party list's leaves: the held slots it no longer seats.
         if !raid {
             for (guid, name) in &held_slots {
                 if !seated.iter().any(|m| m.guid == *guid) {
@@ -197,8 +196,7 @@ impl GroupState {
             }
         }
         if raid {
-            // `0x4ba5f0`: arrivals only onto a held roster (`0x4ba725`), departures, and the
-            // joined line when none was held (`0x4ba83a`).
+            // Arrivals only onto a held roster, departures, and the joined line when none was held.
             if raid_held {
                 for m in &members {
                     if !self.members.iter().any(|old| old.guid == m.guid) {
@@ -215,13 +213,13 @@ impl GroupState {
             } else {
                 out.lines.push(UiError::key("ERR_RAID_YOU_JOINED"));
             }
-            // The rebuild ends in the signal unless a name is pending (`0x4babdf`-`0x4babef`).
+            // The rebuild ends in the signal unless a name is pending.
             if !names_pending {
                 self.count_roster_update();
             }
         } else if raid_held {
-            // `0x4ba550`: a list that is not a raid drops the held roster (`0x4ba55f`), and says so
-            // (`0x4ba57b`). With no roster held it signals no `RAID_ROSTER_UPDATE`.
+            // A list that is not a raid drops the held roster, and says so. With no roster held it
+            // signals no `RAID_ROSTER_UPDATE`.
             out.lines.push(UiError::key("ERR_RAID_YOU_LEFT"));
             self.count_roster_update();
         }
@@ -232,7 +230,7 @@ impl GroupState {
             self.leave_group();
             return out;
         }
-        // Raid to party clears the raid-target board, as the reference's `0x4ba550` does on the
+        // Raid to party clears the raid-target board, as the reference's does on the
         // raid-flag-clear leg; a disband clears it in `leave_group`.
         if group_type != 1 && self.group_type == 1 {
             self.raid_targets = [0; 8];
@@ -241,10 +239,9 @@ impl GroupState {
         self.stats
             .retain(|guid, _| members.iter().any(|m| m.guid == *guid));
         // Each listed member's record takes its online bit from the row's status byte and keeps the
-        // rest: a known member's record is passed back to `0x4e82d0` (`0x5e6ddb`-`0x5e6de8`), which
-        // writes the bit last (`0x4e8361`-`0x4e837b`), and the raid roster's twin does the same to
-        // its row's record (`0x4ba947`-`0x4ba960`). A member new to the roster has no record yet;
-        // `net::list` seats its placeholder.
+        // rest: a known member's record is passed back, which writes the bit last, and the raid
+        // roster's twin does the same to its row's record. A member new to the roster has no record
+        // yet; `net::list` seats its placeholder.
         for m in &members {
             if let Some(record) = self.stats.get_mut(&m.guid) {
                 record.set_online(m.listed_online());
@@ -303,7 +300,7 @@ impl GroupState {
         self.roster_updates = self.roster_updates.wrapping_add(1);
     }
 
-    /// The `party1..party4` slots: our own subgroup in packet order, at most four (`0x5e6baa`
+    /// The `party1..party4` slots: our own subgroup in packet order, at most four (the reference
     /// compares the flags under `0x7f`). A slot's member can change on any resync.
     pub fn party_slots(&self) -> impl Iterator<Item = &GroupMemberEntry> {
         // The subgroup bits alone: the folded assistant and assignment bits are no group.
@@ -339,16 +336,14 @@ impl GroupState {
         vec![UiError::s("ERR_DECLINE_GROUP_S", name)]
     }
 
-    /// `SMSG_GROUP_UNINVITE`: we were kicked; empties the slots and prints unconditionally
-    /// (`0x5e6850`).
+    /// `SMSG_GROUP_UNINVITE`: we were kicked; empties the slots and prints unconditionally.
     pub fn apply_uninvited(&mut self) -> Vec<UiError> {
         self.slots_emptied = true;
         vec![UiError::key("ERR_UNINVITE_YOU")]
     }
 
-    /// `SMSG_GROUP_DESTROYED`: prints only while grouped (`0x5e6880` tests `0x4e86d0() != 0`), then
-    /// empties the slots (`0x5e6893`). vmangos's two-member collapse sends none
-    /// (`Group/Group.cpp:533`).
+    /// `SMSG_GROUP_DESTROYED`: prints only while grouped, then empties the slots. vmangos's
+    /// two-member collapse sends none (`Group/Group.cpp:533`).
     pub fn apply_destroyed(&mut self) -> Vec<UiError> {
         let lines = if self.in_group {
             vec![UiError::key("ERR_GROUP_DISBANDED")]
@@ -580,7 +575,7 @@ impl GroupState {
         self.saved_instances_answers = self.saved_instances_answers.wrapping_add(1);
     }
 
-    /// `MSG_RAID_READY_CHECK`, open form, echoed to the whole group: `0x4ba360` splits on the
+    /// `MSG_RAID_READY_CHECK`, open form, echoed to the whole group: the reference splits on the
     /// leader guid, and only a non-leader prints the leader's line and gets the popup. Both arms
     /// count the request and start a fresh answer log.
     pub fn apply_ready_check_request(&mut self, we_lead: bool) -> Vec<UiError> {
@@ -681,8 +676,8 @@ mod tests {
         assert_eq!(g.lists_applied, 0);
     }
 
-    /// The raid roster writer signals after each rebuild (`0x4babef`), and nothing gates the signal
-    /// on a difference from the roster it replaces, so a list that moves a member's status alone, or
+    /// The raid roster writer signals after each rebuild, and nothing gates the signal on a
+    /// difference from the roster it replaces, so a list that moves a member's status alone, or
     /// nothing, counts.
     #[test]
     fn every_raid_list_counts_a_roster_update_whatever_it_changes() {
@@ -724,8 +719,8 @@ mod tests {
     }
 
     /// A list that is not a raid runs no roster writer, so a party's list signals nothing; one that
-    /// finds a raid held drops it and signals once (`0x4ba57b`), the all-zero list among them, and
-    /// with none held there is nothing to say.
+    /// finds a raid held drops it and signals once, the all-zero list among them, and with none
+    /// held there is nothing to say.
     #[test]
     fn a_list_that_is_not_a_raid_counts_a_roster_update_only_for_the_raid_it_drops() {
         let mut g = GroupState::default();
@@ -768,8 +763,8 @@ mod tests {
         );
     }
 
-    /// The rebuild counts the rows whose name is still to come and signals only with none
-    /// (`0x4babdf`); the list lands all the same, and a list that drops a raid asks no name.
+    /// The rebuild counts the rows whose name is still to come and signals only with none; the list
+    /// lands all the same, and a list that drops a raid asks no name.
     #[test]
     fn a_raid_list_with_a_name_pending_counts_no_roster_update() {
         let mut g = GroupState::default();
@@ -986,7 +981,7 @@ mod tests {
             assert!(!g.in_group);
         }
 
-        // Ungrouped, the disband is silent (the `0x4e86d0` gate).
+        // Ungrouped, the disband is silent.
         assert!(GroupState::default().apply_destroyed().is_empty());
 
         // vmangos's two-member collapse sends nothing first: the survivor sees the leaver go.
@@ -1436,7 +1431,7 @@ mod tests {
                 .apply_command_result(op, "Zed", party_result::OK)
                 .is_none());
         }
-        // 3: an invite ack with no name (`0x5e6923`).
+        // 3: an invite ack with no name.
         assert!(g
             .apply_command_result(party_operation::INVITE, "", party_result::OK)
             .is_none());

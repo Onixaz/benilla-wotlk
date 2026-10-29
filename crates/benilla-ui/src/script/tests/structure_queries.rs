@@ -1,6 +1,6 @@
-//! The structure queries `GetChildren`, `GetNumChildren`, `GetRegions` and `GetNumRegions`
-//! (`0x773f60`/`0x774180`): they walk `[frame+0x300]` and `[frame+0x1b8]`, whose linkers append at
-//! the tail, so values come back oldest first as multiple returns, hidden ones included.
+//! The structure queries `GetChildren`, `GetNumChildren`, `GetRegions` and `GetNumRegions`: they
+//! walk `[frame+0x300]` and `[frame+0x1b8]`, whose linkers append at the tail, so values come back
+//! oldest first as multiple returns, hidden ones included.
 
 use super::common::script;
 
@@ -86,7 +86,7 @@ fn the_structure_queries_report_the_structure() {
     );
 
     // ── A detached region leaves both verbs: `Region:SetParent(nil)` unlinks it from the draw
-    //    layer and the region list (`0x77fd10`); our arena keeps the entry, unseen here.
+    //    layer and the region list; our arena keeps the entry, unseen here.
     s.run("SQFontB:SetParent(nil)").unwrap();
     assert_eq!(
         s.eval::<String>(
@@ -104,7 +104,7 @@ fn the_structure_queries_report_the_structure() {
     );
 
     // ── The title region is not in the list: its creation sets `[this+0x9c] = parent` without
-    //    the region linker, and `Hide`/`Show` handle `[frame+0xa8]` separately (`0x768060`).
+    //    the region linker, and `Hide`/`Show` handle `[frame+0xa8]` separately.
     s.run("SQHost:CreateTitleRegion()").unwrap();
     assert_eq!(
         s.eval::<usize>("return SQHost:GetNumRegions()").unwrap(),

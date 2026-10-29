@@ -10,8 +10,7 @@
 //! The output device list is the reference's cache (`s_outputDrivers`): index 0 is "System
 //! Default", index `i` the host's device `i - 1`, enumerated at init and at each restart. The
 //! choice persists by name (`Sound_OutputDriverName`) and is resolved to an index at init
-//! ([`find_driver`], `FindDriverIndex 0x8790c0`), which is written back to
-//! `Sound_OutputDriverIndex`.
+//! ([`find_driver`], `FindDriverIndex`), which is written back to `Sound_OutputDriverIndex`.
 
 use bevy::prelude::*;
 
@@ -72,8 +71,8 @@ impl OutputDrivers {
     }
 }
 
-/// `FindDriverIndex` (`0x8790c0`): `index` if its entry carries `name`, else the first entry that
-/// does, else 0. The comparison is case-sensitive (`SStrCmp`).
+/// `FindDriverIndex`: `index` if its entry carries `name`, else the first entry that does, else 0.
+/// The comparison is case-sensitive (`SStrCmp`).
 pub(crate) fn find_driver(drivers: &OutputDrivers, name: &str, index: i32) -> usize {
     if let Ok(i) = usize::try_from(index) {
         if drivers.name(i) == Some(name) {

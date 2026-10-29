@@ -116,8 +116,8 @@ pub struct CharCreateCatalog {
 
 impl CharCreateCatalog {
     /// The body displayId for a (race, sex), resolved through CreatureDisplayInfo like any unit.
-    /// The reference reads the race row's male id for gender 0 and the female for 1 and nothing
-    /// for any other gender byte (`0x5ec4c0`), and a zero id finds no model (`0x5ec485`).
+    /// The reference reads the race row's male id for gender 0 and the female for 1 and nothing for
+    /// any other gender byte, and a zero id finds no model.
     pub fn body_display(&self, race: u8, sex: u8) -> Option<u32> {
         let &(male, female) = self.displays.get(&race)?;
         let id = match sex {
@@ -158,7 +158,7 @@ impl CharCreateCatalog {
     }
 
     /// The classes a race may be created as, ascending by id: the client lists them in CharBaseInfo
-    /// row order (`0x4706b0`), which is ascending class id in the shipped file.
+    /// row order, which is ascending class id in the shipped file.
     pub fn classes_for_race(&self, race: u8) -> Vec<u8> {
         let mut cs: Vec<u8> = self
             .combos

@@ -27,7 +27,7 @@ pub struct ActionSlot {
     pub action: u32,
     /// `GetActionCount`'s bag count for an item slot, 0 otherwise.
     pub count: u32,
-    /// `IsConsumableAction`: `0x4e5250` reads only the slot's item template, so this rides the
+    /// `IsConsumableAction`: the reference reads only the slot's item template, so this rides the
     /// icon's push, not [`ActionState`]'s.
     pub consumable: bool,
     /// `IsStackableAction`: an item slot whose template stacks past one (`0x5a8470`, record
@@ -49,14 +49,14 @@ pub struct ActionState {
     pub has_range: bool,
     /// `IsCurrentAction`: the Attack action while auto-attack is on, or the spell being cast.
     pub current: bool,
-    /// `IsAutoRepeatAction`: the action's spell is the live autorepeat spell (`0xceac30`).
+    /// `IsAutoRepeatAction`: the action's spell is the live autorepeat spell.
     pub auto_repeat: bool,
     /// `IsAttackAction`: the action is the melee auto-attack.
     pub is_attack: bool,
     /// `IsEquippedAction`: an item action currently worn.
     pub equipped: bool,
     /// `(start_ms, duration_ms, enabled)`, the start absolute on the `GetTime` clock, so a running
-    /// cooldown re-pushes the same triple and a re-arm a new one (`0x6e13e0` returns the start).
+    /// cooldown re-pushes the same triple and a re-arm a new one.
     pub cooldown: Option<(i64, u32, bool)>,
 }
 
@@ -173,12 +173,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetActionAutocast(slot) (`0x4e6f90`) → autoCastAllowed, autoCastEnabled: 1 or nil each,
-    // always two values. Only a pet spell has them: the slot resolver (`0x4e5a50`) writes its
-    // book flag 0 for a spell or an item and a macro's `[rec+0x568]`, and only a set flag looks the
-    // spell up in the pet's words (`0x4bd160`, low 16 bits), reading bits 31 and 30. An empty,
-    // out-of-range or missing-macro slot leaves the flag unwritten, and the stale non-zero local
-    // looks up spell 0, which no pet word carries. A non-number raises.
+    // GetActionAutocast(slot) → autoCastAllowed, autoCastEnabled: 1 or nil each, always two values.
+    // Only a pet spell has them: the slot resolver writes its book flag 0 for a spell or an item
+    // and a macro's `[rec+0x568]`, and only a set flag looks the spell up in the pet's words (low
+    // 16 bits), reading bits 31 and 30. An empty, out-of-range or missing-macro slot leaves the
+    // flag unwritten, and the stale non-zero local looks up spell 0, which no pet word carries. A
+    // non-number raises.
     g.set(
         "GetActionAutocast",
         lua.create_function(|lua, slot: Value| {
@@ -233,15 +233,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetActionText(slot): the macro's name, else nil. `0x4e7050` tests only
+    // GetActionText(slot): the macro's name, else nil. The reference tests only
     // `raw & 0xf0000000 == 0x40000000`, so spell, item and empty slots all answer nil; a missing or
-    // non-number slot raises `Usage: GetActionText(slot)` (`0x84bff4`); the slot is 1-based
-    // (`0x4e7072` `dec eax`). An empty name answers "": it is an inline buffer at `+0x24`, so
-    // `0x6f3890`'s null guard never fires.
-    // The reference's macro payload (`raw & 0x3fffffff`) is a hash key into `[0xbdcc54]`; ours is
-    // the 1..54 index, the lookup the app's macro icon makes too, so text and icon agree.
-    // Deviation: an out-of-range slot answers nil, because the reference indexes `0xbc6980` with
-    // no bounds check and reads the memory beside its 120 slots.
+    // non-number slot raises `Usage: GetActionText(slot)`; the slot is 1-based (`dec eax`). An
+    // empty name answers "": it is an inline buffer at `+0x24`, so the reference's null guard never
+    // fires. The reference's macro payload (`raw & 0x3fffffff`) is a hash key; ours is the 1..54
+    // index, the lookup the app's macro icon makes too, so text and icon agree. Deviation: an
+    // out-of-range slot answers nil, because the reference indexes with no bounds check and reads
+    // the memory beside its 120 slots.
     g.set(
         "GetActionText",
         lua.create_function(|lua, slot: Value| {
@@ -478,7 +477,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "IsAttackAction",
         lua.create_function(|lua, action: u32| Ok(state_flag(lua, action, |s| s.is_attack)))?,
     )?;
-    // From the slot, not the state map: `0x4e5250` depends only on the item template.
+    // From the slot, not the state map: the reference depends only on the item template.
     g.set(
         "IsConsumableAction",
         lua.create_function(|lua, action: u32| {
@@ -543,7 +542,7 @@ mod tests {
     use crate::script::UiScript;
 
     /// `GetActionAutocast` answers a pet spell's two bits only for a macro bound out of the pet's
-    /// book (`0x4e6fcb`), never for a spell slot of the same id, and always two values.
+    /// book, never for a spell slot of the same id, and always two values.
     #[test]
     fn action_autocast_reads_a_pet_book_macro_only() {
         use crate::script::{MacroBinding, MacroState, MacroView, PetBookState, SpellSlotView};
@@ -912,7 +911,7 @@ mod tests {
         assert!(s.cursor_payload().is_some());
     }
 
-    // ── `GetActionText` (`0x4e7050`) ──
+    // ── `GetActionText` ──
 
     #[test]
     fn get_action_text_is_the_macro_name_and_nil_for_everything_else() {
@@ -972,7 +971,7 @@ mod tests {
         assert_eq!(s.arity("GetActionText(4)").unwrap(), 1);
     }
 
-    /// The raise is `0x4e70be` into `0x6f4940`, which never returns.
+    /// The raise, which never returns.
     #[test]
     fn get_action_text_raises_on_a_bad_slot() {
         let s = UiScript::new().unwrap();

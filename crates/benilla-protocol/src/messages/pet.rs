@@ -709,8 +709,8 @@ mod tests {
     }
 }
 
-/// `SMSG_PET_UNLEARN_CONFIRM` (`0x5e4a26`): the trainer's guid and the unlearn cost in copper,
-/// which the reference latches before firing `CONFIRM_PET_UNLEARN(cost)`.
+/// `SMSG_PET_UNLEARN_CONFIRM`: the trainer's guid and the unlearn cost in copper, which the
+/// reference latches before firing `CONFIRM_PET_UNLEARN(cost)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PetUnlearnConfirm {
     pub trainer: u64,
@@ -727,7 +727,7 @@ pub(super) fn read_pet_unlearn_confirm(
     })
 }
 
-/// Body of `CMSG_PET_UNLEARN` (the confirm arm of `0x5dfba0`): the latched trainer guid.
+/// Body of `CMSG_PET_UNLEARN`: the latched trainer guid.
 pub fn pet_unlearn(trainer: u64) -> Vec<u8> {
     trainer.to_le_bytes().to_vec()
 }

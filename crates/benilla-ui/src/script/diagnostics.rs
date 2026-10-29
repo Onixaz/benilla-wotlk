@@ -125,8 +125,7 @@ impl super::UiScript {
         self.model_mut().load_log.ui.merge(status);
     }
 
-    /// The UI load is over: its record is drained (`0x490187`), after any `LoadAddOn` block it
-    /// ran.
+    /// The UI load is over: its record is drained, after any `LoadAddOn` block it ran.
     pub fn finish_ui_load_log(&self) {
         let mut model = self.model_mut();
         let lines = model.load_log.ui.take_lines();
@@ -153,9 +152,8 @@ impl super::UiScript {
 }
 
 /// Retain an addon file that did not load: the one rule for the startup walk and for `LoadAddOn`,
-/// which holds only `&Lua`. The reference's failed open is non-fatal: `0x6edaa0` logs
-/// `Couldn't open %s` (`0x846ff4`) at severity 2 and loading goes on, never reaching the Lua
-/// error handler.
+/// which holds only `&Lua`. The reference's failed open is non-fatal: the reference logs
+/// `Couldn't open %s` at severity 2 and loading goes on, never reaching the Lua error handler.
 pub(crate) fn record_load_failure(lua: &Lua, msg: &str) {
     crate::script::model_mut_of(lua)
         .diagnostics

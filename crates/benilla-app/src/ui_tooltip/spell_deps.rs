@@ -17,7 +17,7 @@ use crate::spell::usable::{slot_item_cached, SlotItem, EQUIPMENT_MASK, EQUIPMENT
 use crate::spell::{ModsDiff, SkillSnapshot};
 use crate::unit_auras::UnitAuras;
 
-/// The four percentages a chance-to-X line reads (`0x52f5b1`), in the order [`Seen`] keeps them.
+/// The four percentages a chance-to-X line reads, in the order [`Seen`] keeps them.
 #[derive(Clone, Copy)]
 pub(super) enum Chance {
     Block,
@@ -111,7 +111,7 @@ impl UnitFields {
 pub(super) struct Deps {
     /// A `$z` expanded: the bind point.
     pub(super) home: bool,
-    /// A `$g`/`$G` expanded: the branch read the active player's gender byte (`0x508214`).
+    /// A `$g`/`$G` expanded: the branch read the active player's gender byte.
     pub(super) gender: bool,
     /// The required-form test read the shapeshift form.
     pub(super) form: bool,
@@ -294,8 +294,8 @@ impl Changes {
     }
 }
 
-/// Per reagent on show, `(owned count, name resolved)`: what the reagents line renders (the
-/// inline red, `0x854120`).
+/// Per reagent on show, `(owned count, name resolved)`: what the reagents line renders (the inline
+/// red).
 pub(super) type Reagents = BTreeMap<u32, (u32, bool)>;
 
 /// What the range cell's melee arm reads of two units: the caster's combat reach and its
@@ -335,14 +335,14 @@ fn sorted_difference(a: &[u32], b: &[u32]) -> Vec<u32> {
 pub(super) struct Seen {
     /// The bind point `$z` names.
     home: Option<String>,
-    /// The gender byte `$g`/`$G` branch on (`0x508214`), 0 without a player as the views read it.
+    /// The gender byte `$g`/`$G` branch on, 0 without a player as the views read it.
     gender: u8,
-    /// The form the required-form line's colour follows (`0x52f1e3`).
+    /// The form the required-form line's colour follows.
     form: u8,
     /// The skills the descriptions' per-level terms scale by ([`crate::spell::skill_snapshot`]).
     skills: SkillSnapshot,
-    /// What the equipped-item search learns of each of the 23 equipment slots (`0x5f0c50`); `None`
-    /// without a player.
+    /// What the equipped-item search learns of each of the 23 equipment slots; `None` without a
+    /// player.
     worn: Option<[SlotItem; EQUIPMENT_SLOTS as usize]>,
     /// The disarm flag, which hides a hand from that search.
     disarmed: bool,

@@ -124,21 +124,21 @@ const CRIT_KEYFRAMES: [(f32, f32, f32, f32); 3] = [
     (0.2, 1.0, 1.0, 1.0),
 ];
 
-/// The outcome words by code 1-11 (`0x86582c` keys for `FrameScript_GetText`), vmangos
-/// `SpellMissInfo` (`SpellDefines.h:160`); the enUS `GlobalStrings.lua` values.
+/// The outcome words by code 1-11 (keys for `FrameScript_GetText`), vmangos `SpellMissInfo`
+/// (`SpellDefines.h:160`); the enUS `GlobalStrings.lua` values.
 const WORDS: [&str; 11] = [
     "Miss", "Resist", "Dodge", "Parry", "Block", "Evade", "Immune", "Immune", "Deflect", "Absorb",
     "Reflect",
 ];
 
-/// Outcome code 1-11 to `(word, category)`: category 3, except ABSORB's 1 (`0x80c48c`).
+/// Outcome code 1-11 to `(word, category)`: category 3, except ABSORB's 1.
 pub(crate) fn miss_word(code: u8) -> Option<(&'static str, u8)> {
     let word = *WORDS.get((code as usize).checked_sub(1)?)?;
     Some((word, if code == 10 { 1 } else { 3 }))
 }
 
-/// The emitter override colours (`0x5fa0b0`/`0x5fa0f0`): spell damage gold `[0xc4d8a0]`, pet melee
-/// orange `[0xc4d8cc]`. No override means the row's default, white for rows 0-3.
+/// The emitter override colours: spell damage gold, pet melee orange. No override means the row's
+/// default, white for rows 0-3.
 pub(crate) const COLOR_SPELL_GOLD: u32 = 0xFFFF_DE00;
 pub(crate) const COLOR_PET_MELEE_ORANGE: u32 = 0xFFFF_8400;
 /// The mechanic word's colour (`[0xadb93c]`).
@@ -181,8 +181,8 @@ impl Default for DamageTextGates {
     }
 }
 
-/// The `0x5efea0` source-ownership classes that may draw (`K`): the player, or a unit it summoned
-/// or created. Every other source is suppressed; the caller drops the emit.
+/// The source-ownership classes that may draw (`K`): the player, or a unit it summoned or created.
+/// Every other source is suppressed; the caller drops the emit.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum DamageSource {
     Player,
@@ -191,14 +191,14 @@ pub(crate) enum DamageSource {
 
 /// The colour law's `B` bit: `recordPtr == 0 || sign(byte[SpellRec+0x25])`, no record or
 /// `AttributesEx3` bit 15. `None` is both a pushed NULL (a melee swing, a damage shield) and a
-/// missing catalog. `0x607140` and `0x6128b0` compute it alike; only the melee word site
-/// (`0x624511`) pushes NULL, so a spell's miss word is gold like its number.
+/// missing catalog. The reference compute it alike; only the melee word site pushes NULL, so a
+/// spell's miss word is gold like its number.
 pub(crate) fn melee_styled(display: Option<&benilla_formats::SpellDisplay>) -> bool {
     display.is_none_or(benilla_formats::SpellDisplay::melee_white_damage)
 }
 
-/// The colour branch (`0x6128b0`, `6128f6`-`612964`) by `B` and `K`: `None` gates the emit off,
-/// `Some(None)` draws in the row's default, `Some(Some(argb))` in the override. Crit never enters.
+/// The colour branch (-`612964`) by `B` and `K`: `None` gates the emit off, `Some(None)` draws in
+/// the row's default, `Some(Some(argb))` in the override. Crit never enters.
 pub(crate) fn damage_color(
     gates: DamageTextGates,
     source: DamageSource,
@@ -248,21 +248,20 @@ pub(crate) fn melee_text(hit_info: u32, victim_state: u32, damage: u32) -> Optio
     miss_word(code).map(|(w, c)| (c, w.to_string()))
 }
 
-/// The gx pixel round (`0x5c7010`/`0x5c6fa0`): add 0.5 and truncate, half away from zero.
+/// The gx pixel round: add 0.5 and truncate, half away from zero.
 fn round_px(t: f64) -> f32 {
     let r = if t > 0.0 { t + 0.5 } else { t - 0.5 };
     r.trunc() as f32
 }
 
 /// Scale value `v` to pixel height, constant with distance. One gx unit is the screen diagonal:
-/// device space spans `[0,G44]x[0,G48]`, `G48 = 1/√(s²+1)` for `s = W/H` (live at `0x832a44/48`),
-/// so `v/G48 × H = v·√(W²+H²)`.
+/// device space spans `[0,G44]x[0,G48]`, `G48 = 1/√(s²+1)` for `s = W/H`, so
+/// `v/G48 × H = v·√(W²+H²)`.
 pub(super) fn text_px(v: f32, viewport: Vec2) -> f32 {
     round_px(f64::from(v) * f64::from(viewport.x).hypot(f64::from(viewport.y)))
 }
 
-/// The shadow offset, `0xce8804` (`{0.002, 0.002}`, init `0x6c7c20`): a viewport fraction per
-/// axis, rounded at draw (`0x5c8710`).
+/// The shadow offset, (`{0.002, 0.002}`): a viewport fraction per axis, rounded at draw.
 const SHADOW_OFFSET_FRAC: f32 = 0.002;
 
 /// The rendered shadow offset, `{round(0.002·W), round(0.002·H)}` px down-right.
@@ -273,11 +272,11 @@ pub(super) fn shadow_offset_px(viewport: Vec2) -> Vec2 {
     )
 }
 
-/// The anti-overlap claim box in px. `0x6c81a0` stores the halves as screen fractions (height the
-/// size value ÷ G48, width the advance sum ÷ screen width plus a `round(0.002·diag)` pen seed) and
-/// `0x6c7cc0` spends them as DDC lengths, inflating them by diag/dim (1.667x tall, 1.25x wide at
-/// 4:3). `ink_w` stands in for the advance sum; the reference's side bearings and raster pad
-/// (at most ~3 px) are untraced.
+/// The anti-overlap claim box in px. The reference stores the halves as screen fractions (height
+/// the size value ÷ G48, width the advance sum ÷ screen width plus a `round(0.002·diag)` pen seed)
+/// and the reference spends them as DDC lengths, inflating them by diag/dim (1.667x tall, 1.25x
+/// wide at 4:3). `ink_w` stands in for the advance sum; the reference's side bearings and raster
+/// pad (at most ~3 px) are untraced.
 pub(super) fn claimed_box_px(ink_w: f32, size_value: f32, viewport: Vec2) -> Vec2 {
     let diag = viewport.length();
     Vec2::new(
@@ -286,10 +285,10 @@ pub(super) fn claimed_box_px(ink_w: f32, size_value: f32, viewport: Vec2) -> Vec
     )
 }
 
-/// The text and rendered shadow alpha at `elapsed_ms`: `0x6c82e0`'s two lanes (255.0 at
-/// `0x7ffe58`, 127.0 at `0x811310`), fade-in tested first, then fade-out, else the `(0xFF, 0x7F)`
-/// plateau. The ramps divide by the duration, so fade-in ends in a step. `0x5cd650` stores the
-/// shadow as `min(shadow, text)`, so the raw `[128, 255]` fade-out lane renders as the text alpha.
+/// The text and rendered shadow alpha at `elapsed_ms`: the reference's two lanes, fade-in tested
+/// first, then fade-out, else the `(0xFF, 0x7F)` plateau. The ramps divide by the duration, so
+/// fade-in ends in a step. The reference stores the shadow as `min(shadow, text)`, so the raw
+/// `[128, 255]` fade-out lane renders as the text alpha.
 pub(super) fn fade_alpha(cat: &Category, elapsed_ms: f32) -> (u8, u8) {
     // MSVC __ftol truncates; `as i32` matches.
     let (text, shadow) = if elapsed_ms < cat.fade_in_ms {
@@ -307,7 +306,7 @@ pub(super) fn fade_alpha(cat: &Category, elapsed_ms: f32) -> (u8, u8) {
     } else {
         (0xff, 0x7f)
     };
-    // `0x5cd650` writes the shadow alpha as min(shadowA, mainA) every tick, after SetColor.
+    // The reference writes the shadow alpha as min(shadowA, mainA) every tick, after SetColor.
     (text, shadow.min(text))
 }
 
@@ -329,8 +328,8 @@ pub(super) fn scale_value(category: u8, t: f32) -> f32 {
     v.max(0.001)
 }
 
-/// Packed ARGB (`0x4a2c10`) to straight-alpha sRGB RGBA; the alpha byte is dropped, as the fade
-/// replaces it every tick.
+/// Packed ARGB to straight-alpha sRGB RGBA; the alpha byte is dropped, as the fade replaces it
+/// every tick.
 pub(super) fn argb(c: u32) -> [f32; 4] {
     [
         ((c >> 16) & 0xff) as f32 / 255.0,
@@ -344,8 +343,8 @@ pub(super) fn argb(c: u32) -> [f32; 4] {
 mod tests {
     use super::*;
 
-    /// The claimed box (`0x6c81a0`) at 1024×768: 39.1 px tall for the 23 px number, 58.7 px for the
-    /// 35 px crit, and 1.25x the ink plus pen seed wide.
+    /// The claimed box at 1024×768: 39.1 px tall for the 23 px number, 58.7 px for the 35 px crit,
+    /// and 1.25x the ink plus pen seed wide.
     #[test]
     fn claimed_box_matches_the_measured_block_anchors() {
         let ref43 = Vec2::new(1024.0, 768.0); // diag = 1280, G44 = 0.8, G48 = 0.6
@@ -471,8 +470,8 @@ mod tests {
         assert_eq!(miss_word(12), None);
     }
 
-    /// The `0x6128b0` B/K colour branch: self melee the row default, self spell gold, pet melee
-    /// orange, pet spell gold.
+    /// The B/K colour branch: self melee the row default, self spell gold, pet melee orange, pet
+    /// spell gold.
     #[test]
     fn damage_color_matches_the_byte_table() {
         let on = DamageTextGates::default();
@@ -489,7 +488,7 @@ mod tests {
             damage_color(on, DamageSource::Pet, false),
             Some(Some(COLOR_SPELL_GOLD))
         );
-        // `0x5fa0b0`/`0x5fa0f0`.
+        // .
         assert_eq!(COLOR_SPELL_GOLD, 0xFFFF_DE00);
         assert_eq!(COLOR_PET_MELEE_ORANGE, 0xFFFF_8400);
     }

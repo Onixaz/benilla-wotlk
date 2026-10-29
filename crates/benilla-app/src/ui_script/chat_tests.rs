@@ -78,8 +78,8 @@ fn newest_line_sits_at_the_bottom() {
     assert!(y("newer") < y("older"), "newest renders at the bottom");
 }
 
-/// A scroll re-arms a fading line to full and holds it there until the view is back at the
-/// bottom: every scroll entry reaches the re-arm at `0x788b80` or the relayout's `0x788af0`.
+/// A scroll re-arms a fading line to full and holds it there until the view is back at the bottom:
+/// every scroll entry reaches the re-arm or the relayout's.
 #[test]
 fn wheel_scroll_re_arms_the_fade_then_freezes_it() {
     benilla_formats::wow_data_or_skip!();

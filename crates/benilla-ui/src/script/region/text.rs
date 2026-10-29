@@ -157,9 +157,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetStringWidth (`0x48de90` → `0x483e80`): the natural, unwrapped width of the current text,
-    // measured on demand. Never the declared width, which `PanelTemplates_TabResize` sets from
-    // this; on an axis sized 0, `GetWidth` (`0x483f30`) reads the same width.
+    // GetStringWidth (`0x48de90`): the natural, unwrapped width of the current text, measured on
+    // demand. Never the declared width, which `PanelTemplates_TabResize` sets from this; on an axis
+    // sized 0, `GetWidth` (`0x483f30`) reads the same width.
     fn natural_w(lua: &Lua, this: &Table) -> mlua::Result<f32> {
         let rh = region_handle_of(lua, this)?;
         // Measure now when a host font engine is installed, as the reference measures inline, so
@@ -240,12 +240,12 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             match parsed {
                 justify::Set::To(jh) => d.justify.set_h(jh),
                 // A cross-axis token erases the axis: `GetJustifyH()` answers "UNKNOWN" while the
-                // glyphs draw centred (`0x44d420` presets 1).
+                // glyphs draw centred.
                 justify::Set::Clears => d.justify.clear_h(),
                 justify::Set::NoMatch => unreachable!("returned above"),
             }
-            // Every successful parse overrides the font object, the erasing one too: `0x79e6b0`
-            // sets the per-axis mask (`+0x124`) at `0x79e780`, before the branch.
+            // Every successful parse overrides the font object, the erasing one too: the reference
+            // sets the per-axis mask (`+0x124`), before the branch.
             d.font_explicit.justify_h = true;
             Ok(())
         })?,
@@ -273,8 +273,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetJustifyH/GetJustifyV (`0x79e5f0`/`0x79e7f0`): one string; CENTER and MIDDLE when
-    // untouched, the ctor's `0x212` read through each axis mask.
+    // GetJustifyH/GetJustifyV: one string; CENTER and MIDDLE when untouched, the ctor's `0x212`
+    // read through each axis mask.
     fn justify_of(lua: &Lua, this: &Table) -> mlua::Result<justify::Justify> {
         let rh = region_handle_of(lua, this)?;
         let model = lua
@@ -295,8 +295,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| Ok(justify_of(lua, &this)?.name_v()))?,
     )?;
 
-    // SetNonSpaceWrap/CanNonSpaceWrap (`0x79e9f0`/`0x79ead0`), FontString only: the getter
-    // answers 1 or nil, and a call with no argument enables.
+    // SetNonSpaceWrap/CanNonSpaceWrap, FontString only: the getter answers 1 or nil, and a call
+    // with no argument enables.
     m.set(
         "SetNonSpaceWrap",
         lua.create_function(|lua, (this, enable): (Table, Value)| {
@@ -326,9 +326,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetTextHeight: the scaled-string mode (`0x771600` alone clears the one-to-one bit `0x200`),
-    // the size magnified from the raster, uncapped. The font is untouched, so GetFont keeps the
-    // face's own height.
+    // SetTextHeight: the scaled-string mode (alone clears the one-to-one bit `0x200`), the size
+    // magnified from the raster, uncapped. The font is untouched, so GetFont keeps the face's own
+    // height.
     m.set(
         "SetTextHeight",
         lua.create_function(|lua, (this, height): (Table, f32)| {
@@ -343,6 +343,6 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     // ── the shared font block ───────────────────────────────────────────────────────────────
     //
     // The font object, font, text colour and shadow getters and setters are type-guard shims over
-    // one implementation each (`0x79f210` SetFont, `0x79f3b0` GetFont), shared with EditBox.
+    // one implementation each, shared with EditBox.
     super::super::font_block::install(lua, m, region_handle_of, "FontString", None)
 }

@@ -89,7 +89,7 @@ pub use factions::{
 };
 mod creature_types;
 pub use creature_types::{load_creature_type_flags, CreatureTypeFlags};
-/// The chat language scramble, the reference's `0x49b560`.
+/// The chat language scramble, the reference's.
 mod garble;
 pub use garble::{garble, garble_chat, Garble, FLUENT_SKILL};
 mod languages;
@@ -612,8 +612,8 @@ pub fn blp_bytes_to_mip_chain(bytes: &[u8]) -> Result<BlpMipChain> {
 }
 
 /// Every authored level of an in-memory BLP with its DXTC blocks kept, as the reference uploads
-/// them (`glCompressedTexImage2DARB`, `0x59f5b0`). Raw1 and Raw3 come back decoded; levels are
-/// padded to whole blocks.
+/// them (`glCompressedTexImage2DARB`). Raw1 and Raw3 come back decoded; levels are padded to whole
+/// blocks.
 pub fn blp_bytes_to_native_chain(bytes: &[u8]) -> Result<BlpMipChain> {
     let decoded =
         benilla_blp::decode_native(bytes).map_err(|e| anyhow::anyhow!("decoding BLP: {e}"))?;
@@ -740,10 +740,9 @@ mod tests {
     }
 
     /// `RainDrop01.blp` (16×128 DXT3) stores 16 bytes for its 2×16 and 1×8 levels, which need 64
-    /// and 32. The reference completes a short level from the bytes after it (`0x5a5780`); a zero
-    /// fill would darken the Mod2x rain streak toward black.
-    /// The Storm Peaks base snow is a single-unit file in `lichking.MPQ`: it reads at its block
-    /// table size and decodes.
+    /// and 32. The reference completes a short level from the bytes after it; a zero fill would
+    /// darken the Mod2x rain streak toward black. The Storm Peaks base snow is a single-unit file
+    /// in `lichking.MPQ`: it reads at its block table size and decodes.
     #[test]
     fn a_single_unit_texture_reads_and_decodes() {
         let data = crate::wow_data_or_skip!();

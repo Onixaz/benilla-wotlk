@@ -23,7 +23,7 @@ use crate::ui_party::GroupState;
 use crate::ui_script::{UiFeed, UiInput, WorldLeaveSweepMessage};
 use crate::ui_session::{close_npc_session_out_of_range, NpcSession};
 
-/// The pet trainer's pending question: the latch (`0xc4d7b0/b4`) and the cost (`0xc4d7b8`).
+/// The pet trainer's pending question: the latch (`b4`) and the cost.
 #[derive(Resource, Default)]
 pub(crate) struct PetUnlearnState {
     npc: Option<u64>,
@@ -55,7 +55,7 @@ impl NpcSession for PetUnlearnState {
     }
 }
 
-/// The instance-boot clock (`[0xb4e34c]`), and what the last packet owes the UI.
+/// The instance-boot clock, and what the last packet owes the UI.
 #[derive(Resource, Default)]
 pub(crate) struct InstanceBoot {
     deadline: Option<Instant>,
@@ -91,8 +91,8 @@ impl InstanceBoot {
 /// `UNIT_NPC_FLAGS` `SPIRITGUIDE`, which the area spirit healer's acquire callback tests.
 const NPC_FLAG_SPIRITGUIDE: u32 = crate::target::cursor_mode::npc_flags::SPIRITGUIDE;
 
-/// The area spirit healer's aura, cancelled by `0x4921c0` and `CancelAreaSpiritHeal`; `0x6e7040`
-/// fires `AREA_SPIRIT_HEALER_OUT_OF_RANGE` for this spell id alone (`0x6e70b6`).
+/// The area spirit healer's aura, cancelled by the reference and `CancelAreaSpiritHeal`; the
+/// reference fires `AREA_SPIRIT_HEALER_OUT_OF_RANGE` for this spell id alone.
 pub(crate) const AREA_SPIRIT_HEALER_AURA: u32 = 2584;
 
 /// The acquire radius, squared `[0x9e898c]` = 400 in the enumerate callback `0x523f80`.
@@ -101,28 +101,28 @@ const SPIRIT_GUIDE_ACQUIRE_YD: f32 = 20.0;
 /// kept until 22.
 const SPIRIT_GUIDE_RETAIN_YD: f32 = SPIRIT_GUIDE_ACQUIRE_YD * 1.1;
 
-/// What [`AreaSpiritHealer::set_healer`] owes the frame; the reference does both in `0x4921c0`.
+/// What [`AreaSpiritHealer::set_healer`] owes the frame; the reference does both.
 #[derive(Default, PartialEq, Eq, Debug)]
 pub(crate) struct SetHealerOutcome {
-    /// A wave was pending and the healer changed (`0x4921fc`): `AREA_SPIRIT_HEALER_OUT_OF_RANGE`
-    /// fires and `CMSG_CANCEL_AURA` goes out for 2584; this, not Lua, closes the dialog.
+    /// A wave was pending and the healer changed: `AREA_SPIRIT_HEALER_OUT_OF_RANGE` fires and
+    /// `CMSG_CANCEL_AURA` goes out for 2584; this, not Lua, closes the dialog.
     pub(crate) cancel_aura: bool,
     /// A newly adopted non-zero healer: `CMSG_AREA_SPIRIT_HEALER_QUERY` with it.
     pub(crate) query: Option<u64>,
 }
 
-/// The current-area spirit healer (`[0xb4e330/334]`) and its wave clock (`[0xb4e338]`).
+/// The current-area spirit healer and its wave clock.
 #[derive(Resource, Default)]
 pub(crate) struct AreaSpiritHealer {
-    /// Written only by [`Self::set_healer`], the reference's `0x4921c0`.
+    /// Written only by [`Self::set_healer`], the reference's.
     healer: Option<u64>,
     deadline: Option<Instant>,
     in_range: bool,
 }
 
 impl AreaSpiritHealer {
-    /// `SMSG_AREA_SPIRIT_HEALER_TIME`: arms the clock only for the cached healer (`0x4922a0`) and
-    /// a positive time, and owes `AREA_SPIRIT_HEALER_IN_RANGE`.
+    /// `SMSG_AREA_SPIRIT_HEALER_TIME`: arms the clock only for the cached healer and a positive
+    /// time, and owes `AREA_SPIRIT_HEALER_IN_RANGE`.
     pub(crate) fn on_time(&mut self, healer: u64, ms: u32, now: Instant) {
         if self.healer == Some(healer) && ms > 0 {
             self.deadline = Some(now + std::time::Duration::from_millis(u64::from(ms)));
@@ -130,9 +130,8 @@ impl AreaSpiritHealer {
         }
     }
 
-    /// `0x4921c0`: an unchanged guid returns before anything else (`0x4921cf`/`0x4921dd`), so the
-    /// poll calls it every frame; a change cancels a pending wave (`0x4921fc`), zeroes the
-    /// deadline (`0x492211`) and queries a non-zero healer (`0x492217`).
+    /// An unchanged guid returns before anything else, so the poll calls it every frame; a change
+    /// cancels a pending wave, zeroes the deadline and queries a non-zero healer.
     pub(crate) fn set_healer(&mut self, new: Option<u64>) -> SetHealerOutcome {
         // The reference's zero guid is our `None`.
         let new = new.filter(|&g| g != 0);
@@ -151,8 +150,8 @@ impl AreaSpiritHealer {
         }
     }
 
-    /// The spirit-guide click (`0x5df950`): `0x4921c0(0)` then `0x4921c0(guid)`, a cache-bust that
-    /// makes the second call query even for the healer already cached.
+    /// The spirit-guide click: the reference then `(guid)`, a cache-bust that makes the second call
+    /// query even for the healer already cached.
     pub(crate) fn click_guide(&mut self, guid: u64) -> SetHealerOutcome {
         let bust = self.set_healer(None);
         let set = self.set_healer(Some(guid));
@@ -174,8 +173,8 @@ impl AreaSpiritHealer {
     }
 }
 
-/// The status text (`[0xb7203c]`): none before world enter and after world leave, the bare
-/// `UNKNOWN` until the server's `0x295` lands, then a built line; localized at push time.
+/// The status text: none before world enter and after world leave, the bare `UNKNOWN` until the
+/// server's `0x295` lands, then a built line; localized at push time.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 enum StoneText {
     #[default]
@@ -190,7 +189,7 @@ const STONE_TEXT_BYTES: usize = 255;
 /// The meeting-stone queue: the two globals and what the wire still owes the screen.
 #[derive(Resource, Default)]
 pub(crate) struct MeetingStone {
-    /// `[0xb72038]`, the queued area id, 0 for none.
+    /// The queued area id, 0 for none.
     pub(crate) area: u32,
     text: StoneText,
     /// `0x295` arrivals as `(previous area, status)`; the handler stores the new area before it
@@ -204,7 +203,7 @@ pub(crate) struct MeetingStone {
 }
 
 impl MeetingStone {
-    /// `SMSG 0x295` (`0x4ca230`): the area is stored at once; the line and event wait for the feed.
+    /// `SMSG 0x295`: the area is stored at once; the line and event wait for the feed.
     pub(crate) fn apply(&mut self, area: u32, status: u8) {
         let old = self.area;
         self.area = area;
@@ -216,21 +215,21 @@ impl MeetingStone {
         self.notices.push(notice);
     }
 
-    /// The enter-world bring-up (`0x4c9f40`): the text becomes the bare `UNKNOWN`, the area stays.
+    /// The enter-world bring-up: the text becomes the bare `UNKNOWN`, the area stays.
     fn enter_world(&mut self) {
         self.text = StoneText::Unknown;
         self.dirty = true;
     }
 
-    /// The leave-world sweep (`0x4c9f80`): the text goes, the area stays.
+    /// The leave-world sweep: the text goes, the area stays.
     fn leave_world(&mut self) {
         self.text = StoneText::None;
         self.dirty = true;
     }
 }
 
-/// A `GlobalStrings` value as the client's `GetText` reads it: `""` when the global is missing
-/// (`0x882748`, the shared empty string, never NULL).
+/// A `GlobalStrings` value as the client's `GetText` reads it: `""` when the global is missing (the
+/// shared empty string, never NULL).
 fn global_text(script: &UiScript, key: &str) -> String {
     script
         .lua()
@@ -244,8 +243,8 @@ fn area_name(areas: Option<&AreaTableRes>, id: u32) -> Option<&str> {
     areas.and_then(|a| a.0.name(id))
 }
 
-/// The status-text rebuild `0x4ca070`: `MEETINGSTONE_TOOLTIP` (or `""` when missing) over the
-/// queued area's name (or `UNKNOWN`), printed into a 256-byte buffer.
+/// The status-text rebuild: `MEETINGSTONE_TOOLTIP` (or `""` when missing) over the queued area's
+/// name (or `UNKNOWN`), printed into a 256-byte buffer.
 fn build_stone_text(script: &UiScript, areas: Option<&AreaTableRes>, area: u32) -> String {
     let name = area_name(areas, area)
         .map(str::to_string)
@@ -261,8 +260,8 @@ fn build_stone_text(script: &UiScript, areas: Option<&AreaTableRes>, area: u32) 
     text
 }
 
-/// The `0x295` handler's five-way table (`0x4ca3a4`): status 0 names the old area and is silent
-/// without its row, status 1 names the new one and is silent when unchanged, past 4 is silent.
+/// The `0x295` handler's five-way table: status 0 names the old area and is silent without its row,
+/// status 1 names the new one and is silent when unchanged, past 4 is silent.
 fn stone_line(
     script: &UiScript,
     areas: Option<&AreaTableRes>,
@@ -321,8 +320,8 @@ fn feed_meeting_stone(
         let new = stone.area;
         lines.extend(stone_line(&script, areas, old, new, status));
         if status == 1 && new != old {
-            // Status 1's extra block (`0x4ca363`): `Effect_C` kind `0xc` on the local player,
-            // then the Meeting Stones tutorial.
+            // Status 1's extra block: `Effect_C` kind `0xc` on the local player, then the Meeting
+            // Stones tutorial.
             if let (Some(visuals), Ok(entity)) = (inputs.visuals.as_deref(), inputs.self_q.single())
             {
                 if let Some(fx) = meeting_stone_join_fx(visuals, entity) {
@@ -404,27 +403,27 @@ pub(crate) struct MeetingStoneUse {
     pub(crate) go_guid: u64,
 }
 
-/// What the meeting stone's use slot `0x5f69d0` does with one click.
+/// What the meeting stone's use slot does with one click.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum StoneJoin {
-    /// No local player (`0x5f69f8`): no message and no packet.
+    /// No local player: no message and no packet.
     Silent,
-    /// One of the four refusals (`0x496720`): an error-frame line with no sound, never chat.
+    /// One of the four refusals: an error-frame line with no sound, never chat.
     Refuse(&'static str),
-    /// The tail `0x5f6af6`: `CMSG 0x292` with the stone's guid, and nothing else.
+    /// The tail: `CMSG 0x292` with the stone's guid, and nothing else.
     Send,
 }
 
-/// The meeting stone's use slot `0x5f69d0`. With no local player it is silent (`0x5f69f8`);
-/// otherwise four refusals in this order, the first two only in a group (`0x5f6a10`):
+/// The meeting stone's use slot. With no local player it is silent; otherwise four refusals in this
+/// order, the first two only in a group:
 ///
-/// 1. not the leader (`0x5f6a2f`, the full 64-bit guid against `[0xbc75f8]`);
-/// 2. four other members (`0x5f6a4f`, `GetNumPartyMembers` at `0x4e86d0`);
-/// 3. a level outside `data[0]..=data[1]`, unsigned (`0x5f6ab4`);
-/// 4. in a raid (`0x5f6ad3`, the raid member count `[0xb713e0]`).
+/// 1. not the leader (the full 64-bit guid against);
+/// 2. four other members (`GetNumPartyMembers`);
+/// 3. a level outside `data[0]..=data[1]`, unsigned;
+/// 4. in a raid.
 ///
-/// vmangos repeats all but the level test (`LFGHandler.cpp:49-68`), which is the client's alone.
-/// An uncached template reads 0/0 (`0x5f8150`), so it refuses every level.
+/// vmangos repeats all but the level test (`LFGHandler.cpp:49-68`), which is the client's alone. An
+/// uncached template reads 0/0, so it refuses every level.
 pub(crate) fn meeting_stone_join_refusal(
     group: Option<&GroupState>,
     self_guid: Option<u64>,
@@ -455,7 +454,7 @@ pub(crate) fn meeting_stone_join_refusal(
 }
 
 /// Four other members is a full party: [`GroupState::members`] omits the player, so this is
-/// vmangos's five (`Group/Group.h:49,232`) and the client's `>= 4` (`0x5f6a4f`), with no `+ 1`.
+/// vmangos's five (`Group/Group.h:49,232`) and the client's `>= 4`, with no `+ 1`.
 const MEETING_STONE_PARTY_CAP: usize = 4;
 
 /// The join drain: the meeting stone's use slot, run with the click's guid.
@@ -507,8 +506,7 @@ fn drain_meeting_stone_joins(
     }
 }
 
-/// The leave-world sweep's meeting-stone leg (`0x490b2f` → `0x4c9f80`): the text dropped, the
-/// area kept.
+/// The leave-world sweep's meeting-stone leg: the text dropped, the area kept.
 pub(crate) fn meeting_stone_leave_world(
     mut sweeps: MessageReader<WorldLeaveSweepMessage>,
     mut stone: ResMut<MeetingStone>,
@@ -518,8 +516,8 @@ pub(crate) fn meeting_stone_leave_world(
     }
 }
 
-/// Drop the cached spirit guide when the world does, so no healer, wave or event reaches the
-/// next session; the reference clears it only through `0x4921c0`, its world-leave path untraced.
+/// Drop the cached spirit guide when the world does, so no healer, wave or event reaches the next
+/// session; the reference clears it only, its world-leave path untraced.
 fn area_spirit_healer_leave_world(mut spirit: ResMut<AreaSpiritHealer>) {
     *spirit = AreaSpiritHealer::default();
 }
@@ -673,7 +671,7 @@ fn poll_area_spirit_healer(
 ) {
     let mut apply = |outcome: SetHealerOutcome| {
         if outcome.cancel_aura {
-            // `0x6e7040(0xA18)`: the event with no argument, the packet with no guid.
+            // The event with no argument, the packet with no guid.
             if let Some(script) = script.as_deref_mut() {
                 script.fire_event("AREA_SPIRIT_HEALER_OUT_OF_RANGE", vec![]);
             }
@@ -822,18 +820,18 @@ impl Plugin for UiDialogVerbsPlugin {
                     feed_dialog_verbs
                         .in_set(UiFeed)
                         .run_if(crate::ui_script::ingame_ui_up),
-                    // After the mouse pick, the reference's order: `CGWorldFrame`'s OnUpdate picks
-                    // at `0x48184a`, then polls at `0x4818ca`. Gating is safe: the poll is
-                    // level-triggered and re-derives the cache every frame.
+                    // After the mouse pick, the reference's order: `CGWorldFrame`'s OnUpdate picks,
+                    // then polls. Gating is safe: the poll is level-triggered and re-derives the
+                    // cache every frame.
                     poll_area_spirit_healer
                         .after(crate::target::TargetUpdate)
                         .run_if(crate::ui_script::ingame_ui_up)
                         .in_set(crate::char_select::InWorldGated),
                     // The sweep's drop, then the cascade's reset: a `/reload` runs both in one
-                    // frame, in this order (`0x490c20`, then `0x490168`).
+                    // frame, in this order.
                     meeting_stone_leave_world.before(meeting_stone_enter_world),
-                    // The cascade's order: the battlefield status, then this (`0x4909fb`,
-                    // `0x490a14`), so `CMSG 0x296` follows `CMSG 0x2D3` on the wire.
+                    // The cascade's order: the battlefield status, then this, so `CMSG 0x296`
+                    // follows `CMSG 0x2D3` on the wire.
                     meeting_stone_enter_world
                         .in_set(UiFeed)
                         .after(crate::ui_battlefield::reset_on_world_enter)
@@ -864,8 +862,8 @@ impl Plugin for UiDialogVerbsPlugin {
 #[cfg(test)]
 const AREA_SPIRIT_HEALER_SPELL: u32 = AREA_SPIRIT_HEALER_AURA;
 
-/// The cancel-aura routine `0x6e7040` sends nothing when `AttributesEx` has bit 13 set, bit 2
-/// clear and `0x5ee290(player)` holds; these are the first two terms.
+/// The cancel-aura routine sends nothing when `AttributesEx` has bit 13 set, bit 2 clear and
+/// `(player)` holds; these are the first two terms.
 #[cfg(test)]
 fn cancel_gate_could_apply(attributes_ex: u32) -> bool {
     attributes_ex & 0x2000 != 0 && attributes_ex & 0x4 == 0
@@ -901,7 +899,7 @@ mod tests {
         assert_eq!(
             spirit.secs(now),
             30,
-            "and the deadline SURVIVES — 0x492211's clear sits past the early return"
+            "and the deadline SURVIVES — the reference's clear sits past the early return"
         );
     }
 
@@ -930,7 +928,7 @@ mod tests {
                 cancel_aura: false,
                 query: None
             },
-            "no deadline pending — 0x4921fa's `je` skips the cancel"
+            "no deadline pending — the reference's `je` skips the cancel"
         );
     }
 
@@ -1218,7 +1216,7 @@ mod tests {
             StoneJoin::Refuse("ERR_MEETING_STONE_MUST_BE_LEADER")
         );
 
-        // An uncached template reads 0/0 (`0x5f8150`) and refuses.
+        // An uncached template reads 0/0 and refuses.
         assert_eq!(
             meeting_stone_join_refusal(None, Some(ME), Some(5), None),
             StoneJoin::Refuse("ERR_MEETING_STONE_INVALID_LEVEL")
@@ -1243,7 +1241,7 @@ mod tests {
             StoneJoin::Send
         );
 
-        // No active player, whether the guid or the level is missing: silent (`0x5f69f8`).
+        // No active player, whether the guid or the level is missing: silent.
         assert_eq!(
             meeting_stone_join_refusal(None, Some(ME), None, stone),
             StoneJoin::Silent
@@ -1392,18 +1390,14 @@ mod tests {
             );
             let stone = app.world().resource::<MeetingStone>();
             assert!(stone.dirty, "{entry} owes the VM the reset");
-            assert_eq!(
-                stone.area, 1519,
-                "{entry} keeps the queued area (`[0xb72038]`)"
-            );
+            assert_eq!(stone.area, 1519, "{entry} keeps the queued area");
             app.update();
             assert_eq!(stone_queries(&rx), 0, "{entry} sends nothing later either");
         }
     }
 
-    /// A cross-map worldport runs the sweep from the local player's destructor (`0x5dd543`),
-    /// which drops the text (`0x490b2f` → `0x4c9f80`); the login map's verify-world destroys
-    /// nothing, so the text stays.
+    /// A cross-map worldport runs the sweep from the local player's destructor, which drops the
+    /// text; the login map's verify-world destroys nothing, so the text stays.
     #[test]
     fn a_cross_map_worldport_drops_the_text_and_the_login_map_does_not() {
         let (mut app, rx) = stone_app();
@@ -1431,8 +1425,8 @@ mod tests {
         assert_eq!(stone_queries(&rx), 0, "the sweep sends nothing");
     }
 
-    /// `/reload` sweeps (`0x490c20`) and then re-enters the cascade (`0x490168`) in one frame:
-    /// the drop, then the reset, in that order.
+    /// `/reload` sweeps and then re-enters the cascade in one frame: the drop, then the reset, in
+    /// that order.
     #[test]
     fn a_reload_drops_the_text_then_resets_it() {
         let (mut app, rx) = stone_app();

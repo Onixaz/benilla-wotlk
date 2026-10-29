@@ -4,9 +4,9 @@
 //!
 //! A pet the object manager holds is an ordinary live unit. One it does not hold is answered from
 //! the owner's roster record, the way the reference's getters fall through: the live descriptor,
-//! then the member record, then the pet record (`0x496420`). `UnitExists` answers 1 for it through
-//! the roster fallback (`0x491900`), which needs no object, and `UnitLevel`, `UnitIsDead` and
-//! `UnitIsGhost` have no pet leg, so they read as they do for a unit the client knows nothing of.
+//! then the member record, then the pet record. `UnitExists` answers 1 for it through the roster
+//! fallback, which needs no object, and `UnitLevel`, `UnitIsDead` and `UnitIsGhost` have no pet
+//! leg, so they read as they do for a unit the client knows nothing of.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
@@ -20,8 +20,8 @@ use crate::ui_script::gate;
 
 use super::GroupState;
 
-/// Which roster a pet token counts its owner in: the two resolve the pet's guid apart
-/// (`0x4e81d0` behind the owner's online bit, `0x491960` with none).
+/// Which roster a pet token counts its owner in: the two resolve the pet's guid apart (behind the
+/// owner's online bit).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Roster {
     Party,
@@ -71,7 +71,7 @@ impl<'a, 'w, 's, 'q> Lookup<'a, 'w, 's, 'q> {
         }
     }
 
-    /// The held object's descriptor (`0x468460`).
+    /// The held object's descriptor.
     pub(super) fn store(&self, guid: u64) -> Option<&ObjectStore> {
         self.stores.get(*self.index.0.get(&guid)?).ok()
     }
@@ -113,8 +113,7 @@ pub(super) fn store_changed(
 
 /// One pet token's inputs for a frame: the guid `UNIT_PET` keys on, and the token's own guid and
 /// snapshot. The two differ for a party slot whose owner has no object and reads offline: the
-/// record's pet guid is still what the owner's stats named, while `partypetN` names nobody
-/// (`0x4e8227`).
+/// record's pet guid is still what the owner's stats named, while `partypetN` names nobody.
 #[derive(Default)]
 pub(super) struct PetNow {
     /// The owner's pet guid as the stats handler's diff sees it ([`GroupState::pet_edge_guid`]).
@@ -141,9 +140,9 @@ pub(super) fn member_pet(
         return PetNow { edge, token: None };
     };
     let mut state = match look.store(guid) {
-        // A held pet is a live unit like any: every getter reads its descriptor (`0x468460`), and
-        // `UnitIsConnected` answers 1 for any object (`0x517daf`), as `snapshot` does. No
-        // reaction: the pet frame reads none, as the `"pet"` token's.
+        // A held pet is a live unit like any: every getter reads its descriptor, and
+        // `UnitIsConnected` answers 1 for any object, as `snapshot` does. No reaction: the pet
+        // frame reads none, as the `"pet"` token's.
         Some(store) => {
             let name = look
                 .names
@@ -166,19 +165,18 @@ pub(super) fn member_pet(
     }
 }
 
-/// A pet with no object, off the pet record that names it (`0x496420`); with no record, a bare
-/// snapshot that carries only the guid.
+/// A pet with no object, off the pet record that names it; with no record, a bare snapshot that
+/// carries only the guid.
 ///
-/// The getters' record leg (`UnitHealth 0x5174d0`, `UnitHealthMax 0x5175b0`, `UnitMana 0x517670`,
-/// `UnitManaMax 0x5177e0`, `UnitPowerType 0x517940`) reads the pet block's `+0xdc`, `+0xde`,
-/// `+0xe0`, `+0xe2` and `+0xd8`, the two power figures divided as a live unit's. `UnitName`
-/// (`0x5171da`) reads the block's name buffer whole, so an unnamed pet is the empty string, not
-/// `UNKNOWNOBJECT`. `UnitIsConnected` is existence-only there (`0x517dfb`). `UnitLevel`,
-/// `UnitIsDead`, `UnitIsGhost` and `UnitIsDeadOrGhost` never look at a pet record: 0, nil, nil,
-/// nil, which the snapshot's defaults are.
+/// The getters' record leg (`UnitHealth`, `UnitHealthMax`, `UnitMana`, `UnitManaMax`,
+/// `UnitPowerType`) reads the pet block's `+0xdc`, `+0xde`, `+0xe0`, `+0xe2` and `+0xd8`, the two
+/// power figures divided as a live unit's. `UnitName` reads the block's name buffer whole, so an
+/// unnamed pet is the empty string, not `UNKNOWNOBJECT`. `UnitIsConnected` is existence-only there.
+/// `UnitLevel`, `UnitIsDead`, `UnitIsGhost` and `UnitIsDeadOrGhost` never look at a pet record: 0,
+/// nil, nil, nil, which the snapshot's defaults are.
 ///
-/// The roster names the pet's owner with no object, on the terms it answers `UnitExists`: the
-/// party half of `UnitPlayerOrPetInParty` compares guids alone (`0x4e8fa0`).
+/// The roster names the pet's owner with no object, on the terms it answers `UnitExists`: the party
+/// half of `UnitPlayerOrPetInParty` compares guids alone.
 fn record_state(group: &GroupState, guid: u64, owner: u64, exists: bool) -> UnitState {
     let record = group.pet_record(guid);
     UnitState {
@@ -213,8 +211,8 @@ pub(super) struct FedPets {
     pub(super) raid: Vec<FedPet>,
 }
 
-/// Push one pet token's snapshot and fire what moved, in the reference's order (`0x5e5720`):
-/// `UNIT_PET` for the owner's token, then the pet's own `UNIT_*` events for its own.
+/// Push one pet token's snapshot and fire what moved, in the reference's order: `UNIT_PET` for the
+/// owner's token, then the pet's own `UNIT_*` events for its own.
 ///
 /// `UNIT_PET` fires when the same owner's pet guid changes ([`PetNow::edge`]): a pet arriving,
 /// going or being replaced, off the record or the descriptor alike. The token's own guid and
@@ -478,9 +476,8 @@ pub(in crate::ui_party) mod tests {
     }
 
     /// A pet the object manager does not hold answers from its online owner's record, as the
-    /// getters fall through the party record to the pet record (`0x496420`): `UnitExists` is 1
-    /// through the roster fallback with no object, `UnitIsVisible` is nil, and `UnitLevel` has no
-    /// pet leg.
+    /// getters fall through the party record to the pet record: `UnitExists` is 1 through the
+    /// roster fallback with no object, `UnitIsVisible` is nil, and `UnitLevel` has no pet leg.
     #[test]
     fn an_unheld_party_pet_reads_its_online_owners_record() {
         let mut app = app();
@@ -521,12 +518,12 @@ pub(in crate::ui_party) mod tests {
         assert_eq!(
             flag(&mut app, "UnitIsConnected('partypet1')"),
             Some(1.0),
-            "existence alone (`0x517dfb`)"
+            "existence alone"
         );
         assert_eq!(
             flag(&mut app, "UnitPlayerOrPetInParty('partypet1')"),
             Some(1.0),
-            "the roster names it by guid alone (`0x4e8fa0`)"
+            "the roster names it by guid alone"
         );
         for dead in ["UnitIsDead", "UnitIsGhost", "UnitIsDeadOrGhost"] {
             assert_eq!(
@@ -537,8 +534,7 @@ pub(in crate::ui_party) mod tests {
         }
     }
 
-    /// A pet is found only behind its owner's online bit (`0x4e8227`, `0x4e8884`): an offline
-    /// member's record names nobody.
+    /// A pet is found only behind its owner's online bit: an offline member's record names nobody.
     #[test]
     fn an_offline_owners_party_pet_is_nobody() {
         let mut app = app();
@@ -604,9 +600,8 @@ pub(in crate::ui_party) mod tests {
     }
 
     /// The reported shape: a member with a pet logs off out of view, and the server sends the list
-    /// again with their status alone moved. The list rewrites the record's online bit
-    /// (`0x4e8361`-`0x4e837b`), so the pet is nobody at once (`0x4e8227`) and comes back with the
-    /// next list; no list reaches the stats diff (`0x5e5510`'s callers are `0x5e54a8` and `0x5f0c1c`), so
+    /// again with their status alone moved. The list rewrites the record's online bit, so the pet
+    /// is nobody at once and comes back with the next list; no list reaches the stats diff, so
     /// neither fires `UNIT_PET`.
     #[test]
     fn a_status_only_list_takes_an_out_of_view_members_pet_and_fires_no_unit_pet() {
@@ -653,9 +648,9 @@ pub(in crate::ui_party) mod tests {
         assert_eq!(num(&mut app, "UnitHealth('partypet1')"), 400.0);
     }
 
-    /// The edge is the record's own pet guid, whatever the online bit: a stats packet that moves
-    /// an offline out-of-view owner's pet guid fires `UNIT_PET` for it (`0x5e55fb`-`0x5e5617`,
-    /// `0x5e57e9`), though `partypetN` still names nobody behind the bit.
+    /// The edge is the record's own pet guid, whatever the online bit: a stats packet that moves an
+    /// offline out-of-view owner's pet guid fires `UNIT_PET` for it, though `partypetN` still names
+    /// nobody behind the bit.
     #[test]
     fn unit_pet_fires_when_an_offline_owners_pet_guid_moves() {
         let mut app = app();
@@ -694,7 +689,7 @@ pub(in crate::ui_party) mod tests {
     }
 
     /// A raid's rows take the same list: the record's bit moves, the offline row's pet does not
-    /// exist (`0x4bb040`) and its party slot's is nobody, and no `UNIT_PET` fires for either token.
+    /// exist and its party slot's is nobody, and no `UNIT_PET` fires for either token.
     #[test]
     fn a_status_only_raid_list_takes_an_offline_rows_pet_and_fires_no_unit_pet() {
         let mut app = app();
@@ -781,9 +776,9 @@ pub(in crate::ui_party) mod tests {
         assert_eq!(num(&mut app, "UnitHealth('partypet1')"), 250.0);
     }
 
-    /// A raid's pets are its rows' (`0x491960`): the record leg has no online test at the
-    /// resolver, but `UnitExists`' roster fallback (`0x4bb040`) has one, so an offline member's
-    /// pet resolves to a guid the client never holds and does not exist.
+    /// A raid's pets are its rows': the record leg has no online test at the resolver, but
+    /// `UnitExists`' roster fallback has one, so an offline member's pet resolves to a guid the
+    /// client never holds and does not exist.
     #[test]
     fn raid_pets_follow_their_rows_and_an_offline_rows_pet_does_not_exist() {
         let mut app = app();
@@ -955,10 +950,10 @@ pub(in crate::ui_party) mod tests {
     const NIGHT_ELF: u32 = 4;
     const CAT_FORM: u32 = 1;
 
-    /// `UnitCreatureType` on the party's tokens goes through the one resolver (`0x605570`): a
-    /// held member in Cat Form is a Beast and an unshifted one a Humanoid by race, a held pet
-    /// answers its template's type, and a member the object manager does not hold answers nil,
-    /// as the token resolver finds no object for it (`0x51a2b1`).
+    /// `UnitCreatureType` on the party's tokens goes through the one resolver: a held member in Cat
+    /// Form is a Beast and an unshifted one a Humanoid by race, a held pet answers its template's
+    /// type, and a member the object manager does not hold answers nil, as the token resolver finds
+    /// no object for it.
     #[test]
     fn party_tokens_read_the_creature_type_through_the_resolver() {
         let mut app = app();

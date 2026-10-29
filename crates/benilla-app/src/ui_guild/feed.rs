@@ -84,7 +84,7 @@ pub(super) fn feed_guild(
             .map(|i| i.rank_name(guild.rank_index).to_string())
             .unwrap_or_default(),
         rank_index: guild.rank_index,
-        // `IsGuildLeader 0x516e40`: rank 0 in a guild; a guildless rank 0 is not a leader.
+        // `IsGuildLeader`: rank 0 in a guild; a guildless rank 0 is not a leader.
         is_leader: guild.in_guild() && guild.rank_index == 0,
         rights: guild.own_rights(),
         motd: guild.motd.clone(),
@@ -151,10 +151,10 @@ pub(super) fn feed_guild(
         script.fire_event("GUILD_MOTD", vec![ScriptValue::Str(guild.motd.clone())]);
     }
 
-    // `PLAYER_GUILD_UPDATE`, as the reference's descriptor callbacks fire it (`0x5e27b0`,
-    // `0x5e2770`, `0x515e50`): bare on a `PLAYER_GUILDRANK` change, and once per unit token naming
-    // the player, the token as arg1, on a `PLAYER_GUILDID` change. Only our own avatar's edges
-    // fire here; other players' are not built, and the reference's per-token walk is unconfirmed.
+    // `PLAYER_GUILD_UPDATE`, as the reference's descriptor callbacks fire it: bare on a
+    // `PLAYER_GUILDRANK` change, and once per unit token naming the player, the token as arg1, on a
+    // `PLAYER_GUILDID` change. Only our own avatar's edges fire here; other players' are not built,
+    // and the reference's per-token walk is unconfirmed.
     if id_changed {
         script.fire_event(
             "PLAYER_GUILD_UPDATE",
@@ -166,7 +166,7 @@ pub(super) fn feed_guild(
     }
 
     // `GUILD_INVITE_REQUEST` shows the popup. There is no hide edge: nothing in the 1.12 client
-    // raises `GUILD_INVITE_CANCEL` (its wrapper `0x48f470` has no callers).
+    // raises `GUILD_INVITE_CANCEL`.
     if fed.invite != guild.pending_invite {
         fed.invite = guild.pending_invite.clone();
         if let Some((inviter, name)) = &guild.pending_invite {
@@ -190,10 +190,10 @@ pub(super) fn feed_guild(
     }
 }
 
-/// `SMSG_GUILD_INFO`'s chat lines, `GUILD_NAME_TEMPLATE` then `GUILD_INFO_TEMPLATE` (`0x5e6fb0`,
-/// at `0x5e700f` and `0x5e706b`). Not message records: the handler reads each template from the
-/// script VM (`0x703bf0`) and prints chat itself, so a missing template prints nothing. It passes
-/// wire fields 2, 1, 3, 4, 5 (`0x5e704d`-`0x5e7061`): month first, where the wire has day first.
+/// `SMSG_GUILD_INFO`'s chat lines, `GUILD_NAME_TEMPLATE` then `GUILD_INFO_TEMPLATE`. Not message
+/// records: the handler reads each template from the script VM and prints chat itself, so a missing
+/// template prints nothing. It passes wire fields 2, 1, 3, 4, 5: month first, where the wire has
+/// day first.
 fn ginfo_lines(script: &UiScript, info: &GuildInfo) -> Vec<crate::ui_action::Shown> {
     use benilla_ui::strings::Arg;
     let get = |key: &str| script.lua().globals().get::<String>(key).ok();
@@ -291,8 +291,8 @@ pub(super) fn status_tag(presence: u8) -> &'static str {
     }
 }
 
-/// The 1-based row of a guid in the shown order, `0` when absent, as `GetGuildRosterSelection
-/// 0x4d1890` searches it (`0x4d1030`): a member who left reads as nothing selected.
+/// The 1-based row of a guid in the shown order, `0` when absent, as `GetGuildRosterSelection`
+/// searches it: a member who left reads as nothing selected.
 pub(super) fn index_of(order: &[u64], guid: u64) -> u32 {
     if guid == 0 {
         return 0;
@@ -321,8 +321,8 @@ pub(super) fn drain_guild(
     for request in requests {
         match request {
             GuildRequest::Roster => {
-                // One request per 10 s, the rest swallowed silently (`0x4d10d0`, against
-                // `0xb73130`). Real time: the virtual clock's 250 ms `max_delta` lags in a hitch.
+                // One request per 10 s, the rest swallowed silently. Real time: the virtual clock's
+                // 250 ms `max_delta` lags in a hitch.
                 let now = time.elapsed_secs_f64();
                 if now >= guild.roster_allowed_at {
                     guild.roster_allowed_at = now + ROSTER_REQUEST_THROTTLE_SECS;
@@ -365,8 +365,8 @@ pub(super) fn drain_guild(
                 let _ = commands.0.send(ClientCommand::GuildMotd { motd });
             }
             GuildRequest::SetInfoText(text) => {
-                // No local write: `SetGuildInfoText 0x4d2380` only sends, leaving `0xb72720` to
-                // change with the next roster.
+                // No local write: `SetGuildInfoText` only sends, leaving to change with the next
+                // roster.
                 let _ = commands.0.send(ClientCommand::GuildInfoText { text });
             }
             GuildRequest::SetPublicNote { index, note } => {
@@ -409,8 +409,8 @@ pub(super) fn drain_guild(
     }
 }
 
-/// A note verb: resolve the row to the member, write the note locally, and send only if it
-/// changed, as the reference gates the send on its own write (`0x4d15e0`, `0x64a480`).
+/// A note verb: resolve the row to the member, write the note locally, and send only if it changed,
+/// as the reference gates the send on its own write.
 fn set_note(
     guild: &mut GuildState,
     commands: &NetCommands,
@@ -494,7 +494,7 @@ mod tests {
     fn an_online_row_reports_no_last_online() {
         let member = GuildRosterMember {
             presence: guild_presence::ONLINE,
-            // Ignored for an online member, as in the reference (`0x4d14fd`).
+            // Ignored for an online member, as in the reference.
             last_online_days: 9.0,
             ..Default::default()
         };

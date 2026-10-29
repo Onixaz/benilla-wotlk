@@ -75,8 +75,8 @@ impl CooldownState {
         self.armed = true;
     }
 
-    /// The per-frame update of a shown cooldown (`0x5ec8f0`). `now − start` is unsigned
-    /// (`0x5ec91b`), so a start still in the future counts as done.
+    /// The per-frame update of a shown cooldown. `now − start` is unsigned (`0x5ec91b`), so a start
+    /// still in the future counts as done.
     pub fn update(&mut self, now_ms: u32) -> CooldownStep {
         self.elapsed_ms = now_ms.wrapping_sub(self.start_ms);
         if self.elapsed_ms < self.duration_ms {

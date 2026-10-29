@@ -65,8 +65,8 @@ pub(super) struct Parsed {
     pub(super) looks: Vec<(usize, ChatWindowLook)>,
     pub(super) colors: Vec<(String, [u8; 3], bool)>,
     pub(super) joined: Vec<super::edit::SavedChannel>,
-    /// The header's `ZONECHANNELS` word, the reference's `[0xb6e5e0]`, overwritten from the file
-    /// (`0x498d83`); `None` without the line, so the loader seeds from the DBC rather than 0.
+    /// The header's `ZONECHANNELS` word, the reference's, overwritten from the file; `None` without
+    /// the line, so the loader seeds from the DBC rather than 0.
     pub(super) zone_mask: Option<u32>,
     /// `OPTION_GUILD_RECRUITMENT_CHANNEL`, the latch the `guildRecruitmentChannel` CVar moves:
     /// `STANDARD` is 0 and any other word, or none, is 1 (`LoadChatSettingsCallback 0x508320`).
@@ -283,7 +283,7 @@ fn parse(text: &str, rows: &[(u32, String)]) -> Parsed {
             } else if head.eq_ignore_ascii_case("ADDEDVERSION") {
                 added_version = it.next().and_then(|v| v.parse().ok()).unwrap_or(0);
             } else if head.eq_ignore_ascii_case("ZONECHANNELS") {
-                // Overwrites `[0xb6e5e0]` (`0x498d83`), never ORs: the file holds the whole mask.
+                // Overwrites, never ORs: the file holds the whole mask.
                 out.zone_mask = it.next().and_then(|v| v.trim().parse::<u32>().ok());
             } else if head.eq_ignore_ascii_case("OPTION_GUILD_RECRUITMENT_CHANNEL") {
                 // The reference's test, whole-word and case-folded: only `STANDARD` means 0.
@@ -465,7 +465,7 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
     // The durable mask: the file's word, else the DBC seed; confirmed joins OR into it after.
     let mask = parsed.zone_mask.unwrap_or(seed_mask);
     if let Some(mut channels) = world.get_resource_mut::<super::edit::ChannelState>() {
-        // `Some` is the reference's "chat system ready" flag (`0x499a18`): the zone walk and the
+        // `Some` is the reference's "chat system ready" flag: the zone walk and the
         // guild-recruitment cascade wait for it.
         channels.zone_mask = Some(mask);
         // The custom re-join list, seated here, then moved only by a confirmed join or a leave.
@@ -490,8 +490,8 @@ pub(crate) fn restore_chat_looks(world: &mut World, script: &mut UiScript) {
         );
     }
     // The header's `CHANNELS` re-join at login, as in the reference; zone channels are the walk's.
-    // The list holds custom channels only, so each carries id 0; 3.3.5a's re-join (`0x50819c`)
-    // is the client's own, auto 1.
+    // The list holds custom channels only, so each carries id 0; 3.3.5a's re-join is the client's
+    // own, auto 1.
     if let Some(commands) = commands {
         for c in parsed.joined {
             let _ = commands.send(ClientCommand::JoinChannel {
@@ -756,8 +756,8 @@ POSITION "
         assert_eq!(state.zone_mask, Some(0b11));
         state.note_zone_channel_joined("MyChan");
         assert_eq!(state.zone_mask, Some(0b11), "a custom channel has no bit");
-        // The clear is keyed on the slot the wire name finds and its id (`0x49f0f4`-`0x49f11a`);
-        // a name with no slot clears nothing.
+        // The clear is keyed on the slot the wire name finds and its id; a name with no slot clears
+        // nothing.
         state.note_zone_channel_left("Trade - City");
         assert_eq!(state.zone_mask, Some(0b11), "no slot carries it yet");
         state.claim_slot("Trade - City");

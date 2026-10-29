@@ -14,9 +14,8 @@ pub(super) const INTERFACE_VERSION: f64 = 30300.0;
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `GetLocale()` (glue `0x46ce40`, in-game `0x48d8b0`) returns one string, `enUS`, as benilla
-    // is enUS-only. `IsMacClient()` (`0x48c980`) returns one nil, the PC build's answer, which
-    // takes FrameXML's PC key-label arm.
+    // `GetLocale()` returns one string, `enUS`, as benilla is enUS-only. `IsMacClient()` returns
+    // one nil, the PC build's answer, which takes FrameXML's PC key-label arm.
     g.set(
         "GetLocale",
         lua.create_function(|lua, ()| lua.create_string("enUS"))?,
@@ -27,8 +26,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetExistingLocales",
         lua.create_function(|lua, _: MultiValue| lua.create_string("enUS"))?,
     )?;
-    // The PC build's other two platform answers: `IsWindowsClient()` (`0x48c960`) pushes the
-    // number 1 and `IsLinuxClient()` (`0x48c990`) one nil. Arguments are ignored.
+    // The PC build's other two platform answers: `IsWindowsClient()` pushes the number 1 and
+    // `IsLinuxClient()` one nil. Arguments are ignored.
     g.set(
         "IsWindowsClient",
         lua.create_function(|_, _: MultiValue| Ok(1.0))?,
@@ -38,16 +37,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|_, _: MultiValue| Ok(Value::Nil))?,
     )?;
 
-    // `GetDebugStats()` (`0x488af0`, `xor eax,eax; ret`): zero values, which `StatsFrame.lua:20`
-    // hands straight to `SetText`.
+    // `GetDebugStats()` (`xor eax,eax; ret`): zero values, which `StatsFrame.lua:20` hands straight
+    // to `SetText`.
     g.set(
         "GetDebugStats",
         lua.create_function(|_, _: MultiValue| Ok(MultiValue::new()))?,
     )?;
 
-    // `OpeningCinematic()` (`0x48c8c0`): sends an empty `CMSG_OPENING_CINEMATIC` (`0xf9`,
-    // `0x48c8c9` into `0x5ab630`) and returns nothing; the server may answer with
-    // `SMSG_TRIGGER_CINEMATIC`. Arguments are ignored.
+    // `OpeningCinematic()`: sends an empty `CMSG_OPENING_CINEMATIC` (`0xf9`) and returns nothing;
+    // the server may answer with `SMSG_TRIGGER_CINEMATIC`. Arguments are ignored.
     g.set(
         "OpeningCinematic",
         lua.create_function(|lua, _: MultiValue| {
@@ -58,14 +56,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // Three setters whose state has no reader here, so each takes its argument as the reference
     // does, never raising, and stores nothing; all return zero values.
-    // - `SetEuropeanNumbers(flag)` (`0x48dec0`): `GetBoolOrDefault(1, true)` into `[0xcf4d24]`,
-    //   which turns on `FontString:SetText`'s digit-group pass (`0x771daa` into `0x771c50`).
-    //   benilla's `SetText` has no such pass.
-    // - `SetLayoutMode(mode)` (`0x488540`): a number truncates into the UI root's `+0xcf8`, anything
-    //   else stores 1; read by the root's mouse handler (`0x766301`) for a frame-dragging mode
-    //   benilla does not build.
-    // - `SetConsoleKey(key)` (`0x488640`): a one-character or named key becomes the console's
-    //   toggle key (`0x63cb00`), a non-string the default `0x30e`. benilla has no console screen.
+    // - `SetEuropeanNumbers(flag)`: `GetBoolOrDefault(1, true)`, which turns on
+    //   `FontString:SetText`'s digit-group pass. benilla's `SetText` has no such pass.
+    // - `SetLayoutMode(mode)`: a number truncates into the UI root's `+0xcf8`, anything else stores
+    //   1; read by the root's mouse handler for a frame-dragging mode benilla does not build.
+    // - `SetConsoleKey(key)`: a one-character or named key becomes the console's toggle key, a
+    //   non-string the default `0x30e`. benilla has no console screen.
     for name in ["SetEuropeanNumbers", "SetLayoutMode", "SetConsoleKey"] {
         g.set(
             name,
@@ -73,10 +69,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // `FrameXML_Debug([v])` (`0x488440`): get-or-set of the XML loader's trace flag `[0xceea30]`,
-    // which gates `crate::loader::LoadReport::traces`. A Lua-truthy argument sets it, truncated
-    // toward zero (`0x40a2b0`), so `FrameXML_Debug(0)` clears it; nil or false only reads. It
-    // returns the flag after the call.
+    // `FrameXML_Debug([v])`: get-or-set of the XML loader's trace flag, which gates
+    // `crate::loader::LoadReport::traces`. A Lua-truthy argument sets it, truncated toward zero, so
+    // `FrameXML_Debug(0)` clears it; nil or false only reads. It returns the flag after the call.
     g.set(
         "FrameXML_Debug",
         lua.create_function(|lua, v: Value| {
@@ -85,7 +80,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .expect("model app_data");
             let truthy = !matches!(v, Value::Nil | Value::Boolean(false));
             if truthy {
-                // A value that will not coerce is 0, as `lua_tonumber` (`0x6f3620`) answers.
+                // A value that will not coerce is 0, as `lua_tonumber` answers.
                 let n = lua.coerce_number(v)?.unwrap_or(0.0);
                 model.framexml_debug.set(n.trunc() as i32);
             }
@@ -107,16 +102,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `RunScript(text)` (`0x48b980`) runs a chunk in the shared global state with full API
-    // access, no `setfenv`. Its contract:
-    // 1. The chunk name is the source itself: the one `lua_tostring` result is passed as both
-    //    code and name to `FrameScript_Execute` (`0x704cd0`), so an error renders
-    //    `[string "…"]`, as `loadstring`'s default does.
-    // 2. An argument that is neither a string nor a number, or is empty, is a silent no-op, never
-    //    a raise (`0x48b98f`, `0x48b99f`, `0x48b9a1`); `lua_isstring` (`0x6f3510`) passes a number.
-    // 3. An error never reaches the caller: `0x704ae0` runs the chunk under `lua_pcall` with the
-    //    registered error handler (`0x704b68`), and a compile failure goes to the same handler
-    //    (`0x704b42`).
+    // `RunScript(text)` runs a chunk in the shared global state with full API access, no `setfenv`.
+    // Its contract:
+    // 1. The chunk name is the source itself: the one `lua_tostring` result is passed as both code
+    //    and name to `FrameScript_Execute`, so an error renders `[string "…"]`, as `loadstring`'s
+    //    default does.
+    // 2. An argument that is neither a string nor a number, or is empty, is a silent no-op, never a
+    //    raise; `lua_isstring` passes a number.
+    // 3. An error never reaches the caller: the reference runs the chunk under `lua_pcall` with the
+    //    registered error handler, and a compile failure goes to the same handler.
     // 4. It returns zero values on every path.
     g.set(
         "RunScript",
@@ -245,10 +239,10 @@ impl super::UiScript {
         }
     }
 
-    /// Seed the local player record (the reference's `0xc27d80`, [`super::PlayerRecord`]) from the
-    /// char-enum row at Enter World, before any addon file runs, as `UnitName("player")` at file
-    /// scope is common. A record with no name is refused: nothing empties the reference's record
-    /// once it holds a character, so the last one stands.
+    /// Seed the local player record ([`super::PlayerRecord`]) from the char-enum row at Enter
+    /// World, before any addon file runs, as `UnitName("player")` at file scope is common. A record
+    /// with no name is refused: nothing empties the reference's record once it holds a character,
+    /// so the last one stands.
     pub fn set_player_record(&mut self, record: super::PlayerRecord) {
         if record.name.is_empty() {
             return;
@@ -267,8 +261,8 @@ impl super::UiScript {
             if model.realm_name != realm {
                 model.realm_name = realm.to_string();
             }
-            // The persisted `realmName` CVar (`0x83f2d0`) is the same fact, set here so it cannot
-            // drift from `GetRealmName()`; the engine write queues the change, so it is saved.
+            // The persisted `realmName` CVar is the same fact, set here so it cannot drift from
+            // `GetRealmName()`; the engine write queues the change, so it is saved.
             super::cvars::set_from_engine(&mut model, "realmName", realm.to_string());
         }
     }
@@ -367,8 +361,8 @@ mod tests {
         );
     }
 
-    /// A failure is recorded, not raised: `0x704ae0` runs the chunk under `lua_pcall(L, 0, 0, -2)`
-    /// with the registry's error handler.
+    /// A failure is recorded, not raised: the reference runs the chunk under
+    /// `lua_pcall(L, 0, 0, -2)` with the registry's error handler.
     #[test]
     fn run_script_evaluates_in_the_shared_state_and_reports_without_raising() {
         let mut s = UiScript::new().unwrap();
@@ -384,8 +378,7 @@ mod tests {
         );
     }
 
-    /// The reference's arities: `GetLocale` (`0x48d8b0`) one string, `IsMacClient` (`0x48c980`)
-    /// one nil.
+    /// The reference's arities: `GetLocale` one string, `IsMacClient` one nil.
     #[test]
     fn the_client_identity_pair_answers_its_reference_arity() {
         let s = UiScript::new().unwrap();
@@ -406,8 +399,8 @@ mod tests {
         );
     }
 
-    /// `IsWindowsClient` (`0x48c960`) pushes 1 and `IsLinuxClient` (`0x48c990`) nil, one value
-    /// each; `GetDebugStats` (`0x488af0`) pushes none.
+    /// `IsWindowsClient` pushes 1 and `IsLinuxClient` nil, one value each; `GetDebugStats` pushes
+    /// none.
     #[test]
     fn the_platform_queries_and_debug_stats_answer_the_pc_build() {
         let s = UiScript::new().unwrap();

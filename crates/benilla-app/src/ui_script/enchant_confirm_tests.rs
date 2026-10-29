@@ -20,7 +20,7 @@ fn setup() -> UiScript {
     s
 }
 
-/// `BIND_ENCHANT` (event 402) has no args; Yes re-enters the gate (`0x495d60`), sending nothing.
+/// `BIND_ENCHANT` (event 402) has no args; Yes re-enters the gate, sending nothing.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bind_confirm_shows_and_its_okay_queues_bind_enchant() {

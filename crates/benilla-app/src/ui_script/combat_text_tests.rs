@@ -300,16 +300,16 @@ fn combat_text_master_toggle_unregisters() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The reference reads the `DAMAGE_TEXT_FONT` global (`0x6c847c`) after the addons load
-/// (`0x6c8470`), so an addon's `ADDON_LOADED` assignment wins over stock Friz.
+/// The reference reads the `DAMAGE_TEXT_FONT` global after the addons load, so an addon's
+/// `ADDON_LOADED` assignment wins over stock Friz.
 #[test]
 fn the_damage_text_font_is_read_from_the_lua_global() {
     let data = benilla_formats::wow_data_or_skip!();
     let _ = data;
     let s = UiScript::new().unwrap();
 
-    // Unassigned, the reference's failure block (`0x704350`) leaves `0x703bf0`'s pre-seeded `""`,
-    // which the font factory rejects.
+    // Unassigned, the reference's failure block leaves the reference's pre-seeded `""`, which the
+    // font factory rejects.
     assert_eq!(crate::combat_text::read_damage_text_font(&s).0, None);
 
     load_xml(&s, "Interface\\FrameXML\\Fonts.xml");

@@ -131,9 +131,9 @@ fn unqueried_wolf() -> UnitState {
     }
 }
 
-/// `CGUnit_C::GetUnitName 0x609210` (`0x52a187`) reads the name, as for `UnitName 0x517020`, and
-/// every miss, a null `CGUnit+0xb30` among them (`0x609353 je 0x609324`), ends at
-/// `FrameScript_GetText("UNKNOWNOBJECT")`. The `"player"` fast path is the binding's (`0x517083`).
+/// `CGUnit_C::GetUnitName` reads the name, as for `UnitName`, and every miss, a null `CGUnit+0xb30`
+/// among them, ends at `FrameScript_GetText("UNKNOWNOBJECT")`. The `"player"` fast path is the
+/// binding's.
 #[test]
 fn a_pending_name_titles_unknownobject_and_the_answer_replaces_it() {
     let mut s = script();
@@ -180,7 +180,7 @@ fn a_pending_name_titles_unknownobject_and_the_answer_replaces_it() {
     )
     .unwrap();
 
-    // An empty or absent global falls to the binary's own literal `0x860fa4` (`0x609324`).
+    // An empty or absent global falls to the binary's own literal.
     s.set_unit("target", Some(unqueried_wolf()));
     s.run(
         r#"
@@ -297,9 +297,8 @@ Guardian of Stormwind",
     assert!(s.take_errors().is_empty());
 }
 
-/// The faction line sits between the level line and "PvP" (`0x529fe0`). Civilian needs the PvP
-/// bit, the flag, hostility and a grey level (`0x612550`); Leader only the PvP bit and the flag
-/// (`0x6125c0`).
+/// The faction line sits between the level line and "PvP". Civilian needs the PvP bit, the flag,
+/// hostility and a grey level; Leader only the PvP bit and the flag.
 #[test]
 fn faction_line_and_civilian_gate() {
     let mut s = script();
@@ -507,9 +506,8 @@ fn level_line_variants() {
 }
 
 /// A player's level line reads "Race Class (Player)" whatever creature type the snapshot carries:
-/// the builder tests the player type bit (`0x52a4a6`) and takes the race and class names for a
-/// player (`0x52a4e5`-`0x52a555`), the type row only otherwise (`0x52a4bd`-`0x52a4d4`), so a
-/// shapeshifted player's Beast never reaches the line.
+/// the builder tests the player type bit and takes the race and class names for a player, the type
+/// row only otherwise, so a shapeshifted player's Beast never reaches the line.
 #[test]
 fn a_players_level_line_ignores_the_snapshots_creature_type() {
     let mut s = script();
@@ -619,8 +617,8 @@ fn world_hover_drive_and_health_watcher() {
         r#"assert(GameTooltipStatusBar:GetValue() == 12, "the health watcher tracked the push")"#,
     )
     .unwrap();
-    // Hover lost: the fade arms and `"mouseover"` names nobody (`0x492890` zeroes the pair), yet
-    // the fading plate keeps its bar, whose watcher follows the unit's guid, not the token.
+    // Hover lost: the fade arms and `"mouseover"` names nobody, yet the fading plate keeps its bar,
+    // whose watcher follows the unit's guid, not the token.
     s.world_tooltip_fade();
     s.set_unit("mouseover", None);
     s.tick(0.1);

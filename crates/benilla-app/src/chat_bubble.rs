@@ -1,15 +1,15 @@
 //! Chat bubbles, `CGChatBubbleFrame`: the speech bubble a chat line spawns over the speaker, a
 //! 2-D overlay like the V-plate ([`crate::vplates`]).
 //!
-//! - Spawn (`0x608ac0`, from the `SMSG_MESSAGECHAT` display path): the sender resolves to a live
-//!   unit, its CVar is on, the text is non-empty, the unit carries no V-plate (`0x608adc`; a live
-//!   bubble in turn hides the overhead name, [`BubblesActive`]), and the local player is within
-//!   25 yd (3-D). Self is not excluded. A new line replaces the old bubble, never queues.
-//! - Anchor (`0x4b0c30`): unit z + height × model scale + 0.7, bottom-seated, growing upward. The
-//!   height is the Stand sequence box's Z extent from the model header (`0x711a20`), not the posed
-//!   attachment the overhead name reads (`0x608640`), latched once per chat line.
-//! - Stacking (`0x4b1060`): every frame the bubbles sort farthest-first by camera distance and
-//!   take frame levels 2, 3, 4…, so whole cards stack with the nearest speaker's on top.
+//! - Spawn (from the `SMSG_MESSAGECHAT` display path): the sender resolves to a live unit, its CVar
+//!   is on, the text is non-empty, the unit carries no V-plate (a live bubble in turn hides the
+//!   overhead name, [`BubblesActive`]), and the local player is within 25 yd (3-D). Self is not
+//!   excluded. A new line replaces the old bubble, never queues.
+//! - Anchor: unit z + height × model scale + 0.7, bottom-seated, growing upward. The height is the
+//!   Stand sequence box's Z extent from the model header, not the posed attachment the overhead
+//!   name reads, latched once per chat line.
+//! - Stacking: every frame the bubbles sort farthest-first by camera distance and take frame levels
+//!   2, 3, 4…, so whole cards stack with the nearest speaker's on top.
 //!
 //! Only say, party, yell, monster say/yell and the party leader's line bubble: `ChatBubbleShow`
 //! (`0x720010`) admits types 1, 2, 6, 12, 14 and 51.
@@ -18,7 +18,7 @@
 //! reference law, so bubble text and plate text keep one em at every window size.
 //!
 //! Not built: the reference also fades a bubble whose speaker's model data is not resident or whose
-//! scene-entity flag is clear (`0x7103d0`/`0x6704c0`); only distance is re-tested here.
+//! scene-entity flag is clear; only distance is re-tested here.
 
 use std::collections::HashMap;
 
@@ -56,36 +56,36 @@ impl Default for BubbleConfig {
     }
 }
 
-/// The bubble art (`0x4b0940`).
+/// The bubble art.
 const BG_TEXTURE: &str = "Interface\\Tooltips\\ChatBubble-Background";
 const EDGE_TEXTURE: &str = "Interface\\Tooltips\\ChatBubble-Backdrop";
 const TAIL_TEXTURE: &str = "Interface\\Tooltips\\ChatBubble-Tail";
 
-/// The 0.7 yd lift over the anchor height (`[0x7ffd7c]`).
+/// The 0.7 yd lift over the anchor height.
 const LIFT: f32 = 0.7;
 /// The spawn and per-frame range gate, 25 yd squared (`[0xa104b0]`, read at `0x7200ce` and
 /// `CGChatBubbleFrame::Update` `0x56c5e9`).
 const MAX_DIST_SQ: f32 = 625.0;
-/// The 250 ms linear fade, in and out (`0x4b0ea0`/`0x4b0ee0`).
+/// The 250 ms linear fade, in and out.
 const FADE_SECS: f32 = 0.25;
 /// `NAMEPLATE_FONT` at 0.01 gx, the plate name's em.
 const TEXT_H: f32 = 0.01;
 /// The body margin around the text layout, all four sides (`0x3c23d70a`).
 const MARGIN: f32 = 0.01;
-/// The text wrap hard cap, gx (`[0x80679c]` = 0.2).
+/// The text wrap hard cap, gx (0.2).
 const WRAP_W: f32 = 0.2;
 /// The border unit (edge size, insets, tail side): 16/1024 of the screen width.
 const BORDER_FRAC: f32 = 16.0 / 1024.0;
 
 /// Paint order inside one bubble's level: the tail covers the bottom edge piece and the text draws
-/// last, as the reference's batch drains textures before font strings (`0x76fb00`).
+/// last, as the reference's batch drains textures before font strings.
 const Z_BG: u64 = 0;
 const Z_EDGE: u64 = 1;
 const Z_TAIL: u64 = 2;
 const Z_TEXT: u64 = 3;
 
 /// The z base for the bubble at `rank`, farthest first: the reference's per-frame
-/// `SetFrameLevel(2 + i)` walk (`0x4b12d5`-`0x4b1312`), one level per bubble, under the V-plates.
+/// `SetFrameLevel(2 + i)` walk, one level per bubble, under the V-plates.
 fn level_z(rank: usize) -> u64 {
     let level = (rank as u64).min(overlay_z::BUBBLE_MAX_LEVEL);
     overlay_z::BUBBLE + level * overlay_z::BUBBLE_STRIDE
@@ -102,7 +102,7 @@ fn bubble_cvar(kind: ChatEventKind, cfg: &BubbleConfig) -> Option<bool> {
     }
 }
 
-/// The word count (`0x4b1810`): maximal runs of characters other than space and tab.
+/// The word count: maximal runs of characters other than space and tab.
 fn word_count(text: &str) -> u32 {
     let mut words = 0u32;
     let mut in_word = false;
@@ -116,8 +116,8 @@ fn word_count(text: &str) -> u32 {
     words
 }
 
-/// The lifetime (`0x4b1810`): `base + perWord·(words−1)` ms, 2750/750 for others and 1500/500
-/// for the local player.
+/// The lifetime: `base + perWord·(words−1)` ms, 2750/750 for others and 1500/500 for the local
+/// player.
 fn duration_secs(words: u32, is_self: bool) -> f32 {
     if words == 0 {
         return 0.0;
@@ -284,8 +284,8 @@ fn load_bubble_art(
     });
 }
 
-/// Every frame: drain the queue through the spawn gate (`0x608ac0`), ramp each bubble's fade
-/// against its lifetime and the 25 yd re-test (`0x4b0c30`), publish [`BubblesActive`], and draw.
+/// Every frame: drain the queue through the spawn gate, ramp each bubble's fade against its
+/// lifetime and the 25 yd re-test, publish [`BubblesActive`], and draw.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 fn drive_bubbles(
     mut queue: ResMut<BubbleQueue>,
@@ -308,11 +308,11 @@ fn drive_bubbles(
     let now = time.elapsed_secs();
     let step = time.delta_secs() / FADE_SECS;
     let self_tf = self_q.single().ok();
-    // The typed sender lookup (`0x468460`), a linear scan of the small streamed set.
+    // The typed sender lookup, a linear scan of the small streamed set.
     let find = |guid: u64| units.iter().find(|(_, g, _)| g.0 == guid);
 
-    // ── The spawn/replace gate (`0x608ac0`) ─────────────────────────────────────────────────
-    // Every refusal is traced under the `bub` tag.
+    // ── The spawn/replace gate ───────────────────────────────────────────────── Every refusal is
+    // traced under the `bub` tag.
     let refuse = |why: &str, guid: u64| {
         if benilla_assets::trace::enabled_for("bub") {
             benilla_assets::trace::line("bub", &format!("refuse guid={guid:#x} {why}"));
@@ -329,7 +329,7 @@ fn drive_bubbles(
             refuse("sender-not-a-live-unit", guid);
             continue;
         };
-        // An active V-plate blocks the bubble (`0x608adc`): a plated hostile's yell shows none.
+        // An active V-plate blocks the bubble: a plated hostile's yell shows none.
         if vplates.0.contains(&entity) {
             refuse("v-plate-on-speaker", guid);
             continue;
@@ -345,10 +345,10 @@ fn drive_bubbles(
         }
         let is_self = self_guid.0 == Some(guid);
         let c = default_color(kind);
-        // The one-time height query (`0x4b0e38` calling `0x711a20`, scaled by `[unit+0x90]`). A
-        // model with no bounds reads 0 and the bubble sits 0.7 above the feet, as in the reference.
+        // The one-time height query (scaled by `[unit+0x90]`). A model with no bounds reads 0 and
+        // the bubble sits 0.7 above the feet, as in the reference.
         let lift = heights.get(entity).map_or(0.0, |h| h.0) * tf.scale.y;
-        // Replace, never queue (`0x608c00`): the fresh bubble fades in from 0.
+        // Replace, never queue: the fresh bubble fades in from 0.
         bubbles.0.insert(
             guid,
             Bubble {
@@ -382,7 +382,7 @@ fn drive_bubbles(
             continue;
         };
         if now >= b.born + b.duration + FADE_SECS {
-            // The permanent fade-out (`0x4b0ee0(1)`); at 0 the frame recycles.
+            // The permanent fade-out; at 0 the frame recycles.
             b.alpha -= step;
             if b.alpha <= 0.0 {
                 dead.push(*guid);
@@ -407,8 +407,8 @@ fn drive_bubbles(
         let (Some((cam, cam_pose)), true) = (cam, atlas.is_some() && art.is_some()) else {
             continue;
         };
-        // The anchor (`0x4b0c30`), from this frame's `Transform` and constants only. A seat behind
-        // the camera draws nothing and keeps its state.
+        // The anchor, from this frame's `Transform` and constants only. A seat behind the camera
+        // draws nothing and keeps its state.
         let seat_world = tf.translation + Vec3::Y * (b.lift + LIFT);
         let cam_tf = GlobalTransform::from(*cam_pose);
         let Ok(seat) = cam.world_to_viewport(&cam_tf, seat_world) else {
@@ -425,7 +425,7 @@ fn drive_bubbles(
             entity,
             seat,
             viewport,
-            // The sort key (`0x4b1251`-`0x4b12c0`): the camera's distance, not the player's.
+            // The sort key: the camera's distance, not the player's.
             cam_dist_sq: cam_pose.translation.distance_squared(tf.translation),
             anchor: seat_world,
             unit_pos: tf.translation,
@@ -435,9 +435,9 @@ fn drive_bubbles(
         bubbles.0.remove(&g);
     }
 
-    // ── The frame-level pass (`0x4b12d5`–`0x4b1312`) ─────────────────────────────────────────
-    // Sorted farthest first (`0x4b1360`), levels stamped head to tail (`0x4b1309`). The reference
-    // re-sorts only on a change; sorting every frame gives the same list.
+    // ── The frame-level pass ───────────────────────────────────────── Sorted farthest first,
+    // levels stamped head to tail. The reference re-sorts only on a change; sorting every frame
+    // gives the same list.
     stack_sort(&mut pending);
     let (Some((_, cam_pose)), Some(atlas), Some(art)) = (cam, atlas.as_deref_mut(), art) else {
         return; // the tick's same gate kept `pending` empty
@@ -522,7 +522,7 @@ fn draw_bubble(
         alpha_gradient: None,
         spacing: 0.0,
     };
-    // The wrap law (`0x4b1600`): wider than 0.2 gx wraps at the cap, else max(width, 2 borders).
+    // The wrap law: wider than 0.2 gx wraps at the cap, else max(width, 2 borders).
     let cap = gx_px(WRAP_W, basis);
     let floor = 2.0 * border;
     let (line_w, _) = measure_text(&mut e, &b.text, None, spec);
@@ -538,8 +538,8 @@ fn draw_bubble(
     let frame = Rect::new(left, bottom - h, left + w, bottom);
     let alpha = b.alpha;
 
-    // The backdrop (`0x4b0a35` into `0x76a5d0`): one value feeds the four insets and both
-    // edge-size fields. `pieces` is y-up, so y negates across the seam.
+    // The backdrop: one value feeds the four insets and both edge-size fields. `pieces` is y-up, so
+    // y negates across the seam.
     let bd = Backdrop {
         bg_file: Some(BG_TEXTURE.to_string()),
         edge_file: Some(EDGE_TEXTURE.to_string()),
@@ -584,7 +584,7 @@ fn draw_bubble(
             ..default()
         });
     }
-    // The tail (`0x4b0af1`): a border-unit square, TOPRIGHT on the bottom lifted border/4.
+    // The tail: a border-unit square, TOPRIGHT on the bottom lifted border/4.
     let tail_top = frame.max.y - border * 0.25;
     let cx = (frame.min.x + frame.max.x) * 0.5;
     quads.overlays.push(UiQuad {

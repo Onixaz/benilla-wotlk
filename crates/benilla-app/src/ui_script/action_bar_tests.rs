@@ -798,8 +798,8 @@ fn drag_drop_onto_another_button_hops_the_displaced_action() {
 }
 
 /// The count shows only for `IsConsumableAction` (ActionButton.lua:285-292), false for a mount's
-/// item: zero charges, `InventoryType` 0 (`0x4e5250`). The flag rides the slot, not the state
-/// map: `ACTIONBAR_SLOT_CHANGED` repaints before the state feed writes.
+/// item: zero charges, `InventoryType` 0. The flag rides the slot, not the state map:
+/// `ACTIONBAR_SLOT_CHANGED` repaints before the state feed writes.
 #[test]
 fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
     benilla_formats::wow_data_or_skip!();
@@ -1106,8 +1106,8 @@ fn shipped_bag_frame_drives_end_to_end() {
         "a pickup alone queues no move"
     );
 
-    // Right-click while holding: the right arm has no cursor test (ContainerFrame.lua:583-599),
-    // and `UseContainerItem` clears the cursor before it reads the slot (`0x4fa198`).
+    // Right-click while holding: the right arm has no cursor test (ContainerFrame.lua:583-599), and
+    // `UseContainerItem` clears the cursor before it reads the slot.
     s.mouse_button(bx, by, "RightButton", true);
     s.mouse_button(bx, by, "RightButton", false);
     assert_eq!(
@@ -1206,7 +1206,7 @@ fn state_events_leave_empty_wells_untinted() {
 }
 
 /// A slot going empty draws no plate: the empty arm hides the icon (ActionButton.lua:168), and a
-/// texture-less region never draws, whatever its tint (`0x7706e0` gates on `+0xcc`).
+/// texture-less region never draws, whatever its tint (the reference gates on `+0xcc`).
 #[test]
 fn an_occupied_slot_going_empty_leaves_no_white_plate() {
     benilla_formats::wow_data_or_skip!();

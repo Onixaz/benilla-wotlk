@@ -1,6 +1,5 @@
-//! The melee blood spurt (`0x624530` → `0x625010`): a self-terminating particle model on the
-//! victim, front or back by where the attacker stands, large on a crushing blow, colored by the
-//! victim's blood type.
+//! The melee blood spurt: a self-terminating particle model on the victim, front or back by where
+//! the attacker stands, large on a crushing blow, colored by the victim's blood type.
 
 use bevy::prelude::*;
 
@@ -28,7 +27,7 @@ pub(super) fn violence_level(cvars: Option<&crate::cvars::Cvars>) -> usize {
     }
 }
 
-/// The victim attachments the spurt hangs on, `0xf` front and `0x10` back (`0x625010`).
+/// The victim attachments the spurt hangs on, `0xf` front and `0x10` back.
 const ATTACH_FRONT: u16 = 15;
 const ATTACH_BACK: u16 = 16;
 
@@ -102,8 +101,8 @@ pub(super) fn blood_spurts(
             info!("blood: dropped — display {display_id} unknown to the creature catalog");
             continue;
         };
-        // The three-tier row resolve (`0x60afb0`). Its tier-3 records-base fallback is real blood,
-        // never "no blood": Quilboar, crocolisks and gnolls land there.
+        // The three-tier row resolve. Its tier-3 records-base fallback is real blood, never "no
+        // blood": Quilboar, crocolisks and gnolls land there.
         let Some(blood_id) = blood.0.level_key(disp_blood, model_blood) else {
             info!("blood: dropped — UnitBloodLevels is empty");
             continue;
@@ -137,7 +136,7 @@ pub(super) fn blood_spurts(
             class: super::FxClass::Hold,
             // Not a kit stage (`CEffect::AddEffect` off the melee path), but it too plays once.
             stage: super::FxStage::OneShot,
-            // One spurt per (record, tag) on a body: a new one replaces the old (`0x6208e0`, which
+            // One spurt per (record, tag) on a body: a new one replaces the old (which
             // `resolve_spell_fx` runs for every slot), so a busy fight does not stack them.
             effects: vec![FxSlot {
                 tag: if front { ATTACH_FRONT } else { ATTACH_BACK },

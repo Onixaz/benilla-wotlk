@@ -370,8 +370,8 @@ pub(crate) fn feed_cast_bar(
     let target = shield.selection.as_ref().and_then(|s| s.guid);
     let focus = Some(script.focus_guid()).filter(|&g| g != 0);
     let watched = [target, focus];
-    // The auto-repeat key (`0xceac30`), which the reference reads first, then the in-flight slot
-    // the cancel resolves, so the flag and the cancel agree.
+    // The auto-repeat key, which the reference reads first, then the in-flight slot the cancel
+    // resolves, so the flag and the cancel agree.
     let started = self_guid
         .0
         .as_ref()

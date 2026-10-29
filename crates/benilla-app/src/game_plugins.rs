@@ -123,8 +123,8 @@ impl PluginGroup for GamePlugins {
             // The combat log, ahead of the animation layer, whose two shared kinds run second.
             .add(crate::combat_log::CombatLogPlugin)
             .add(CreatureAnimPlugin)
-            // The blob shadow (`0x6d7920`), sized from the Stand box (`playableAnimationLookup[0]`,
-            // fixed per model), never the playing sequence.
+            // The blob shadow, sized from the Stand box (`playableAnimationLookup[0]`, fixed per
+            // model), never the playing sequence.
             .add(BlobShadowPlugin)
             .add(CameraShakePlugin)
             .add(FootprintsPlugin)
@@ -227,8 +227,8 @@ impl PluginGroup for GamePlugins {
             .add(UiSpellInfoPlugin)
             .add(UiAchievementPlugin)
             .add(UiTalentWipePlugin)
-            // The form list by the reference's admission and order (`0x4b25b0`, `0x4b2bb0`); after
-            // UiActionPlugin (`Spells`) and SpellPlugin (the cast tail).
+            // The form list by the reference's admission and order; after UiActionPlugin (`Spells`)
+            // and SpellPlugin (the cast tail).
             .add(UiShapeshiftPlugin)
             // The companion lists; after UiSpellbookPlugin, whose feed it follows.
             .add(crate::ui_companion::UiCompanionPlugin)

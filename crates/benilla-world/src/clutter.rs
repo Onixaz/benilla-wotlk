@@ -43,8 +43,8 @@ impl Plugin for ClutterPlugin {
 }
 
 /// Drop the built meshes when the cutout value moves (a density write must not re-mesh): the ref is
-/// baked into the material. The reference's `detailDoodadAlpha` is a console command (`0x6739a0`,
-/// registered at `0x63f9e0`), not a CVar, so it never persists.
+/// baked into the material. The reference's `detailDoodadAlpha` is a console command, not a CVar,
+/// so it never persists.
 fn remesh_on_cutout_change(
     mut commands: Commands,
     cfg: Res<ClutterConfig>,
@@ -263,8 +263,7 @@ struct ShadedPlacement {
     tint: f32,
     /// The ground normal under the tuft, in Bevy space, on every vertex: here the MCNR normal of
     /// the nearest outer-grid vertex ([`terrain_normal_at`]). The reference uses the plane of the
-    /// cell's centre-fan triangle the tuft lands in (planes built at `0x6bfec1`–`0x6bfefe`, the
-    /// triangle picked at `0x6c0148`–`0x6c0193`, the normal stored at `0x6b2a87`–`0x6b2a9c`).
+    /// cell's centre-fan triangle the tuft lands.
     ground_normal: [f32; 3],
 }
 
@@ -390,9 +389,9 @@ fn build_chunk_clutter(
                 // The reference's random per-tuft scale, in [0.9, 1.1].
                 let inst_scale = d.scale;
                 // One tint per tuft. The reference makes the grey the lit material (colour material
-                // on ambient and diffuse, `0x59cfec`), `clamp(grey × light) × texture`; the shader
-                // multiplies it outside the clamp, `texture × grey × clamp(light)`, so under light
-                // above 1.0 a shadowed tuft comes out darker than the reference's.
+                // on ambient and diffuse), `clamp(grey × light) × texture`; the shader multiplies
+                // it outside the clamp, `texture × grey × clamp(light)`, so under light above 1.0 a
+                // shadowed tuft comes out darker than the reference's.
                 let tint = [sp.tint, sp.tint, sp.tint, 1.0];
                 for (i, p) in sub.positions.iter().enumerate() {
                     positions.push((rot * (wow_to_bevy(*p) * inst_scale) + origin).to_array());
@@ -414,8 +413,8 @@ fn build_chunk_clutter(
             mesh.insert_indices(Indices::U32(indices));
             let mesh = meshes.add(mesh);
             // The detail-doodad pass owns the render state, never the batch: the reference sets one
-            // for every tuft (`0x6b2b80`: alpha blend, ALPHAREF `detailDoodadAlpha`, cull off,
-            // depth write on), and its per-slot draw `0x6b2d60` binds only the texture.
+            // for every tuft (ALPHAREF `detailDoodadAlpha`, cull off, depth write on), and its
+            // per-slot draw binds only the texture.
             let material = assets.model_material(
                 sub.texture.as_deref(),
                 ModelBlend::AlphaTest, // the pass's cutout, not the batch's authored blend
@@ -471,8 +470,8 @@ fn frustum_corner_reach(fov_y: f32, aspect: f32) -> f32 {
 }
 
 /// Build a chunk's clutter when its box comes within the fade reach, and tear it down past it,
-/// where the fade is already zero. The reference builds and unlinks per chunk at 70 yd
-/// (`[0x867958]`), by the nearest view depth of the chunk's bounding sphere.
+/// where the fade is already zero. The reference builds and unlinks per chunk at 70 yd, by the
+/// nearest view depth of the chunk's bounding sphere.
 pub(crate) fn stream_chunk_clutter(
     mut commands: Commands,
     cam: Query<(&GlobalTransform, Option<&Projection>), With<WorldCamera>>,
@@ -598,9 +597,9 @@ mod tests {
         ((254.0 - 256.0 * u) / 255.0).clamp(0.0, 252.0 / 255.0)
     }
 
-    /// The reference's 64-texel clamp/linear ramp (`0x6b235b` fills it, `[0x867958]` = 70 anchors
-    /// it): `alpha = (254 − 256u)/255` capped at `252/255`, so the plateau ends at 52.63672 yd,
-    /// zero falls at 69.86328 yd, and the 128/255 cutout erases opaque grass at 61.11328 yd.
+    /// The reference's 64-texel clamp/linear ramp (70 anchors it): `alpha = (254 − 256u)/255`
+    /// capped at `252/255`, so the plateau ends at 52.63672 yd, zero falls at 69.86328 yd, and the
+    /// 128/255 cutout erases opaque grass at 61.11328 yd.
     #[test]
     fn the_ramp_hits_the_reference_landmarks() {
         assert!(

@@ -254,7 +254,7 @@ fn every_event_we_fire_carries_the_reference_s_arguments() {
     );
 }
 
-/// `0x51bbb0` registers one watch per named unit-window field, so each of the 25 named event ids
+/// The reference registers one watch per named unit-window field, so each of the 25 named event ids
 /// below `0xb6` comes from that bridge with the unit token, and each needs a producer here.
 #[test]
 #[ignore = "1.12.1's gate rules; port them to the 3.3.5a tables (#54)"]

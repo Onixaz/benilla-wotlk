@@ -1,10 +1,9 @@
-//! The quest-log verbs the stock `QuestLogFrame.lua` calls, over a [`QuestLogState`] the app
-//! pushes (rows from the `PLAYER_QUEST_LOG` descriptor slots, text from the quest template cache),
-//! with the abandon, share and fold intents drained back. The selection lives in the engine, as
+//! The quest-log verbs the stock `QuestLogFrame.lua` calls, over a [`QuestLogState`] the app pushes
+//! (rows from the `PLAYER_QUEST_LOG` descriptor slots, text from the quest template cache), with
+//! the abandon, share and fold intents drained back. The selection lives in the engine, as
 //! `QuestLog_SetSelection` sets and re-reads it in one call (`QuestLogFrame.lua:318`, `:342`). The
-//! abandon mark and the share hold the quest id selected at the click, as the reference's mark
-//! does (`0x4dfb50` copies the selection `0xbb7480`, a quest id, to `0xbb7484`), so a re-index
-//! before the popup's Yes cannot retarget them.
+//! abandon mark and the share hold the quest id selected at the click, as the reference's mark does
+//! (a quest id), so a re-index before the popup's Yes cannot retarget them.
 //!
 //! Not built: `IsUnitOnQuest` and `GetAbandonQuestItems` answer nil; the first needs the party
 //! members' quest logs.
@@ -50,9 +49,8 @@ pub struct QuestLogEntryView {
     /// This row's objective lines; the leaderboard verbs serve any row, selected or not.
     pub objectives: Vec<QuestLogObjectiveView>,
     /// This row's detail pane, `None` on a header. Per row, not per selection: the reference's
-    /// detail verbs read the selection `0xbb7480` that `SelectQuestLogEntry` (`0x4dfae0`) wrote and
-    /// look the quest up in the same call (`0x4e1130` to `0xc0e1b0`, `0x562a40`), so a
-    /// select-then-read answers about the row just selected.
+    /// detail verbs read the selection that `SelectQuestLogEntry` wrote and look the quest up in
+    /// the same call, so a select-then-read answers about the row just selected.
     pub detail: Option<QuestLogDetail>,
     /// `GetQuestLogCompletionText` (`0x5e06d0`): the template's end text, or its objectives text
     /// when the end text is empty or flag `0x40000` is set, through the quest text parser.
@@ -115,8 +113,8 @@ pub struct QuestLogState {
     /// `GetDailyQuestsCompleted`: the daily-quest fields holding a quest (`0x58db30`).
     pub daily_completed: u32,
     /// Quests folded under a collapsed header: in the log, not in `entries`. Their watches and
-    /// abandon marks hold, as the reference's watch prune (`0x4de7a7` to `0x4de80f`) and abandon
-    /// search (`0xbb71c0`) cover every row, folded ones included.
+    /// abandon marks hold, as the reference's watch prune and abandon search cover every row,
+    /// folded ones included.
     pub hidden_quest_ids: Vec<u32>,
 }
 
@@ -188,11 +186,11 @@ impl super::UiScript {
     }
 }
 
-/// Signed seconds left on a row's timer, by the reference's formula at all four of its sites
-/// (`0x4e0905`, `0x4e14b9`, `0x4e16c9`, `0x4de6b6`): `slot.timer + G - now - 1`, `G` folded into
-/// `now`, so a quest's last second reads 0. A negative value drops the row from the lists (`js` at
-/// `0x4e14c5`) and clamps to 0 in `GetQuestLogTimeLeft`. `None` when there is nothing to show:
-/// - an untimed row, or a header (skipped at `0x4e1460`);
+/// Signed seconds left on a row's timer, by the reference's formula at all four of its sites:
+/// `slot.timer + G - now - 1`, `G` folded into `now`, so a quest's last second reads 0. A negative
+/// value drops the row from the lists (`js`) and clamps to 0 in `GetQuestLogTimeLeft`. `None` when
+/// there is nothing to show:
+/// - an untimed row, or a header;
 /// - a failed row: vmangos sets its timer to 1 (`Player.cpp:13430`), and the reference tests the
 ///   fail bit `[slot+0x7] & 0x2` first;
 /// - no server clock yet, the reference's never-synced `G == 0`.
@@ -481,9 +479,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // `name, texture, numItems, quality, isUsable`, the giver panels' shape, as one stock routine
     // lays out both (`QuestFrameItems_Update`, `QuestFrame.lua:311`): five values, `isUsable` 1 or
-    // nil (`0x4e0b00`, `0x4e0cf0`). No selected quest, an index past the list or a template in
-    // flight answers `nil, nil, 1, 0, nil` (`0x4e0ca8`); a non-number index raises the reward
-    // getter's Usage line from both (`0x84b6ac`).
+    // nil. No selected quest, an index past the list or a template in flight answers
+    // `nil, nil, 1, 0, nil`; a non-number index raises the reward getter's Usage line from both.
     fn install_detail_item(
         lua: &Lua,
         name: &str,
@@ -598,9 +595,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── The abandon two-step (mark → confirm) ────────────────────────────────────────────────────
-    // Marks the selected quest (`QuestLogFrame.xml:464`). The reference's `0x4dfb50` copies the
-    // selection, which there is a quest id (`0x4def30` stores it at `0x4def5d`); ours is a row
-    // index, so the id is resolved here, at the click, before the rows can move.
+    // Marks the selected quest (`QuestLogFrame.xml:464`). The reference's copies the selection,
+    // which there is a quest id; ours is a row index, so the id is resolved here, at the click,
+    // before the rows can move.
     g.set(
         "SetAbandonQuest",
         lua.create_function(|lua, ()| {
@@ -614,8 +611,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // The marked quest's title, "" for none; the reference (`0x4dfb60`) reads the quest cache by
-    // id, the source of the rows' titles too.
+    // The marked quest's title, "" for none; the reference reads the quest cache by id, the source
+    // of the rows' titles too.
     g.set(
         "GetAbandonQuestName",
         lua.create_function(|lua, ()| {
@@ -640,8 +637,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "GetAbandonQuestItems",
         lua.create_function(|_, ()| Ok(Value::Nil))?,
     )?;
-    // The popup's Yes (`0x4dfe00` to `0x4df070`): the reference searches every row, folded ones
-    // included (`0xbb71c0`), for the marked id; a hit sends and clears the mark, a miss keeps it.
+    // The popup's Yes: the reference searches every row, folded ones included, for the marked id; a
+    // hit sends and clears the mark, a miss keeps it.
     g.set(
         "AbandonQuest",
         lua.create_function(|lua, ()| {
@@ -732,7 +729,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── Reward spell and party ───────────────────────────────────────────────────────────────────
-    // `texture, name, isTradeskillSpell` (`0x4e1130`), three nils without a reward spell.
+    // `texture, name, isTradeskillSpell`, three nils without a reward spell.
     g.set(
         "GetQuestLogRewardSpell",
         lua.create_function(|lua, ()| {
@@ -791,7 +788,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // The share button enables on `GetQuestLogPushable() and GetNumPartyMembers() > 0`
     // (`QuestLogFrame.lua:301`) and clicks `QuestLogPushQuest()` (`QuestLogFrame.xml:512`), both
-    // about the selection. `GetQuestLogPushable` answers 1 or nil, never false (`0x4e12b0`).
+    // about the selection. `GetQuestLogPushable` answers 1 or nil, never false.
     g.set(
         "GetQuestLogPushable",
         lua.create_function(|lua, ()| {
@@ -808,8 +805,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "QuestLogPushQuest",
         lua.create_function(|lua, ()| {
             let mut model = crate::script::model_mut_of(lua);
-            // The verb checks the party and the sharable bit itself (`0x4e13a6`), as a macro can
-            // call it solo. The id is resolved now; a header's `quest_id` is 0 and never queues.
+            // The verb checks the party and the sharable bit itself, as a macro can call it solo.
+            // The id is resolved now; a header's `quest_id` is 0 and never queues.
             if model.party.members.is_empty() {
                 return Ok(());
             }
@@ -1140,7 +1137,7 @@ mod tests {
             40
         );
         assert_eq!(s.eval::<i64>("return GetNumQuestLogRewards()").unwrap(), 1);
-        // Five values, `isUsable` 1 or nil (`0x4e0b00`).
+        // Five values, `isUsable` 1 or nil.
         assert_eq!(s.arity("GetQuestLogRewardInfo(1)").unwrap(), 5);
         assert!(s
             .eval::<bool>(
@@ -1148,7 +1145,7 @@ mod tests {
                  return n == 'Militia Hammer' and c == 1 and q == 1 and u == 1"
             )
             .unwrap());
-        // No row answers the miss, `nil, nil, 1, 0, nil` (`0x4e0ca8`), from either getter.
+        // No row answers the miss, `nil, nil, 1, 0, nil`, from either getter.
         for call in [
             "GetQuestLogChoiceInfo(1)",
             "GetQuestLogRewardInfo(2)",
@@ -1164,7 +1161,7 @@ mod tests {
                 "{call}"
             );
         }
-        // A non-number index raises the reward getter's line from both (`0x84b6ac`).
+        // A non-number index raises the reward getter's line from both.
         for call in ["GetQuestLogRewardInfo()", "GetQuestLogChoiceInfo({})"] {
             let e = s.run(call).expect_err(call).to_string();
             assert!(
@@ -1198,7 +1195,7 @@ mod tests {
             s.eval::<String>("return GetAbandonQuestName()").unwrap(),
             "Kobold Camp Cleanup"
         );
-        // The mark is the quest id (`0x4dfb50`), not the selection: entry 2 is quest 7.
+        // The mark is the quest id, not the selection: entry 2 is quest 7.
         s.run("SelectQuestLogEntry(1); AbandonQuest()").unwrap();
         assert_eq!(s.take_quest_log_abandons(), vec![7]);
         assert!(s.take_quest_log_abandons().is_empty(), "drained");
@@ -1247,7 +1244,7 @@ mod tests {
         assert_eq!(s.eval::<i64>("return GetNumQuestWatches()").unwrap(), 0);
     }
 
-    /// The prune (`0x4de7a7` to `0x4de80f`) counts folded quests; a collapse never prunes.
+    /// The prune counts folded quests; a collapse never prunes.
     #[test]
     fn a_collapsed_header_keeps_its_quests_watched() {
         let header = |collapsed| QuestLogEntryView {
@@ -1383,7 +1380,7 @@ mod tests {
         );
     }
 
-    /// A miss keeps the mark, as `0x4df070` returns before the clear at `0x4df0cf`.
+    /// A miss keeps the mark, as the reference returns before the clear.
     #[test]
     fn abandon_mark_is_a_quest_id_that_survives_a_reindex() {
         let mut s = UiScript::new().unwrap();
@@ -1461,7 +1458,7 @@ mod tests {
         assert!(s.take_quest_log_pushes().is_empty());
     }
 
-    /// `0x4e13a6` checks the party and the sharable bit itself; each guard is tested alone.
+    /// The reference checks the party and the sharable bit itself; each guard is tested alone.
     #[test]
     fn push_refuses_solo_and_refuses_an_unsharable_quest() {
         let sharable = || {

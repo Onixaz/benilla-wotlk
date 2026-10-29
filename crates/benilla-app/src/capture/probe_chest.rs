@@ -1,6 +1,6 @@
 //! The chest live probe (`WOW_PROBE_CHEST=1`): does the player kneel at an open chest? The
-//! reference arms the loot latch in `OnLootResponse` (`0x5eb900`) as well as on the `CMSG_LOOT`
-//! send, and a chest never sends `CMSG_LOOT`.
+//! reference arms the loot latch in `OnLootResponse` as well as on the `CMSG_LOOT` send, and a
+//! chest never sends `CMSG_LOOT`.
 //!
 //! It reads the self unit's
 //! [`AnimDriver::active_anim`][crate::creature_anim::AnimDriver::active_anim] in three windows:

@@ -67,12 +67,12 @@ pub struct PropLobeLight {
 }
 
 /// The fixed-function light at world up that every lit particle of a model in a WMO room takes. A
-/// particle batch (TYPE 4, `0x70d8b0`) goes through `0x70ca50`, which binds no vertex program, so
-/// `0x70baf0` takes the device-light commit `0x71c730`: `max(N·L, 0)` over the room's committed
-/// words, not [`fold_interior_probe`]'s SH lobe. Slot 0 is the committed diffuse (`0x71c2f0`
-/// rebuilds `1.25·P − 0.25·DC`, and one directional has `P == DC`), with `N·L` 0.9 on the fixed
-/// axis; slots 1..3 are the ≤3 nearest MOLT points, diffuse only, under `1/(0.7d + 0.03d²)`.
-/// Unclamped: GL clamps the lit colour, the product, which the particle sim does.
+/// particle batch (TYPE 4) goes, which binds no vertex program, so the reference takes the
+/// device-light commit: `max(N·L, 0)` over the room's committed words, not
+/// [`fold_interior_probe`]'s SH lobe. Slot 0 is the committed diffuse (rebuilds `1.25·P − 0.25·DC`,
+/// and one directional has `P == DC`), with `N·L` 0.9 on the fixed axis; slots 1..3 are the ≤3
+/// nearest MOLT points, diffuse only, under `1/(0.7d + 0.03d²)`. Unclamped: GL clamps the lit
+/// colour, the product, which the particle sim does.
 pub fn interior_light_up(
     ambient: [f32; 3],
     diffuse: [f32; 3],
@@ -82,9 +82,9 @@ pub fn interior_light_up(
     // Toward-light, Bevy space: the axis the SH fold puts the diffuse word on.
     let axis = Vec3::new(-0.30822, 0.9, -0.30822).normalize();
     let mut lit = Vec3::from_array(ambient) + Vec3::from_array(diffuse) * axis.y.max(0.0);
-    // The ≤3 nearest: the reference's 4-entry max-heap by squared distance (`0x71bf90`) minus
-    // slot 0. Membership is the light's disk window, as in the SH fold; the reference's is
-    // `0x6a7ac0`'s radius test against the proxy's WMO instances.
+    // The ≤3 nearest: the reference's 4-entry max-heap by squared distance minus slot 0. Membership
+    // is the light's disk window, as in the SH fold; the reference's is the reference's radius test
+    // against the proxy's WMO instances.
     let mut near: Vec<(f32, &PropLobeLight)> = lights
         .iter()
         .map(|l| ((l.pos - ref_point).length(), l))
@@ -105,7 +105,7 @@ pub fn interior_light_up(
 }
 
 /// An interior light as its 7-row SH probe, each MOLR lobe windowed by its distance from
-/// `ref_point` (`0x69e1c0`: full inside `attenStart`, none past `attenEnd`, linear between).
+/// `ref_point` (: full inside `attenStart`, none past `attenEnd`, linear between).
 pub fn fold_interior_probe(
     ambient: [f32; 3],
     diffuse: [f32; 3],
@@ -135,8 +135,8 @@ pub fn fold_interior_probe(
 mod tests {
     use super::*;
 
-    /// The reference's interior leg (`0x6a7300` → `0x71bce0`/`0x71bc70` → `0x71c2f0` →
-    /// `0x71c730`) on a (70, 60, 50) floor sample: `sample/255 · (2.4·0.9 + 1.0)` per channel.
+    /// The reference's interior leg on a (70, 60, 50) floor sample: `sample/255 · (2.4·0.9 + 1.0)`
+    /// per channel.
     #[test]
     fn the_committed_interior_light_at_world_up_is_the_reference_worked_case() {
         let sample = [70.0f32, 60.0, 50.0].map(|c| c / 255.0);

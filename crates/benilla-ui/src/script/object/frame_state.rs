@@ -63,7 +63,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             None => Ok(Value::Nil),
         }
     })?;
-    // GetID/SetID (`0x775280`/`0x775340`): a plain numeric label at `+0xb0` (XML `id=`), default 0.
+    // GetID/SetID: a plain numeric label at `+0xb0` (XML `id=`), default 0.
     m.set(
         "GetID",
         lua.create_function(|lua, this: Table| {
@@ -85,11 +85,11 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // ── GetObjectType / IsObjectType, frame side (`0x7a11d0`/`0x7a1290`) ──
+    // ── GetObjectType / IsObjectType, frame side ──
     //
     // Each class's chain is a fixed list in the reference, so a table here. `ScrollingMessageFrame`
-    // derives from `Frame`, not `MessageFrame` (`0x787940`); `SimpleHTML` keeps its capitals,
-    // unlike the `SimpleHtml` variant; `Cooldown` is its own frame class (`0x5ebe70`).
+    // derives from `Frame`, not `MessageFrame`; `SimpleHTML` keeps its capitals, unlike the
+    // `SimpleHtml` variant; `Cooldown` is its own frame class (`0x5ebe70`).
     fn type_chain(kind: FrameKind) -> &'static [&'static str] {
         match kind {
             FrameKind::Frame => &["Frame", "Region"],
@@ -170,9 +170,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 
     // ── GetFrameType / IsFrameType ──
     //
-    // The frame script's own spellings of the pair above (`GetFrameType 0x773640`, `IsFrameType
-    // 0x773700`), reading the same per-class type slot: one name, or 1 or nil. An absent argument
-    // raises `Usage:` like `IsObjectType`; the reference's absent-argument branch is untraced.
+    // The frame script's own spellings of the pair above (`GetFrameType`, `IsFrameType`), reading
+    // the same per-class type slot: one name, or 1 or nil. An absent argument raises `Usage:` like
+    // `IsObjectType`; the reference's absent-argument branch is untraced.
     m.set(
         "GetFrameType",
         lua.create_function(|lua, this: Table| {
@@ -227,9 +227,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     })?;
     // ── GetChildren / GetNumChildren / GetRegions / GetNumRegions ──
     //
-    // `0x774180` / `0x774080` / `0x773f60` / `0x773e60`: link order, oldest first (both linkers,
-    // `0x76a750` and `0x76aa20`, append at the tail), hidden ones included; the list as separate
-    // values, none when empty, the count as one number. Each count shares its list's walk.
+    // Link order, oldest first (both linkers, append at the tail), hidden ones included; the list
+    // as separate values, none when empty, the count as one number. Each count shares its list's
+    // walk.
     m.set(
         "GetChildren",
         lua.create_function(|lua, this: Table| {
@@ -262,9 +262,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "GetNumRegions",
         lua.create_function(|lua, this: Table| Ok(regions_of(lua, &this)?.len()))?,
     )?;
-    // `SetParent` (`0x7a1550`): a frame, a name (`0x76c760`) or an explicit nil; an absent argument
-    // raises like an unknown name (`0x6f3400` gives -1), and so does a cycle (`0x87cb14`). As in
-    // the reference, the hide cascade runs before the move and the show cascade after it.
+    // `SetParent`: a frame, a name or an explicit nil; an absent argument raises like an unknown
+    // name, and so does a cycle. As in the reference, the hide cascade runs before the move and the
+    // show cascade after it.
     set_shared(
         lua,
         m,
@@ -288,8 +288,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     .unwrap_or_else(|| "<unnamed>".to_string())
             };
             let parent_arg = it.next();
-            // `_G[name]` is read with no guard alive and no `$parent` expansion: `0x7a1550` calls
-            // `0x76c760` directly, and only the layout path's `0x76c700` expands the token.
+            // `_G[name]` is read with no guard alive and no `$parent` expansion: the reference
+            // directly, and only the layout path's expands the token.
             let named = match &parent_arg {
                 Some(Value::String(s)) => Some(match s.to_str() {
                     Ok(n) => super::prefetch_named_target(lua, n.as_ref(), None),
@@ -315,8 +315,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             })?,
                     ),
                     Some(Value::String(_)) => {
-                        // `0x76c760` accepts only a frame (`[0xcf0c10]`), not any region
-                        // (`[0xcf0c3c]`), so a region's name fails like an absent one.
+                        // The reference accepts only a frame, not any region, so a region's name
+                        // fails like an absent one.
                         let nt = named.as_ref().expect("a String argument is prefetched");
                         let hit = super::resolve_named_target(&model, nt)
                             .and_then(|id| model.id_to_frame.get(&id).copied());
@@ -327,7 +327,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             ))
                         })?)
                     }
-                    // Absent, or any other type: the reference raises first (`0x87cb48`).
+                    // Absent, or any other type: the reference raises first.
                     _ => {
                         return Err(mlua::Error::runtime(format!(
                             "{who}:SetParent(): Couldn't find region named ''"
@@ -335,7 +335,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     }
                 }
             };
-            // The cycle guard raises (`0x7a177f`'s ancestor walk, the frame itself included).
+            // The cycle guard raises (the reference's ancestor walk, the frame itself included).
             if let Some(np) = new_parent {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
@@ -384,8 +384,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "SetFrameStrata",
         lua.create_function(|lua, (this, strata): (Table, String)| {
             let h = frame_handle_of(lua, &this)?;
-            // A name off the table raises, naming the frame or `<unnamed>` (`0x774450`), and the
-            // stratum stays.
+            // A name off the table raises, naming the frame or `<unnamed>`, and the stratum stays.
             let Some(s) = strata_from_str(&strata) else {
                 let name = lua
                     .app_data_ref::<crate::script::ModelCell>()
@@ -489,9 +488,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(model.arena.frame(h).map(|f| f.alpha).unwrap_or(1.0))
         })?,
     )?;
-    // `SetBackdrop(table|nil)` (`0x7776e0` → `0x76a5d0`) installs or removes the tiled background
-    // and 8-piece border, both white until tinted; the two colour setters tint the background and
-    // the border respectively (`0x77f410`/`0x77f440`).
+    // `SetBackdrop(table|nil)` installs or removes the tiled background and 8-piece border, both
+    // white until tinted; the two colour setters tint the background and the border respectively.
     m.set(
         "SetBackdrop",
         lua.create_function(|lua, (this, arg): (Table, Value)| {
@@ -518,10 +516,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // `GetBackdrop([table])` (`0x777370`) rebuilds the table from the stored struct: no backdrop is
-    // zero values, not nil; an omitted key reads its ctor default (files `""`, `tileSize` 0,
-    // `edgeSize` 32; `0x77e5f0`); `tile` is 1 or absent, never a boolean; a table argument is
-    // filled in place, its `insets` reused (`0x77740e`). No colour keys.
+    // `GetBackdrop([table])` rebuilds the table from the stored struct: no backdrop is zero values,
+    // not nil; an omitted key reads its ctor default (files `""`, `tileSize` 0, `edgeSize` 32);
+    // `tile` is 1 or absent, never a boolean; a table argument is filled in place, its `insets`
+    // reused. No colour keys.
     m.set(
         "GetBackdrop",
         lua.create_function(|lua, (this, target): (Table, Value)| {
@@ -651,8 +649,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             ))
         })?,
     )?;
-    // EnableKeyboard / IsKeyboardEnabled (`0x776ec0`/`0x776f90`): the flag key delivery gates on
-    // (`script::keyboard`), separate from having a handler (`0x76af00`).
+    // EnableKeyboard / IsKeyboardEnabled: the flag key delivery gates on (`script::keyboard`),
+    // separate from having a handler.
     m.set(
         "EnableKeyboard",
         lua.create_function(|lua, (this, enable): (Table, bool)| {
@@ -675,8 +673,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             ))
         })?,
     )?;
-    // EnableDrawLayer / DisableDrawLayer (`0x7755b0`/`0x775680`): the frame's layer mask. An
-    // unknown layer name is a no-op here; the reference's handling of one is untraced.
+    // EnableDrawLayer / DisableDrawLayer: the frame's layer mask. An unknown layer name is a no-op
+    // here; the reference's handling of one is untraced.
     for (name, disable) in [("EnableDrawLayer", false), ("DisableDrawLayer", true)] {
         m.set(
             name,
@@ -725,8 +723,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             ))
         })?,
     )?;
-    // Clamp-to-screen (`0x776c00`/`0x776cb0`, geometry flags bit 4): the layout resolve keeps the
-    // frame's rect inside the window, size preserved.
+    // Clamp-to-screen (geometry flags bit 4): the layout resolve keeps the frame's rect inside the
+    // window, size preserved.
     m.set(
         "SetClampedToScreen",
         lua.create_function(|lua, (this, clamp): (Table, bool)| {
@@ -858,8 +856,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Parse a `SetBackdrop` table (`0x7776e0`): exactly the reference's keys, a wrong-typed one read
-/// as absent and a missing one left at the ctor default (`edgeSize` 32); no colour keys.
+/// Parse a `SetBackdrop` table: exactly the reference's keys, a wrong-typed one read as absent and
+/// a missing one left at the ctor default (`edgeSize` 32); no colour keys.
 fn backdrop_from_table(t: &Table) -> mlua::Result<Backdrop> {
     let mut bd = Backdrop::default();
     if let Ok(Value::String(s)) = t.get::<Value>("bgFile") {
@@ -931,9 +929,8 @@ fn children_of(lua: &Lua, this: &Table) -> mlua::Result<Vec<u32>> {
 }
 
 /// The frame's region ids in link order, the one walk `GetRegions` and `GetNumRegions` share. A
-/// detached region is left out (`SetParent(nil)` unlinks it, `0x76a7f0`), and so is the title
-/// region, which never reaches the linker `0x77fd10` (`0x773910`, `0x769b79`); a Button's label
-/// and state textures are in.
+/// detached region is left out (`SetParent(nil)` unlinks it), and so is the title region, which
+/// never reaches the linker; a Button's label and state textures are in.
 fn regions_of(lua: &Lua, this: &Table) -> mlua::Result<Vec<u32>> {
     let h = frame_handle_of(lua, this)?;
     let mut model = crate::script::model_mut_of(lua);
@@ -952,10 +949,9 @@ fn regions_of(lua: &Lua, this: &Table) -> mlua::Result<Vec<u32>> {
     Ok(live.into_iter().map(|r| model.region_id(r)).collect())
 }
 
-/// One backdrop colour channel as `SetBackdropColor` (`0x777d30`) and `SetBackdropBorderColor`
-/// (`0x7780d0`) convert it: r, g, b through a bare `lua_tonumber` (nil is 0), alpha gated by
-/// `lua_isnumber` with 1.0 staged (`0x778220`, `0x778227`); clamped to 0..1 with NaN at 1, then
-/// stored as a byte, rounded half up (`×255 + 0.5`, `__ftol`).
+/// One backdrop colour channel as `SetBackdropColor` and `SetBackdropBorderColor` convert it: r, g,
+/// b through a bare `lua_tonumber` (nil is 0), alpha gated by `lua_isnumber` with 1.0 staged;
+/// clamped to 0..1 with NaN at 1, then stored as a byte, rounded half up (`×255 + 0.5`, `__ftol`).
 fn backdrop_channel(lua: &Lua, v: Option<Value>, gated: bool) -> f32 {
     let x = if gated {
         v.and_then(|v| lua.coerce_number(v).ok().flatten())

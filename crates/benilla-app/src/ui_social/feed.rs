@@ -369,8 +369,7 @@ fn who_row(entry: &WhoEntry, names: &WhoNames) -> WhoInfo {
     }
 }
 
-/// The 1-based row of a guid in the shown order, 0 when absent, as `GetSelectedFriend`
-/// (`0x5ae510`) converts it.
+/// The 1-based row of a guid in the shown order, 0 when absent, as `GetSelectedFriend` converts it.
 fn index_of(order: &[u64], guid: u64) -> u32 {
     if guid == 0 {
         return 0;

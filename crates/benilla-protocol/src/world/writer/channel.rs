@@ -32,7 +32,7 @@ impl WorldWriter {
         self.send(opcode::CMSG_CHANNEL_LIST, &messages::channel_list(name))
     }
 
-    /// Watch the channel the pane shows (`CMSG_SET_CHANNEL_WATCH`, `0x504490`).
+    /// Watch the channel the pane shows (`CMSG_SET_CHANNEL_WATCH`).
     pub fn set_channel_watch(&mut self, name: &str) -> Result<()> {
         self.send(
             opcode::CMSG_SET_CHANNEL_WATCH,

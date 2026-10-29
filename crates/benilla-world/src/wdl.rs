@@ -208,9 +208,9 @@ fn stream_wdl(
                 MeshMaterial3d(streamer.material.clone()),
                 Transform::IDENTITY,
                 WdlTile,
-                // Exterior scene: the reference's far walk `0x683040` shares the per-window
-                // populate `0x682fa0`, so a sealed room hides the horizon (`crate::exterior_cull`).
-                // One ring tile is one object, the reference's far-tier granularity.
+                // Exterior scene: the reference's far walk shares the per-window populate, so a
+                // sealed room hides the horizon (`crate::exterior_cull`). One ring tile is one
+                // object, the reference's far-tier granularity.
                 crate::exterior_cull::ExteriorScene,
             ))
             .id();
@@ -234,7 +234,7 @@ fn the_far_band_stays_a_depth_pushed_backdrop() {
     assert!(
         src.contains("const WDL_OVERLAP: f32 = 33.0;"),
         "wdl.wgsl: the far band's 33 yd overlap into the wall is gone — the coarse-vs-fine seam \
-         reopens as a hole at the horizon (the reference's far-band near plane, [0x8101b0])"
+         reopens as a hole at the horizon (the reference's far-band near plane)"
     );
     assert!(
         src.contains("out.depth = depth;") && src.contains("view_z_to_depth_ndc(-farclip)"),
@@ -243,9 +243,9 @@ fn the_far_band_stays_a_depth_pushed_backdrop() {
     );
 }
 
-/// The reference's far-band emitter submits its own fog pair, start 0 and end 1.0 (`0x6bd7ae` to
-/// `0x6bd7c8` in `0x6bd780`), so the hull is the flat fog colour at every distance. Under the scene
-/// fog the 33 yd overlap shows as a pale band at low view distances.
+/// The reference's far-band emitter submits its own fog pair, start 0 and end 1.0, so the hull is
+/// the flat fog colour at every distance. Under the scene fog the 33 yd overlap shows as a pale
+/// band at low view distances.
 #[test]
 fn the_far_band_is_a_fog_hull_not_a_fogged_surface() {
     let src = benilla_assets::materials::WDL_WGSL;

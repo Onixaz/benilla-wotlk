@@ -31,8 +31,8 @@ fn the_birds_authored_box_covers_a_flight_path_its_bind_pose_never_hints_at() {
         hi[0] - lo[0]
     );
 
-    // The reference culls on the authored sphere, `rec+0x68` = `bounding_sphere_radius × scale`
-    // (`0x682ef0` -> `0x686b80`), about 35 yd around this bird.
+    // The reference culls on the authored sphere, `rec+0x68` = `bounding_sphere_radius × scale`,
+    // about 35 yd around this bird.
     let b = parse_m2_bounds(&bytes);
     let box_x = b.bbox_max[0] - b.bbox_min[0];
     assert!(

@@ -5,17 +5,16 @@
 //! `PROBE_CHARTER: <step> PASS/FAIL/SKIP <detail>` line per step, then
 //! `PROBE_CHARTER: DONE pass=<n> fail=<m>`. Inert without the env.
 //!
-//! The registrar is Aldwin Laughlin (entry 4974, spawn guid 79681, map 0), `npc_flags` `0x601`:
-//! the buy handler wants the petitioner flag and also refuses anything that is not a tabard
-//! designer (`PetitionsHandler.cpp:44-52`). His menu 708 sends two unconditional rows, the charter
-//! at wire index 0 with icon 7 (`petition` in the reference's `0x84b7ac` table) and the tabard
-//! designer with icon 8. The charter is entry 5863, flags `0x2000` (`ITEM_FLAG_CHARTER`), no use
-//! spell, at 1000 copper (`PetitionsHandler.cpp:38`); a charter name is at most 24 characters
-//! (`ObjectMgr.h:401`), digits and spaces allowed.
+//! The registrar is Aldwin Laughlin (entry 4974, spawn guid 79681, map 0), `npc_flags` `0x601`: the
+//! buy handler wants the petitioner flag and also refuses anything that is not a tabard designer
+//! (`PetitionsHandler.cpp:44-52`). His menu 708 sends two unconditional rows, the charter at wire
+//! index 0 with icon 7 (`petition` in the reference's table) and the tabard designer with icon 8.
+//! The charter is entry 5863, flags `0x2000` (`ITEM_FLAG_CHARTER`), no use spell, at 1000 copper
+//! (`PetitionsHandler.cpp:38`); a charter name is at most 24 characters (`ObjectMgr.h:401`), digits
+//! and spaces allowed.
 //!
 //! One client cannot sign, offer or turn in a charter: that half needs other accounts. Closing the
-//! window is not asserted: closing another player's charter sends `MSG_PETITION_DECLINE`
-//! (`0x4f3f60`).
+//! window is not asserted: closing another player's charter sends `MSG_PETITION_DECLINE`.
 //!
 //! Non-combat; GM mode is left as found, every wait is bounded and the probe exits once done. How
 //! to run it is `docs/CONTRIBUTING.md`, "Running it unattended".
@@ -1048,8 +1047,8 @@ fn hop(probe: &mut CharterProbe, net: &NetCommands, now: f64) {
     probe.phase = Phase::Settling { sent_at: now };
 }
 
-/// Step 3, the icon (byte 7 is `"petition"` in the reference's `0x84b7ac` table), then step 4's
-/// select by the row's wire index, never its list position. Sets `probe.phase` on every path.
+/// Step 3, the icon (byte 7 is `"petition"` in the reference's table), then step 4's select by the
+/// row's wire index, never its list position. Sets `probe.phase` on every path.
 fn assert_icon_and_select(
     probe: &mut CharterProbe,
     gossip: &GossipState,

@@ -3,11 +3,10 @@
 //!
 //! - STOREY: a pool's wet cells over another group's floor, submerged by placement scoping alone.
 //! - OVERHANG: how far wet cells reach past their own group's XY box, up to 25 yd, which is why
-//!   benilla bounds a pool by that box's Z floor only where the reference tests the whole box
-//!   (`0x6a4e00`).
+//!   benilla bounds a pool by that box's Z floor only where the reference tests the whole box.
 //! - DRY-GROUP: a group whose `groupLiquid` names a liquid under the target's
 //!   [`benilla_formats::WmoLiquidRule`] and no MLIQ, which the reference answers with an
-//!   unconditional hit at height `FLT_MAX` (1.12.1 `0x6b9f10`, 3.3.5a `0x7c8360`).
+//!   unconditional hit at height `FLT_MAX` (3.3.5a `0x7c8360`).
 //!
 //! Output is Blizzard data: never commit it.
 

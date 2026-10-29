@@ -413,7 +413,7 @@ fn broken_instance_hover_renders_zero_durability() {
     )
     .unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
-    // Red only when broken (`0x854bc4`, colour `0xc0d390`).
+    // Red only when broken.
     let lines = super::lines_of(&mut s);
     let dur = lines
         .iter()
@@ -505,8 +505,8 @@ fn an_enchanted_instance_renders_its_enchant_line_before_durability() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Enchant colour goes by slot (`0x52ca29`): slots 0 and 1 are green for a positive id and pure
-/// red (`0xc0d398`, `ffff0000`, not the requirement `ffff2020`) for a negative one; 2..6 are white.
+/// Enchant colour goes by slot: slots 0 and 1 are green for a positive id and pure red (`ffff0000`,
+/// not the requirement `ffff2020`) for a negative one; 2..6 are white.
 #[test]
 fn enchant_line_colour_is_per_slot_and_sign() {
     let mut s = script();
@@ -583,7 +583,7 @@ fn enchant_line_colour_is_per_slot_and_sign() {
     assert_eq!(
         color_of("Cursed"),
         [1.0, 0.0, 0.0, 1.0],
-        "slot 1, id < 0 → the pure red 0xc0d398, NOT the requirement red"
+        "slot 1, id < 0 → the pure red, NOT the requirement red"
     );
     assert_eq!(
         color_of("Stamina +7"),
@@ -597,8 +597,8 @@ fn enchant_line_colour_is_per_slot_and_sign() {
     );
 }
 
-/// A temporary enchant prints one line, its countdown template (`0x52fa50`) around the name, then
-/// the charges joined by `" (%s)"`; with no `SMSG_ITEM_ENCHANT_TIME_UPDATE` it is the bare name.
+/// A temporary enchant prints one line, its countdown template around the name, then the charges
+/// joined by `" (%s)"`; with no `SMSG_ITEM_ENCHANT_TIME_UPDATE` it is the bare name.
 #[test]
 fn temporary_enchant_line_carries_its_countdown_and_charges() {
     let mut s = script();
@@ -665,11 +665,10 @@ fn temporary_enchant_line_carries_its_countdown_and_charges() {
     );
 }
 
-/// A loot hover shows the roll, never the placeholder: `SetLootItem` (`0x533470`) builds an
-/// instance block (p6 = 1) with the roll at `+0x424`, zeroed enchant slots and no object, so the
-/// builder copies the suffix row into slots 2..6 (`0x52b7e0`) and never reaches
-/// `ITEM_RANDOM_ENCHANT` (`0x52c991`). The name is the suffixed one `GetLootSlotInfo` returns
-/// (`0x5d8b00`).
+/// A loot hover shows the roll, never the placeholder: `SetLootItem` builds an instance block (p6 = 1)
+/// with the roll at `+0x424`, zeroed enchant slots and no object, so the builder copies the suffix
+/// row into slots 2..6 and never reaches `ITEM_RANDOM_ENCHANT`. The name is the suffixed one
+/// `GetLootSlotInfo` returns.
 #[test]
 fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
     let mut s = script();
@@ -753,7 +752,7 @@ fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {
 }
 
 /// A loot row with no roll shows neither enchant lines nor the placeholder, though the template can
-/// roll: the fork tests the block's presence, not its contents (`0x52c9a3`).
+/// roll: the fork tests the block's presence, not its contents.
 #[test]
 fn a_looted_item_with_no_roll_shows_neither_line_nor_placeholder() {
     let mut s = script();
@@ -798,8 +797,8 @@ fn a_looted_item_with_no_roll_shows_neither_line_nor_placeholder() {
     );
 }
 
-/// A chat link is a block source too (`SetHyperlink` `0x532181`, p6 = 1): its `|Hitem:` token 2 is
-/// the roll, `0x52b7e0` expands it into slots 2..6, and `0x52c9a3` never reaches the placeholder.
+/// A chat link is a block source too (`SetHyperlink`, p6 = 1): its `|Hitem:` token 2 is the roll,
+/// expands it into slots 2..6, and the reference never reaches the placeholder.
 #[test]
 fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
     let mut s = script();
@@ -856,8 +855,8 @@ fn a_linked_roll_shows_its_lines_and_never_the_placeholder() {
     );
 }
 
-/// `ITEM_RANDOM_ENCHANT` (`0x52cc33`) prints, green, only for a random-property item with no
-/// instance to read a roll from; an instance's known roll prints its slot lines instead.
+/// `ITEM_RANDOM_ENCHANT` prints, green, only for a random-property item with no instance to read a
+/// roll from; an instance's known roll prints its slot lines instead.
 #[test]
 fn random_property_template_hover_shows_the_placeholder() {
     let mut s = script();

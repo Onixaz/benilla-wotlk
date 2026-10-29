@@ -1,7 +1,6 @@
-//! The player's own cast state: the pending cast (`SPELLCAST` at `0xceac48` and the inflight id
-//! `0xceca88`), the queued on-next-swing strike, the running channel (`0xceac58`), the
-//! auto-repeat key (`0xceac30`), and the local abort on a move, jump or Esc (`AbortCast
-//! 0x6e4940`).
+//! The player's own cast state: the pending cast (`SPELLCAST` and the inflight id), the queued
+//! on-next-swing strike, the running channel, the auto-repeat key, and the local abort on a move,
+//! jump or Esc (`AbortCast`).
 
 use std::time::{Duration, Instant};
 
@@ -25,10 +24,10 @@ const ITEM_SEND_PROVISIONAL: Duration = Duration::from_millis(1_500);
 /// delays (`SMSG_SPELL_DELAYED`) still guards past its stretched end.
 const CAST_SLACK: Duration = Duration::from_secs(2);
 
-/// Our outstanding cast, armed at send. `TryCast 0x6e4b60` refuses a second cast while the
-/// inflight id `0xceca88` is set: the same spell bails silently (`0x6e4d43`), another errors 0x61
-/// (`0x6e4d97`) unless the inflight spell is on-next-swing (`Attributes & 0x404`). On-next-swing
-/// spells arm [`QueuedMeleeSpell`] instead, so this guard needs no attribute test.
+/// Our outstanding cast, armed at send. `TryCast` refuses a second cast while the inflight id is
+/// set: the same spell bails silently, another errors 0x61 unless the inflight spell is
+/// on-next-swing (`Attributes & 0x404`). On-next-swing spells arm [`QueuedMeleeSpell`] instead, so
+/// this guard needs no attribute test.
 ///
 /// Cleared by the cast's resolution (`SMSG_SPELL_GO`, a failing `SMSG_CAST_RESULT`,
 /// `SMSG_SPELL_FAILED_OTHER`), keyed on the spell id, or by [`local_self_cancel`]; `deadline`
@@ -40,9 +39,9 @@ struct PendingCastState {
     spell_id: u32,
     deadline: Instant,
     /// This record refuses the next press, lights the in-flight ring and gates the by-name walk:
-    /// ordinary casts and item uses. The reference writes `0xceca88` for every committed cast
-    /// (`0x6e5026`) and discriminates at the gate instead; a ranged shot is recorded here without
-    /// guarding, so the `modalNextSpell` test (`0x6e7408`) still matches it.
+    /// ordinary casts and item uses. The reference writes for every committed cast and
+    /// discriminates at the gate instead; a ranged shot is recorded here without guarding, so the
+    /// `modalNextSpell` test still matches it.
     guards: bool,
 }
 
@@ -54,8 +53,8 @@ impl PendingCast {
             .is_some_and(|p| p.guards && now < p.deadline)
     }
 
-    /// The reference's `0xceca88`: the last committed, unresolved cast of any class, which
-    /// `HandleCastResult 0x6e7330` tests at `0x6e7408` before reading `modalNextSpell`.
+    /// The reference's: the last committed, unresolved cast of any class, which `HandleCastResult`
+    /// tests before reading `modalNextSpell`.
     pub(crate) fn committed(&self, now: Instant) -> Option<u32> {
         self.0
             .as_ref()
@@ -71,7 +70,7 @@ impl PendingCast {
             .map(|p| p.spell_id)
     }
 
-    /// Arm at send, the client's `0xceca88` write; a ranged shot passes `guards = false`.
+    /// Arm at send, the client's write; a ranged shot passes `guards = false`.
     pub(crate) fn arm(&mut self, spell_id: u32, now: Instant, guards: bool) {
         self.0 = Some(PendingCastState {
             spell_id,
@@ -80,9 +79,8 @@ impl PendingCast {
         });
     }
 
-    /// Arm on an item use: the client's item use (`0x5d9258`) goes through `TryCast 0x6e4b60`
-    /// via `0x6e5a90`, so it writes the same inflight id and meets the same gate. Only the
-    /// deadline differs.
+    /// Arm on an item use: the client's item use goes through `TryCast`, so it writes the same
+    /// inflight id and meets the same gate. Only the deadline differs.
     pub(crate) fn arm_item(&mut self, spell_id: u32, now: Instant) {
         self.0 = Some(PendingCastState {
             spell_id,
@@ -115,18 +113,16 @@ impl PendingCast {
 }
 
 /// Our queued on-next-swing spell (Heroic Strike, Cleave: `Attributes & 0x404`). The reference
-/// keeps it in the inflight id `0xceca88`, and a new cast nests around it (`PushPopNestedCast
-/// 0x6e4ad0`); this second slot beside [`PendingCast`] gives the same observable.
+/// keeps it in the inflight id, and a new cast nests around it (`PushPopNestedCast`); this second
+/// slot beside [`PendingCast`] gives the same observable.
 ///
-/// No deadline: cleared, keyed on the id, by `SMSG_SPELL_GO` when the swing fires or by the
-/// failing `SMSG_CAST_RESULT` and `SMSG_SPELL_FAILED_OTHER` vmangos sends when the melee slot
-/// dies. The reference clears it on a matching `SMSG_CAST_RESULT` alone (`0x6e7330`; its GO
-/// handler never touches `0xceca88`); vmangos sends the OK result just before the GO
-/// (`Spell.cpp:3681`, `Spell.cpp:3715`). A re-arm replaces it (the server's one
-/// `CURRENT_MELEE_SPELL`). Re-pressing the queued spell bails silently (`0x6e4d43`); it un-queues
-/// through the StopAttack chain (`0x5ecac0`, `CancelQueuedCast 0x6e6f30`), which an auto-repeat
-/// press also runs (`0x6e5976`), or through Esc, which cancels it as the inflight spell
-/// (`SpellStopCasting 0x6e6e80`).
+/// No deadline: cleared, keyed on the id, by `SMSG_SPELL_GO` when the swing fires or by the failing
+/// `SMSG_CAST_RESULT` and `SMSG_SPELL_FAILED_OTHER` vmangos sends when the melee slot dies. The
+/// reference clears it on a matching `SMSG_CAST_RESULT` alone (its GO handler never touches);
+/// vmangos sends the OK result just before the GO (`Spell.cpp:3681`, `Spell.cpp:3715`). A re-arm
+/// replaces it (the server's one `CURRENT_MELEE_SPELL`). Re-pressing the queued spell bails
+/// silently; it un-queues through the StopAttack chain (`CancelQueuedCast`), which an auto-repeat
+/// press also runs, or through Esc, which cancels it as the inflight spell (`SpellStopCasting`).
 #[derive(Resource, Default)]
 pub(crate) struct QueuedMeleeSpell(Option<u32>);
 
@@ -146,14 +142,14 @@ impl QueuedMeleeSpell {
     }
 }
 
-/// What the reference's one inflight id `0xceca88` holds, joined from our two slots: `IsCasting
-/// 0x6e3d30` and `AbortCast 0x6e4940` treat a cast and a queued strike alike.
+/// What the reference's one inflight id holds, joined from our two slots: `IsCasting` and
+/// `AbortCast` treat a cast and a queued strike alike.
 ///
-/// A cast started over a queued strike pushes it into the save `0xcecaa8` (`0x6e5026`), so the
-/// cast comes first and the first Esc takes it, the second the strike. Deviation: the reference's
-/// second Esc re-asserts the strike from the save it never clears (`0x6e4b2c`), where ours clears,
-/// because vmangos drops the melee slot on the first cancel whatever its id
-/// (`HandleCancelCastOpcode`) and both clients converge on that echo.
+/// A cast started over a queued strike pushes it into the save, so the cast comes first and the
+/// first Esc takes it, the second the strike. Deviation: the reference's second Esc re-asserts the
+/// strike from the save it never clears, where ours clears, because vmangos drops the melee slot on
+/// the first cancel whatever its id (`HandleCancelCastOpcode`) and both clients converge on that
+/// echo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Inflight {
     /// An ordinary cast, with a guard, a bar and a `Casting` to reap.
@@ -190,8 +186,8 @@ pub(crate) fn inflight(
 /// Slack past the named channel end, so a lost `MSG_CHANNEL_UPDATE(0)` cannot pin the ring on.
 const CHANNEL_SLACK: Duration = Duration::from_secs(2);
 
-/// Our running channel, the client's `0xceac58`: `IsCurrentAction 0x4e53a0` keeps a channeled
-/// spell's button checked while it runs. `MSG_CHANNEL_UPDATE(0)` ends it, finished or interrupted.
+/// Our running channel, the client's: `IsCurrentAction` keeps a channeled spell's button checked
+/// while it runs. `MSG_CHANNEL_UPDATE(0)` ends it, finished or interrupted.
 #[derive(Resource, Default)]
 pub(crate) struct ActiveChannel(Option<(u32, Instant)>);
 
@@ -220,17 +216,15 @@ impl ActiveChannel {
     }
 }
 
-/// The live auto-repeat spell, the client's `0xceac30`: set at cast send (`0x6e54f0`) for
-/// `AttributesEx2 & 0x20`, cleared by `SMSG_CANCEL_AUTO_REPEAT` (`0x6ea080`) and a matching cast
-/// failure. `IsAutoRepeatAction` and the button flash read it; the sticky
-/// `creature_anim::AutoRepeatArmed` is the idle gate.
+/// The live auto-repeat spell, the client's: set at cast send for `AttributesEx2 & 0x20`, cleared
+/// by `SMSG_CANCEL_AUTO_REPEAT` and a matching cast failure. `IsAutoRepeatAction` and the button
+/// flash read it; the sticky `creature_anim::AutoRepeatArmed` is the idle gate.
 #[derive(Resource, Default)]
 pub(crate) struct AutoRepeatActive(pub Option<u32>);
 
-/// The per-spell movement gates of the local self-cancel, tested at `0x51511e` and `0x515175`.
-/// The move keybinds' dispatcher `0x515090` cancels on mask `0x10f0` (forward, back, strafe,
-/// autorun; not turn or pitch) and `Script::Jump 0x513bd0` likewise, both calling `AbortCast`
-/// for `CMSG_CANCEL_CAST` and the cast's end events.
+/// The per-spell movement gates of the local self-cancel, tested. The move keybinds' dispatcher
+/// cancels on mask `0x10f0` (forward, back, strafe, autorun; not turn or pitch) and `Script::Jump`
+/// likewise, both calling `AbortCast` for `CMSG_CANCEL_CAST` and the cast's end events.
 pub(crate) const SPELL_INTERRUPT_MOVEMENT: u32 = 0x1; // SpellRec+0x54 InterruptFlags (SPELL_INTERRUPT_FLAG_MOVEMENT)
 const CHANNEL_INTERRUPT_MOVING: u32 = 0x8; // SpellRec+0x5c ChannelInterruptFlags (AURA_INTERRUPT_MOVING_CANCELS)
 
@@ -239,16 +233,16 @@ const CHANNEL_INTERRUPT_MOVING: u32 = 0x8; // SpellRec+0x5c ChannelInterruptFlag
 #[derive(Resource, Default)]
 pub(crate) struct LocalMoveStart(pub(crate) bool);
 
-/// The client's local cancel on a move, jump or Esc mid-cast (`AbortCast 0x6e4940`):
+/// The client's local cancel on a move, jump or Esc mid-cast (`AbortCast`):
 ///
-/// - Esc first stops a running auto-repeat (`SpellStopCasting 0x6e6e80`, then `0x6ea080`),
-///   and that spends the press; the cast survives to the next one.
+/// - Esc first stops a running auto-repeat (`SpellStopCasting`), and that spends the press; the
+///   cast survives to the next one.
 /// - The cast: `CMSG_CANCEL_CAST`, the self `Casting` reaped with a `Fail` cast event, and the
 ///   running cast ended interrupted ([`CastBarEdge::Cancelled`]). Movement tests the spell's
 ///   `InterruptFlags`; Esc does not.
-/// - The channel, on movement only: `CMSG_CANCEL_CHANNELLING` (`0x6e9b70`) and nothing local;
-///   the bar and [`ActiveChannel`] close on `MSG_CHANNEL_UPDATE(0)` (`0x6e75f0`). Esc cannot
-///   stop a channel: `0x6e6e80` never calls `0x6e9b70`, and the inflight id is 0 mid-channel.
+/// - The channel, on movement only: `CMSG_CANCEL_CHANNELLING` and nothing local; the bar and
+///   [`ActiveChannel`] close on `MSG_CHANNEL_UPDATE(0)`. Esc cannot stop a channel: the reference
+///   never calls, and the inflight id is 0 mid-channel.
 ///
 /// 12340's cancel (`0x806200`) ends the cast through `0x7fecc0` itself, so `INTERRUPTED` and
 /// `STOP` fire before the server's `SMSG_SPELL_FAILURE` echo, which the bar then ignores.
@@ -278,7 +272,7 @@ pub(crate) struct SelfCancel<'w, 's> {
 }
 
 impl SelfCancel<'_, '_> {
-    /// `SpellStopCasting()` (`0x6e6e80`), the ESC chain's cast rung.
+    /// `SpellStopCasting()`, the ESC chain's cast rung.
     pub(crate) fn stop_casting(&mut self) {
         self.cancel(true, false);
     }
@@ -301,7 +295,7 @@ impl SelfCancel<'_, '_> {
         } = self;
         let now = Instant::now();
         let self_e = self_guid.0.as_ref().and_then(|g| index.0.get(g)).copied();
-        // Esc stops one thing, auto-repeat first (`0x6e6e80`).
+        // Esc stops one thing, auto-repeat first.
         let esc = if esc && auto_repeat.0.is_some() {
             if *crate::net::CAST_TRACE {
                 info!("cast-trace: LOCAL auto-repeat self-cancel (esc), CMSG_CANCEL_AUTO_REPEAT_SPELL");
@@ -369,7 +363,7 @@ impl SelfCancel<'_, '_> {
                 }
             }
         }
-        // The channel: movement only, and the send only (`0x6e9b70`).
+        // The channel: movement only, and the send only.
         if moved {
             if let Some(spell_id) = channel.current(now) {
                 if flags_open(
@@ -392,9 +386,8 @@ mod tests {
 
     const FIREBALL: u32 = 133;
 
-    /// A channel whose bar is suppressed still arms [`ActiveChannel`]: the reference writes
-    /// `0xceac58` at cast send (`0x6e4f88`) and the channel-start handler `0x6e7550` never
-    /// touches it.
+    /// A channel whose bar is suppressed still arms [`ActiveChannel`]: the reference writes at cast
+    /// send and the channel-start handler never touches it.
     #[test]
     fn suppressing_the_channel_bar_does_not_clear_the_channel_mirror() {
         let t0 = Instant::now();
@@ -621,7 +614,7 @@ mod tests {
             );
         }
 
-        /// `InterruptFlags` without the movement bit keeps casting (`0x51511e`).
+        /// `InterruptFlags` without the movement bit keeps casting.
         #[test]
         fn the_interrupt_flags_gate_spares_a_movement_castable_spell() {
             let (mut app, rx) = harness(HashMap::from([(
@@ -743,7 +736,7 @@ mod tests {
             );
         }
 
-        /// `SpellStopCasting` (`0x6e6e80`) stops the auto-repeat first and spends the press.
+        /// `SpellStopCasting` stops the auto-repeat first and spends the press.
         #[test]
         fn esc_cancels_the_auto_repeat_first_and_the_cast_on_the_next_press() {
             const AUTO_SHOT: u32 = 75;
@@ -804,8 +797,8 @@ mod tests {
             );
         }
 
-        /// Esc with a strike queued cancels it and returns 1 (`IsCasting 0x6e3d30` is true), so
-        /// the Esc ladder stops before `ClearTarget()`.
+        /// Esc with a strike queued cancels it and returns 1 (`IsCasting` is true), so the Esc
+        /// ladder stops before `ClearTarget()`.
         #[test]
         fn esc_unqueues_a_strike_and_eats_the_press() {
             let (mut app, rx) = harness(HashMap::from([(
@@ -875,8 +868,8 @@ mod tests {
             );
         }
 
-        /// A cast nested over a queued strike (`PushPopNestedCast 0x6e4ad0`) dies on the first
-        /// Esc, the strike on the second; this pins the local order only.
+        /// A cast nested over a queued strike (`PushPopNestedCast`) dies on the first Esc, the
+        /// strike on the second; this pins the local order only.
         #[test]
         fn esc_takes_the_cast_first_and_the_strike_on_the_next_press() {
             let (mut app, rx) = harness(HashMap::new());
@@ -932,7 +925,7 @@ mod tests {
             assert_eq!(app.world().resource::<QueuedMeleeSpell>().current(), None);
         }
 
-        /// `0x6e9b70` sends the cancel and fires no event, clearing nothing local.
+        /// The reference sends the cancel and fires no event, clearing nothing local.
         #[test]
         fn a_move_edge_mid_channel_sends_the_cancel_and_touches_nothing_local() {
             let (mut app, rx) = harness(HashMap::from([(

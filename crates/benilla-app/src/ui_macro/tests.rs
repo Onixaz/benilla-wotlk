@@ -70,9 +70,8 @@ fn ui() -> UiScript {
     crate::ui_script::test_ui::stock_ui(1024.0, 768.0)
 }
 
-/// One `EXECUTE_CHAT_LINE` per non-empty line, in order (`0x4f14e0`), which `ChatFrame_OnEvent`
-/// sends through the edit box (`ChatFrame.lua`): a macro line lands where a typed one
-/// does.
+/// One `EXECUTE_CHAT_LINE` per non-empty line, in order, which `ChatFrame_OnEvent` sends through
+/// the edit box (`ChatFrame.lua`): a macro line lands where a typed one does.
 #[test]
 fn running_a_macro_runs_its_lines_through_the_references_edit_box() {
     benilla_formats::wow_data_or_skip!();
@@ -209,7 +208,7 @@ fn a_registered_frame_sees_every_macro_line_as_an_event() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The reference's tokenizer (`0x64ae50`) splits on either `\r` or `\n`.
+/// The reference's tokenizer splits on either `\r` or `\n`.
 #[test]
 fn either_line_ending_splits_a_body() {
     benilla_formats::wow_data_or_skip!();

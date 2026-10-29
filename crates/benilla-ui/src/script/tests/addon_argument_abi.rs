@@ -1,7 +1,6 @@
-//! The `index or "name"` prologue of `GetAddOnInfo 0x48e390`, `GetAddOnMetadata 0x48e530`,
-//! `GetAddOnDependencies 0x48e5e0`, `EnableAddOn 0x48e690`, `DisableAddOn 0x48e760`,
-//! `IsAddOnLoadOnDemand 0x48e840`, `IsAddOnLoaded 0x48e8e0` and `LoadAddOn 0x48e980`; both its
-//! raises are `luaL_error` (`0x6f4940`), which does not return.
+//! The `index or "name"` prologue of `GetAddOnInfo`, `GetAddOnMetadata`, `GetAddOnDependencies`,
+//! `EnableAddOn`, `DisableAddOn`, `IsAddOnLoadOnDemand`, `IsAddOnLoaded` and `LoadAddOn`; both its
+//! raises are `luaL_error`, which does not return.
 
 use crate::script::{AddOnInfo, UiScript};
 
@@ -40,7 +39,7 @@ fn raised(s: &UiScript, call: &str) -> String {
     .unwrap()
 }
 
-/// The client's own literals (`.data` `0x842d68` to `0x842e98`); addons see the spelling.
+/// The client's own literals (`.data`); addons see the spelling.
 #[test]
 fn a_bad_argument_type_raises_each_verbs_own_usage_string() {
     let s = seeded();
@@ -80,12 +79,12 @@ fn a_bad_argument_type_raises_each_verbs_own_usage_string() {
             raised(&s, call)
         );
     }
-    // The second argument's own `lua_isstring` (`0x48e59c`) fails onto the same raise.
+    // The second argument's own `lua_isstring` fails onto the same raise.
     assert!(raised(&s, "GetAddOnMetadata(1)").contains("Usage: GetAddOnMetadata"));
 }
 
-/// `"AddOn index must be in the range of 1 to %d"` (`0x837d70`, `%d` from `0x51def0()`). The
-/// bound is unsigned (`0x51df00 cmp ecx,[0xbe1b90]; jb`): 0 wraps to `0xFFFFFFFF` and raises.
+/// `"AddOn index must be in the range of 1 to %d"` (`%d`). The bound is unsigned: 0 wraps to
+/// `0xFFFFFFFF` and raises.
 #[test]
 fn an_out_of_range_index_raises_with_the_registrys_own_count() {
     let s = seeded();
@@ -100,7 +99,7 @@ fn an_out_of_range_index_raises_with_the_registrys_own_count() {
         "LoadAddOn",
     ] {
         for arg in ["0", "3", "-1", "2.9"] {
-            // 2.9 truncates to 2 (`_ftol 0x40a2b0`), which is in range.
+            // 2.9 truncates to 2 (`_ftol`), which is in range.
             let got = raised(&s, &format!("{verb}({arg})"));
             if arg == "2.9" {
                 assert!(!got.contains("must be in the range"), "{verb}(2.9): {got}");
@@ -112,7 +111,7 @@ fn an_out_of_range_index_raises_with_the_registrys_own_count() {
     assert!(raised(&s, "GetAddOnMetadata(3, \"Version\")").contains(want));
 }
 
-/// `lua_isnumber` (`0x6f34d0`) coerces a numeric string, so the index arm claims it first.
+/// `lua_isnumber` coerces a numeric string, so the index arm claims it first.
 #[test]
 fn a_numeric_string_takes_the_index_arm() {
     let s = seeded();
@@ -124,7 +123,7 @@ fn a_numeric_string_takes_the_index_arm() {
     assert!(raised(&s, r#"GetAddOnInfo("9")"#).contains("must be in the range"));
 }
 
-/// A name miss echoes the caller's string (`0x48e401`); only an index is existence-checked.
+/// A name miss echoes the caller's string; only an index is existence-checked.
 #[test]
 fn an_unknown_name_echoes_itself_rather_than_a_placeholder_literal() {
     let s = seeded();

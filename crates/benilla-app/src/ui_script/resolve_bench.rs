@@ -425,7 +425,7 @@ fn a_tooltip_line_flipping_wrapped_to_plain_costs_no_graph_derivation() {
         FlipOwner:SetWidth(10); FlipOwner:SetHeight(10)
         flip_n = 0
         -- The two shapes a hover alternates between. The trailing `1` on the wrap arm is
-        -- `AddLine`'s positional wrapText flag (the byte-pinned 0x531630 signature) — it is what
+        -- `AddLine`'s positional wrapText flag — it is what
         -- pins the line's wrap column, and what un-pins it again on the plain arm.
         function flip_change()
             flip_n = flip_n + 1
@@ -583,7 +583,7 @@ fn an_action_bar_hover_sweep_costs_no_graph_derivation() {
     assert_eq!(
         derives, 0,
         "24 action-bar hovers derived the layout graph {derives} times. `SetOwner`'s ANCHOR_NONE \
-         arm clears the anchors (`0x52fec2 call 0x767ed0`), and so does the `ClearAllPoints()` \
+         arm clears the anchors, and so does the `ClearAllPoints()` \
          on `GameTooltip_SetDefaultAnchor`'s next line: each is a retarget to the EMPTY target \
          set and must name its node like any other."
     );

@@ -88,10 +88,10 @@ fn force_speed_change_parses_and_ack_body_golden() {
     assert_eq!(SpeedKind::TurnRate.ack_opcode(), 0x02DF);
 }
 
-/// The knockback and its ack: `SMSG_MOVE_KNOCK_BACK` orders the launch vcos, vsin, speedXY,
-/// speedZ; the ack's jump tail orders it zspeed, sin, cos, xyspeed, and the server rejects a
-/// mismatched ack. speedZ is down-positive: the reference stores it as-is (`0x7c61f0`) where a
-/// jump stores -7.955547, so -12 throws the body up.
+/// The knockback and its ack: `SMSG_MOVE_KNOCK_BACK` orders the launch vcos, vsin, speedXY, speedZ;
+/// the ack's jump tail orders it zspeed, sin, cos, xyspeed, and the server rejects a mismatched
+/// ack. speedZ is down-positive: the reference stores it as-is where a jump stores -7.955547, so
+/// -12 throws the body up.
 #[test]
 fn knock_back_parses_and_ack_body_golden() {
     // Packed guid 8, counter 7, then vcos 0.6, vsin 0.8, speedXY 25, speedZ -12.
@@ -162,8 +162,8 @@ fn a_misframed_batch_errors_rather_than_dropping_moves() {
 }
 
 /// The twelve `SMSG_SPLINE_MOVE_*` opcodes (reference dispatch `0x304..=0x31A`, root at `0x31A`):
-/// the body is a bare packed guid with no counter, and `SET_RUN_MODE` clears
-/// `MOVEFLAG_WALK_MODE`, because the reference (`0x617e80`) passes its bool to `SetRunMode`.
+/// the body is a bare packed guid with no counter, and `SET_RUN_MODE` clears `MOVEFLAG_WALK_MODE`,
+/// because the reference passes its bool to `SetRunMode`.
 #[test]
 fn spline_move_mode_family_parses_golden() {
     use benilla_protocol::messages::SplineMode;

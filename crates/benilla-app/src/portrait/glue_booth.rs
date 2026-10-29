@@ -32,8 +32,8 @@ pub(crate) const GLUE_SLOT: &str = "glue";
 const GLUE_SIZE: u32 = 1024;
 
 /// The create screen's look: race, sex, class and the five appearance dials. The body wears the
-/// (race, class, sex) `CharStartOutfit`, so a class change re-dresses it (reference: `SelectClass`
-/// `0x470f50` → `0x470800`).
+/// (race, class, sex) `CharStartOutfit`, so a class change re-dresses it (reference:
+/// `SelectClass`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct CreateLook {
     pub(crate) race: u8,
@@ -184,8 +184,8 @@ impl GlueScene {
         }
     }
 
-    /// A race's stage, `GetCreateBackgroundModel`'s (`0x4e0360`): Gnome stands in Dwarf's, Troll
-    /// in Orc's, every other race in its `ChrRaces` file name's.
+    /// A race's stage, `GetCreateBackgroundModel`'s: Gnome stands in Dwarf's, Troll in Orc's, every
+    /// other race in its `ChrRaces` file name's.
     pub(crate) fn of_race(race: u8) -> Self {
         match race {
             2 | 8 => GlueScene::Orc,
@@ -233,7 +233,7 @@ impl GlueScene {
     }
 }
 
-/// A scene's fog: the colour and the span the fog fill callback (`0x76d680`) reads off the pane.
+/// A scene's fog: the colour and the span the fog fill callback reads off the pane.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) struct SceneFog {
     pub(crate) rgb: [f32; 3],
@@ -241,11 +241,11 @@ pub(crate) struct SceneFog {
     pub(crate) far: f32,
 }
 
-/// The glue screens' input to the booth: the scene (`None` tears the booth down), the standing
-/// look (`None` for an empty stage), the yaw in radians, which create resets to the reference's
-/// −15° and select to 0 (a yaw change never re-bakes), and the scene's fog. The fog is the
-/// pane's while the scene holds the fog fill callback `Model:SetModel` installs (`0x76d680`), and
-/// none once `SetCharSelectBackground` put the select screen's in its place (`0x472150`).
+/// The glue screens' input to the booth: the scene (`None` tears the booth down), the standing look
+/// (`None` for an empty stage), the yaw in radians, which create resets to the reference's −15° and
+/// select to 0 (a yaw change never re-bakes), and the scene's fog. The fog is the pane's while the
+/// scene holds the fog fill callback `Model:SetModel` installs, and none once
+/// `SetCharSelectBackground` put the select screen's in its place.
 #[derive(Resource)]
 pub(crate) struct GluePreview {
     pub(crate) scene: Option<GlueScene>,
@@ -256,10 +256,10 @@ pub(crate) struct GluePreview {
     /// from the top-left ([`super::framing::stock_pane_view`]); `None` frames pane-less.
     pub(crate) pane: Option<[f32; 4]>,
     /// The stage's instance: a change starts the scene over, as each `SetModel` makes a new
-    /// instance (`0x76cce0`), the same file included.
+    /// instance, the same file included.
     pub(crate) stage: u64,
-    /// Bumped as a glue screen's scene shows: the `ModelFFX`'s OnShow pins the glow back to
-    /// 0.30 (`0x46fa60`), which nothing else does ([`sync_glue_ffx`]).
+    /// Bumped as a glue screen's scene shows: the `ModelFFX`'s OnShow pins the glow back to 0.30,
+    /// which nothing else does ([`sync_glue_ffx`]).
     pub(crate) shown: u64,
     /// The pane's custom light sets ([`benilla_ui::script::GlueScenePane::lights`]).
     pub(crate) lights: PaneLights,
@@ -315,14 +315,14 @@ pub(crate) struct CreateScene {
     /// scene, so the box never moves on a race change.
     viewport_aspect: Option<f32>,
     /// The character's stage spot, scene attachment 0 in Bevy model space (`ZERO` with no scene);
-    /// the body seats on attachment 0 at select too (`0x473039`).
+    /// the body seats on attachment 0 at select too.
     char_spot: Vec3,
     /// The stage's authored frame, attachment 0's bone rotation and uniform scale
     /// ([`stage_frame`]); identity and 1.0 with no scene.
     char_facing: Quat,
     char_scale: f32,
-    /// The pet's spot, scene attachment 1 (`0x47306b` seats the secondary model there). Every
-    /// `UI_*` scene authors exactly attachments 0 and 1, both on parentless root bones.
+    /// The pet's spot, scene attachment 1 (seats the secondary model there). Every `UI_*` scene
+    /// authors exactly attachments 0 and 1, both on parentless root bones.
     pet_root: Entity,
     pet_spot: Vec3,
     /// Attachment 1's bone frame, read like [`Self::char_facing`]. UI_Human's holds the same
@@ -624,11 +624,10 @@ pub(crate) struct PreviewEffects {
     pub(crate) emitters: Vec<benilla_assets::ModelEmitter>,
 }
 
-/// The select screen's ghost treatment of the body, applied by the reference at `0x4727f0` for a
-/// record with `CHARSELECT+0xfc & 0x2000`: `SpellVisualKit` 989 (`0x47280f`), the state kit of
-/// spell 8326 "Ghost" that the world ghost rides, resolved through
-/// [`crate::aura_visual::node_for`]. There is no ramp: the world's 1000 ms alpha ease
-/// (`0x614f80`) is never reached, and the values go straight through `0x710cb0`/`0x710cf0`.
+/// The select screen's ghost treatment of the body, applied by the reference for a record with
+/// `CHARSELECT+0xfc & 0x2000`: `SpellVisualKit` 989, the state kit of spell 8326 "Ghost" that the
+/// world ghost rides, resolved through [`crate::aura_visual::node_for`]. There is no ramp: the
+/// world's 1000 ms alpha ease is never reached, and the values go straight.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(crate) struct GhostKit {
     /// The whole-model modulate colour (CharProc 1, `cc+0x184..0x18c`).
@@ -649,7 +648,7 @@ pub(crate) struct GluePreviewBake {
     pub(crate) effects: Vec<PreviewEffects>,
     /// The look's camera-facing batches ([`PreviewBillboard`]), faced to the booth camera.
     pub(crate) billboards: Vec<PreviewBillboard>,
-    /// Per-hand weapon grip `[right, left]`, closing into `HandsClosed` (`CloseHand` `0x479660`).
+    /// Per-hand weapon grip `[right, left]`, closing into `HandsClosed` (`CloseHand`).
     pub(crate) grip: [bool; 2],
     /// The selection's ghost kit ([`GhostKit`]); its effect models are already in the lists above.
     pub(crate) ghost: Option<GhostKit>,
@@ -670,7 +669,7 @@ pub(crate) struct GluePetBake {
     pub(crate) emitters: Vec<benilla_assets::ModelEmitter>,
     /// The render scale, the `CreatureFamily` level ramp
     /// ([`benilla_formats::CreatureFamily::scale_at`]): the reference overwrites the display's
-    /// scale product with it (`0x472e87`). The glue pet has no wire object to carry a scale.
+    /// scale product with it. The glue pet has no wire object to carry a scale.
     pub(crate) scale: f32,
     pub(crate) revision: u64,
 }
@@ -707,8 +706,8 @@ pub(super) fn spawn_glue_booth(
             ..default()
         },
         bevy::camera::RenderTarget::Image(image.clone().into()),
-        // The reference's glue FFX pass pair around the scene (`0x46fad3`/`0x46fae0`); the
-        // GlueXML frames draw over it, so a ghost selection tints the scene and not the UI.
+        // The reference's glue FFX pass pair around the scene; the GlueXML frames draw over it, so
+        // a ghost selection tints the scene and not the UI.
         benilla_world::ffx_glow::FfxGlow::GLUE_SCENE,
         // Placeholder: `sync_glue_booth` sets transform and projection on the first bake.
         Projection::from(bevy::camera::PerspectiveProjection {
@@ -748,7 +747,7 @@ pub(super) fn spawn_glue_booth(
     let scene_root = commands
         .spawn((Transform::IDENTITY, Visibility::Visible, layer.clone()))
         .id();
-    // The pet's root never yaws: the reference's facing call turns only the character (`0x4730e0`).
+    // The pet's root never yaws: the reference's facing call turns only the character.
     let pet_root = commands
         .spawn((Transform::IDENTITY, Visibility::Visible, layer))
         .id();
@@ -758,17 +757,16 @@ pub(super) fn spawn_glue_booth(
 /// Drive the glue FFX state ([`benilla_world::ffx_glow::GlueFfx`]) off the live look: the pass
 /// installed and the pinned `LightParams.glow`.
 ///
-/// | look | reference | pass | glow |
+/// | look | written by | pass | glow |
 /// |---|---|---|---|
-/// | none, from the show (login) | `CSimpleModelFFX::OnShow 0x46fa60` | glow | `*0x8380b4` 0.30 |
-/// | a create look | same, no select build runs | glow | 0.30 |
-/// | a living select record | `0x472ff7`/`0x473002` | glow | `*0x838574` 0.40 |
-/// | a ghost select record | `0x472fde`/`0x472fe9` | death | `*0x838570` 0.15 |
+/// | none, from the show (login) | the pane's `OnShow` | glow | 0.30 |
+/// | a create look | the same, no select build runs | glow | 0.30 |
+/// | a living select record | the select build | glow | 0.40 |
+/// | a ghost select record | the select build | death | 0.15 |
 ///
-/// Only the OnShow and a select build write it. A select scene with nobody standing keeps what
-/// the last build wrote: the list ask (`0x4723d0`), the teardown (`0x472580`) and the load
-/// (`0x4724d0`) never touch it, and an empty account's build exits before it (`0x472950` is gated
-/// `-1 ≤ [0x83856c] < [0xb42140]`). The screen's show ([`GluePreview::shown`]) puts it back.
+/// Only the OnShow and a select build write it. A select scene with nobody standing keeps what the
+/// last build wrote: the list ask, the teardown and the load never touch it, and an empty account's
+/// build exits before it. The screen's show ([`GluePreview::shown`]) puts it back.
 pub(super) fn sync_glue_ffx(
     preview: Res<GluePreview>,
     mut ffx: ResMut<benilla_world::ffx_glow::GlueFfx>,
@@ -1028,8 +1026,8 @@ pub(super) fn sync_glue_scene(
             let order = u16::try_from(pi + 1).unwrap_or(u16::MAX);
             let material = mats.off_world(s, s.texture.clone(), order, &light, true);
             // Texture transforms and M2Color tints run live, as in the reference's per-frame
-            // animate kernel (`0x715f25`-`0x7163bc`). Every glue model's loops are shared, none
-            // per-placement, so `host: None` is exact.
+            // animate kernel. Every glue model's loops are shared, none per-placement, so
+            // `host: None` is exact.
             let loops = benilla_world::doodad_anim::UvLoops::of(s);
             let mut mat_anim = false;
             if loops.animates() {
@@ -1220,8 +1218,7 @@ pub(super) fn sync_glue_scene(
 }
 
 /// The scene camera's vertical opening for its record's diagonal `fov`: at a stock pane's own
-/// aspect by the reference's law (`0x5c3cc0`), else the pane-less [`glue_scene_framing`]
-/// for the window.
+/// aspect by the reference's law, else the pane-less [`glue_scene_framing`] for the window.
 fn scene_vert_fov(
     fov: f32,
     window_aspect: f32,
@@ -1389,7 +1386,7 @@ pub(super) fn sync_glue_booth(
                 _ => booth_light.studio.variant(material, materials),
             }
         };
-        // One instance alpha per CM2, which attached models compose onto (`0x714000`).
+        // One instance alpha per CM2, which attached models compose onto.
         let instance = BoothInstance {
             alpha: bake.ghost.map_or(1.0, |g| g.alpha),
         };
@@ -1480,8 +1477,8 @@ pub(super) fn sync_glue_booth(
             &booth_billboards,
             instance,
         );
-        // The whole-model tint ([`GhostKit::tint`], the reference's `0x472939` → `0x710cf0`),
-        // per rig slot, identity when living so a ghost's colour never carries over.
+        // The whole-model tint ([`GhostKit::tint`]), per rig slot, identity when living so a
+        // ghost's colour never carries over.
         tints.set(
             booth_rig.slot(),
             match bake.ghost {
@@ -1489,8 +1486,8 @@ pub(super) fn sync_glue_booth(
                 None => benilla_world::instance_tint::IDENTITY,
             },
         );
-        // The worn items' effects, through the reference's world attach primitive (`0x472c91` →
-        // `0x47a0c0` → `0x4798c0`); the enum carries no enchant, so only intrinsic effects show.
+        // The worn items' effects, through the reference's world attach primitive; the enum carries
+        // no enchant, so only intrinsic effects show.
         let (fx_emitters, fx_frames) = spawn_booth_effects(
             &mut commands,
             &mut booth_rig,
@@ -1556,9 +1553,9 @@ pub(super) fn sync_glue_booth(
     ));
 }
 
-/// Stand the select screen's pet on scene attachment 1 (the reference's secondary model,
-/// `0x47306b`), relit onto the scene's rig, only while a scene is up. It does not yaw: the
-/// reference's facing call (`0x4730e0`) turns the character alone.
+/// Stand the select screen's pet on scene attachment 1 (the reference's secondary model), relit
+/// onto the scene's rig, only while a scene is up. It does not yaw: the reference's facing call
+/// turns the character alone.
 pub(super) fn sync_glue_pet(
     mut commands: Commands,
     pet: Res<GluePetBake>,
@@ -1716,10 +1713,10 @@ fn apply_yaw(
 }
 
 /// The stage's authored frame: the constant rotation and uniform scale parked on attachment
-/// `bone`'s chain. The reference composes an attachment's whole frame, not only its point
-/// (`0x71439b` in `0x714260`). `UI_Human` keys its stage bones with a constant −16.5° yaw to face
-/// its off-axis camera; the other race scenes leave them unrotated. The scale is uniform on every
-/// shipped scene, so `x` stands for it.
+/// `bone`'s chain. The reference composes an attachment's whole frame, not only its point.
+/// `UI_Human` keys its stage bones with a constant −16.5° yaw to face its off-axis camera; the
+/// other race scenes leave them unrotated. The scale is uniform on every shipped scene, so `x`
+/// stands for it.
 fn stage_frame(model: &M2Model, bone: u16) -> (Quat, f32) {
     let Some(anims) = model.animations.as_ref() else {
         return (Quat::IDENTITY, 1.0);

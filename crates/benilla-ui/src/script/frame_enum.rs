@@ -1,17 +1,17 @@
-//! `GetNumFrames` (`0x705f00`) and `EnumerateFrames` (`0x705f60`), registered beside `CreateFrame`
-//! from the frame-script table `0x872e74`: both walk the UI root's list of every live frame
-//! (`root+0xcc4`), which a frame joins at construction and leaves at destruction, hidden or not.
-//! Regions are not frames and are not on it. Here the list is the frame ids in ascending order,
-//! since every creation path mints its frame's id at once ([`Model::frame_id`]).
+//! `GetNumFrames` and `EnumerateFrames`, registered beside `CreateFrame` from the frame-script
+//! table: both walk the UI root's list of every live frame (`root+0xcc4`), which a frame joins at
+//! construction and leaves at destruction, hidden or not. Regions are not frames and are not on it.
+//! Here the list is the frame ids in ascending order, since every creation path mints its frame's
+//! id at once ([`Model::frame_id`]).
 
 use mlua::{Lua, MultiValue, Value};
 
 use super::object::{decode_id, frame_wrapper};
 use super::Model;
 
-/// `0x872f08`, verbatim.
+/// Verbatim.
 const NO_THIS: &str = "EnumerateFrames: Couldn't find 'this' in current object";
-/// `0x872ecc`, verbatim.
+/// Verbatim.
 const NOT_A_FRAME: &str = "EnumerateFrames: Wrong current object type, expected frame";
 
 /// The first live frame with an id above `after`, in creation order.
@@ -39,9 +39,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // `EnumerateFrames([frame])`: the frame after `frame` on the list, or the first when the
-    // argument is not a table (`lua_type(L, 1) == 5`, `0x705f6e`); nil past the last. A table is
-    // read as an object through its `[0]` (`lua_rawgeti`, `0x705f7c`): none raises `0x872f08`,
-    // and an object that is not a frame, a Texture or FontString, raises `0x872ecc`.
+    // argument is not a table (`lua_type(L, 1) == 5`); nil past the last. A table is read as an
+    // object through its `[0]` (`lua_rawgeti`): none raises, and an object that is not a frame, a
+    // Texture or FontString, raises.
     g.set(
         "EnumerateFrames",
         lua.create_function(|lua, args: MultiValue| {

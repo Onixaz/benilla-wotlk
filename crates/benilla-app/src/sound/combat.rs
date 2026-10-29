@@ -1,20 +1,18 @@
 //! Melee combat audio. `SMSG_ATTACKERSTATEUPDATE` arrives as a [`SwingMessage`], then the attack
 //! clip's M2 events fire mid-swing through [`AnimSoundEvent`] and [`SwingImpact`].
 //!
-//! - Exertion, the attacker's vocal: packet-driven at swing start (`0x6246a0` → `0x624786`),
-//!   only when victimState is nonzero (`0x62476a`), crit bit as class, rolled unless a crit.
-//! - `$CSS`, the whoosh: victimState alone picks it ([`whiffed`], `0x624ca0`), the miss whoosh by
-//!   handedness or `WeaponSwingSounds2` by weapon weight ([`swing_weight`]).
-//! - Contact, at the `$AH0-3`/`$CAH` crossing ([`SwingImpact`]): first the attacker's
-//!   weapon-sound block (`0x6247d0`: the natural-weapon `CustomAttack[n]` column, else the
-//!   landed impact for the victim's slot), then the victim dispatch (`0x624530`: the parry or
-//!   block clang, the deflect and absorb stubs, the injury vocal). `$CAH` drives the victim's
-//!   injury (`0x624865`), never the attacker's exertion.
+//! - Exertion, the attacker's vocal: packet-driven at swing start, only when victimState is
+//!   nonzero, crit bit as class, rolled unless a crit.
+//! - `$CSS`, the whoosh: victimState alone picks it ([`whiffed`]), the miss whoosh by handedness or
+//!   `WeaponSwingSounds2` by weapon weight ([`swing_weight`]).
+//! - Contact, at the `$AH0-3`/`$CAH` crossing ([`SwingImpact`]): first the attacker's weapon-sound
+//!   block (: the natural-weapon `CustomAttack[n]` column, else the landed impact for the victim's
+//!   slot), then the victim dispatch (: the parry or block clang, the deflect and absorb stubs, the
+//!   injury vocal). `$CAH` drives the victim's injury, never the attacker's exertion.
 //!
-//! Metal vs wood is `Material.dbc`'s `Flags & 1` throughout (`0x457e80`). Untraced: whether the
-//! generic impact also plays under a clang (`0x624936`) and whether the natural-weapon column
-//! plays on a whiff; benilla plays neither. A `text_only` flush plays nothing. `$CPP` and `$CST`
-//! are not audio.
+//! Metal vs wood is `Material.dbc`'s `Flags & 1` throughout. Untraced: whether the generic impact
+//! also plays under a clang and whether the natural-weapon column plays on a whiff; benilla plays
+//! neither. A `text_only` flush plays nothing. `$CPP` and `$CST` are not audio.
 
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
@@ -47,18 +45,17 @@ const VICTIM_EVADE: u32 = 6;
 const VICTIM_IMMUNE: u32 = 7;
 const VICTIM_DEFLECT: u32 = 8;
 
-/// `HITINFO_LEFTSWING`, the offhand swing; the reference picks the hand by it
-/// (`0x624c36`: `(hitInfo >> 2) & 1`).
+/// `HITINFO_LEFTSWING`, the offhand swing; the reference picks the hand by it (:
+/// `(hitInfo >> 2) & 1`).
 const HITINFO_LEFTSWING: u32 = 0x4;
 
-/// The `(DONOTRENAME)Combat Miss 1H/2H` whooshes, cached by name at startup (`0x4575b0`).
+/// The `(DONOTRENAME)Combat Miss 1H/2H` whooshes, cached by name at startup.
 const COMBAT_MISS_1H: u32 = 7080;
 const COMBAT_MISS_2H: u32 = 7081;
 
-/// The victim dispatch's fixed stub kits (`0x624530`), from the same startup name cache
-/// (`0x835e8c`/`0x835eac`), played at the victim two yards up on bus 0 at volume 1.0
-/// (`0x458870`): deflect (victimState 8, `0x6245f5`) plays `(DONOTRENAME)ShieldWoodImpact`;
-/// absorb, resist or immune (`0x62460f`, `0x624613`) play `(DONOTRENAME)AbsorbGetHit`.
+/// The victim dispatch's fixed stub kits, from the same startup name cache, played at the victim
+/// two yards up on bus 0 at volume 1.0: deflect (victimState 8) plays
+/// `(DONOTRENAME)ShieldWoodImpact`; absorb, resist or immune play `(DONOTRENAME)AbsorbGetHit`.
 const DEFLECT_KIT: u32 = 3262;
 const ABSORB_KIT: u32 = 3334;
 
@@ -66,11 +63,11 @@ const ABSORB_KIT: u32 = 3334;
 const HITINFO_ABSORB_OR_RESIST: u32 = benilla_protocol::messages::hit_info::FULL_ABSORB
     | benilla_protocol::messages::hit_info::FULL_RESIST;
 
-/// The stub emitters' lift (`0x457f4a`/`0x45863a`: `fadd [0x801628]`), as the armor foley's; the
-/// generic weapon impact passes its position through unlifted.
+/// The stub emitters' lift (: `fadd`), as the armor foley's; the generic weapon impact passes its
+/// position through unlifted.
 const STUB_HEIGHT: f32 = 2.0;
 
-/// `ItemClass` 2, a weapon (`0x6238b4`); any other held item swings in silence.
+/// `ItemClass` 2, a weapon; any other held item swings in silence.
 const ITEM_CLASS_WEAPON: u32 = 2;
 
 /// Weapon subclasses swung two-handed, for the 2H miss whoosh.
@@ -116,15 +113,15 @@ fn load_weapon_impacts(mut commands: Commands, assets: Option<Res<WorldAssets>>)
 #[derive(Default)]
 struct LastSwing(EntityHashMap<SwingMessage>);
 
-/// The attacker's swinging weapon as `(subclass, metal)`, unarmed for an empty hand. `metal` is
-/// the item's `Material` with `Flags & 1` (`0x457e80` → `0x5d9a50`), so leather, cloth and the
-/// unknown id 0 are non-metal, as is an empty hand (`0x457e8d`).
+/// The attacker's swinging weapon as `(subclass, metal)`, unarmed for an empty hand. `metal` is the
+/// item's `Material` with `Flags & 1`, so leather, cloth and the unknown id 0 are non-metal, as is
+/// an empty hand.
 fn swing_weapon(
     wielded: Option<&Wielded>,
     offhand: bool,
     materials: Option<&benilla_formats::MaterialCatalog>,
 ) -> (u32, bool) {
-    // `0x625400`/`0x625460` pass `visFlag = 0`: a disarmed hand swings as unarmed.
+    // The reference pass `visFlag = 0`: a disarmed hand swings as unarmed.
     let hand = wielded.and_then(|w| {
         if offhand {
             w.armed_off()
@@ -147,10 +144,10 @@ fn swing_weapon(
     }
 }
 
-/// A creature victim's `WeaponImpactSounds` slot (`[vt+0x90]`, `0x6238f0`): its
-/// `CreatureSoundData` column, `>= 4` refused, remapped by `{0, 8, 7, 9}` (`0x80db94`) to flesh,
-/// stone, wood, ethereal. A player victim instead presents its chest armor (`0x62fb70`, at the
-/// call site), the only route to the chain and plate slots.
+/// A creature victim's `WeaponImpactSounds` slot (`[vt+0x90]`): its `CreatureSoundData` column,
+/// `>= 4` refused, remapped by `{0, 8, 7, 9}` to flesh, stone, wood, ethereal. A player victim
+/// instead presents its chest armor (at the call site), the only route to the chain and plate
+/// slots.
 fn creature_impact_slot(impact_type: u32) -> usize {
     match impact_type {
         1 => impact_slot::STONE,
@@ -160,16 +157,15 @@ fn creature_impact_slot(impact_type: u32) -> usize {
     }
 }
 
-/// The `$CSS` split (`0x624ca0`), on victimState alone: unaffected, dodge and evade take the
-/// miss whoosh, every other outcome the connecting swing, never both (`0x624ba4`). Not
-/// [`no_contact`]: this reads no hit flags, and immune and deflect connect.
+/// The `$CSS` split, on victimState alone: unaffected, dodge and evade take the miss whoosh, every
+/// other outcome the connecting swing, never both. Not [`no_contact`]: this reads no hit flags, and
+/// immune and deflect connect.
 fn whiffed(victim_state: u32) -> bool {
     matches!(victim_state, 0 | VICTIM_DODGE | VICTIM_EVADE)
 }
 
-/// The swinging weapon's weight (`0x623870`): `ItemSubClass.dbc`'s `WeaponSwingSize` (field 9)
-/// for a weapon, Light for an empty hand (`0x623892`), `None` for a held non-weapon
-/// (`0x6238b7`), which plays nothing.
+/// The swinging weapon's weight: `ItemSubClass.dbc`'s `WeaponSwingSize` (field 9) for a weapon,
+/// Light for an empty hand, `None` for a held non-weapon, which plays nothing.
 fn swing_weight(
     wielded: Option<&Wielded>,
     offhand: bool,
@@ -192,7 +188,7 @@ fn swing_weight(
 }
 
 /// Nothing for the weapon to strike, so no weapon impact or clang; immune and deflect play their
-/// stub kits instead (`0x457f20`/`0x458610`).
+/// stub kits instead.
 fn no_contact(swing: &SwingMessage) -> bool {
     swing.hit_info & HITINFO_MISS != 0
         || matches!(
@@ -206,9 +202,8 @@ fn defended(victim_state: u32) -> bool {
     matches!(victim_state, VICTIM_PARRY | VICTIM_BLOCK)
 }
 
-/// The victim's defending item as `(class, material)` (`0x625400(sel)`): a parry takes a
-/// mainhand weapon, else the offhand; a block takes the offhand; it must be class 2 or 4. `None`
-/// plays no clang (`0x623690`).
+/// The victim's defending item as `(class, material)` (`(sel)`): a parry takes a mainhand weapon,
+/// else the offhand; a block takes the offhand; it must be class 2 or 4. `None` plays no clang.
 fn defending_item(wielded: Option<&Wielded>, block: bool) -> Option<(u8, u8)> {
     let w = wielded?;
     // `visFlag = 0`: a disarmed mainhand falls through to the offhand.
@@ -221,9 +216,9 @@ fn defending_item(wielded: Option<&Wielded>, block: bool) -> Option<(u8, u8)> {
     matches!(class, 2 | 4).then_some((class, w.materials[1]))
 }
 
-/// The clang (`0x623640` → `0x457dc0`): the attacker's weapon row, slot by the defending item's
-/// class, not the victimState (`0x457de6`/`0x457dfd`): class 2 the parry pair, class 4 the
-/// shield pair, its `Material` picking metal or wood. Not crit-tiered.
+/// The clang: the attacker's weapon row, slot by the defending item's class, not the victimState:
+/// class 2 the parry pair, class 4 the shield pair, its `Material` picking metal or wood. Not
+/// crit-tiered.
 fn defense_clang(
     row: &benilla_formats::WeaponImpactRow,
     item: Option<(u8, u8)>,
@@ -240,7 +235,7 @@ fn defense_clang(
     row.impact[slot]
 }
 
-/// The generic weapon impact for a landed hit (`0x6247d0`), crit-tiered.
+/// The generic weapon impact for a landed hit, crit-tiered.
 fn landed_impact(row: &benilla_formats::WeaponImpactRow, slot: usize, crit: bool) -> u32 {
     if crit {
         row.crit[slot]
@@ -258,7 +253,7 @@ type CombatUnit = (
     Option<&'static crate::net::ObjectStore>,
 );
 
-/// The attachment a whiffed swing's whoosh plays at (`0x624bdd`: `0x712cb0(1)`).
+/// The attachment a whiffed swing's whoosh plays.
 const MISS_ATTACH: u16 = 1;
 
 /// The DBC tables the melee sounds read, each optional: a missing one silences its own branch.
@@ -289,11 +284,11 @@ fn combat_sounds(
     config: Res<SoundConfig>,
     listener: Res<AudioListener>,
 ) {
-    // Exertion fires from the packet, at swing start (`0x6246a0` → `0x624786`).
+    // Exertion fires from the packet, at swing start.
     let mut exertions: Vec<(Entity, bool)> = Vec::new();
     for s in swings.read() {
         last.0.insert(s.attacker, *s);
-        // `0x62476a`: gated on victimState alone, with no victim-health test.
+        // Gated on victimState alone, with no victim-health test.
         if s.victim_state != 0 {
             exertions.push((s.attacker, s.hit_info & HITINFO_CRITICAL != 0));
         }
@@ -346,8 +341,8 @@ fn combat_sounds(
         }
     };
 
-    // `force = 0` (`0x62477e`), so the class roll applies: class 0 is 70 for a creature and 35
-    // for a player, class 1 (a crit) 100.
+    // `force = 0`, so the class roll applies: class 0 is 70 for a creature and 35 for a player,
+    // class 1 (a crit) 100.
     for (attacker, crit) in exertions {
         let Ok((tr, _, net, _, store)) = units.get(attacker) else {
             continue;
@@ -405,7 +400,7 @@ fn combat_sounds(
             } else {
                 COMBAT_MISS_1H
             };
-            // Attachment 1, not the event's point: a whiff plays from the hand (`0x624baa`).
+            // Attachment 1, not the event's point: a whiff plays from the hand.
             let at = attach.point(ev.entity, MISS_ATTACH, attacker_tr.translation);
             play(
                 &mut kits,
@@ -420,26 +415,26 @@ fn combat_sounds(
             );
             continue;
         }
-        // The connecting swing (`0x624c36`).
+        // The connecting swing.
         let (Some(swings), Some(subs)) = (swing_sounds.as_deref(), sub_classes.as_deref()) else {
             continue;
         };
         let Some(weight) = swing_weight(wielded, offhand, &subs.0) else {
-            continue; // a non-weapon in the hand: `0x623870` returns false and nothing plays
+            continue; // a non-weapon in the hand: the reference returns false and nothing plays
         };
         let Some(kit) = swings.0.kit(weight, swing.hit_info & HITINFO_CRITICAL != 0) else {
-            continue; // `0x457f63`'s `swingType >= 3` bail: silence, never a fallback weight
+            continue; // the reference's `swingType >= 3` bail: silence, never a fallback weight
         };
         play(
             &mut kits,
             &mut out,
             kit,
-            // The event's own point (`0x624c6e` → `0x457f60`), usually on a moving bone.
+            // The event's own point, usually on a moving bone.
             ev.pos.unwrap_or(attacker_tr.translation),
             PlayExtras {
                 bus: Bus::WEAPON_SWING,
-                // Half volume under `HITINFO_MISS` (`0x457f74`/`0x457f7d`); vmangos never
-                // sends a miss with a connecting victimState.
+                // Half volume under `HITINFO_MISS`; vmangos never sends a miss with a connecting
+                // victimState.
                 volume_mult: Volume(if swing.hit_info & HITINFO_MISS != 0 {
                     0.5
                 } else {
@@ -459,8 +454,8 @@ fn combat_sounds(
         let swing = &imp.swing;
         let attacker = units.get(swing.attacker).ok();
         let victim = swing.victim.and_then(|v| units.get(v).ok());
-        // The fired tag's own point (`0x6248ef`, `0x624950`); the receive-time fallback fired no
-        // tag, so it takes the attacker, then the victim.
+        // The fired tag's own point; the receive-time fallback fired no tag, so it takes the
+        // attacker, then the victim.
         let Some(pos) = imp
             .pos
             .or_else(|| attacker.map(|(t, ..)| t.translation))
@@ -470,15 +465,15 @@ fn combat_sounds(
         };
         let crit = swing.hit_info & HITINFO_CRITICAL != 0;
         if !no_contact(swing) {
-            // The attacker's weapon row (`0x625460`); `None` for a wand or thrown weapon.
+            // The attacker's weapon row; `None` for a wand or thrown weapon.
             let offhand = swing.hit_info & HITINFO_LEFTSWING != 0;
             let (subclass, metal) = swing_weapon(attacker.and_then(|(_, w, ..)| w), offhand, mats);
             let row = impacts.0.get(subclass, metal);
             let defended = defended(swing.victim_state);
 
-            // `0x6247d0`'s weapon-sound block, before the victim dispatch: the `$AHn` column,
+            // The reference's weapon-sound block, before the victim dispatch: the `$AHn` column,
             // else the generic impact behind the `SWINGNOHITSOUND` latch. Under a parry or block
-            // benilla plays no generic impact; the reference's side (`0x624936`) is untraced.
+            // benilla plays no generic impact; the reference's side is untraced.
             if let Some(n) = imp.natural {
                 // The natural-weapon sound replaces the generic weapon impact.
                 let vocal = attacker
@@ -499,7 +494,7 @@ fn combat_sounds(
                 );
             } else if !defended {
                 if let Some(row) = row {
-                    // A player victim presents its chest armor (`0x62fb70`), self-only.
+                    // A player victim presents its chest armor, self-only.
                     let slot = match (victim, mats) {
                         (Some((_, _, vnet, _, vstore)), Some(mats))
                             if vnet.kind == EntityKind::Player =>
@@ -533,16 +528,16 @@ fn combat_sounds(
                 }
             }
 
-            // The clang at the victim (`0x6245bb` parry, `0x6245d8` block), reached on every
-            // impact tag through the shared tail (`0x6249bb`), natural weapons included. No
-            // defending item skips only the clang: the wound vocal below still runs.
+            // The clang at the victim, reached on every impact tag through the shared tail, natural
+            // weapons included. No defending item skips only the clang: the wound vocal below still
+            // runs.
             let defending = defending_item(
                 victim.and_then(|(_, w, ..)| w),
                 swing.victim_state == VICTIM_BLOCK,
             );
             if let (true, Some(row), Some(item)) = (defended, row, defending) {
                 let kit = defense_clang(row, Some(item), mats);
-                // The clang is lifted two yards (`0x457e29`: `fadd [0x801628]`).
+                // The clang is lifted two yards (: `fadd`).
                 let at = victim.map(|(t, ..)| t.translation).unwrap_or(pos) + Vec3::Y * STUB_HEIGHT;
                 play(
                     &mut kits,
@@ -585,9 +580,9 @@ fn combat_sounds(
             }
         }
 
-        // The wound vocal (`0x62460c`..`0x624674`): absorb, resist and immune never reach it;
-        // then `hitInfo & 0x2` (`AFFECTS_VICTIM`) is required, and the class is crushing → 9,
-        // critical → 3, `MISS` → nothing, else 2.
+        // The wound vocal: absorb, resist and immune never reach it; then `hitInfo & 0x2`
+        // (`AFFECTS_VICTIM`) is required, and the class is crushing → 9, critical → 3, `MISS` →
+        // nothing, else 2.
         //
         // Deviation: `damage > 0` without a parry or block stands in for `0x2`, because vmangos
         // clears that bit only for immune and a zero-damage miss or absorb
@@ -596,11 +591,10 @@ fn combat_sounds(
             && swing.hit_info & HITINFO_ABSORB_OR_RESIST == 0
             && !matches!(swing.victim_state, VICTIM_PARRY | VICTIM_BLOCK)
         {
-            // The class decides both gates below (`0x62462c`/`0x624649`/`0x624666`).
+            // The class decides both gates below.
             let crushing = swing.hit_info & HITINFO_CRUSHING != 0;
-            // The `AISOUNDDESC` gate (`0x4591f0` from `0x6234cb`): a live server-pushed sound on
-            // the victim suppresses classes 0-3 and 8 (`0x6234bb`), so a crushing blow's class 9
-            // gets through. The player twin `0x62f880` has no gate.
+            // The `AISOUNDDESC` gate: a live server-pushed sound on the victim suppresses classes
+            // 0-3 and 8, so a crushing blow's class 9 gets through. The player twin has no gate.
             let vocal_victim = victim.filter(|(_, _, net, ..)| {
                 crushing
                     || net.kind == EntityKind::Player
@@ -619,8 +613,8 @@ fn combat_sounds(
                         continue;
                     }
                 }
-                // A zero column plays nothing, with no fallback to another class: `0x623490`
-                // tests the id once (`0x6234e6`), as does the player twin (`0x62f8be`).
+                // A zero column plays nothing, with no fallback to another class: the reference
+                // tests the id once, as does the player twin.
                 let vocal = net
                     .display_id
                     .and_then(|d| voices.0.for_display(d))
@@ -652,7 +646,7 @@ fn combat_sounds(
 
 /// A player's exertion (classes 0/1) and wound (2/3/9) vocals take a Death Knight's voice chain:
 /// `CGPlayer_C::PlayUnitSound` (`0x7631a0`) filters every class but 5-7 and 10-13. The creature
-/// route `0x623490` never does.
+/// route never does.
 fn player_voice_filter(
     out: &SoundOutput,
     net: &NetEntity,
@@ -676,7 +670,7 @@ pub(super) fn plugin(app: &mut App) {
 mod tests {
     use super::*;
 
-    /// `0x624ca0`'s `{0, 2, 6}`; immune and deflect take the connecting swing.
+    /// The reference's `{0, 2, 6}`; immune and deflect take the connecting swing.
     #[test]
     fn only_unaffected_dodge_and_evade_take_the_miss_whoosh() {
         for whiff in [0, VICTIM_DODGE, VICTIM_EVADE] {
@@ -697,7 +691,7 @@ mod tests {
         }
     }
 
-    /// `0x623870`'s three answers on the shipped `ItemSubClass.dbc`. Skips without client data.
+    /// The reference's three answers on the shipped `ItemSubClass.dbc`. Skips without client data.
     #[test]
     fn the_swing_weight_is_the_dbc_column_not_a_guess() {
         let Some(data) = benilla_formats::wow_data() else {
@@ -845,7 +839,7 @@ mod tests {
         assert_eq!(defense_clang(&row, Some((4, 0)), m), 3262, "no material");
     }
 
-    /// `0x625400(sel)`.
+    /// `(sel)`.
     #[test]
     fn the_defending_item_is_the_hand_the_outcome_names() {
         let sword_and_board = Wielded {
@@ -909,7 +903,7 @@ mod tests {
         assert_eq!(landed_impact(&row, impact_slot::STONE, false), 3206);
     }
 
-    /// `0x6238f0`'s remap never reaches the chain or plate slots.
+    /// The reference's remap never reaches the chain or plate slots.
     #[test]
     fn the_creature_impact_slot_is_the_four_entry_remap() {
         assert_eq!(creature_impact_slot(0), impact_slot::FLESH);

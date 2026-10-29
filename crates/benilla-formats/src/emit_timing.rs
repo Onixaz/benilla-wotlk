@@ -1,21 +1,20 @@
 //! Particle emitter tracks sampled per sequence: the spawn rate (`+0xdc`) and enabled gate
 //! (`+0x1dc`) in [`EmitTiming`], the other nine parameters in [`EmitParams`], each baked one loop
-//! per file sequence slot by the reference's key-window kernel (`0x713d50`).
+//! per file sequence slot by the reference's key-window kernel.
 
 use benilla_m2::M2ScalarTrack;
 
 use crate::models::{bake_track, ScalarAnim, SeqSlot};
 
-/// The spawn rate and enabled gate per file sequence slot. The reference's animate kernel
-/// (`0x714260`) samples both through the playing sequence's key window every frame, and the rate
-/// is 0 while the gate is off (`0x717d90`, `0x718f32`). A looping slot wraps its band, a clamped
-/// one holds its tail, a gseq-tagged track runs on its own clock; `None` or an unknown `seq` is
-/// slot 0.
+/// The spawn rate and enabled gate per file sequence slot. The reference's animate kernel samples
+/// both through the playing sequence's key window every frame, and the rate is 0 while the gate is
+/// off. A looping slot wraps its band, a clamped one holds its tail, a gseq-tagged track runs on
+/// its own clock; `None` or an unknown `seq` is slot 0.
 #[derive(Debug, Clone, Default)]
 pub struct EmitTiming {
     /// Per file slot; `None` where the track keys nothing (rate 0).
     rate: Vec<Option<ScalarAnim>>,
-    /// Per file slot, stepped 0 or 1; `None` is on, the loader default (`0x710092` sets
+    /// Per file slot, stepped 0 or 1; `None` is on, the loader default (the reference sets
     /// `block+0x14c = 1`).
     enabled: Vec<Option<ScalarAnim>>,
     /// Per file slot: the band loops when sequence flags bit 0 is clear.
@@ -80,9 +79,9 @@ impl EmitTiming {
     }
 
     /// The first burst on slot `seq` as `(seconds in, particle count)`, on a 60 Hz grid: the
-    /// reference fires `ftol(rate)` particles on the rising edge of `enabled != 0 && rate > 0`
-    /// (`0x718ed2`-`0x718ef6`). `None` is a shipped shape: `Spells\\Strike_Impact_Chest.m2`'s gold
-    /// flare turns its gate off on the key its rate rises.
+    /// reference fires `ftol(rate)` particles on the rising edge of `enabled != 0 && rate > 0`.
+    /// `None` is a shipped shape: `Spells\\Strike_Impact_Chest.m2`'s gold flare turns its gate off
+    /// on the key its rate rises.
     pub fn first_burst(&self, seq: Option<usize>) -> Option<(f32, f32)> {
         let i = self.idx(seq);
         let span = |o: &Option<ScalarAnim>| -> f32 {
@@ -146,8 +145,8 @@ impl EmitTiming {
 
 /// One frame's sample of the emitter's nine parameter tracks (`+0x34..+0x130`, all but rate and
 /// gate). The reference samples them every frame into the emitter's animation block
-/// (`[model+0x3d0]`, stride 0x16c) as it does the rate (`0x71850d`), and they animate:
-/// `Frost_Nova_area`'s emission sphere grows from 0.19 to 13.2 yd.
+/// (`[model+0x3d0]`, stride 0x16c) as it does the rate, and they animate: `Frost_Nova_area`'s
+/// emission sphere grows from 0.19 to 13.2 yd.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ParamsNow {
     /// Initial particle speed (yards/sec).
@@ -158,7 +157,7 @@ pub struct ParamsNow {
     pub vertical_range: f32,
     /// Azimuthal spread, radians (sphere: longitude range; spline: scatter jitter).
     pub horizontal_range: f32,
-    /// Downward acceleration (yards/sec²), read live every frame by the integrator (`0x7b2680`).
+    /// Downward acceleration (yards/sec²), read live every frame by the integrator.
     pub gravity: f32,
     /// Particle lifetime (seconds); a birth keeps the value current at its spawn (the spawn
     /// kernels' `ebp+0xc`).

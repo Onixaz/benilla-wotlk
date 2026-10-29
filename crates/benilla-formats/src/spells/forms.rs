@@ -17,17 +17,16 @@ const SHAPESHIFT_FORM: &str = "DBFilesClient\\SpellShapeshiftForm.dbc";
 pub struct ShapeshiftForm {
     /// `BonusActionBar` (column 1): the page the action bar flips to, 0 for none.
     pub bonus_bar: u32,
-    /// The enUS name (column 2), the tooltip's `SPELL_REQUIRED_FORM` "Requires %s"
-    /// (`0x52f10a`-`0x52f2ae`).
+    /// The enUS name (column 2), the tooltip's `SPELL_REQUIRED_FORM` "Requires %s".
     pub name: String,
     /// `flags1` (column 19): bit 0 marks a stance, bit 1 blocks cancelling the active form.
     pub flags: u32,
-    /// `creatureType` (column 20): the form's creature-type override, which the resolver
-    /// (`0x605570`) reads before the creature template or race, so a cat-form druid tracks as a
-    /// Beast; `<= 0` is no override, and the template or race answers.
+    /// `creatureType` (column 20): the form's creature-type override, which the resolver reads
+    /// before the creature template or race, so a cat-form druid tracks as a Beast; `<= 0` is no
+    /// override, and the template or race answers.
     pub creature_type: i32,
     /// `AttackIconID` (column 21) through `SpellIcon.dbc`: the Attack action shows the current
-    /// form's icon before the main-hand weapon's (`0x4e6870`); `None` falls through to the weapon.
+    /// form's icon before the main-hand weapon's; `None` falls through to the weapon.
     pub attack_icon: Option<String>,
 }
 
@@ -40,8 +39,7 @@ impl ShapeshiftForm {
     }
 
     /// Clicking the active form's button cancels its aura (`CMSG_CANCEL_AURA`) unless bit `0x2`
-    /// makes it a silent no-op (`CastShapeshiftForm` `0x4b4810`, guard at `0x4b4963`); the
-    /// warrior stances (`0x7`) set it on 5875.
+    /// makes it a silent no-op (`CastShapeshiftForm`); the warrior stances (`0x7`) set it on 5875.
     pub fn cancelable(&self) -> bool {
         self.flags & 0x2 == 0
     }
@@ -60,14 +58,14 @@ pub(crate) fn schema() -> Schema {
 }
 
 /// Load `SpellShapeshiftForm.dbc` by form id. The bonus bar is data, not a stance switch:
-/// `GetBonusBarOffset` (`0x4e7620`) returns what the `UPDATE_BONUS_ACTIONBAR` handler (`0x4e4fc0`)
-/// read from column 1 for the player's form. `flags1` feeds the form gate (`0x612480`).
+/// `GetBonusBarOffset` returns what the `UPDATE_BONUS_ACTIONBAR` handler read from column 1 for the
+/// player's form. `flags1` feeds the form gate.
 pub fn load_shapeshift_forms(chain: &mut Chain) -> Result<HashMap<u32, ShapeshiftForm>> {
     let bytes = chain
         .read_file(SHAPESHIFT_FORM)
         .context("reading SpellShapeshiftForm.dbc")?;
     let set = parse(&bytes, schema(), "SpellShapeshiftForm.dbc")?;
-    // AttackIconID resolves through SpellIcon.dbc like a spell's own icon (`0x4e68af`-`0x4e68da`).
+    // AttackIconID resolves through SpellIcon.dbc like a spell's own icon.
     let icons = crate::dbc::load_spell_icon_map(chain)?;
     let mut map = HashMap::new();
     for r in set.records() {

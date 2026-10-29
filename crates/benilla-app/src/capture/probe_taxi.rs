@@ -83,7 +83,7 @@ enum Phase {
     Flying {
         started_at: f64,
         last_report: f64,
-        /// Latched once the rider plays Mount (91) and the mount child Fly (135) (`0x5fd19c`).
+        /// Latched once the rider plays Mount (91) and the mount child Fly (135).
         gait_ok: bool,
         /// The largest flying pitch magnitude (radians) on the self transform.
         max_pitch: f32,
@@ -284,8 +284,8 @@ fn taxi_probe(
         } => {
             let wow = bevy_to_wow(player.pos);
             if player.server_riding() {
-                // Rider Mount (91), mount child Fly (135) (`0x5fd19c`); latched, as the first
-                // frames lag the mount attach.
+                // Rider Mount (91), mount child Fly (135); latched, as the first frames lag the
+                // mount attach.
                 let rider = drivers.get(self_entity).ok().map(|d| d.playing().0);
                 let mount = mount_child
                     .and_then(|mc| drivers.get(mc.0).ok())

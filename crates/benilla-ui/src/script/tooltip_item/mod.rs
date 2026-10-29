@@ -1,15 +1,15 @@
 //! The engine item-tooltip renderer: every item hover renders through one line law, as the
 //! reference's `Set*Item` bindings share the builder `CGTooltip::SetItem 0x6277f0`. A template in
 //! flight shows `RETRIEVING_ITEM_INFO` and repaints on arrival ([`wait`]). The methods register
-//! into the GameTooltip kind table beside the widget verbs ([`super::tooltip`]). Every family's order,
-//! gate and colour is the reference's, and every sentence is a key resolved off the player's own
-//! `GlobalStrings.lua` at render time. Red (`0xc0d390`, `0xffff2020`) marks unmet requirements,
-//! LOCKED, broken durability and "Already known"; the name never recolors.
+//! into the GameTooltip kind table beside the widget verbs ([`super::tooltip`]). Every family's
+//! order, gate and colour is the reference's, and every sentence is a key resolved off the player's
+//! own `GlobalStrings.lua` at render time. Red (`0xffff2020`) marks unmet requirements, LOCKED,
+//! broken durability and "Already known"; the name never recolors.
 //!
 //! Stock FrameXML seats the shopping plates (`MerchantFrame.xml:63-80`,
 //! `Blizzard_AuctionUI.lua:1078`). There is no hover compare: `SHOW_COMPARE_TOOLTIP` has no fire
-//! site (`0x49211a` and `0x49630d` never produce event 377), so `PaperDollFrame.lua`'s listener
-//! for it is dead code.
+//! site (the reference never produce event 377), so `PaperDollFrame.lua`'s listener for it is dead
+//! code.
 
 use mlua::{Lua, MultiValue, Table, Value};
 
@@ -26,11 +26,10 @@ use render::{render_view, BuilderFlags};
 use wait::{note_item_miss, retrieving};
 pub(crate) use wait::{note_set_miss, wrap_setters, ItemRender, ItemWait};
 
-/// The body both compare bindings run (`0x536080`, `0x535d70`): walk `0x809200[InventoryType]`'s
-/// slots, skipping empty ones uncounted and ones whose worn item's class differs (`0x5d9f30`),
-/// until `left` matches have passed; then run `SetInventoryItem` there with the header latch armed,
-/// as `0x536080` calls `0x52b650` with p4 = 0, p5 = 1. The number 1, or nil on a miss, which leaves
-/// the tooltip untouched.
+/// The body both compare bindings run: walk `[InventoryType]`'s slots, skipping empty ones
+/// uncounted and ones whose worn item's class differs, until `left` matches have passed; then run
+/// `SetInventoryItem` there with the header latch armed, as the reference with p4 = 0, p5 = 1. The
+/// number 1, or nil on a miss, which leaves the tooltip untouched.
 fn compare_against_worn(
     lua: &Lua,
     this: &Table,
@@ -97,7 +96,7 @@ fn view_of(lua: &Lua, item_id: u32) -> Option<ItemTemplateView> {
 }
 
 /// A random-suffix roll's enchant lines: the reference copies the suffix row's five ids into
-/// enchant slots 2..6 (`0x52b7bf`) for a block source with no item object.
+/// enchant slots 2..6 for a block source with no item object.
 fn roll_enchants(lua: &Lua, random_property_id: u32) -> Vec<crate::script::EnchantView> {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
@@ -252,8 +251,8 @@ fn set_quest_item_view(
     }
 }
 
-/// An InventoryType's compare candidate slots, as `GetInventorySlotInfo` ids: the reference's
-/// mask table `0x809200[InventoryType]`.
+/// An InventoryType's compare candidate slots, as `GetInventorySlotInfo` ids: the reference's mask
+/// table `[InventoryType]`.
 fn equip_slots_for(inventory_type: u32) -> &'static [u32] {
     match inventory_type {
         1 => &[1],             // head
@@ -273,8 +272,8 @@ fn equip_slots_for(inventory_type: u32) -> &'static [u32] {
         13 => &[16, 17],       // one-hand
         21 => &[16],           // main hand
         14 | 22 | 23 => &[17], // shield / off-hand weapon / held
-        // Two-hand: main hand only, though a two-hander displaces both: `0x809200[17]` is
-        // `0x8000`, bit 15.
+        // Two-hand: main hand only, though a two-hander displaces both: the reference is `0x8000`,
+        // bit 15.
         17 => &[16],
         15 | 25 | 26 | 28 => &[18], // bow / thrown / wand-gun / relic
         _ => &[],
@@ -429,8 +428,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GameTooltip:SetQuestItem(type, index) / SetQuestLogItem(type, index) (`0x533610`,
-    // `0x533760`; `QuestFrameTemplates.xml:148`, `QuestLogFrame.xml:113`), no returns. `type` is
+    // GameTooltip:SetQuestItem(type, index) / SetQuestLogItem(type, index)
+    // (`QuestFrameTemplates.xml:148`, `QuestLogFrame.xml:113`), no returns. `type` is
     // `GetQuestItemInfo`'s; an unknown type or index leaves the tooltip empty, as in the reference.
     m.set(
         "SetQuestItem",
@@ -566,13 +565,13 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
-            // The reference's format is `"%s|Hitem:%d:%d:%d:%d|h[%s]|h%s"` (`0x8549c8`), and
-            // `SetHyperlink` (`0x532181`) parses it into a block (p6=1): the enchant id to slot 0
-            // (`+0x3d0`), the roll to `+0x424` (expanded into slots 2..6 by `0x52b7bf`), the
-            // unique id to `+0x420`, unread; a missing field is 0. So a link shows its roll's
-            // lines, never the placeholder (`0x52cc33`). The name is the link's own, built with
-            // the suffix joined (`0x5d8b00`). The enchant id is parsed, not rendered: naming it
-            // needs its `SpellItemEnchantment` row, and no link benilla composes carries one.
+            // The reference's format is `"%s|Hitem:%d:%d:%d:%d|h[%s]|h%s"`, and `SetHyperlink`
+            // parses it into a block (p6=1): the enchant id to slot 0 (`+0x3d0`), the roll to
+            // `+0x424` (expanded into slots 2..6), the unique id to `+0x420`, unread; a missing
+            // field is 0. So a link shows its roll's lines, never the placeholder. The name is the
+            // link's own, built with the suffix joined. The enchant id is parsed, not rendered:
+            // naming it needs its `SpellItemEnchantment` row, and no link benilla composes carries
+            // one.
             let inst = render::ItemInstance {
                 name: link_name(&link).map(str::to_string),
                 enchants: roll_enchants(lua, roll),
@@ -594,21 +593,20 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GameTooltip:SetInventoryItem(unit, slot [, nameOnly]) -> hasItem, hasCooldown, repairCost
-    // (`0x532ee0`), three as `PaperDollFrame.lua:741` reads them; the arity is that consumer's,
-    // not byte-read as `SetBagItem`'s two is (`0x534985`). Unit-keyed through `Model::inv_slot`:
-    // an inspected item (`InspectPaperDollFrame.xml:20`) has no durability or creator, so those
-    // lines do not show, as in the reference. An armed shopping tooltip renders the compare
-    // shape; the arm is consumed either way. repairCost is the item's cost (`0x5332fb`), 0 for an
-    // inspected unit's.
+    // GameTooltip:SetInventoryItem(unit, slot [, nameOnly]) -> hasItem, hasCooldown, repairCost,
+    // three as `PaperDollFrame.lua:741` reads them; the arity is that consumer's, not byte-read as
+    // `SetBagItem`'s two is. Unit-keyed through `Model::inv_slot`: an inspected item
+    // (`InspectPaperDollFrame.xml:20`) has no durability or creator, so those lines do not show, as
+    // in the reference. An armed shopping tooltip renders the compare shape; the arm is consumed
+    // either way. repairCost is the item's cost, 0 for an inspected unit's.
     m.set(
         "SetInventoryItem",
         lua.create_function(
             |lua, (this, unit, slot, name_only): (Table, String, usize, Value)| {
                 let h = frame_handle_of(lua, &this)?;
-                // `nameOnly` (usage string `0x8552dc`) is set only by a number above 0
-                // (`0x533027..0x53304c`); anything else builds the ordinary tooltip, without an
-                // error. Three of the binding's four builder legs pass it on, not `0x533106`.
+                // `nameOnly` is set only by a number above 0; anything else builds the ordinary
+                // tooltip, without an error. Three of the binding's four builder legs pass it on,
+                // not.
                 let name_only = super::binding_abi::positive_number_flag(lua, name_only)?;
                 let (item_id, inst, repair_cost, currently_equipped, stack) = {
                     let mut model = crate::script::model_mut_of(lua);
@@ -635,8 +633,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                     // A charter has `InventoryType` 0 and is never equipped.
                                     petition: None,
                                     enchants: s.enchants.clone(),
-                                    // `0x532ee0` has p6=0 legs too (`0x533106`, `0x5332ad`), but
-                                    // nothing openable is equippable.
+                                    // The reference has p6=0 legs too, but nothing openable is
+                                    // equippable.
                                     openable_source: false,
                                     duration_ms: s.duration_ms,
                                     guid: s.guid,
@@ -689,8 +687,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 Ok(MultiValue::from_vec(vec![
                     Value::Integer(1),
                     // hasCooldown is the builder's `[ebp-0x38]`, set by four lines:
-                    // LOCKED_WITH_ITEM, the temporary-enchant countdown, the item's duration
-                    // (`0x52ce0d`) and ITEM_COOLDOWN_TIME. Only the duration is answered here.
+                    // LOCKED_WITH_ITEM, the temporary-enchant countdown, the item's duration and
+                    // ITEM_COOLDOWN_TIME. Only the duration is answered here.
                     if inst.duration_ms.is_some() {
                         Value::Boolean(true)
                     } else {
@@ -730,9 +728,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     .and_then(|c| c.slots.get(&slot))
                     .filter(|s| s.item_id != 0)
                 {
-                    // `0x534620` takes the p6=1 leg iff the cooldown query `0x6e2ed0` reports
-                    // enable, start and duration all non-zero; that one boolean is both the
-                    // `hasCooldown` return and the inverse of the openable gate.
+                    // The reference takes the p6=1 leg iff the cooldown query reports enable, start
+                    // and duration all non-zero; that one boolean is both the `hasCooldown` return
+                    // and the inverse of the openable gate.
                     Some(s) => {
                         let has_cd = s
                             .cooldown
@@ -742,7 +740,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                             s.count.max(1),
                             has_cd,
                             render::ItemInstance {
-                                // The link's name: the reference builds both from `0x5d8b00`.
+                                // The link's name: the reference builds both.
                                 name: s.link.as_deref().and_then(link_name).map(str::to_string),
                                 durability: s.durability,
                                 creator: s.creator.clone(),
@@ -791,10 +789,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GameTooltip:SetTradePlayerItem(slot) / SetTradeTargetItem(slot) (`0x5341e0`, `0x534410`;
-    // `TradeFrame.xml:150`, `TradeFrame.xml:106`), no returns: the slot's item, the target side
-    // off the partner's slot guids (`[0xb715a0 + slot*4]`). An empty or out-of-range slot leaves
-    // the tooltip untouched. The enchant line is not rendered: the trade view has no enchant id.
+    // GameTooltip:SetTradePlayerItem(slot) / SetTradeTargetItem(slot) (`TradeFrame.xml:150`,
+    // `TradeFrame.xml:106`), no returns: the slot's item, the target side off the partner's slot
+    // guids (`[ + slot*4]`). An empty or out-of-range slot leaves the tooltip untouched. The
+    // enchant line is not rendered: the trade view has no enchant id.
     for (name, player_side) in [("SetTradePlayerItem", true), ("SetTradeTargetItem", false)] {
         m.set(
             name,
@@ -850,10 +848,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         )?;
     }
 
-    // GameTooltip:SetLootItem(slot): the loot-row hover (`0x533470`, `LootFrame.xml:42`, behind
-    // `LootSlotIsItem`). A block source (`0x533564`, p6=1): a loot slot is no item object, so a
-    // rolled suffix's enchants reach the builder through the block, never through
-    // `ITEM_FIELD_ENCHANTMENT`. `slot` is the 1-based row; coin and cleared rows have no tooltip.
+    // GameTooltip:SetLootItem(slot): the loot-row hover (`LootFrame.xml:42`, behind
+    // `LootSlotIsItem`). A block source (p6=1): a loot slot is no item object, so a rolled suffix's
+    // enchants reach the builder through the block, never through `ITEM_FIELD_ENCHANTMENT`. `slot`
+    // is the 1-based row; coin and cleared rows have no tooltip.
     m.set(
         "SetLootItem",
         lua.create_function(|lua, (this, slot): (Table, usize)| {
@@ -875,8 +873,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
-            // The row's app-composed name has the suffix joined, as `0x5d8b00` does; the lines
-            // come from the roll id, the reference's `+0x424` (`0x52b7bf`).
+            // The row's app-composed name has the suffix joined, as the reference does; the lines
+            // come from the roll id, the reference's `+0x424`.
             let inst = render::ItemInstance {
                 name: row.name.clone(),
                 enchants: roll_enchants(lua, row.random_property_id),
@@ -950,10 +948,9 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GameTooltip:SetLootRollItem(rollId): the roll window's hover (`0x5364a0`,
-    // `LootFrame.xml:343`). Like `SetLootItem`: p6=1 with `+0x424` = `[roll+0x20]`, the roll's
-    // randomPropertyId, every enchant slot zero and no item object, so the suffix-row copy
-    // (`0x52b7bf`) is the only enchant source.
+    // GameTooltip:SetLootRollItem(rollId): the roll window's hover (`LootFrame.xml:343`). Like
+    // `SetLootItem`: p6=1 with `+0x424` = `[roll+0x20]`, the roll's randomPropertyId, every enchant
+    // slot zero and no item object, so the suffix-row copy is the only enchant source.
     m.set(
         "SetLootRollItem",
         lua.create_function(|lua, (this, roll_id): (Table, u32)| {
@@ -997,13 +994,13 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GameTooltip:SetMerchantCompareItem(index [, offset]) (`0x536080`, method-table entry 43):
-    // the shopping tooltip beside a vendor row. `offset` counts candidate slots, 1-based: set in
-    // `0x809200[InventoryType]`, occupied, and holding an item of the offered class (never
-    // subclass), so a worn shield makes offset 2 nil for a one-hand weapon and a worn wand compares
-    // against a bow. One value on every non-raising path: the number 1 (`lua_pushnumber`) or nil.
-    // A bad `this` or a non-number index raises; a missing `offset` is 1, one of 0 or less is nil.
-    // An uncached template answers nil and fires the query, as in the reference.
+    // GameTooltip:SetMerchantCompareItem(index [, offset]) (method-table entry 43): the shopping
+    // tooltip beside a vendor row. `offset` counts candidate slots, 1-based: set in
+    // `[InventoryType]`, occupied, and holding an item of the offered class (never subclass), so a
+    // worn shield makes offset 2 nil for a one-hand weapon and a worn wand compares against a bow.
+    // One value on every non-raising path: the number 1 (`lua_pushnumber`) or nil. A bad `this` or
+    // a non-number index raises; a missing `offset` is 1, one of 0 or less is nil. An uncached
+    // template answers nil and fires the query, as in the reference.
     m.set(
         "SetMerchantCompareItem",
         lua.create_function(
@@ -1062,11 +1059,10 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
         )?,
     )?;
 
-    // GameTooltip:SetAuctionCompareItem("type", index [, offset]) (`0x535d70`): the vendor
-    // compare's body (`0x53603e` and `0x5362d4` both pass p4 = 0, p5 = 1) over an auction list.
-    // `type` is `lua_isstring`-gated (`0x535e28`); a non-string type or non-number index raises
-    // the reference's usage, and a bad list, row or uncached template is nil. The number 1 on
-    // success, which `Blizzard_AuctionUI.lua:1081` gates each shopping tooltip on.
+    // GameTooltip:SetAuctionCompareItem("type", index [, offset]): the vendor compare's body (p5 = 1)
+    // over an auction list. `type` is `lua_isstring`-gated; a non-string type or non-number index
+    // raises the reference's usage, and a bad list, row or uncached template is nil. The number 1
+    // on success, which `Blizzard_AuctionUI.lua:1081` gates each shopping tooltip on.
     m.set(
         "SetAuctionCompareItem",
         lua.create_function(
@@ -1265,7 +1261,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
-            // A block source (`0x5355fa`, p6=1) carrying the attachment's roll: no placeholder.
+            // A block source (p6=1) carrying the attachment's roll: no placeholder.
             let inst = render::ItemInstance {
                 name,
                 enchants: roll_enchants(lua, roll),
@@ -1286,8 +1282,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
 
     // GameTooltip:SetAuctionItem(type, index): an auction row's hover, `type` "list", "bidder" or
-    // "owner". No creator, gift or open line: the reference zeroes the guid arguments
-    // (`0x535a6d`, `0x535a73`), so the item-object gate those lines hang off fails.
+    // "owner". No creator, gift or open line: the reference zeroes the guid arguments, so the
+    // item-object gate those lines hang off fails.
     m.set(
         "SetAuctionItem",
         lua.create_function(|lua, (this, kind, index): (Table, String, usize)| {
@@ -1313,7 +1309,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                 clear_content(&mut model, h);
             }
             fire_cleared(lua, h);
-            // A block source (`0x5359d9`, p6=1) carrying the listing's roll: no placeholder.
+            // A block source (p6=1) carrying the listing's roll: no placeholder.
             let inst = render::ItemInstance {
                 name,
                 enchants: roll_enchants(lua, roll),
@@ -1330,8 +1326,8 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
 
     // GameTooltip:SetAuctionSellItem(): the sell slot's hover (`Blizzard_AuctionUI.xml:1791`); an
-    // empty slot does nothing. The reference resolves the live sell-slot object (`[0xb72608]`,
-    // `[0xb7260c]`, `0x5357b4`), so its creator line can show; this renders the template alone.
+    // empty slot does nothing. The reference resolves the live sell-slot object, so its creator
+    // line can show; this renders the template alone.
     m.set(
         "SetAuctionSellItem",
         lua.create_function(|lua, this: Table| {

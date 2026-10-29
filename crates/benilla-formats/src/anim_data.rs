@@ -1,9 +1,9 @@
 //! `AnimationData.dbc`, the per-animation policy: 506 rows of `ID`, `Name`, `WeaponFlags`,
 //! `BodyFlags`, `Flags`, `Fallback`, `BehaviorID` and `BehaviorTier` in 12340. The sheath reconcile
-//! (`0x5fdf80` in 5875, on every `PlayAnimation`) reads `WeaponFlags` at row `+0x8` for the
-//! requested id, not a model's substitute: `4` and `0x10` stow, `0x20` draws melee, and 12340 sets
-//! no other bit. `Fallback` is walked for an id a model does not author (`0x826350`); a 3.3.5a
-//! model bakes no `PlayableAnimationLookup` from it.
+//! (on every `PlayAnimation`) reads `WeaponFlags` at row `+0x8` for the requested id, not a model's
+//! substitute: `4` and `0x10` stow, `0x20` draws melee, and 12340 sets no other bit. `Fallback` is
+//! walked for an id a model does not author (`0x826350`); a 3.3.5a model bakes no
+//! `PlayableAnimationLookup` from it.
 
 use std::collections::HashMap;
 

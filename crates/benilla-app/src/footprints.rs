@@ -1,21 +1,21 @@
 //! Footprint decals on snow and sand, through the shared decal projector
 //! ([`benilla_world::decal`]). A print is projected once when its foot plants and its triangles
-//! replay with the current alpha until it fades, as the reference's per-frame draw `0x69a3e0` does.
+//! replay with the current alpha until it fades, as the reference's per-frame draw does.
 //!
-//! - Surface: `TerrainType.Flags & 1` (`0x699eb6`, Snow and Sand) on the unit's one resolved
-//!   surface (`CGUnit+0xc60`), which the decal, the spray and `$FSD` share (`0x5fc06e`,
-//!   `0x5fc20f`, `0x62341d`); indoors it is the building's floor.
-//! - Trigger: the per-foot tags `$xL*`/`$xR*` of [`AnimSoundEvent`], placed at the event's
-//!   authored offset through the live bone (`0x7196df`); `$FSD` is sound-only.
+//! - Surface: `TerrainType.Flags & 1` (Snow and Sand) on the unit's one resolved surface
+//!   (`CGUnit+0xc60`), which the decal, the spray and `$FSD` share; indoors it is the building's
+//!   floor.
+//! - Trigger: the per-foot tags `$xL*`/`$xR*` of [`AnimSoundEvent`], placed at the event's authored
+//!   offset through the live bone; `$FSD` is sound-only.
 //! - Ink and size: `CreatureModelData.FootprintTextureID` to `FootprintTextures.dbc`, Length and
-//!   Width in inches (1/36 yd, `0x5fc310`, `0x607a00`) times the wire `OBJECT_FIELD_SCALE_X` alone
-//!   (`0x469f10`); `0xFFFFFFFF` is printless. A mount prints its own ink at the rider's scale. The
-//!   texture is a left foot; right prints mirror (`0x5fc07f`).
-//! - Caps: ring pools of 64 for the local player and 512 for everyone else (`0xca05f0`).
+//!   Width in inches (1/36 yd) times the wire `OBJECT_FIELD_SCALE_X` alone; `0xFFFFFFFF` is
+//!   printless. A mount prints its own ink at the rider's scale. The texture is a left foot; right
+//!   prints mirror.
+//! - Caps: ring pools of 64 for the local player and 512 for everyone else.
 //! - Suppressed by hover, stealth (not death), a player ghost and more than 50 yd from the camera
 //!   eye ([`footfall_culls`], the local player's feet included); water does not suppress it.
-//! - The reference's `showfootprints` cvar (default on, `0x5fc023`) skips the decal block alone,
-//!   so the footstep shake and the spray still run; it is not wired here, so prints are always on.
+//! - The reference's `showfootprints` cvar (default on) skips the decal block alone, so the
+//!   footstep shake and the spray still run; it is not wired here, so prints are always on.
 //!
 //! Draw state, as the reference's: src-alpha blend, no depth write, unlit, white vertex RGB with
 //! the fade in alpha; the ink's darkness is the texture's.
@@ -39,9 +39,9 @@ use benilla_world::particles::buffer::{begin_effect_frame, EffectVertex};
 use benilla_world::schedule::WorldStage;
 use benilla_world::view::WorldCamera;
 
-/// 6000 ms (`0x69a3e0`).
+/// 6000 ms.
 const LIFETIME: f32 = 6.0;
-/// The local player's ring: the head of the reference's 576-slot table at `0xca05f0`.
+/// The local player's ring: the head of the reference's 576-slot table.
 const OWN_CAP: usize = 64;
 /// Everyone else's ring, the table's tail.
 const SHARED_CAP: usize = 512;
@@ -154,7 +154,7 @@ fn spawn_footprints(
         let Ok((net, transform)) = units.get(ev.entity) else {
             continue;
         };
-        // Ink and size from the event's model, scale and gates from the root unit (`0x607920`).
+        // Ink and size from the event's model, scale and gates from the root unit.
         let Some(params) = net.display_id.and_then(|d| creatures.footprint(d)) else {
             continue;
         };
@@ -177,8 +177,8 @@ fn spawn_footprints(
                 continue;
             }
         }
-        // The fired key's own point, not a first-match marker lookup (`0x7130e0`), which a model
-        // authoring a side tag twice would resolve to the wrong foot.
+        // The fired key's own point, not a first-match marker lookup, which a model authoring a
+        // side tag twice would resolve to the wrong foot.
         let foot = ev.pos.unwrap_or_else(|| transform.translation());
         if footfall_culls(eye, foot) {
             continue;
@@ -258,8 +258,8 @@ fn spawn_footprints(
     }
 }
 
-/// The reference's fade (`0x69a3e0`): `t = 1 - age/6 s`, alpha byte `min(127, floor(255 t))`,
-/// so a 3 s hold at half opacity, then linear to 0, with no fade-in.
+/// The reference's fade: `t = 1 - age/6 s`, alpha byte `min(127, floor(255 t))`, so a 3 s hold at
+/// half opacity, then linear to 0, with no fade-in.
 fn fade(age: f32) -> f32 {
     let t = 1.0 - age / LIFETIME;
     if t <= 0.0 {

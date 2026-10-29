@@ -1,8 +1,8 @@
 //! The share of a particle emitter's constant-depth quad that passes `LEQUAL` against its own
 //! model's depth-writing batches, per camera direction, from our parse alone. The reference's quad
-//! writer (`0x7b2a50`) gives 43.4% front, 38.8% 30° above and 43.3% 60° left for `Voidwalker.m2`
-//! bone 60 at half-size 0.0833; a mismatch puts the bug in our asset side, a match in the renderer.
-//! Model space, rest pose, WoW axes (X forward, Y left, Z up); the emitter `position`, equal to its
+//! writer gives 43.4% front, 38.8% 30° above and 43.3% 60° left for `Voidwalker.m2` bone 60 at
+//! half-size 0.0833; a mismatch puts the bug in our asset side, a match in the renderer. Model
+//! space, rest pose, WoW axes (X forward, Y left, Z up); the emitter `position`, equal to its
 //! bone's pivot, is the quad centre. `cargo run -p benilla-formats --example eye_quad_pass -- <m2>`
 
 use benilla_formats::RenderSubmesh;

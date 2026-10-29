@@ -154,8 +154,8 @@ fn a_raise_during_the_walk_follows_the_relinked_frames() {
     assert_eq!(take_log(&s), "Front2 Back3");
 }
 
-/// A kind's own update runs in its frame's slot (`CGCooldown::OnLayerUpdate` `0x5ec8f0`): a
-/// cooldown whose flash ends hides between the frames walked before it and those after.
+/// A kind's own update runs in its frame's slot (`CGCooldown::OnLayerUpdate`): a cooldown whose
+/// flash ends hides between the frames walked before it and those after.
 #[test]
 fn a_cooldowns_self_hide_lands_in_its_walk_slot() {
     let mut s = script();

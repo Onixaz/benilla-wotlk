@@ -1,21 +1,20 @@
 //! The current-group down-ray: which room the camera is in, and which flood roots follow.
 //!
-//! The 1.12 client's per-frame probe (`0x6821f0` → `0x6be250` → `0x6a3f80`) casts 1760 yd down
-//! from the eye, and the nearest crossing wins:
+//! The 1.12 client's per-frame probe casts 1760 yd down from the eye, and the nearest crossing
+//! wins:
 //!
 //! - Leg A, walking-collision faces (the collision BSP, MOPY mask `0x84`): every non-DETAIL face,
 //!   with no orientation filter.
-//! - Leg B, portal crossings (`0x6a3f80`): the eye's side of the portal plane picks the group
+//! - Leg B, portal crossings: the eye's side of the portal plane picks the group
 //!   (`group_a iff (signed_dist ≥ 0) == (side > 0)`). A near-parallel portal (`|denom| < 1e-4`)
-//!   counts only within the 0.1 yd snap of its plane (`0x7c22b0`), and a crossing within about
-//!   1e-4 of the nearest face hit still wins (`0x80c4f4`).
+//!   counts only within the 0.1 yd snap of its plane, and a crossing within about 1e-4 of the
+//!   nearest face hit still wins.
 //! - The terrain race: the WMO hit is dropped only when terrain on the same segment is strictly
-//!   nearer (`0x6822a2`; `GetAreaID` `0x670250` arbitrates alike at `0x670345`). Terrain above the
-//!   eye is off the segment, so a tunnel under a hill stays inside.
+//!   nearer (`GetAreaID` arbitrates alike). Terrain above the eye is off the segment, so a tunnel
+//!   under a hill stays inside.
 //!
-//! The verdict is the in-group plus, for a portal win, the across-group: the containing-group set
-//! `0xc7cd88`, each flooded as its own root (`0x6b3bd4`–`0x6b3c10`). An exterior winner or no
-//! crossing is outside.
+//! The verdict is the in-group plus, for a portal win, the across-group: the containing-group set,
+//! each flooded as its own root. An exterior winner or no crossing is outside.
 //!
 //! Deviation: when legs A and B both miss and no terrain lies at or below the eye, Leg C runs the
 //! same race over the camera-only faces (DETAIL without NOCAMCOLLIDE), because the 1.12 client
@@ -32,8 +31,7 @@ use super::{
 };
 
 /// The down-ray's verdict: the camera's group and, when the nearest crossing was a portal, the
-/// group across it, both flood roots (the containing-group set `0xc7cd88`). Outside, both are
-/// `None`.
+/// group across it, both flood roots. Outside, both are `None`.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub struct DownRaySeeds {
     pub in_group: Option<usize>,
@@ -142,8 +140,8 @@ pub(crate) fn down_ray_pick(
             if !point_in_poly_dominant(verts, info.plane, [eye[0], eye[1], z]) {
                 continue;
             }
-            // The plane-side pick (`0x6a4130..0x6a4159`): the eye's side, oriented by `side`, picks
-            // the walked group or the neighbour.
+            // The plane-side pick: the eye's side, oriented by `side`, picks the walked group or
+            // the neighbour.
             let d_signed = nx * eye[0] + ny * eye[1] + nz * eye[2] + d;
             let chosen = if (d_signed >= 0.0) == (r.side > 0) {
                 gi
@@ -206,17 +204,15 @@ pub(crate) fn down_ray_pick(
     }
 }
 
-/// The zone-text ray length, the client's `[0x8022cc]` = 1000.0; the render probe's is 1760.
+/// The zone-text ray length, the client's1000.0; the render probe's is 1760.
 const ZONE_RAY_LEN: f32 = 1000.0;
 
-/// The position-cast indoor predicate, faces only: the CGLight node's down-ray attach `0x6a8a20`
-/// casts [`ZONE_RAY_LEN`] down, races terrain against WMO faces with the WMO winning ties
-/// (`0x6a8b15`), and classifies the winning group's flags against `outdoor_mask`. The classify
-/// `0x6a87f0` has two sinks:
+/// The position-cast indoor predicate, faces only: the CGLight node's down-ray attach casts
+/// [`ZONE_RAY_LEN`] down, races terrain against WMO faces with the WMO winning ties, and classifies
+/// the winning group's flags against `outdoor_mask`. The classify has two sinks:
 ///
 /// - zone-text (`[node+0x90]` bit 0): [`EXTERIOR`] alone, so a `0x40`-only street is indoors;
-/// - unit lighting (`[node+0xc]`): `EXTERIOR | EXTERIOR_LIT`, the fork on `MOGI & 0x48`
-///   (`0x6a880d`, `0x6a8823`).
+/// - unit lighting (`[node+0xc]`): `EXTERIOR | EXTERIOR_LIT`, the fork on `MOGI & 0x48`.
 ///
 /// The portal leg belongs to the camera's render seed alone: a doorway plane under the eye must
 /// not claim the interior. `None` is outdoors; [`down_ray_claim`] keeps an outdoor-class winner.
@@ -305,12 +301,11 @@ pub(crate) fn down_ray_claim(
     )
 }
 
-/// The same claim cast upward: the containment lane's retry, and only that. `0x6a8ed0` anchors a
+/// The same claim cast upward: the containment lane's retry, and only that. The reference anchors a
 /// GameObject's light node at its world bounding-box centre (`[node+0x5c]`), and that box is the M2
-/// header's authored one (`0x713640` copies `MD20+0xB4`, not the collision box `0x713700` copies),
-/// which can put a particle-heavy model's anchor 40 yd under its floor. The reference retries
-/// 1000 yd upward (`0x6a908d`, `0x6a9093`). No terrain race: a cast up from under a floor cannot
-/// lose to the ground below it.
+/// header's authored one (the reference copies `MD20+0xB4`, not the collision box copies), which
+/// can put a particle-heavy model's anchor 40 yd under its floor. The reference retries 1000 yd
+/// upward. No terrain race: a cast up from under a floor cannot lose to the ground below it.
 pub(crate) fn up_ray_claim(
     tris: &[Vec<[[f32; 3]; 3]>],
     bounds: &[Option<([f32; 3], [f32; 3])>],
@@ -346,9 +341,9 @@ fn ray_claim(
     // An object link's own point ([`link_down_ray`]); `None` for the position casts.
     link_mid: Option<[f32; 3]>,
 ) -> Option<DownRayClaim> {
-    // Candidates are per face: the client's query has no bbox, portals or camera (`0x6a8a20`).
-    // The broad phase is the AABB of the faces themselves (`group_collision_bounds`), never a
-    // group's authored box, which can float above its own floor; so the cull is exact.
+    // Candidates are per face: the client's query has no bbox, portals or camera. The broad phase
+    // is the AABB of the faces themselves (`group_collision_bounds`), never a group's authored box,
+    // which can float above its own floor; so the cull is exact.
     let column_owned = |gi: usize| {
         bounds.get(gi).copied().flatten().is_some_and(|(min, max)| {
             eye[0] >= min[0]
@@ -398,11 +393,11 @@ fn ray_claim(
         return None;
     }
     // The terrain race: strictly nearer terrain wins the column; a tie keeps the WMO
-    // (`0x6a8b15`, `t_wmo <= t_terr`).
+    // (`t_wmo <= t_terr`).
     if terrain_z.is_some_and(|tz| tz <= eye[2] && tz > best_z) {
         return None;
     }
-    // The winner's class under the caller's law (`0x6a87f0` against `outdoor_mask`).
+    // The winner's class under the caller's law (against `outdoor_mask`).
     let outdoor = nav
         .get(in_group)
         .is_none_or(|g| g.flags & outdoor_mask != 0);
@@ -413,8 +408,7 @@ fn ray_claim(
     })
 }
 
-/// Point-in-polygon with the plane's dominant axis projected out (the client's `0x7c23e0`), for a
-/// point on or near the plane.
+/// Point-in-polygon with the plane's dominant axis projected out, for a point on or near the plane.
 fn point_in_poly_dominant(verts: &[[f32; 3]], plane: [f32; 4], p: [f32; 3]) -> bool {
     let (u, v) = dominant_axes(plane);
     point_in_poly_2d(verts.iter().map(|q| (q[u], q[v])), (p[u], p[v]))
@@ -524,7 +518,7 @@ mod tests {
     #[test]
     fn face_leg_is_orientation_agnostic() {
         // A near-wall ramp face (|n.z|/|n| ≈ 0.1) still owns the column: the down-ray's segment
-        // query, run with the walking mask `0x84`, has no normal filter in its leaf (`0x6bc700`).
+        // query, run with the walking mask `0x84`, has no normal filter in its leaf.
         let g = nav(0, [-10.0, -10.0, 0.0], [10.0, 10.0, 120.0], 0, 0);
         let steep = vec![[[-1.0, -1.0, 0.0], [1.0, -1.0, 0.0], [0.0, 1.0, 20.0]]];
         assert_eq!(faces_only(&[steep], &[g], [0.0, 0.0, 30.0]), Some(0));
@@ -714,7 +708,7 @@ mod tests {
             }
         );
         // Eye 0.3 in, beyond the snap: the doorway is not crossed and room A's floor decides. Real
-        // collision meshes track the room boundary to sub-yard (`0x6b92b0`).
+        // collision meshes track the room boundary to sub-yard.
         assert_eq!(
             no_terrain(&tris, &groups, &verts, &infos, &refs, [0.3, 0.0, 1.7]),
             DownRaySeeds {
@@ -943,8 +937,8 @@ mod tests {
     #[test]
     fn the_upward_retry_recovers_a_floor_from_beneath_it() {
         // An Onyxia lava trap anchors about 40 yd under its chamber floor (its authored box reaches
-        // 98 yd past its geometry): the downward cast finds nothing and the upward retry
-        // (`0x6a908d`) finds the floor.
+        // 98 yd past its geometry): the downward cast finds nothing and the upward retry finds the
+        // floor.
         let room = nav(0, [-10.0, -10.0, 0.0], [10.0, 10.0, 10.0], 0, 0);
         let tris = [quad(0.0, 10.0)]; // the chamber floor at z = 0
         let (bounds, _) = benilla_assets::collision_tri_bounds(&tris);

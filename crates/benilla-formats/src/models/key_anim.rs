@@ -1,7 +1,7 @@
 //! The keyed-loop bake shared by the material-alpha and texture-transform channels: one sampler,
-//! after the reference's key search `0x713d50`, and one clock resolution. A sequence track bakes
-//! per sequence, since its keys lie on one timeline that every sequence slices a band from and the
-//! reference reads the playing sequence's own key window (`ranges[seqSlot]`) every frame.
+//! after the reference's key search, and one clock resolution. A sequence track bakes per sequence,
+//! since its keys lie on one timeline that every sequence slices a band from and the reference
+//! reads the playing sequence's own key window (`ranges[seqSlot]`) every frame.
 
 use benilla_m2::M2Track;
 
@@ -63,9 +63,9 @@ pub struct KeyAnim<V> {
     /// `RepeatAnimation::Never` clip parks at or past `period` without its modulo, where a wrap
     /// would snap a Death fade-out back to its opening value.
     pub wrap: bool,
-    /// A global-sequence loop, whose reference cursor is `(sceneClock − attachTime) % duration`
-    /// (`0x71437b`), the attach time stamped once per model instance (`0x70ea00`,
-    /// `CM2Model+0x68`); a band loop instead runs on the host's clip time, re-armed every play.
+    /// A global-sequence loop, whose reference cursor is `(sceneClock − attachTime) % duration`,
+    /// the attach time stamped once per model instance (`CM2Model+0x68`); a band loop instead runs
+    /// on the host's clip time, re-armed every play.
     pub gseq: bool,
     /// `(secs from loop start, value)`, time-ascending.
     pub keys: Vec<(f32, V)>,
@@ -124,11 +124,11 @@ impl<V: Lerp> KeyAnim<V> {
     }
 }
 
-/// The reference's track read at `t_ms` over the key window `[lo, hi]` (`0x713d50`, interp
-/// dispatch `0x71af20`): `keys[lo]` for a collapsed window (`lo >= hi`), else the last window key
-/// at or before `t_ms`, held for a step track or past the last key, else lerped toward the next.
-/// Deviation: the fraction is clamped to `[0, 1]`; the reference extrapolates, which for a window
-/// whose brackets miss the band can push a fix16 factor negative and cull the batch on a quirk.
+/// The reference's track read at `t_ms` over the key window `[lo, hi]`: `keys[lo]` for a collapsed
+/// window (`lo >= hi`), else the last window key at or before `t_ms`, held for a step track or past
+/// the last key, else lerped toward the next. Deviation: the fraction is clamped to `[0, 1]`; the
+/// reference extrapolates, which for a window whose brackets miss the band can push a fix16 factor
+/// negative and cull the batch on a quirk.
 pub(super) fn sample_window<V: Lerp>(
     keys: &[(u32, V)],
     step: bool,

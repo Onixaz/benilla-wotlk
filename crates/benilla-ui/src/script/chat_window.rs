@@ -238,7 +238,7 @@ impl ChatWindowLook {
 }
 
 /// The leading decimal integer after optional whitespace and a sign, 0 when there is none. The
-/// reference's `SStrToInt` (`0x64ac60`) takes neither the whitespace nor a `+`.
+/// reference's `SStrToInt` takes neither the whitespace nor a `+`.
 pub(super) fn leading_int(s: &str) -> i64 {
     let s = s.trim_start();
     let (neg, digits) = match s.strip_prefix('-') {
@@ -407,7 +407,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     // SetChatWindowUninteractable(id, flag) (`0x4fc6e0`): a non-number id raises the usage; the
-    // flag is Lua truthiness (`0x815500`).
+    // flag is Lua truthiness.
     lua.globals().set(
         "SetChatWindowUninteractable",
         lua.create_function(|lua, (id, flag): (Value, Value)| {

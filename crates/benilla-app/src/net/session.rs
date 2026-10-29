@@ -394,9 +394,9 @@ fn on_packet_dropped(In(ev): In<SessionEvent>, mut b: Bridge) {
     }
 }
 
-/// The read thread consumes the pong inline, as the reference's `OnData` (`0x537b10`) hands
-/// `SMSG_PONG` to `HandlePong` (`0x537d60`); reaching here means that bypass is gone and every
-/// latency reading is a frame late, so it warns.
+/// The read thread consumes the pong inline, as the reference's `OnData` hands `SMSG_PONG` to
+/// `HandlePong`; reaching here means that bypass is gone and every latency reading is a frame late,
+/// so it warns.
 fn on_pong(In(ev): In<SessionEvent>) {
     if let SessionEvent::Pong { sequence } = ev {
         warn!("net: pong seq={sequence} reached the drain — the read thread's RTT bypass is gone");
@@ -490,8 +490,8 @@ fn connected(
     status.connected = true;
     status.last_reason = None;
     info!("net: in world as {name} (guid {guid})");
-    // The reference clears player and pet names at every world entry (`0x555740`, arm
-    // `0x5557ad`), since a guid may name a new character; creature templates survive.
+    // The reference clears player and pet names at every world entry, since a guid may name a new
+    // character; creature templates survive.
     names.clear_world_session();
     // Our own name came with the login, so "player" never queries.
     names.insert_player(guid, name, None);
@@ -594,9 +594,9 @@ fn teleport(
     }
 }
 
-/// `SMSG_MOVE_KNOCK_BACK`: a ballistic launch our controller flies and acks. The reference
-/// handles it for the controller only (`0x603f90`); observers get `MSG_MOVE_KNOCK_BACK`
-/// (`0x603bb0`), so one naming another unit is dropped.
+/// `SMSG_MOVE_KNOCK_BACK`: a ballistic launch our controller flies and acks. The reference handles
+/// it for the controller only; observers get `MSG_MOVE_KNOCK_BACK`, so one naming another unit is
+/// dropped.
 fn knock_back(
     guid: u64,
     counter: u32,
@@ -712,8 +712,8 @@ fn reputations(standings: Vec<(u8, i32)>, reputations: &mut Reputations) {
     reputations.0 = standings;
 }
 
-/// `SMSG_SET_FACTION_STANDING`: overwrites the changed slots, growing the store with flags 0,
-/// and makes each visible unless it is `HIDDEN`, as the reference's handler does (`0x4d5760`).
+/// `SMSG_SET_FACTION_STANDING`: overwrites the changed slots, growing the store with flags 0, and
+/// makes each visible unless it is `HIDDEN`, as the reference's handler does.
 fn reputation_delta(
     standings: Vec<(u32, i32)>,
     reputations: &mut Reputations,

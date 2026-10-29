@@ -1,8 +1,8 @@
 //! The ground selection ring under the current target: the reference's `UnitSelectTexture.blp`
-//! projected onto the terrain and WMO faces in its box, never doodads or GameObjects (`0x6723b0`,
-//! flags `0x200122`), additive, steady and at full brightness from the instant of selection, its
-//! bright arc toward the camera. The vertical fade on wall and ledge pieces is matched to
-//! captures: the reference's edge-fade ramp (`0x6147f0`) is untraced.
+//! projected onto the terrain and WMO faces in its box, never doodads or GameObjects (flags
+//! `0x200122`), additive, steady and at full brightness from the instant of selection, its bright
+//! arc toward the camera. The vertical fade on wall and ledge pieces is matched to captures: the
+//! reference's edge-fade ramp is untraced.
 
 use benilla_formats::{load_faction_catalog, reputation_rank, FactionCatalog, Reaction};
 use benilla_protocol::EntityKind;
@@ -44,9 +44,9 @@ pub(super) struct RingAssets {
     texture: Handle<Image>,
 }
 
-/// The reference's selection-circle texture, loaded at `0x6146d0`: a white ring, tinted per vertex.
+/// The reference's selection-circle texture, loaded: a white ring, tinted per vertex.
 const RING_TEXTURE: &str = "mpq://textures/unitselecttexture.blp";
-/// Ring radius for a unit with no model: the reference's degenerate-box answer, 1.2 (`0x60aee0`).
+/// Ring radius for a unit with no model: the reference's degenerate-box answer, 1.2.
 const RING_FALLBACK_RADIUS: f32 = benilla_formats::DEGENERATE_RING_FOOTPRINT;
 /// The highlight resolver's palette (`0x521bf0` with its third argument 1), not the nameplate's,
 /// written as each decal vertex's diffuse: the reaction entries (`0xbd0c94`) red, orange
@@ -169,7 +169,7 @@ pub(super) fn update_ring(
     // Net entities are roots, so `Transform` is this frame's world position. `.0` filters on
     // `Guid`, which a torn-down unit sheds at the teardown while its model fades on. `.1` gives a
     // mounted target the mount model's footprint at its rendered scale, as the reference's ring
-    // cache (`+0xcf0`) recomputes from the mount (`0x60ce70` → `0x60aee0`).
+    // cache (`+0xcf0`) recomputes from the mount.
     targets: (
         Query<
             (
@@ -239,15 +239,15 @@ pub(super) fn update_ring(
                 let is_player = net.is_some_and(|n| n.kind == EntityKind::Player);
                 let is_dead = store.is_some_and(|s| s.0.unit_is_dead());
                 // The alive-to-dead edge clears the target, as the reference's health handler does
-                // (`0x6046f0` fires `0x605860`, which sends `CMSG_SET_SELECTION 0`); a corpse
-                // selected afterwards stays selected, gray.
+                // (which sends `CMSG_SET_SELECTION 0`); a corpse selected afterwards stays
+                // selected, gray.
                 let died = is_dead
                     && selection
                         .guid
                         .is_some_and(|g| *last_vitals == Some((g, false)));
                 *last_vitals = selection.guid.map(|g| (g, is_dead));
                 if died {
-                    // `SetSelection(0,0)` at `0x605901`, so the dead target becomes the last one.
+                    // `SetSelection(0,0)`, so the dead target becomes the last one.
                     deselect(&mut selection, &mut seam, !engaged.is_empty());
                     *last_vitals = None;
                     state.shown = false;
@@ -274,12 +274,12 @@ pub(super) fn update_ring(
                 } else {
                     variant.color()
                 };
-                // No ground in the box hides the ring: the reference skips the draw (`0x6d74b5`).
+                // No ground in the box hides the ring: the reference skips the draw.
                 !projected
             }
             // No longer an object: clear and tell the server, as the reference's deactivate does on
-            // both removal paths (`0x5fbb60` → `0x493910`). This also drops a selected corpse at
-            // respawn, which the server destroys before the fresh create.
+            // both removal paths. This also drops a selected corpse at respawn, which the server
+            // destroys before the fresh create.
             Err(_) => {
                 clear(&mut selection, &mut seam, !engaged.is_empty());
                 *last_vitals = None;
@@ -308,10 +308,9 @@ fn ring_fade_angle(camera: &Query<&GlobalTransform, With<WorldCamera>>) -> Optio
     Some(-std::f32::consts::FRAC_PI_2 - flat.z.atan2(flat.x))
 }
 
-/// Project the ring through the reference's decal projector (`0x6d7330` → `0x6d6fa0` →
-/// `0x6d7480`): the box is the texture square, yawed by the fade angle, reaching two radii up and
-/// down (`0x608e00`). Vertex alpha is full within half a radius of the feet and falls to 0 at the
-/// box's top and bottom. False when nothing is gathered.
+/// Project the ring through the reference's decal projector: the box is the texture square, yawed
+/// by the fade angle, reaching two radii up and down. Vertex alpha is full within half a radius of
+/// the feet and falls to 0 at the box's top and bottom. False when nothing is gathered.
 fn project_ring(
     out: &mut Vec<EffectVertex>,
     decals: &WorldDecal<'_, '_>,
@@ -372,16 +371,15 @@ pub(super) fn push_ring(
     batch.tris();
 }
 
-/// The target's reaction toward our player as a rank `0..=6`, the direction every NPC colour
-/// uses (`0x605960` and `0x7cbaa0` ask `UnitReaction 0x6061e0` with the unit as `this`). The
-/// player-vs-player rungs ([`pvp_rungs`]) decide first: the unit itself is friendly, then, when
-/// both carry `UNIT_FIELD_FLAGS` bit 3, a duel, one controller, the party and mutual FFA. Then
-/// `0x606530`: a reaction the server forces on the target's faction answers first (`0x71f822`,
-/// `GetForcedReaction 0x5d06a0`); then a faction with a reputation slot (`0x605fc0`) answers with
-/// our reputation rank (`0x4d63a0`), even in GM mode; any other goes to the template comparator
-/// (`0x606640`). Neutral when anything is missing. `0x606439` caps that answer at 6, so Revered
-/// and Exalted both read 6. A party rung lands on this same generic leg, `0x71f770` with the unit
-/// as `this` and the player as the actor. Not applied: the contested guard and the summon tail.
+/// The target's reaction toward our player as a rank `0..=6`, the direction every NPC colour uses
+/// (ask `UnitReaction` with the unit as `this`). The player-vs-player rungs ([`pvp_rungs`]) decide
+/// first: the unit itself is friendly, then, when both carry `UNIT_FIELD_FLAGS` bit 3, a duel, one
+/// controller, the party and mutual FFA. Then: a reaction the server forces on the target's faction
+/// answers first (`0x71f822`, `GetForcedReaction 0x5d06a0`); then a faction with a reputation slot
+/// answers with our reputation rank, even in GM mode; any other goes to the template comparator.
+/// Neutral when anything is missing. The reference caps that answer at 6, so Revered and Exalted
+/// both read 6. A party rung lands on this same generic leg, `0x71f770` with the unit as `this` and
+/// the player as the actor. Not applied: the contested guard and the summon tail.
 pub(crate) fn ring_reaction(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -418,21 +416,21 @@ pub(crate) fn ring_reaction(
         let self_tpl = catalog.template(self_store.0.unit_faction_template()?)?;
         Some(target_tpl.reaction_toward(self_tpl) as u8)
     })();
-    // `0x606439` (`cmp esi,6` / `jl` / `mov esi,6`) caps `0x606530`'s answer: Exalted's 7 reads 6.
+    // (`cmp esi,6` / `jl` / `mov esi,6`) caps the reference's answer: Exalted's 7 reads 6.
     resolved.map_or(Reaction::Neutral as u8, |rank| rank.min(REACTION_CAP))
 }
 
-/// Revered, the highest rank `UnitReaction`'s generic leg answers (`0x606439`).
+/// Revered, the highest rank `UnitReaction`'s generic leg answers.
 const REACTION_CAP: u8 = 6;
 
 /// `UNIT_FIELD_FLAGS` bit 3, player-controlled in behaviour: players and their pets carry it, wild
-/// creatures do not. `UnitReaction` needs it on both sides before any player-vs-player rung
-/// (`0x606217`, `0x60622f`), and `CanAttack` picks its reaction arm by it (`0x606a13`).
+/// creatures do not. `UnitReaction` needs it on both sides before any player-vs-player rung, and
+/// `CanAttack` picks its reaction arm by it.
 const UNIT_FLAG_PVP_ATTACKABLE: u32 = 1 << 3;
 
-/// The duel rung of `UnitReaction` (`0x60626b`–`0x6062ad`): hostile (1) between opposing teams,
-/// friendly (4) on one team, `None` when no duel relates the two. It needs team and arbiter both:
-/// `PLAYER_DUEL_ARBITER` is set at the challenge, `PLAYER_DUEL_TEAM` only when the countdown ends
+/// The duel rung of `UnitReaction`: hostile (1) between opposing teams, friendly (4) on one team,
+/// `None` when no duel relates the two. It needs team and arbiter both: `PLAYER_DUEL_ARBITER` is
+/// set at the challenge, `PLAYER_DUEL_TEAM` only when the countdown ends
 /// (`Player::UpdateDuelFlag`), so the arbiter alone would turn the opponent red during the count.
 fn duel_reaction(
     target: &benilla_protocol::ObjectFields,
@@ -558,11 +556,10 @@ fn ffa_reaction(
         && own.unit_byte2_flags() & BYTE2_FFA_PVP != 0
 }
 
-/// Target `UNIT_FIELD_FLAGS` bits, any one of which makes `CanAttack` refuse
-/// (`0x6069b7`–`0x6069ff`); their vanilla names are unconfirmed, so none is used.
+/// Target `UNIT_FIELD_FLAGS` bits, any one of which makes `CanAttack` refuse; their vanilla names
+/// are unconfirmed, so none is used.
 const CANNOT_BE_ATTACKED: u32 = 0x2 | 0x80 | 0x1_0000 | 0x10_0000 | 0x200_0000;
-/// The cross-flag immunity bits `CanAttack` reads on both sides (`0x606a05`–`0x606a8a`), each
-/// against the other unit's bit 3.
+/// The cross-flag immunity bits `CanAttack` reads on both sides, each against the other unit's bit 3.
 const IMMUNE_TO_PLAYER_CONTROLLED: u32 = 0x100;
 const IMMUNE_TO_UNCONTROLLED: u32 = 0x200;
 /// `UNIT_FIELD_BYTES_2` byte 1 (`[unit+0xd0]+0x1d1`), the PvP state `CanAttack 0x729740` reads:
@@ -575,12 +572,11 @@ const BYTE2_SANCTUARY: u8 = 0x8;
 /// `PLAYER_FLAGS` `0x80000`, which refuses every attack by its holder (`0x72975d`).
 const PLAYER_FLAGS_NO_ATTACK: u32 = 0x8_0000;
 
-/// The local player's reaction toward a unit, `0x6061e0` with the player as `this`. This direction
-/// reaches leg 3 (`0x606372`), which answers a reputation faction by the at-war bit alone, never
-/// the standing, so a not-at-war neutral NPC is friendly here and neutral to [`ring_reaction`]: a
-/// friendly-category plate with a yellow bar. A reaction the server forces on the target's faction
-/// answers ahead of it (`0x725439`). Not applied, only ever making a unit friendlier: the
-/// charmed-player case.
+/// The local player's reaction toward a unit, with the player as `this`. This direction reaches leg
+/// 3, which answers a reputation faction by the at-war bit alone, never the standing, so a
+/// not-at-war neutral NPC is friendly here and neutral to [`ring_reaction`]: a friendly-category
+/// plate with a yellow bar. A reaction the server forces on the target's faction answers ahead of
+/// it (`0x725439`). Not applied, only ever making a unit friendlier: the charmed-player case.
 pub(crate) fn reaction_from_player(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -648,12 +644,10 @@ pub(crate) fn at_war_with(
     )
 }
 
-/// `CanInteract` from the local player (`0x6067f0`), the world cursor's service gate at
-/// `0x482310`: bit 25 of `UNIT_FIELD_FLAGS` clear (`0x606835`), some `UNIT_NPC_FLAGS`
-/// (`0x60683d`), and both reactions at least neutral, [`ring_reaction`] (`0x606847`) and
-/// [`reaction_from_player`] (`0x606854`). Not applied, each only ever making a unit less
-/// interactable: the `CanInteractNow 0x606880` wrapper's gates (`0x606893`, charm, alive,
-/// shapeshift `0x60e9f0`, `0x613230`, `0x60ecd0`) and the ghost leg `0x605f70`.
+/// `CanInteract` from the local player, the world cursor's service gate: bit 25 of
+/// `UNIT_FIELD_FLAGS` clear, some `UNIT_NPC_FLAGS`, and both reactions at least neutral,
+/// [`ring_reaction`] and [`reaction_from_player`]. Not applied, each only ever making a unit less
+/// interactable: the `CanInteractNow` wrapper's gates (charm, alive) and the ghost leg.
 pub(crate) fn can_interact_from_player(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -770,8 +764,8 @@ pub(crate) fn faction_group_mask(
     )
 }
 
-/// `CanCooperate` from the local player (`0x606ba0`): equal faction-group masks, neither side
-/// charmed, and not the same unit; it reads no party or raid state.
+/// `CanCooperate` from the local player: equal faction-group masks, neither side charmed, and not
+/// the same unit; it reads no party or raid state.
 pub(crate) fn can_cooperate_with_player(
     factions: Option<&Factions>,
     target_store: Option<&ObjectStore>,
@@ -780,7 +774,7 @@ pub(crate) fn can_cooperate_with_player(
     let (Some(target), Some(own)) = (target_store, self_store) else {
         return false;
     };
-    // The first leg: a unit never cooperates with itself (`0x606ba6` compares the objects).
+    // The first leg: a unit never cooperates with itself.
     if std::ptr::eq(target, own) {
         return false;
     }
@@ -798,9 +792,9 @@ pub(crate) fn can_cooperate_with_player(
     resolved.unwrap_or(false)
 }
 
-/// The V-plate category (`0x60f6b7`–`0x60f6f1`): `true` is the friendly bucket (Shift-V, bit
-/// `0x8`), `false` the enemy one (V, bit `0x1`). A unit is friendly when `CanAttack` refuses it,
-/// and a player only when `CanCooperate` also passes; no reaction rank takes part.
+/// The V-plate category: `true` is the friendly bucket (Shift-V, bit `0x8`), `false` the enemy one
+/// (V, bit `0x1`). A unit is friendly when `CanAttack` refuses it, and a player only when
+/// `CanCooperate` also passes; no reaction rank takes part.
 pub(crate) fn plate_is_friendly(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -993,8 +987,8 @@ mod tests {
         assert_eq!(rank(&unit(12), &quiet), 4);
     }
 
-    /// The reputation leg walks the ladder up to Revered and stops: `0x606439` caps the rank at 6,
-    /// so a Stormwind unit reads the same to a Revered and an Exalted human, while the ladder
+    /// The reputation leg walks the ladder up to Revered and stops: the reference caps the rank at
+    /// 6, so a Stormwind unit reads the same to a Revered and an Exalted human, while the ladder
     /// itself, which the reputation pane reads, still reaches 7.
     #[test]
     fn the_reputation_rank_is_capped_at_revered() {
@@ -1118,9 +1112,9 @@ mod tests {
         assert!(!interactable(&chicken, &quiet));
     }
 
-    /// A player is friendly only if `CanCooperate`, faction-group-mask equality (`0x606ba0`), also
-    /// passes. Template 35, which vmangos's `.gm on` sets (`Player.cpp:2661`), is faction 31 with
-    /// mask 0, so a GM-mode character leaves every player's friendly bucket while NPCs keep theirs.
+    /// A player is friendly only if `CanCooperate`, faction-group-mask equality, also passes.
+    /// Template 35, which vmangos's `.gm on` sets (`Player.cpp:2661`), is faction 31 with mask 0,
+    /// so a GM-mode character leaves every player's friendly bucket while NPCs keep theirs.
     #[test]
     fn the_player_subject_category_on_the_real_dbc() {
         use crate::net::{ObjectStore, Reputations};
@@ -1194,7 +1188,7 @@ mod tests {
         assert!(npc_category(&npc(12), &gm), "the guard keeps his bucket");
         assert!(!npc_category(&npc(14), &gm), "and the mob keeps his");
 
-        // Nobody cooperates with themselves (`0x606ba6`).
+        // Nobody cooperates with themselves.
         assert!(!can_cooperate_with_player(
             Some(&factions),
             Some(&me),
@@ -1202,7 +1196,7 @@ mod tests {
         ));
     }
 
-    /// `CanAttack`'s flag refusals (`0x6069b7`–`0x6069ff`) beat a hostile reaction.
+    /// `CanAttack`'s flag refusals beat a hostile reaction.
     #[test]
     fn an_unattackable_flag_beats_a_hostile_reaction() {
         use crate::net::{ObjectStore, Reputations};
@@ -1259,10 +1253,10 @@ mod tests {
         ));
     }
 
-    /// A torn-down object stops being an object at the teardown, not when its model has faded:
-    /// both of the reference's routes (`SMSG_DESTROY_OBJECT`, the out-of-range block) reach
-    /// `0x464920` → `0x5fbb60` → `0x493910`, which clears a matching selection and sends
-    /// `CMSG_SET_SELECTION 0` at once, while only the detached model fades on.
+    /// A torn-down object stops being an object at the teardown, not when its model has faded: both
+    /// of the reference's routes (`SMSG_DESTROY_OBJECT`, the out-of-range block) reach, which
+    /// clears a matching selection and sends `CMSG_SET_SELECTION 0` at once, while only the
+    /// detached model fades on.
     mod teardown {
         use benilla_protocol::field::{
             FIELD_UNIT_FLAGS, FIELD_UNIT_HEALTH, FIELD_UNIT_LEVEL, FIELD_UNIT_MAXHEALTH,

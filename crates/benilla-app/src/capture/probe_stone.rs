@@ -17,7 +17,7 @@
 //!    `IsInMeetingStoneQueue()` is `1`, `GetMeetingStoneStatusText()` a string, and
 //!    `MiniMapMeetingStoneFrame` shown.
 //! 4. Darkened: the stone queued at is no longer highlightable
-//!    ([`crate::target::cursor_mode::meeting_stone_queued`], `0x5f6990`).
+//!    ([`crate::target::cursor_mode::meeting_stone_queued`]).
 //! 5. Left: `CancelMeetingStoneRequest()` through the VM: back to `nil`, icon hidden.
 //!
 //! `WOW_PROBE_STONE=<x>,<y>,<z>[,<map>]` aims it elsewhere. It leaves the body at the stone's
@@ -341,7 +341,7 @@ fn stone_probe(
                     if text.is_some() { "yes" } else { "no" }
                 ),
             );
-            // Leg 4: `0x5f6990` over the live queue refuses the stone we are queued at.
+            // Leg 4: the reference over the live queue refuses the stone we are queued at.
             probe.darkened = meeting_stone_queued(Some(area), queue.area);
             probe.fails += check("DARKENED", "true", &probe.darkened.to_string());
             info!("PROBE_STONE: leaving through the live VM's own CancelMeetingStoneRequest()");

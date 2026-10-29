@@ -1,13 +1,13 @@
 //! The celestial draw-order ladder: the reference's fixed sky pass order as `Transparent3d` sort
 //! biases.
 //!
-//! The 1.12 client draws `sky → opaque world → weather → glare`. Its sky pass (`CSky::Render`,
-//! `0x6d4940`) paints stars, sun disc, white moon, moon02, the additive gradient strip and the
-//! cloud dome, in that order, depth-write off in the slice `[0.975, 0.98]`; the glare quads take
-//! `[0.995, 1.0]` and draw last. Our sky is camera-anchored and Bevy sorts transparents back to
-//! front by `view-z + depth_bias`, so its rungs sit far below any world view-z. Rain has no bias:
-//! its view-z lands it after the sky and before the glare, the reference's weather slot; its order
-//! against world transparents is untraced.
+//! The 1.12 client draws `sky → opaque world → weather → glare`. Its sky pass (`CSky::Render`)
+//! paints stars, sun disc, white moon, moon02, the additive gradient strip and the cloud dome, in
+//! that order, depth-write off in the slice `[0.975, 0.98]`; the glare quads take `[0.995, 1.0]`
+//! and draw last. Our sky is camera-anchored and Bevy sorts transparents back to front by
+//! `view-z + depth_bias`, so its rungs sit far below any world view-z. Rain has no bias: its view-z
+//! lands it after the sky and before the glare, the reference's weather slot; its order against
+//! world transparents is untraced.
 //!
 //! The sign: `Transparent3d` sorts ascending on view-space z (negative in front of the eye) plus
 //! the bias, so a positive bias draws later, on top. On a `StandardMaterial` the same field is the
@@ -33,36 +33,36 @@ pub(crate) fn sky_pipeline_state(descriptor: &mut RenderPipelineDescriptor) {
     }
 }
 
-/// Stars, the sky pass's first draw (`0x6d4a3f`): the ladder's lowest rung.
+/// Stars, the sky pass's first draw: the ladder's lowest rung.
 pub(crate) const STARS_BIAS: f32 = -1.0e6;
 /// The WMO skybox ([`crate::skybox`]), which replaces this ladder while it draws: an ordinary
 /// blended M2, so its camera-anchored batches need a rung under every world transparent (the
 /// deepest, [`FAR_SIDE_BIAS`] at the far plane, ≈ −4.3e4), and no deeper, so its batch-order step
 /// (`model_render::SKYBOX_ORDER_EPS`) stays above the f32 ulp here.
 pub(crate) const WMO_SKYBOX_BIAS: f32 = -6.0e4;
-/// The sun disc, second (`0x7e5b90` via `0x6d4a47`).
+/// The sun disc, second.
 pub(crate) const SUN_DISC_BIAS: f32 = -8.2e5;
 /// The white moon, third: where the discs cross, it paints over the sun.
 pub(crate) const WHITE_MOON_BIAS: f32 = -8.1e5;
 /// moon02, fourth: invisible in clear weather, ordered for when the weather seed surfaces it.
 pub(crate) const MOON02_BIAS: f32 = -8.0e5;
-/// The cloud dome, the sky pass's last draw (`0x6d4a71`): clouds blend over a setting sun.
+/// The cloud dome, the sky pass's last draw: clouds blend over a setting sun.
 pub(crate) const CLOUDS_BIAS: f32 = -6.0e5;
 /// Far-side model transparents, the water-plane interleave's early half: the reference splits M2
-/// transparents per model (`0x707680`; per emitter for particles, `0x7084a0`) and `0x483460` draws
-/// the eye's far side of the water plane before the water pass, the near side after, flipping on
-/// submersion (`0x4836d6`). Sort-only: the mesh lane's far twin zeroes its raster constant.
+/// transparents per model (per emitter for particles) and the reference draws the eye's far side of
+/// the water plane before the water pass, the near side after, flipping on submersion. Sort-only:
+/// the mesh lane's far twin zeroes its raster constant.
 pub(crate) const FAR_SIDE_BIAS: f32 = -4.0e4;
 /// The water surface: the reference draws ocean, river, WMO liquid, then foam in a fixed slot
-/// between the two transparent halves (`0x6701d0 → 0x6816d0`), never view-z sorted against model
-/// transparents. It rides a `StandardMaterial`, so it is also a depth-test bias (~0.24% pull).
+/// between the two transparent halves, never view-z sorted against model transparents. It rides a
+/// `StandardMaterial`, so it is also a depth-test bias (~0.24% pull).
 pub(crate) const WATER_BIAS: f32 = -2.0e4;
 /// The water pass's own foam (`CWater0Ripple`'s wade wake), drawn inside the water group after
-/// every liquid queue (`0x6816d0`): over every water surface, under the near-side transparents. A
-/// rung, not a tie-break over [`WATER_BIAS`], since a chunk's key carries its own view-z.
+/// every liquid queue: over every water surface, under the near-side transparents. A rung, not a
+/// tie-break over [`WATER_BIAS`], since a chunk's key carries its own view-z.
 pub(crate) const FOAM_BIAS: f32 = -1.0e4;
-/// The sun and moon glare quads, the frame's last render (`0x483740`): over the clouds and the
-/// rain, under the nameplates, occluded only by their pinned far depth.
+/// The sun and moon glare quads, the frame's last render: over the clouds and the rain, under the
+/// nameplates, occluded only by their pinned far depth.
 pub(crate) const GLARE_BIAS: f32 = 2.0e4;
 
 /// The floor of any world draw's view-z, the ~3 km far plane negated: two rungs order their draws
@@ -82,45 +82,42 @@ impl Rung {
     /// residual: ~1 to 3 world-coordinate ulps between CPU-baked verts and GPU-transformed ones.
     ///
     /// Deviation: one constant, not the reference's per-lane magnitudes (ring and shadow at one
-    /// site, `0x6d7480`; footprints 10x, `0x69a54a`; foam 20x), because those suit its 24-bit
-    /// fixed-point forward-Z buffer; in our reversed-Z float buffer the bias is ULP-relative, and
-    /// one bake path sets one residual.
+    /// site, footprints 10x, foam 20x), because those suit its 24-bit fixed-point forward-Z buffer;
+    /// in our reversed-Z float buffer the bias is ULP-relative, and one bake path sets one
+    /// residual.
     pub const DECAL_RASTER: i32 = 32768;
     /// The pre-water decal band, rung 1: the selection ring (and, when built, the corpse and
-    /// click-to-move markers). The reference emits it in phase 1's M2 node drain
-    /// (`0x6812c5 call 0x683dd0`; the node's `+0x38` tick, `0x48160c` → `0x608e00`) before the
-    /// node's shadow gate (`0x683ec3`), so the modulate shadow darkens the additive ring.
+    /// click-to-move markers). The reference emits it in phase 1's M2 node drain (the node's
+    /// `+0x38` tick) before the node's shadow gate, so the modulate shadow darkens the additive
+    /// ring.
     pub const RING: f32 = -5.4e4;
-    /// The pre-water band, rung 2: the unit blob shadow, emitted in the same node drain right
-    /// after the ring (`0x6d78f0` → `0x6d7920`), before the footprints, the M2 opaque pass
-    /// (`0x4836a6`) and the water (phase 3, `0x6816d0`). Sort-only, its raster half being
-    /// [`DECAL_RASTER`](Rung::DECAL_RASTER). The band's window is `(−5.7e4, −4.3e4)`, between the
-    /// WMO-skybox band and the deepest world transparent.
+    /// The pre-water band, rung 2: the unit blob shadow, emitted in the same node drain right after
+    /// the ring, before the footprints, the M2 opaque pass and the water (phase 3). Sort-only, its
+    /// raster half being [`DECAL_RASTER`](Rung::DECAL_RASTER). The band's window is
+    /// `(−5.7e4, −4.3e4)`, between the WMO-skybox band and the deepest world transparent.
     pub const SHADOW_SORT: f32 = -5.2e4;
-    /// The pre-water band, rung 3: footprints, drawn at `0x483654` (`0x670240` → `0x69a3e0`) after
-    /// the shadows and before the M2 opaque pass, so a print paints over a shadow.
+    /// The pre-water band, rung 3: footprints, drawn after the shadows and before the M2 opaque
+    /// pass, so a print paints over a shadow.
     pub const FOOTPRINT: f32 = -5.0e4;
-    /// The pre-water band, rung 4: the ground-target reticle's solid-receiver pass (`0x4836c5`,
-    /// flags `0x200122`), the last decal before the water. Its liquid pass (`0x483727`, flags
-    /// `0xf0000`) is not built: liquid is not a `GroundDecalSurface`, and it would need a rung
-    /// above [`WATER_BIAS`].
+    /// The pre-water band, rung 4: the ground-target reticle's solid-receiver pass (flags
+    /// `0x200122`), the last decal before the water. Its liquid pass (flags `0xf0000`) is not
+    /// built: liquid is not a `GroundDecalSurface`, and it would need a rung above [`WATER_BIAS`].
     pub const RETICLE: f32 = -4.8e4;
-    /// The wade-foam decal's rasterizer constant. The reference's foam draw (`0x68fd0f`,
-    /// `0x68fae0`) takes `D3DRS_DEPTHBIAS` = `−f32(footstepBias(0.125) × [0x810390])`, −2048 ULPs
-    /// of its 24-bit depth; its OpenGL arm's `−4.0` slope never runs, as `gxApi` defaults to
-    /// `"direct3d"` (`0x63a81d`). Reversed-Z flips the sign.
+    /// The wade-foam decal's rasterizer constant. The reference's foam draw takes `D3DRS_DEPTHBIAS`
+    /// = `−f32(footstepBias(0.125) × )`, −2048 ULPs of its 24-bit depth; its OpenGL arm's `−4.0`
+    /// slope never runs, as `gxApi` defaults to `"direct3d"`. Reversed-Z flips the sign.
     ///
     /// Deviation: only a few ULPs, a guard against drivers rounding coplanar arithmetic
-    /// differently, because the reference's `1.29847e−3 · d²` yd pull paints the splash onto dry
-    /// bank (0.3 to 1.0 yd at an 11.9-yd camera, measured).
+    /// differently, because the reference's `1.−3 · d²` yd pull paints the splash onto dry bank
+    /// (0.3 to 1.0 yd at an 11.9-yd camera, measured).
     pub const FOAM_RASTER: i32 = 8;
     /// Zero, as in the reference, which never writes `D3DRS_SLOPESCALEDEPTHBIAS`. The foam patch is
     /// the liquid mesh's own triangles, so `GreaterEqual` wins the tie unaided, and a slope pull
     /// (growing as z²) would spread the wake over the wet cells a shoreline lays on sand.
     pub const FOAM_RASTER_SLOPE: f32 = 0.0;
-    /// The underwater drift cloud, at the reference's slot `0x483731`: after the water and both M2
-    /// transparent passes, just before the glare (`0x483740`). One batch, no per-mote sort: the
-    /// reference submits one indexed triangle list (`0x68f3c9`) with depth-write off.
+    /// The underwater drift cloud, at the reference's slot: after the water and both M2 transparent
+    /// passes, just before the glare. One batch, no per-mote sort: the reference submits one
+    /// indexed triangle list with depth-write off.
     pub const DRIFT_CLOUD: f32 = 1.4e4;
     /// World text, above the glare so a flare never washes a nameplate (the reference draws it late
     /// in the frame); also the raster bias of a depth-tested layer, so no bigger than needed.

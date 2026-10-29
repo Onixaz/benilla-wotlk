@@ -5,11 +5,11 @@
 //!
 //! The stock surface (`StaticPopup.lua:1289-1304`, `UIParent.lua:123`, `533-538`) is
 //! `CONFIRM_TALENT_WIPE`, whose one argument is the cost in copper for the dialog's money frame;
-//! `ConfirmTalentWipe()`, the Accept; and `CheckTalentMasterDist()`, polled from `OnUpdate`,
-//! which hides the dialog the frame it goes false. The reference's `0x5df980` serves both
-//! directions: a question gates on `d² <= [0xc4c28c]`, the constant behind
-//! [`crate::target::SERVICE_RANGE_SQ`], latches the guid (`0xc4d7a0`) and the cost and fires the
-//! event; the Accept calls it with a zero guid, which takes the latch and repeats the gate.
+//! `ConfirmTalentWipe()`, the Accept; and `CheckTalentMasterDist()`, polled from `OnUpdate`, which
+//! hides the dialog the frame it goes false. The reference's serves both directions: a question
+//! gates on `d² <=`, the constant behind [`crate::target::SERVICE_RANGE_SQ`], latches the guid and
+//! the cost and fires the event; the Accept calls it with a zero guid, which takes the latch and
+//! repeats the gate.
 //!
 //! Deviation: vmangos answers a reset with nothing to reset by asking again with a zero guid
 //! (`SkillHandler.cpp:52`), which the 1.12 client takes as its Accept and answers, looping; this
@@ -82,8 +82,8 @@ fn feed_talent_wipe(script: Option<NonSendMut<UiScript>>, mut wipe: ResMut<Talen
         return;
     }
     wipe.ask = false;
-    // The cost in copper as a number, the reference's `"%d"` fire (`0x5dfa3f`), which the
-    // dialog's `MoneyFrame_Update` takes.
+    // The cost in copper as a number, the reference's `"%d"` fire, which the dialog's
+    // `MoneyFrame_Update` takes.
     script.fire_event(
         "CONFIRM_TALENT_WIPE",
         vec![ScriptValue::Int(i64::from(wipe.cost))],
@@ -92,7 +92,7 @@ fn feed_talent_wipe(script: Option<NonSendMut<UiScript>>, mut wipe: ResMut<Talen
 
 /// Turns the dialog's Accept into the outbound `MSG_TALENT_WIPE_CONFIRM`, or the reference's
 /// not-enough-money line, only while a question is pending: with no guid latched, the reference
-/// finds no unit and sends nothing (`0x5df9be`).
+/// finds no unit and sends nothing.
 fn drain_talent_wipe(
     script: Option<NonSendMut<UiScript>>,
     mut wipe: ResMut<TalentWipeState>,
@@ -110,7 +110,7 @@ fn drain_talent_wipe(
     let Some(npc) = wipe.pending() else {
         return;
     };
-    // The client's purse check (`0x5dfa79`): over budget is a red line and no packet.
+    // The client's purse check: over budget is a red line and no packet.
     let money = self_q
         .single()
         .ok()
@@ -121,8 +121,8 @@ fn drain_talent_wipe(
             "ui_talent_wipe: respec costs {} copper, purse holds {money} — refused client-side",
             wipe.cost
         );
-        // `DisplayError(0x25)` at `0x5dfa81`, `ERR_NOT_ENOUGH_MONEY`: the red line and, as that
-        // row's `+0x0c` is `0x28`, the spoken one.
+        // `DisplayError(0x25)`, `ERR_NOT_ENOUGH_MONEY`: the red line and, as that row's `+0x0c` is
+        // `0x28`, the spoken one.
         let text = script
             .lua()
             .globals()
@@ -144,8 +144,8 @@ fn drain_talent_wipe(
             .0
             .send(ClientCommand::TalentWipeConfirm { trainer: npc });
     }
-    // Deviation: the reference never clears its latch (`0xc4d7a0`); this does once the answer is
-    // sent, because the reference's dialog is gone by then and a second Accept would reset twice.
+    // Deviation: the reference never clears its latch; this does once the answer is sent, because
+    // the reference's dialog is gone by then and a second Accept would reset twice.
     wipe.clear();
 }
 

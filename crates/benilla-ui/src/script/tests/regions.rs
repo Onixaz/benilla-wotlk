@@ -51,8 +51,8 @@ fn region_texture_anchored_topleft_resolves_exact_rect() {
     );
 }
 
-/// A FontString's extent is its measured text floored at one unit (`GetWidth 0x772930`,
-/// `GetHeight 0x772a60`), so an unmeasured one is a 1x1 box on its anchor.
+/// A FontString's extent is its measured text floored at one unit (`GetWidth`, `GetHeight`), so an
+/// unmeasured one is a 1x1 box on its anchor.
 #[test]
 fn region_fontstring_span_floors_at_one_unit_until_measured() {
     let mut s = script();
@@ -90,8 +90,8 @@ fn region_fontstring_span_floors_at_one_unit_until_measured() {
 }
 
 /// `ExhaustionLevelFillBar`'s shape, width 0 and one TOPLEFT anchor: its `<Color>` installs an 8x8
-/// texture (`0x7700a9` → `0x770360` → `0x44a900`), so `GetWidth 0x770720` answers 8; with no art
-/// it answers 0.0, and `assemble 0x767a20` leaves the rect unresolved.
+/// texture, so `GetWidth` answers 8; with no art it answers 0.0, and `assemble` leaves the rect
+/// unresolved.
 #[test]
 fn a_zero_width_solid_spans_eight_units_and_its_artless_twin_gets_no_rect() {
     let mut s = script();
@@ -126,8 +126,8 @@ fn a_zero_width_solid_spans_eight_units_and_its_artless_twin_gets_no_rect() {
 
 #[test]
 fn templateless_lua_region_without_anchors_never_draws() {
-    // `CreateTexture 0x773a20` anchors a new texture only on a template hit, so a templateless one
-    // has no anchor, no rect and no draw, whatever its size.
+    // `CreateTexture` anchors a new texture only on a template hit, so a templateless one has no
+    // anchor, no rect and no draw, whatever its size.
     let mut s = script();
     s.set_screen_size(800.0, 600.0);
     s.run(
@@ -378,9 +378,9 @@ fn child_frame_layers_regions_render_after_the_fixpoint() {
     );
 }
 
-/// A region draws at its own alpha times its owner frame's, one hop (`SetAlpha 0x76a690` cascades
-/// onto child frames, not regions), and `GetAlpha` answers its own: stock `CastingBarFrame.lua:133`
-/// ramps `CastingBarFlash` by reading it back.
+/// A region draws at its own alpha times its owner frame's, one hop (`SetAlpha` cascades onto child
+/// frames, not regions), and `GetAlpha` answers its own: stock `CastingBarFrame.lua:133` ramps
+/// `CastingBarFlash` by reading it back.
 #[test]
 fn region_alpha_is_its_own_and_multiplies_the_owner_frames() {
     let mut s = script();
@@ -428,9 +428,9 @@ fn region_alpha_is_its_own_and_multiplies_the_owner_frames() {
     );
 }
 
-/// A solid colour is a texel (`0x770360`, an 8x8 block at `+0xcc`) and the vertex colour a
-/// separate slot (`SetVertexColor 0x77f750`, `+0xb8`); the draw multiplies them, alpha included,
-/// as stock `SkillFrame`'s row trough needs (`SkillFrame.xml:35`, `SkillFrame.lua:158`).
+/// A solid colour is a texel (an 8x8 block at `+0xcc`) and the vertex colour a separate slot
+/// (`SetVertexColor`, `+0xb8`); the draw multiplies them, alpha included, as stock `SkillFrame`'s
+/// row trough needs (`SkillFrame.xml:35`, `SkillFrame.lua:158`).
 #[test]
 fn a_solid_colour_texel_multiplies_with_the_vertex_colour() {
     let mut s = script();
@@ -544,8 +544,8 @@ fn desaturation_rides_the_extract_for_art_and_never_for_a_solid() {
     assert!(!grey(&s, true), "clearing the flag restores full colour");
 }
 
-/// A Texture region's desaturation state, read off the model by name: `IsDesaturated`
-/// (`0x79c2c0`) is not built, and a cleared texture emits no quad to read it from.
+/// A Texture region's desaturation state, read off the model by name: `IsDesaturated` is not built,
+/// and a cleared texture emits no quad to read it from.
 fn desaturated(s: &UiScript, name: &str) -> bool {
     let lua = s.lua();
     let model = lua
@@ -557,7 +557,7 @@ fn desaturated(s: &UiScript, name: &str) -> bool {
 }
 
 /// The desaturation is the shader slot `+0x128`, which `CSimpleTexture::SetTexture` rewrites with
-/// the binding's always-NULL slot 0, except that the same path returns early (`0x770225`).
+/// the binding's always-NULL slot 0, except that the same path returns early.
 #[test]
 fn set_texture_clears_desaturation_unless_the_path_is_unchanged() {
     let s = script();
@@ -585,15 +585,15 @@ fn set_texture_clears_desaturation_unless_the_path_is_unchanged() {
         .unwrap();
     assert!(!grey(&s), "SetTexture(nil) clears it too");
 
-    // The colour form (`0x770360`) does not write the shader slot.
+    // The colour form does not write the shader slot.
     s.run(r#"icon:SetTexture("Interface\\Icons\\Spell_Nature_Sleep") icon:SetDesaturated(1)"#)
         .unwrap();
     s.run("icon:SetTexture(1, 0, 0)").unwrap();
     assert!(grey(&s), "the colour form does not touch the shader slot");
 }
 
-/// `SetDesaturated` reads its flag with `0x6f1c10(L, 2, default=1)`: no argument (`LUA_TNONE`)
-/// greys, and a number is truncated to an int, so 0 and 0.5 clear.
+/// `SetDesaturated` reads its flag with `(L, 2, default=1)`: no argument (`LUA_TNONE`) greys, and a
+/// number is truncated to an int, so 0 and 0.5 clear.
 #[test]
 fn set_desaturated_takes_the_clients_argument_truth_table() {
     let s = script();
@@ -622,7 +622,7 @@ fn set_desaturated_takes_the_clients_argument_truth_table() {
     assert!(!grey(&s), "false clears");
 }
 
-/// The draw gate is the texture slot, never the colour: `0x7706e0` emits nothing when `+0xcc` is
+/// The draw gate is the texture slot, never the colour: the reference emits nothing when `+0xcc` is
 /// empty, though the tint survives `SetTexture(nil)`.
 #[test]
 fn a_vertex_colour_without_a_texture_draws_nothing() {
@@ -665,8 +665,8 @@ fn a_vertex_colour_without_a_texture_draws_nothing() {
     );
 }
 
-/// `SetTexture`'s path form reads one argument (`0x770200`) and its colour form up to four
-/// (`0x770360`), ignoring the rest; a non-numeric channel reads as `lua_tonumber` reads it, 0.
+/// `SetTexture`'s path form reads one argument and its colour form up to four, ignoring the rest; a
+/// non-numeric channel reads as `lua_tonumber` reads it, 0.
 #[test]
 fn set_texture_ignores_arguments_past_the_path_like_the_client_does() {
     let s = script();
@@ -730,8 +730,8 @@ fn a_gradient_is_stored_whole_and_painted_as_its_midpoint() {
     );
 }
 
-/// Texture's map (`0x87c128`, 22 entries) and FontString's (`0xcf5400`, 32) each answer their own
-/// verbs, then fall back to the Region map and stop there.
+/// Texture's map (22 entries) and FontString's (32) each answer their own verbs, then fall back to
+/// the Region map and stop there.
 #[test]
 fn the_two_region_leaves_answer_their_own_maps() {
     let s = crate::script::UiScript::new().unwrap();
@@ -838,17 +838,15 @@ fn set_portrait_to_texture_is_a_global_taking_a_name() {
         "nil",
         "1.12 has no Texture:SetPortraitToTexture — it is a global"
     );
-    // An unknown name does not raise here; the reference raises "Couldn't find texture named"
-    // (`0x48d7db`).
+    // An unknown name does not raise here; the reference raises "Couldn't find texture named".
     s.run(r#"SetPortraitToTexture("NoSuchPortrait", "Interface\\X")"#)
         .unwrap();
     assert!(s.errors().is_empty());
 }
 
-/// `Region:GetWidth`/`GetHeight` (`0x7a1e00`/`0x7a2030`) call the virtual size getters the rect
-/// resolver uses: a FontString's authored axis wins (`0x772930` skips the measure, `jp 0x77294a`),
-/// else its width is the unwrapped extent `GetStringWidth` reads (`0x772890`, `[fs+0xfc]`) and its
-/// height the wrapped one (`0x7729b0`, `[fs+0x100]`).
+/// `Region:GetWidth`/`GetHeight` call the virtual size getters the rect resolver uses: a
+/// FontString's authored axis wins (`jp`), else its width is the unwrapped extent `GetStringWidth`
+/// reads (`[fs+0xfc]`) and its height the wrapped one (`[fs+0x100]`).
 #[test]
 fn the_size_getters_take_the_author_first_then_the_natural_width_and_wrapped_height() {
     let mut s = script();
@@ -885,8 +883,8 @@ fn the_size_getters_take_the_author_first_then_the_natural_width_and_wrapped_hei
     assert!(s.take_errors().is_empty());
 }
 
-/// `0x772930`/`0x772a60` clamp to one unit, so an empty string reads 1. A host measure still in
-/// flight, a state the reference does not have, reads 0, so an `if h <= 0` guard keeps waiting.
+/// The reference clamp to one unit, so an empty string reads 1. A host measure still in flight, a
+/// state the reference does not have, reads 0, so an `if h <= 0` guard keeps waiting.
 #[test]
 fn an_empty_string_reads_back_one_unit_and_a_pending_measure_reads_back_zero() {
     let mut s = script();
@@ -908,8 +906,8 @@ fn an_empty_string_reads_back_one_unit_and_a_pending_measure_reads_back_zero() {
     assert!(s.take_errors().is_empty());
 }
 
-/// A Texture's size getters (`0x770720`/`0x770790`): the authored value unless exactly `0.0`, else
-/// the art's texel extent, else `0.0`, with no floor.
+/// A Texture's size getters: the authored value unless exactly `0.0`, else the art's texel extent,
+/// else `0.0`, with no floor.
 #[test]
 fn a_textures_getters_report_its_texel_span_on_an_unsized_axis() {
     let mut s = script();
@@ -935,11 +933,10 @@ fn a_textures_getters_report_its_texel_span_on_an_unsized_axis() {
 }
 
 /// The constructors' string arguments take four shapes, by whether the binding tests its parser's
-/// return: a region constructor's `name` and `layer` (`0x6f3510` → `0x6f3690`, untested) and
-/// `CreateFrame`'s `name` and `inherits` (`0x6f3690`, unguarded) read a table as absent and
-/// stringify a number; a region constructor's `inherits` (a raw `lua_type == LUA_TSTRING`) ignores
-/// both; `CreateFrame`'s `kind` (`0x6f3510`, tested) raises on a table and takes a number, which
-/// `CreateFrame` coerces in place before its gate (`0x70613f`, `0x6f7cb1`).
+/// return: a region constructor's `name` and `layer` (untested) and `CreateFrame`'s `name` and
+/// `inherits` (unguarded) read a table as absent and stringify a number; a region constructor's
+/// `inherits` (a raw `lua_type == LUA_TSTRING`) ignores both; `CreateFrame`'s `kind` (tested)
+/// raises on a table and takes a number, which `CreateFrame` coerces in place before its gate.
 #[test]
 fn the_constructors_string_arguments_are_four_shapes_not_one() {
     let mut s = script();
@@ -1008,20 +1005,19 @@ fn the_constructors_string_arguments_are_four_shapes_not_one() {
     assert_eq!(
         layer_of(&s, "LayLower"),
         layer_of(&s, "LayUpper"),
-        "layer matching is case-insensitive (SStrCmpI 0x64a4c0)"
+        "layer matching is case-insensitive"
     );
     assert_eq!(
         layer_of(&s, "LayJunk"),
         crate::order::DrawLayer::Artwork,
         "an unrecognised layer leaves the PRE-STAGED default standing — ARTWORK (2), not an error \
-         and not BACKGROUND: `0x6f18b0` returns 0 with its out-param unwritten and neither \
+         and not BACKGROUND: the reference returns 0 with its out-param unwritten and neither \
          constructor reads the result"
     );
 }
 
 /// `SetPortraitTexture` lowercases the token, which the app matches exactly: the reference reads
-/// unit tokens case-insensitively (`0x515970`, `_strnicmp`), and stock `MerchantFrame.lua:68`
-/// passes `"NPC"`.
+/// unit tokens case-insensitively (`_strnicmp`), and stock `MerchantFrame.lua:68` passes `"NPC"`.
 #[test]
 fn set_portrait_texture_folds_the_token_to_lowercase() {
     let mut s = script();
@@ -1050,9 +1046,8 @@ fn set_portrait_texture_folds_the_token_to_lowercase() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `FontString:GetText` (`0x79d690`) pushes nil for an empty string by a first-byte test
-/// (`0x79d73b`), though `SetText 0x771d80` keeps an empty buffer; `Button:GetText 0x780e10` does
-/// the same (`0x780ec5`), and `EditBox:GetText 0x7985c0` returns `""`.
+/// `FontString:GetText` pushes nil for an empty string by a first-byte test, though `SetText` keeps
+/// an empty buffer; `Button:GetText` does the same, and `EditBox:GetText` returns `""`.
 #[test]
 fn an_empty_fontstring_reads_back_nil_and_an_edit_box_does_not() {
     let s = script();
@@ -1098,7 +1093,7 @@ fn an_empty_fontstring_reads_back_nil_and_an_edit_box_does_not() {
     assert_eq!(
         text_of(&s, "TextCellButton").as_deref(),
         Some("Accept"),
-        "a nil never reaches the button's label (`0x778dcc`)"
+        "a nil never reaches the button's label"
     );
     s.run(r#"TextCellButton:SetText("")"#).unwrap();
     assert_eq!(text_of(&s, "TextCellButton"), None, "an empty label is nil");
@@ -1114,13 +1109,13 @@ fn an_empty_fontstring_reads_back_nil_and_an_edit_box_does_not() {
     assert_eq!(
         text_of(&s, "TextCellEdit").as_deref(),
         Some(""),
-        "EditBox:GetText 0x7985c0 reads [edit+0x32c] straight through — no substitution"
+        "EditBox:GetText reads [edit+0x32c] straight through — no substitution"
     );
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// A path that fails to load leaves the art alone (`0x770288` → `0x77028e`-`0x7702b2` returns 0
-/// without touching `+0xcc`); with no probe installed, every path is stored.
+/// A path that fails to load leaves the art alone (the reference returns 0 without touching
+/// `+0xcc`); with no probe installed, every path is stored.
 #[test]
 fn an_unresolvable_set_texture_keeps_the_art_the_region_had() {
     let mut s = script();
@@ -1160,8 +1155,8 @@ fn an_unresolvable_set_texture_keeps_the_art_the_region_had() {
     assert!(s.eval::<bool>("return t:GetTexture() == nil").unwrap());
 }
 
-/// `Texture:GetBlendMode` (`0x79a890`, table `0x87c128`) answers one string, the mode
-/// `SetBlendMode` (`0x79a950`) set, `"BLEND"` by default (the ctor's `[+0xd0] = 2`, `0x76fc64`).
+/// `Texture:GetBlendMode` answers one string, the mode `SetBlendMode` set, `"BLEND"` by default
+/// (the ctor's `[+0xd0] = 2`).
 #[test]
 fn get_blend_mode_answers_one_string_and_defaults_to_the_ctors_blend() {
     let s = crate::script::UiScript::new().unwrap();
@@ -1215,8 +1210,8 @@ fn get_blend_mode_answers_one_string_and_defaults_to_the_ctors_blend() {
         .unwrap());
 }
 
-/// `Texture:GetTexCoordModifiesRect` (`0x79c120`, table `0x87c128`) answers `1` or nil. The flag is
-/// stored, not applied: on the reference it makes `SetTexCoord` re-derive the rect (`0x770462`).
+/// `Texture:GetTexCoordModifiesRect` answers `1` or nil. The flag is stored, not applied: on the
+/// reference it makes `SetTexCoord` re-derive the rect.
 #[test]
 fn tex_coord_modifies_rect_is_one_slash_nil_and_moves_no_rect_yet() {
     let mut s = crate::script::UiScript::new().unwrap();

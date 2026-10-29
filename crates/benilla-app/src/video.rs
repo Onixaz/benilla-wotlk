@@ -112,9 +112,9 @@ pub(crate) fn parse_resolution(value: &str) -> Option<UVec2> {
 }
 
 /// The `WindowMode` a configuration means. `maximize` is `gxMaximize`, which counts only while
-/// windowed: the reference's window rebuild (`0x58cf10`) gives a windowed, maximized window the
-/// popup style `0x90000000`, no caption and no border, sized to the screen, which is a borderless
-/// window over the monitor. `exclusive` is the mode to set, `None` keeping the monitor's own.
+/// windowed: the reference's window rebuild gives a windowed, maximized window the popup style
+/// `0x90000000`, no caption and no border, sized to the screen, which is a borderless window over
+/// the monitor. `exclusive` is the mode to set, `None` keeping the monitor's own.
 pub(crate) fn window_mode(
     display: DisplayMode,
     maximize: bool,
@@ -1178,7 +1178,7 @@ mod tests {
     }
 
     /// Fullscreen mode-sets where the platform can and is borderless where it cannot; a windowed,
-    /// maximized window is the reference's popup over the screen (`0x58cf10`).
+    /// maximized window is the reference's popup over the screen.
     #[test]
     fn the_window_mode_of_each_configuration() {
         let m = MonitorSelection::Primary;

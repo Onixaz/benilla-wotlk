@@ -210,8 +210,8 @@ pub(super) fn feed_ui_input(
     capture.consumed.clear();
     // ── The alt-arrow exemption ────────────────────────────────────────────────────────────────
     // An EditBox in alt-arrow mode (`ignoreArrows`, set on the chat box at `ChatFrame.xml:21`)
-    // passes the arrows on unless ALT is held: its handler returns 0 at `0x77b1c4` and the
-    // binding runs at `CGWorldFrame`; a focused box swallows any other key (`0x77b35e` returns 1).
+    // passes the arrows on unless ALT is held: its handler returns 0 and the binding runs at
+    // `CGWorldFrame`; a focused box swallows any other key.
     capture.arrows_fall_through = !alt && script.editbox_alt_arrow_mode();
 
     // ── Keyboard → VM ── box-event keys go to `key_input` by name, editing keys through the
@@ -242,7 +242,7 @@ pub(super) fn feed_ui_input(
         let chord = keymap::chord(ev.key_code, token, mods, mac);
         // A keyboard frame gets these by name before their chord runs (a dialog needs BACKSPACE);
         // `frame_key_input` declines at a focused box, so no frame steals its editing keys. `true`
-        // suppresses the chord and the key's binding (the reference's existence gate, `0x76b7d0`).
+        // suppresses the chord and the key's binding (the reference's existence gate).
         let frame_named = match ev.key_code {
             KeyCode::Backspace => Some("BACKSPACE"),
             KeyCode::Delete => Some("DELETE"),
@@ -262,14 +262,13 @@ pub(super) fn feed_ui_input(
                 continue;
             }
         }
-        // Every other key reaches a keyboard frame by name too: the reference's key-down walk
-        // takes its `arg1` from the table the binding chord uses (`0x4b66b0`), `chord::key_token`
-        // under the active layout here, so the Key Bindings window stores the name the key's
-        // press dispatches by. The gate is existence, not handling: a shown keyboard frame with
-        // an `OnKeyDown` swallows the key whatever its script does (`0x76b7d0`, `0x76ba25`).
-        // Consumption suppresses only the key's binding: `OnChar` is a separate dispatcher
-        // (`0x765df0`), so the stack-split spinner still gets a digit its `OnKeyDown` ate, and it
-        // is not a focus change, so it releases nothing held.
+        // Every other key reaches a keyboard frame by name too: the reference's key-down walk takes
+        // its `arg1` from the table the binding chord uses, `chord::key_token` under the active
+        // layout here, so the Key Bindings window stores the name the key's press dispatches by.
+        // The gate is existence, not handling: a shown keyboard frame with an `OnKeyDown` swallows
+        // the key whatever its script does. Consumption suppresses only the key's binding: `OnChar`
+        // is a separate dispatcher, so the stack-split spinner still gets a digit its `OnKeyDown`
+        // ate, and it is not a focus change, so it releases nothing held.
         else if named.is_none() {
             if let Some(token) = token {
                 if script.frame_key_input(&token.to_string()) {
@@ -302,8 +301,8 @@ pub(super) fn feed_ui_input(
                 // Declined: the key falls through to its binding, which `bindings.rs` allows
                 // because `arrows_fall_through` exempts exactly these four from the typing gate.
                 keymap::Chord::Edit(_) => {}
-                // Copy and cut need a selection (`0x77e1d0`), and a password box yields its mask
-                // run, never the real text; paste sanitizes and inserts.
+                // Copy and cut need a selection, and a password box yields its mask run, never the
+                // real text; paste sanitizes and inserts.
                 keymap::Chord::Copy => {
                     if let Some(text) = script.editbox_copy() {
                         clipboard.write(wl_display, &text);

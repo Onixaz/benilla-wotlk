@@ -59,13 +59,13 @@ pub(crate) struct CombatTextEvent {
     pub(crate) args: Vec<ScriptValue>,
 }
 
-/// `PLAYER_LEAVING_WORLD` on a cross-map worldport. The reference fires event `0x111` at one site
-/// (`0x490b48`), gated only by the latch `[0xb4b424]`, from the local player's destructor
-/// (`0x5dd543`, this system), the shutdown tail `0x490bd0` (ours is `shutdown_ui_state`) and the
-/// local player's DESTROY or OUT_OF_RANGE (`0x5e9b5a`); a same-map teleport destroys nothing.
+/// `PLAYER_LEAVING_WORLD` on a cross-map worldport. The reference fires event `0x111` at one site,
+/// gated only by the latch, from the local player's destructor (this system), the shutdown tail
+/// (ours is `shutdown_ui_state`) and the local player's DESTROY or OUT_OF_RANGE; a same-map
+/// teleport destroys nothing.
 ///
 /// Deviation: fires with our descriptor present, so `UnitExists("player")` answers true where the
-/// reference's (`0x515970`) misses, because matching it breaks `UnitExists` for no stock reader.
+/// reference's misses, because matching it breaks `UnitExists` for no stock reader.
 pub(crate) fn fire_leaving_world_on_worldport(
     script: Option<NonSendMut<UiScript>>,
     mut sweep: crate::ui_script::LeaveWorldSweep,
@@ -78,7 +78,7 @@ pub(crate) fn fire_leaving_world_on_worldport(
         return;
     }
     // The world latch keeps this producer and the shutdown tail from both claiming one departure;
-    // spent even with no VM, as the reference clears it at `0x490a8d`, ahead of the fire.
+    // spent even with no VM, as the reference clears it, ahead of the fire.
     if !sweep.run() {
         return;
     }
@@ -120,7 +120,7 @@ struct UnitFeedMemo {
     /// `(HIDE_HELM, HIDE_CLOAK)`, pushed on the edge only: the Options setter flips the VM's
     /// belief ahead of the server, and a per-frame push would snap it back.
     worn_hidden: Option<(bool, bool)>,
-    /// `PLAYER_FIELD_BYTES` byte 2 (`GetActionBarToggles`, `0x4e7660`); no field watch, no event.
+    /// `PLAYER_FIELD_BYTES` byte 2 (`GetActionBarToggles`); no field watch, no event.
     action_bar_toggles: Option<u8>,
 }
 
@@ -219,9 +219,9 @@ fn load_languages(mut commands: Commands, assets: Option<Res<benilla_assets::Wor
 }
 
 /// The languages this character knows, in `Languages.dbc` order: one a known spell declares
-/// (`Effect_1 == 39`, `0x4b25b0`; spell to language, never the reverse) whose skill line
-/// (`0x6de040`) is present in `PLAYER_SKILL_INFO`, whatever its value (`0x5ec720`). Two spells on
-/// one language both count here; the reference keeps the later learn, invisible on shipped data.
+/// (`Effect_1 == 39`, spell to language, never the reverse) whose skill line is present in
+/// `PLAYER_SKILL_INFO`, whatever its value. Two spells on one language both count here; the
+/// reference keeps the later learn, invisible on shipped data.
 pub(crate) fn known_languages(
     known: impl IntoIterator<Item = u32>,
     spells: &benilla_formats::SpellCatalog,
@@ -336,7 +336,7 @@ pub(crate) fn seed_default_language(world: &mut World, script: &mut UiScript) {
 }
 
 /// Seed a new VM with `Languages.dbc`, the static table `SendChatMessage` resolves its language
-/// name against (`0x49f8a0`); locale column 0, as [`feed_default_language`] reads.
+/// name against; locale column 0, as [`feed_default_language`] reads.
 pub(crate) fn seed_language_table(world: &World, script: &mut UiScript) {
     let Some(langs) = world.get_resource::<LanguagesRes>() else {
         return;
@@ -351,7 +351,7 @@ pub(crate) fn seed_language_table(world: &World, script: &mut UiScript) {
 }
 
 /// Push `GetDefaultLanguage()`'s string on a change of race; `None` is the reference's zero value.
-/// Locale column 0 (the client's slot is `[0xc0e080]`): only enUS is populated in the 1.12 data.
+/// Locale column 0: only enUS is populated in the 1.12 data.
 fn feed_default_language(
     script: Option<NonSendMut<UiScript>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -551,11 +551,11 @@ pub(crate) fn race_faction_group(race: u8) -> Option<&'static str> {
     }
 }
 
-/// A unit's PvP team digit, `0x5efe00`'s `0` Horde, `1` Alliance, `-1` no side, from the race and
-/// never the live template: `ChrRaces.dbc` field 2 to `FactionTemplate.dbc` field 3's group mask,
-/// `& 4` Horde, else `& 2` Alliance, so a template-35 GM keeps his rank title. Read by
-/// `GetPVPRankInfo` (`0x51a9af`, `0x51a9c8`), `UnitPVPName` (`0x5efe60`) and the scoreboard
-/// (`0x4aa200`). A frozen copy of the shipped eleven rows; race 9 (Goblin) answers Alliance.
+/// A unit's PvP team digit, the reference's `0` Horde, `1` Alliance, `-1` no side, from the race
+/// and never the live template: `ChrRaces.dbc` field 2 to `FactionTemplate.dbc` field 3's group
+/// mask, `& 4` Horde, else `& 2` Alliance, so a template-35 GM keeps his rank title. Read by
+/// `GetPVPRankInfo`, `UnitPVPName` and the scoreboard. A frozen copy of the shipped eleven rows;
+/// race 9 (Goblin) answers Alliance.
 pub(crate) fn race_pvp_team(race: u8) -> i8 {
     match race {
         // Group mask 3, Player|Alliance: `& 4` clear, `& 2` set.
@@ -588,9 +588,9 @@ pub(crate) fn player_token_guid(
     }
 }
 
-/// The one unit-token resolver, the reference's `0x515970`: case-insensitive compares, then the
-/// object manager; a caller wanting a type tests the resolved unit. [`Selection`] is a parameter
-/// because [`crate::target::SelectCommit`] holds it as `ResMut`.
+/// The one unit-token resolver, the reference's: case-insensitive compares, then the object
+/// manager; a caller wanting a type tests the resolved unit. [`Selection`] is a parameter because
+/// [`crate::target::SelectCommit`] holds it as `ResMut`.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct UnitTokens<'w, 's> {
     /// `Option`, like those below: a UI-only harness lacks their plugins; a bare `Res` panics.
@@ -610,12 +610,12 @@ impl UnitTokens<'_, '_> {
         self.me.iter().next().map(|(e, g)| (e, g.0))
     }
 
-    /// The guid lookup (`0x468460`), `pub(crate)` for `TargetLastEnemy`, which starts from a guid.
+    /// The guid lookup, `pub(crate)` for `TargetLastEnemy`, which starts from a guid.
     pub(crate) fn held(&self, guid: u64) -> Option<(Entity, u64)> {
         Some((*self.index.as_ref()?.0.get(&guid)?, guid))
     }
 
-    /// Resolve `token` as `0x515970` does: its base, then a hop for each `target` after it. The
+    /// Resolve `token` as the reference does: its base, then a hop for each `target` after it. The
     /// text is read by [`parse_unit_token`], which the VM's resolver shares, so both take the same
     /// tokens; a token that names nobody, or a base or hop the object manager does not hold, is
     /// `None`.
@@ -653,7 +653,7 @@ impl UnitTokens<'_, '_> {
                 .and_then(|member| self.pet_of(member, true)),
             UnitBase::Raid(row) => self.raid_member(row).and_then(|guid| self.held(guid)),
             UnitBase::Party(row) => self.party_member(row).and_then(|guid| self.held(guid)),
-            // The interaction NPC's guid, `[0xb4e2d0]` (`0x515c00`).
+            // The interaction NPC's guid.
             UnitBase::Npc => self.held(self.interact.as_ref()?.1?),
             UnitBase::QuestNpc => self.held(self.quest.as_ref()?.quest_npc()?),
             // 12340's bases the app has no unit for yet (#90).
@@ -666,9 +666,8 @@ impl UnitTokens<'_, '_> {
         }
     }
 
-    /// One `target` hop (`0x515a0f`-`0x515a25`): the held unit's `UNIT_FIELD_TARGET`, held in turn.
-    /// The lookup takes the unit typemask, so a hop off any other object, or off a unit with no
-    /// target, is nobody.
+    /// One `target` hop: the held unit's `UNIT_FIELD_TARGET`, held in turn. The lookup takes the
+    /// unit typemask, so a hop off any other object, or off a unit with no target, is nobody.
     fn target_of(&self, unit: Entity) -> Option<(Entity, u64)> {
         let store = self.stores.get(unit).ok().filter(|s| s.is_unit())?;
         self.held(store.0.unit_target()?)
@@ -687,8 +686,8 @@ impl UnitTokens<'_, '_> {
     }
 
     /// A group member's pet, held: `CHARM`, else `SUMMON`, off the member's descriptor while it is
-    /// held, else off the roster record's pet guid (`partypetN` `0x4e81d0`, `raidpetN` `0x491960`).
-    /// A pet the object manager does not hold names no unit here, as any unheld unit.
+    /// held, else off the roster record's pet guid (`partypetN`, `raidpetN`). A pet the object
+    /// manager does not hold names no unit here, as any unheld unit.
     fn pet_of(&self, member: u64, raid: bool) -> Option<(Entity, u64)> {
         let live = self
             .held(member)
@@ -703,9 +702,9 @@ impl UnitTokens<'_, '_> {
     }
 }
 
-/// Squared distance as the reference sums it: `f32` widened to `f64`, `(dz² + dx²) + dy²`
-/// (`0x48a26f..0x48a27d`, shared by `CanInspect` `0x48a1b0` and `CheckInteractDistance`
-/// `0x48ba00`). Bevy's axes change it by at most a last ulp, which matters only on a threshold.
+/// Squared distance as the reference sums it: `f32` widened to `f64`, `(dz² + dx²) + dy²` (shared
+/// by `CanInspect` and `CheckInteractDistance`). Bevy's axes change it by at most a last ulp, which
+/// matters only on a threshold.
 fn dist_sq(q: Vec3, p: Vec3) -> f64 {
     let dx = f64::from(q.x) - f64::from(p.x);
     let dy = f64::from(q.y) - f64::from(p.y);
@@ -745,8 +744,8 @@ fn feed_player_control(
     }
 }
 
-/// `PLAYER_FARSIGHT_FOCUS_CHANGED`: the `PLAYER_FARSIGHT` field callback (`0x5de0d0`) fires it on
-/// every change, whether or not the new guid resolves, so this diffs the field, never the pose.
+/// `PLAYER_FARSIGHT_FOCUS_CHANGED`: the `PLAYER_FARSIGHT` field callback fires it on every change,
+/// whether or not the new guid resolves, so this diffs the field, never the pose.
 fn feed_farsight_focus(
     script: Option<NonSendMut<UiScript>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -768,11 +767,11 @@ fn feed_farsight_focus(
 
 /// Feed the unit reach map: per held unit a token can name, its squared distance and whether it
 /// passes inspect's two other refusals, a non-player and an attackable one (vmangos
-/// `MiscHandler.cpp:945-956`; that the client checks them is inferred, `0x48a1b0` being partly
-/// undecoded). The guids are the resolver's own inputs, which the aura feed pushes each frame
-/// ([`UiScript::held_unit_guids`], so this runs after it): the bases and each unit a `target`
-/// chain reaches, and the VM resolves a verb's token to one of them or to a guid with no entry. Ungated: distances move every
-/// frame, and no event keys off the map.
+/// `MiscHandler.cpp:945-956`; that the client checks them is inferred, being partly undecoded). The
+/// guids are the resolver's own inputs, which the aura feed pushes each frame
+/// ([`UiScript::held_unit_guids`], so this runs after it): the bases and each unit a `target` chain
+/// reaches, and the VM resolves a verb's token to one of them or to a guid with no entry. Ungated:
+/// distances move every frame, and no event keys off the map.
 fn feed_unit_reach(
     script: Option<NonSendMut<UiScript>>,
     tokens: UnitTokens,
@@ -848,9 +847,9 @@ impl SnapshotTables<'_> {
     }
 }
 
-/// `UnitReaction(unit, "player")` (`0x5167e0`): [`ring_reaction`] plus one (`0x51683e`), so
-/// `1..=7`, Hated to Revered, and Exalted reads 7 too (`0x606439`). Stock `UnitReactionColor`
-/// has seven entries (`TargetFrame.lua:6-14`), one per value.
+/// `UnitReaction(unit, "player")`: [`ring_reaction`] plus one, so `1..=7`, Hated to Revered, and
+/// Exalted reads 7 too. Stock `UnitReactionColor` has seven entries (`TargetFrame.lua:6-14`), one
+/// per value.
 pub(crate) fn unit_reaction(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -878,17 +877,17 @@ pub(crate) fn snapshot(
     let class = class_id.and_then(class_names);
     UnitState {
         exists: true,
-        // A live descriptor is `0x468460` having succeeded, all of `UnitIsVisible` (`0x516030`).
+        // A live descriptor is having succeeded, all of `UnitIsVisible`.
         has_object: true,
-        // `UnitIsConnected` (`0x517d50`) answers 1 for any unit the object manager holds
-        // (`0x517daf`); only an unheld member reads the roster record's online bit.
+        // `UnitIsConnected` answers 1 for any unit the object manager holds; only an unheld member
+        // reads the roster record's online bit.
         is_connected: true,
-        // What the token resolver `0x515970` yields, and `UnitIsUnit` (`0x516070`) compares.
+        // What the token resolver yields, and `UnitIsUnit` compares.
         guid,
         name,
-        // The UI getters: `UNIT_DYNFLAG_DEAD` (feign death) zeroes `UnitHealth` (`0x5174d0`) and
-        // `UnitMana` (`0x517670`) but not the maxima, so its edge fires the reference's pair
-        // (`0x6004c5`, `0x6004f0`); the power getters divide rage by 10 and happiness by 1000.
+        // The UI getters: `UNIT_DYNFLAG_DEAD` (feign death) zeroes `UnitHealth` and `UnitMana` but
+        // not the maxima, so its edge fires the reference's pair; the power getters divide rage by
+        // 10 and happiness by 1000.
         health: store.0.unit_shown_health().unwrap_or(0),
         max_health: store.0.unit_max_health().unwrap_or(0),
         level: store.0.unit_level().unwrap_or(0),
@@ -899,11 +898,11 @@ pub(crate) fn snapshot(
         shown_max_powers: std::array::from_fn(|ty| {
             store.0.unit_shown_max_power(ty as u8).unwrap_or(0)
         }),
-        // `UnitIsDead` (`0x517ac0`): health ≤ 0 or the dead-looking flag.
+        // `UnitIsDead`: health ≤ 0 or the dead-looking flag.
         dead: store.0.unit_reads_dead(),
         // `PLAYER_FLAGS` bit `0x10`; a ghost's health is 1, so `dead` is false for it.
         ghost: store.0.player_is_ghost(),
-        // `UnitIsCharmed` (`0x516cf0`): `UNIT_FIELD_CHARMEDBY != 0`.
+        // `UnitIsCharmed`: `UNIT_FIELD_CHARMEDBY != 0`.
         charmed: store.0.unit_charmed_by().is_some(),
         // `UNIT_DYNAMIC_FLAGS` bits `0x4`/`0x8`; a unit with no descriptor reads `false`.
         tapped: store.0.unit_tapped(),
@@ -916,19 +915,19 @@ pub(crate) fn snapshot(
         afk: store.0.player_flags() & 0x2 != 0,
         dnd: store.0.player_flags() & 0x4 != 0,
         reaction,
-        // The one resolver `0x605570` behind `UnitCreatureType` (`0x51a2bc`) and the tooltip's
-        // type slot (`0x52a2e5`): the form's type, else the template's, else the race's.
+        // The one resolver behind `UnitCreatureType` and the tooltip's type slot: the form's type,
+        // else the template's, else the race's.
         creature_type_name: creature_type_word(types.of(store)).map(str::to_string),
         race: race.map(|(n, _)| n.to_string()),
         race_file: race.map(|(_, f)| f.to_string()),
         class: class.map(|(n, _)| n.to_string()),
         class_file: class.map(|(_, f)| f.to_string()),
-        // `UnitHasRelicSlot` (`0x519e50`): TYPEMASK_PLAYER first (`0x519e8d`), then the class
-        // byte against `ChrClasses.dbc` field 16; without the player test a class-2 NPC answers 1.
+        // `UnitHasRelicSlot`: TYPEMASK_PLAYER first, then the class byte against `ChrClasses.dbc`
+        // field 16; without the player test a class-2 NPC answers 1.
         has_relic_slot: matches!(store.0.object_type(), Some(ObjectType::Player))
             && class_id.is_some_and(|c| classes.is_some_and(|t| t.has_relic_slot(u32::from(c)))),
-        // `GetDamageBonusStat` (`0x48b520`): the class byte against `ChrClasses.dbc` field 2,
-        // read for the active player only (TYPEMASK_PLAYER, `0x48b538`).
+        // `GetDamageBonusStat`: the class byte against `ChrClasses.dbc` field 2, read for the
+        // active player only (TYPEMASK_PLAYER).
         damage_bonus_stat: matches!(store.0.object_type(), Some(ObjectType::Player))
             .then(|| class_id.and_then(|c| classes.and_then(|t| t.damage_bonus_stat(u32::from(c)))))
             .flatten(),
@@ -956,7 +955,7 @@ pub(crate) fn snapshot(
             .or_else(|| store.0.unit_charmed_by())
             .or_else(|| store.0.unit_created_by())
             .unwrap_or(0),
-        // `UnitAffectingCombat` (`0x517e10`): bit 19, the one combat bit for every token.
+        // `UnitAffectingCombat`: bit 19, the one combat bit for every token.
         in_combat: store.0.unit_flags() & crate::player::UNIT_FLAG_IN_COMBAT != 0,
         // Free-for-all PvP, `PLAYER_FLAGS` bit 7 (vmangos `Player.h:322`); false on a creature.
         is_pvp_ffa: store.0.player_flags() & 0x80 != 0,
@@ -1007,7 +1006,7 @@ pub(crate) fn enrich_unit(
     }
     // The faction-name line, every gate of the tooltip builder: the record's `HIDE_FACTION_TOOLTIP`
     // (`0x10`), a reputation slot, and the race/class slot walk with its hidden flag (`0x4`). Its
-    // entry gate `0x612610` passes with no record, so the line shows before the query answers.
+    // entry gate passes with no record, so the line shows before the query answers.
     if rec.is_none_or(|r| r.type_flags & crate::names::type_flags::NO_FACTION_TOOLTIP == 0) {
         state.faction_name = (|| {
             let catalog = factions?.catalog();
@@ -1051,8 +1050,8 @@ fn drain_worn_display_toggles(script: Option<NonSendMut<UiScript>>, commands: Re
     }
 }
 
-/// Drain `SetActionBarToggles` into `CMSG_SET_ACTIONBAR_TOGGLES` (sent at `0x4e771d`), one packet
-/// per call: the reference binding neither checks for a change nor coalesces.
+/// Drain `SetActionBarToggles` into `CMSG_SET_ACTIONBAR_TOGGLES`, one packet per call: the
+/// reference binding neither checks for a change nor coalesces.
 fn drain_action_bar_toggles(script: Option<NonSendMut<UiScript>>, commands: Res<NetCommands>) {
     let Some(mut script) = script else {
         return;
@@ -1093,10 +1092,10 @@ fn pvp_announcement(was: Option<bool>, now: bool) -> Option<(&'static str, &'sta
     })
 }
 
-/// The rest-state chat key: `0x5de4e0` messages only on a real byte change (the `rep cmpsb` diff at
-/// `0x4655bb`), through the pair table `0x80af50`: 1 rested, 2 normal, 0 the no-message sentinel
-/// (`0x1d1`), ≥ 3 gated off (`cmp esi,3; jae`). Rows 346/347 are kind 0, a system chat line with
-/// no cue or voice (`type_tag 0x44`).
+/// The rest-state chat key: the reference messages only on a real byte change (the `rep cmpsb`
+/// diff), through the pair table: 1 rested, 2 normal, 0 the no-message sentinel (`0x1d1`), ≥ 3
+/// gated off (`cmp esi,3; jae`). Rows 346/347 are kind 0, a system chat line with no cue or voice
+/// (`type_tag 0x44`).
 fn rest_state_message(prev: u8, new: u8) -> Option<&'static str> {
     if prev == new {
         return None;
@@ -1108,9 +1107,9 @@ fn rest_state_message(prev: u8, new: u8) -> Option<&'static str> {
     }
 }
 
-/// `UnitFactionGroup`'s (`0x516630`) first return: the faction template's group mask `& 6`, named
-/// by `FactionGroup.dbc`. Only the side bits: player and city-guard templates carry
-/// `Player|<side>`, and the Player and Monster rows have no name and no icon art.
+/// `UnitFactionGroup`'s first return: the faction template's group mask `& 6`, named by
+/// `FactionGroup.dbc`. Only the side bits: player and city-guard templates carry `Player|<side>`,
+/// and the Player and Monster rows have no name and no icon art.
 pub(crate) fn faction_group(store: &ObjectStore, factions: Option<&Factions>) -> Option<String> {
     let catalog = factions?.catalog();
     let template = catalog.template(store.0.unit_faction_template()?)?;
@@ -1155,7 +1154,7 @@ fn creature_type_word(t: u32) -> Option<&'static str> {
         7 => "Humanoid",
         8 => "Critter",
         9 => "Mechanical",
-        // The shipped table runs 1..11; the nameplate filter tests 11 (`0x605570`).
+        // The shipped table runs 1..11; the nameplate filter tests 11.
         11 => "Totem",
         // Deviation: 10, "Not specified", answers None because the word would print in the
         // tooltip's level line; `UnitCreatureType` then answers nil where the reference names it.
@@ -1188,16 +1187,16 @@ pub(crate) fn fire_transitions(
     if changed(|u| u64::from(u.power_type)) {
         script.fire_event("UNIT_DISPLAYPOWER", vec![tok()]);
     }
-    // `UNIT_FLAGS` (id 40), the per-field watch bridge: `0x51bbb0` registers one watch per named
-    // unit field, and on any change of the dword the notifier `0x465570` fires `0x51bd50` →
-    // `0x515e50`, once per token naming the unit, `arg1` the token. The stock pet bar reads it.
+    // `UNIT_FLAGS` (id 40), the per-field watch bridge: the reference registers one watch per named
+    // unit field, and on any change of the dword the notifier fires, once per token naming the
+    // unit, `arg1` the token. The stock pet bar reads it.
     if edges.moved(cur.guid, benilla_protocol::field::FIELD_UNIT_FLAGS) {
         script.fire_event("UNIT_FLAGS", vec![tok()]);
     }
-    // `PLAYER_FLAGS_CHANGED` (id 407, `0x5eea35` into `0x515e50`): no bit test after the XOR diff
-    // (`0x5ee9b8`) and above the local-GUID gate (`0x5eea93`), so any bit of any player fires it,
-    // once per token naming it (none, nothing: `0x515e63`). The sole 1.12 consumer is the target
-    // frame's leader icon (`TargetFrame.lua:88-95`); 1.12 has no AFK/DND unit-frame badge.
+    // `PLAYER_FLAGS_CHANGED` (id 407): no bit test after the XOR diff and above the local-GUID
+    // gate, so any bit of any player fires it, once per token naming it (none). The sole 1.12
+    // consumer is the target frame's leader icon (`TargetFrame.lua:88-95`); 1.12 has no AFK/DND
+    // unit-frame badge.
     if edges.moved(cur.guid, benilla_protocol::field::FIELD_PLAYER_FLAGS) {
         script.fire_event("PLAYER_FLAGS_CHANGED", vec![tok()]);
     }
@@ -1229,8 +1228,7 @@ pub(crate) fn fire_transitions(
         script.fire_event("UNIT_CLASSIFICATION_CHANGED", vec![tok()]);
     }
     // `UNIT_FACTION`, the PvP-icon repaint, on the fields the icon reads and on the tapped bit: the
-    // reference's dynamic-flags watcher (`0x600440`) fires event 29 on bit `0x4` (`0x6005a1` →
-    // `0x6005b0`) and has no arm for `0x8`.
+    // reference's dynamic-flags watcher fires event 29 on bit `0x4` and has no arm for `0x8`.
     if prev.is_none_or(|p| {
         (p.pvp, p.is_pvp_ffa, &p.faction_group, p.tapped)
             != (cur.pvp, cur.is_pvp_ffa, &cur.faction_group, cur.tapped)
@@ -1437,8 +1435,8 @@ fn feed_units(
         script.set_unit("focus", focus.clone());
     }
 
-    // `"npc"`: the interaction NPC, the reference's `[0xb4e2d0]` that `CGGameUI::SetInteractNPC`
-    // (`0x4930d0`) writes, which `InteractNpc` models. No guild leg, as for `"targettarget"`.
+    // `"npc"`: the interaction NPC, the reference's that `CGGameUI::SetInteractNPC` writes, which
+    // `InteractNpc` models. No guild leg, as for `"targettarget"`.
     let npc = interact
         .npc
         .as_deref()
@@ -1510,9 +1508,8 @@ fn feed_units(
     // as the reference's descriptor is. Below `0x6e0fd0`'s local-GUID gate (`0x6e10dc`) each arm
     // tests its own bits: `PLAYER_UPDATE_RESTING` on either edge of `0x20` (fire `0x6e112d`),
     // `PLAYTIME_CHANGED` on `0x3000` (`0x6e11c9`), `DISABLE_`/`ENABLE_XP_GAIN` on `0x2000000`
-    // (`0x6e121c`).
-    // `UPDATE_EXHAUSTION` is two other watchers, `0x5de4e0` on the byte and `0x5de4b0` on the pool;
-    // here it also fires on first sight, where they stay silent on a create and on `/reload`.
+    // (`0x6e121c`). `UPDATE_EXHAUSTION` is two other watchers, on the byte and the reference on the
+    // pool; here it also fires on first sight, where they stay silent on a create and on `/reload`.
     if let Some((store, _)) = self_q.iter().next() {
         let rest = (
             store.0.player_rest_state().unwrap_or(0),
@@ -1598,9 +1595,8 @@ fn feed_units(
     }
 
     // `PLAYER_FIELD_BYTES` byte 2, the four extra bars, on the edge: the reference never writes the
-    // cell (its one access is the read at `0x4e768c`) or watches it (`0x468070`), and stock reads
-    // it once, at `PLAYER_ENTERING_WORLD` (`UIParent.lua:364`), so this goes ahead of that fire. No
-    // player and a zero byte share the four-nil branch (`0x4e7684`).
+    // cell or watches it, and stock reads it once, at `PLAYER_ENTERING_WORLD` (`UIParent.lua:364`),
+    // so this goes ahead of that fire. No player and a zero byte share the four-nil branch.
     if let Some((store, _)) = self_q.iter().next() {
         let toggles = store.0.player_action_bar_toggles().unwrap_or(0);
         if memo.action_bar_toggles != Some(toggles) {
@@ -1660,7 +1656,7 @@ fn feed_units(
     }
 
     // `PLAYER_TARGET_CHANGED`, argless, when the selection changes. A `/reload`'s fresh memo fires
-    // it for a kept selection, where the reference's shutdown clears the target (`0x490bdf`).
+    // it for a kept selection, where the reference's shutdown clears the target.
     if selection.guid != memo.target_guid {
         gate.audit("feed_units", "the PLAYER_TARGET_CHANGED edge");
         memo.target_guid = selection.guid;
@@ -1688,8 +1684,8 @@ fn feed_units(
         }
     }
 
-    // The reference's local `PLAYER_FLAGS` handler answers a preference change (`0x5eeaff`), not
-    // the icon's flag, with a yellow toast and a system chat line.
+    // The reference's local `PLAYER_FLAGS` handler answers a preference change, not the icon's
+    // flag, with a yellow toast and a system chat line.
     if let Some((store, _)) = self_pair {
         let desired = store.0.player_flags() & PLAYER_FLAGS_PVP_DESIRED != 0;
         if let Some((toast, verbose)) = pvp_announcement(memo.pvp_desired, desired) {
@@ -1731,7 +1727,7 @@ fn feed_units(
 }
 
 /// The combo banks into the VM, then `UNIT_COMBO_POINTS` once per packet, changed or not, to every
-/// token naming the bank's unit: ours (`0x519780`) and the pet's (`0x5d34b0`), each through
+/// token naming the bank's unit: ours and the pet's (`0x5d34b0`), each through
 /// `Script_SendUnitSignal` (`0x60bf10`); the pet's packet then fires `PET_BAR_UPDATE_USABLE`
 /// (`0x5d3507`). A fresh VM takes the banks silently.
 fn feed_combo_points(
@@ -1832,7 +1828,7 @@ mod tests {
     use super::*;
 
     /// `"mouseover"` resolves through the pick the tooltip publishes: the hovered unit, until a
-    /// nearer GameObject wins it and the resolver rejects the GameObject's guid (`0x515bd9 je`).
+    /// nearer GameObject wins it and the resolver rejects the GameObject's guid.
     #[test]
     fn the_mouseover_token_resolves_nobody_behind_a_nearer_gameobject() {
         use crate::target::{Hovered, HoveredObject};
@@ -1866,9 +1862,9 @@ mod tests {
         assert_eq!(resolve(&mut app), None, "a nearer GameObject names nobody");
     }
 
-    /// `partypetN` and `raidpetN` through the one resolver (`0x515970`): the pet the member's
-    /// descriptor names while it is held, else the roster record's, and a pet the object manager
-    /// does not hold names no unit.
+    /// `partypetN` and `raidpetN` through the one resolver: the pet the member's descriptor names
+    /// while it is held, else the roster record's, and a pet the object manager does not hold names
+    /// no unit.
     mod group_pet_tokens {
         use super::*;
         use crate::net::GuidIndex;
@@ -1989,7 +1985,7 @@ mod tests {
             );
         }
 
-        /// The compares fold ASCII case (`_strnicmp`, `0x5159b4`).
+        /// The compares fold ASCII case (`_strnicmp`).
         #[test]
         fn the_pet_tokens_fold_case() {
             let mut app = party(1, true, true);
@@ -2017,8 +2013,8 @@ mod tests {
             }
         }
 
-        /// A held member names `CHARM` before `SUMMON` (`0x4e8204`), and a held member with
-        /// neither is petless whatever its record says (`0x4e8218`).
+        /// A held member names `CHARM` before `SUMMON`, and a held member with neither is petless
+        /// whatever its record says.
         #[test]
         fn a_held_member_names_its_charm_else_summon_and_never_its_record() {
             let mut app = party(1, false, true);
@@ -2046,7 +2042,7 @@ mod tests {
         }
 
         /// A member the object manager does not hold answers from its record's pet guid, which
-        /// `partypetN` reads only while the record reads online (`0x4e8227`).
+        /// `partypetN` reads only while the record reads online.
         #[test]
         fn an_unheld_member_names_its_records_pet_while_online() {
             let mut app = party(1, false, false);
@@ -2117,7 +2113,7 @@ mod tests {
             assert_eq!(guid_of(&mut app, "RaidPet3"), Some(pet(2)), "case folds");
         }
 
-        /// `raidpetN`'s record leg has no online test (`0x4919ae`), where `partypetN`'s has one.
+        /// `raidpetN`'s record leg has no online test, where `partypetN`'s has one.
         #[test]
         fn a_raid_pet_reads_the_record_of_an_offline_member_a_party_pet_does_not() {
             let mut app = raid();
@@ -2189,9 +2185,9 @@ mod tests {
         }
     }
 
-    /// The `target` chain through the one resolver (`0x5159d3`-`0x515a2c`): a base, then a hop off
-    /// each held unit's `UNIT_FIELD_TARGET`, so `party1target`, `pettarget` and `raid3target` name
-    /// the unit at the end of the chain and any break in it names nobody.
+    /// The `target` chain through the one resolver: a base, then a hop off each held unit's
+    /// `UNIT_FIELD_TARGET`, so `party1target`, `pettarget` and `raid3target` name the unit at the
+    /// end of the chain and any break in it names nobody.
     mod target_chain_tokens {
         use super::*;
         use crate::net::GuidIndex;
@@ -2345,9 +2341,8 @@ mod tests {
             );
         }
 
-        /// A unit with no target ends the chain (`0x515a2e`), as does a target the object manager
-        /// does not hold (`0x515a16`), a hop off anything but a unit (`0x515a0f`, typemask 8) and
-        /// a base that names no one.
+        /// A unit with no target ends the chain, as does a target the object manager does not hold,
+        /// a hop off anything but a unit (typemask 8) and a base that names no one.
         #[test]
         fn a_chain_that_breaks_names_nobody() {
             let mut app = app();
@@ -2418,8 +2413,8 @@ mod tests {
             assert_eq!(guid_of(&mut app, "player"), Some(ME));
         }
 
-        /// The compares fold ASCII case, the hops' included (`_strnicmp`, `0x5159f1`), and the
-        /// chain has no depth limit: three hops round `A`, the mob and `B` come back to `A`.
+        /// The compares fold ASCII case, the hops' included (`_strnicmp`), and the chain has no
+        /// depth limit: three hops round `A`, the mob and `B` come back to `A`.
         #[test]
         fn a_chain_folds_case_and_has_no_depth_limit() {
             let mut app = app();
@@ -2442,8 +2437,8 @@ mod tests {
             assert_eq!(guid_of(&mut app, &token), Some(MOB));
         }
 
-        /// A number wraps in 32 bits as the reference's inline parse does (`0x515af4`): 2^32 + 1
-        /// is row 1, and digits stop at the first letter.
+        /// A number wraps in 32 bits as the reference's inline parse does: 2^32 + 1 is row 1, and
+        /// digits stop at the first letter.
         #[test]
         fn a_row_number_wraps_as_the_reference_parse_does() {
             let mut app = app();
@@ -2455,8 +2450,8 @@ mod tests {
 
     /// The range verbs end to end, with the aura feed that pushes the resolver's inputs and the
     /// reach feed that measures the units they hold: `CheckInteractDistance` and `CanInspect`
-    /// answer for a `target` chain (`0x48ba00` and `0x48a1b0` resolve their token through
-    /// `0x515970`), on the unit the chain names and not on the base.
+    /// answer for a `target` chain (the reference resolve their token), on the unit the chain names
+    /// and not on the base.
     #[test]
     fn the_range_verbs_answer_for_a_target_chain() {
         use benilla_protocol::messages::{member_status, GroupMemberEntry, ObjectFields};
@@ -2702,7 +2697,7 @@ mod tests {
         assert_eq!(got, ids);
     }
 
-    /// [`race_pvp_team`] against the shipped DBCs, walked as `0x5efe00` walks them.
+    /// [`race_pvp_team`] against the shipped DBCs, walked as the reference walks them.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn race_pvp_team_matches_the_shipped_tables() {
@@ -2902,7 +2897,7 @@ mod tests {
             ..Default::default()
         };
 
-        // The `0x4` edge fires `UNIT_FACTION`, the reference's event 29 (`0x6005a1`).
+        // The `0x4` edge fires `UNIT_FACTION`, the reference's event 29.
         assert_eq!(
             fired(
                 base.clone(),
@@ -2981,7 +2976,7 @@ mod tests {
         assert_eq!(
             fired(Some(with(0)), with(0x1), &moved),
             vec!["PLAYER_FLAGS_CHANGED:target".to_string()],
-            "arg1 is the unit token, and there is no arg2 (0x515e50 -> 0x703f50(id, \"%s\", token))"
+            "arg1 is the unit token, and there is no arg2 (\"%s\", token))"
         );
         // And back down: the reference tests the XOR diff, not the new value.
         assert_eq!(
@@ -2989,7 +2984,8 @@ mod tests {
             vec!["PLAYER_FLAGS_CHANGED:target".to_string()]
         );
 
-        // `PLAYER_FLAGS_HIDE_HELM`: no `UnitState` field decodes it, and `0x5eea35` tests no bit.
+        // `PLAYER_FLAGS_HIDE_HELM`: no `UnitState` field decodes it, and the reference tests no
+        // bit.
         assert_eq!(
             fired(Some(with(0)), with(0x400), &moved),
             vec!["PLAYER_FLAGS_CHANGED:target".to_string()],
@@ -3052,8 +3048,7 @@ mod tests {
         assert!(fired(Some(with(0x4)), with(0x4), &still).is_empty());
     }
 
-    /// `PLAYER_UPDATE_RESTING` fires at `0x5eeaf2`, inside the `0x20` arm whose `je` (`0x5eead4`)
-    /// skips to `0x5eeafc`.
+    /// `PLAYER_UPDATE_RESTING` fires, inside the `0x20` arm whose `je` skips.
     #[test]
     fn the_self_flag_events_each_fire_on_their_own_bits() {
         use bevy::ecs::system::RunSystemOnce;
@@ -3117,8 +3112,8 @@ mod tests {
             out
         };
 
-        // `UPDATE_EXHAUSTION` is other watchers (`0x5de4e0`/`0x5de4b0`) and fires on first sight
-        // here, so it is filtered out.
+        // `UPDATE_EXHAUSTION` is other watchers and fires on first sight here, so it is filtered
+        // out.
         let flag_events = |v: Vec<String>| -> Vec<String> {
             v.into_iter().filter(|e| e != "UPDATE_EXHAUSTION").collect()
         };
@@ -3132,7 +3127,7 @@ mod tests {
             flag_events(step(&mut app, 0x400)).is_empty(),
             "a non-resting, non-playtime bit fires neither self event"
         );
-        // The resting bit's own edge, both ways: `0x5eead0 test byte [ebp-4],0x20`.
+        // The resting bit's own edge, both ways.
         assert_eq!(
             flag_events(step(&mut app, 0x400 | PLAYER_FLAGS_RESTING)),
             vec!["PLAYER_UPDATE_RESTING".to_string()]
@@ -3143,7 +3138,7 @@ mod tests {
             "the fire is on the XOR-diff, so the clear edge fires it too"
         );
 
-        // `PLAYTIME_CHANGED`: `0x5eeb65 test ah,0x30`, the two play-time regimes together.
+        // `PLAYTIME_CHANGED`, the two play-time regimes together.
         assert_eq!(
             flag_events(step(&mut app, 0x400 | PLAYER_FLAGS_PARTIAL_PLAY_TIME)),
             vec!["PLAYTIME_CHANGED".to_string()]
@@ -3326,21 +3321,20 @@ mod tests {
         assert_eq!(
             (feigning.health, feigning.max_health),
             (0, 1500),
-            "UnitHealth 0x5174d0 zeroes, UnitHealthMax 0x5175b0 does not — an EMPTY bar, not a gone one"
+            "UnitHealth zeroes, UnitHealthMax does not — an EMPTY bar, not a gone one"
         );
         assert_eq!(
             (feigning.power, feigning.max_power),
             (0, 900),
-            "UnitMana 0x517670 zeroes, UnitManaMax 0x5177e0 does not"
+            "UnitMana zeroes, UnitManaMax does not"
         );
-        assert!(feigning.dead, "UnitIsDead 0x517ac0's dynflag leg");
+        assert!(feigning.dead, "UnitIsDead the reference's dynflag leg");
         assert!(
             !feigning.ghost,
             "feign is not a ghost — PLAYER_FLAGS is clear"
         );
 
-        // The flag moves only health and power, the pair the reference's watcher fires
-        // (`0x6004c5`, `0x6004f0`).
+        // The flag moves only health and power, the pair the reference's watcher fires.
         assert_ne!(alive.health, feigning.health);
         assert_ne!(alive.power, feigning.power);
         assert_eq!(
@@ -3349,7 +3343,7 @@ mod tests {
         );
     }
 
-    /// The rank getter's two gates (`0x605620`), through `enrich_unit`'s wiring.
+    /// The rank getter's two gates, through `enrich_unit`'s wiring.
     #[test]
     fn the_rank_gate_zeroes_a_pet_or_charm() {
         use benilla_protocol::messages::ObjectFields;
@@ -3427,8 +3421,8 @@ mod tests {
         assert_eq!(side(2).as_deref(), Some("Horde"), "an orc");
     }
 
-    /// The entry gate `0x612610` passes with no record; the record's `HIDE_FACTION_TOOLTIP`
-    /// (`0x10`) can then take the line away, as in the reference.
+    /// The entry gate passes with no record; the record's `HIDE_FACTION_TOOLTIP` (`0x10`) can then
+    /// take the line away, as in the reference.
     #[test]
     fn the_faction_line_does_not_wait_for_the_creature_query() {
         use benilla_protocol::messages::ObjectFields;
@@ -3557,7 +3551,7 @@ mod tests {
         }
     }
 
-    /// Only states 1 and 2 speak, and only on a real byte change (`0x5de4e0`).
+    /// Only states 1 and 2 speak, and only on a real byte change.
     #[test]
     fn rest_state_message_speaks_only_on_a_real_transition() {
         assert_eq!(rest_state_message(2, 1), Some("ERR_EXHAUSTION_RESTED"));
@@ -3662,10 +3656,9 @@ mod tests {
         );
     }
 
-    /// `UnitCreatureType` through the real feed (`0x51a280`, resolver `0x605570`): a shapeshifted
-    /// player answers the form's type before the race's, an unshifted one the race's, a form of
-    /// type -1 falls through to the race, and a creature keeps its template's unless a form
-    /// outranks it.
+    /// `UnitCreatureType` through the real feed: a shapeshifted player answers the form's type
+    /// before the race's, an unshifted one the race's, a form of type -1 falls through to the race,
+    /// and a creature keeps its template's unless a form outranks it.
     #[test]
     fn unit_creature_type_names_the_form_before_the_race_and_a_creature_its_template() {
         use crate::names::CreatureRecord;
@@ -3876,7 +3869,7 @@ mod tests {
         assert_eq!(
             left(&mut app),
             1,
-            "a second departure with the latch spent fired again — [0xb4b424] is per world"
+            "a second departure with the latch spent fired again — the reference is per world"
         );
 
         // Re-armed, as the new world's create does: the next departure is its own.
@@ -3888,7 +3881,7 @@ mod tests {
 
     /// Every combo packet fires `UNIT_COMBO_POINTS` to the tokens naming its unit, an unchanged
     /// bank too, and the pet's adds `PET_BAR_UPDATE_USABLE`; a fresh VM takes the banks silently
-    /// (`0x519780`, `0x5d34b0`).
+    /// (`0x5d34b0`).
     #[test]
     fn each_combo_packet_fires_unit_combo_points_to_its_unit() {
         const ME: u64 = 0x7;

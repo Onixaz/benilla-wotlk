@@ -1,20 +1,19 @@
-//! `GetWeaponEnchantInfo` (`0x4c9790`): the two temporary weapon enchantments, which
+//! `GetWeaponEnchantInfo`: the two temporary weapon enchantments, which
 //! `BuffFrame_Enchant_OnUpdate` (`BuffFrame.lua:162-233`) polls every frame.
 //!
-//! No arguments; six values on every path (`0x4c993a`, `0x4c995b`, `0x4c998f`), main hand
-//! (equipment slot 15, `0x4c97c3`) then off hand (slot 16, `0x4c988b`):
+//! No arguments; six values on every path, main hand (equipment slot 15) then off hand (slot 16):
 //!
 //! | value | present | absent |
 //! |---|---|---|
-//! | `has*Enchant` | the number 1 (`0x6f3810`) | nil (`0x6f37f0`) |
-//! | `*Expiration` | milliseconds remaining (`0x5d9d00`) | nil |
-//! | `*Charges` | the charges | 0, never nil (`0x4c985a`) |
+//! | `has*Enchant` | the number 1 | nil |
+//! | `*Expiration` | milliseconds remaining | nil |
+//! | `*Charges` | the charges | 0, never nil |
 //!
-//! Each weapon's `ITEM_FIELD_ENCHANTMENT` slot 1 triple is read raw (`0x83a3c8`): a nonzero id is
-//! the whole gate (`0x4c97f8`), with no DBC lookup, so the totem imbues, which the tooltip's
-//! enchant list drops, still show. The duration dword only gates the expiration (`0x4c981b`); the
-//! value is `max(0, deadline - now)` on a deadline `0x5d9cc0` parks from the seconds in
-//! `SMSG_ITEM_ENCHANT_TIME_UPDATE`, so the host subtracts on read and an elapsed timer is 0.
+//! Each weapon's `ITEM_FIELD_ENCHANTMENT` slot 1 triple is read raw: a nonzero id is the whole
+//! gate, with no DBC lookup, so the totem imbues, which the tooltip's enchant list drops, still
+//! show. The duration dword only gates the expiration; the value is `max(0, deadline - now)` on a
+//! deadline parks from the seconds in `SMSG_ITEM_ENCHANT_TIME_UPDATE`, so the host subtracts on
+//! read and an elapsed timer is 0.
 //!
 //! The reference's expiration is nil only when the duration dword is 0; ours is nil until the
 //! first `SMSG_ITEM_ENCHANT_TIME_UPDATE`, which follows the field within a frame or two.

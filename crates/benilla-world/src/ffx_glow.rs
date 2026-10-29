@@ -1,9 +1,9 @@
-//! The reference's full-screen glow (`FFXGlow.bls`): the scene is box-downsampled to ¼ in one
-//! pass (dims floored at 8, `0x6cdb40`), blurred by Gauss4 H then V (weights ⅛ ⅜ ⅜ ⅛), and
-//! combined as `lerp(screen, blur, z) + w·blur²` in gamma bytes (`shaders/ffx_glow.wgsl`), `w` the
-//! zone glow and `z` the haze. The combine also owns the frame's one gamma decode. A world view
-//! the player-UI camera claims ([`FfxBackdrop`]) runs only the filter passes, and the UI camera
-//! draws its combine.
+//! The reference's full-screen glow (`FFXGlow.bls`): the scene is box-downsampled to ¼ in one pass
+//! (dims floored at 8), blurred by Gauss4 H then V (weights ⅛ ⅜ ⅜ ⅛), and combined as
+//! `lerp(screen, blur, z) + w·blur²` in gamma bytes (`shaders/ffx_glow.wgsl`), `w` the zone glow
+//! and `z` the haze. The combine also owns the frame's one gamma decode. A world view the player-UI
+//! camera claims ([`FfxBackdrop`]) runs only the filter passes, and the UI camera draws its
+//! combine.
 
 use bevy::core_pipeline::core_2d::graph::{Core2d, Node2d};
 use bevy::core_pipeline::core_2d::Transparent2d;
@@ -41,20 +41,18 @@ pub struct FfxGlow {
 }
 
 /// Which of the reference's two FFX pass pairs a view runs. The reference keeps the painting
-/// screen's pair in one active-pass slot `[0xce8bb4]`; our views coexist, so it is per view.
+/// screen's pair in one active-pass slot; our views coexist, so it is per view.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FfxState {
-    /// The WorldFrame pair (`0x6cc130` CFFXGlow → `[0xb4b350]`, `0x6cc690` CFFXDeath →
-    /// `[0xb4b39c]`, built at `0x481c46`): the ghost death combine ([`FfxDeathFade`]) and the
-    /// drunk/underwater haze ([`FfxHazeMix`]) of the live player. The world view only.
+    /// The WorldFrame pair: the ghost death combine ([`FfxDeathFade`]) and the drunk/underwater
+    /// haze ([`FfxHazeMix`]) of the live player. The world view only.
     Player,
-    /// The glue pair (`[0xb414c4]` glow, `[0xb41468]` death, built at `0x46a723`/`0x46a752`): the
-    /// death combine when the selected roster row is a ghost ([`GlueFfx::death`]), and no haze.
+    /// The glue pair: the death combine when the selected roster row is a ghost
+    /// ([`GlueFfx::death`]), and no haze.
     Glue,
     /// Neither: a bake standing in for a UI model widget. The reference's pass runs inside the
-    /// WorldFrame paint (`0x6cd890`/`0x6cda70`, at `0x48350e`/`0x48379d` in `0x483460`) on its own
-    /// targets (`0xce8b5c`, `0xce8ae8`, `0xce8b98`), and its portrait bake `0x524f60` copies its
-    /// pixels out of the framebuffer (`0x58acd0`/`0x449bf0`), so a bake never carries the pass.
+    /// WorldFrame paint on its own targets, and its portrait bake copies its pixels out of the
+    /// framebuffer, so a bake never carries the pass.
     None,
 }
 
@@ -64,8 +62,8 @@ impl FfxGlow {
         gain_scale: 1.0,
         state: FfxState::Player,
     };
-    /// The glue screens' scene: the zone glow and the glue pair, around the glue paint (`0x46fad3`
-    /// calls `0x6cd890`, `0x46fae0` jumps to `0x6cda70`); GlueXML composites after, untinted.
+    /// The glue screens' scene: the zone glow and the glue pair, around the glue paint; GlueXML
+    /// composites after, untinted.
     pub const GLUE_SCENE: Self = Self {
         gain_scale: 1.0,
         state: FfxState::Glue,
@@ -104,17 +102,16 @@ pub struct FfxBackdrop {
 #[derive(Resource, Clone, ExtractResource)]
 pub struct FfxGlowGain(pub f32);
 
-/// The FFXDeath gate, the combine's `y`: `1.0` while the player is a released ghost (`0x5de9c0`,
-/// off `PLAYER_FLAGS_GHOST`), else `0.0`, with no ramp on either edge.
+/// The FFXDeath gate, the combine's `y`: `1.0` while the player is a released ghost (off
+/// `PLAYER_FLAGS_GHOST`), else `0.0`, with no ramp on either edge.
 #[derive(Resource, Clone, Default, ExtractResource)]
 pub struct FfxDeathFade(pub f32);
 
 /// The three switches the reference's FFX pass reads every frame, as the `ffx`, `ffxGlow` and
-/// `ffxDeath` CVars' integers (each registered "1" with the echo stub `0x6cde30`, so nothing is
-/// cached). The begin/end pair (`0x6cd890`/`0x6cda70`) runs the active pass only while `ffx`
-/// (`[0xce8a04]`, `0x6cd8a6`/`0x6cda76`) is on and the pass's own enable (vtable `+4`) says so:
-/// `CFFXGlow` (`0x6cc5a0`) reads `ffxGlow` (`0x6cc5a8`), `CFFXDeath` (`0x6cded0`) reads `ffxDeath`
-/// (`0x6cdf10`). A pass that does not run is not replaced by the other one: the slot holds one.
+/// `ffxDeath` CVars' integers (so nothing is cached). The begin/end pair runs the active pass only
+/// while `ffx` is on and the pass's own enable (vtable `+4`) says so: `CFFXGlow` reads `ffxGlow`,
+/// `CFFXDeath` reads `ffxDeath`. A pass that does not run is not replaced by the other one: the
+/// slot holds one.
 #[derive(Resource, Clone, Copy, PartialEq, Eq, Debug, ExtractResource)]
 pub struct FfxSwitches {
     /// `ffx`, the master.
@@ -143,28 +140,25 @@ impl FfxSwitches {
     }
 }
 
-/// The glue screens' FFX state. The select build's tail (`0x472fba`–`0x473007`) forks on the
-/// selected record's `CHARSELECT+0xfc & 0x2000` (`0x472fd9`), installs (`0x6cde60`) the glue
-/// death or glow pass and pins `LightParams.glow` (`[0x6d48b0()+0x110]`) to a constant: both
-/// combines' blur² weight, which the death combine packs as its alpha byte (`0x6cb930`).
+/// The glue screens' FFX state. The select build's tail forks on the selected record's
+/// `CHARSELECT+0xfc & 0x2000`, installs the glue death or glow pass and pins `LightParams.glow` to
+/// a constant: both combines' blur² weight, which the death combine packs as its alpha byte.
 #[derive(Resource, Clone, Copy, Default, PartialEq, Eq, Debug, ExtractResource)]
 pub enum GlueFfx {
     /// A glue model widget is shown and nothing has re-pinned it: login, create, and a character
-    /// select with no characters. The widget's OnShow (`0x46fa60`) installs the glue glow pass and
-    /// pins `*0x8380b4` = 0.30, once on show, so the select build's pins hold.
+    /// select with no characters. The widget's OnShow installs the glue glow pass and pins0.30,
+    /// once on show, so the select build's pins hold.
     #[default]
     Shown,
-    /// Character select, a living selection: the glue glow pass, pinned at `*0x838574` = 0.40
-    /// (`0x472ff7`/`0x473002`).
+    /// Character select, a living selection: the glue glow pass, pinned at0.40.
     SelectLiving,
-    /// Character select, a ghost selection: the glue death pass, pinned at `*0x838570` = 0.15
-    /// (`0x472fde`/`0x472fe9`).
+    /// Character select, a ghost selection: the glue death pass, pinned at0.15.
     SelectGhost,
 }
 
 impl GlueFfx {
     /// The glue pair's death gate, with no ramp. The swap re-runs on every selection, an
-    /// already-built record included (`0x472a6d`), so the scene changes on the click's frame.
+    /// already-built record included, so the scene changes on the click's frame.
     fn death(self) -> f32 {
         match self {
             Self::SelectGhost => 1.0,
@@ -172,25 +166,24 @@ impl GlueFfx {
         }
     }
 
-    /// `LightParams.glow` (`0xce9c70`) on a glue screen; the death combine packs it into its alpha
-    /// byte (`0x6cb9ec`: 0.15 → 38, 0.40 → 102). Deviation: kept a float where every reference
-    /// pack (`0x6cb0e2`/`0x6cb557`/`0x6cb9e1`) quantizes it to a byte, because the two differ by
-    /// under a thousandth (38/255 against 0.15).
+    /// `LightParams.glow` on a glue screen; the death combine packs it into its alpha byte (0.40 →
+    /// 102). Deviation: kept a float where every reference pack quantizes it to a byte, because the
+    /// two differ by under a thousandth (38/255 against 0.15).
     fn glow(self) -> f32 {
         match self {
-            // `*0x8380b4`, the widget's OnShow pin.
+            // The widget's OnShow pin.
             Self::Shown => 0.30,
-            // `*0x838574`, the select build's living arm.
+            // The select build's living arm.
             Self::SelectLiving => 0.40,
-            // `*0x838570`, the select build's ghost arm.
+            // The select build's ghost arm.
             Self::SelectGhost => 0.15,
         }
     }
 }
 
-/// The haze mix `z`, the combine's cross-fade toward the blur, packed per frame from the player
-/// (`0x6cb134`/`0x6cb599`): `max(min(drunkByte, 100)/100, submerged ? 84/255 : 0)`, submerged
-/// being the camera eye in any liquid (`0x672470` not `0xf`).
+/// The haze mix `z`, the combine's cross-fade toward the blur, packed per frame from the player:
+/// `max(min(drunkByte, 100)/100, submerged ? 84/255 : 0)`, submerged being the camera eye in any
+/// liquid (not `0xf`).
 #[derive(Resource, Clone, Default, ExtractResource)]
 pub struct FfxHazeMix(pub f32);
 
@@ -216,29 +209,29 @@ fn sync_haze(
     }
 }
 
-/// The underwater screen warp's inputs. With the camera eye in liquid, `CFFXGlow::Render`
-/// (`0x6cc630`) walks a second pass list ending in FFXGlowWave (`0x6cb1f0`, render `0x6cb310`),
-/// which displaces the combine's two samples through a sine bump map. The guard compares the
-/// eye-liquid byte `[0xc7f288]` with `0xf` (dry) alone (`0x6cc644`): lava and slime warp too.
+/// The underwater screen warp's inputs. With the camera eye in liquid, `CFFXGlow::Render` walks a
+/// second pass list ending in FFXGlowWave, which displaces the combine's two samples through a sine
+/// bump map. The guard compares the eye-liquid byte with `0xf` (dry) alone: lava and slime warp
+/// too.
 #[derive(Resource, Clone, Copy, Default, ExtractResource)]
 pub struct FfxWave {
     /// `(t mod 3174)/3174`, the u-axis phase.
     phase1: f32,
     /// `(t mod 2805)/2805`, the v-axis phase; the two rejoin only every ~49 minutes.
     phase2: f32,
-    /// The swap: in-world (`0x467d00`) and the eye in liquid (`0x672470` not `0xf`), with no ramp.
+    /// The swap: in-world and the eye in liquid (not `0xf`), with no ramp.
     active: bool,
 }
 
-/// The phase periods (`[0xce89c4]`, `[0xce89c8]`), moduli of an integer millisecond clock.
+/// The phase periods, moduli of an integer millisecond clock.
 const WAVE_PERIOD_MS: [u64; 2] = [3174, 2805];
 
-/// The wave LUT is 128×128 texels (`[0xce89a0]`'s descriptor).
+/// The wave LUT is 128×128 texels.
 const WAVE_LUT_EDGE: u32 = 128;
 
-/// The reference's glow-wave LUT (`0x6cbea0`), a displacement map: `du = sin(2πx/128)`,
-/// `dv = sin(2πy/128)`, stored as the unsigned pack `(s·0.5 + 0.5)·255` that the default Direct3D
-/// path's `ps_2_0` permutation biases back; `as u8` truncates toward zero, as `__ftol` does.
+/// The reference's glow-wave LUT, a displacement map: `du = sin(2πx/128)`, `dv = sin(2πy/128)`,
+/// stored as the unsigned pack `(s·0.5 + 0.5)·255` that the default Direct3D path's `ps_2_0`
+/// permutation biases back; `as u8` truncates toward zero, as `__ftol` does.
 fn wave_lut_texels() -> Vec<u8> {
     let pack = |s: f32| ((s * 0.5 + 0.5) * 255.0).clamp(0.0, 255.0) as u8;
     let sine = |i: u32| (std::f32::consts::TAU * i as f32 / WAVE_LUT_EDGE as f32).sin();
@@ -253,9 +246,8 @@ fn wave_lut_texels() -> Vec<u8> {
     texels
 }
 
-/// [`FfxWave`] from the swap guard's inputs and the render's clock (`OsGetAsyncTimeMs`,
-/// `0x6cb43a`); the phases run free, armed or not, as the reference's do, so a dive never restarts
-/// them.
+/// [`FfxWave`] from the swap guard's inputs and the render's clock (`OsGetAsyncTimeMs`); the phases
+/// run free, armed or not, as the reference's do, so a dive never restarts them.
 fn sync_wave(
     time: Res<Time>,
     live: Res<crate::schedule::WorldLive>,
@@ -274,7 +266,7 @@ fn sync_wave(
         let sec = time.elapsed_secs() as u32;
         if last_dump.replace(sec) != Some(sec) {
             let why = match (live.0, verdict) {
-                (false, _) => "off — not in world (the reference's 0x467d00 half of the guard)",
+                (false, _) => "off — not in world",
                 (_, None) => "off — no submersion verdict resolved yet",
                 (_, Some(benilla_formats::Submersion::Dry)) => "off — the eye is dry",
                 (_, Some(_)) => "WARPING",
@@ -288,9 +280,8 @@ fn sync_wave(
 }
 
 /// Whether a view draws the warped combine: the WorldFrame pair (the glue pair reaches the same
-/// render, but the guard's in-world half `0x467d00` never trips there), [`FfxWave::active`], no
-/// ghost, whose `CFFXDeath::Render` (`0x6cdf20`) has one list and no guard, and a glow pass that
-/// runs ([`FfxSwitches`]).
+/// render, but the guard's in-world half never trips there), [`FfxWave::active`], no ghost, whose
+/// `CFFXDeath::Render` has one list and no guard, and a glow pass that runs ([`FfxSwitches`]).
 fn wave_armed(state: FfxState, wave: FfxWave, world: FfxPassState) -> bool {
     matches!(state, FfxState::Player) && wave.active && world.death == 0.0 && world.runs
 }
@@ -351,9 +342,9 @@ struct FfxGlowPipelines {
     layout_filter: BindGroupLayoutDescriptor,
     layout_combine: BindGroupLayoutDescriptor,
     sampler: Sampler,
-    /// The 128×128 sine bump map, built once as the reference builds it (`0x6cbcf0`), and its
-    /// sampler, which must repeat (`D3DTADDRESS_WRAP`, `0x5a2646`/`0x5a266a`): the texcoord spans
-    /// `W/128` cycles, and a clamp would pin all but the first.
+    /// The 128×128 sine bump map, built once as the reference builds it, and its sampler, which
+    /// must repeat (`D3DTADDRESS_WRAP`): the texcoord spans `W/128` cycles, and a clamp would pin
+    /// all but the first.
     wave_view: TextureView,
     wave_sampler: Sampler,
     downsample: CachedRenderPipelineId,
@@ -548,8 +539,8 @@ fn init_pipelines(
     });
 }
 
-/// One view's ¼-res ping-pong pair (the reference downsamples full to ¼ in one Box4 pass,
-/// `0x6ca9d0`) and the GPU objects built from it, kept across frames.
+/// One view's ¼-res ping-pong pair (the reference downsamples full to ¼ in one Box4 pass) and the
+/// GPU objects built from it, kept across frames.
 #[derive(Component)]
 struct FfxGlowTextures {
     quarter_a: CachedTexture,
@@ -658,7 +649,7 @@ fn prepare_textures(
         // compile synchronously on the render thread. Keeping it warm is a cached lookup.
         let own = specializer.pair(FinalPassTarget::format(&camera.output_mode, target));
         let combine = (!claims.0.contains(&entity)).then_some(own);
-        // ¼ of the viewport, each side at least 8, as the reference sizes its targets (`0x6cdb40`).
+        // ¼ of the viewport, each side at least 8, as the reference sizes its targets.
         let mut tex = |label: &'static str, w: u32, h: u32| {
             texture_cache.get(
                 &render_device,
@@ -780,8 +771,8 @@ impl FfxPassState {
         }
     }
 
-    /// Death only: the reference packs the haze into `primary.z` of the glow combine (`0x6cb020`)
-    /// from the in-world player's state, which a glue screen does not have.
+    /// Death only: the reference packs the haze into `primary.z` of the glow combine from the
+    /// in-world player's state, which a glue screen does not have.
     fn glue(death: f32) -> Self {
         Self {
             death,
@@ -790,9 +781,8 @@ impl FfxPassState {
         }
     }
 
-    /// The pair under the three switches: the glue pair is built by the same constructors
-    /// (`0x46a723`/`0x46a752`) and reads the same records, and its paint calls the same begin
-    /// (`0x46fad3`).
+    /// The pair under the three switches: the glue pair is built by the same constructors and reads
+    /// the same records, and its paint calls the same begin.
     fn switched(self, switches: FfxSwitches) -> Self {
         Self {
             runs: switches.runs(self.death > 0.0),
@@ -841,7 +831,7 @@ impl ViewNode for FfxGlowNode {
         let out = match textures.combine.as_ref() {
             None => None,
             Some(pair) => {
-                // The pass-list swap (`0x6cc630`): the two lists differ only in the combine.
+                // The pass-list swap: the two lists differ only in the combine.
                 let Some(combine) = pipeline_cache.get_render_pipeline(pair.armed(wave)) else {
                     return Ok(());
                 };
@@ -1368,8 +1358,7 @@ mod tests {
         );
     }
 
-    /// The swap's guard is `0x467d00() != 0 && 0x672470() != 0xf` (`0x6cc630`), and a ghost runs
-    /// the death pass in place of the glow pass.
+    /// The swap's guard, and a ghost runs the death pass in place of the glow pass.
     #[test]
     fn the_warp_arms_only_for_a_living_submerged_world_view() {
         let wet = FfxWave {
@@ -1392,7 +1381,7 @@ mod tests {
         );
         assert!(
             !wave_armed(FfxState::Glue, wet, alive()),
-            "the glue pair reaches the same Render, but 0x467d00 gates it out of the swap"
+            "the glue pair reaches the same Render, but the reference gates it out of the swap"
         );
         assert!(
             !wave_armed(FfxState::None, wet, alive()),
@@ -1409,9 +1398,9 @@ mod tests {
         }
     }
 
-    /// `ffxGlow` 0: `CFFXGlow`'s enable (`0x6cc5a8`) fails, so the begin/end pair runs no pass. The
-    /// combine is the scene alone, the three filter passes are skipped, the warp never arms, and
-    /// the death pass, glue pair included, still runs.
+    /// `ffxGlow` 0: `CFFXGlow`'s enable fails, so the begin/end pair runs no pass. The combine is
+    /// the scene alone, the three filter passes are skipped, the warp never arms, and the death
+    /// pass, glue pair included, still runs.
     #[test]
     fn glow_off_drops_the_glow_pass_and_only_it() {
         let off = FfxSwitches {
@@ -1456,8 +1445,8 @@ mod tests {
         );
     }
 
-    /// `ffxDeath` 0: the ghost's slot holds `CFFXDeath`, whose enable (`0x6cdf10`) fails, and the
-    /// glow pass is not put back in its place, so the ghost sees the plain scene.
+    /// `ffxDeath` 0: the ghost's slot holds `CFFXDeath`, whose enable fails, and the glow pass is
+    /// not put back in its place, so the ghost sees the plain scene.
     #[test]
     fn death_off_drops_the_death_pass_without_restoring_the_glow() {
         let off = FfxSwitches {
@@ -1492,7 +1481,7 @@ mod tests {
         );
     }
 
-    /// `ffx` 0 (`0x6cd8a6`): neither pass runs, on either pair.
+    /// `ffx` 0: neither pass runs, on either pair.
     #[test]
     fn the_master_off_drops_both_passes() {
         let off = FfxSwitches {
@@ -1603,19 +1592,15 @@ mod tests {
     #[test]
     fn the_glue_screens_pin_three_verified_glow_weights() {
         assert_eq!(GlueFfx::default(), GlueFfx::Shown);
-        assert_eq!(
-            GlueFfx::Shown.glow(),
-            0.30,
-            "*0x8380b4, the widget's OnShow"
-        );
-        assert_eq!(GlueFfx::SelectLiving.glow(), 0.40, "*0x838574");
-        assert_eq!(GlueFfx::SelectGhost.glow(), 0.15, "*0x838570");
+        assert_eq!(GlueFfx::Shown.glow(), 0.30, "*, the widget's OnShow");
+        assert_eq!(GlueFfx::SelectLiving.glow(), 0.40, "*");
+        assert_eq!(GlueFfx::SelectGhost.glow(), 0.15, "*");
         // Only the ghost arm installs the death pass.
         assert_eq!(GlueFfx::SelectGhost.death(), 1.0);
         assert_eq!(GlueFfx::Shown.death(), 0.0);
         assert_eq!(GlueFfx::SelectLiving.death(), 0.0);
-        // The packed byte (`0x6cb9ec`: ×255, +512, `fstp`, `shr 14`): 38, the ghost's death
-        // combine alpha, and 102, the living glow pass's `w`.
+        // The packed byte (+512, `fstp`, `shr 14`): 38, the ghost's death combine alpha, and 102,
+        // the living glow pass's `w`.
         let alpha_byte = |glow: f32| ((glow * 255.0 + 512.0).to_bits() >> 14) & 0xff;
         assert_eq!(alpha_byte(GlueFfx::SelectGhost.glow()), 38);
         assert_eq!(alpha_byte(GlueFfx::SelectLiving.glow()), 102);

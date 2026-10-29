@@ -36,7 +36,7 @@ struct WowLight {
 @group(1) @binding(0) var effect_texture: texture_2d<f32>;
 @group(1) @binding(1) var effect_sampler: sampler;
 @group(1) @binding(2) var<storage, read> wow_light: WowLight;
-// Per-draw params. `fog`: x the fog colour policy, `0x70baf0`'s per-blend table (0 off for file
+// Per-draw params. `fog`: x the fog colour policy, the reference's per-blend table (0 off for file
 // flag 0x8, 1 scene, 2 black for Add, 3 white for Mod, 4 grey for Mod2x); y rain's forced fog, zw
 // its start and end. `clip`: the target rect in pixels (min.xy, max.xy), the whole target when
 // z <= x; the reference clips a UI model to its widget's viewport, and model panes share an atlas.
@@ -194,7 +194,7 @@ fn vertex(@builtin(vertex_index) vi: u32) -> VertexOutput {
     if ((!is_tail && (flags & DRAWS_HEAD) == 0u) || (is_tail && (flags & DRAWS_TAIL) == 0u)) {
         return dead();
     }
-    // The twinklePercent gate (`0x7b2adc`) on the table's `(floor(clamp(speed·age)) + phase)`.
+    // The twinklePercent gate on the table's `(floor(clamp(speed·age)) + phase)`.
     let idx = (u32(clamp(pool.params.z * p.age, 0.0, 255.0)) + p.phase) & 127u;
     var row = twinkle[idx >> 2u];
     let noise = row[idx & 3u];
@@ -297,7 +297,7 @@ fn vertex(@builtin(vertex_index) vi: u32) -> VertexOutput {
         let tu = dot(tail, cam_u);
         let l2 = tr * tr + tu * tu;
         if (l2 < 7.7e-4) {
-            // Degenerate: the plain-billboard fallback (`0x7b33fa`).
+            // Degenerate: the plain-billboard fallback.
             let r = cam_r * half_t;
             let up = cam_u * half_t;
             if (corner == 0u) { world = center - r - up; uv = vec2<f32>(u0, v1); }
@@ -383,7 +383,7 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     // LOD compensation, 0.0 at native and above.
     let c = textureSampleBias(effect_texture, effect_sampler, in.uv, view.mip_bias) * in.color;
 #ifdef BLEND_ALPHAKEY
-    // The fixed-function alpha test (EGxRs id 0x08, `glAlphaFunc(GL_GEQUAL, ref/255)`): `0x70c256`
+    // The fixed-function alpha test (EGxRs id 0x08, `glAlphaFunc(GL_GEQUAL, ref/255)`):
     // sets ref = round(instanceAlpha × 224), 224 at full alpha, and `c.a` is the reference's
     // fragment alpha (texture α × track α, GL_MODULATE). GEQUAL passes at the ref.
     if (c.a < 224.0 / 255.0) {
@@ -392,9 +392,9 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 #endif
     var rgb = c.rgb;
 #ifdef EFFECT_LIT
-    // Scene lighting (EGxRs id 0x0e, `0x70d8b0`) when the emitter clears the unlit flag 0x1 and
-    // its blend is not Mod or Mod2x (`0x70bb00`): the fixed-function matte with N = world up for
-    // the whole draw, as `0x7b3fd0` takes the normal from view row 2 and `0x71bce0` moves the
+    // Scene lighting (EGxRs id 0x0e) when the emitter clears the unlit flag 0x1 and
+    // its blend is not Mod or Mod2x: the fixed-function matte with N = world up for
+    // the whole draw, as the reference takes the normal from view row 2 and the reference moves the
     // light into that frame, so N·L holds as the camera orbits. Bevy +Y is WoW +Z.
     let L = -normalize(wow_light.light_sun.xyz);
     let N = vec3<f32>(0.0, 1.0, 0.0);

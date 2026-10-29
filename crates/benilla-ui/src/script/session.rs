@@ -7,7 +7,7 @@ use mlua::Lua;
 /// A session intent queued by a Lua call, drained by the app.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SessionRequest {
-    /// `Logout()`: `CMSG_LOGOUT_REQUEST` (`0x5ab000`), back to character select.
+    /// `Logout()`: `CMSG_LOGOUT_REQUEST`, back to character select.
     Logout,
     /// `Quit()`: the same request, then the process ends once the logout completes.
     Quit,
@@ -15,16 +15,14 @@ pub enum SessionRequest {
     CancelLogout,
     /// `ForceQuit()`: end the process now, with no server round trip.
     ForceQuit,
-    /// `ForceLogout()` (`0x48ab50`): an empty `CMSG_PLAYER_LOGOUT` (`0x4A`), bypassing the
-    /// pending-logout latch, and nothing without a live in-world session (`0x5ab020`).
+    /// `ForceLogout()`: an empty `CMSG_PLAYER_LOGOUT` (`0x4A`), bypassing the pending-logout latch,
+    /// and nothing without a live in-world session.
     ForceLogout,
-    /// `ReloadUI()` (`0x4884d0`) only sets `0xb4b3f4`; the next frame's `0x495590` tears the VM
-    /// down and rebuilds it, so it is never destroyed mid-call. The app's drain, outside any call,
-    /// is the same guard.
+    /// `ReloadUI()` only sets; the next frame's tears the VM down and rebuilds it, so it is never
+    /// destroyed mid-call. The app's drain, outside any call, is the same guard.
     ReloadUi,
-    /// `StopCinematic()` (`0x48b970`), the only skip: no native caller and no binding, so ESC
-    /// reaches it only through `CinematicFrame`'s `OnKeyDown`; playback therefore waits for the
-    /// in-game UI.
+    /// `StopCinematic()`, the only skip: no native caller and no binding, so ESC reaches it only
+    /// through `CinematicFrame`'s `OnKeyDown`; playback therefore waits for the in-game UI.
     StopCinematic,
 }
 
@@ -63,7 +61,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?;
     }
 
-    // `0x48c930`: the number 1 while a cinematic plays, else nil, one result either way.
+    // The number 1 while a cinematic plays, else nil, one result either way.
     g.set(
         "InCinematic",
         lua.create_function(|lua, ()| {

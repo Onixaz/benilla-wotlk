@@ -1,8 +1,7 @@
-//! Equipment visuals: `resolve` decides what each unit holds and wears and where, and `spawn`
-//! hangs the item models from the body's attachment joints (the reference's attach install,
-//! `0x47a380`). A creature carries display ids (`UNIT_VIRTUAL_ITEM_SLOT_DISPLAY`), a player only
-//! item entries (`PLAYER_VISIBLE_ITEM_*`), resolved through the templates as the reference's
-//! ItemCache does.
+//! Equipment visuals: `resolve` decides what each unit holds and wears and where, and `spawn` hangs
+//! the item models from the body's attachment joints (the reference's attach install). A creature
+//! carries display ids (`UNIT_VIRTUAL_ITEM_SLOT_DISPLAY`), a player only item entries
+//! (`PLAYER_VISIBLE_ITEM_*`), resolved through the templates as the reference's ItemCache does.
 
 use std::collections::HashMap;
 
@@ -27,7 +26,7 @@ const HELD_SLOTS: usize = 3;
 /// The held items' equipment slots, which index the `PLAYER_VISIBLE_ITEM_*` blocks.
 const PLAYER_HELD_SLOTS: [u8; HELD_SLOTS] = [15, 16, 17];
 
-/// M2 attachment ids. A stowed item's is `0x47a070`'s: K - 1 for the mainhand and K for the
+/// M2 attachment ids. A stowed item's is the reference's: K - 1 for the mainhand and K for the
 /// offhand, K = 27 two-hander, 31 staff, 33 one-hander; 28 for a shield.
 pub(crate) mod attach_id {
     /// Left forearm: a drawn shield.
@@ -35,7 +34,7 @@ pub(crate) mod attach_id {
     pub(crate) const SHOULDER_RIGHT: u16 = 5;
     pub(crate) const SHOULDER_LEFT: u16 = 6;
     pub(crate) const HELM: u16 = 11;
-    /// The drawn mainhand, and a drawn gun, crossbow, wand or thrown weapon (`0x611e10`).
+    /// The drawn mainhand, and a drawn gun, crossbow, wand or thrown weapon.
     pub(crate) const HAND_RIGHT: u16 = 1;
     /// A drawn offhand other than a shield, and a drawn bow.
     pub(crate) const HAND_LEFT: u16 = 2;
@@ -47,10 +46,10 @@ pub(crate) mod attach_id {
     /// The mainhand's hip is the left one.
     pub(crate) const HIP_MAIN: u16 = 32;
     pub(crate) const HIP_OFF: u16 = 33;
-    /// HandArrow, the nocked arrow's one body attach (`0x712f70(body, 0x23)` in `0x60ba30` and the
-    /// `$BWP` handler). The 0x18/0x19 that `0x479f40` takes pick a model directory, not an attach.
+    /// HandArrow, the nocked arrow's one body attach (`(body, 0x23)` and the `$BWP` handler). The
+    /// 0x18/0x19 that the reference takes pick a model directory, not an attach.
     pub(crate) const HAND_ARROW: u16 = 0x23;
-    /// The worn quiver's attachment (`0x479c50`), the stowed mainhand two-hander's point.
+    /// The worn quiver's attachment, the stowed mainhand two-hander's point.
     pub(crate) const QUIVER: u16 = 26;
 }
 
@@ -83,11 +82,11 @@ pub(crate) struct Equipment {
     pub(crate) bodyslots: [u32; 8],
     /// A geoset and a runtime cape texture, no body region.
     pub(crate) cloak: u32,
-    /// An attach model plus the masks that hide hair, facial hair and ears (`0x4799a0`).
+    /// An attach model plus the masks that hide hair, facial hair and ears.
     pub(crate) helm: u32,
     /// The guild emblem off `PLAYER_GUILDID`; `None` for no guild, or until its query answers.
     pub(crate) emblem: Option<benilla_formats::GuildEmblem>,
-    /// The tabard designer's preview on our own body (`[cc+0xc]`, `0x5e07d0`).
+    /// The tabard designer's preview on our own body (`[cc+0xc]`).
     pub(crate) tabard_preview: bool,
     /// A player's look in dial order (skin, face, hair style, hair colour, facial hair): the
     /// `PLAYER_BYTES` fields, or on our own body the barber shop's preview. A change re-dresses the
@@ -125,10 +124,9 @@ pub(super) struct HeldItems {
 pub(super) const ATTACH_SLOTS: usize = 8;
 
 /// What the disarm reflex left attached: the reference builds attachments from events, and this is
-/// the one such state kept across frames. `0x5ff580` runs on any unit whose disarm bit changes
-/// (`0x5ff619`); as it rises, a drawn weapon leaves the hidden hand (`0x5ff676`,
-/// `0x47a310(model, 0xf, 0, 0)`) and a stowed one stays, and no attach site (`0x60b770`,
-/// `0x605da0`, `0x60b590`) moves it while `GetWeapon(slot, 0)` reads NULL.
+/// the one such state kept across frames. The reference runs on any unit whose disarm bit changes;
+/// as it rises, a drawn weapon leaves the hidden hand (`(model, 0xf, 0, 0)`) and a stowed one
+/// stays, and no attach site moves it while `GetWeapon(slot, 0)` reads NULL.
 #[derive(Component, Clone, Copy, PartialEq, Eq)]
 pub(super) struct DisarmFreeze {
     /// The hand hidden at the edge: 0 mainhand, 1 offhand.
@@ -186,7 +184,7 @@ pub(crate) enum ItemModelKind {
     /// A nocked-ammo model: a display with `model[0]` is a thrown weapon under `Weapon\`, one with
     /// only `model[1]` an arrow or bullet under `Ammo\`.
     Ammo,
-    /// The worn ammo container (`0x479c50`), on the back while the ranged weapon is drawn.
+    /// The worn ammo container, on the back while the ranged weapon is drawn.
     Quiver,
 }
 
@@ -195,8 +193,7 @@ pub(crate) enum ItemModelKind {
 #[derive(Component)]
 pub(crate) struct BoneAttach {
     pub(crate) points: HashMap<u16, (u16, Vec3)>,
-    /// First record per FourCC (`0x7130e0`): the missile launch points `$CSL`/`$CSR`/`$CST`
-    /// (`0x60c9b0`) and `$BWR`.
+    /// First record per FourCC: the missile launch points `$CSL`/`$CSR`/`$CST` and `$BWR`.
     pub(crate) markers: HashMap<[u8; 4], (u16, Vec3)>,
 }
 
@@ -228,8 +225,7 @@ pub(crate) const ATTACH_SLOT_NAMES: [&str; ATTACH_SLOTS] = [
 ];
 
 /// The glow of a slot the reference never lights: the helm, shoulder and quiver builders pass a
-/// literal 0 to `0x4798c0` (`0x479aa2`, `0x479e5f`, `0x479cf2`, `0x479db4`); only the hand attach
-/// (`0x47a200`) and the ranged and ammo builder pass the display's visual.
+/// literal 0; only the hand attach and the ranged and ammo builder pass the display's visual.
 const NO_GLOW: i32 = 0;
 
 /// [`ensure_item_model`] through the resource's change-detected handle: a model already present is

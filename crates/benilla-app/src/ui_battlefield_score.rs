@@ -213,8 +213,7 @@ mod net {
             .net_handler(SessionEventKind::Disconnected, on_session_end);
     }
 
-    /// Zeroes the board and the stamp, as the reference's module init (`0x4a9c40`) does at every
-    /// login.
+    /// Zeroes the board and the stamp, as the reference's module init does at every login.
     fn on_session_end(In(_): In<SessionEvent>, mut board: ResMut<BattlefieldScoreboard>) {
         *board = BattlefieldScoreboard::default();
     }

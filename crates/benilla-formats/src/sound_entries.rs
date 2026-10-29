@@ -1,6 +1,6 @@
-//! `SoundEntries.dbc`, the sound-kit table every audio trigger resolves through: up to 10
-//! weighted variation files with volume, flags and distances. Kits play by id or by name:
-//! `PlaySoundByName` (`0x458030`), behind Lua's `PlaySound`, hashes the name into this table.
+//! `SoundEntries.dbc`, the sound-kit table every audio trigger resolves through: up to 10 weighted
+//! variation files with volume, flags and distances. Kits play by id or by name: `PlaySoundByName`,
+//! behind Lua's `PlaySound`, hashes the name into this table.
 //!
 //! 30 fields and 120-byte records in 12340: 5875's 29, then `SoundEntriesAdvancedID`, set on
 //! 1,617 of the 12,941 rows and not read.
@@ -15,9 +15,9 @@ use crate::dbc::{f32_at, parse, str_at, u32_at};
 
 const SOUND_ENTRIES: &str = "DBFilesClient\\SoundEntries.dbc";
 
-/// `Flags` bits, copied raw into the runtime kit (`0x45c139`): `0x400` varies pitch (`0x458da0`),
-/// `0x800` volume (`0x458c60`), though no 5875 kit sets it. `0x20` no-duplicates and `0x200`
-/// looping are the wiki's 0.5.3 meanings, consistent with behaviour.
+/// `Flags` bits, copied raw into the runtime kit: `0x400` varies pitch, `0x800` volume, though no
+/// 5875 kit sets it. `0x20` no-duplicates and `0x200` looping are the wiki's 0.5.3 meanings,
+/// consistent with behaviour.
 pub mod sound_kit_flags {
     pub const NO_DUPLICATES: u32 = 0x20;
     pub const LOOPING: u32 = 0x200;
@@ -36,21 +36,21 @@ pub struct SoundKit {
     /// Non-empty variations as `(MPQ path, Freq[i] weight)`, `DirectoryBase` and `File[i]` joined
     /// as the reference joins them.
     pub files: Vec<(String, u32)>,
-    /// Base volume in `[0, 1]`, scaled by the per-shot variation (`0x458c60`).
+    /// Base volume in `[0, 1]`, scaled by the per-shot variation.
     pub volume: f32,
     pub flags: u32,
     /// Full-volume radius fed to the backend's min/max rolloff (FMOD `Sample_SetMinMaxDistance`).
     pub min_distance: f32,
-    /// The audibility radius, `d² < cutoff²`, also the per-frame virtualization cull (`0x45cdf0`,
-    /// `0x7a5000`); 0 is non-positional.
+    /// The audibility radius, `d² < cutoff²`, also the per-frame virtualization cull; 0 is
+    /// non-positional.
     pub distance_cutoff: f32,
     /// The `SoundSamplePreferences.dbc` row for the channel's EAX send. 0 is dry, not a default:
-    /// that table holds only 1 and 2, so the slot lookup (`0x45cdc0`) returns null and
-    /// `FSOUND_Reverb_SetChannelProperties` (`0x7a5bf0`) skips. Every NPC voice kit is 0.
+    /// that table holds only 1 and 2, so the slot lookup returns null and
+    /// `FSOUND_Reverb_SetChannelProperties` skips. Every NPC voice kit is 0.
     pub eax_def: u32,
 }
 
-/// The names `0x4609b0` finds the two forced ambience beds by (`0x836444`, `0x836428`).
+/// The names finds the two forced ambience beds.
 const GHOST_BED_NAME: &str = "Ghost (DONOTRENAME)";
 const UNDERWATER_BED_NAME: &str = "Underwater (DONOTRENAME)";
 
@@ -75,12 +75,12 @@ impl SoundKitCatalog {
             .and_then(|id| self.kits.get(id))
     }
 
-    /// The ambience bed a ghost hears, the row named `"Ghost (DONOTRENAME)"`: `[0xb06d48]`.
+    /// The ambience bed a ghost hears, the row named `"Ghost (DONOTRENAME)"`.
     pub fn ghost_bed(&self) -> Option<u32> {
         self.ghost_bed
     }
 
-    /// The ambience bed under water, the row named `"Underwater (DONOTRENAME)"`: `[0xb06d4c]`.
+    /// The ambience bed under water, the row named `"Underwater (DONOTRENAME)"`.
     pub fn underwater_bed(&self) -> Option<u32> {
         self.underwater_bed
     }
@@ -138,11 +138,11 @@ impl SoundKitCatalog {
     }
 }
 
-/// `0x4609b0`: the ghost and underwater ambience rows, `(ghost, underwater)`. It walks the table
-/// from the last row down, comparing each name with `0x64a480` at length `0x7fffffff`, which is
-/// `strncmp` (`0x40de80`): exact, case-sensitive, the whole string with its terminator, so neither
-/// a case variant nor a prefix matches (the ignore-case `0x64a4c0` is not used here). A match
-/// stores the row's id, later rows down overwriting, and the walk ends when both are set.
+/// The ghost and underwater ambience rows, `(ghost, underwater)`. It walks the table from the last
+/// row down, comparing each name with the reference at length `0x7fffffff`, which is `strncmp`:
+/// exact, case-sensitive, the whole string with its terminator, so neither a case variant nor a
+/// prefix matches (the ignore-case is not used here). A match stores the row's id, later rows down
+/// overwriting, and the walk ends when both are set.
 fn resolve_forced_beds(rows: &[SoundKit]) -> (Option<u32>, Option<u32>) {
     let (mut ghost, mut underwater) = (None, None);
     for kit in rows.iter().rev() {
@@ -182,11 +182,11 @@ pub(crate) fn sound_entries_schema() -> Schema {
     s
 }
 
-/// `DirectoryBase` and `File[i]` joined as the reference does (`0x45be10`, called only from
-/// `0x45c167` in the `SOUNDDEFINITION` loader): `"%s%s%s"` over dir, separator and file, with no
-/// separator when the dir is empty or already ends in `\`. Nothing below normalizes further: the
-/// archive hash (`0x6549a0`) folds case and maps `/` to `\` but keeps leading and doubled
-/// separators, and there is no loose-file fallback for a single leading `\`.
+/// `DirectoryBase` and `File[i]` joined as the reference does (called only from the reference in
+/// the `SOUNDDEFINITION` loader): `"%s%s%s"` over dir, separator and file, with no separator when
+/// the dir is empty or already ends in `\`. Nothing below normalizes further: the archive hash
+/// folds case and maps `/` to `\` but keeps leading and doubled separators, and there is no
+/// loose-file fallback for a single leading `\`.
 ///
 /// So the reference cannot play 27 of the 8961 shipped variations, and neither does this: 17 are
 /// absent from the archives, and 10 are kit 8940 `Ashbringer`, whose `DirectoryBase` starts with
@@ -279,9 +279,8 @@ mod tests {
         );
     }
 
-    /// The two forced ambience rows, by the exact names `0x4609b0` compares: row 4160 and row 4209,
-    /// where no row is named plain `Ghost` and 4123 `UnderWaterLoop` is a different row of the
-    /// same file.
+    /// The two forced ambience rows, by the exact names compares: row 4160 and row 4209, where no
+    /// row is named plain `Ghost` and 4123 `UnderWaterLoop` is a different row of the same file.
     #[test]
     fn real_sound_entries_resolve_the_forced_ambience_beds() {
         let data = crate::wow_data_or_skip!();
@@ -303,7 +302,7 @@ mod tests {
         assert!(cat.by_name("Ghost").is_none());
     }
 
-    /// `0x64a480` at length `0x7fffffff` is `strncmp` over the whole string: a case variant, a
+    /// The reference at length `0x7fffffff` is `strncmp` over the whole string: a case variant, a
     /// prefix or an extension of the name is another row, and the ignore-case name registry does
     /// not decide it.
     #[test]

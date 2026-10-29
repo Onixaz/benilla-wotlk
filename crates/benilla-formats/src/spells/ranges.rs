@@ -1,5 +1,5 @@
 //! `SpellRange.dbc`, by `rangeIndex` ([`crate::spells::SpellDisplay::range_index`]), and
-//! `GetMinMaxRange` (`0x6e3480`): a spell's cast range in yards.
+//! `GetMinMaxRange`: a spell's cast range in yards.
 
 use std::collections::HashMap;
 
@@ -38,59 +38,57 @@ impl SpellRange {
     }
 }
 
-/// The pad the melee arm adds to the two reaches, `[0x80b058]`; `CanLootNow` (`0x5ec110`) pads the
-/// loot reach by the same value.
+/// The pad the melee arm adds to the two reaches; `CanLootNow` pads the loot reach by the same
+/// value.
 pub const COMBAT_REACH_ADD: f32 = f32::from_bits(0x3faa_aaab);
-/// The melee arm's floor, not a cap, `[0x80a1e8]`: a lower reach sum is raised to it (`0x6e35bf`).
+/// The melee arm's floor, not a cap: a lower reach sum is raised to it.
 pub const MELEE_RANGE_FLOOR: f32 = 5.0;
-/// The on-next-swing short-circuit's max, `[0x8118d4]` (`0x6e3504`).
+/// The on-next-swing short-circuit's max.
 pub const ON_NEXT_SWING_RANGE: f32 = 100.0;
 
-/// The movement-flag bits the moving bonus tests of each unit, `0x200d` (`0x6e3658`): forward,
-/// either strafe, and jumping. Backward, turning and swimming are not among them.
+/// The movement-flag bits the moving bonus tests of each unit, `0x200d`: forward, either strafe,
+/// and jumping. Backward, turning and swimming are not among them.
 pub const MOVING_BONUS_FLAGS: u32 = 0x200d;
-/// The moving bonus, `[0x811914]` (`0x6e369c`), 2.6667: added to the max after both arms.
+/// The moving bonus, 2.6667: added to the max after both arms.
 pub const MOVING_RANGE_BONUS: f32 = f32::from_bits(0x402a_aaab);
 
 /// One unit's motion as the moving bonus reads it.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct UnitMotion {
-    /// The movement flags word, `[[unit+0x118]+0x40]` (`0x6e364f`-`0x6e3655`, `0x6e3661`).
+    /// The movement flags word, `[[unit+0x118]+0x40]`.
     pub flags: u32,
-    /// The current speed, `0x7c4c90` on `[unit+0x9a8]` (`0x5fc35c`-`0x5fc365`): 0 with no
-    /// direction bit, else the unit's spline speed, or the swim, walk, run or run-back speed the
-    /// flags pick.
+    /// The current speed, on `[unit+0x9a8]`: 0 with no direction bit, else the unit's spline speed,
+    /// or the swim, walk, run or run-back speed the flags pick.
     pub speed: f32,
-    /// The walk speed, `[unit+0xa30]` (`0x5fc354`).
+    /// The walk speed, `[unit+0xa30]`.
     pub walk_speed: f32,
 }
 
 impl UnitMotion {
-    /// `0x5fc350` answering 0: the current speed is above twice the walk speed. The reference
-    /// doubles the walk speed (`fadd st, st`), compares it with the speed (`fcompp`) and tests
-    /// C0 (`test ah, 1`, `0x5fc373`-`0x5fc376`), which is set by a doubled walk speed below the
-    /// speed and by an unordered pair, so a NaN reads as running and an equal pair as walking.
+    /// The reference answering 0: the current speed is above twice the walk speed. The reference
+    /// doubles the walk speed (`fadd st, st`), compares it with the speed (`fcompp`) and tests C0
+    /// (`test ah, 1`), which is set by a doubled walk speed below the speed and by an unordered
+    /// pair, so a NaN reads as running and an equal pair as walking.
     pub fn is_running(&self) -> bool {
         let doubled = 2.0 * self.walk_speed;
         self.speed > doubled || self.speed.is_nan() || doubled.is_nan()
     }
 
-    /// One unit's half of the bonus test: a movement flag in [`MOVING_BONUS_FLAGS`]
-    /// (`0x6e364c`-`0x6e366a`) and [`Self::is_running`] (`0x6e366c`-`0x6e3681`).
+    /// One unit's half of the bonus test: a movement flag in [`MOVING_BONUS_FLAGS`] and
+    /// [`Self::is_running`].
     pub fn moves_at_run_speed(&self) -> bool {
         self.flags & MOVING_BONUS_FLAGS != 0 && self.is_running()
     }
 }
 
-/// A unit as `GetMinMaxRange` (`0x6e3480`) reads it: its combat reach, whether it is a player, and
-/// its motion.
+/// A unit as `GetMinMaxRange` reads it: its combat reach, whether it is a player, and its motion.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RangeUnit {
     /// `UNIT_FIELD_COMBATREACH`, `[[unit+0x110]+0x1f0]`.
     pub reach: f32,
-    /// `OBJECT_FIELD_TYPE` bit 4 (`0x6e3689`-`0x6e3695`). Only a unit target's read counts: the
-    /// ranged arm's bonus asks it of the target, and the melee arm's never does. The caster's
-    /// own is the gate of the `Attributes & 2` scale (`0x6e36b4`-`0x6e36bf`), which is not applied.
+    /// `OBJECT_FIELD_TYPE` bit 4. Only a unit target's read counts: the ranged arm's bonus asks it
+    /// of the target, and the melee arm's never does. The caster's own is the gate of the
+    /// `Attributes & 2` scale, which is not applied.
     pub player: bool,
     pub motion: UnitMotion,
     /// `CanAssist(caster, unit)` (`0x801685`): for a unit target, which `SpellRange.dbc` pair
@@ -110,37 +108,37 @@ impl RangeUnit {
     }
 }
 
-/// The units `GetMinMaxRange` (`0x6e3480`) reads besides the caster, `None` where that unit is
-/// absent. The two are different inputs: only the first is an argument of the call.
+/// The units `GetMinMaxRange` reads besides the caster, `None` where that unit is absent. The two
+/// are different inputs: only the first is an argument of the call.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct RangeTargets {
-    /// The call's `target` argument (`[ebx+0x10]`), when it is a unit (typemask bit 3,
-    /// `0x6e34e1`-`0x6e34f9`): a null target, and one that is no unit, read `None`. Both arms
-    /// read its reach, and the ranged arm pads only for a target passed in (`0x6e35d8`).
+    /// The call's `target` argument (`[ebx+0x10]`), when it is a unit (typemask bit 3): a null
+    /// target, and one that is no unit, read `None`. Both arms read its reach, and the ranged arm
+    /// pads only for a target passed.
     pub target: Option<RangeUnit>,
-    /// The caster's auto-attack target, `[caster+0xc48]`, which the function looks up itself
-    /// (`0x47bf60`, `0x6e356a`). Only the melee arm reads it, and only with no unit target passed
-    /// (`0x6e3552`-`0x6e3584`). A caller that has no such unit to hand passes `None`.
+    /// The caster's auto-attack target, `[caster+0xc48]`, which the function looks up itself. Only
+    /// the melee arm reads it, and only with no unit target passed. A caller that has no such unit
+    /// to hand passes `None`.
     pub attack_target: Option<RangeUnit>,
 }
 
-/// `GetMinMaxRange` (`0x6e3480`): a spell's `{min, max}` cast range, summed in `f64` because the
-/// client keeps the reach sums on the x87 stack and stores `f32` only at the end. On-next-swing
-/// spells (`Attributes & 0x404`, `0x6e34fb`) short-circuit to `(0, 100)`. The melee arm sums the
-/// reach of the unit target, else the auto-attack target, else the caster's own, with the
-/// caster's. The ranged arm pads only for a unit target passed in, the auto-attack target never
-/// pads it: the max always, and the min only when nonzero (the `fcomp`-vs-0.0 guard), so a min-0
-/// spell never refuses `TOO_CLOSE`. `None`: no row, or the self row (id 1, `{0, 0}`).
+/// `GetMinMaxRange`: a spell's `{min, max}` cast range, summed in `f64` because the client keeps
+/// the reach sums on the x87 stack and stores `f32` only at the end. On-next-swing spells
+/// (`Attributes & 0x404`) short-circuit to `(0, 100)`. The melee arm sums the reach of the unit
+/// target, else the auto-attack target, else the caster's own, with the caster's. The ranged arm
+/// pads only for a unit target passed in, the auto-attack target never pads it: the max always, and
+/// the min only when nonzero (the `fcomp`-vs-0.0 guard), so a min-0 spell never refuses
+/// `TOO_CLOSE`. `None`: no row, or the self row (id 1, `{0, 0}`).
 ///
-/// After both arms the max takes the moving bonus ([`MOVING_RANGE_BONUS`], `0x6e3648`-`0x6e36a2`)
-/// when there is a unit (the target, or on the melee arm the auto-attack target), the caster and
-/// that unit each [`UnitMotion::moves_at_run_speed`], and the row is the melee row or the unit a
-/// player. It comes after the melee floor and before the range modifier (op 5, `0x6e3746`), and
-/// the min never takes it. The on-next-swing short-circuit skips it.
+/// After both arms the max takes the moving bonus ([`MOVING_RANGE_BONUS`]) when there is a unit
+/// (the target, or on the melee arm the auto-attack target), the caster and that unit each
+/// [`UnitMotion::moves_at_run_speed`], and the row is the melee row or the unit a player. It comes
+/// after the melee floor and before the range modifier (op 5), and the min never takes it. The
+/// on-next-swing short-circuit skips it.
 ///
-/// Not applied: for a player the `Attributes & 2` scale (`0x6e36aa`), `max *= RangedModRange ·
-/// 0.01` of the ranged-slot item, which a relic (range mod 0, InventoryType 28, admitted by
-/// `0x809200`) would zero, though no spell a relic class learns carries the bit.
+/// Not applied: for a player the `Attributes & 2` scale, `max *= RangedModRange · 0.01` of the
+/// ranged-slot item, which a relic (range mod 0, InventoryType 28) would zero, though no spell a
+/// relic class learns carries the bit.
 pub fn min_max_range(
     spell: &crate::spells::SpellDisplay,
     row: Option<&SpellRange>,
@@ -151,7 +149,7 @@ pub fn min_max_range(
         return Some((0.0, ON_NEXT_SWING_RANGE));
     }
     let row = row?;
-    // The `esi` both arms leave (`0x6e3648`): the unit the bonus reads, if any.
+    // The `esi` both arms leave: the unit the bonus reads, if any.
     let (min, max, unit) = if row.is_melee() {
         let unit = targets.target.or(targets.attack_target);
         let reach = unit.map_or(caster.reach, |u| u.reach);
@@ -197,11 +195,11 @@ pub fn min_max_range(
 }
 
 /// Whether [`min_max_range`] reads the units it is not handed for this spell and row when it is
-/// passed no unit target, as the spell tooltip calls it (`push 0`, `0x52e9c2`): only the melee
-/// arm, which sums the auto-attack target's reach, else the caster's own, with the caster's, and
-/// asks both units' motion for the moving bonus. The ranged arm pads only for a target passed in,
-/// so a tooltip prints its row as it is; the on-next-swing short-circuit, the missing row and the
-/// self row read none. With a unit target the ranged arm reads both units too.
+/// passed no unit target, as the spell tooltip calls it (`push 0`): only the melee arm, which sums
+/// the auto-attack target's reach, else the caster's own, with the caster's, and asks both units'
+/// motion for the moving bonus. The ranged arm pads only for a target passed in, so a tooltip
+/// prints its row as it is; the on-next-swing short-circuit, the missing row and the self row read
+/// none. With a unit target the ranged arm reads both units too.
 pub fn min_max_range_reads_units(
     spell: &crate::spells::SpellDisplay,
     row: Option<&SpellRange>,
@@ -289,8 +287,8 @@ mod tests {
 
     const FORWARD: u32 = 0x1;
     const BACKWARD: u32 = 0x2;
-    /// A unit running forward: the speed `0x7c4c90` answers for it is the run speed, above twice
-    /// the walk speed.
+    /// A unit running forward: the speed answers for it is the run speed, above twice the walk
+    /// speed.
     const RUNNING: UnitMotion = UnitMotion {
         flags: FORWARD,
         speed: 7.0,
@@ -388,7 +386,7 @@ mod tests {
         assert_eq!(min, 0.0);
         assert!((max - 38.0).abs() < 1e-3);
 
-        // No target, as the tooltip calls it (`target = NULL`, `0x52e9c2`): the raw bounds.
+        // No target, as the tooltip calls it (`target = NULL`): the raw bounds.
         assert_eq!(
             min_max_range(
                 &d,
@@ -428,10 +426,10 @@ mod tests {
         );
     }
 
-    /// The ranged arm pads only for the target passed in (`0x6e35d8 test ecx,ecx`, `0x6e35ec je`),
-    /// never for the caster's auto-attack target, which the ranged arm does not read.
-    /// A row whose friendly pair is wider, as row 161's is: a unit target picks the pair by
-    /// `CanAssist`, no target by the spell's own `IsHelpfulOrHarmful` (`0x801650`).
+    /// The ranged arm pads only for the target passed, never for the caster's auto-attack target,
+    /// which the ranged arm does not read. A row whose friendly pair is wider, as row 161's is: a
+    /// unit target picks the pair by `CanAssist`, no target by the spell's own `IsHelpfulOrHarmful`
+    /// (`0x801650`).
     #[test]
     fn the_target_relation_picks_the_hostile_or_friendly_pair() {
         const SPLIT: SpellRange = SpellRange {
@@ -524,7 +522,7 @@ mod tests {
     }
 
     /// The melee arm takes the unit target's reach, else the auto-attack target's, else the
-    /// caster's own (`0x6e3552`-`0x6e3584`, `0x6e3594`), and adds the caster's.
+    /// caster's own, and adds the caster's.
     #[test]
     fn the_melee_arm_falls_back_from_the_target_to_the_attack_target_to_the_caster() {
         let d = spell(2, 0);
@@ -547,8 +545,8 @@ mod tests {
         assert!((max(None, None) - sum(4.0)).abs() < 1e-3);
     }
 
-    /// The predicate is exact for the tooltip's call (`0x52e9c2`, no unit target passed): it is
-    /// true for a spell and row exactly when some change of the caster's reach or motion, or of the
+    /// The predicate is exact for the tooltip's call (no unit target passed): it is true for a
+    /// spell and row exactly when some change of the caster's reach or motion, or of the
     /// auto-attack target's reach, motion or presence, moves [`min_max_range`]'s answer.
     #[test]
     fn the_units_predicate_matches_what_min_max_range_reads_with_no_target() {
@@ -622,7 +620,7 @@ mod tests {
         }
     }
 
-    /// `0x5fc350` answers 0 for a current speed above twice the walk speed (`fcompp`, then C0),
+    /// The reference answers 0 for a current speed above twice the walk speed (`fcompp`, then C0),
     /// and 1 for an equal pair; an unordered pair sets C0 too.
     #[test]
     fn running_is_a_speed_above_twice_the_walk_speed() {
@@ -645,8 +643,8 @@ mod tests {
         assert!(!UnitMotion::default().is_running());
     }
 
-    /// The moving bonus (`0x6e3648`-`0x6e36a2`) on the melee row: two running units of reach 1.5
-    /// sum 4.333, which the melee floor raises to 5.0 first, so the bonus makes 7.667.
+    /// The moving bonus on the melee row: two running units of reach 1.5 sum 4.333, which the melee
+    /// floor raises to 5.0 first, so the bonus makes 7.667.
     #[test]
     fn two_running_units_earn_the_moving_bonus_on_the_melee_row_after_the_floor() {
         let d = spell(2, 0);
@@ -748,7 +746,7 @@ mod tests {
     }
 
     /// The bonus reads the unit `esi` holds after both arms: the melee arm's auto-attack target
-    /// when no target is passed (`0x6e3580`), never that target beside one passed in.
+    /// when no target is passed, never that target beside one passed in.
     #[test]
     fn the_melee_bonus_reads_the_attack_target_when_no_target_is_passed() {
         let d = spell(2, 0);
@@ -777,8 +775,7 @@ mod tests {
     }
 
     /// On a ranged row the bonus needs a target unit passed in, and a player: a creature target
-    /// earns none (`0x6e3683`-`0x6e3695`), nor does the auto-attack target, which that arm never
-    /// reads.
+    /// earns none, nor does the auto-attack target, which that arm never reads.
     #[test]
     fn the_ranged_bonus_needs_a_player_target_passed_in() {
         let d = spell(4, 0);
@@ -827,7 +824,7 @@ mod tests {
         );
     }
 
-    /// The on-next-swing short-circuit returns before the bonus (`0x6e350f`).
+    /// The on-next-swing short-circuit returns before the bonus.
     #[test]
     fn the_on_next_swing_range_takes_no_bonus() {
         let targets = RangeTargets {

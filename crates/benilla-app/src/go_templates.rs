@@ -43,8 +43,8 @@ pub(crate) struct GoTemplate {
     pub(crate) quest_material: Option<u32>,
 }
 
-/// A MEETINGSTONE template's slots, 12340 properties `0x33` to `0x35` (`0x7121e0`, `0x7108d0`).
-/// The area feeds the type's highlightable slot `0x5f6990`, the levels the use refusal
+/// A MEETINGSTONE template's slots, 12340 properties `0x33` to `0x35` (`0x7121e0`, `0x7108d0`). The
+/// area feeds the type's highlightable slot, the levels the use refusal
 /// `ERR_MEETING_STONE_INVALID_LEVEL`.
 #[derive(Clone, Copy)]
 pub(crate) struct MeetingStoneTemplate {
@@ -234,7 +234,7 @@ mod tests {
         assert_eq!(go_lock_slot(19), None); // MAILBOX opens by USE
     }
 
-    /// `0x5f5950`: QUESTGIVER (2) and TEXT (9) read `data[2]`, GOOBER (10) `data[9]`.
+    /// QUESTGIVER (2) and TEXT (9) read `data[2]`, GOOBER (10) `data[9]`.
     #[test]
     fn insert_captures_the_quest_material_by_type() {
         let mut t = GameObjectTemplates::default();

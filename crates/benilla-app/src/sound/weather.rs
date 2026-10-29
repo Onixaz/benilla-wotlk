@@ -1,10 +1,9 @@
 //! Weather sound: the `SMSG_WEATHER` id's `Weather.dbc` ambience kit (12340 stores it at
-//! `0x4c8610`; 0 is none) is an input to the one zone-ambience channel, not a loop of
-//! its own. The selector `0x460bd0` returns the weather kit while the zonetext indoor bit
-//! `[0xb06d44]` is clear (written 1 by the indoor area feeder `0x67e7d4`, 0 by the outdoor one
-//! `0x67e919`) and the area's `AmbienceID` while set, each swap a 5.0 s crossfade (`0x460b00`):
-//! rain is replaced indoors, not ducked. The packet's `grade` drives rendering only (`0x67baf0`).
-//! The channel itself is `super::zone`'s.
+//! `0x4c8610`; 0 is none) is an input to the one zone-ambience channel, not a loop of its own. The
+//! selector returns the weather kit while the zonetext indoor bit is clear (written 1 by the indoor
+//! area feeder) and the area's `AmbienceID` while set, each swap a 5.0 s crossfade: rain is
+//! replaced indoors, not ducked. The packet's `grade` drives rendering only. The channel itself is
+//! `super::zone`'s.
 
 use bevy::prelude::*;
 

@@ -1,11 +1,11 @@
-//! The justify dword and its token table (`.rdata 0x811ad0`), shared by the `FontString`
-//! (`0x87c1d8`), `Font` (`0x87c7c8`) and `EditBox` method tables. Each setter replaces only its
-//! own axis, and also clears the inherit bit whether or not the value changed (`0x79fc7c`).
+//! The justify dword and its token table (`.rdata`), shared by the `FontString`, `Font` and
+//! `EditBox` method tables. Each setter replaces only its own axis, and also clears the inherit bit
+//! whether or not the value changed.
 
 use crate::script::{JustifyH, JustifyV};
 
-/// `.rdata 0x811ad0`, six `{u32 bits, const char* name}` entries in image order. The order
-/// matters: `0x6f1990` scans linearly and `0x6f1a00` answers the first entry with its bit set.
+/// `.rdata`, six `{u32 bits, const char* name}` entries in image order. The order matters: the
+/// reference scans linearly and the reference answers the first entry with its bit set.
 const TOKENS: [(u32, &str); 6] = [
     (0x01, "LEFT"),
     (0x02, "CENTER"),
@@ -15,15 +15,15 @@ const TOKENS: [(u32, &str); 6] = [
     (0x20, "BOTTOM"),
 ];
 
-/// The literal `0x6f1a00` answers when no bit in the requested axis is set (`.data 0x838044`).
+/// The literal answers when no bit in the requested axis is set (`.data`).
 pub const UNKNOWN: &str = "UNKNOWN";
 
-/// The horizontal axis, bits 0–2: the mask of `SetJustifyH 0x79fc20`.
+/// The horizontal axis, bits 0–2: the mask of `SetJustifyH`.
 pub const H_MASK: u32 = 0x07;
-/// The vertical axis, bits 3–5: the mask of `SetJustifyV 0x79fce0`.
+/// The vertical axis, bits 3–5: the mask of `SetJustifyV`.
 pub const V_MASK: u32 = 0x38;
 
-/// A justify argument after `0x6f1990` and the setter's mask.
+/// A justify argument after the reference and the setter's mask.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Set<J> {
     /// A token with a bit on this axis.
@@ -35,8 +35,8 @@ pub enum Set<J> {
     NoMatch,
 }
 
-/// `CENTER | MIDDLE | 0x200`, as `CSimpleFontString`'s ctor writes it (`0x770dd3`); bit 9 is in
-/// neither axis and no reader looks at it.
+/// `CENTER | MIDDLE | 0x200`, as `CSimpleFontString`'s ctor writes it; bit 9 is in neither axis and
+/// no reader looks at it.
 const CTOR_DEFAULT: u32 = 0x212;
 
 /// The justify dword (`CSimpleFont+0x54`, `CSimpleFontString+0x120`, `CSimpleEditBox`'s own),
@@ -66,20 +66,19 @@ impl Justify {
         self.0 = set_axis(self.0, V_MASK, 0);
     }
 
-    /// `GetJustifyH`'s answer (`0x79e5f0`) through `0x6f1a00`: `"UNKNOWN"` for a cleared axis.
+    /// `GetJustifyH`'s answer: `"UNKNOWN"` for a cleared axis.
     pub fn name_h(self) -> &'static str {
         name_of(self.0, H_MASK)
     }
-    /// `GetJustifyV`'s answer (`0x79e7f0`).
+    /// `GetJustifyV`'s answer.
     pub fn name_v(self) -> &'static str {
         name_of(self.0, V_MASK)
     }
 
-    /// Where the glyphs draw horizontally: the translator `0x44d420` (called only from
-    /// `0x772693`) is a ladder whose result is pre-set to `1`, CENTER (`0x44d4fb`, before the
-    /// `je` at `0x44d516`), so a cleared axis draws centred. The gx enum's `else` arms, LEFT and
-    /// BOTTOM, are unreachable (`0x44d420` emits only 0 to 2, `0x5c1c30` rejects 3 and up):
-    /// mapping the bitmask onto that enum with a `0` default inverts both axes.
+    /// Where the glyphs draw horizontally: the translator is a ladder whose result is pre-set to
+    /// `1`, CENTER (before the `je`), so a cleared axis draws centred. The gx enum's `else` arms,
+    /// LEFT and BOTTOM, are unreachable: mapping the bitmask onto that enum with a `0` default
+    /// inverts both axes.
     pub fn paint_h(self) -> JustifyH {
         if self.0 & 0x04 != 0 {
             JustifyH::Right
@@ -90,8 +89,7 @@ impl Justify {
         }
     }
 
-    /// The same ladder vertically, `TOP > BOTTOM > MIDDLE`, falling through to MIDDLE
-    /// (`0x44d536`).
+    /// The same ladder vertically, `TOP > BOTTOM > MIDDLE`, falling through to MIDDLE.
     pub fn paint_v(self) -> JustifyV {
         if self.0 & 0x08 != 0 {
             JustifyV::Top
@@ -119,7 +117,7 @@ fn bits_v(j: JustifyV) -> u32 {
     }
 }
 
-/// `0x6f1990`: `SStrCmpI` over the six entries, whole-string and untrimmed, so `"left "` misses.
+/// `SStrCmpI` over the six entries, whole-string and untrimmed, so `"left "` misses.
 pub fn parse_bits(s: &str) -> Option<u32> {
     TOKENS
         .iter()
@@ -127,7 +125,7 @@ pub fn parse_bits(s: &str) -> Option<u32> {
         .map(|(bits, _)| *bits)
 }
 
-/// `0x6f1a00`: the first entry whose bit is set within `mask`, else the literal `UNKNOWN`.
+/// The first entry whose bit is set within `mask`, else the literal `UNKNOWN`.
 pub fn name_of(bits: u32, mask: u32) -> &'static str {
     TOKENS
         .iter()
@@ -135,8 +133,8 @@ pub fn name_of(bits: u32, mask: u32) -> &'static str {
         .map_or(UNKNOWN, |(_, name)| *name)
 }
 
-/// The setters' `(cur ^ parsed) & mask ^ cur` (`SetJustifyH` at `0x79fc5d`–`0x79fc64`), which is
-/// why a cross-axis token clears rather than raises.
+/// The setters' `(cur ^ parsed) & mask ^ cur` (`SetJustifyH`), which is why a cross-axis token
+/// clears rather than raises.
 pub fn set_axis(cur: u32, mask: u32, parsed: u32) -> u32 {
     (cur & !mask) | (parsed & mask)
 }
@@ -172,13 +170,13 @@ pub fn name_v(j: JustifyV) -> &'static str {
     name_of(bits_v(j), V_MASK)
 }
 
-/// The `Usage:` string `SetJustifyH` raises on a miss (`.rdata 0x87c77c`), the `%s` spelled as
-/// the widget type.
+/// The `Usage:` string `SetJustifyH` raises on a miss (`.rdata`), the `%s` spelled as the widget
+/// type.
 pub fn usage_h(widget: &str) -> mlua::Error {
     mlua::Error::runtime(format!("Usage: <{widget}>:SetJustifyH(\"justify\")"))
 }
 
-/// The `Usage:` string `SetJustifyV` raises on a miss (`.rdata 0x87c7a0`).
+/// The `Usage:` string `SetJustifyV` raises on a miss (`.rdata`).
 pub fn usage_v(widget: &str) -> mlua::Error {
     mlua::Error::runtime(format!("Usage: <{widget}>:SetJustifyV(\"justify\")"))
 }
@@ -227,7 +225,7 @@ mod tests {
 
     #[test]
     fn the_formatter_is_first_bit_set_within_the_axis_else_unknown() {
-        // `0x6f1a00`: no bit in the axis answers UNKNOWN, two bits answer the first table entry.
+        // No bit in the axis answers UNKNOWN, two bits answer the first table entry.
         assert_eq!(name_of(0x00, H_MASK), "UNKNOWN");
         assert_eq!(name_of(0x38, H_MASK), "UNKNOWN"); // vertical bits only
         assert_eq!(name_of(0x05, H_MASK), "LEFT"); // LEFT | RIGHT

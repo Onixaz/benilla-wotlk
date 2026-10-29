@@ -1,7 +1,7 @@
 //! `SpellCastTimes.dbc`: the cast time a spell's `CastingTimeIndex`
-//! ([`crate::spells::SpellDisplay::casting_time_index`]) resolves to in `Spell_C::GetCastTime`
-//! (`0x6e3340`), before spell-mod op `0xa` (`SPELLMOD_CASTING_TIME`). Row 1, `{0, 0, 0}`, is the
-//! instant sentinel every spell without a cast time points at.
+//! ([`crate::spells::SpellDisplay::casting_time_index`]) resolves to in `Spell_C::GetCastTime`,
+//! before spell-mod op `0xa` (`SPELLMOD_CASTING_TIME`). Row 1, `{0, 0, 0}`, is the instant sentinel
+//! every spell without a cast time points at.
 
 use std::collections::HashMap;
 
@@ -24,11 +24,10 @@ pub struct SpellCastTime {
 }
 
 impl SpellCastTime {
-    /// The level-scaled cast time (`0x6e3395`-`0x6e33b4`): `base + perLevel·(casterLevel −
-    /// baseLevel)`, the level delta signed, raised to the row minimum and nothing else, so row 18
-    /// stays negative. `base_level` is the DBC's `baseLevel`
-    /// ([`crate::spells::SpellDisplay::base_level`]), not `spellLevel`. Spell-mod op `0xa` and the
-    /// clamp at zero are the caller's.
+    /// The level-scaled cast time: `base + perLevel·(casterLevel − baseLevel)`, the level delta
+    /// signed, raised to the row minimum and nothing else, so row 18 stays negative. `base_level`
+    /// is the DBC's `baseLevel` ([`crate::spells::SpellDisplay::base_level`]), not `spellLevel`.
+    /// Spell-mod op `0xa` and the clamp at zero are the caller's.
     pub fn resolved_ms(&self, caster_level: u32, base_level: u32) -> i32 {
         let delta = (caster_level as i32).wrapping_sub(base_level as i32);
         let scaled = self

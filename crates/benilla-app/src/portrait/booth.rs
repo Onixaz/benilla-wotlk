@@ -1,7 +1,6 @@
-//! The booth bake spawn: a mirrored look becomes the posed throwaway instance the camera shoots
-//! (the reference's instance `0x707400`, pose `0x7121a0`). The skeleton is one
-//! [`RigPose`](benilla_world::rig_anim::RigPose) buffer on the booth root; riders, cards and
-//! effect hosts seat on demand-spawned anchors ([`BoothRig::anchor`]).
+//! The booth bake spawn: a mirrored look becomes the posed throwaway instance the camera shoots.
+//! The skeleton is one [`RigPose`](benilla_world::rig_anim::RigPose) buffer on the booth root;
+//! riders, cards and effect hosts seat on demand-spawned anchors ([`BoothRig::anchor`]).
 
 use benilla_formats::BillboardKind;
 use benilla_world::model_render::SortOrigin;
@@ -25,8 +24,8 @@ pub(super) struct BoothPart {
     pub(super) twins: BoothTwins,
     /// Whether the builder registered this batch's material on the UV and tint lane. It records the
     /// registration, never re-tests the asset: the marker and the registration must be one fact.
-    /// True only for the glue scenes, which animate texture transforms per frame (`0x715f25` to
-    /// `0x7163bc` over `md+0x74`); portraits and panes are stills.
+    /// True only for the glue scenes, which animate texture transforms per frame (over `md+0x74`);
+    /// portraits and panes are stills.
     pub(super) mat_anim: bool,
     /// The batch's transparent sort key, ranked inside its booth model.
     pub(super) sort: Option<benilla_formats::BatchSort>,
@@ -63,10 +62,10 @@ pub(crate) struct BoothTwins {
     pub(crate) zfill: Option<Handle<WowModelMaterial>>,
 }
 
-/// The bake's instance-level render properties: the reference's per-instance alpha
-/// (`model+0x180`), which every batch draws through and every attached model composes onto
-/// (`0x714000`), so an item on a ghost is as translucent as the arm holding it. The tag alpha, the
-/// blend-twin swap and the [`FadeMaterials`] record are applied together in [`spawn_booth_model`].
+/// The bake's instance-level render properties: the reference's per-instance alpha (`model+0x180`),
+/// which every batch draws through and every attached model composes onto, so an item on a ghost is
+/// as translucent as the arm holding it. The tag alpha, the blend-twin swap and the
+/// [`FadeMaterials`] record are applied together in [`spawn_booth_model`].
 #[derive(Clone, Copy)]
 pub(super) struct BoothInstance {
     /// `model+0x180`; 1.0 is opaque, every bake but a ghosted one.
@@ -120,8 +119,8 @@ impl BoothInstance {
 /// Marks a booth part whose render-alpha `MeshTag` and `Visibility` its own
 /// [`MatAnim`](benilla_world::doodad_anim::MatAnim) drives ([`push_booth_mat_alpha`]). The world's
 /// visibility writer culls against the world camera, so a booth part stays out of it and this
-/// marker claims sole `Visibility` authority, including the reference's `A <= 0` cull, which
-/// fires before the blend mode is read (`0x707b3a` to `0x707b5c`).
+/// marker claims sole `Visibility` authority, including the reference's `A <= 0` cull, which fires
+/// before the blend mode is read.
 #[derive(Component)]
 pub(super) struct BoothMatAlpha;
 
@@ -131,8 +130,8 @@ pub(super) struct BoothRider {
     pub(super) material: Handle<WowModelMaterial>,
     pub(super) bone: u16,
     pub(super) offset: Vec3,
-    /// An attached model composes onto its parent's alpha (`0x714000`), so a ghost's helm
-    /// feathers with the head under it.
+    /// An attached model composes onto its parent's alpha, so a ghost's helm feathers with the head
+    /// under it.
     pub(super) twins: BoothTwins,
 }
 
@@ -165,10 +164,10 @@ pub(super) struct BoothBillboard {
 }
 
 impl BoothBillboard {
-    /// A mesh-less billboard frame: its world rotation is the billboard bone's replaced basis
-    /// about the booth camera, for an emitter under that bone to ride; the reference folds the
-    /// emitter's position through this matrix (`0x7190a9` to `0x71910c`, in `0x718960`). The
-    /// caller owns the translation; [`face_booth_billboards`] writes only the rotation.
+    /// A mesh-less billboard frame: its world rotation is the billboard bone's replaced basis about
+    /// the booth camera, for an emitter under that bone to ride; the reference folds the emitter's
+    /// position through this matrix. The caller owns the translation; [`face_booth_billboards`]
+    /// writes only the rotation.
     pub(super) fn frame(kind: BillboardKind) -> Self {
         Self { kind }
     }
@@ -242,9 +241,9 @@ pub(super) fn clear_booth_rig(commands: &mut Commands, root: Entity) {
 /// `(emitters, billboard frames)`. `light` is the booth's own light buffer, so the world's time of
 /// day never shades a pane.
 ///
-/// Only live booths call this. A `<PlayerModel>` pane renders every frame (`0x76d680`), while
-/// `SetPortraitTexture` bakes a round portrait in one draw and caches it (`0x524f60`), where a
-/// newborn particle pool draws nothing.
+/// Only live booths call this. A `<PlayerModel>` pane renders every frame, while
+/// `SetPortraitTexture` bakes a round portrait in one draw and caches it, where a newborn particle
+/// pool draws nothing.
 pub(super) fn spawn_booth_effects(
     commands: &mut Commands,
     rig: &mut BoothRig,
@@ -261,9 +260,9 @@ pub(super) fn spawn_booth_effects(
             continue; // bad bone index: bake the body without this model's effects
         };
         // The host stands for the attached model: the reference composes its alpha every frame as
-        // `child+0x19c = parent+0x19c × child+0x180` (`0x714260`) and folds it into every particle
-        // through `emitter+0x1a8` (`0x718960` at `0x719073`); `ModelAlphas` walks that chain.
-        // `ModelFade`, not `ModelAlpha`: a bake has no ramps, so the declared value is read as is.
+        // `child+0x19c = parent+0x19c × child+0x180` and folds it into every particle through
+        // `emitter+0x1a8`; `ModelAlphas` walks that chain. `ModelFade`, not `ModelAlpha`: a bake
+        // has no ramps, so the declared value is read as is.
         let mut host = commands.spawn((
             Transform::from_translation(fx.offset),
             Visibility::default(),
@@ -411,8 +410,8 @@ pub(super) enum BoothMotion {
     Loop,
 }
 
-/// Spawns a booth bake under `root`: a fresh throwaway instance posed at Stand (the reference's
-/// instance `0x707400`, pose `0x7121a0`), never the unit's live pose.
+/// Spawns a booth bake under `root`: a fresh throwaway instance posed at Stand, never the unit's
+/// live pose.
 ///
 /// With a rig, skinned parts draw against a palette slot, riders seat on bone anchors and Stand
 /// (anim 0) is armed frozen or looping per `motion`; the reference's bake sampling clock is
@@ -433,8 +432,8 @@ pub(super) fn spawn_booth_model(
     catalog: Option<&benilla_formats::AnimDataCatalog>,
     motion: BoothMotion,
     // Per-hand weapon grip `[right, left]`: a hand whose attach point holds a weapon keeps its
-    // `HandsClosed` pose (`0x5059a0`). Round portraits pass `[false, false]`: the reference's
-    // portrait bake arms no grip.
+    // `HandsClosed` pose. Round portraits pass `[false, false]`: the reference's portrait bake arms
+    // no grip.
     grip: [bool; 2],
     // Character billboard batches (the eye glow); the boneless bake drops them.
     billboards: &[BoothBillboardSpec],
@@ -455,7 +454,7 @@ pub(super) fn spawn_booth_model(
             mark_mat_anim(&mut child, p);
             insert_sort(&mut child, p.sort, root, SortOrigin::Part);
             // The batch's material alpha times the instance alpha, the reference's
-            // `model+0x180 × the batch factor` (`0x707680`).
+            // `model+0x180 × the batch factor`.
             if let Some(anim) = &p.alpha_anim {
                 let mat_anim =
                     benilla_world::doodad_anim::MatAnim::driving_tag(anim.clone(), 0.0, None);
@@ -602,8 +601,8 @@ pub(super) fn spawn_booth_model(
             layer.clone(),
             ChildOf(anchor),
         ));
-        // An attached model composes onto its parent's colour and alpha (`0x714000`). Untagged
-        // means opaque and slot 0, so the tag goes up only for a translucent instance or a slot.
+        // An attached model composes onto its parent's colour and alpha. Untagged means opaque and
+        // slot 0, so the tag goes up only for a translucent instance or a slot.
         if instance.feathering() || rig_slot != 0 {
             child.insert(bevy::mesh::MeshTag(benilla_world::mesh_tag::spawn_tag(
                 rig_slot,
@@ -687,16 +686,16 @@ pub(super) fn spawn_booth_model(
     booth_rig
 }
 
-/// The ids `PlayerModel:SetRotation` chooses between, from the reference's name table
-/// (`0x6143b6`, `[ecx*4+0x8686a8]`): 0 `Stand`, 11 `ShuffleLeft`, 12 `ShuffleRight`.
+/// The ids `PlayerModel:SetRotation` chooses between, from the reference's name table: 0 `Stand`,
+/// 11 `ShuffleLeft`, 12 `ShuffleRight`.
 const STAND: u16 = 0;
 const SHUFFLE_LEFT: u16 = 11;
 const SHUFFLE_RIGHT: u16 = 12;
 
-/// The sequence a facing change arms (`0x505bb0`, the `fcomp` at `0x505bce`): current facing below
-/// the angle arms ShuffleRight, above it ShuffleLeft; equal or NaN arms Stand, an active play,
-/// which is why `Model:SetSequence` cannot stick on these panes. Compared on the Lua-facing
-/// scalar `SetRotation` takes, so no sign conversion is involved.
+/// The sequence a facing change arms (the `fcomp`): current facing below the angle arms
+/// ShuffleRight, above it ShuffleLeft; equal or NaN arms Stand, an active play, which is why
+/// `Model:SetSequence` cannot stick on these panes. Compared on the Lua-facing scalar `SetRotation`
+/// takes, so no sign conversion is involved.
 pub(super) fn turn_shuffle(faced: f32, angle: f32) -> u16 {
     if faced < angle {
         SHUFFLE_RIGHT
@@ -708,9 +707,9 @@ pub(super) fn turn_shuffle(faced: f32, angle: f32) -> u16 {
 }
 
 /// How long one rotation keeps its shuffle stepping: the reference's `[+0x3ec] = clock() + 100`
-/// (`0x42c010`, milliseconds), drained per paint by `0x505c50`. Every path through `0x505bb0` sets
-/// it (`0x505c28`), so a held arrow pushes it out each frame. Taking `spun` before the expiry
-/// check matches the `[+0x3e8]` latch: a paint after a `SetRotation` never expires.
+/// (milliseconds), drained per paint. Every path through the reference sets it, so a held arrow
+/// pushes it out each frame. Taking `spun` before the expiry check matches the `[+0x3e8]` latch: a
+/// paint after a `SetRotation` never expires.
 const SHUFFLE_HOLD_SECS: f64 = 0.100;
 
 /// The fraction of a cross-fade still to run, 1 to 0: the client's `(blendEnd − now) · blendRate`,
@@ -720,7 +719,7 @@ fn fade_frac(fade: &super::Fade, now: f64) -> f32 {
 }
 
 /// Arms one `AnimationData` id as the reference's turn does,
-/// `0x7121a0(bone -1, id, variation -1, offset 0, rate 1.0, blend 1, primary 1)`:
+/// `(bone -1, id, variation -1, offset 0, rate 1.0, blend 1, primary 1)`:
 ///
 /// - variation -1: a frequency-weighted roll on every arm, expiry included (HumanMale authors
 ///   four Stands).
@@ -752,9 +751,9 @@ fn arm_turn(
         return false;
     };
     let (node, looping, blend) = (clip.node, clip.looping, clip.blend_time.max(0.0));
-    // The half-blend refusal (`0x7125c9`/`0x7125d4`): a running blend with λ > 0.5 is not
-    // re-seeded; the old secondary keeps its window and the primary is dropped. λ equal to 0.5
-    // re-seeds. A second arrow nudge within 250 ms of a release meets it.
+    // The half-blend refusal: a running blend with λ > 0.5 is not re-seeded; the old secondary
+    // keeps its window and the primary is dropped. λ equal to 0.5 re-seeds. A second arrow nudge
+    // within 250 ms of a release meets it.
     let refused = turn
         .fade
         .is_some_and(|f| crate::creature_anim::select::blend_lambda(fade_frac(&f, now)) > 0.5);
@@ -816,8 +815,8 @@ pub(super) fn drive_booth_turn(
     mut booths: ResMut<super::Booths>,
     anim_data: Option<Res<crate::creature_anim::AnimData>>,
     mut rigs: Query<(&mut AnimationPlayer, &benilla_assets::ModelAnimations)>,
-    // Variation -1 is a frequency-weighted roll off the CRT LCG (`0x71249a` calls `0x7400e5`),
-    // the same generator the world's picks use.
+    // Variation -1 is a frequency-weighted roll off the CRT LCG, the same generator the world's
+    // picks use.
     mut rng: ResMut<benilla_assets::AnimRng>,
 ) {
     let Some(anim_data) = anim_data.as_deref() else {
@@ -853,8 +852,8 @@ fn step_turn(
     turn: &mut super::Turn,
     now: f64,
 ) {
-    // Arm: the reference compares the id against the root bone's (`0x712090`), so a held direction
-    // arms once and loops while a reversal restarts from t = 0.
+    // Arm: the reference compares the id against the root bone's, so a held direction arms once and
+    // loops while a reversal restarts from t = 0.
     if let Some(want) = turn.spun.take() {
         let armed = turn.shuffle.map_or(STAND, |(id, _)| id);
         if want == armed {
@@ -863,20 +862,19 @@ fn step_turn(
                 *until = now + SHUFFLE_HOLD_SECS;
             }
         } else if arm_turn(player, anims, catalog, rng, turn, want, now) {
-            // Equal facings and NaN arm Stand (`0x505c23`), which schedules no expiry.
+            // Equal facings and NaN arm Stand, which schedules no expiry.
             turn.shuffle = (want != STAND).then_some((want, now + SHUFFLE_HOLD_SECS));
         }
     }
-    // Expire: the arrow came up, so back to Stand, re-rolled and blended (`0x505c98`).
+    // Expire: the arrow came up, so back to Stand, re-rolled and blended.
     if let Some((_, until)) = turn.shuffle {
         if now > until {
             arm_turn(player, anims, catalog, rng, turn, STAND, now);
             turn.shuffle = None;
         }
     }
-    // Advance the cross-fade: λ, smoothstep of the window still to run (`0x714880`), weights the
-    // outgoing pose and the incoming takes `1 − λ`, the client's
-    // `out = primary + (secondary − primary)·λ`.
+    // Advance the cross-fade: λ, smoothstep of the window still to run, weights the outgoing pose
+    // and the incoming takes `1 − λ`, the client's `out = primary + (secondary − primary)·λ`.
     let Some(fade) = turn.fade else {
         return;
     };
@@ -1015,7 +1013,7 @@ mod tests {
         );
     }
 
-    /// The reference culls the batch before reading the blend mode (`0x707b3a` to `0x707b5c`).
+    /// The reference culls the batch before reading the blend mode.
     #[test]
     fn a_batch_the_artist_zeroed_in_this_sequence_is_culled_not_merely_dimmed() {
         let mut app = App::new();
@@ -1523,8 +1521,8 @@ mod tests {
         player.animation(node(n)).map(|a| a.weight())
     }
 
-    /// Every arm `0x505bb0`/`0x505c50` makes carries `blendFlag = 1`, each over the incoming clip's
-    /// `blendTime`; the weights sum to 1 throughout.
+    /// Every arm makes carries `blendFlag = 1`, each over the incoming clip's `blendTime`; the
+    /// weights sum to 1 throughout.
     #[test]
     fn a_turn_blends_both_ways_over_the_incoming_clips_own_time() {
         let (anims, catalog) = (
@@ -1595,8 +1593,8 @@ mod tests {
         );
     }
 
-    /// Inside a blend's first half `0x7125d4` refuses the arm; at or past halfway the arm takes the
-    /// one secondary slot.
+    /// Inside a blend's first half refuses the arm; at or past halfway the arm takes the one
+    /// secondary slot.
     #[test]
     fn a_reversal_is_refused_inside_the_half_blend_and_displaces_it_after() {
         let (anims, catalog) = (
@@ -1767,8 +1765,8 @@ mod instance_tests {
         );
     }
 
-    /// An attached model's emitters compose onto the instance alpha (`0x714260`, into
-    /// `emitter+0x1a8`); the fold is tested in `benilla_world`, this pins the gate.
+    /// An attached model's emitters compose onto the instance alpha (into `emitter+0x1a8`); the
+    /// fold is tested in `benilla_world`, this pins the gate.
     #[test]
     fn a_feathering_bake_hands_its_effect_host_an_alpha_to_compose() {
         assert!(BoothInstance { alpha: 0.5 }.feathering());

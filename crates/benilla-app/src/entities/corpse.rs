@@ -1,14 +1,13 @@
 //! The corpse object (`TYPEID_CORPSE`) drawn as the dead body: a released player's body, and the
 //! bone pile the server turns it into once it is reclaimed, looted or timed out.
 //!
-//! The reference forks once, on `CORPSE_FLAG_BONES` (dress `0x5d6260`, model getter `0x5d6700`).
-//! A fresh body (`0x5d6297`) is a player body: `CORPSE_FIELD_DISPLAY_ID` down the usual display
-//! chain (`0x5d6759`), dressed from the corpse's own appearance bytes and item slots through the
-//! living player's compositor (`0x478cb0`), armour only. A bone pile (`0x5d6291`) has no
-//! appearance and takes a static two-bone `<Race><Sex>DeathSkeleton` model (`0x5d670c`).
+//! The reference forks once, on `CORPSE_FLAG_BONES`. A fresh body is a player body:
+//! `CORPSE_FIELD_DISPLAY_ID` down the usual display chain, dressed from the corpse's own appearance
+//! bytes and item slots through the living player's compositor, armour only. A bone pile has no
+//! appearance and takes a static two-bone `<Race><Sex>DeathSkeleton` model.
 //!
-//! No selection decal: `0x5d6fe0` draws one only for the locked target, and `SetSelection`
-//! (`0x493540`) refuses a corpse, whose selectability slot `0x469fe0` returns 0.
+//! No selection decal: the reference draws one only for the locked target, and `SetSelection`
+//! refuses a corpse, whose selectability slot returns 0.
 //!
 //! The reference takes the drowned verdict inside the create (`CGCorpse_C::PostInit`, `0x705b20`)
 //! from the object's liquid query (`0x77f1e0`); this asks the world at attach time.
@@ -36,8 +35,8 @@ const DROWNED_DEPTH: f32 = 0.666_666_7;
 #[derive(Resource, Default)]
 pub(crate) struct BonesModels(pub(crate) HashMap<(u8, u8), DisplayModel>);
 
-/// A corpse's model source, the `0x5d6700` fork, read by both the display build and the attach
-/// pass so they agree on which cache holds it.
+/// A corpse's model source, the fork, read by both the display build and the attach pass so they
+/// agree on which cache holds it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::entities) enum CorpseModel {
     /// `CORPSE_FLAG_BONES`: `<Race><Sex>DeathSkeleton`, from [`BonesModels`].
@@ -72,8 +71,8 @@ pub(in crate::entities) fn corpse_char_look(store: Option<&ObjectStore>) -> Opti
     (!s.corpse_is_bones()).then(|| s.corpse_look())?
 }
 
-/// `0x5d673c`'s format string `0x85fb30` with `ChrRaces[race]` column 15 and the sex table
-/// `0x856450`, clamped to its two shipped entries: the third, `NOSEX`, has no skeleton file.
+/// The reference's format string with `ChrRaces[race]` column 15 and the sex table, clamped to its
+/// two shipped entries: the third, `NOSEX`, has no skeleton file.
 fn bones_model_path(race_file: &str, sex: u8) -> String {
     let sex = if sex == 0 { "Male" } else { "Female" };
     format!("World\\Generic\\PassiveDoodads\\DeathSkeletons\\{race_file}{sex}DeathSkeleton.mdx")
@@ -175,7 +174,7 @@ fn arm_settled(
 mod tests {
     use super::*;
 
-    /// The 16 shipped skeleton files, spelled exactly as `0x5d673c`'s format string builds them.
+    /// The 16 shipped skeleton files, spelled exactly as the reference's format string builds them.
     #[test]
     fn bones_paths_match_the_shipped_files() {
         assert_eq!(

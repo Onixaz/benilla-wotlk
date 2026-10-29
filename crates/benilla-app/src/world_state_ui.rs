@@ -41,12 +41,12 @@ fn load_world_state_ui(mut commands: Commands, assets: Option<Res<WorldAssets>>)
     }
 }
 
-/// Expands a `WorldStateUI` label (`0x508560`), a different expander from [`crate::npc_text`]'s,
-/// sharing only the world-state getter. The grammar is `%<digits>W|w` alone, printed `%d`; any
-/// other `%` emits a literal `%`, consumes its digits and leaves the next character as text.
-/// Output is truncated at the reference's 256-byte limit.
+/// Expands a `WorldStateUI` label, a different expander from [`crate::npc_text`]'s, sharing only
+/// the world-state getter. The grammar is `%<digits>W|w` alone, printed `%d`; any other `%` emits a
+/// literal `%`, consumes its digits and leaves the next character as text. Output is truncated at
+/// the reference's 256-byte limit.
 fn expand(text: &str, states: &WorldStates) -> String {
-    /// The `strncat` bound: `0x508560`'s caller passes `0x100`.
+    /// The `strncat` bound: the reference's caller passes `0x100`.
     const LIMIT: usize = 0x100 - 1;
 
     fn push(s: &str, out: &mut String) {

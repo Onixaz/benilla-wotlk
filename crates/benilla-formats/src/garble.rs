@@ -1,36 +1,35 @@
-//! The chat language scramble, the reference's `0x49b560`: the server sends foreign speech in
-//! plaintext beside a language id, and the client garbles it.
+//! The chat language scramble, the reference's: the server sends foreign speech in plaintext beside
+//! a language id, and the client garbles it.
 //!
 //! The line alternates separator runs and words. Each word is hashed once with case-folded
 //! `SStrHash`; it is understood when `hash % 300 < skill`, and otherwise the same hash picks a
-//! substitute of its byte length from `LanguageWords.dbc`, which takes the source's case letter
-//! by letter. The result is a pure function of the word's bytes. The three call sites differ only
-//! in [`Garble`]'s flags and cap: chat (`0x49aa7c`), the gossip greeting (`0x4e22ab`), item text
-//! (`0x4e35b0`).
+//! substitute of its byte length from `LanguageWords.dbc`, which takes the source's case letter by
+//! letter. The result is a pure function of the word's bytes. The three call sites differ only in
+//! [`Garble`]'s flags and cap: chat, the gossip greeting, item text.
 
 use crate::LanguageWords;
 
-/// `SStrHash`'s 16-entry mix table (`0x80e4e0`), not Storm's 0x500-entry crypt table: a byte
-/// mixes as `T[hi] - T[lo]`.
+/// `SStrHash`'s 16-entry mix table, not Storm's 0x500-entry crypt table: a byte mixes as
+/// `T[hi] - T[lo]`.
 const HASH_TABLE: [u32; 16] = [
     0x486e26ee, 0xdcaa16b3, 0xe1918eef, 0x202dafdb, 0x341c7dc7, 0x1c365303, 0x40ef2d37, 0x65fd5e49,
     0xd6057177, 0x904ece93, 0x1c38024f, 0x98fd323b, 0xe3061ae7, 0xa39b0fa1, 0x9797f25f, 0xe4444563,
 ];
 
-/// Full fluency (`0x49b599`): at or above it the line is copied untokenized.
+/// Full fluency: at or above it the line is copied untokenized.
 pub const FLUENT_SKILL: u32 = 300;
 
-/// The per-word test's modulus (`0x49b79c`), so a line keeps about `skill / 300` of its words.
+/// The per-word test's modulus, so a line keeps about `skill / 300` of its words.
 const UNDERSTAND_MODULUS: u32 = 300;
 
-/// The bytes of a word copied into the reference's scratch buffer and hashed (`0x49b768`).
+/// The bytes of a word copied into the reference's scratch buffer and hashed.
 const MAX_HASHED_BYTES: usize = 0x100;
 
-/// The lookup length's clamp (`0x49b7c1`), apart from [`MAX_HASHED_BYTES`]: a 45-byte word hashes
-/// all 45 bytes and is looked up at length 18.
+/// The lookup length's clamp, apart from [`MAX_HASHED_BYTES`]: a 45-byte word hashes all 45 bytes
+/// and is looked up at length 18.
 const MAX_LENGTH_KEY: usize = 0x12;
 
-/// The flags and destination cap `0x49b560` takes, one set per call site.
+/// The flags and destination cap takes, one set per call site.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Garble {
     /// `keepAngle`: pass a `<…>` span through verbatim, brackets included.
@@ -43,21 +42,21 @@ pub struct Garble {
 }
 
 impl Garble {
-    /// Chat (`0x49aa7c`, in the display path `0x49a870`).
+    /// Chat.
     pub const CHAT: Self = Self {
         keep_angle: false,
         keep_punct: false,
         dst_size: 0x800,
     };
 
-    /// The NPC gossip greeting (`0x4e22ab`, then `GOSSIP_SHOW`).
+    /// The NPC gossip greeting (then `GOSSIP_SHOW`).
     pub const GOSSIP: Self = Self {
         keep_angle: false,
         keep_punct: true,
         dst_size: 0x800,
     };
 
-    /// Readable item text, letters and books (`0x4e3856`, then `ITEM_TEXT_READY`).
+    /// Readable item text, letters and books (then `ITEM_TEXT_READY`).
     pub const ITEM_TEXT: Self = Self {
         keep_angle: true,
         keep_punct: true,
@@ -65,8 +64,8 @@ impl Garble {
     };
 }
 
-/// `SStrHash` (`0x64af90`), case-folded with a zero seed as `0x49b560` calls it. The fold is
-/// ASCII-only (`a`-`z` up, `/` to `\`), and the walk stops at a NUL, both as the reference does.
+/// `SStrHash`, case-folded with a zero seed as the reference calls it. The fold is ASCII-only
+/// (`a`-`z` up, `/` to `\`), and the walk stops at a NUL, both as the reference does.
 fn sstr_hash_folded(bytes: &[u8]) -> u32 {
     let mut s1: u32 = 0x7FED_7FED;
     let mut s2: u32 = 0xEEEE_EEEE;
@@ -96,11 +95,11 @@ fn sstr_hash_folded(bytes: &[u8]) -> u32 {
     }
 }
 
-/// `0x41aab0`'s malformed-byte sentinel; above 0xff, so a malformed run stays inside its word.
+/// The reference's malformed-byte sentinel; above 0xff, so a malformed run stays inside its word.
 const MALFORMED: u32 = 0x8000_0000;
 
-/// The reference's UTF-8 decoder (`0x41aab0`), which accepts 1 to 6 byte forms; returns the
-/// codepoint and the bytes consumed, one when malformed.
+/// The reference's UTF-8 decoder, which accepts 1 to 6 byte forms; returns the codepoint and the
+/// bytes consumed, one when malformed.
 fn decode(bytes: &[u8]) -> (u32, usize) {
     let b0 = bytes[0];
     let (mut cp, n) = match b0 {
@@ -124,7 +123,7 @@ fn decode(bytes: &[u8]) -> (u32, usize) {
     (cp, n)
 }
 
-/// A Latin-1 letter as `0x6c9c60`'s table classifies one, which leaves out `0xDE` (thorn).
+/// A Latin-1 letter as the reference's table classifies one, which leaves out `0xDE` (thorn).
 fn is_latin1_letter(cp: u32) -> bool {
     matches!(cp, 0x41..=0x5a | 0x61..=0x7a)
         || matches!(cp, 0xc0..=0xdd if cp != 0xd7)
@@ -132,8 +131,8 @@ fn is_latin1_letter(cp: u32) -> bool {
         || matches!(cp, 0xe0..=0xff if cp != 0xf7)
 }
 
-/// The word-character predicate (`0x49b940`): digits, the apostrophe and every codepoint above
-/// Latin-1 are word characters.
+/// The word-character predicate: digits, the apostrophe and every codepoint above Latin-1 are word
+/// characters.
 fn is_word_char(cp: u32) -> bool {
     is_latin1_letter(cp) || (0x30..=0x39).contains(&cp) || cp == 0x27 || cp > 0xff
 }
@@ -143,7 +142,7 @@ fn is_word_char(cp: u32) -> bool {
 pub fn garble(words: &LanguageWords, language: u32, skill: u32, src: &str, mode: Garble) -> String {
     let cap = mode.dst_size.saturating_sub(1);
     if language == 0 || skill >= FLUENT_SKILL {
-        // `SStrCopy` at `0x49b5a1`: untokenized, so separator runs stay as they are.
+        // `SStrCopy`: untokenized, so separator runs stay as they are.
         return truncate_utf8(src, cap).to_string();
     }
     let Some(pool) = words.pool(language) else {
@@ -239,8 +238,8 @@ fn push(out: &mut Vec<u8>, bytes: &[u8], cap: usize) {
     out.extend_from_slice(&bytes[..room.min(bytes.len())]);
 }
 
-/// `0x49b8b0`: each character takes the case of the source's at the same position (`hEllO` to
-/// `kAzuM`), a non-letter forcing lowercase, for the shorter of the two words.
+/// Each character takes the case of the source's at the same position (`hEllO` to `kAzuM`), a
+/// non-letter forcing lowercase, for the shorter of the two words.
 fn stamp_case(out: &mut Vec<u8>, source: &[u8], substitute: &[u8], cap: usize) {
     for (i, &s) in source.iter().enumerate() {
         if i >= substitute.len() || out.len() >= cap {
@@ -272,8 +271,8 @@ mod tests {
     use super::*;
     use crate::{load_language_words, Chain};
 
-    /// `(language, skill, input, expected)`: the reference's `0x49b560` output, emulated over the
-    /// shipped `LanguageWords.dbc`.
+    /// `(language, skill, input, expected)`: the reference's output, emulated over the shipped
+    /// `LanguageWords.dbc`.
     const GOLDEN: &[(u32, u32, &str, &str)] = &[
         (1, 0, "hello", "kazum"),
         (1, 0, "h", "o"),
@@ -294,7 +293,7 @@ mod tests {
         (1, 0, "hello hello", "kazum kazum"),
         (1, 0, "hello, world.", "kazum magan "),
         (1, 0, "don't", "re'ka"),
-        (1, 0, "abc123", "moguna"),
+        (1, 0, "", "moguna"),
         (1, 0, "12345", "regas"),
         (1, 0, "hello    world", "kazum magan"),
         (1, 0, "  hello  ", " kazum "),

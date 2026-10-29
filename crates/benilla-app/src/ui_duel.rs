@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(duel.challenger, Some(9));
     }
 
-    /// Only an unstarted duel earns "Duel cancelled." (`0x4d4b20`).
+    /// Only an unstarted duel earns "Duel cancelled.".
     #[test]
     fn completion_is_gated_on_holding_an_arbiter() {
         let mut duel = DuelState::default();

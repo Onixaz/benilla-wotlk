@@ -1,12 +1,11 @@
 //! The GameObject-questgiver live probe (`WOW_PROBE_GOQUEST=1`). The reference asks about a
 //! quest-giving GameObject as it does a creature: the sweep sends `CMSG_QUESTGIVER_STATUS_QUERY`
 //! for any GameObject with `GAMEOBJECT_FLAGS` bit 2 whose reaction toward us is `> 1`. It then
-//! refuses the answer: its handler `0x5dc9f0` resolves the guid with typemask 8, a GameObject's
-//! `0x21` misses bit 3, and the packet dies at `0x5dca2f`. Real 1.12 captures carry no GameObject
-//! status at all, but vmangos answers one (`TYPEMASK_CREATURE_OR_GAMEOBJECT`,
-//! `QuestHandler.cpp:40`), so without the refusal a wanted poster would wear a `!`. The probe tells
-//! "asked and refused" from "never asked" through [`QuestGiver::refused_for`], keyed by guid since
-//! one drain answers several quest objects.
+//! refuses the answer: its handler resolves the guid with typemask 8, a GameObject's `0x21` misses
+//! bit 3, and the packet dies. Real 1.12 captures carry no GameObject status at all, but vmangos
+//! answers one (`TYPEMASK_CREATURE_OR_GAMEOBJECT`, `QuestHandler.cpp:40`), so without the refusal a
+//! wanted poster would wear a `!`. The probe tells "asked and refused" from "never asked" through
+//! [`QuestGiver::refused_for`], keyed by guid since one drain answers several quest objects.
 //!
 //! Four readings:
 //!
@@ -43,7 +42,7 @@ use crate::ui_quest::QuestGiver;
 const POSTER_AT: [f32; 4] = [-9668.23, 683.39, 36.33, 0.0];
 /// `GAMEOBJECT_TYPE_QUESTGIVER`, the type a wanted poster carries.
 const GO_TYPE_QUESTGIVER: i32 = 2;
-/// `GAMEOBJECT_FLAGS` bit 2, the reference's GameObject query gate (`0x5eb0f2`).
+/// `GAMEOBJECT_FLAGS` bit 2, the reference's GameObject query gate.
 const GO_FLAG_INTERACT_COND: u32 = 0x4;
 /// `UNIT_NPC_FLAGS` questgiver bit, how the unit control is found.
 const NPC_FLAG_QUESTGIVER: u32 = 0x2;
@@ -52,7 +51,7 @@ const NPC_FLAG_QUESTGIVER: u32 = 0x2;
 /// `level > QuestLevel + Quests.LowLevelHideDiff`).
 const LOW_LEVEL: u32 = 2;
 const HIGH_LEVEL: u32 = 8;
-/// `DialogStatus` ids the verdict is written in (the keys of the status map `0x80c454`).
+/// `DialogStatus` ids the verdict is written in (the keys of the status map).
 const STATUS_UNAVAILABLE: u32 = 1;
 const STATUS_AVAILABLE: u32 = 5;
 
@@ -280,8 +279,8 @@ fn goquest_probe(
         }
         Phase::Level { to, since } => {
             if level == to {
-                // A GameObject guid reaches the wire only from a sweep (`0x5eb159`, `0x5eb456`);
-                // the epoch bump forces one even if the level did not change.
+                // A GameObject guid reaches the wire only from a sweep; the epoch bump forces one
+                // even if the level did not change.
                 quest.bump_reask();
                 info!("PROBE_GOQUEST: at level {to}, swept — reading the window");
                 probe.phase = Phase::Read {

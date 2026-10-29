@@ -470,9 +470,9 @@ fn shipped_loot_pushed_to_center_by_merchant() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// The party template's `frameStrata="LOW"` must reach an instance
-/// and its nested art frame (`SetFrameStrata` `0x76a470` cascades over the subtree): in one
-/// stratum that level-1 child draws over the window's level-0 art, whatever the show order.
+/// The party template's `frameStrata="LOW"` must reach an instance and its nested art frame
+/// (`SetFrameStrata` cascades over the subtree): in one stratum that level-1 child draws over the
+/// window's level-0 art, whatever the show order.
 #[test]
 fn the_loot_window_draws_over_the_party_frames() {
     benilla_formats::wow_data_or_skip!();
@@ -1042,8 +1042,8 @@ fn loot_row_awaiting_its_template_opens_clean() {
         "LootFrame_Update:85 must paint the -1 colour, got {painted:?} want {miss:?}"
     );
 
-    // The template lands and the window opens only now: the reference's item-cache callback
-    // (`0x4c2ac0`) fires `LOOT_OPENED` as the pending count falls to zero.
+    // The template lands and the window opens only now: the reference's item-cache callback fires
+    // `LOOT_OPENED` as the pending count falls to zero.
     s.fire_event("LOOT_CLOSED", vec![]);
     s.set_loot(Some(LootState {
         source_unit: false,

@@ -155,10 +155,10 @@ fn a_named_frame_uses_the_5_0_backtick_quoting() {
     assert_eq!(found, "`BenillaProbeNamed'");
 }
 
-/// The reference ends each frame with `"\n"` and writes no header (`0x703971`). It formats while
-/// the level is `<= start + count1` (`0x703857`, `jbe`), then probes `getstack(level + count2)`; a
-/// failed probe prints that level as an ordinary frame. So with `count1 = 1, count2 = 0` a
-/// two-deep stack gives two frames and no marker, and a three-deep one a frame then `"...\n"`.
+/// The reference ends each frame with `"\n"` and writes no header. It formats while the level is
+/// `<= start + count1` (`jbe`), then probes `getstack(level + count2)`; a failed probe prints that
+/// level as an ordinary frame. So with `count1 = 1, count2 = 0` a two-deep stack gives two frames
+/// and no marker, and a three-deep one a frame then `"...\n"`.
 #[test]
 fn debugstack_frames_end_in_newline_and_count1_does_not_clamp() {
     let s = script();
@@ -259,8 +259,8 @@ fn the_rest_of_the_bare_globals() {
     .unwrap();
 }
 
-/// 1.12 runs Lua 5.0 (`0x811b30`, "Lua: Lua 5.0 Copyright..."); this VM is mlua's `lua51`, and the
-/// 5.0 idioms vanilla addons use run on it, above all the implicit vararg `arg` table.
+/// 1.12 runs Lua 5.0 ("Lua: Lua 5.0 Copyright..."); this VM is mlua's `lua51`, and the 5.0 idioms
+/// vanilla addons use run on it, above all the implicit vararg `arg` table.
 #[test]
 fn the_lua_5_0_dialect_vanilla_addons_are_written_in_runs_here() {
     let s = script();
@@ -336,8 +336,8 @@ fn time_is_epoch_seconds_and_date_formats_them() {
 
 // ── RunScript ──
 
-/// `RunScript` hands its string to `FrameScript_Execute` (`0x704cd0`) as both code and chunk name
-/// (`0x48b9c7`, `0x48b9c9`), so `luaO_chunkid` (`0x6f5c40`) reports it as `[string "…"]`.
+/// `RunScript` hands its string to `FrameScript_Execute` as both code and chunk name, so
+/// `luaO_chunkid` reports it as `[string "…"]`.
 #[test]
 fn a_runscript_chunk_is_named_by_its_own_source() {
     let mut s = script();
@@ -351,9 +351,8 @@ fn a_runscript_chunk_is_named_by_its_own_source() {
     );
 }
 
-/// A non-string argument returns silently (`0x48b98f` jumps to `0x48b9f3`), as does an empty
-/// string (`0x48b9a1`); a number passes `lua_isstring` (`0x6f3510`) and runs as text. The function
-/// never calls `luaL_error` (`0x6f4940`).
+/// A non-string argument returns silently, as does an empty string; a number passes `lua_isstring`
+/// and runs as text. The function never calls `luaL_error`.
 #[test]
 fn runscript_swallows_a_bad_argument_instead_of_raising() {
     let mut s = script();
@@ -381,9 +380,8 @@ fn runscript_swallows_a_bad_argument_instead_of_raising() {
     );
 }
 
-/// A raise inside the snippet stays there: `0x704ae0` runs it under `lua_pcall` (`0x704b68`) with
-/// the registry's error handler (`0x704afe`), and calls that handler for a compile failure too
-/// (`0x704b42`).
+/// A raise inside the snippet stays there: the reference runs it under `lua_pcall` with the
+/// registry's error handler, and calls that handler for a compile failure too.
 #[test]
 fn a_runscript_error_reaches_the_handler_and_not_the_caller() {
     let mut s = script();

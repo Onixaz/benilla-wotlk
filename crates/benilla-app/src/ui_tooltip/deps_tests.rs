@@ -1018,8 +1018,8 @@ fn a_pet_view_reads_no_player_form_equipment_reach_or_unit_field_but_the_ranged_
     assert!(ranged >= 1, "no pet view reads the ranged attack time");
 }
 
-/// A pet view's cost reads `0x612c50` on the pet (`6e327b`), so the pet's base mana and base health
-/// are pet inputs, and its max health and max pools, which no cost reads, are not.
+/// A pet view's cost reads on the pet, so the pet's base mana and base health are pet inputs, and
+/// its max health and max pools, which no cost reads, are not.
 #[test]
 fn the_pets_cost_bases_are_its_inputs_and_its_max_pools_are_not() {
     let unit = RangeUnit::still(1.5);

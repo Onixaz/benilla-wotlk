@@ -35,7 +35,7 @@ pub(crate) struct BattlefieldPositions {
 }
 
 impl BattlefieldPositions {
-    /// `MSG_BATTLEGROUND_PLAYER_POSITIONS` in: kept as sent, as the handler (`0x4aad40`) does.
+    /// `MSG_BATTLEGROUND_PLAYER_POSITIONS` in: kept as sent, as the handler does.
     pub(crate) fn apply(&mut self, packet: PositionsPacket) {
         self.packet = Some(packet);
     }

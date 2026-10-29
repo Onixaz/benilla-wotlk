@@ -1,20 +1,20 @@
 //! The four summon globals the `CONFIRM_SUMMON` dialog calls (`StaticPopup.lua:1336-1357`); 1.12
-//! has no `CancelSummon`, as declining sends nothing. The reference resolves the summoner
-//! (`0xb4e358`), zone (`0xb4e354`) and deadline (`0xb4e350`) at call time; the app pushes the
-//! answers each frame, so a name still in flight reads `""` and fills in on a later tick.
+//! has no `CancelSummon`, as declining sends nothing. The reference resolves the summoner, zone and
+//! deadline at call time; the app pushes the answers each frame, so a name still in flight reads
+//! `""` and fills in on a later tick.
 
 use mlua::Lua;
 
-/// The dialog's three reads, never nil: with nothing pending or resolved they are `""`, `""` and
-/// 0, as the reference's getters answer (`0x882748` is its shared `""`).
+/// The dialog's three reads, never nil: with nothing pending or resolved they are `""`, `""` and 0,
+/// as the reference's getters answer (the reference is its shared `""`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SummonConfirmUiState {
-    /// The summoner's name from the name cache (`0x55f080`), `""` while the query is out.
+    /// The summoner's name from the name cache, `""` while the query is out.
     pub summoner: String,
     /// The summoner's zone name out of `AreaTable.dbc`, or `""` if the id names no row.
     pub area: String,
     /// Milliseconds left, 0 when nothing is pending or it ran out; the binding truncates to
-    /// seconds, as `0x48b660` does.
+    /// seconds, as the reference does.
     pub time_left_ms: u32,
 }
 
@@ -36,7 +36,7 @@ impl super::UiScript {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `0x48b6a0`: a string on every path.
+    // A string on every path.
     g.set(
         "GetSummonConfirmSummoner",
         lua.create_function(|lua, ()| {
@@ -47,8 +47,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `0x48b720`: the summoner's zone straight from `AreaTable.dbc`, with no parent walk and no
-    // GlobalString fallback, unlike the innkeeper question's chain (`0x5dfe5e`).
+    // The summoner's zone straight from `AreaTable.dbc`, with no parent walk and no GlobalString
+    // fallback, unlike the innkeeper question's chain.
     g.set(
         "GetSummonConfirmAreaName",
         lua.create_function(|lua, ()| {
@@ -59,8 +59,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // Whole seconds, truncated (`0x48b660`); the dialog reads it once in `OnShow` and counts down
-    // locally from there.
+    // Whole seconds, truncated; the dialog reads it once in `OnShow` and counts down locally from
+    // there.
     g.set(
         "GetSummonConfirmTimeLeft",
         lua.create_function(|lua, ()| {

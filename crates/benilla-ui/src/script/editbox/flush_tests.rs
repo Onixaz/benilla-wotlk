@@ -1,5 +1,5 @@
-//! The box's flush (`0x77d3e0`) in its place in the tick's walk: after the box's own `OnUpdate`
-//! (`0x77a790`), `OnCursorChanged` then `OnTextChanged`, on the dirty word `[E+0x31c]`.
+//! The box's flush in its place in the tick's walk: after the box's own `OnUpdate`,
+//! `OnCursorChanged` then `OnTextChanged`, on the dirty word `[E+0x31c]`.
 
 use crate::script::{
     EditAction, EditBoxAdvanceRequest, EditUnit, MeasureRequest, TextMeasure, UiScript,
@@ -7,7 +7,7 @@ use crate::script::{
 
 /// A stand-in font engine: each byte 7 wide and each line 14 tall, answering the advance table
 /// inline as the host's engine does. A multi-line box's rows start after each newline, a trailing
-/// one opening an empty row, as the reference's break routine adds one (`0x5c250b`–`0x5c2522`).
+/// one opening an empty row, as the reference's break routine adds one.
 struct Mono;
 
 impl TextMeasure for Mono {
@@ -70,9 +70,9 @@ fn logged_box(s: &mut UiScript) {
     take_log(s);
 }
 
-/// The box's update fires its own `OnUpdate`, then the flush (`0x77a79a`, then `0x77a7a1`), whose
-/// caret leg fires `OnCursorChanged` (`0x77d475` → `0x77de1b`) before `OnTextChanged` fires
-/// (`0x77d498`); a frame walked after the box updates after all three.
+/// The box's update fires its own `OnUpdate`, then the flush, whose caret leg fires
+/// `OnCursorChanged` before `OnTextChanged` fires; a frame walked after the box updates after all
+/// three.
 #[test]
 fn the_flush_follows_the_boxs_own_on_update_cursor_then_text() {
     let mut s = script();
@@ -113,8 +113,8 @@ fn an_edit_in_the_boxs_own_on_update_fires_its_events_the_same_tick() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The ctor raises dirty bit 0 (`0x779a34`), so a new box fires `OnTextChanged` once at its first
-/// flush, with its text unchanged; a hidden box is not walked, so its bit waits for the show.
+/// The ctor raises dirty bit 0, so a new box fires `OnTextChanged` once at its first flush, with
+/// its text unchanged; a hidden box is not walked, so its bit waits for the show.
 #[test]
 fn a_new_box_fires_on_text_changed_once_at_its_first_flush_once_shown() {
     let mut s = script();
@@ -149,10 +149,9 @@ fn a_new_box_fires_on_text_changed_once_at_its_first_flush_once_shown() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// Every run of the text seat `0x77b8c0` on a box with a rect ends in `or eax,7` (`0x77ba7f`), so
-/// its next flush fires `OnTextChanged` once, with the text unchanged: from a resize (the
-/// `OnSizeChanged` override, `0x77a8e7`), `SetTextInsets` (`0x77a707`), `GetTextInsets`
-/// (`0x77a73f`), `SetMultiLine` (`0x77a63f`) and a font change (`0x77e2b5`).
+/// Every run of the text seat on a box with a rect ends in `or eax,7`, so its next flush fires
+/// `OnTextChanged` once, with the text unchanged: from a resize (the `OnSizeChanged` override),
+/// `SetTextInsets`, `GetTextInsets`, `SetMultiLine` and a font change.
 #[test]
 fn each_re_seat_of_the_text_fires_one_on_text_changed_at_the_next_flush() {
     let mut s = script();
@@ -201,7 +200,7 @@ fn each_re_seat_of_the_text_fires_one_on_text_changed_at_the_next_flush() {
     );
     assert_eq!(s.eval::<String>("return E:GetText()").unwrap(), "same");
 
-    // A box with no rect yet returns before the seat (`0x77b8c7`) and raises nothing.
+    // A box with no rect yet returns before the seat and raises nothing.
     s.run(
         r#"
         M = 0
@@ -222,9 +221,9 @@ fn each_re_seat_of_the_text_fires_one_on_text_changed_at_the_next_flush() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// A handler's edit raises the bits the flush has already cleared (`0x77d44c`, `0x77d47a`), so an
-/// `OnTextChanged` that sets its own text fires once more, at the next frame's flush, and never
-/// loops inside one; `SetText` of an equal text raises nothing (`0x77be4b`), which ends it.
+/// A handler's edit raises the bits the flush has already cleared, so an `OnTextChanged` that sets
+/// its own text fires once more, at the next frame's flush, and never loops inside one; `SetText`
+/// of an equal text raises nothing, which ends it.
 #[test]
 fn an_on_text_changed_that_sets_its_own_text_fires_once_more_next_frame() {
     let mut s = script();
@@ -248,8 +247,8 @@ fn an_on_text_changed_that_sets_its_own_text_fires_once_more_next_frame() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// Bit 2 clears after the caret leg (`0x77d47a`), so a caret an `OnCursorChanged` handler moves is
-/// not reported again; the text it inserts keeps bit 0 for the next frame.
+/// Bit 2 clears after the caret leg, so a caret an `OnCursorChanged` handler moves is not reported
+/// again; the text it inserts keeps bit 0 for the next frame.
 #[test]
 fn a_caret_moved_by_on_cursor_changed_is_cleared_with_the_bit() {
     let mut s = script();
@@ -275,8 +274,8 @@ fn a_caret_moved_by_on_cursor_changed_is_cleared_with_the_bit() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The focus transition raises bit 2 on both boxes (`0x77af50`, `0x77afa8`): each fires
-/// `OnCursorChanged` at its next flush, the one that lost the keyboard included.
+/// The focus transition raises bit 2 on both boxes: each fires `OnCursorChanged` at its next flush,
+/// the one that lost the keyboard included.
 #[test]
 fn a_focus_change_runs_the_caret_leg_of_both_boxes() {
     let mut s = script();
@@ -305,9 +304,8 @@ fn a_focus_change_runs_the_caret_leg_of_both_boxes() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The move helpers step the caret only while it can (`0x77c750` `cursor < len`, `0x77c870`
-/// `cursor > 0`), and only the step raises bit 2 (`0x77c73b`): Right at the end and Home at 0 fire
-/// nothing.
+/// The move helpers step the caret only while it can (`cursor < len`, `cursor > 0`), and only the
+/// step raises bit 2: Right at the end and Home at 0 fire nothing.
 #[test]
 fn a_caret_move_that_goes_nowhere_raises_nothing() {
     let mut s = script();
@@ -343,9 +341,9 @@ fn a_caret_move_that_goes_nowhere_raises_nothing() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `OnKeyDown` flushes the box before it handles the key (`0x77b1e2`), and a char's key-down comes
-/// before it: keys typed within one frame fire their events per key, ahead of the next key's own
-/// script, so `OnEnterPressed` sees the `OnTextChanged` of the text it ends.
+/// `OnKeyDown` flushes the box before it handles the key, and a char's key-down comes before it:
+/// keys typed within one frame fire their events per key, ahead of the next key's own script, so
+/// `OnEnterPressed` sees the `OnTextChanged` of the text it ends.
 #[test]
 fn a_key_flushes_the_box_before_it_acts() {
     let mut s = script();
@@ -376,8 +374,8 @@ fn a_key_flushes_the_box_before_it_acts() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `HighlightText` writes only the selection (`0x77cca0`), and Ctrl+A is that call (`0x77b239`):
-/// the caret bit stays down, so no `OnCursorChanged` fires at the flush.
+/// `HighlightText` writes only the selection, and Ctrl+A is that call: the caret bit stays down, so
+/// no `OnCursorChanged` fires at the flush.
 #[test]
 fn highlight_text_and_ctrl_a_fire_no_on_cursor_changed() {
     let mut s = script();
@@ -410,9 +408,8 @@ fn highlight_text_and_ctrl_a_fire_no_on_cursor_changed() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// A focus change raises bit 2 (`0x77afa8`), and the caret leg restarts the blink (`0x77dd68`)
-/// and shows the caret in the focused box (`0x77de35`): a box that takes the keyboard back starts
-/// solid, whatever phase it lost it in.
+/// A focus change raises bit 2, and the caret leg restarts the blink and shows the caret in the
+/// focused box: a box that takes the keyboard back starts solid, whatever phase it lost it in.
 #[test]
 fn taking_the_keyboard_restarts_the_caret_blink() {
     let mut s = script();
@@ -441,8 +438,8 @@ fn taking_the_keyboard_restarts_the_caret_blink() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// UP and DOWN in a multi-line box move a row (`0x77cb20`), and `OnCursorChanged` reports it a
-/// row pitch down (`0x77db31`); a single-line box would recall history instead.
+/// UP and DOWN in a multi-line box move a row, and `OnCursorChanged` reports it a row pitch down; a
+/// single-line box would recall history instead.
 #[test]
 fn up_and_down_move_a_multi_line_boxs_caret_by_rows() {
     let mut s = script();
@@ -485,9 +482,9 @@ fn up_and_down_move_a_multi_line_boxs_caret_by_rows() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// `OnCursorChanged`'s `y` starts at 0 and loses one row pitch per row above the caret
-/// (`0x77dae1`, `0x77db31`): a single-line box, and a multi-line box's first row, report +0, which
-/// Lua prints as "0", never "-0".
+/// `OnCursorChanged`'s `y` starts at 0 and loses one row pitch per row above the caret: a
+/// single-line box, and a multi-line box's first row, report +0, which Lua prints as "0", never
+/// "-0".
 #[test]
 fn on_cursor_changed_reports_the_first_row_at_plus_zero() {
     let mut s = script();

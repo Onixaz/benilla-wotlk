@@ -1,25 +1,23 @@
-//! While the loading screen covers the frame, no mouse or keyboard input reaches anything: one
-//! cut at the source, in `PreUpdate` after `InputSystems`, so no consumer needs to know the cover.
-//! The reference does the same: the raise (`0x406800`, `0x4068e0 call 0x4069e0`) registers the
-//! stub `0x406a50` (`xor eax,eax; ret`) at priority 8.0 on event categories 1, 8 (key down), 0xa
-//! (repeat), 0xb (button down) and 0xc (mouse move), above every `CSimpleTop` handler at 1.0; the
-//! dispatcher `0x4245b0` stops on a zero return (`0x4246ad`), and the dismiss `0x407e80`
-//! unregisters them.
-//! Category 0xc feeds `UpdateMouseFocus` (`0x7660d0`), so the cursor freezes.
+//! While the loading screen covers the frame, no mouse or keyboard input reaches anything: one cut
+//! at the source, in `PreUpdate` after `InputSystems`, so no consumer needs to know the cover. The
+//! reference does the same: the raise registers the stub (`xor eax,eax; ret`) at priority 8.0 on
+//! event categories 1, 8 (key down), 0xa (repeat), 0xb (button down) and 0xc (mouse move), above
+//! every `CSimpleTop` handler at 1.0; the dispatcher stops on a zero return, and the dismiss
+//! unregisters them. Category 0xc feeds `UpdateMouseFocus`, so the cursor freezes.
 //!
 //! - Up edges are swallowed too, which matches by outcome: the reference's held key comes back
-//!   released on world enter (`0x4908c0 → 0x49093c → 0x5144c0`).
+//!   released on world enter.
 //! - Deviation: the wheel is swallowed, where the reference still zooms the hidden camera, because
 //!   nothing should act through the screen.
-//! - Deviation: the world pick is cleared, where the reference's `0x481790` keeps picking at the
-//!   frozen point, because ours is quieter and looks the same: the reference's pointer cannot
-//!   move, so its pick changes nothing visible.
+//! - Deviation: the world pick is cleared, where the reference's keeps picking at the frozen point,
+//!   because ours is quieter and looks the same: the reference's pointer cannot move, so its pick
+//!   changes nothing visible.
 //!
 //! Taken: the button planes ([`swallow`]), the raw message queues, the mouse accumulators, and the
 //! window's cursor position, blanked so every hit-test takes its pointer-outside-the-window path
 //! ([`CoveredPointer`]). Not taken: synthetic probe input, written in `Update` or ordered after
-//! [`CoverInput`]. The cursor art (`0x6e4940`, the plain arrow) lives in [`crate::cursor`]. There
-//! is no dev exemption; a stuck load is diagnosed by [`super::WAIT_LOG_AFTER`].
+//! [`CoverInput`]. The cursor art (the plain arrow) lives in [`crate::cursor`]. There is no dev
+//! exemption; a stuck load is diagnosed by [`super::WAIT_LOG_AFTER`].
 
 use bevy::input::keyboard::{Key, KeyboardInput};
 use bevy::input::mouse::{
