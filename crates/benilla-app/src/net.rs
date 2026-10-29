@@ -1039,6 +1039,11 @@ pub(crate) enum ClientCommand {
         guid: u64,
         lag_ms: u32,
     },
+    /// `CMSG_TIME_SYNC_RESP`: the request's counter and our movement clock when it was handled.
+    TimeSyncResp {
+        counter: u32,
+        client_ms: u32,
+    },
     /// `CMSG_SET_ACTIVE_MOVER`: at our own player's create and on possession; the server drops
     /// `MSG_MOVE_*` for an unconfirmed mover.
     SetActiveMover {

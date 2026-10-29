@@ -548,6 +548,8 @@ pub enum SessionEvent {
     /// `SMSG_OPEN_CONTAINER`: the reference fires `BAG_OPEN` with 0 for our own guid (the
     /// backpack), 1..10 for a bag-cache slot, and nothing for a miss.
     OpenContainer { item: u64 },
+    /// The server asks for our movement clock under `counter` (`SMSG_TIME_SYNC_REQ`).
+    TimeSyncReq { counter: u32 },
     /// Our own stand state (`SMSG_STANDSTATE_UPDATE`), applied ungated through the setter a
     /// volunteered change uses (reference: `0x603e50` → `0x6127b0`).
     StandStateUpdate { state: u8 },

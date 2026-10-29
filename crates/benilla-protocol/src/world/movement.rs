@@ -5,7 +5,7 @@ pub(super) const MOVEMENT_FLAG_FORWARD: u32 = 0x1;
 
 /// Ms since start for the `MovementInfo` time, as the 1.12 client's `GetTickCount()`, never 0:
 /// vmangos pauses extrapolation on 0 and otherwise uses only deltas, so a full `u32` wrap is safe.
-pub(super) fn client_uptime_ms() -> u32 {
+pub fn client_uptime_ms() -> u32 {
     use std::sync::OnceLock;
     use std::time::Instant;
     static START: OnceLock<Instant> = OnceLock::new();

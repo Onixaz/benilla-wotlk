@@ -1133,6 +1133,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::GameObjectDespawnAnim { guid }]
         }
         ServerPacket::OpenContainer { item } => vec![SessionEvent::OpenContainer { item }],
+        ServerPacket::TimeSyncReq { counter } => vec![SessionEvent::TimeSyncReq { counter }],
         ServerPacket::StandStateUpdate { state } => {
             vec![SessionEvent::StandStateUpdate { state }]
         }

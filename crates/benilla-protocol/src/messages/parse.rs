@@ -1661,6 +1661,9 @@ fn parse_server_body(
         opcode::SMSG_INSPECT => ServerPacket::Inspect {
             guid: items::read_inspect(&mut r)?,
         },
+        opcode::SMSG_TIME_SYNC_REQ => ServerPacket::TimeSyncReq {
+            counter: read_u32_le(&mut r)?,
+        },
         opcode::SMSG_STANDSTATE_UPDATE => ServerPacket::StandStateUpdate {
             state: pose::read_stand_state_update(&mut r)?,
         },

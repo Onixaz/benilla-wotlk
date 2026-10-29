@@ -180,6 +180,11 @@ pub const CMSG_MOVE_SPLINE_DONE: u16 = 0x02C9; // 713
 /// Our movement clock skipped (a stall, a long frame): the mover and the missing milliseconds.
 /// vmangos shifts its clock, and re-creates a just-boarded transport (`MovementHandler.cpp:989`).
 pub const CMSG_MOVE_TIME_SKIPPED: u16 = 0x02CE; // 718
+/// The server asks for our movement clock, `u32 counter` (`0x6dc010`).
+pub const SMSG_TIME_SYNC_REQ: u16 = 0x0390; // 912
+/// The answer: the echoed counter, then our movement clock when the request was handled
+/// (`0x6e9bb0`).
+pub const CMSG_TIME_SYNC_RESP: u16 = 0x0391; // 913
 /// Another mover's clock skip, relayed: packed guid, `u32` lag (`MovementHandler.cpp:1005-1011`).
 /// The reference (`0x603b40`) adds it to that unit's last wire timestamp (`CMovement+0xac`); if
 /// dropped, the unit's next packet lands `lag` ms late.

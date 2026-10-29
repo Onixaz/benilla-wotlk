@@ -300,6 +300,14 @@ pub fn move_time_skipped(guid: u64, lag_ms: u32) -> Vec<u8> {
     body
 }
 
+/// `CMSG_TIME_SYNC_RESP` body: the echoed counter, then the client's movement clock when the
+/// request was handled (`0x6e9bb0`).
+pub fn time_sync_resp(counter: u32, client_ms: u32) -> Vec<u8> {
+    let mut body = counter.to_le_bytes().to_vec();
+    body.extend_from_slice(&client_ms.to_le_bytes());
+    body
+}
+
 /// `CMSG_MOVE_SPLINE_DONE` body: the mover's packed guid and `MovementInfo` at the ride's end,
 /// then the acked spline id (`HandleMoveSplineDoneOpcode`).
 pub fn move_spline_done(mover: u64, info: &MovementInfo, spline_id: u32) -> Vec<u8> {

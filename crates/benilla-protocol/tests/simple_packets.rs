@@ -636,6 +636,21 @@ fn pet_feedback_family_parses_and_decodes() {
     ));
 }
 
+#[test]
+fn time_sync_request_decodes_and_its_answer_is_counter_then_clock() {
+    let req = messages::parse_server(messages::opcode::SMSG_TIME_SYNC_REQ, &hx("07000000"))
+        .expect("time sync request parses");
+    assert!(matches!(req, ServerPacket::TimeSyncReq { counter: 7 }));
+    assert!(matches!(
+        decode(req).as_slice(),
+        [SessionEvent::TimeSyncReq { counter: 7 }]
+    ));
+    assert_eq!(
+        messages::time_sync_resp(7, 0x0102_0304),
+        hx("0700000004030201")
+    );
+}
+
 /// 3.3.5a's gravity and collision-height grants on our mover, their acks, and the observer
 /// flight and gravity modes (`0x732450`, `0x741c30`).
 #[test]

@@ -142,7 +142,7 @@ pub use client::{
     join_channel_wotlk, knock_back_ack, leave_channel, leave_channel_wotlk, messagechat,
     messagechat_channel, messagechat_kind, messagechat_whisper, move_flag_ack, move_spline_done,
     move_time_skipped, movement, pet_name_query, ping, played_time, query_time, random_roll,
-    teleport_ack, text_emote,
+    teleport_ack, text_emote, time_sync_resp,
 };
 pub use combat_log::{
     spell_hit_info, BuildingDamage, DamageShield, DispelFailed, EnchantmentLog,

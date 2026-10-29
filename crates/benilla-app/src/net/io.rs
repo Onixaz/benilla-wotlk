@@ -1344,6 +1344,9 @@ pub(super) fn writer_loop(
                     ClientCommand::MoveTimeSkipped { guid, lag_ms } => {
                         w.move_time_skipped(guid, lag_ms)
                     }
+                    ClientCommand::TimeSyncResp { counter, client_ms } => {
+                        w.time_sync_resp(counter, client_ms)
+                    }
                     ClientCommand::ForceSpeedAck {
                         kind,
                         guid,

@@ -74,6 +74,14 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_TIME_SYNC_RESP`: answer a time-sync request with our movement clock at `client_ms`.
+    pub fn time_sync_resp(&mut self, counter: u32, client_ms: u32) -> Result<()> {
+        self.send(
+            opcode::CMSG_TIME_SYNC_RESP,
+            &messages::time_sync_resp(counter, client_ms),
+        )
+    }
+
     /// `CMSG_MOVE_SPLINE_DONE`: owed, at rest, when an `SMSG_MONSTER_MOVE` on our own guid ends.
     /// The server checks `spline_id` against its newest, then relocates us and tells observers.
     pub fn move_spline_done(

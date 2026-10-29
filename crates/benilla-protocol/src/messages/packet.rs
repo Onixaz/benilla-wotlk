@@ -438,6 +438,10 @@ pub enum ServerPacket {
     Inspect {
         guid: u64,
     },
+    /// `SMSG_TIME_SYNC_REQ`: the server asks for our movement clock under `counter`.
+    TimeSyncReq {
+        counter: u32,
+    },
     /// `SMSG_STANDSTATE_UPDATE`: the server set our stand state (`u8`), applied ungated.
     StandStateUpdate {
         state: u8,
@@ -1570,6 +1574,7 @@ impl ServerPacket {
             ServerPacket::GameObjectDespawnAnim { .. } => "SMSG_GAMEOBJECT_DESPAWN_ANIM".into(),
             ServerPacket::OpenContainer { .. } => "SMSG_OPEN_CONTAINER".into(),
             ServerPacket::Inspect { .. } => "SMSG_INSPECT".into(),
+            ServerPacket::TimeSyncReq { .. } => "SMSG_TIME_SYNC_REQ".into(),
             ServerPacket::StandStateUpdate { .. } => "SMSG_STANDSTATE_UPDATE".into(),
             ServerPacket::FishNotHooked => "SMSG_FISH_NOT_HOOKED".into(),
             ServerPacket::FishEscaped => "SMSG_FISH_ESCAPED".into(),
