@@ -38,13 +38,16 @@ pub(super) enum BodySkin {
     Baked(String),
 }
 
-/// A net entity's character look; `None` unless its display is a character-model body.
+/// A net entity's character look; `None` unless its display is a character-model body. A
+/// player's comes from its [`super::super::Equipment`] look where it carries one, so the barber
+/// shop's preview and a `PLAYER_BYTES` change dress the body as its gear does.
 pub(super) fn resolve_char_look(
     net: &NetEntity,
     dm: Option<&DisplayModel>,
     entity: Entity,
     stores: &Query<&ObjectStore>,
     mirror: Option<&super::super::mirror_image::MirrorLookOf>,
+    equipment: Option<&super::super::Equipment>,
 ) -> Option<CharLook> {
     // The look follows the display, not the entity kind: the display's own appearance row first,
     // the wire's only for a character body without one, as the reference's race and sex getters
@@ -111,15 +114,23 @@ pub(super) fn resolve_char_look(
         // create mask (`Object.cpp:1149`), and an absent field is 0, so each customization byte
         // defaults to 0.
         let s = &stores.get(entity).ok()?.0;
+        let [skin, face, hair_style, hair_color, facial_hair] =
+            equipment.and_then(|e| e.look).unwrap_or([
+                s.player_skin().unwrap_or(0),
+                s.player_face().unwrap_or(0),
+                s.player_hair_style().unwrap_or(0),
+                s.player_hair_color().unwrap_or(0),
+                s.player_facial_hair().unwrap_or(0),
+            ]);
         return Some(CharLook {
             race: s.unit_race()?,
             sex: s.unit_gender()?,
             class: s.unit_class().unwrap_or(0),
-            skin: s.player_skin().unwrap_or(0),
-            face: s.player_face().unwrap_or(0),
-            hair_style: s.player_hair_style().unwrap_or(0),
-            hair_color: s.player_hair_color().unwrap_or(0),
-            facial_hair: s.player_facial_hair().unwrap_or(0),
+            skin,
+            face,
+            hair_style,
+            hair_color,
+            facial_hair,
             body: BodySkin::Composite,
         });
     }

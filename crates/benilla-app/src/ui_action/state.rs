@@ -12,9 +12,9 @@ use std::time::Instant;
 
 use bevy::prelude::*;
 
-use benilla_formats::RangeTargets;
+use benilla_formats::{RangeTargets, SpellCatalog};
 use benilla_protocol::messages::{ACTION_KIND_ITEM, ACTION_KIND_MACRO, ACTION_KIND_SPELL};
-use benilla_ui::script::{ActionState, UiScript};
+use benilla_ui::script::{ActionState, ScriptValue, UiScript};
 
 use crate::creature_anim::{Casting, Engaged};
 use crate::items::Items;
@@ -34,6 +34,42 @@ pub(super) struct StateMemory {
     engaged: bool,
     auto_repeat: Option<u32>,
     last_cd_trace: Option<Instant>,
+    /// The reactive spells and whether each was ready last frame ([`reactive_spells`]); `None`
+    /// until built, rebuilt when the book changes.
+    reactive: Option<Vec<(u32, bool)>>,
+}
+
+/// `AttributesExD & 0x200`: a reactive spell, whose turn to usable floats its name
+/// (`0x54228c`).
+const EX4_REACTIVE: u32 = 0x200;
+
+/// The book's reactive spells (`0x54228c`), one per name, the highest `spellLevel` kept, in
+/// learn order.
+fn reactive_spells(known: &std::collections::BTreeSet<u32>, catalog: &SpellCatalog) -> Vec<u32> {
+    let mut out: Vec<u32> = Vec::new();
+    for &id in known {
+        let Some(d) = catalog
+            .get(id)
+            .filter(|d| d.attributes_ex4 & EX4_REACTIVE != 0)
+        else {
+            continue;
+        };
+        match out
+            .iter_mut()
+            .find(|o| catalog.get(**o).is_some_and(|e| e.name == d.name))
+        {
+            Some(o) => {
+                if catalog
+                    .get(*o)
+                    .is_some_and(|e| d.spell_level > e.spell_level)
+                {
+                    *o = id;
+                }
+            }
+            None => out.push(id),
+        }
+    }
+    out
 }
 
 /// A slot after the macro indirection (`0x4e5a50`), as the usable compute `0x4e5050` reads it.
@@ -416,6 +452,47 @@ pub(super) fn feed_action_state(
         script.fire_event("ACTIONBAR_UPDATE_STATE", vec![]);
         script.fire_event("CURRENT_SPELL_CAST_CHANGED", vec![]);
     }
+    // The book's usable sweeps (`0x53cf10`, `0x53d1b0`): a reactive spell turning usable with
+    // the power to cast sends `SPELL_ACTIVE` with its name.
+    if let (Some((store, _, _, _)), Some(sp)) = (me, spells.as_deref()) {
+        if actions.is_changed() || memory.reactive.is_none() {
+            memory.reactive = Some(
+                reactive_spells(&actions.spells, &sp.catalog)
+                    .into_iter()
+                    .map(|id| (id, false))
+                    .collect(),
+            );
+        }
+        let ctx = usable::UsableCtx {
+            store,
+            target_store: target.map(|(s, _)| s),
+            factions: factions.as_deref(),
+            reputations: &reputations,
+            party: crate::target::party_of(group.as_deref()),
+            cooldowns: &cooldowns,
+            carried: &carried,
+            spell_mods,
+            runes: rune_check,
+            combo_points,
+        };
+        for (id, was_ready) in memory.reactive.iter_mut().flatten() {
+            let Some(d) = sp.catalog.get(*id) else {
+                continue;
+            };
+            let (usable, oom) = usable::spell_usable(*id, d, sp, &ctx, &objects, &items, &commands);
+            let ready = usable && !oom;
+            if ready && !*was_ready {
+                script.fire_event(
+                    "COMBAT_TEXT_UPDATE",
+                    vec![
+                        ScriptValue::Str("SPELL_ACTIVE".into()),
+                        ScriptValue::Str(d.name.clone()),
+                    ],
+                );
+            }
+            *was_ready = ready;
+        }
+    }
     if engaged != memory.engaged {
         memory.engaged = engaged;
         script.fire_event(
@@ -443,6 +520,26 @@ pub(super) fn feed_action_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The reactive list off the real `Spell.dbc` (`0x54228c`): Overpower and Revenge carry
+    /// `AttributesExD & 0x200`, Fireball does not, and two Revenge ranks keep the higher one.
+    #[test]
+    fn the_reactive_list_keeps_one_flagged_spell_per_name() {
+        let Some(spells) = crate::ui_action::real_spells() else {
+            return;
+        };
+        const OVERPOWER: u32 = 7384;
+        const REVENGE_1: u32 = 6572;
+        const REVENGE_9: u32 = 57823;
+        const FIREBALL: u32 = 133;
+        let known = [FIREBALL, REVENGE_1, OVERPOWER, REVENGE_9]
+            .into_iter()
+            .collect();
+        let list = reactive_spells(&known, &spells.catalog);
+        assert_eq!(list.len(), 2, "{list:?}");
+        assert!(list.contains(&OVERPOWER));
+        assert!(list.contains(&REVENGE_9), "the higher rank: {list:?}");
+    }
     use benilla_formats::SpellDisplay;
 
     /// `[rec+0x564]`'s three values (`0x4e5a50`): a live spell, a bare macro, and grey.
@@ -906,6 +1003,91 @@ mod tests {
         assert!(
             !lit(true),
             "in combat the food's on-use spell fails leg 8 and the button greys"
+        );
+    }
+
+    /// The book sweep (`0x53cf10`): a known reactive spell sends `SPELL_ACTIVE` with its name on
+    /// each turn to usable, here its caster aura state lighting, and nothing while it stays lit.
+    #[test]
+    fn a_reactive_spell_turning_usable_sends_spell_active_once() {
+        use benilla_protocol::ObjectFields;
+        const REVENGE: u32 = 6572;
+        // `UNIT_FIELD_AURASTATE`.
+        const AURA_STATE: u16 = 125;
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        let mut actions = PlayerActions::default();
+        actions.spells.insert(REVENGE);
+        let revenge = SpellDisplay {
+            name: "Revenge".into(),
+            attributes_ex4: EX4_REACTIVE,
+            caster_aura_state: 1,
+            ..Default::default()
+        };
+        app.insert_resource(actions)
+            .insert_resource(crate::ui_macro::MacroBoundSpells::default())
+            .insert_resource(Spells {
+                catalog: benilla_formats::SpellCatalog::from_displays(
+                    [(REVENGE, revenge)].into_iter().collect(),
+                ),
+                forms: Default::default(),
+                ranges: Default::default(),
+                cast_times: Default::default(),
+                durations: Default::default(),
+                radii: Default::default(),
+            })
+            .init_resource::<Cooldowns>()
+            .init_resource::<crate::spell::SpellModifiers>()
+            .init_resource::<crate::ui_script::UiClock>()
+            .init_resource::<AutoRepeatActive>()
+            .init_resource::<crate::spell::PendingCast>()
+            .init_resource::<crate::spell::QueuedMeleeSpell>()
+            .init_resource::<crate::spell::ActiveChannel>()
+            .init_resource::<crate::spell::SpellTargeting>()
+            .init_resource::<crate::spell::HeldForPick>()
+            .init_resource::<Selection>()
+            .init_resource::<crate::net::GuidIndex>()
+            .init_resource::<crate::net::Reputations>()
+            .init_resource::<Items>()
+            .insert_resource(NetCommands(tx));
+        let me = app
+            .world_mut()
+            .spawn((
+                SelfPlayer,
+                Transform::default(),
+                ObjectStore(ObjectFields::from_pairs(&[(22, 100), (23, 500)])),
+            ))
+            .id();
+        let script = UiScript::new().unwrap();
+        script
+            .run(
+                "SEEN = {} local f = CreateFrame('Frame') f:RegisterEvent('COMBAT_TEXT_UPDATE')                  f:SetScript('OnEvent', function(_, _, t, d) SEEN[#SEEN + 1] = t .. ':' .. d end)",
+            )
+            .unwrap();
+        app.insert_non_send_resource(script);
+        app.add_systems(Update, feed_action_state);
+        let mut frame = |lit: bool| {
+            app.world_mut()
+                .entity_mut(me)
+                .insert(ObjectStore(ObjectFields::from_pairs(&[
+                    (22, 100),
+                    (23, 500),
+                    (AURA_STATE, u32::from(lit)),
+                ])));
+            app.update();
+            app.world()
+                .non_send_resource::<UiScript>()
+                .eval::<String>("return table.concat(SEEN, ',')")
+                .unwrap()
+        };
+        assert_eq!(frame(false), "", "not usable, nothing sent");
+        assert_eq!(frame(true), "SPELL_ACTIVE:Revenge");
+        assert_eq!(frame(true), "SPELL_ACTIVE:Revenge", "still lit, no repeat");
+        frame(false);
+        assert_eq!(
+            frame(true),
+            "SPELL_ACTIVE:Revenge,SPELL_ACTIVE:Revenge",
+            "a new turn sends again"
         );
     }
 

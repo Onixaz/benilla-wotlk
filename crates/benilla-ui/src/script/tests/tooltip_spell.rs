@@ -570,6 +570,56 @@ fn action_hover_delegates_by_kind() {
     assert!(s.take_errors().is_empty());
 }
 
+/// `UberTooltips` off makes the action hover brief (`0x6312fd` into `0x6238a0`): the name and
+/// rank alone, no cost, range, cast time or description, a met requirement dropped and an unmet
+/// one kept; on, the full tooltip.
+#[test]
+fn action_hover_is_brief_without_uber_tooltips() {
+    let mut s = script();
+    s.set_screen_size(800.0, 600.0);
+    s.register_cvars([("UberTooltips", "1")]);
+    s.set_spell_tooltip(
+        133,
+        SpellTooltipView {
+            reagents: Some("Reagents: Rune of Portals".into()),
+            reagents_met: true,
+            requires_form: Some("Requires Moonkin Form".into()),
+            form_met: false,
+            ..fireball()
+        },
+    );
+    s.set_action(
+        24,
+        Some(ActionSlot {
+            kind: 0x00,
+            action: 133,
+            ..Default::default()
+        }),
+    );
+    let hover = |s: &mut UiScript| {
+        s.run(
+            r#"
+            local a = AB1 or CreateFrame("Button", "AB1"); a:SetPoint("CENTER", 0, 0)
+            local tt = TT or CreateFrame("GameTooltip", "TT")
+            tt:SetOwner(a, "ANCHOR_RIGHT")
+            tt:SetAction(24)
+        "#,
+        )
+        .unwrap();
+        left_lines(s)
+    };
+    let full = hover(&mut s);
+    assert!(full.iter().any(|l| l == "30 Mana"), "{full:?}");
+    assert!(full.iter().any(|l| l.starts_with("Hurls")), "{full:?}");
+    s.run("SetCVar('UberTooltips', '0')").unwrap();
+    assert_eq!(
+        hover(&mut s),
+        ["Fireball", "Requires Moonkin Form"],
+        "brief: the name and the unmet requirement"
+    );
+    assert!(s.take_errors().is_empty());
+}
+
 /// A macro slot's hover is the reference's `0x52b040`: one line, the macro's name in the normal
 /// colour (`0xc0cf60` holds `0xffffffff`, white); a slot whose macro is gone shows no plate.
 #[test]
@@ -581,7 +631,6 @@ fn action_hover_on_a_macro_slot_shows_its_name_in_white() {
             name: "spawn".into(),
             texture: Some("Interface\\Icons\\Ability_Racial_Cannibalize".into()),
             body: ".spawn 16032".into(),
-            local_only: false,
         }],
         character: Vec::new(),
     });

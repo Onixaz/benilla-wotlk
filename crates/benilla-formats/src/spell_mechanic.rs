@@ -21,6 +21,13 @@ pub struct SpellMechanicCatalog {
 }
 
 impl SpellMechanicCatalog {
+    /// A catalog of `(id, state name)` rows, for a host without the install.
+    pub fn from_names(rows: impl IntoIterator<Item = (u32, String)>) -> Self {
+        Self {
+            names: rows.into_iter().collect(),
+        }
+    }
+
     /// The name for a mechanic id; `None` for 0, where the refusal falls back to its own reason.
     pub fn name(&self, mechanic_id: u32) -> Option<&str> {
         self.names.get(&mechanic_id).map(String::as_str)

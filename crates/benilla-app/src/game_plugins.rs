@@ -265,6 +265,7 @@ impl PluginGroup for GamePlugins {
             .add(crate::account_data::AccountDataPlugin)
             .add(UiStablePlugin)
             .add(TabardUiPlugin)
+            .add(crate::ui_barber::BarberUiPlugin)
             .add(UiTrainerPlugin)
             .add(UiTaxiPlugin)
             .add(UiTradeSkillPlugin)
@@ -842,8 +843,9 @@ pub(crate) mod schedule_tests {
     ///   `drain_social` and `drain_chat_input`. They only read membership, so a frame on either
     ///   side of a roster change gives the same colour a frame late, and nothing else they touch is
     ///   written by those drains.
-    /// - `main` at `8c4f8ff` already counts 3895 against its 3889: 6 more pairs this branch does
-    ///   not add and does not argue, carried here so the ratchet measures only this change.
+    /// - The zone PvP answer (#689) adds 6: `area::feed_zone_events` reads the character
+    ///   `Roster` for the realm's PvP type against its six writers in `char_select` and
+    ///   `drive_glue_mgr`, which change it only at character select, where no zone feeds.
     const UPDATE_ACTIONABLE_CEILING: usize = 3_895;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 

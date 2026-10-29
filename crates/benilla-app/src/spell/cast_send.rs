@@ -152,8 +152,8 @@ pub(crate) enum TargetedBind {
 }
 
 impl CastLadder<'_, '_> {
-    /// `Spell_C_ClickSpell`'s guard on an active toggle (`0x80da80`): with `secureAbilityToggle`
-    /// on, a spell cast under 1.5 s ago (`SpellHistory::RecentlyCast`) keeps its aura, and the
+    /// The click path's guard on an active toggle (`0x80da80`): with `secureAbilityToggle`
+    /// on, a spell cast under 1.5 s ago keeps its aura, and the
     /// press does nothing.
     pub(crate) fn keeps_fresh_toggle(&self, spell_id: u32) -> bool {
         self.secure_toggle.as_deref().is_none_or(|s| s.0)
@@ -1293,7 +1293,7 @@ mod tests {
         );
     }
 
-    /// `Spell_C_ClickSpell`'s guard (`0x80da80`): a toggle cast under 1.5 s ago keeps its aura
+    /// The click path's guard (`0x80da80`): a toggle cast under 1.5 s ago keeps its aura
     /// while `secureAbilityToggle` is on, and is free to cancel with it off or once the window
     /// has passed.
     #[test]

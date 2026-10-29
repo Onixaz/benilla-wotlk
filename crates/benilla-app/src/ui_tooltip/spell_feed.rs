@@ -378,6 +378,7 @@ pub(super) fn build_view(
         });
     // Reagents (`SPELL_REAGENTS`, `0x854e54`), red when short; one whose template has not
     // streamed is absent until `feed_spell_tooltips` re-pushes on its arrival.
+    let mut reagents_met = true;
     let reagents = {
         let mut parts: Vec<String> = Vec::new();
         for (entry, count) in d.reagents.iter().copied().filter(|&(e, _)| e != 0) {
@@ -397,6 +398,7 @@ pub(super) fn build_view(
             let short = vctx.store.is_some_and(|s| {
                 count_of(&s.0, vctx.objects, entry, InventoryScope::CARRIED) < count
             });
+            reagents_met &= !short;
             parts.push(if short {
                 format!("|cffff2020{text}|r")
             } else {
@@ -420,6 +422,7 @@ pub(super) fn build_view(
         form_met,
         chance,
         reagents,
+        reagents_met,
         description: d
             .description
             .as_deref()

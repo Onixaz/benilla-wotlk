@@ -465,7 +465,7 @@ impl Default for AutoDismount {
 }
 
 /// `secureAbilityToggle` (`[0xbd097c]`, default "1"): a toggle re-pressed within 1.5 s of its
-/// cast keeps its aura (`Spell_C_ClickSpell 0x80da80`).
+/// cast keeps its aura (`0x80da80`).
 #[derive(bevy::prelude::Resource)]
 pub(crate) struct SecureAbilityToggle(pub(crate) bool);
 

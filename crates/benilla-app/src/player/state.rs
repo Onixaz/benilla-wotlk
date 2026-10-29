@@ -572,6 +572,12 @@ impl Player {
         self.face_yaw
     }
 
+    /// The stand state this client has committed: its local prediction until the server's echo
+    /// of `UNIT_FIELD_BYTES_1` lands, then that byte (`[player+0x1d68]`).
+    pub(crate) fn committed_stand_state(&self, echoed: u8) -> u8 {
+        self.stand_pending.unwrap_or(echoed)
+    }
+
     /// End the settle hold, called by the terrain streamer: `resident` is false when
     /// [`SETTLE_TIMEOUT`] fired first, which the `sett` trace records.
     pub(crate) fn end_settle(&mut self, resident: bool, now: f32) {

@@ -141,6 +141,8 @@ pub(crate) fn miss_word(code: u8) -> Option<(&'static str, u8)> {
 /// orange `[0xc4d8cc]`. No override means the row's default, white for rows 0-3.
 pub(crate) const COLOR_SPELL_GOLD: u32 = 0xFFFF_DE00;
 pub(crate) const COLOR_PET_MELEE_ORANGE: u32 = 0xFFFF_8400;
+/// The mechanic word's colour (`[0xadb93c]`).
+pub(crate) const COLOR_MECHANIC: u32 = 0xFFFF_DE00;
 
 /// The floating-text CVar gates, read by the word, number and heal emitters (`0x71f990`,
 /// `0x722340`, `0x722440`); a failed gate suppresses the emit entirely.
@@ -156,10 +158,15 @@ pub(crate) struct DamageTextGates {
     pub(crate) pet_spell: bool,
     pub(crate) periodic: bool,
     pub(crate) healing: bool,
+    /// `fctAllSpellMechanics`, `fctSpellMechanics` and `fctSpellMechanicsOther`, the mechanic
+    /// word's gates (`0x74da00`).
+    pub(crate) all_mechanics: bool,
+    pub(crate) mechanics: bool,
+    pub(crate) mechanics_other: bool,
 }
 
 impl Default for DamageTextGates {
-    /// The reference's registered defaults, all `"1"`.
+    /// The reference's registered defaults: the damage rows `"1"`, the mechanic rows `"0"`.
     fn default() -> Self {
         Self {
             combat_damage: true,
@@ -167,6 +174,9 @@ impl Default for DamageTextGates {
             pet_spell: true,
             periodic: true,
             healing: true,
+            all_mechanics: false,
+            mechanics: false,
+            mechanics_other: false,
         }
     }
 }

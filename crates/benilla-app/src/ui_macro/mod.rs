@@ -237,7 +237,7 @@ fn rebind_macro_spells(
 
     let (macros, book) = (script.macros(), script.spellbook());
     let mut fresh = std::collections::HashMap::new();
-    for index in 1..=(benilla_ui::script::MAX_MACROS as u32 * 2) {
+    for index in 1..=benilla_ui::script::MAX_MACRO_INDEX as u32 {
         let Some(m) = macros.get(index as usize) else {
             continue;
         };

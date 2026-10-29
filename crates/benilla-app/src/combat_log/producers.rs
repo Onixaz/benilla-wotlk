@@ -38,6 +38,12 @@ const EX4_NO_SOURCE: u32 = 0x2000;
 const EX6_CAST_TEXT: u32 = 0x40;
 /// `AttributesExF & 0x400`: the aura does not log.
 const EX6_AURA_NOT_LOGGED: u32 = 0x400;
+/// `AttributesExF & 0x200000`: the spell's mechanics float as words (`0x74da03`).
+const EX6_MECHANIC_TEXT: u32 = 0x20_0000;
+/// `SPELL_EFFECT_OPEN_LOCK`: a spell carrying it floats no mechanic (`0x74db80`).
+const EFFECT_OPEN_LOCK: u32 = 33;
+/// `SpellMechanic.dbc` 26, "interrupted": the interrupt's word, never an aura's.
+const MECHANIC_INTERRUPT: u32 = 26;
 
 /// A spell record logs: present, `Attributes & 0x180` clear and named.
 fn logged(d: &SpellDisplay) -> bool {
@@ -88,9 +94,15 @@ pub(crate) struct LogCtx<'w, 's> {
     objects: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
     names: Res<'w, NameCache>,
     net: Res<'w, NetCommands>,
+    mechanics: Option<Res<'w, crate::ui_action::SpellMechanics>>,
 }
 
 impl LogCtx<'_, '_> {
+    /// A mechanic's `SpellMechanic.dbc` state name.
+    fn mechanic_name(&self, id: u32) -> Option<&str> {
+        self.mechanics.as_deref()?.catalog.name(id)
+    }
+
     pub(crate) fn me(&self) -> Option<u64> {
         self.self_guid.0
     }
@@ -1399,6 +1411,9 @@ impl Log<'_, '_> {
                 ..CombatLogInfo::default()
             },
         );
+        if added {
+            self.spell_mechanic_text(unit, caster, spell);
+        }
         if !self.ctx.is_text_unit(unit) {
             return;
         }
@@ -1458,6 +1473,74 @@ impl Log<'_, '_> {
                 ..CombatLogInfo::default()
             },
         );
+        self.spell_mechanic_text(unit, caster, spell);
+    }
+
+    /// An aura's mechanic words (`0x74db80`): each distinct effect mechanic, then the spell's own
+    /// when no effect names it; an open-lock spell and the interrupt mechanic float none.
+    fn spell_mechanic_text(&mut self, unit: u64, caster: u64, spell: u32) {
+        let Some(d) = self.ctx.spell(spell).filter(|d| logged(d)) else {
+            return;
+        };
+        if d.effects.contains(&EFFECT_OPEN_LOCK) {
+            return;
+        }
+        let mut ids: Vec<u32> = Vec::with_capacity(4);
+        for &m in &d.effect_mechanic {
+            if m != 0 && !ids.contains(&m) {
+                ids.push(m);
+            }
+        }
+        if d.mechanic != 0 && !d.effect_mechanic.contains(&d.mechanic) {
+            ids.push(d.mechanic);
+        }
+        for m in ids.into_iter().filter(|&m| m != MECHANIC_INTERRUPT) {
+            self.mechanic_effect(unit, caster, spell, m);
+        }
+    }
+
+    /// `0x74da70`: the mechanic's state name, first letter upper-cased, floats over `unit`, with
+    /// the caster's name after it unless the caster is the player. `0x74da00` gates it: the
+    /// spell's `AttributesExF` bit, then `fctAllSpellMechanics`, or `fctSpellMechanics` with the
+    /// player as the caster or `fctSpellMechanicsOther`.
+    fn mechanic_effect(&mut self, unit: u64, caster: u64, spell: u32, mechanic: u32) {
+        let flagged = self
+            .ctx
+            .spell(spell)
+            .is_some_and(|d| d.attributes_ex6 & EX6_MECHANIC_TEXT != 0);
+        let mine = self.ctx.is_text_unit(caster);
+        let g = *self.out.gates;
+        if !flagged || !(g.all_mechanics || g.mechanics && (mine || g.mechanics_other)) {
+            return;
+        }
+        let Some(state) = self.ctx.mechanic_name(mechanic) else {
+            return;
+        };
+        let mut chars = state.chars();
+        let state: String = chars
+            .next()
+            .map(|c| c.to_uppercase().chain(chars).collect())
+            .unwrap_or_default();
+        let text = if mine {
+            state
+        } else {
+            format!("{state} ({})", self.ctx.name_of(caster))
+        };
+        let Some(anchor) = self.ctx.entity(unit).filter(|_| self.ctx.unit(unit)) else {
+            return;
+        };
+        if benilla_assets::trace::enabled() {
+            benilla_assets::trace::line(
+                "fct",
+                &format!("mechanic {text:?} over {unit:#x} from {caster:#x}"),
+            );
+        }
+        self.out.text.write(CombatTextSpawn {
+            anchor,
+            text,
+            category: 0,
+            color: Some(crate::combat_text::COLOR_MECHANIC),
+        });
     }
 
     /// `HandleSpellRemoveLog` (`0x6ce2b0`): a break removes, a dispel or steal replaces.
@@ -1759,6 +1842,7 @@ impl Log<'_, '_> {
         if self.ctx.is_text_unit(dest) {
             self.out.center("INTERRUPT", vec![text(name)]);
         }
+        self.mechanic_effect(dest, source, spell, MECHANIC_INTERRUPT);
     }
 
     /// `GetSpellLogLinkInfo` (`0x50ebe0`): an opened item or game object's chat line.
