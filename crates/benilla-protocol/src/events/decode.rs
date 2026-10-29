@@ -821,6 +821,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::MonsterMove {
             guid,
             transport,
+            seat,
             start,
             spline_id,
             path,
@@ -832,6 +833,7 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         } => vec![SessionEvent::MonsterMove {
             guid,
             transport,
+            seat,
             start: v3(start),
             spline_id,
             path: path.into_iter().map(v3).collect(),

@@ -258,6 +258,7 @@ pub(in crate::net) fn apply_move(
                 transport_guid: t.guid,
                 local_pos: [t.pos.x, t.pos.y, t.pos.z],
                 local_orientation: t.orientation,
+                seat: t.seat,
             });
         }
         None => {

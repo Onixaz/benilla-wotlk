@@ -559,6 +559,9 @@ pub(crate) struct TransportRider {
     pub(crate) local_pos: [f32; 3],
     /// Facing in the transport's frame (WoW radians); world facing is `local + transport yaw`.
     pub(crate) local_orientation: f32,
+    /// The vehicle seat it rides, `-1` on a boat or with no seat (`0x6ea1d0` reads it with the
+    /// guid).
+    pub(crate) seat: i8,
 }
 
 /// Compose each observed rider's world pose through its transport's this-frame pose, after

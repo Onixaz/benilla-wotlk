@@ -122,6 +122,8 @@ pub enum ServerPacket {
         guid: u64,
         /// `SMSG_MONSTER_MOVE_TRANSPORT` only: the transport whose frame `start` and `path` are in.
         transport: Option<u64>,
+        /// That transport's seat for a vehicle passenger, else `-1`.
+        seat: i8,
         start: Vector3d,
         /// Echoed in `CMSG_MOVE_SPLINE_DONE` when the spline moves our own player.
         spline_id: u32,

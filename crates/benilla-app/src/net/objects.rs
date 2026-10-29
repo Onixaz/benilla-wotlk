@@ -333,6 +333,7 @@ fn on_monster_move(In(ev): In<SessionEvent>, mut sc: Scene) {
     if let SessionEvent::MonsterMove {
         guid,
         transport,
+        seat,
         start,
         spline_id,
         path,
@@ -347,6 +348,7 @@ fn on_monster_move(In(ev): In<SessionEvent>, mut sc: Scene) {
         monster_move(
             guid,
             transport,
+            seat,
             start,
             spline_id,
             path,
@@ -510,6 +512,7 @@ fn object_create(
             transport_guid: t.guid,
             local_pos: [t.pos.x, t.pos.y, t.pos.z],
             local_orientation: t.orientation,
+            seat: t.seat,
         });
     // Warm the name cache as a unit streams in, the reference's timing: its create path
     // (`0x5fb880`) queries every creature (`0x60afb0`, at `0x60b157`), whose name is the record's
@@ -846,6 +849,7 @@ pub(crate) fn tear_down(mut ent: EntityWorldMut) {
 fn monster_move(
     guid: u64,
     transport: Option<u64>,
+    seat: i8,
     start: [f32; 3],
     spline_id: u32,
     path: Vec<[f32; 3]>,
@@ -906,6 +910,7 @@ fn monster_move(
             match riders.get_mut(e) {
                 Ok(mut rider) => {
                     rider.transport_guid = t;
+                    rider.seat = seat;
                     rider.local_pos = start;
                     if let Some(o) = local_facing {
                         rider.local_orientation = o;
@@ -916,6 +921,7 @@ fn monster_move(
                         transport_guid: t,
                         local_pos: start,
                         local_orientation: local_facing.unwrap_or_default(),
+                        seat,
                     });
                 }
             }
@@ -1431,6 +1437,7 @@ mod tests {
                         monster_move(
                             MOB,
                             None,
+                            -1,
                             [0.0, 0.0, 0.0],
                             7,
                             path.clone(),
@@ -1487,6 +1494,7 @@ mod tests {
                     monster_move(
                         MOB,
                         Some(BOAT),
+                        -1,
                         [1.5, -2.5, 0.75],
                         7,
                         deck_path.clone(),
@@ -1534,6 +1542,7 @@ mod tests {
                     monster_move(
                         MOB,
                         None,
+                        -1,
                         [100.0, 200.0, 30.0],
                         8,
                         world_path.clone(),

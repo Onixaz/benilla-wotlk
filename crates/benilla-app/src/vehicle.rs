@@ -8,24 +8,41 @@
 //! the gate bit `0x40000`), so only the packet's fires, and world entry fires it again for a
 //! player already holding one (`0x757180`).
 
+use std::collections::HashMap;
 use std::sync::Arc;
+
+mod passenger;
 
 use bevy::prelude::*;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
-use benilla_formats::{VehicleCatalog, VehicleRec};
+use benilla_formats::{VehicleCatalog, VehicleRec, VehicleSeatRec};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{ScriptValue, UiScript};
 
 use crate::net::{EnteredWorldMessage, GuidIndex, NetHandlerApp, ObjectStore, SelfGuid};
 
-/// The vehicle tables; empty without client data.
+/// The vehicle tables, and the `SoundEntries` names the seats' enter and exit sounds have;
+/// empty without client data.
 #[derive(Resource, Default, Clone)]
-pub(crate) struct VehicleTables(pub(crate) Arc<VehicleCatalog>);
+pub(crate) struct VehicleTables {
+    pub(crate) catalog: Arc<VehicleCatalog>,
+    sound_names: Arc<HashMap<u32, String>>,
+}
 
 impl VehicleTables {
     pub(crate) fn vehicle(&self, id: u32) -> Option<&VehicleRec> {
-        self.0.vehicle(id)
+        self.catalog.vehicle(id)
+    }
+
+    /// `0x756ec0`: seat slot `slot` of vehicle `id`.
+    pub(crate) fn seat(&self, id: u32, slot: usize) -> Option<&VehicleSeatRec> {
+        self.catalog.vehicle_seat(self.catalog.vehicle(id)?, slot)
+    }
+
+    /// A seat sound's `SoundEntries` name, `""` for none or an unknown id.
+    pub(crate) fn sound_name(&self, id: u32) -> &str {
+        self.sound_names.get(&id).map_or("", String::as_str)
     }
 }
 
@@ -44,6 +61,10 @@ pub(crate) struct VehicleSignals {
     data: Vec<(u64, Option<u32>)>,
     /// World entry's slider reset (`0x757180` → `0x74c5a0` with no vehicle): both shows, empty.
     sliders_hidden: bool,
+    /// Passenger transitions of our player and group members, in order.
+    transitions: Vec<passenger::Transition>,
+    /// A transition touched our own vehicle chain (`VEHICLE_PASSENGERS_CHANGED`).
+    passengers_changed: bool,
 }
 
 pub(crate) struct VehiclePlugin;
@@ -61,10 +82,12 @@ impl Plugin for VehiclePlugin {
                 Update,
                 (
                     on_world_enter.after(benilla_world::schedule::WorldStage::Net),
+                    passenger::track_passengers.after(benilla_world::schedule::WorldStage::Net),
                     feed_vehicle_signals
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(crate::ui_unit::EnterWorldFeed)
-                        .after(on_world_enter),
+                        .after(on_world_enter)
+                        .after(passenger::track_passengers),
                 ),
             );
     }
@@ -72,14 +95,37 @@ impl Plugin for VehiclePlugin {
 
 fn load_vehicle_tables(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     let Some(assets) = assets else { return };
-    let loaded = {
+    let (loaded, sounds) = {
         let mut chain = assets.chain.lock_recover();
-        benilla_formats::load_vehicles(&mut chain)
+        (
+            benilla_formats::load_vehicles(&mut chain),
+            benilla_formats::load_sound_kit_catalog(&mut chain),
+        )
     };
-    match loaded {
-        Ok(catalog) => commands.insert_resource(VehicleTables(Arc::new(catalog))),
-        Err(e) => warn!("vehicle: the vehicle tables failed — no unit holds a vehicle: {e:#}"),
-    }
+    let catalog = match loaded {
+        Ok(catalog) => catalog,
+        Err(e) => {
+            warn!("vehicle: the vehicle tables failed — no unit holds a vehicle: {e:#}");
+            return;
+        }
+    };
+    // Only the seats' sounds are named in an event, so only theirs are kept.
+    let sound_names = match sounds {
+        Ok(kits) => catalog
+            .seats
+            .values()
+            .flat_map(|s| [s.enter_ui_sound_id, s.exit_ui_sound_id])
+            .filter_map(|id| Some((id, kits.get(id)?.name.clone())))
+            .collect(),
+        Err(e) => {
+            warn!("vehicle: SoundEntries failed — the seat events name no sound: {e:#}");
+            HashMap::new()
+        }
+    };
+    commands.insert_resource(VehicleTables {
+        catalog: Arc::new(catalog),
+        sound_names: Arc::new(sound_names),
+    });
 }
 
 /// The create block's vehicle (`0x73c260`), built before post-init, so it fires nothing.
@@ -175,6 +221,42 @@ fn feed_vehicle_signals(script: Option<NonSendMut<UiScript>>, mut signals: ResMu
         script.fire_event("VEHICLE_ANGLE_SHOW", vec![]);
         script.fire_event("VEHICLE_POWER_SHOW", vec![]);
     }
+    // `0x749650` fires a transition's events bit by bit (`0x748810` for the two enters).
+    for t in std::mem::take(&mut signals.transitions) {
+        let bits = passenger::event_bits(t.from, t.to);
+        let enter = |name: &str, script: &mut UiScript| {
+            script.fire_unit_event(
+                t.unit,
+                name,
+                vec![
+                    ScriptValue::Bool(t.vehicle_ui),
+                    ScriptValue::Str(t.skin.to_string()),
+                    ScriptValue::Str(t.sound.clone()),
+                    ScriptValue::Bool(t.control_seat),
+                    ScriptValue::Int(i64::from(t.indicator)),
+                ],
+            )
+        };
+        if bits & 1 != 0 {
+            enter("UNIT_ENTERING_VEHICLE", &mut script);
+        }
+        if bits & 2 != 0 {
+            enter("UNIT_ENTERED_VEHICLE", &mut script);
+        }
+        if bits & 4 != 0 {
+            script.fire_unit_event(t.unit, "UNIT_EXITING_VEHICLE", vec![]);
+        }
+        if bits & 8 != 0 {
+            script.fire_unit_event(
+                t.unit,
+                "UNIT_EXITED_VEHICLE",
+                vec![ScriptValue::Str(t.sound.clone())],
+            );
+        }
+    }
+    if std::mem::take(&mut signals.passengers_changed) {
+        script.fire_event("VEHICLE_PASSENGERS_CHANGED", vec![]);
+    }
     for (guid, gained) in std::mem::take(&mut signals.data) {
         match gained {
             Some(indicator) => script.fire_unit_event(
@@ -224,7 +306,10 @@ mod tests {
                 ..Default::default()
             },
         );
-        w.insert_resource(VehicleTables(Arc::new(cat)));
+        w.insert_resource(VehicleTables {
+            catalog: Arc::new(cat),
+            ..Default::default()
+        });
         w.init_resource::<VehicleSignals>();
         (w, me, cart)
     }

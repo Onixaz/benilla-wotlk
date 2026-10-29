@@ -303,6 +303,8 @@ pub enum SessionEvent {
         guid: u64,
         /// `SMSG_MONSTER_MOVE_TRANSPORT`: `start`/`path` are deck-local, and the unit now rides it.
         transport: Option<u64>,
+        /// The vehicle seat it rides, else `-1`.
+        seat: i8,
         start: [f32; 3],
         /// Echoed in `CMSG_MOVE_SPLINE_DONE` when the spline drives our own player.
         spline_id: u32,
