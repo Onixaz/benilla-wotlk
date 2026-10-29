@@ -240,13 +240,16 @@ fn a_self_unregistering_listener_does_not_rob_its_successor_on_the_internal_disp
     assert_eq!(s.eval::<String>("return log").unwrap(), "ab");
 }
 
-/// The handler's own failure goes to the host channel only, never re-queued.
+/// A handler that keeps raising is handed its own error, as Lua 5.1 calls the pcall's error slot
+/// again (`0x850830`), until the nesting ends; the chain is then dropped unreported, and only the
+/// original fault is on the host channel.
 #[test]
-fn an_error_handler_that_errors_does_not_recurse() {
+fn a_handler_that_keeps_raising_is_reentered_to_the_limit_then_dropped() {
     let mut s = crate::script::UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
     s.run(
-        "seterrorhandler(function() error('the handler is broken too') end) \
+        "CALLS = 0 \
+         seterrorhandler(function() CALLS = CALLS + 1 error('the handler is broken too') end) \
          local f = CreateFrame('Frame') \
          f:RegisterEvent('ERROR_PROBE') \
          f:SetScript('OnEvent', function() error('original fault') end)",
@@ -254,22 +257,55 @@ fn an_error_handler_that_errors_does_not_recurse() {
     .unwrap();
     s.fire_event("ERROR_PROBE", vec![]);
     s.dispatch_script_errors_to_handler();
+    assert_eq!(
+        s.eval::<usize>("return CALLS").unwrap(),
+        super::ERROR_HANDLER_NESTING
+    );
     let errors = s.take_errors();
-    assert!(
-        errors.iter().any(|e| e.contains("original fault")),
-        "the original fault is on the host channel: {errors:?}"
-    );
-    assert!(
-        errors
-            .iter()
-            .any(|e| e.contains("error handler itself failed")),
-        "and so is the handler's own failure, named as such: {errors:?}"
-    );
+    assert_eq!(errors.len(), 1, "the original fault alone: {errors:?}");
+    assert!(errors[0].contains("original fault"), "{errors:?}");
     s.dispatch_script_errors_to_handler();
-    assert!(
-        s.take_errors().is_empty(),
-        "nothing recurses: the queue drained and the handler failure did not re-enter it"
+    assert_eq!(
+        s.eval::<usize>("return CALLS").unwrap(),
+        super::ERROR_HANDLER_NESTING,
+        "nothing was re-queued"
     );
+    assert!(s.take_errors().is_empty());
+}
+
+/// Stock `ScriptErrorsFrame_Update` (`Blizzard_DebugTools.lua:449`) on a second, different error
+/// reaches `ScrollingEdit_OnUpdate` with `cursorOffset` nil, as in the reference: the box is hidden
+/// at `scriptErrors` 0, so no flush ever ran its `OnCursorChanged`. The handler's own raise goes
+/// back to it, which files that error too, and nothing reaches the host as a handler failure.
+#[test]
+fn a_second_error_files_the_error_its_handler_raises() {
+    let mut s = crate::script::UiScript::new().unwrap();
+    s.set_screen_size(1024.0, 768.0);
+    s.run(
+        r#"FILED = {}
+        local box = {}
+        seterrorhandler(function(msg)
+            table.insert(FILED, msg)
+            if #FILED == 2 and not box.cursorOffset then return -box.cursorOffset end
+        end)
+        local f = CreateFrame("Frame")
+        f:RegisterEvent("ERROR_PROBE")
+        f:SetScript("OnEvent", function(self, event, which) error(which) end)"#,
+    )
+    .unwrap();
+    for which in ["first", "second"] {
+        s.fire_event(
+            "ERROR_PROBE",
+            vec![crate::script::ScriptValue::Str(which.into())],
+        );
+    }
+    s.dispatch_script_errors_to_handler();
+    let filed: Vec<String> = s.eval("return FILED").unwrap();
+    assert_eq!(filed.len(), 3, "{filed:#?}");
+    assert!(filed[0].contains("first") && filed[1].contains("second"));
+    assert!(filed[2].contains("cursorOffset"), "{filed:#?}");
+    let errors = s.take_errors();
+    assert_eq!(errors.len(), 2, "the two faults alone: {errors:?}");
 }
 
 /// A handler that raises on one error still receives the next: the reference calls it once per
@@ -292,8 +328,13 @@ fn a_raising_handler_still_receives_the_next_error() {
     );
     s.dispatch_script_errors_to_handler();
     let seen: Vec<String> = s.eval("return SEEN").unwrap();
-    assert_eq!(seen.len(), 2, "both errors reached the handler: {seen:?}");
-    assert!(seen[1].contains("second"));
+    assert_eq!(
+        seen.len(),
+        3,
+        "both errors reached the handler, the trip between them: {seen:?}"
+    );
+    assert!(seen[1].contains("the handler trips once"));
+    assert!(seen[2].contains("second"));
 }
 
 /// `debuglocals` (`0x819a60`) answers nothing outside the handler dispatch, and inside it packs
