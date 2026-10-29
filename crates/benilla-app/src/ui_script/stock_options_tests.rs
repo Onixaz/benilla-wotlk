@@ -701,6 +701,95 @@ fn every_actionbars_checkbox_writes_its_cvar_or_its_toggle_bit() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Buffs and Debuffs panel's checkboxes, `(button suffix, CVar, registered default, what its
+/// write reaches)` (`InterfaceOptionsPanels.xml`; registered at `0x51e8b3`-`0x51e93e`).
+const BUFF_CHECKBOXES: [(&str, &str, &str, &str); 5] = [
+    ("BuffDurations", "buffDurations", "1", "SHOW_BUFF_DURATIONS"),
+    (
+        "DispellableDebuffs",
+        "showDispelDebuffs",
+        "0",
+        "GetCVar('showDispelDebuffs')",
+    ),
+    (
+        "CastableBuffs",
+        "showCastableBuffs",
+        "0",
+        "GetCVar('showCastableBuffs')",
+    ),
+    (
+        "ConsolidateBuffs",
+        "consolidateBuffs",
+        "0",
+        "CONSOLIDATE_BUFFS",
+    ),
+    (
+        "ShowCastableDebuffs",
+        "showCastableDebuffs",
+        "0",
+        "SHOW_CASTABLE_DEBUFFS",
+    ),
+];
+
+/// Each Buffs and Debuffs checkbox boots at its CVar's 12340 default, a click and Okay writes the
+/// flip and reaches its reader, a click and Cancel writes nothing, and Defaults puts the
+/// registered value back.
+#[test]
+fn every_buff_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-buffs");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsBuffsPanel)";
+    for (suffix, cvar, default, reader) in BUFF_CHECKBOXES {
+        let button = format!("InterfaceOptionsBuffsPanel{suffix}");
+        let read = |s: &UiScript| {
+            s.eval::<String>(&format!("return tostring({reader})"))
+                .unwrap()
+        };
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        assert_eq!(read(&s), flip(default), "{cvar} reaches {reader}");
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Combat panel's checkboxes, `(button path, CVar, registered default)`
 /// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
 const COMBAT_CHECKBOXES: [(&str, &str, &str); 8] = [
