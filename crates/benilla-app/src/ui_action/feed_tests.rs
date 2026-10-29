@@ -291,7 +291,6 @@ fn a_macro_slot_shows_the_macros_own_icon_and_follows_an_edit() {
             texture: Some("Interface\\Icons\\Ability_Ambush".into()),
             // The bound spell is not what the icon shows.
             body: "/cast Ambush".into(),
-            local_only: false,
         }],
         character: Vec::new(),
     });
