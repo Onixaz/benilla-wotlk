@@ -269,6 +269,16 @@ impl Plugin for WmoPortalPlugin {
 /// is not the room you are in.
 const MAX_FLOOR_DROP: f32 = 1760.0;
 
+/// `WOW_CULLDUMP=<path>`, read once.
+fn cull_dump_path() -> &'static Option<std::path::PathBuf> {
+    static ENV_DUMP: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    ENV_DUMP.get_or_init(|| std::env::var_os("WOW_CULLDUMP").map(std::path::PathBuf::from))
+}
+
+fn cull_dump_env() -> bool {
+    cull_dump_path().is_some()
+}
+
 /// Recompute each resident WMO's per-group visible set from the camera; a portal-less prop stays
 /// all-visible.
 fn compute_wmo_pvs(
@@ -281,6 +291,11 @@ fn compute_wmo_pvs(
     mut camera_fog: ResMut<CameraWmoFog>,
     mut camera_claim: ResMut<CameraInteriorClaim>,
     mut camera_windows: ResMut<ExteriorWindows>,
+    // The flood's other inputs: a placement moving, arriving or leaving, and its model landing.
+    (mut gone, mut last): (
+        RemovedComponents<WmoPortalInstance>,
+        Local<Option<(Mat4, Option<f32>, usize)>>,
+    ),
 ) {
     // No world camera yet: keep last frame's sets, all visible.
     let Some((cam_t, proj)) = cam.iter().next() else {
@@ -291,14 +306,19 @@ fn compute_wmo_pvs(
     probe.eye = eye_world;
     // The seed's terrain leg, sampled once for the camera's column (`0x6821f0`).
     let terrain = terrain_height_under(&streamer, &adt_tiles, eye_world);
+    // The flood is a pure function of the view, the eye's ground and the placements: a still
+    // camera over unchanged buildings keeps last frame's sets (the dump request always floods).
+    // This system's own writes do not read back as changed here.
+    let key = (clip_from_world, terrain, wmos.len());
+    let placements_moved =
+        gone.read().count() > 0 || instances.iter_mut().any(|(_, i)| i.is_changed());
+    if *last == Some(key) && !placements_moved && probe.dump_to.is_none() && !cull_dump_env() {
+        return;
+    }
+    *last = Some(key);
     // `WOW_CULLDUMP=<path>` re-requests the dump every frame, last writer wins: a headless run has
     // no panel button, and a one-shot request at startup would catch an empty world.
-    static ENV_DUMP: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
-    let dump_to = probe.dump_to.take().or_else(|| {
-        ENV_DUMP
-            .get_or_init(|| std::env::var_os("WOW_CULLDUMP").map(std::path::PathBuf::from))
-            .clone()
-    });
+    let dump_to = probe.dump_to.take().or_else(|| cull_dump_path().clone());
     // The full camera pose: replaying a dump needs forward, fov and aspect, not just the eye.
     let mut dump_text = dump_to.is_some().then(|| {
         let fwd = cam_t.forward();
