@@ -1162,6 +1162,77 @@ fn the_combat_panel_reaches_the_target_frame() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Status Text panel's rows, `(button suffix, CVar, a bar that row locks)`
+/// (`InterfaceOptionsPanels.xml`); every row registers "0" (the game CVar registrar `0x51d9b0`).
+const STATUS_TEXT_ROWS: [(&str, &str, &str); 5] = [
+    ("Player", "playerStatusText", "PlayerFrameHealthBar"),
+    ("Pet", "petStatusText", "PetFrameHealthBar"),
+    ("Party", "partyStatusText", "PartyMemberFrame1HealthBar"),
+    ("Target", "targetStatusText", "TargetFrameHealthBar"),
+    ("XP", "xpBarText", "MainMenuExpBar"),
+];
+
+/// Each Status Text row boots "0", a click and Okay writes "1" and its `CVAR_UPDATE` token shows
+/// the locked text on its bar as `value / max`, Percentages turns it to `n%`, and Defaults puts
+/// every row back to "0" and hides the text again.
+#[test]
+fn every_status_text_row_locks_its_bars_text() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-statustext");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsStatusTextPanel)";
+    assert_eq!(s.cvar("statusTextPercentage").as_deref(), Some("0"));
+    for (suffix, cvar, bar) in STATUS_TEXT_ROWS {
+        let button = format!("InterfaceOptionsStatusTextPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some("0"), "{cvar} boots");
+        s.run(&format!(
+            "{bar}:SetMinMaxValues(0, 100) {bar}:SetValue(42) TextStatusBar_UpdateTextString({bar})"
+        ))
+        .unwrap();
+        let text = |s: &UiScript| -> (bool, String) {
+            s.eval(&format!(
+                "local t = {bar}.TextString return t:IsShown() == 1, t:GetText() or ''"
+            ))
+            .unwrap()
+        };
+        assert!(!text(&s).0, "{bar}'s text hides with {cvar} off");
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(s.cvar(cvar).as_deref(), Some("1"), "Okay writes {cvar}");
+        let (shown, value) = text(&s);
+        assert!(shown, "{bar}'s text locks on");
+        assert!(
+            value.contains("42") && value.contains("100"),
+            "{bar}: {value:?}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsStatusTextPanelPercentages:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        // The experience bar keeps its `XP` prefix (`alwaysPrefix`).
+        let percent = text(&s).1;
+        assert!(
+            percent == "42%" || percent == "XP 42%",
+            "{bar} in percent: {percent:?}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(s.cvar(cvar).as_deref(), Some("0"), "Defaults resets {cvar}");
+        assert_eq!(s.cvar("statusTextPercentage").as_deref(), Some("0"));
+        assert!(!text(&s).0, "{bar}'s text hides again");
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Display panel's CVar checkboxes, `(button suffix, CVar, registered default)`
 /// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const DISPLAY_CHECKBOXES: [(&str, &str, &str); 10] = [
