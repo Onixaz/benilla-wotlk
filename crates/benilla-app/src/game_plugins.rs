@@ -236,6 +236,8 @@ impl PluginGroup for GamePlugins {
             .add(UiTotemPlugin)
             // The threat lists; after UiUnitPlugin, whose feed sets it runs in.
             .add(crate::ui_threat::UiThreatPlugin)
+            // Vehicles; after the net plugin, whose object handlers spawn the unit it reads.
+            .add(crate::vehicle::VehiclePlugin)
             // The rune table; after UiActionPlugin, whose `Spells` names each rune spell's power.
             .add(crate::ui_rune::UiRunePlugin)
             // After UiActionPlugin, whose `Spells` and cooldown clock it shares.

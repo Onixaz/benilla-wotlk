@@ -203,6 +203,7 @@ mod ui_transfer;
 mod ui_unit;
 mod ui_world_map;
 mod unit_auras;
+mod vehicle;
 mod video;
 mod vplates;
 mod wdb;
