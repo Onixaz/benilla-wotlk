@@ -484,6 +484,9 @@ pub(super) struct SpellFeedMemory {
     pub(super) reagents: Reagents,
     /// The known spells as last frame's check found them.
     pub(super) known: std::collections::BTreeSet<u32>,
+    /// The race and class the source walk (book, trainer, talent ranks) last ran for; it runs
+    /// again only when a source or these move, since a pushed id stays pushed until requeued.
+    pub(super) walked_for: Option<(u8, u8)>,
 }
 
 impl SpellFeedMemory {
@@ -608,6 +611,7 @@ pub(super) fn feed_spell_tooltips(
         return;
     };
     let memory = memory.get(&script);
+    let spells_changed = spells.as_ref().is_some_and(|s| s.is_changed());
     let Some(spells) = spells.as_deref() else {
         return;
     };
@@ -619,7 +623,20 @@ pub(super) fn feed_spell_tooltips(
             .into_iter()
             .filter(|s| !memory.pushed.contains_key(s)),
     );
-    if let Some(actions) = actions.as_deref() {
+    let race_class = self_q.single().ok().map_or((0, 0), |store| {
+        (
+            store.0.unit_race().unwrap_or(0),
+            store.0.unit_class().unwrap_or(0),
+        )
+    });
+    // A view that fails to build only lacks its catalog row, so an unmoved source has nothing new.
+    let walk_sources = memory.walked_for != Some(race_class)
+        || spells_changed
+        || actions.as_ref().is_some_and(|a| a.is_changed())
+        || trainer_subjects.as_ref().is_some_and(|t| t.is_changed())
+        || talents.as_ref().is_some_and(|t| t.is_changed());
+    memory.walked_for = Some(race_class);
+    if let Some(actions) = actions.as_deref().filter(|_| walk_sources) {
         wanted.extend(
             actions
                 .spells
@@ -638,7 +655,7 @@ pub(super) fn feed_spell_tooltips(
     );
     // The open trainer's services, which the detail icon's `SetTrainerService` renders, a
     // pet-learn service's against the pet.
-    if let Some(trainer) = trainer_subjects.as_deref() {
+    if let Some(trainer) = trainer_subjects.as_deref().filter(|_| walk_sources) {
         wanted.extend(
             trainer
                 .player
@@ -655,9 +672,8 @@ pub(super) fn feed_spell_tooltips(
         );
     }
     // Every rank of the class's talents: a talent tooltip reads the current and the next rank.
-    if let (Some(talents), Ok(store)) = (talents.as_deref(), self_q.single()) {
-        let race = store.0.unit_race().unwrap_or(0);
-        let class = store.0.unit_class().unwrap_or(0);
+    if let (Some(talents), Ok(_), true) = (talents.as_deref(), self_q.single(), walk_sources) {
+        let (race, class) = race_class;
         for tab in talents.catalog.tabs_for_class(race, class) {
             for t in talents.catalog.talents_in_tab(tab.id) {
                 wanted.extend(

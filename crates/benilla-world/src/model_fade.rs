@@ -587,8 +587,10 @@ const PENDING_TIMEOUT_SECS: f32 = 8.0;
 
 /// The appear fade's clock on a streamed unit's root. The reference fades a unit and its attached
 /// models as one, so a part that resolves later (a held item) joins this ramp; it is dropped when
-/// the ramp ends, after which a new part spawns steady.
+/// the ramp ends, after which a new part spawns steady. Sparse: inserted and dropped once per
+/// unit, it otherwise mints a twin of every unit's table that stands empty once the ramp ends.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
+#[component(storage = "SparseSet")]
 pub enum UnitAppearFade {
     /// Waiting for the world to be shown: since `since`, the backstop's origin, with the ramp
     /// running from `arrived`.

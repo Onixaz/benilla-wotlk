@@ -1129,6 +1129,10 @@ mod tests {
                 "ForcedProjection",
                 <super::ForcedProjection as Component>::STORAGE_TYPE,
             ),
+            (
+                "UnitAppearFade",
+                <crate::model_fade::UnitAppearFade as Component>::STORAGE_TYPE,
+            ),
         ] {
             assert_eq!(storage, StorageType::SparseSet, "{name}");
         }

@@ -413,12 +413,6 @@ fn extract_effects(
             AssetEvent::LoadedWithDependencies { .. } => {}
         }
     }
-    meta.vertices.clear();
-    meta.vertices.extend(quads.verts.iter().copied());
-    meta.pools.clear();
-    meta.pools.extend(quads.pools.iter().copied());
-    meta.particles.clear();
-    meta.particles.extend(quads.particles.iter().copied());
     meta.draws.clear();
     meta.draws.extend(quads.draws.iter().map(|d| ExtractedDraw {
         cam: d.cam,
@@ -438,6 +432,25 @@ fn extract_effects(
         light: d.light.clone(),
         clip: d.clip,
     }));
+}
+
+/// Take the frame's vertices, pools and particles from the main world by swap, not copy: the main
+/// world's `begin_effect_frame` clears what it gets back, so the render world's spent buffers return
+/// as its next frame's capacity.
+fn swap_effect_streams(
+    mut meta: ResMut<EffectMeta>,
+    mut main_world: ResMut<bevy::render::MainWorld>,
+) {
+    let Some(mut quads) = main_world.get_resource_mut::<EffectQuads>() else {
+        return;
+    };
+    let quads = quads.bypass_change_detection();
+    meta.vertices.clear();
+    std::mem::swap(meta.vertices.values_mut(), &mut quads.verts);
+    meta.pools.clear();
+    std::mem::swap(meta.pools.values_mut(), &mut quads.pools);
+    meta.particles.clear();
+    std::mem::swap(meta.particles.values_mut(), &mut quads.particles);
 }
 
 /// `$WOW_EFFECT_TRACE`'s name for a surface-decal draw, keyed on its sort rung, the one field
@@ -879,7 +892,10 @@ impl Plugin for EffectLanePlugin {
             .init_resource::<SpecializedRenderPipelines<EffectPipeline>>()
             .add_render_command::<Transparent3d, DrawEffects>()
             .add_systems(RenderStartup, init_effect_pipeline)
-            .add_systems(ExtractSchedule, extract_effects)
+            .add_systems(
+                ExtractSchedule,
+                (extract_effects, swap_effect_streams).chain(),
+            )
             .add_systems(
                 Render,
                 (

@@ -1097,10 +1097,10 @@ mod loader_tests {
         );
     }
 
-    /// The reference names a handler chunk `"%s:%s"` from the object's `GetName`, or `<unnamed>`,
-    /// and loads the raw body, so body line n is chunk line n.
+    /// The reference names an XML handler's chunk `"*:%s"` by the handler alone, whatever the
+    /// frame, and loads the raw body, so body line n is chunk line n.
     #[test]
-    fn an_xml_handler_chunk_is_named_by_its_frame_and_handler() {
+    fn an_xml_handler_chunk_is_named_by_its_handler() {
         let s = UiScript::new().unwrap();
         let doc = parse(
             "<Ui>\n\
@@ -1135,18 +1135,18 @@ mod loader_tests {
         // The `error` is on the body's second line: `:2:`.
         let named = raised(r#"NamedBtn:GetScript("OnClick")"#);
         assert!(
-            named.starts_with(r#"[string "NamedBtn:OnClick"]:2: boom"#),
+            named.starts_with(r#"[string "*:OnClick"]:2: boom"#),
             "{named}"
         );
-        // A `CreateFrame` instance is named by its own `GetName()`, not by its template.
+        // A `CreateFrame` instance's template handler too.
         let made = raised(r#"Made:GetScript("OnClick")"#);
         assert!(
-            made.starts_with(r#"[string "Made:OnClick"]:1: tmpl"#),
+            made.starts_with(r#"[string "*:OnClick"]:1: tmpl"#),
             "{made}"
         );
         let anon = raised(r#"BenillaAnon:GetScript("OnClick")"#);
         assert!(
-            anon.starts_with(r#"[string "<unnamed>:OnClick"]:1: anon"#),
+            anon.starts_with(r#"[string "*:OnClick"]:1: anon"#),
             "{anon}"
         );
     }

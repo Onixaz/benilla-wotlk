@@ -14,8 +14,7 @@ impl Loader<'_> {
         dbg: &str,
     ) -> Option<Function> {
         let mut onload = None;
-        // A handler's chunk name is `"<GetName()>:<Handler>"` off the wrapper, `<unnamed>` for a
-        // nameless frame, never the loader's `dbg`.
+        // The owner's name only words the unknown-function warning; the chunk is `*:<Handler>`.
         for scripts in children_named(el, "Scripts") {
             let owner = wrapper
                 .call_method::<Option<String>>("GetName", ())
@@ -34,7 +33,7 @@ impl Loader<'_> {
                 } else if cleared {
                     None
                 } else {
-                    match self.compile_handler(handler, &name, &owner, dbg) {
+                    match self.compile_handler(handler, &name, dbg) {
                         Some(f) => Some(f),
                         None => continue,
                     }
@@ -107,15 +106,16 @@ impl Loader<'_> {
         }
     }
 
-    /// Compile a handler body as the client does: formatted into `return function(<params>) %s
-    /// end` ([`crate::script::event::script_parameters`]), keeping the function the chunk returns,
-    /// the body on the template's first line so its line numbers hold. A `function=` replaces the
-    /// body before this is reached ([`Self::named_handler`]).
+    /// Compile a handler body as `LoadXML_Scripts` (`0x48fef0`) does: formatted into `return
+    /// function(<params>) %s end` ([`crate::script::event::script_parameters`]), the body on the
+    /// first line so its line numbers hold, the chunk named `*:<Handler>` (`0x9eb83c`), and
+    /// compiled once: the reference caches the function on the XML node and every instance of a
+    /// template shares it. Keyed here by handler and body, as an expanded template clones its
+    /// nodes. A `function=` replaces the body before this is reached ([`Self::named_handler`]).
     pub(super) fn compile_handler(
         &mut self,
         handler: &Element,
         name: &str,
-        owner: &str,
         dbg: &str,
     ) -> Option<Function> {
         // The raw body, never trimmed: a whitespace body is a real empty chunk (`apply_scripts`).
@@ -123,17 +123,30 @@ impl Loader<'_> {
         if body.is_empty() {
             return None;
         }
+        let cache = self.handler_cache();
+        let key = format!("{name}\0{body}");
+        if let Some(f) = cache
+            .as_ref()
+            .and_then(|c| c.raw_get::<Option<Function>>(key.as_str()).ok().flatten())
+        {
+            return Some(f);
+        }
         let params = crate::script::event::script_parameters(name);
         let source = format!("return function({params}) {body} end");
         let compiled = self
             .lua()
             .load(source.as_str())
-            .set_name(format!("{owner}:{name}"))
+            .set_name(format!("*:{name}"))
             .set_mode(mlua::ChunkMode::Text)
             .into_function()
             .and_then(|chunk| chunk.call::<Function>(()));
         match compiled {
-            Ok(f) => Some(f),
+            Ok(f) => {
+                if let Some(c) = cache {
+                    let _ = c.raw_set(key, f.clone());
+                }
+                Some(f)
+            }
             Err(e) => {
                 self.report
                     .errors
@@ -141,6 +154,18 @@ impl Loader<'_> {
                 None
             }
         }
+    }
+
+    /// The VM's compiled XML handlers, by handler and body.
+    fn handler_cache(&self) -> Option<Table> {
+        const KEY: &str = "benilla.xml_handlers";
+        let lua = self.lua();
+        if let Ok(t) = lua.named_registry_value::<Table>(KEY) {
+            return Some(t);
+        }
+        let t = lua.create_table().ok()?;
+        lua.set_named_registry_value(KEY, &t).ok()?;
+        Some(t)
     }
 
     /// Fire a captured `OnLoad` under the event path's convention, `this` set and restored; an
