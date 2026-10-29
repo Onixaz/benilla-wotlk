@@ -139,6 +139,22 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_MOVE_SET_COLLISION_HGT_ACK`: the grant's counter, our pose and the height it set.
+    pub fn collision_height_ack(
+        &mut self,
+        guid: u64,
+        counter: u32,
+        height: f32,
+        flags: u32,
+        pose: ([f32; 3], f32),
+    ) -> Result<()> {
+        let info = movement_info(pose.0, pose.1, flags);
+        self.send(
+            opcode::CMSG_MOVE_SET_COLLISION_HGT_ACK,
+            &messages::collision_height_ack(guid, counter, &info, height),
+        )
+    }
+
     /// Ack a granted root, water-walk, feather-fall, hover or can-fly: guid, echoed counter and
     /// our pose, plus a trailing `f32` apply for all but root. Unacked, the server never applies it.
     /// `flags` must carry the mode's bit (a root apply-ack without it is a kick, vmangos

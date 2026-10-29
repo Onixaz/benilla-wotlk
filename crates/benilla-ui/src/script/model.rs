@@ -621,6 +621,8 @@ pub(crate) struct Model {
     pub(crate) title_throttle: super::title::TitleThrottle,
     /// What `GetSpellInfo` asks; absent before the app installs it.
     pub(crate) spell_info: Option<std::rc::Rc<dyn super::spell_info::SpellInfoSource>>,
+    /// Each held unit's threat list.
+    pub(crate) threat: super::threat::ThreatView,
     /// The four totem slots and their tools.
     pub(crate) totems: super::totem::TotemSlots,
     /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
@@ -1107,7 +1109,7 @@ impl Model {
     }
 
     /// Records a caught script error for the host, the retained log and the Lua error handler; an
-    /// error raised by the handler itself goes to `errors` directly, which stops the recursion.
+    /// error raised by the handler itself goes back to the handler alone, never through here.
     pub(crate) fn record_script_error(&mut self, msg: String) {
         self.diagnostics
             .record(super::diagnostics::DiagnosticKind::Error, &msg);
@@ -1434,6 +1436,7 @@ impl Model {
             title_sets: Vec::new(),
             title_throttle: Default::default(),
             spell_info: None,
+            threat: Default::default(),
             totems: Default::default(),
             totem_destroys: Vec::new(),
             multicast: Default::default(),

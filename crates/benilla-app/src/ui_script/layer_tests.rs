@@ -503,6 +503,44 @@ fn the_error_log_collects_off_the_error_handler() {
     );
 }
 
+/// Two different errors in one tick reach stock `ScriptErrorsFrame_Update` with the first entry's
+/// text unchanged, so it calls `ScrollingEdit_OnTextChanged` (`Blizzard_DebugTools.lua:449`) and
+/// `ScrollingEdit_OnUpdate` reads a nil `cursorOffset`, as in the reference: the box is hidden at
+/// `scriptErrors` 0 and never flushed. The handler is handed that error in turn (`0x850830`), so
+/// the frame files it as a third entry and the host sees only the faults, here and on a repeat.
+#[test]
+fn two_errors_in_one_tick_file_through_the_stock_error_frame() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, failures) = production_load("errtwice", false);
+    assert!(failures.is_empty(), "load failures: {failures:#?}");
+    s.take_errors();
+    s.run(
+        "ZZTwiceA = CreateFrame('Button') ZZTwiceA:SetScript('OnClick', function() error('fault a') end) \
+         ZZTwiceB = CreateFrame('Button') ZZTwiceB:SetScript('OnClick', function() error('fault b') end) \
+         ZZTwiceA:Click() ZZTwiceB:Click()",
+    )
+    .unwrap();
+    s.dispatch_script_errors_to_handler();
+    let filed: Vec<String> = s.eval("return ScriptErrorsFrame.messages").unwrap();
+    assert_eq!(filed.len(), 3, "{filed:#?}");
+    assert!(filed[0].contains("fault a") && filed[1].contains("fault b"));
+    assert!(filed[2].contains("cursorOffset"), "{filed:#?}");
+    let errors = s.take_errors();
+    assert_eq!(errors.len(), 2, "the two faults alone: {errors:#?}");
+
+    s.run("ZZTwiceA:Click() ZZTwiceA:Click()").unwrap();
+    s.dispatch_script_errors_to_handler();
+    let errors = s.take_errors();
+    assert_eq!(
+        errors.len(),
+        2,
+        "the repeat's two faults alone: {errors:#?}"
+    );
+}
+
 /// Every global the layer defines takes the `Benilla` prefix (a slash alias its `SLASH_BENILLA_`
 /// form, as `ChatEdit_ParseText` reads it), so no layer name meets a stock or an addon one; a stock
 /// global the layer redefines keeps its name and is not a new definition here.

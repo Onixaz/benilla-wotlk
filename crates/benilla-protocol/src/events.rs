@@ -822,6 +822,13 @@ pub enum SessionEvent {
     PetComboPoints { pet: u64, target: u64, points: u8 },
     /// Drop the target when it is `guid` (`SMSG_CLEAR_TARGET`).
     ClearTarget { guid: u64 },
+    /// Entries of `unit`'s threat list, with its new highest for `SMSG_HIGHEST_THREAT_UPDATE`
+    /// (`SMSG_THREAT_UPDATE`).
+    ThreatUpdate(crate::messages::ThreatUpdate),
+    /// `victim` leaves `unit`'s threat list (`SMSG_THREAT_REMOVE`).
+    ThreatRemove { unit: u64, victim: u64 },
+    /// `unit`'s threat list is dropped (`SMSG_THREAT_CLEAR`).
+    ThreatClear { unit: u64 },
     /// The unit dismounts now, ahead of its descriptor (`SMSG_DISMOUNT`).
     Dismount { guid: u64 },
     /// A clone's caster look (`SMSG_MIRRORIMAGE_DATA`).
@@ -1079,15 +1086,22 @@ pub enum SessionEvent {
     /// The spirit healer's `CONFIRM_XP_LOSS` popup (`SMSG_SPIRIT_HEALER_CONFIRM`); accepting sends
     /// `CMSG_SPIRIT_HEALER_ACTIVATE` with `npc`.
     SpiritHealerConfirm { npc: u64 },
-    /// Our root, water-walk, feather-fall or hover changed. Ack with `counter` and our
-    /// `MovementInfo`, or the server never applies it and observers never see it.
+    /// Our collision height (`SMSG_MOVE_SET_COLLISION_HGT`). Ack with `counter`, our
+    /// `MovementInfo` and the height.
+    MoveSetCollisionHeight {
+        guid: u64,
+        counter: u32,
+        height: f32,
+    },
+    /// Our root, water-walk, feather-fall, hover, can-fly or gravity changed. Ack with `counter`
+    /// and our `MovementInfo`, or the server never applies it and observers never see it.
     MoveMode {
         guid: u64,
         counter: u32,
         mode: crate::messages::MoveMode,
         apply: bool,
     },
-    /// Any unit's movement mode (the twelve `SMSG_SPLINE_MOVE_*`), no ack; on vmangos, a unit the
+    /// Any unit's movement mode (the sixteen `SMSG_SPLINE_MOVE_*`), no ack; on vmangos, a unit the
     /// server drives. `apply` sets the mode's `MOVEMENTFLAGS` bit, and the reference then re-runs
     /// the unit's gait selector (`0x6014ec`).
     SplineMoveMode {

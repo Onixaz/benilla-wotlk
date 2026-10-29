@@ -358,6 +358,14 @@ pub fn move_flag_ack(guid: u64, counter: u32, info: &MovementInfo, apply: Option
     body
 }
 
+/// `CMSG_MOVE_SET_COLLISION_HGT_ACK` body: the movement-mode ack with the granted height as its
+/// value (`0x7151f0`, written by `0x71ef80`).
+pub fn collision_height_ack(guid: u64, counter: u32, info: &MovementInfo, height: f32) -> Vec<u8> {
+    let mut body = move_flag_ack(guid, counter, info, None);
+    body.extend_from_slice(&height.to_le_bytes());
+    body
+}
+
 /// `CMSG_MOVE_KNOCK_BACK_ACK` body, a movement-mode ack without `apply` (`HandleMoveKnockBackAck`).
 /// `info` must carry `MOVEFLAG_JUMPING` and the launch quad, which the server matches.
 pub fn knock_back_ack(guid: u64, counter: u32, info: &MovementInfo) -> Vec<u8> {

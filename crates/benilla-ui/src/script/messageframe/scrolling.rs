@@ -80,17 +80,26 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // The justify quartet, on both classes ([`super::install_justify`]).
     super::install_justify(lua, &m, "ScrollingMessageFrame")?;
 
-    // AddMessage(text [, r, g, b [, id]]) (`0x792900`): white without rgb; the state quantizes
-    // the colour and makes the line opaque. The rgb test is three `lua_isnumber` checks; the id
-    // is stack index 6 when they pass (`0x792b13`) and index 3, `r`'s, when they fail
+    // AddMessage(text [, r, g, b,] id, backFill) (`0x792900`): white without rgb; the state
+    // quantizes the colour and makes the line opaque. The rgb test is three `lua_isnumber` checks;
+    // the id is stack index 6 when they pass (`0x792b13`) and index 3, `r`'s, when they fail
     // (`0x792b48`), which makes `AddMessage(text, id)` work and gives
     // `AddMessage(text, nil, nil, nil, nil, 5)` id 0. A missing id is 0, which `UpdateColorByID`
-    // never matches (`0x788250`). The text gate (`0x79299c`) is the plain class's
-    // ([`super::message_text`]).
+    // never matches (`0x788250`). `backFill` is stack index 7 or 4 and counts only as a boolean
+    // (`0x972f20`). The text gate (`0x79299c`) is the plain class's ([`super::message_text`]).
     m.set(
         "AddMessage",
         lua.create_function(
-            |lua, (this, text, r, g, b, id): (Table, Value, Value, Value, Value, Value)| {
+            |lua,
+             (this, text, r, g, b, id, back_fill): (
+                Table,
+                Value,
+                Value,
+                Value,
+                Value,
+                Value,
+                Value,
+            )| {
                 let Some(text) = super::message_text(lua, &text) else {
                     return Ok(());
                 };
@@ -103,12 +112,21 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Value::Number(n) if n.is_finite() && *n >= 0.0 => *n as u32,
                     _ => 0,
                 };
+                // Stack index 7 or 4; the combat log's refilter passes it (`COMBATLOG:AddMessage`).
+                let back_fill =
+                    matches!(if has_rgb { &back_fill } else { &g }, Value::Boolean(true));
                 let (r, g, b) = if has_rgb {
                     (num_f32(&r), num_f32(&g), num_f32(&b))
                 } else {
                     (1.0, 1.0, 1.0)
                 };
-                with_smf(lua, &this, |smf| smf.add_with_id(text, r, g, b, id))
+                with_smf(lua, &this, |smf| {
+                    if back_fill {
+                        smf.add_back_fill(text, r, g, b, id);
+                    } else {
+                        smf.add_with_id(text, r, g, b, id);
+                    }
+                })
             },
         )?,
     )?;
@@ -839,6 +857,61 @@ mod tests {
             vec![5, 0, 7],
             "shorthand id from index 3; AceConsole's nils are id 0; the coloured line's id 7"
         );
+    }
+
+    /// A backfilled line goes in before the oldest and leaves the view where it is (`0x96a9f0`):
+    /// the combat log's refilter walks newest to oldest, so the newest stays at the bottom and
+    /// the history lands above it in order; on a full ring it overwrites the oldest line.
+    #[test]
+    fn a_back_filled_line_goes_above_the_oldest_and_never_moves_the_view() {
+        let mut smf = ScrollingMessageState {
+            max_lines: 4,
+            ..Default::default()
+        };
+        smf.add("newest".into(), 1.0, 1.0, 1.0);
+        for n in 1..=2 {
+            smf.add_back_fill(format!("older {n}"), 1.0, 1.0, 1.0, 0);
+            assert!(smf.at_bottom(), "the view stays at the bottom");
+            assert_eq!(smf.lines.back().unwrap().text, "newest");
+        }
+        let texts: Vec<&str> = smf.lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["older 2", "older 1", "newest"]);
+
+        // Scrolled back one line, the same lines stay in view.
+        smf.scroll_up(1);
+        let before = smf.displayed_range(1);
+        let gen = smf.lines_gen;
+        smf.add_back_fill("older 3".into(), 1.0, 1.0, 1.0, 0);
+        assert_ne!(smf.lines_gen, gen, "a backfill is a redraw");
+        assert_eq!(smf.scroll_offset, 1);
+        assert_eq!(smf.lines[smf.displayed_range(1).start].text, "older 1");
+        assert_eq!(before.len(), smf.displayed_range(1).len());
+
+        // Full: the slot before the oldest is the oldest's, overwritten in place.
+        smf.add_back_fill("older 4".into(), 1.0, 1.0, 1.0, 0);
+        let texts: Vec<&str> = smf.lines.iter().map(|l| l.text.as_str()).collect();
+        assert_eq!(texts, ["older 4", "older 2", "older 1", "newest"]);
+    }
+
+    /// `backFill` is stack index 7 with rgb and 4 without, and only a boolean counts (`0x972f20`).
+    #[test]
+    fn the_addmessage_back_fill_index_follows_the_rgb_leg() {
+        let s = UiScript::new().unwrap();
+        s.run(
+            "BenillaBF = CreateFrame('ScrollingMessageFrame') \
+             BenillaBF:AddMessage('newest', 1, 1, 1) \
+             BenillaBF:AddMessage('rgb', 1, 1, 1, nil, true) \
+             BenillaBF:AddMessage('bare', nil, true) \
+             BenillaBF:AddMessage('number', 1, 1, 1, nil, 1) \
+             BenillaBF:AddMessage('false', nil, false)",
+        )
+        .unwrap();
+        let frame: mlua::Table = s.eval("return BenillaBF").unwrap();
+        let texts: Vec<String> = super::with_smf(s.lua(), &frame, |smf| {
+            smf.lines.iter().map(|l| l.text.clone()).collect()
+        })
+        .unwrap();
+        assert_eq!(texts, ["bare", "rgb", "newest", "number", "false"]);
     }
 
     #[test]

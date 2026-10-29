@@ -2020,6 +2020,15 @@ pub(crate) enum ClientCommand {
         pos: [f32; 3],
         orientation: f32,
     },
+    /// `CMSG_MOVE_SET_COLLISION_HGT_ACK`: the granted `height` echoed after our live pose.
+    CollisionHeightAck {
+        guid: u64,
+        counter: u32,
+        height: f32,
+        flags: u32,
+        pos: [f32; 3],
+        orientation: f32,
+    },
     /// `CMSG_MOVE_KNOCK_BACK_ACK`, `launch` echoed as the jump tail. Sent on the frame the mover
     /// takes off, never on receipt: the reference applies (`0x61624d call 0x6179c0`) then sends
     /// (`0x616261`) in one call, so the wire pose is post-launch.

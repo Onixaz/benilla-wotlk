@@ -51,6 +51,25 @@ impl super::UiScript {
     }
 }
 
+/// The flag `0x519df0` recomputes off the `threatWarning` CVar, the map and the group, read on
+/// demand: mode 0 never, 1 a dungeon or raid map (`InstanceType` 1 or 2, `0x519e4b`), 2 in a party
+/// or raid (`0x519e08`), any other value always; the CVar is read as `atoi` reads it.
+pub(crate) fn threat_warning_enabled(model: &super::Model) -> bool {
+    let mode = model
+        .cvars
+        .get("threatwarning")
+        .map_or(3, |c| atoi(&c.value));
+    match mode {
+        0 => false,
+        1 => matches!(model.instance_type, Some(1 | 2)),
+        2 => {
+            let g = &model.unit_guids;
+            g.party.iter().any(|&p| p != 0) || g.raid.iter().any(|&r| r != 0)
+        }
+        _ => true,
+    }
+}
+
 /// C's `atoi`, which `CVar` keeps as its integer: leading blanks, an optional sign, then digits up
 /// to the first other byte; nothing parsed is 0.
 fn atoi(s: &str) -> i64 {
@@ -114,30 +133,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `IsThreatWarningEnabled()` (`0x517d30`): 1 or nil off the flag `0x519df0` recomputes when
-    // the `threatWarning` CVar, the map or the group changes, read here on demand. Mode 0 is
-    // never, 1 a dungeon or raid map (`InstanceType` 1 or 2, `0x519e4b`), 2 in a party or raid
-    // (`0x519e08`), and any other value always; the CVar is read as `atoi` reads it.
+    // `IsThreatWarningEnabled()` (`0x517d30`): 1 or nil off [`threat_warning_enabled`].
     g.set(
         "IsThreatWarningEnabled",
         lua.create_function(|lua, ()| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
-            let mode = model
-                .cvars
-                .get("threatwarning")
-                .map_or(3, |c| atoi(&c.value));
-            let on = match mode {
-                0 => false,
-                1 => matches!(model.instance_type, Some(1 | 2)),
-                2 => {
-                    let g = &model.unit_guids;
-                    g.party.iter().any(|&p| p != 0) || g.raid.iter().any(|&r| r != 0)
-                }
-                _ => true,
-            };
-            Ok(super::binding_abi::flag(on))
+            Ok(super::binding_abi::flag(threat_warning_enabled(&model)))
         })?,
     )?;
 

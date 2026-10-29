@@ -234,6 +234,8 @@ impl PluginGroup for GamePlugins {
             .add(crate::ui_companion::UiCompanionPlugin)
             // The totem slots; after UiActionPlugin, whose `Spells` names each totem's icon.
             .add(UiTotemPlugin)
+            // The threat lists; after UiUnitPlugin, whose feed sets it runs in.
+            .add(crate::ui_threat::UiThreatPlugin)
             // The rune table; after UiActionPlugin, whose `Spells` names each rune spell's power.
             .add(crate::ui_rune::UiRunePlugin)
             // After UiActionPlugin, whose `Spells` and cooldown clock it shares.
@@ -846,7 +848,15 @@ pub(crate) mod schedule_tests {
     /// - The zone PvP answer (#689) adds 6: `area::feed_zone_events` reads the character
     ///   `Roster` for the realm's PvP type against its six writers in `char_select` and
     ///   `drive_glue_mgr`, which change it only at character select, where no zone feeds.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_895;
+    /// - `ui_threat::feed_threat` (#629) adds 10: against the `Transform` writers
+    ///   `transport::tick_transports`, `reseek_ridden_transport_at_worldport`, `compose_riders`,
+    ///   `ground_deck_riders` and `portrait::booth::face_booth_billboards`, whose poses its melee
+    ///   test reads one frame late at worst, as `ui_unit::feed_unit_reach`'s range test does
+    ///   (`UiFeed` runs before `WorldStage::Input`, so it cannot follow the transport chain); and
+    ///   against the `TutorialEvent` writers `tutorial::watch_self`, `watch_windows`,
+    ///   `ui_battlefield::feed_battlefield` and `ui_dialog_verbs::feed_meeting_stone` and the
+    ///   drain `tutorial::feed_tutorials`: it only appends one fire-once ask.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_905;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

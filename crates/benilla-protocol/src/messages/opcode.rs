@@ -529,6 +529,12 @@ pub const SMSG_SPLINE_MOVE_STOP_SWIM: u16 = 0x030C; // 780
 pub const SMSG_SPLINE_MOVE_SET_RUN_MODE: u16 = 0x030D; // 781
 pub const SMSG_SPLINE_MOVE_SET_WALK_MODE: u16 = 0x030E; // 782
 pub const SMSG_SPLINE_MOVE_ROOT: u16 = 0x031A; // 794
+/// 3.3.5a only: flight started or ended on a unit we do not control (`0x741c30`).
+pub const SMSG_SPLINE_MOVE_SET_FLYING: u16 = 0x0422; // 1058
+pub const SMSG_SPLINE_MOVE_UNSET_FLYING: u16 = 0x0423; // 1059
+/// 3.3.5a only: gravity off or on for a unit we do not control (`0x741c30`).
+pub const SMSG_SPLINE_MOVE_GRAVITY_DISABLE: u16 = 0x04D3; // 1235
+pub const SMSG_SPLINE_MOVE_GRAVITY_ENABLE: u16 = 0x04D4; // 1236
 pub const MSG_MOVE_SET_RUN_SPEED: u16 = 0x00CD; // 205
 pub const MSG_MOVE_SET_RUN_BACK_SPEED: u16 = 0x00CF; // 207
 pub const MSG_MOVE_SET_WALK_SPEED: u16 = 0x00D1; // 209
@@ -960,6 +966,16 @@ pub const CMSG_MOVE_FEATHER_FALL_ACK: u16 = 0x02CF; // 719
 pub const SMSG_MOVE_SET_CAN_FLY: u16 = 0x0343; // 835
 pub const SMSG_MOVE_UNSET_CAN_FLY: u16 = 0x0344; // 836
 pub const CMSG_MOVE_SET_CAN_FLY_ACK: u16 = 0x0345; // 837
+/// 3.3.5a only: `MOVEFLAG_DISABLE_GRAVITY` set and cleared on our mover (handler `0x732450`), each
+/// with its own ack.
+pub const SMSG_MOVE_GRAVITY_DISABLE: u16 = 0x04CE; // 1230
+pub const CMSG_MOVE_GRAVITY_DISABLE_ACK: u16 = 0x04CF; // 1231
+pub const SMSG_MOVE_GRAVITY_ENABLE: u16 = 0x04D0; // 1232
+pub const CMSG_MOVE_GRAVITY_ENABLE_ACK: u16 = 0x04D1; // 1233
+/// 3.3.5a only: our mover's collision height, `u32 counter`, `f32 height` (handler `0x732450`).
+pub const SMSG_MOVE_SET_COLLISION_HGT: u16 = 0x0516; // 1302
+/// The ack: the mode-ack body with the height as its value (`0x7151f0`).
+pub const CMSG_MOVE_SET_COLLISION_HGT_ACK: u16 = 0x0517; // 1303
 /// 3.3.5a only: our mover's flight start or stop, a plain `MovementInfo` report (`0x6ef860`).
 pub const CMSG_MOVE_SET_FLY: u16 = 0x0346; // 838
 
@@ -975,6 +991,8 @@ pub const MSG_MOVE_FEATHER_FALL: u16 = 0x02B0; // 688
 pub const MSG_MOVE_WATER_WALK: u16 = 0x02B1; // 689
 /// 3.3.5a only: another unit's can-fly change, the relay shape (`0x741b60`).
 pub const MSG_MOVE_UPDATE_CAN_FLY: u16 = 0x03AD; // 941
+/// 3.3.5a only: another unit's gravity change, the relay shape (`0x741b60`).
+pub const MSG_MOVE_GRAVITY_CHNG: u16 = 0x04D2; // 1234
 
 // Knockback. `SMSG_MOVE_KNOCK_BACK` to the mover: packed guid, `u32 counter`, `f32` vcos, vsin,
 // speedXY, speedZ, with speedZ down-positive like the jump tail. The mandatory ack is full u64
@@ -1302,6 +1320,14 @@ pub const SMSG_PET_UPDATE_COMBO_POINTS: u16 = 0x0492; // 1170
 pub const SMSG_MODIFY_COOLDOWN: u16 = 0x0491; // 1169
 /// Drop the named target (`0x756800`'s `0x3bf` arm).
 pub const SMSG_CLEAR_TARGET: u16 = 0x03BF; // 959
+/// A unit's threat list and its new highest (`0x741c90`).
+pub const SMSG_HIGHEST_THREAT_UPDATE: u16 = 0x0482; // 1154
+/// A unit's threat list (`0x741c90`).
+pub const SMSG_THREAT_UPDATE: u16 = 0x0483; // 1155
+/// One unit off a unit's threat list (`0x737b20`).
+pub const SMSG_THREAT_REMOVE: u16 = 0x0484; // 1156
+/// A unit's whole threat list dropped (`0x734b00`).
+pub const SMSG_THREAT_CLEAR: u16 = 0x0485; // 1157
 /// A unit dismounts now, ahead of its descriptor (`Packet_SMSG_DISMOUNT` `0x741a40`).
 pub const SMSG_DISMOUNT: u16 = 0x03AC; // 940
 /// Ask for a clone's caster look (`CGUnit_C::RequestMirrorImageData` `0x716f10`).

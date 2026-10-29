@@ -130,6 +130,10 @@ pub(super) fn step(
     // walk resolver returns on a step under `2^-20`. A root caught mid-air hangs until `ClearRoot`
     // (`0x7c7370`) starts the fall (`0x7c61c0`, which refuses while rooted, `0x7c61d6`).
     let anchored = !held && player.modes.rooted;
+    // Gravity off (`DISABLE_GRAVITY`): nothing pulls the body down and it cannot jump (`Jump`
+    // `0x9883f0` refuses), so an unsupported body holds its height and steers as on the ground;
+    // it is not falling, so no FALLING goes out (`0x6eba60` stops the fall).
+    let weightless = !held && !anchored && player.modes.levitating;
     // A body part-way up a foot cone stands: the straight-down probe sees only the riser it rides,
     // and the ride is re-certified every frame it continues.
     let on_floor =
@@ -176,7 +180,7 @@ pub(super) fn step(
         // (`0x615ec5`), so no `MSG_MOVE_JUMP` and no retry. `wire_jump` is `Jump(0)`, which skips
         // the test (`0x7c6236`), so a hover grant can launch the hovering body. The mount flourish
         // is diverted upstream in `control` (`0x60dea0`), so hover does not gate it.
-        if (want_jump && !player.modes.hover) || wire_jump {
+        if (want_jump && !player.modes.hover && !weightless) || wire_jump {
             player.vel_y = JUMP_SPEED;
             player.launch_vz = JUMP_SPEED;
             player.wedged = false;
@@ -185,6 +189,8 @@ pub(super) fn step(
             // A moving jump is locked to its momentum; a standing one may steer once.
             player.arc_dirs_set = moving;
         }
+    } else if weightless {
+        player.vel_y = 0.0;
     } else if !player.airborne_prev {
         // A step-off: `StartFalling(0)` launches at exactly 0, which the wire tail sends and the
         // FALLINGFAR legs split on; the nibble seeds from the keys.
@@ -197,7 +203,7 @@ pub(super) fn step(
     // speed (`0x7c5d20`). `vel_y` keeps the end-of-step speed that the next frame and the wire
     // read; `fall_mean_vy` is the exact rate to move at ([`fall_step`]).
     let mut fall_mean_vy = player.vel_y;
-    if !held && !anchored && (jumped || !grounded) {
+    if !held && !anchored && (jumped || !grounded) && !(weightless && !jumped) {
         let terminal = if player.modes.feather_fall {
             FEATHER_TERMINAL_VELOCITY
         } else {
@@ -212,7 +218,7 @@ pub(super) fn step(
     if knocked {
         // The launch owns both axes: a knockback from standing is still `grounded` this frame, and
         // the walk arm would hand the horizontal back to the keys.
-    } else if grounded && !anchored {
+    } else if (grounded || weightless) && !anchored {
         player.horiz_vel = input_horiz;
     } else if !held && !anchored && moving && !player.arc_dirs_set {
         // Air control: one nudge for a jump taken standing, re-seeding the airborne direction
@@ -245,7 +251,9 @@ pub(super) fn step(
         // Only this mover has a fall to elect, so it spends the no-floor drop (`pos.z -= achieved`
         // at `0x636e52`) and a ledge's first fall frame starts lower. A walk frame that went
         // nowhere writes the `stup` report ([`super::step_probe`]).
-        let resolved = g.center - Vec3::Y * g.unsupported.unwrap_or(0.0);
+        // A weightless body elects no fall, so it does not spend the drop either.
+        let drop = g.unsupported.filter(|_| !weightless).unwrap_or(0.0);
+        let resolved = g.center - Vec3::Y * drop;
         super::step_probe::watch(
             world,
             capsule,
@@ -301,7 +309,8 @@ pub(super) fn step(
         player.wedge_still = 0;
     }
     // The detecting frame is grounded, so the landing (`MSG_MOVE_FALL_LAND`) goes out this frame.
-    let mut grounded = grounded || player.wedged;
+    // A weightless body is never airborne, so it reads as standing wherever it hangs.
+    let mut grounded = grounded || player.wedged || (weightless && !jumped);
 
     // The water floor, after the slide: a body landing on water crosses more than [`LAND_PROBE`]
     // in a frame. Down is the reference's snap with its hover arm, `z − max(L − 1, 0)`
@@ -2627,6 +2636,67 @@ mod tests {
             "a body at rest under the surface is still lifted onto it: {rest_y}"
         );
         assert_eq!(rest_vy, 0.0, "and the floor takes its velocity");
+    }
+
+    /// Gravity off (`SMSG_MOVE_GRAVITY_DISABLE`): a body walked off a ledge holds its height and
+    /// keeps steering, never reads airborne, and refuses the jump key; with gravity on, the same
+    /// walk falls.
+    #[test]
+    fn a_weightless_body_walks_off_a_ledge_level_and_cannot_jump() {
+        const LEDGE: [(f32, f32); 2] = [(-6.0, 0.0), (0.0, 0.0)];
+        let walk = |levitating: bool, jump: bool| {
+            world_from_profile(&LEDGE)
+                .world_mut()
+                .run_system_once(move |world: benilla_world::collision::WorldCollision| {
+                    let capsule = player_capsule();
+                    let mut time = Time::default();
+                    time.advance_by(std::time::Duration::from_secs_f32(1.0 / 60.0));
+                    let mut player = Player {
+                        modes: super::super::state::MoveModes {
+                            levitating,
+                            ..Default::default()
+                        },
+                        pos: Vec3::new(-2.0, 0.0, 0.0),
+                        ..Default::default()
+                    };
+                    let mut ever_airborne = false;
+                    for _ in 0..60 {
+                        let out = step(
+                            &mut player,
+                            &time,
+                            &world,
+                            &capsule,
+                            !jump,
+                            if jump { Vec3::ZERO } else { Vec3::X },
+                            7.0,
+                            jump,
+                            false,
+                            None,
+                            None,
+                            AIR_NUDGE_SPEED,
+                        );
+                        ever_airborne |= !out.grounded;
+                    }
+                    (player.pos, ever_airborne)
+                })
+                .unwrap()
+        };
+        let (pos, airborne) = walk(true, false);
+        assert!(pos.x > 1.0, "it steered past the edge: {pos}");
+        // The walk resolver's rim snap may take a few centimetres as the capsule rounds the
+        // corner; past it nothing pulls the body down.
+        assert!(pos.y > -0.1, "and holds its height there: {pos}");
+        assert!(!airborne, "a weightless body is never falling");
+        let (fallen, _) = walk(false, false);
+        assert!(
+            fallen.y < -1.0,
+            "with gravity the same walk falls: {fallen}"
+        );
+        let (jumped, airborne) = walk(true, true);
+        assert!(
+            jumped.y.abs() < 1.0e-3 && !airborne,
+            "the jump key does nothing while weightless: {jumped}"
+        );
     }
 
     /// A hovering water-walker holds the hover line walking and standing: the snap must see the

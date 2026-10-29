@@ -375,6 +375,11 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             points,
         }],
         ServerPacket::ClearTarget { guid } => vec![SessionEvent::ClearTarget { guid }],
+        ServerPacket::ThreatUpdate(u) => vec![SessionEvent::ThreatUpdate(u)],
+        ServerPacket::ThreatRemove { unit, victim } => {
+            vec![SessionEvent::ThreatRemove { unit, victim }]
+        }
+        ServerPacket::ThreatClear { unit } => vec![SessionEvent::ThreatClear { unit }],
         ServerPacket::Dismount { guid } => vec![SessionEvent::Dismount { guid }],
         ServerPacket::MirrorImageData { guid, image } => {
             vec![SessionEvent::MirrorImageData { guid, image }]
@@ -607,6 +612,15 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::SpiritHealerConfirm { npc } => {
             vec![SessionEvent::SpiritHealerConfirm { npc }]
         }
+        ServerPacket::MoveSetCollisionHeight {
+            guid,
+            counter,
+            height,
+        } => vec![SessionEvent::MoveSetCollisionHeight {
+            guid,
+            counter,
+            height,
+        }],
         ServerPacket::MoveMode {
             guid,
             counter,
