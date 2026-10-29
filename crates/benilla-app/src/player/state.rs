@@ -154,8 +154,9 @@ pub(crate) struct MoveModes {
     /// swimming turns water walking off and hover refuses the breach: each gate is traced, the sum
     /// is not.
     pub(crate) hover: bool,
-    /// `MOVEFLAG_LEVITATING` (GM `.cheat fly`), merged unacked from a server-authored move: the
-    /// swim decision does not run while it is set (`0x6030d2`), so a server-set swim is flight.
+    /// 3.3.5a's `DISABLE_GRAVITY` (`0x400`, 1.12.1's levitating), from `SMSG_MOVE_GRAVITY_DISABLE`
+    /// or merged unacked from a server-authored move: the body neither falls nor jumps while it is
+    /// set (`0x9883f0`, `0x6eba60`), and the swim decision does not run (`0x6030d2`).
     pub(crate) levitating: bool,
     /// 3.3.5a's `CAN_FLY` (`SMSG_MOVE_SET_CAN_FLY`, a flying mount or `.gm fly on`): the jump key
     /// takes flight and a fall off a ledge becomes one ([`super::flight`]).
@@ -163,9 +164,10 @@ pub(crate) struct MoveModes {
 }
 
 impl MoveModes {
-    /// Grant or revoke one acked mode; `levitating` has no opcode and arrives by the wire merge.
+    /// Grant or revoke one acked mode; `levitating` also arrives by the wire merge.
     pub(crate) fn set(&mut self, mode: MoveMode, apply: bool) {
         match mode {
+            MoveMode::DisableGravity => self.levitating = apply,
             MoveMode::Root => self.rooted = apply,
             MoveMode::WaterWalk => self.water_walking = apply,
             MoveMode::FeatherFall => self.feather_fall = apply,

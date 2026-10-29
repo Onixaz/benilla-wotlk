@@ -138,10 +138,11 @@ pub use client::{
     auth_session, auth_session_wotlk, channel_announcements, channel_ban, channel_invite,
     channel_kick, channel_list, channel_moderate, channel_moderator, channel_mute, channel_owner,
     channel_password, channel_set_owner, channel_unban, channel_unmoderator, channel_unmute,
-    char_create, creature_query, force_speed_ack, full_guid, join_channel, join_channel_wotlk,
-    knock_back_ack, leave_channel, leave_channel_wotlk, messagechat, messagechat_channel,
-    messagechat_kind, messagechat_whisper, move_flag_ack, move_spline_done, move_time_skipped,
-    movement, pet_name_query, ping, played_time, query_time, random_roll, teleport_ack, text_emote,
+    char_create, collision_height_ack, creature_query, force_speed_ack, full_guid, join_channel,
+    join_channel_wotlk, knock_back_ack, leave_channel, leave_channel_wotlk, messagechat,
+    messagechat_channel, messagechat_kind, messagechat_whisper, move_flag_ack, move_spline_done,
+    move_time_skipped, movement, pet_name_query, ping, played_time, query_time, random_roll,
+    teleport_ack, text_emote,
 };
 pub use combat_log::{
     spell_hit_info, BuildingDamage, DamageShield, DispelFailed, EnchantmentLog,
@@ -235,7 +236,8 @@ pub use mirror_timer::{
 };
 pub use movement::{
     JumpInfo, MoveMode, MovementInfo, RelayVerb, SpeedKind, SplineMode, TransportPose,
-    CLASSIC_ASCENDING, CLASSIC_CAN_FLY, CLASSIC_DESCENDING, CLASSIC_FLYING,
+    CLASSIC_ASCENDING, CLASSIC_CAN_FLY, CLASSIC_DESCENDING, CLASSIC_DISABLE_GRAVITY,
+    CLASSIC_FLYING,
 };
 pub use opcode_names::opcode_name;
 pub use packet::{CreatureQueryInfo, MonsterMoveFacing, ServerPacket};

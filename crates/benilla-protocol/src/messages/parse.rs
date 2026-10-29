@@ -158,6 +158,7 @@ const fn is_movement_relay(o: u16) -> bool {
             | opcode::MSG_MOVE_FEATHER_FALL
             | opcode::MSG_MOVE_WATER_WALK
             | opcode::MSG_MOVE_UPDATE_CAN_FLY
+            | opcode::MSG_MOVE_GRAVITY_CHNG
             | opcode::MSG_MOVE_TELEPORT
     )
 }
@@ -1432,7 +1433,7 @@ fn parse_server_body(
         opcode::SMSG_SPIRIT_HEALER_CONFIRM => ServerPacket::SpiritHealerConfirm {
             npc: death::read_spirit_healer_confirm(&mut r)?,
         },
-        // The acked mode family, all ten `packed guid, u32 counter` (`0x732450`, then `0x7307a0`
+        // The acked mode family, all twelve `packed guid, u32 counter` (`0x732450`, then `0x7307a0`
         // reads the counter); unacked, the server never applies the change.
         opcode::SMSG_FORCE_MOVE_ROOT
         | opcode::SMSG_FORCE_MOVE_UNROOT
@@ -1443,7 +1444,9 @@ fn parse_server_body(
         | opcode::SMSG_MOVE_SET_HOVER
         | opcode::SMSG_MOVE_UNSET_HOVER
         | opcode::SMSG_MOVE_SET_CAN_FLY
-        | opcode::SMSG_MOVE_UNSET_CAN_FLY => {
+        | opcode::SMSG_MOVE_UNSET_CAN_FLY
+        | opcode::SMSG_MOVE_GRAVITY_DISABLE
+        | opcode::SMSG_MOVE_GRAVITY_ENABLE => {
             let (mode, apply) = match opcode {
                 opcode::SMSG_FORCE_MOVE_ROOT => (MoveMode::Root, true),
                 opcode::SMSG_FORCE_MOVE_UNROOT => (MoveMode::Root, false),
@@ -1454,7 +1457,9 @@ fn parse_server_body(
                 opcode::SMSG_MOVE_SET_HOVER => (MoveMode::Hover, true),
                 opcode::SMSG_MOVE_UNSET_HOVER => (MoveMode::Hover, false),
                 opcode::SMSG_MOVE_SET_CAN_FLY => (MoveMode::CanFly, true),
-                _ => (MoveMode::CanFly, false),
+                opcode::SMSG_MOVE_UNSET_CAN_FLY => (MoveMode::CanFly, false),
+                opcode::SMSG_MOVE_GRAVITY_DISABLE => (MoveMode::DisableGravity, true),
+                _ => (MoveMode::DisableGravity, false),
             };
             let guid = read_packed_guid(&mut r)?;
             let counter = read_u32_le(&mut r)?;
@@ -1465,8 +1470,18 @@ fn parse_server_body(
                 apply,
             }
         }
-        // The observer mode family: twelve bare packed guids for any unit, nothing to ack
-        // (vmangos `SendMovementFlagChangeToAll`; the reference's one handler `0x603c80`).
+        // The collision-height grant: the acked family's head, then the height (`0x7307a0`).
+        opcode::SMSG_MOVE_SET_COLLISION_HGT => {
+            let guid = read_packed_guid(&mut r)?;
+            let counter = read_u32_le(&mut r)?;
+            ServerPacket::MoveSetCollisionHeight {
+                guid,
+                counter,
+                height: read_f32_le(&mut r)?,
+            }
+        }
+        // The observer mode family: sixteen bare packed guids for any unit, nothing to ack
+        // (vmangos `SendMovementFlagChangeToAll`; 12340's one handler `0x741c30`).
         opcode::SMSG_SPLINE_MOVE_ROOT
         | opcode::SMSG_SPLINE_MOVE_UNROOT
         | opcode::SMSG_SPLINE_MOVE_WATER_WALK
@@ -1478,7 +1493,11 @@ fn parse_server_body(
         | opcode::SMSG_SPLINE_MOVE_START_SWIM
         | opcode::SMSG_SPLINE_MOVE_STOP_SWIM
         | opcode::SMSG_SPLINE_MOVE_SET_RUN_MODE
-        | opcode::SMSG_SPLINE_MOVE_SET_WALK_MODE => {
+        | opcode::SMSG_SPLINE_MOVE_SET_WALK_MODE
+        | opcode::SMSG_SPLINE_MOVE_SET_FLYING
+        | opcode::SMSG_SPLINE_MOVE_UNSET_FLYING
+        | opcode::SMSG_SPLINE_MOVE_GRAVITY_DISABLE
+        | opcode::SMSG_SPLINE_MOVE_GRAVITY_ENABLE => {
             let (mode, apply) = match opcode {
                 opcode::SMSG_SPLINE_MOVE_ROOT => (SplineMode::Root, true),
                 opcode::SMSG_SPLINE_MOVE_UNROOT => (SplineMode::Root, false),
@@ -1493,7 +1512,11 @@ fn parse_server_body(
                 // The one inverted pair: RUN_MODE clears `MOVEFLAG_WALK_MODE`, because the
                 // reference's `0x617e80` feeds the opcode's bool to `SetRunMode 0x7c71c0`.
                 opcode::SMSG_SPLINE_MOVE_SET_WALK_MODE => (SplineMode::WalkMode, true),
-                _ => (SplineMode::WalkMode, false),
+                opcode::SMSG_SPLINE_MOVE_SET_RUN_MODE => (SplineMode::WalkMode, false),
+                opcode::SMSG_SPLINE_MOVE_SET_FLYING => (SplineMode::Flying, true),
+                opcode::SMSG_SPLINE_MOVE_UNSET_FLYING => (SplineMode::Flying, false),
+                opcode::SMSG_SPLINE_MOVE_GRAVITY_DISABLE => (SplineMode::DisableGravity, true),
+                _ => (SplineMode::DisableGravity, false),
             };
             ServerPacket::SplineMoveMode {
                 guid: read_packed_guid(&mut r)?,
