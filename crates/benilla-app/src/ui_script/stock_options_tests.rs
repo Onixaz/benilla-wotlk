@@ -701,6 +701,198 @@ fn every_actionbars_checkbox_writes_its_cvar_or_its_toggle_bit() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Combat Text panel's checkboxes, `(button suffix, CVar, registered default, uvar, parent
+/// row)` (`InterfaceOptionsPanels.xml`; the game CVar registrar `0x51d9b0`). The parent is the row
+/// whose click enables this one.
+type CombatTextRow = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    Option<&'static str>,
+);
+const COMBAT_TEXT_CHECKBOXES: [CombatTextRow; 18] = [
+    ("TargetDamage", "CombatDamage", "1", None, None),
+    ("PeriodicDamage", "CombatLogPeriodicSpells", "1", None, None),
+    ("PetDamage", "PetMeleeDamage", "1", None, None),
+    ("Healing", "CombatHealing", "1", None, None),
+    ("TargetEffects", "fctSpellMechanics", "0", None, None),
+    (
+        "OtherTargetEffects",
+        "fctSpellMechanicsOther",
+        "0",
+        None,
+        Some("TargetEffects"),
+    ),
+    (
+        "DodgeParryMiss",
+        "fctDodgeParryMiss",
+        "0",
+        Some("COMBAT_TEXT_SHOW_DODGE_PARRY_MISS"),
+        None,
+    ),
+    (
+        "DamageReduction",
+        "fctDamageReduction",
+        "0",
+        Some("COMBAT_TEXT_SHOW_RESISTANCES"),
+        None,
+    ),
+    (
+        "RepChanges",
+        "fctRepChanges",
+        "0",
+        Some("COMBAT_TEXT_SHOW_REPUTATION"),
+        None,
+    ),
+    (
+        "ReactiveAbilities",
+        "fctReactives",
+        "0",
+        Some("COMBAT_TEXT_SHOW_REACTIVES"),
+        None,
+    ),
+    (
+        "FriendlyHealerNames",
+        "fctFriendlyHealers",
+        "0",
+        Some("COMBAT_TEXT_SHOW_FRIENDLY_NAMES"),
+        None,
+    ),
+    (
+        "CombatState",
+        "fctCombatState",
+        "0",
+        Some("COMBAT_TEXT_SHOW_COMBAT_STATE"),
+        None,
+    ),
+    (
+        "LowManaHealth",
+        "fctLowManaHealth",
+        "1",
+        Some("COMBAT_TEXT_SHOW_LOW_HEALTH_MANA"),
+        None,
+    ),
+    (
+        "EnergyGains",
+        "fctEnergyGains",
+        "0",
+        Some("COMBAT_TEXT_SHOW_ENERGIZE"),
+        None,
+    ),
+    (
+        "PeriodicEnergyGains",
+        "fctPeriodicEnergyGains",
+        "0",
+        Some("COMBAT_TEXT_SHOW_PERIODIC_ENERGIZE"),
+        None,
+    ),
+    (
+        "HonorGains",
+        "fctHonorGains",
+        "0",
+        Some("COMBAT_TEXT_SHOW_HONOR_GAINED"),
+        None,
+    ),
+    (
+        "Auras",
+        "fctAuras",
+        "0",
+        Some("COMBAT_TEXT_SHOW_AURAS"),
+        None,
+    ),
+    (
+        "EnableFCT",
+        "enableCombatText",
+        "1",
+        Some("SHOW_COMBAT_TEXT"),
+        None,
+    ),
+];
+
+/// Each Combat Text checkbox boots at its CVar's 12340 default, a click and Okay writes the flip
+/// and its uvar, a click and Cancel writes nothing, and Defaults puts the registered value back.
+/// Pet Damage writes `PetSpellDamage` beside its own row; Other Targets' Effects is greyed until
+/// its parent row is on; Combo Points, enabled only for a rogue or druid, boots at "0".
+#[test]
+fn every_combat_text_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-combattext");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    assert_eq!(s.cvar("fctComboPoints").as_deref(), Some("0"));
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsCombatTextPanel)";
+    for (suffix, cvar, default, uvar, parent) in COMBAT_TEXT_CHECKBOXES {
+        let button = format!("InterfaceOptionsCombatTextPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        if let Some(parent) = parent {
+            s.run(open).unwrap();
+            assert!(
+                !s.eval::<bool>(&format!("return {button}:IsEnabled() == 1"))
+                    .unwrap(),
+                "{button} is greyed with {parent} off"
+            );
+            s.run(&format!(
+                "InterfaceOptionsCombatTextPanel{parent}:Click() InterfaceOptionsFrameOkay:Click()"
+            ))
+            .unwrap();
+        }
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        if let Some(uvar) = uvar {
+            assert_eq!(
+                s.eval::<String>(&format!("return tostring({uvar})"))
+                    .unwrap(),
+                flip(default),
+                "{uvar} follows"
+            );
+        }
+        if cvar == "PetMeleeDamage" {
+            assert_eq!(
+                s.cvar("PetSpellDamage").as_deref(),
+                Some(flip(default)),
+                "the row writes PetSpellDamage too"
+            );
+        }
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Combat panel's checkboxes, `(button path, CVar, registered default)`
 /// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
 const COMBAT_CHECKBOXES: [(&str, &str, &str); 8] = [

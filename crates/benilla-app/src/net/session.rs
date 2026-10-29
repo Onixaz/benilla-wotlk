@@ -355,6 +355,7 @@ fn on_reputation_delta(
     mut b: Bridge,
     factions: Option<Res<crate::target::ring::Factions>>,
     mut chat_log: ResMut<crate::ui_chat::ChatLog>,
+    mut center: MessageWriter<crate::ui_unit::CombatTextEvent>,
     mut quest: ResMut<QuestGiver>,
 ) {
     if let SessionEvent::ReputationDelta { standings } = ev {
@@ -363,6 +364,7 @@ fn on_reputation_delta(
             &b.reputations,
             factions.as_deref(),
             &mut chat_log,
+            &mut center,
         );
         reputation_delta(standings, &mut b.reputations, &mut quest);
     }

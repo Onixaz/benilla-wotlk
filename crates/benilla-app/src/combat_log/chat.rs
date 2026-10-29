@@ -4,6 +4,8 @@
 use crate::net::Reputations;
 use crate::ui_chat::combat::{self, Fills, Named, PendingCombat};
 use crate::ui_chat::{ChatEventKind, ChatLog};
+use benilla_ui::script::ScriptValue;
+use bevy::prelude::MessageWriter;
 
 /// A line whose subject is `subject`, keyed on it being the player.
 fn line(
@@ -118,14 +120,16 @@ pub(crate) fn open_lock(
     ));
 }
 
-/// `SMSG_SET_FACTION_STANDING` through `LogFactionChanged` (`0x50b8c0`): the faction and the
-/// delta. The wire carries the new total, so this runs before the store is overwritten, and an
-/// unchanged value prints nothing. The wire's list id is `Faction.dbc`'s `rep_index`.
+/// `SMSG_SET_FACTION_STANDING` through the faction-change line (`0x50b8c0`): the faction and the
+/// delta, then `FACTION` to the combat text. The wire carries the new total, so this runs before
+/// the store is overwritten, and an unchanged value prints nothing. The wire's list id is
+/// `Faction.dbc`'s `rep_index`.
 pub(crate) fn faction_standing(
     deltas: &[(u32, i32)],
     reputations: &Reputations,
     factions: Option<&crate::target::ring::Factions>,
     log: &mut ChatLog,
+    center: &mut MessageWriter<crate::ui_unit::CombatTextEvent>,
 ) {
     let Some(catalog) = factions.map(|f| f.catalog()) else {
         return;
@@ -162,5 +166,12 @@ pub(crate) fn faction_standing(
                 ..Fills::default()
             },
         ));
+        center.write(crate::ui_unit::CombatTextEvent {
+            message_type: "FACTION",
+            args: vec![
+                ScriptValue::Str(name.to_string()),
+                ScriptValue::Int(i64::from(delta)),
+            ],
+        });
     }
 }
