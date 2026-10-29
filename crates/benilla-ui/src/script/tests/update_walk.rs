@@ -301,3 +301,29 @@ fn an_event_resize_fires_on_size_changed_before_the_walk() {
     s.tick(0.01);
     assert_eq!(take_log(&s), "event size update");
 }
+
+/// A fade step moves only line alphas: a paint write of the frame, which the extract patches
+/// alone, never a full mutation that sends it back to its whole walk.
+#[test]
+fn a_fading_message_line_is_a_paint_write() {
+    let mut s = script();
+    s.run(
+        r#"
+        Chat = CreateFrame("ScrollingMessageFrame", "Chat")
+        Chat:SetPoint("BOTTOMLEFT", 0, 0) Chat:SetWidth(300) Chat:SetHeight(100)
+        Chat:SetTimeVisible(1) Chat:SetFadeDuration(4)
+        Chat:AddMessage("hello")
+        "#,
+    )
+    .unwrap();
+    s.resolve();
+    s.tick(1.5); // into the fade
+    let (epoch, paint) = (s.visual_epoch(), s.paint_epoch());
+    s.tick(0.5);
+    assert_eq!(s.visual_epoch(), epoch, "the step is no full mutation");
+    assert_ne!(
+        s.paint_epoch(),
+        paint,
+        "the step marks the frame for its paint"
+    );
+}

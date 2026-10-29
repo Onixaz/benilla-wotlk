@@ -183,7 +183,9 @@ impl UiScript {
 
     /// The message kinds' line fades: MessageFrame's (`0x968a60`), which also keeps only the lines
     /// that fit its height, read from the resolved rect, and ScrollingMessageFrame's (`0x969e60`).
-    /// A step that moved no line's alpha and freed no line changed nothing drawn.
+    /// A step that moved no line's alpha and freed no line changed nothing drawn; one that did is a
+    /// paint write of this frame, whose lines the extract re-reads alone (a freed line changes the
+    /// frame's entry count, which sends the extract back to its full walk).
     fn update_message_lines(&self, h: FrameHandle, kind: FrameKind, elapsed: f32) {
         let mut model = self.model_mut();
         let quiet = model.epoch();
@@ -197,8 +199,9 @@ impl UiScript {
             Some(KindState::ScrollingMessage(smf)) => smf.tick(elapsed),
             _ => false,
         };
-        if !faded {
-            model.set_epoch(quiet);
+        model.set_epoch(quiet);
+        if faded {
+            model.paint_mut(&[crate::order::ZTarget::Frame(h)]);
         }
     }
 
