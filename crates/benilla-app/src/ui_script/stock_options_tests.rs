@@ -195,7 +195,7 @@ fn an_interface_panel_okay_writes_its_cvar() {
 }
 
 /// The Controls panel's checkboxes, `(button suffix, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const CONTROLS_CHECKBOXES: [(&str, &str, &str); 6] = [
     ("StickyTargeting", "deselectOnClick", "1"),
     ("AutoDismount", "autoDismountFlying", "0"),
@@ -433,7 +433,7 @@ fn escape_on_an_options_window_returns_to_the_menu() {
 }
 
 /// The Objectives panel's checkboxes, `(button suffix, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const OBJECTIVES_CHECKBOXES: [(&str, &str, &str); 6] = [
     ("InstantQuestText", "questFadingDisable", "1"),
     ("AutoQuestTracking", "autoQuestWatch", "1"),
@@ -526,7 +526,7 @@ fn every_objectives_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
 }
 
 /// The Social panel's checkboxes, `(button suffix, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`). `showChatIcons`, in
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`). `showChatIcons`, in
 /// `SocialPanelOptions`, has no checkbox and no registration in 12340.
 const SOCIAL_CHECKBOXES: [(&str, &str, &str); 9] = [
     ("ProfanityFilter", "profanityFilter", "1"),
@@ -609,7 +609,7 @@ fn every_social_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
 }
 
 /// The ActionBars panel's CVar checkboxes, `(button suffix, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const ACTIONBARS_CHECKBOXES: [(&str, &str, &str); 3] = [
     ("LockActionBars", "lockActionBars", "1"),
     ("AlwaysShowActionBars", "alwaysShowActionBars", "0"),
@@ -701,79 +701,170 @@ fn every_actionbars_checkbox_writes_its_cvar_or_its_toggle_bit() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
-/// The Status Text panel's rows, `(button suffix, CVar, a bar that row locks)`
-/// (`InterfaceOptionsPanels.xml`); every row registers "0" (the game CVar registrar `0x51d9b0`).
-const STATUS_TEXT_ROWS: [(&str, &str, &str); 5] = [
-    ("Player", "playerStatusText", "PlayerFrameHealthBar"),
-    ("Pet", "petStatusText", "PetFrameHealthBar"),
-    ("Party", "partyStatusText", "PartyMemberFrame1HealthBar"),
-    ("Target", "targetStatusText", "TargetFrameHealthBar"),
-    ("XP", "xpBarText", "MainMenuExpBar"),
+/// The Names panel's checkboxes, `(button path, CVar, registered default, parent)`
+/// (`InterfaceOptionsPanels.xml`; the registrars `0x7e6150` and `0x51d9b0`). A plate sub-row is
+/// a dependent control of its side's row.
+const NAMES_CHECKBOXES: [(&str, &str, &str, Option<&str>); 22] = [
+    ("MyName", "UnitNameOwn", "0", None),
+    ("NPCNames", "UnitNameNPC", "0", None),
+    (
+        "NonCombatCreature",
+        "UnitNameNonCombatCreatureName",
+        "0",
+        None,
+    ),
+    ("Guilds", "UnitNamePlayerGuild", "1", None),
+    ("Titles", "UnitNamePlayerPVPTitle", "1", None),
+    (
+        "FriendlyPlayerNames",
+        "UnitNameFriendlyPlayerName",
+        "1",
+        None,
+    ),
+    ("FriendlyPets", "UnitNameFriendlyPetName", "1", None),
+    (
+        "FriendlyGuardians",
+        "UnitNameFriendlyGuardianName",
+        "0",
+        None,
+    ),
+    ("FriendlyTotems", "UnitNameFriendlyTotemName", "0", None),
+    ("EnemyPlayerNames", "UnitNameEnemyPlayerName", "1", None),
+    ("EnemyPets", "UnitNameEnemyPetName", "1", None),
+    ("EnemyGuardians", "UnitNameEnemyGuardianName", "0", None),
+    ("EnemyTotems", "UnitNameEnemyTotemName", "0", None),
+    (
+        "UnitNameplatesAllowOverlap",
+        "nameplateAllowOverlap",
+        "1",
+        None,
+    ),
+    ("UnitNameplatesFriends", "nameplateShowFriends", "0", None),
+    ("UnitNameplatesEnemies", "nameplateShowEnemies", "0", None),
+    (
+        "UnitNameplatesFriendlyPets",
+        "nameplateShowFriendlyPets",
+        "1",
+        Some("nameplateShowFriends"),
+    ),
+    (
+        "UnitNameplatesFriendlyGuardians",
+        "nameplateShowFriendlyGuardians",
+        "1",
+        Some("nameplateShowFriends"),
+    ),
+    (
+        "UnitNameplatesFriendlyTotems",
+        "nameplateShowFriendlyTotems",
+        "1",
+        Some("nameplateShowFriends"),
+    ),
+    (
+        "UnitNameplatesEnemyPets",
+        "nameplateShowEnemyPets",
+        "1",
+        Some("nameplateShowEnemies"),
+    ),
+    (
+        "UnitNameplatesEnemyGuardians",
+        "nameplateShowEnemyGuardians",
+        "1",
+        Some("nameplateShowEnemies"),
+    ),
+    (
+        "UnitNameplatesEnemyTotems",
+        "nameplateShowEnemyTotems",
+        "1",
+        Some("nameplateShowEnemies"),
+    ),
 ];
 
-/// Each Status Text row boots "0", a click and Okay writes "1" and its `CVAR_UPDATE` token shows
-/// the locked text on its bar as `value / max`, Percentages turns it to `n%`, and Defaults puts
-/// every row back to "0" and hides the text again.
+/// Each Names checkbox boots at its CVar's 12340 default, a click and Okay writes the flip, a
+/// click and Cancel writes nothing, and Defaults puts the registered value back; a plate sub-row
+/// is greyed until its side's row is on.
 #[test]
-fn every_status_text_row_locks_its_bars_text() {
+fn every_names_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
     benilla_formats::wow_data_or_skip!();
     let _l = ENV_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let (mut s, _) = loaded("opt-statustext");
+    let (mut s, _) = loaded("opt-names");
     s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
     s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
-    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsStatusTextPanel)";
-    assert_eq!(s.cvar("statusTextPercentage").as_deref(), Some("0"));
-    for (suffix, cvar, bar) in STATUS_TEXT_ROWS {
-        let button = format!("InterfaceOptionsStatusTextPanel{suffix}");
-        assert_eq!(s.cvar(cvar).as_deref(), Some("0"), "{cvar} boots");
-        s.run(&format!(
-            "{bar}:SetMinMaxValues(0, 100) {bar}:SetValue(42) TextStatusBar_UpdateTextString({bar})"
-        ))
-        .unwrap();
-        let text = |s: &UiScript| -> (bool, String) {
-            s.eval(&format!(
-                "local t = {bar}.TextString return t:IsShown() == 1, t:GetText() or ''"
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsNamesPanel)";
+    for (suffix, cvar, default, parent) in NAMES_CHECKBOXES {
+        let button = format!("InterfaceOptionsNamesPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        if let Some(parent) = parent {
+            s.run(open).unwrap();
+            assert!(
+                !s.eval::<bool>(&format!("return {button}:IsEnabled() == 1"))
+                    .unwrap(),
+                "{button} is greyed with {parent} off"
+            );
+            // The side's row enables its dependents on its click, not on a CVar write.
+            let side = parent.trim_start_matches("nameplateShow");
+            s.run(&format!(
+                "InterfaceOptionsNamesPanelUnitNameplates{side}:Click() \
+                 InterfaceOptionsFrameOkay:Click()"
             ))
-            .unwrap()
-        };
-        assert!(!text(&s).0, "{bar}'s text hides with {cvar} off");
+            .unwrap();
+            assert_eq!(s.cvar(parent).as_deref(), Some("1"), "{parent} on");
+        }
+        s.run(open).unwrap();
+        if parent.is_some() {
+            assert!(
+                s.eval::<bool>(&format!("return {button}:IsEnabled() == 1"))
+                    .unwrap(),
+                "{button} enables with its side"
+            );
+        }
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
         s.run(&format!(
-            "{open} {button}:Click() InterfaceOptionsFrameOkay:Click()"
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
         ))
         .unwrap();
-        assert_eq!(s.cvar(cvar).as_deref(), Some("1"), "Okay writes {cvar}");
-        let (shown, value) = text(&s);
-        assert!(shown, "{bar}'s text locks on");
-        assert!(
-            value.contains("42") && value.contains("100"),
-            "{bar}: {value:?}"
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
         );
         s.run(&format!(
-            "{open} InterfaceOptionsStatusTextPanelPercentages:Click() InterfaceOptionsFrameOkay:Click()"
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
         ))
         .unwrap();
-        // The experience bar keeps its `XP` prefix (`alwaysPrefix`).
-        let percent = text(&s).1;
-        assert!(
-            percent == "42%" || percent == "XP 42%",
-            "{bar} in percent: {percent:?}"
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
         );
         s.run(&format!(
             "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
         ))
         .unwrap();
-        assert_eq!(s.cvar(cvar).as_deref(), Some("0"), "Defaults resets {cvar}");
-        assert_eq!(s.cvar("statusTextPercentage").as_deref(), Some("0"));
-        assert!(!text(&s).0, "{bar}'s text hides again");
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+        if let Some(parent) = parent {
+            assert_eq!(
+                s.cvar(parent).as_deref(),
+                Some("0"),
+                "Defaults resets {parent}"
+            );
+        }
     }
     let errors = options_errors(s.take_errors());
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
 /// The Combat panel's checkboxes, `(button path, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const COMBAT_CHECKBOXES: [(&str, &str, &str); 8] = [
     ("AttackOnAssist", "assistAttack", "0"),
     ("AutoRange", "autoRangedCombat", "1"),
@@ -879,8 +970,79 @@ fn the_combat_panel_reaches_the_target_frame() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Status Text panel's rows, `(button suffix, CVar, a bar that row locks)`
+/// (`InterfaceOptionsPanels.xml`); every row registers "0" (the game CVar registrar `0x51d9b0`).
+const STATUS_TEXT_ROWS: [(&str, &str, &str); 5] = [
+    ("Player", "playerStatusText", "PlayerFrameHealthBar"),
+    ("Pet", "petStatusText", "PetFrameHealthBar"),
+    ("Party", "partyStatusText", "PartyMemberFrame1HealthBar"),
+    ("Target", "targetStatusText", "TargetFrameHealthBar"),
+    ("XP", "xpBarText", "MainMenuExpBar"),
+];
+
+/// Each Status Text row boots "0", a click and Okay writes "1" and its `CVAR_UPDATE` token shows
+/// the locked text on its bar as `value / max`, Percentages turns it to `n%`, and Defaults puts
+/// every row back to "0" and hides the text again.
+#[test]
+fn every_status_text_row_locks_its_bars_text() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-statustext");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsStatusTextPanel)";
+    assert_eq!(s.cvar("statusTextPercentage").as_deref(), Some("0"));
+    for (suffix, cvar, bar) in STATUS_TEXT_ROWS {
+        let button = format!("InterfaceOptionsStatusTextPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some("0"), "{cvar} boots");
+        s.run(&format!(
+            "{bar}:SetMinMaxValues(0, 100) {bar}:SetValue(42) TextStatusBar_UpdateTextString({bar})"
+        ))
+        .unwrap();
+        let text = |s: &UiScript| -> (bool, String) {
+            s.eval(&format!(
+                "local t = {bar}.TextString return t:IsShown() == 1, t:GetText() or ''"
+            ))
+            .unwrap()
+        };
+        assert!(!text(&s).0, "{bar}'s text hides with {cvar} off");
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(s.cvar(cvar).as_deref(), Some("1"), "Okay writes {cvar}");
+        let (shown, value) = text(&s);
+        assert!(shown, "{bar}'s text locks on");
+        assert!(
+            value.contains("42") && value.contains("100"),
+            "{bar}: {value:?}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsStatusTextPanelPercentages:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        // The experience bar keeps its `XP` prefix (`alwaysPrefix`).
+        let percent = text(&s).1;
+        assert!(
+            percent == "42%" || percent == "XP 42%",
+            "{bar} in percent: {percent:?}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(s.cvar(cvar).as_deref(), Some("0"), "Defaults resets {cvar}");
+        assert_eq!(s.cvar("statusTextPercentage").as_deref(), Some("0"));
+        assert!(!text(&s).0, "{bar}'s text hides again");
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Display panel's CVar checkboxes, `(button suffix, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const DISPLAY_CHECKBOXES: [(&str, &str, &str); 10] = [
     ("RotateMinimap", "rotateMinimap", "0"),
     ("ScreenEdgeFlash", "screenEdgeFlash", "1"),
