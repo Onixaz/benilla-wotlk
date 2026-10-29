@@ -38,7 +38,12 @@ fn family(rel: &str) -> Family {
 }
 
 /// The standing count of `Game` files; raise it only with the reason written down.
-const CEILING: usize = 40;
+///
+/// - The vehicle (#632) adds 3: `vehicle.rs`, `vehicle/aim.rs` and `vehicle/control.rs` fire
+///   `VEHICLE_UPDATE`, `VEHICLE_ANGLE_SHOW`, `VEHICLE_POWER_SHOW` and `VEHICLE_ANGLE_UPDATE` on
+///   the mover change and on each pitch step, the frame the reference fires them (`0x747f40`,
+///   `0x5fa910`), where a model value would land them a feed pass later.
+const CEILING: usize = 43;
 
 /// How far under [`CEILING`] the count may sit before the test asks for the ceiling to follow it.
 const SLACK: usize = 4;
