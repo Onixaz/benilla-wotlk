@@ -387,7 +387,10 @@ pub use lfg::{
 };
 pub use loot::{LootRow, LootState, LOOT_PORTRAIT_UNIT};
 pub use loot_roll::{LootRollEntry, LootRollsState};
-pub use macros::{MacroBinding, MacroState, MacroView, MAX_MACROS, MAX_MACRO_BODY, MAX_MACRO_NAME};
+pub use macros::{
+    MacroBinding, MacroState, MacroView, MAX_ACCOUNT_MACROS, MAX_MACRO_BODY, MAX_MACRO_INDEX,
+    MAX_MACRO_NAME,
+};
 pub use mail::{
     MailAttachmentView, MailCommand, MailInboxRow, MailInvoice, MailSendRequest, MailState,
     PackageView, StationeryView, MAIL_ATTACHMENT_SLOTS, MAIL_SEND_SLOTS, STATIONERY_GM,
