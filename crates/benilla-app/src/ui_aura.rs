@@ -7,7 +7,7 @@ mod units;
 
 use bevy::prelude::*;
 
-use benilla_formats::{SpellCatalog, SpellDurationCatalog};
+use benilla_formats::{SpellCatalog, SpellDisplay, SpellDurationCatalog};
 use benilla_protocol::messages::{
     RecordAura, AURA_UPDATE_FLAG_HARMFUL, AURA_UPDATE_FLAG_SELF_CAST,
 };
@@ -34,8 +34,15 @@ pub(crate) struct UiAuraPlugin;
 impl Plugin for UiAuraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AuraFeedMemory>()
-            // Feed before the VM dispatch, drain after it.
-            .add_systems(Update, feed_auras.in_set(UnitFeed).in_set(AuraEvents))
+            // Feed before the VM dispatch, drain after it; after the book's own feeds, whose
+            // spells the `RAID` list reads.
+            .add_systems(
+                Update,
+                feed_auras
+                    .in_set(UnitFeed)
+                    .in_set(AuraEvents)
+                    .after(crate::ui_action::SlotIdentityFeed),
+            )
             .add_systems(Update, drain_aura_cancels.after(UiInput))
             .add_systems(OnExit(ClientState::InWorld), end_session_aura_state);
     }
@@ -49,6 +56,8 @@ struct AuraFeedMemory {
     vm: crate::ui_script::VmMemo<AuraFeedMemo>,
     /// When [`trace_timers`] last printed: host state, outliving any one VM.
     traced_at: f64,
+    /// The book's dispel types ([`dispel_types`]), rebuilt when the book changes.
+    dispel_types: Option<Vec<i32>>,
 }
 
 /// The per-VM `UNIT_AURA` edge keys.
@@ -138,6 +147,57 @@ struct ListCtx<'a> {
     durations: Option<&'a SpellDurationCatalog>,
     viewer: Viewer,
     clock_offset: f64,
+    /// What the `RAID` list reads off the book; `None` lists nothing there.
+    raid: Option<RaidBook<'a>>,
+}
+
+/// The book's side of the finder's second list (`0x72c510`): the player's spells and its pet's,
+/// and the dispel types its dispel effects name.
+#[derive(Clone, Copy)]
+struct RaidBook<'a> {
+    known: &'a std::collections::BTreeSet<u32>,
+    pet: &'a [benilla_protocol::messages::PetActionEntry],
+    dispel_types: &'a [i32],
+}
+
+/// The dispel types the book registers at learn (`0x542170`): each `SPELL_EFFECT_DISPEL` (38)
+/// effect not aimed at an enemy (implicit target 6) names its misc value once.
+fn dispel_types(known: &std::collections::BTreeSet<u32>, catalog: &SpellCatalog) -> Vec<i32> {
+    let mut out = Vec::new();
+    for d in known.iter().filter_map(|&id| catalog.get(id)) {
+        for i in 0..3 {
+            let misc = d.effect_misc_value[i];
+            if d.effects[i] == 38 && d.effect_implicit_target_a[i] != 6 && !out.contains(&misc) {
+                out.push(misc);
+            }
+        }
+    }
+    out
+}
+
+/// Whether the finder's second list holds this aura (`0x72c510`): a buff whose exact spell the
+/// player or its pet knows and could cast on another (`0x53d8a0`: `AttributesExC & 0x4000` clear,
+/// a first implicit target other than self, no area-aura or persistent-area effect), or a debuff
+/// whose dispel type the book's dispels name (`0x53bdf0`).
+fn in_raid_list(
+    book: Option<RaidBook>,
+    d: Option<&SpellDisplay>,
+    spell_id: u32,
+    harmful: bool,
+) -> bool {
+    let (Some(book), Some(d)) = (book, d) else {
+        return false;
+    };
+    if harmful {
+        return i32::try_from(d.dispel).is_ok_and(|t| book.dispel_types.contains(&t));
+    }
+    (book.known.contains(&spell_id) || book.pet.iter().any(|e| e.action() == spell_id))
+        && d.attributes_ex3 & 0x4000 == 0
+        && d.effect_implicit_target_a[0] != 1
+        && !d
+            .effects
+            .iter()
+            .any(|e| matches!(e, 27 | 35 | 65 | 119 | 128 | 129 | 143))
 }
 
 /// What `CanShowAura 0x53d580` reads off the active player: the casters its caster-only leg
@@ -186,7 +246,14 @@ fn aura_state(ctx: ListCtx, a: &AuraInput) -> AuraState {
         channeled: display.is_some_and(|d| d.attributes_ex & SPELL_ATTR_EX_IS_CHANNELED != 0),
         rank: display.and_then(|d| d.rank.clone()),
         caster: a.caster,
-        // Not built: the steal test (`0x53d680`) and the consolidation flag (`0x6149c1`).
+        consolidate: display.is_some_and(|d| d.attributes_ex7 & 0x1000_0000 != 0),
+        raid: in_raid_list(
+            ctx.raid,
+            display,
+            a.spell_id,
+            a.flags & AURA_UPDATE_FLAG_HARMFUL != 0,
+        ),
+        // Not built: the steal test (`0x53d680`).
         ..Default::default()
     }
 }
@@ -337,6 +404,7 @@ fn feed_auras(
     names: Option<Res<crate::names::NameCache>>,
     time: Res<Time<Real>>,
     mut mem: ResMut<AuraFeedMemory>,
+    actions: Option<Res<crate::ui_action::PlayerActions>>,
 ) {
     let Some(mut script) = script else {
         return;
@@ -348,6 +416,22 @@ fn feed_auras(
 
     let bevy_now = time.elapsed_secs_f64();
     let pet_guid = units.pet.spells.pet_guid;
+    // A plain borrow, so the dispel list and the trace clock borrow apart.
+    let mem: &mut AuraFeedMemory = &mut mem;
+    if let (Some(actions), Some(sp)) = (actions.as_ref(), spells.as_deref()) {
+        if mem.dispel_types.is_none() || actions.is_changed() {
+            mem.dispel_types = Some(dispel_types(&actions.spells, &sp.catalog));
+        }
+    }
+    let raid =
+        actions
+            .as_deref()
+            .zip(mem.dispel_types.as_deref())
+            .map(|(actions, dispel_types)| RaidBook {
+                known: &actions.spells,
+                pet: &units.pet.spells.spells,
+                dispel_types,
+            });
     let ctx = ListCtx {
         catalog: spells.as_ref().map(|s| &s.catalog),
         durations: spells.as_ref().map(|s| &s.durations),
@@ -357,6 +441,7 @@ fn feed_auras(
             vision: store.0.player_aura_vision().unwrap_or(0),
         },
         clock_offset: script.now() - bevy_now,
+        raid,
     };
     let catalog = ctx.catalog;
     let empty = UnitAuras::default();
@@ -528,12 +613,65 @@ mod tests {
             vision: 0,
         },
         clock_offset: 0.0,
+        raid: None,
     };
 
     /// [`table_inputs`] as the list.
     fn other_unit_auras(table: &UnitAuras, buffs_visible: bool) -> Vec<AuraState> {
         let inputs: Vec<AuraInput> = table_inputs(table, NO_SPELLS, buffs_visible).collect();
         aura_list(NO_SPELLS, &inputs)
+    }
+
+    /// Off the real `Spell.dbc`: a raid buff carries `AttributesEx7 & 0x10000000` and lists for
+    /// consolidation; the `RAID` list holds a buff the book knows (`0x53d8a0`) and a debuff whose
+    /// dispel type the book's Dispel Magic names (`0x542170`, Magic), and not a poison.
+    #[test]
+    fn raid_buffs_consolidate_and_the_raid_list_follows_the_book() {
+        let Some(spells) = crate::ui_action::real_spells() else {
+            return;
+        };
+        const INTELLECT: u32 = 42995;
+        const FORTITUDE: u32 = 48161;
+        const DISPEL_MAGIC: u32 = 527;
+        const FROSTBOLT: u32 = 42842;
+        const DEADLY_POISON: u32 = 57970;
+        let known = [INTELLECT, DISPEL_MAGIC].into_iter().collect();
+        let types = dispel_types(&known, &spells.catalog);
+        assert_eq!(types, [1], "Dispel Magic names Magic");
+        let ctx = ListCtx {
+            catalog: Some(&spells.catalog),
+            durations: Some(&spells.durations),
+            raid: Some(RaidBook {
+                known: &known,
+                pet: &[],
+                dispel_types: &types,
+            }),
+            ..NO_SPELLS
+        };
+        let state = |spell_id, harmful: bool| {
+            aura_state(
+                ctx,
+                &AuraInput {
+                    spell_id,
+                    stacks: 1,
+                    flags: if harmful { AURA_UPDATE_FLAG_HARMFUL } else { 0 },
+                    caster: 0,
+                    duration_ms: 0,
+                    expires_at: 0.0,
+                },
+            )
+        };
+        let intellect = state(INTELLECT, false);
+        assert!(intellect.consolidate && intellect.raid);
+        let fortitude = state(FORTITUDE, false);
+        assert!(fortitude.consolidate, "a raid buff consolidates");
+        assert!(!fortitude.raid, "but only a known one lists under RAID");
+        assert!(
+            state(FROSTBOLT, true).raid,
+            "a Magic debuff the book dispels"
+        );
+        assert!(!state(DEADLY_POISON, true).raid, "a poison it cannot");
+        assert!(!state(FROSTBOLT, true).consolidate);
     }
 
     #[test]

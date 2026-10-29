@@ -58,6 +58,9 @@ pub struct AuraState {
     /// `AttributesEx7 & 0x10000000`, the stock buff frame's consolidation flag, `UnitAura`'s
     /// tenth return (`0x6149c1`).
     pub consolidate: bool,
+    /// In the finder's second list (`0x72c510`), the one `RAID` reads: a buff the player or its
+    /// pet can cast, or a debuff whose dispel type the player can dispel.
+    pub raid: bool,
 }
 
 /// The cancel gate of `CancelPlayerBuff` (`0x4e49a0`, `0x4e49fb`-`0x4e4a14`):
@@ -119,11 +122,15 @@ impl AuraFilter {
     }
 
     /// The finder's per-aura test (`0x72ca9e`-`0x72cae3`): the sign against `HELPFUL` alone, the
-    /// caster under `PLAYER`, then the cancelable flag. `RAID` picks the finder's second ordering
-    /// of the unit's list (`+0xdd4 + 0x84`); the pushed order stands for both.
+    /// caster under `PLAYER`, then the cancelable flag. `RAID` walks the finder's second list
+    /// (`+0xdd4 + 0x84`, `0x72c9b0`), whose auras keep the main list's order, so here it keeps the
+    /// auras that list holds ([`AuraState::raid`]).
     fn admits(self, a: &AuraState, player: u64) -> bool {
         let helpful = self.0 & Self::HELPFUL != 0;
         if a.helpful != helpful {
+            return false;
+        }
+        if self.0 & Self::RAID != 0 && !a.raid {
             return false;
         }
         // `0x53bd70`: the caster is the player. Its second arm, a caster the player created or
