@@ -928,7 +928,6 @@ impl IndoorMemo {
 #[derive(Clone, Copy, PartialEq)]
 struct InsideProbe {
     pos: Vec3,
-    area: Option<benilla_world::wmo_portal::WmoInteriorKeys>,
     terrain: Option<f32>,
     instances: usize,
     wmos: usize,
@@ -954,15 +953,13 @@ fn feed_minimap_inside(
 ) {
     // The verdict reads these alone: a still player over the same ground under unchanged buildings
     // keeps it. The WMO store is watched by count, as `Assets` is marked changed every frame.
-    let area = world.area_interior();
-    let inside = if !player.active || player.detached || area.is_none() {
+    let inside = if !player.active || player.detached || world.area_interior().is_none() {
         // `minimap_interior`'s own first exit, before any probe.
         *probed = None;
         false
     } else {
         let probe = InsideProbe {
             pos: player.pos,
-            area,
             terrain: world.terrain_height_under(player.pos + Vec3::Y * INTERIOR_PROBE_HEIGHT),
             instances: instances.iter().len(),
             wmos: wmos.len(),
