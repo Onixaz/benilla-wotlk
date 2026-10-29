@@ -62,11 +62,17 @@ fn the_canonical_addon_idiom_moves_a_frame_and_the_position_survives_the_stop() 
     assert_eq!(corner(&mut s), (200.0, 150.0), "no longer following");
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 
-    // The reference moves the anchors in place, so GetPoint reads the frame's own point, dragged.
-    let (point, x, y) = s
-        .eval::<(String, f64, f64)>("local p, _, _, x, y = MovePanel:GetPoint() return p, x, y")
+    // The stop unflattens the frame (`UnflattenFrame` `0x48a840`): one anchor, to the screen
+    // point nearest its own, here the centres.
+    let (n, point, rel, x, y) = s
+        .eval::<(i64, String, Option<String>, f64, f64)>(
+            "local p, r, _, x, y = MovePanel:GetPoint() return MovePanel:GetNumPoints(), p, r, x, y",
+        )
         .unwrap();
-    assert_eq!((point.as_str(), x, y), ("BOTTOMLEFT", 200.0, 150.0));
+    assert_eq!(
+        (n, point.as_str(), rel, x, y),
+        (1, "CENTER", None, -100.0, -110.0)
+    );
 }
 
 /// Each move applies only its own delta: the pump re-centers its sample after every step.
