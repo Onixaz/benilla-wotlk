@@ -887,7 +887,10 @@ pub(crate) mod schedule_tests {
     ///   tile, marker and self-ride writers that publish already pairs with, a frame late at worst;
     ///   and `ZoomLimit`'s max against `ui_barber::drain_barber`, which writes only the barber
     ///   floor.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_968;
+    /// - Trajectory missiles (#632) add 1: `entities::missile::move_missiles` now reads the group,
+    ///   factions and unit stores its hit test asks hostility of, against a writer that runs
+    ///   unordered; a missile picks its units on its first flight step, a frame late at worst.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_969;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

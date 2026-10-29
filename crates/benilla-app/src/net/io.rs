@@ -1393,6 +1393,12 @@ pub(super) fn writer_loop(
                             orientation,
                             seat,
                         } => w.controlled_vehicle(mover, flags, (pos, orientation), seat),
+                        super::VehicleCommand::ProjectileHit {
+                            caster,
+                            spell,
+                            cast_id,
+                            at,
+                        } => w.update_projectile_position(caster, spell, cast_id, at),
                     },
                     ClientCommand::SetActiveMover { guid } => w.set_active_mover(guid),
                     ClientCommand::NotActiveMover {

@@ -808,6 +808,7 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
             dest: None,
             ammo_display_id: None,
             seq: 1,
+            trajectory: None,
         });
         app.update();
         assert_eq!(wounds(&mut app), expected, "instant GO of spell {spell_id}");
@@ -920,6 +921,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
             dest: None,
             ammo_display_id: None,
             seq: 1,
+            trajectory: None,
         });
     }
     app.update();
@@ -1018,6 +1020,7 @@ fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_poin
         dest: Some(at),
         ammo_display_id: None,
         seq: 1,
+        trajectory: None,
     });
     app.update();
     let spawns: Vec<_> = app
@@ -1097,6 +1100,7 @@ fn a_dest_go_plays_the_instant_area_kit_at_the_point() {
         dest: Some(at),
         ammo_display_id: None,
         seq: 1,
+        trajectory: None,
     });
     app.update();
     let bursts: Vec<_> = app
@@ -1761,6 +1765,7 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         dest: None,
         ammo_display_id: None,
         seq: 1,
+        trajectory: None,
     });
     app.update();
 

@@ -36,6 +36,9 @@
 //! (`0x61d870`) and flies the same straight, arrive-on-time line as a unit missile: the
 //! reference's flight is linear, with no gravity (`0x61ceb0`, `0x61e2a0`).
 //!
+//! A GO that names a trajectory flies the arc [`trajectory`] describes instead, landing at the
+//! packet's delay.
+//!
 //! Not built: `$BWR` launches from its event marker, where the reference first tries the ranged
 //! weapon's HandArrow/Bullet attachment (`0x23`/`0x24`); homing aims at the attachment point, not
 //! the ray-sphere intercept `0x61d230`, the same body point in practice; and `0x61dd50`'s
@@ -55,6 +58,8 @@ use crate::creature_anim::{
 use benilla_assets::m2_url;
 
 use super::equipment::ItemDisplays;
+
+mod trajectory;
 use super::spell_fx::{attach_effect_visuals, ensure_model, EffectHost, FxMaterials, SpellFx};
 use super::{BoneAttach, DisplayModel, ModelHandle};
 
@@ -138,6 +143,36 @@ pub(super) struct Missile {
     /// The caster's ranged-weapon `SpellVisual`, resolved at GO, so a basic shot's impact kit
     /// resolves even if the caster despawns mid-flight.
     weapon_visual: Option<u32>,
+    /// A trajectory GO's flight.
+    flight: Option<Flight>,
+}
+
+/// A trajectory missile's flight state.
+struct Flight {
+    /// `None` when no arc solves: the missile flies straight and lands on time.
+    arc: Option<trajectory::Arc>,
+    /// The caster and cast id a server hit names the missile by (`0x6ff2c0`).
+    caster: u64,
+    cast_id: u8,
+    /// The server's hit point (`SMSG_SET_PROJECTILE_POSITION`).
+    remote: Option<Vec3>,
+    collider: Collider,
+}
+
+/// A trajectory missile's unit collision (`0x6fcb60`).
+enum Collider {
+    Off,
+    /// Built on the first flight step, from the units then near the path.
+    Pending {
+        flags: u32,
+        radius: f32,
+        impact: Vec3,
+    },
+    Units {
+        units: Vec<Entity>,
+        dir: Vec2,
+        radius: f32,
+    },
 }
 
 /// The unit-side inputs of an attachment or marker position read: the base frame, the tables and
@@ -247,6 +282,7 @@ impl PendingMissiles {
             weapon_visual: None,
             missile_sound: None,
             awaits_release: true,
+            trajectory: None,
         };
         app.world_mut()
             .resource_mut::<Self>()
@@ -421,15 +457,40 @@ fn launch_go(
         let Some(aim) = aim_point(aim_at, units, joints) else {
             continue; // target already gone
         };
+        // A trajectory lands at the packet's delay (`0x732ff0`), not at distance over speed.
+        let arrive_in = match go.spawn.trajectory {
+            Some((t, _)) => t.delay - go.queued,
+            None => launch.distance(aim) / go.spawn.speed.max(f32::EPSILON) - go.queued,
+        };
+        let flight = go.spawn.trajectory.map(|(t, rec)| {
+            let arc = trajectory::launch(t.pitch, 0.0, launch, aim, rec.as_ref(), arrive_in);
+            // A missile whose row collides with units tests its path (`0x700880`).
+            let collider = match (arc, rec) {
+                (Some(_), Some(r)) if r.flags & 0x3C != 0 => Collider::Pending {
+                    flags: r.flags,
+                    radius: r.collision_radius,
+                    impact: aim,
+                },
+                _ => Collider::Off,
+            };
+            Flight {
+                arc,
+                caster: t.caster,
+                cast_id: t.cast_id,
+                remote: None,
+                collider,
+            }
+        });
         let missile = Missile {
             spell_id: go.spawn.spell_id,
             caster: go.spawn.caster,
             aim: aim_at,
             path: go.key.clone(),
-            arrive_in: launch.distance(aim) / go.spawn.speed.max(f32::EPSILON) - go.queued,
+            arrive_in,
             // An invisible flight has no parts to wait on.
             parts_spawned: go.key.is_none(),
             weapon_visual: go.spawn.weapon_visual,
+            flight,
         };
         if missile.arrive_in <= 0.0 {
             arrival_handoff(&missile, aim, out, play_seq);
@@ -657,8 +718,154 @@ pub(super) fn attach_missile_models(
     }
 }
 
+/// The units a trajectory missile may hit, and what decides which (`0x6fcb60`).
+#[derive(bevy::ecs::system::SystemParam)]
+#[allow(clippy::type_complexity)] // one bundled param, the app's convention for big query sets
+pub(super) struct TrajectoryWorld<'w, 's> {
+    units: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static GlobalTransform,
+            &'static crate::net::NetEntity,
+            &'static crate::net::ObjectStore,
+            Option<&'static crate::net::UnitSpeeds>,
+        ),
+    >,
+    movers: Query<'w, 's, (), With<crate::net::ActiveMover>>,
+    passengers: Query<'w, 's, &'static crate::vehicle::Passenger>,
+    index: Res<'w, crate::net::GuidIndex>,
+    self_guid: Res<'w, crate::net::SelfGuid>,
+    me: Query<'w, 's, &'static crate::net::ObjectStore, With<crate::net::SelfPlayer>>,
+    creatures: Option<Res<'w, super::Creatures>>,
+    names: Option<Res<'w, crate::names::NameCache>>,
+    factions: Option<Res<'w, crate::target::Factions>>,
+    reputations: Option<Res<'w, crate::net::Reputations>>,
+    group: Option<Res<'w, crate::ui_party::GroupState>>,
+    net: Option<Res<'w, crate::net::NetCommands>>,
+}
+
+impl TrajectoryWorld<'_, '_> {
+    /// `unit`'s root vehicle, itself when it rides none.
+    fn root(&self, unit: Entity) -> Entity {
+        let mut at = unit;
+        // A seat tree is a few levels deep; the bound stops a malformed loop.
+        for _ in 0..8 {
+            let Some(up) = self
+                .passengers
+                .get(at)
+                .ok()
+                .and_then(|p| self.index.0.get(&p.vehicle).copied())
+            else {
+                break;
+            };
+            at = up;
+        }
+        at
+    }
+
+    /// Whether the caster is ours to collide for: a unit we control (`0x71c930`'s `0x400`), or
+    /// our pet when nobody charms it (`0x732ff0`).
+    fn ours(&self, caster: Entity) -> bool {
+        if self.movers.contains(caster) {
+            return true;
+        }
+        let Ok((.., store, _)) = self.units.get(caster) else {
+            return false;
+        };
+        self.self_guid.0.is_some()
+            && store.0.unit_summoned_by() == self.self_guid.0
+            && store.0.unit_charmed_by().unwrap_or(0) == 0
+    }
+
+    /// A unit's hit sphere for a flight along `dir`.
+    fn sphere(&self, unit: Entity, dir: Vec2, radius: f32) -> Option<(Vec3, f32)> {
+        let (_, tf, net, ..) = self.units.get(unit).ok()?;
+        let model = self
+            .creatures
+            .as_deref()
+            .zip(net.display_id)
+            .and_then(|(c, d)| c.missile_collision(d));
+        let (c, r) = trajectory::hit_sphere(tf.translation(), net.scale, model, dir);
+        Some((c, r + radius))
+    }
+
+    /// The units near the path, best first (`0x6fcb60`): the caster's own vehicle and everyone on
+    /// it excluded. Whether a unit is hostile is asked of our own body, not the mover.
+    fn pick(
+        &self,
+        caster: Entity,
+        path: &trajectory::Path,
+        flags: u32,
+        radius: f32,
+    ) -> Vec<Entity> {
+        let exclude = self.root(caster);
+        let me = self.me.single().ok();
+        let ranked = self
+            .units
+            .iter()
+            .filter(|(_, _, net, ..)| {
+                matches!(
+                    net.kind,
+                    benilla_protocol::EntityKind::Unit | benilla_protocol::EntityKind::Player
+                )
+            })
+            .filter_map(|(e, _, net, store, speeds)| {
+                let player = net.kind == benilla_protocol::EntityKind::Player;
+                let type_flags = if player {
+                    0
+                } else {
+                    store
+                        .0
+                        .object_entry()
+                        .and_then(|entry| self.names.as_deref()?.creature_record(entry))
+                        .map_or(0, |r| r.type_flags)
+                };
+                let attackable = self.reputations.as_deref().is_some_and(|reps| {
+                    crate::target::can_attack(
+                        Some(store),
+                        self.factions.as_deref(),
+                        reps,
+                        crate::target::party_of(self.group.as_deref()),
+                        me,
+                    )
+                });
+                if !trajectory::collides(flags, player, type_flags, attackable)
+                    || self.root(e) == exclude
+                {
+                    return None;
+                }
+                let speed = speeds.map_or(0.0, |s| s.0.run.max(s.0.swim).max(s.0.flight));
+                let (c, r) = self.sphere(e, path.dir, radius)?;
+                Some((e, path.rank(Vec2::new(c.x, c.z), r, speed)?))
+            })
+            .collect();
+        trajectory::pick(ranked)
+    }
+}
+
+/// A missile that stopped short of its target lands where it stopped: no target, so the area
+/// effect on the caster (`0x703410` with none).
+fn land_short(
+    missile: &Missile,
+    at: Vec3,
+    out: &mut ArrivalOut,
+    play_seq: &mut crate::creature_anim::PlaySeq,
+) {
+    out.impacts.write(CastEvent {
+        entity: missile.caster,
+        spell_id: missile.spell_id,
+        kind: CastEventKind::GroundImpact { pos: at },
+        seq: play_seq.next(),
+    });
+}
+
 /// The reference's arrive-on-time step `0x61e2a0`: each frame covers `dt / remaining time` of the
-/// gap to the live aim; at the deadline the missile snaps there, hands off and despawns.
+/// gap to the live aim; at the deadline the missile snaps there, hands off and despawns. A
+/// trajectory missile flies its arc instead (`0x7015d0`), lands short at a server hit, and one of
+/// ours lands short on the first unit its step crosses, telling the server where.
+#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 pub(super) fn move_missiles(
     mut commands: Commands,
     time: Res<Time>,
@@ -668,6 +875,7 @@ pub(super) fn move_missiles(
     mut out: ArrivalOut,
     mut sounds: MessageWriter<MissileSound>,
     mut play_seq: ResMut<crate::creature_anim::PlaySeq>,
+    world: TrajectoryWorld,
 ) {
     let dt = time.delta_secs();
     for (entity, mut missile, mut transform) in &mut missiles {
@@ -686,10 +894,123 @@ pub(super) fn move_missiles(
             commands.entity(entity).despawn();
             continue;
         }
-        transform.translation += to_target * (dt / missile.arrive_in);
+        let previous = transform.translation;
+        let arc = missile.flight.as_mut().and_then(|f| f.arc.as_mut());
+        if let Some(arc) = arc {
+            transform.translation = arc.advance(dt);
+            if let Some(dir) = arc.heading().try_normalize() {
+                transform.rotation = missile_facing(dir);
+            }
+        } else {
+            transform.translation += to_target * (dt / missile.arrive_in);
+            if let Some(dir) = to_target.try_normalize() {
+                transform.rotation = missile_facing(dir);
+            }
+        }
         missile.arrive_in -= dt;
-        if let Some(dir) = to_target.try_normalize() {
-            transform.rotation = missile_facing(dir);
+        let now = transform.translation;
+        let (caster, spell) = (missile.caster, missile.spell_id);
+        let Some(flight) = missile.flight.as_mut() else {
+            continue;
+        };
+        let short = if flight
+            .remote
+            .is_some_and(|hit| trajectory::passed(previous, now, hit))
+        {
+            Some(previous)
+        } else {
+            collide(flight, caster, spell, previous, now, &world)
+        };
+        if let Some(at) = short {
+            transform.translation = at;
+            land_short(&missile, at, &mut out, &mut play_seq);
+            sounds.write(MissileSound::Stop { entity });
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
+/// One step of a trajectory missile's unit collision: the point its step from `previous` to `now`
+/// first meets a unit, reported to the server (`0x703640`).
+fn collide(
+    flight: &mut Flight,
+    caster: Entity,
+    spell: u32,
+    previous: Vec3,
+    now: Vec3,
+    world: &TrajectoryWorld,
+) -> Option<Vec3> {
+    if let Collider::Pending {
+        flags,
+        radius,
+        impact,
+    } = flight.collider
+    {
+        flight.collider = match flight.arc.filter(|_| world.ours(caster)) {
+            Some(arc) => {
+                let path = trajectory::Path::new(previous, impact, arc.pitch, arc.speed);
+                Collider::Units {
+                    units: world.pick(caster, &path, flags, radius),
+                    dir: path.dir,
+                    radius,
+                }
+            }
+            None => Collider::Off,
+        };
+    }
+    let Collider::Units { units, dir, radius } = &flight.collider else {
+        return None;
+    };
+    let spheres: Vec<(Vec3, f32)> = units
+        .iter()
+        .filter_map(|&u| world.sphere(u, *dir, *radius))
+        .collect();
+    let t = trajectory::segment_hit(previous, now, &spheres)?;
+    let at = previous.lerp(now, t);
+    if let Some(net) = world.net.as_deref() {
+        let _ = net.0.send(crate::net::ClientCommand::Vehicle(
+            crate::net::VehicleCommand::ProjectileHit {
+                caster: flight.caster,
+                spell,
+                cast_id: flight.cast_id,
+                at: benilla_assets::coords::bevy_to_wow(at),
+            },
+        ));
+    }
+    Some(at)
+}
+
+/// The server-hit handler.
+pub(super) fn register(app: &mut App) {
+    use crate::net::NetHandlerApp;
+    app.net_handler(
+        benilla_protocol::SessionEventKind::SetProjectilePosition,
+        on_set_projectile_position,
+    );
+}
+
+/// `SMSG_SET_PROJECTILE_POSITION` (`0x6ff2c0`): every in-flight trajectory missile of the caster's
+/// cast takes the server's hit.
+fn on_set_projectile_position(
+    In(ev): In<benilla_protocol::SessionEvent>,
+    mut missiles: Query<&mut Missile>,
+) {
+    let benilla_protocol::SessionEvent::SetProjectilePosition {
+        caster,
+        cast_id,
+        position,
+    } = ev
+    else {
+        return;
+    };
+    let hit = benilla_assets::coords::wow_to_bevy(position);
+    for mut missile in &mut missiles {
+        if let Some(f) = missile
+            .flight
+            .as_mut()
+            .filter(|f| f.caster == caster && f.cast_id == cast_id)
+        {
+            f.remote = Some(hit);
         }
     }
 }
@@ -764,6 +1085,7 @@ mod tests {
             weapon_visual: None,
             missile_sound: None,
             awaits_release,
+            trajectory: None,
         }
     }
 
@@ -1047,5 +1369,66 @@ mod tests {
         assert_eq!(launched.len(), 1);
         assert_eq!(launched[0].1, hand);
         assert!((launched[0].0 - 1.0).abs() < 1e-3, "full flight time");
+    }
+
+    /// A trajectory shot lands at the packet's delay on an arc above the straight line, and a
+    /// server hit lands it where it starts to fly away from that point.
+    #[test]
+    fn a_trajectory_shot_arcs_and_lands_at_a_server_hit() {
+        use bevy::ecs::system::RunSystemOnce;
+        let mut app = app();
+        app.init_resource::<crate::net::GuidIndex>()
+            .init_resource::<crate::net::SelfGuid>()
+            .add_systems(Update, move_missiles.after(spawn_missiles));
+        let caster = caster(&mut app, Vec3::ZERO);
+        let at = Vec3::new(40.0, 0.0, 0.0);
+        let trajectory = crate::creature_anim::Trajectory {
+            pitch: 0.6,
+            delay: 2.0,
+            caster: 0xF130_0000_0000_0001,
+            cast_id: 7,
+        };
+        let mut spawn = ground_go(caster, at);
+        spawn.trajectory = Some((trajectory, None));
+        app.world_mut().write_message(spawn);
+        step(&mut app, 0.0);
+        assert_eq!(
+            missiles(&mut app)[0].0,
+            2.0,
+            "the packet's delay, not distance / speed"
+        );
+        step(&mut app, 0.5);
+        let (_, mid) = missiles(&mut app)[0];
+        assert!(mid.y > 1.0, "above the straight line: {mid}");
+        // The server's hit, a little ahead of the shot.
+        let hit = mid + Vec3::new(1.0, 0.0, 0.0);
+        app.world_mut()
+            .run_system_once_with(
+                on_set_projectile_position,
+                benilla_protocol::SessionEvent::SetProjectilePosition {
+                    caster: trajectory.caster,
+                    cast_id: trajectory.cast_id,
+                    position: benilla_assets::coords::bevy_to_wow(hit),
+                },
+            )
+            .unwrap();
+        let mut landed = None;
+        for _ in 0..20 {
+            step(&mut app, 0.05);
+            landed = app
+                .world_mut()
+                .resource_mut::<Messages<CastEvent>>()
+                .drain()
+                .find_map(|e| match e.kind {
+                    CastEventKind::GroundImpact { pos } => Some(pos),
+                    _ => None,
+                });
+            if landed.is_some() {
+                break;
+            }
+        }
+        let landed = landed.expect("landed short");
+        assert!(landed.distance(hit) < 2.0, "{landed} near {hit}");
+        assert!(missiles(&mut app).is_empty());
     }
 }

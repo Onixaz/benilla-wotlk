@@ -243,6 +243,14 @@ pub(crate) struct Creatures {
 }
 
 impl Creatures {
+    /// A display's missile hit sphere inputs (`0x6fbff0`).
+    pub(crate) fn missile_collision(
+        &self,
+        display_id: u32,
+    ) -> Option<benilla_formats::MissileCollision> {
+        self.catalog.missile_collision(display_id)
+    }
+
     /// Whether a display id has a model row behind it (`CreatureDisplayInfo` → `CreatureModelData`),
     /// the chain `0x5ec480` walks after the race row's id.
     pub(crate) fn resolves_model(&self, display_id: u32) -> bool {
@@ -606,6 +614,7 @@ impl Plugin for EntitiesPlugin {
         app.add_message::<mount::MountDropped>();
         mount::register(app);
         mirror_image::register(app);
+        missile::register(app);
         app.add_systems(
             Update,
             publish_world_units

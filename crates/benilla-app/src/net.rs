@@ -1020,6 +1020,13 @@ pub(crate) enum VehicleCommand {
         orientation: f32,
         seat: Option<(u64, u8)>,
     },
+    /// `CMSG_UPDATE_PROJECTILE_POSITION`: our trajectory missile's local hit, raw WoW.
+    ProjectileHit {
+        caster: u64,
+        spell: u32,
+        cast_id: u8,
+        at: [f32; 3],
+    },
 }
 
 /// A message to the server through the write thread, carrying any pose it needs.
