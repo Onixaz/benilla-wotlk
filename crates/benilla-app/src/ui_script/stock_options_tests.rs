@@ -701,6 +701,92 @@ fn every_actionbars_checkbox_writes_its_cvar_or_its_toggle_bit() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Features panel's checkboxes, `(button suffix, CVar, registered default, what its write
+/// reaches)` (`InterfaceOptionsPanels.xml`; the game CVar registrar `0x51d9b0`).
+const FEATURES_CHECKBOXES: [(&str, &str, &str, &str); 2] = [
+    (
+        "EquipmentManager",
+        "equipmentManager",
+        "0",
+        "GearManagerToggleButton:IsShown() == 1 and '1' or '0'",
+    ),
+    (
+        "PreviewTalentChanges",
+        "previewTalents",
+        "0",
+        "GetCVarBool('previewTalents') and '1' or '0'",
+    ),
+];
+
+/// Each Features checkbox boots at its CVar's 12340 default, a click and Okay writes the flip and
+/// reaches its reader (Equipment Manager shows the paper doll's set button), a click and Cancel
+/// writes nothing, and Defaults puts the registered value back; `CanUseEquipmentSets` follows
+/// `equipmentManager`.
+#[test]
+fn every_features_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-features");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsFeaturesPanel)";
+    for (suffix, cvar, default, reader) in FEATURES_CHECKBOXES {
+        let button = format!("InterfaceOptionsFeaturesPanel{suffix}");
+        let read = |s: &UiScript| {
+            s.eval::<String>(&format!("return tostring({reader})"))
+                .unwrap()
+        };
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        assert_eq!(read(&s), flip(default), "{cvar} reaches {reader}");
+        if cvar == "equipmentManager" {
+            assert_eq!(
+                s.eval::<i64>("return CanUseEquipmentSets()").unwrap(),
+                1,
+                "the verb follows the CVar"
+            );
+        }
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+        assert_eq!(read(&s), default, "{reader} is back");
+    }
+    assert_eq!(s.eval::<i64>("return CanUseEquipmentSets()").unwrap(), 0);
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Combat panel's checkboxes, `(button path, CVar, registered default)`
 /// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
 const COMBAT_CHECKBOXES: [(&str, &str, &str); 8] = [
