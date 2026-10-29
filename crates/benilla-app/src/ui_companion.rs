@@ -186,7 +186,7 @@ fn identity(state: &CompanionState) -> Vec<(u32, u32, Option<&str>)> {
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system's full input set
 fn feed_companions(
     script: Option<NonSendMut<UiScript>>,
     actions: Res<PlayerActions>,
