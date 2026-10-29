@@ -13,6 +13,7 @@
 //!   stream; `net::motion`'s `rly` is the receive side.
 //! - `sett`: how the settle hold ended ([`settle`]) and the time it skipped ([`skipped_time`]).
 //! - `rid`: a frame of a self-spline ride ([`ride`]).
+//! - `sync`: a time-sync request answered ([`time_sync`]).
 //!
 //! The anim driver writes `anim` lines into the same file on the same clock, and
 //! [`super::ride`] writes the transport carry's `ride`.
@@ -194,6 +195,17 @@ pub(super) fn swim(feet_y: f32, surface_y: f32, swimming: bool, h: f32) {
             "y {feet_y:9.3} surf {surface_y:9.3} depth {depth:6.3} {band} [{exit:.3}..{enter:.3}] h {h:.3} mode={}",
             if swimming { "swim" } else { "walk" }
         ),
+    );
+}
+
+/// One `sync` line per `SMSG_TIME_SYNC_REQ` answered: its counter and the clock we sent.
+pub(super) fn time_sync(counter: u32, client_ms: u32) {
+    if !trace::enabled() {
+        return;
+    }
+    trace::line(
+        "sync",
+        &format!("answered counter {counter} at client {client_ms} ms"),
     );
 }
 
