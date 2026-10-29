@@ -1,6 +1,6 @@
-# FrameScript C->Lua glue-event catalog of the 3.3.5a client (WoW.exe build 12340): eventId -> name.
-# Source: the 0x29-slot event-name pointer array at 0xb6aff8, filled by 0x4dbc70..0x4dbe0a.
-# The glue manager's Resume (0x4da5f0) hands it to the FrameScript event registry at 0x81b5f0 in place of the world table, so a glue event's id names a different event in-game.
+# The 3.3.5a client's (build 12340) glue-screen C->Lua event catalog: eventId -> name.
+# The glue screens load this 41-slot table in place of the in-world one, so a glue event id names
+# a different event in-game.
 eventId	name
 0	SET_GLUE_SCREEN
 1	START_GLUE_MUSIC

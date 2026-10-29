@@ -54,7 +54,7 @@ pub fn tga_to_rgba(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
     }
 
     // The pixels start after the id field and any colour map, which a colour-mapped image reads on
-    // the way (: `entryBytes * colorMapLength + idLength + 0x12`).
+    // the way (`entryBytes * colorMapLength + idLength + 0x12`).
     let map_bytes = if color_map_type == 1 {
         color_map_len * map_entry_bytes
     } else {

@@ -25,7 +25,7 @@ pub struct M2Light {
     pub bone_z: [f32; 3],
     /// Both runtime gate bytes load as 1 and the animate loop rewrites the visibility byte only
     /// when the track has keys, so a light is dark only when its first visibility key is 0. The
-    /// values are bytes (: `+0xec = visibilityValue[k0]`).
+    /// values are bytes (`+0xec = visibilityValue[k0]`).
     pub visibility_off: bool,
 }
 

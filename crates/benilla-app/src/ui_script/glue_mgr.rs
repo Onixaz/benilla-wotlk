@@ -55,7 +55,7 @@
 //!
 //! The character list, the other half of the character screen's show:
 //!
-//! 1. The connect's success tears the roster down (: `UPDATE_SELECTED_CHARACTER` with 1,
+//! 1. The connect's success tears the roster down (`UPDATE_SELECTED_CHARACTER` with 1,
 //!    `CHARACTER_LIST_UPDATE`) and puts `charselect` up, whose `OnShow` calls
 //!    `GetCharacterListUpdate`. The glue VM clears its records in the call; the tail is state 3,
 //!    the `CHAR_LIST_RETRIEVING` dialog and the query, which is a `CMSG_CHAR_ENUM` on the parked
@@ -656,7 +656,7 @@ impl GlueMgr {
     }
 
     /// The tail of `GetCharacterListUpdate`: state 3, the `CHAR_LIST_RETRIEVING` dialog and the
-    /// query (: operation 6 at status `0x2a`, then `CMSG_CHAR_ENUM` on the world link). With no
+    /// query (operation 6 at status `0x2a`, then `CMSG_CHAR_ENUM` on the world link). With no
     /// link the operation fails `RESPONSE_FAILED_TO_CONNECT` at once. State 11, a refused character
     /// login (`0x4d95c0`'s first test), returns before any of it.
     fn get_character_list(&mut self) {

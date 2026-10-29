@@ -426,7 +426,7 @@ pub(crate) struct EmoteAnim {
     pub(crate) anim_id: u16,
     /// `PlaySeq` stamp; a kit anim inherits its `CastEvent`'s.
     pub(crate) seq: u64,
-    /// Came through the shared one-shot emote player (: `SMSG_EMOTE`, the gesture dispatcher),
+    /// Came through the shared one-shot emote player (`SMSG_EMOTE`, the gesture dispatcher),
     /// which skips an id already armed on the key bone or bone 0. A kit anim and `DoEmote`'s local
     /// play call directly and take no such test.
     pub(crate) via_player: bool,
@@ -592,7 +592,7 @@ pub(crate) struct AnimDriver {
     /// and on clear, so a flip cuts a one-shot.
     interacting: bool,
     /// Whether the interaction in `interacting` (or the one just cleared) targets a player, whose
-    /// open and clear skip the re-pick (: the PLAYER typemask bit).
+    /// open and clear skip the re-pick (the PLAYER typemask bit).
     interact_player: bool,
     /// The clear's re-pick runs while the reference still names the NPC, so it picks Stand; the
     /// global is zeroed after. The state returns at the next re-pick: the Stand window's end, a

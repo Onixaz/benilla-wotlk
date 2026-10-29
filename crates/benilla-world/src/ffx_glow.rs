@@ -1592,9 +1592,13 @@ mod tests {
     #[test]
     fn the_glue_screens_pin_three_verified_glow_weights() {
         assert_eq!(GlueFfx::default(), GlueFfx::Shown);
-        assert_eq!(GlueFfx::Shown.glow(), 0.30, "*, the widget's OnShow");
-        assert_eq!(GlueFfx::SelectLiving.glow(), 0.40, "*");
-        assert_eq!(GlueFfx::SelectGhost.glow(), 0.15, "*");
+        assert_eq!(GlueFfx::Shown.glow(), 0.30, "the widget's OnShow");
+        assert_eq!(
+            GlueFfx::SelectLiving.glow(),
+            0.40,
+            "the living select build"
+        );
+        assert_eq!(GlueFfx::SelectGhost.glow(), 0.15, "the ghost select build");
         // Only the ghost arm installs the death pass.
         assert_eq!(GlueFfx::SelectGhost.death(), 1.0);
         assert_eq!(GlueFfx::Shown.death(), 0.0);

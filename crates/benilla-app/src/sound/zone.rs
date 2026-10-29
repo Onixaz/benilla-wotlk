@@ -84,7 +84,7 @@ const LUA_MUSIC_VOLUME: f32 = 1.0;
 /// nothing playing still pushes out a start that was due.
 const LUA_MUSIC_SCHEDULE_SECS: f64 = 6.0;
 
-/// The ambience crossfade, both legs (: out `(0x40a00000 = 5.0f)`, → `(5.0f, kit vol)`);
+/// The ambience crossfade, both legs (out `(0x40a00000 = 5.0f)`, → `(5.0f, kit vol)`);
 /// submerge/emerge is instant instead.
 const AMBIENCE_TRANSITION_FADE_MS: u64 = 5000;
 

@@ -21,7 +21,7 @@ use super::kit::{
 };
 use super::{math, AudioListener, SoundConfig, SoundOutput};
 
-/// 32 entries, one per distinct SoundEntries id (: `0x1c200` over stride `0xe10`); a 33rd id gets
+/// 32 entries, one per distinct SoundEntries id (`0x1c200` over stride `0xe10`); a 33rd id gets
 /// handle 0 from the reference and stays untracked until an entry frees.
 const POOL_ENTRIES: usize = 32;
 

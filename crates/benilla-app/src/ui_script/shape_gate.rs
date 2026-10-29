@@ -23,11 +23,11 @@ const WIDGET_NOT_YET_ASSERTED: &[&str] = &[];
 
 /// The glue registrar table. This VM is the in-game one, so a duplicated name is read at its
 /// other row.
-const GLUE_TABLE: &str = "0xac3e00";
+const GLUE_TABLE: &str = "t022";
 
 struct Row {
     name: String,
-    table_va: String,
+    table: String,
     arity: usize,
     /// The `kinds` column verbatim, `|`-separated alternatives; empty unless trustworthy.
     kinds: String,
@@ -49,20 +49,20 @@ fn rows_of_kind(kind: &str) -> Vec<Row> {
         .filter(|l| !l.starts_with('#') && !l.starts_with("name\t"))
         .filter_map(|l| {
             let f: Vec<&str> = l.split('\t').collect();
-            // name fn pair_va table_va table_kind argc argc_conf arity arity_conf kinds …
-            if f.len() < 9 || f[4] != kind || f[8] != "exact" {
+            // name table table_kind argc argc_conf arity arity_conf kinds kinds_conf notes
+            if f.len() < 7 || f[2] != kind || f[6] != "exact" {
                 return None;
             }
             // A `delegated-push` row's callee pushes on its behalf, unseen by the push trace, so
             // its kinds cover the binding's own ops only; its arity, read from `eax`, holds.
-            let delegated = f.len() > 11 && f[11].contains("delegated-push");
+            let delegated = f.len() > 9 && f[9].contains("delegated-push");
             Some(Row {
                 name: f[0].to_string(),
-                table_va: f[3].to_string(),
-                arity: f[7].parse().ok()?,
+                table: f[1].to_string(),
+                arity: f[5].parse().ok()?,
                 // Kinds are advisory unless `kinds_conf` is `agree`, so such a row carries none.
-                kinds: if f.len() > 10 && f[10] == "agree" && !delegated {
-                    f[9].to_string()
+                kinds: if f.len() > 8 && f[8] == "agree" && !delegated {
+                    f[7].to_string()
                 } else {
                     String::new()
                 },
@@ -112,7 +112,7 @@ fn every_query_binding_answers_the_reference_s_return_arity() {
         let candidates: Vec<&&Row> = if rs.len() == 1 {
             rs.iter().collect()
         } else {
-            rs.iter().filter(|r| r.table_va != GLUE_TABLE).collect()
+            rs.iter().filter(|r| r.table != GLUE_TABLE).collect()
         };
         // Still ambiguous after dropping glue: skip rather than guess.
         let Some(first) = candidates.first() else {
@@ -332,7 +332,7 @@ fn the_base_library_answers_the_reference_s_return_arity_and_kinds() {
 
 /// The widget registrar tables with their class and an instance name. A method name can sit in
 /// several tables at different arities, so each method is probed on its own table's class; an
-/// unmapped table is skipped.
+/// unmapped table is skipped. The 3.3.5a table ids are not mapped yet (#54), so every one is.
 const WIDGET_PROBES: &[(&str, &str, &str)] = &[
     ("", "Frame", "PGFrame"),
     ("", "Button", "PGButton"),
@@ -406,10 +406,10 @@ fn every_widget_method_answers_the_reference_s_return_arity() {
         .filter(|l| !l.starts_with('#') && !l.starts_with("name\t"))
     {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 9 || f[4] != "widget" || f[8] != "exact" {
+        if f.len() < 7 || f[2] != "widget" || f[6] != "exact" {
             continue;
         }
-        let (name, table) = (f[0], f[3]);
+        let (name, table) = (f[0], f[1]);
         if !["Get", "Is", "Has", "Can", "Num"]
             .iter()
             .any(|p| name.starts_with(p))
@@ -417,7 +417,7 @@ fn every_widget_method_answers_the_reference_s_return_arity() {
             continue;
         }
         let Some(obj) = made.get(table) else { continue };
-        let Ok(want) = f[7].parse::<usize>() else {
+        let Ok(want) = f[5].parse::<usize>() else {
             continue;
         };
 
@@ -526,7 +526,7 @@ fn every_query_binding_answers_the_reference_s_return_kinds() {
         let candidates: Vec<&&Row> = if rs.len() == 1 {
             rs.iter().collect()
         } else {
-            rs.iter().filter(|r| r.table_va != GLUE_TABLE).collect()
+            rs.iter().filter(|r| r.table != GLUE_TABLE).collect()
         };
         let Some(first) = candidates.first() else {
             continue;
@@ -638,10 +638,10 @@ fn every_widget_method_answers_the_reference_s_return_kinds() {
         .filter(|l| !l.starts_with('#') && !l.starts_with("name\t"))
     {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 11 || f[4] != "widget" || f[8] != "exact" || f[10] != "agree" {
+        if f.len() < 9 || f[2] != "widget" || f[6] != "exact" || f[8] != "agree" {
             continue;
         }
-        let (name, table) = (f[0], f[3]);
+        let (name, table) = (f[0], f[1]);
         if !["Get", "Is", "Has", "Can", "Num"]
             .iter()
             .any(|p| name.starts_with(p))
@@ -649,7 +649,7 @@ fn every_widget_method_answers_the_reference_s_return_kinds() {
             continue;
         }
         let Some(obj) = made.get(table) else { continue };
-        let want = kind_alternatives(f[9]);
+        let want = kind_alternatives(f[7]);
         if want.is_empty() {
             continue;
         }
@@ -691,7 +691,7 @@ fn every_widget_method_answers_the_reference_s_return_kinds() {
             }
             mismatches.push(format!(
                 "{obj}:{name} answers ({observed}), reference states {}",
-                f[9]
+                f[7]
             ));
         }
     }
@@ -825,10 +825,10 @@ fn no_widget_method_answers_a_lua_boolean() {
         .filter(|l| !l.starts_with('#') && !l.starts_with("name\t"))
     {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 9 || f[4] != "widget" || f[8] != "exact" {
+        if f.len() < 7 || f[2] != "widget" || f[6] != "exact" {
             continue;
         }
-        let (name, table) = (f[0], f[3]);
+        let (name, table) = (f[0], f[1]);
         if !["Get", "Is", "Has", "Can", "Num"]
             .iter()
             .any(|p| name.starts_with(p))

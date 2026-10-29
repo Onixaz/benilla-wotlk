@@ -1,5 +1,5 @@
 //! `ChrRaces.dbc` column 3: the sound the client plays on `SMSG_EXPLORATION_EXPERIENCE`, by the
-//! player's race (: row `[race]`, offset `0xc`).
+//! player's race (row `[race]`, offset `0xc`).
 
 use std::collections::HashMap;
 

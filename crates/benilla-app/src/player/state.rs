@@ -1047,7 +1047,7 @@ mod move_mode_tests {
 
         let mut rooted = granted();
         rooted.modes.rooted = true;
-        assert!(!rooted.take_wire_jump(), "ROOT —");
+        assert!(!rooted.take_wire_jump(), "ROOT");
         assert!(
             !rooted.hover_launch,
             "a refused Jump returns failure and nothing retries it"

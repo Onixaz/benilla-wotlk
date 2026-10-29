@@ -98,9 +98,9 @@ fn main() -> anyhow::Result<()> {
             t.groups,
             t.wet_tiles,
             match (water, interior) {
-                (true, true) => "(interior water)",
-                (true, false) => "(exterior water, MapObjExtWater0.bls)",
-                (false, _) => "(magma/slime — arm-blind)",
+                (true, true) => "0x6b6420  (interior water)",
+                (true, false) => "0x6b6630  (exterior water, MapObjExtWater0.bls)",
+                (false, _) => "0x6b68f0  (magma/slime — arm-blind)",
             }
         );
         if !water {

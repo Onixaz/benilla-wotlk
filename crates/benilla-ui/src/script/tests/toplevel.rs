@@ -461,7 +461,7 @@ fn lua_raise_acts_on_the_nearest_toplevel_ancestor_and_is_silent_without_one() {
     assert!(s.errors().is_empty(), "{:?}", s.errors());
 }
 
-/// The reference's `Lower` does nothing (: `xor eax,eax; ret 4`), and neither does ours.
+/// The reference's `Lower` does nothing (`xor eax,eax; ret 4`), and neither does ours.
 #[test]
 fn lua_lower_exists_and_does_nothing() {
     let mut s = board_and_dialog();

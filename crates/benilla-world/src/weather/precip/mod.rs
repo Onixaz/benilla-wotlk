@@ -85,7 +85,7 @@ const REF_FPS_GAIN: f32 = if REF_MAXFPS < 60.0 {
 } else {
     1.0
 };
-/// A patter lives 0.25 s (: `lifetime = now + 0.25`).
+/// A patter lives 0.25 s (`lifetime = now + 0.25`).
 const PATTER_LIFE: f32 = 0.25;
 /// Per-frame spawn budget uses `min(dt, 1/60)`.
 const DT_CAP: f32 = 1.0 / 60.0;

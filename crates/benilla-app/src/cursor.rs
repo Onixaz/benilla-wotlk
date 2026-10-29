@@ -190,7 +190,7 @@ fn drive_displayed_cursor(
             .as_ref()
             .is_some_and(|s| s.gift_wrap_armed().is_some())
     {
-        // An armed gift wrap sets both cells to Cast(2) (: `SetCursorBaseMode(2)`,
+        // An armed gift wrap sets both cells to Cast(2) (`SetCursorBaseMode(2)`,
         // `CursorSetMode(2)`), so its cursor survives the pointer crossing the world.
         WorldCursor {
             kind: CursorKind::Cast,

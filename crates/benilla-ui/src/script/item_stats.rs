@@ -431,7 +431,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetItemQualityColor(quality) → r, g, b, escapeString. 7 and up, or a negative quality, answer
-    // Common (: an unsigned `cmp ecx,7; jb`), so `ITEM_QUALITY_COLORS[-1]` is white, the colour of
+    // Common (an unsigned `cmp ecx,7; jb`), so `ITEM_QUALITY_COLORS[-1]` is white, the colour of
     // an uncached loot row.
     lua.globals().set(
         "GetItemQualityColor",

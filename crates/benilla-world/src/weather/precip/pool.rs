@@ -132,7 +132,7 @@ pub(super) struct HeightCache {
 
 /// The reference's cell stride (1.0416666).
 pub(super) const CELL: f32 = 1.041_666_6;
-/// A probe that hits nothing reports ground 200 below the query (: `refZ − 200`).
+/// A probe that hits nothing reports ground 200 below the query (`refZ − 200`).
 const MISS_DEPTH: f32 = 200.0;
 
 impl HeightCache {

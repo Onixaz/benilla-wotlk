@@ -999,7 +999,7 @@ mod tests {
             "IS_TRADESKILL: the reference zeroes the flag"
         );
         d.attributes = 0x80;
-        assert!(!d.announces_unlearn(), "DO_NOT_DISPLAY:");
+        assert!(!d.announces_unlearn(), "DO_NOT_DISPLAY");
         d.attributes = 0;
         d.cast_ui = 1;
         assert!(

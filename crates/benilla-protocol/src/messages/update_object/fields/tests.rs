@@ -797,7 +797,7 @@ fn feign_death_reads_dead_without_touching_the_raw_health_field() {
 
     // The reads-dead predicate flips for both, plus the stand-state leg.
     assert!(!alive.unit_reads_dead());
-    assert!(feigning.unit_reads_dead(), "— the dynflag leg");
+    assert!(feigning.unit_reads_dead(), "the dynflag leg");
     assert!(corpse.unit_reads_dead());
     assert!(
         unit(&[

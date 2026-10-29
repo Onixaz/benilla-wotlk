@@ -105,7 +105,7 @@ pub fn interior_light_up(
 }
 
 /// An interior light as its 7-row SH probe, each MOLR lobe windowed by its distance from
-/// `ref_point` (: full inside `attenStart`, none past `attenEnd`, linear between).
+/// `ref_point` (full inside `attenStart`, none past `attenEnd`, linear between).
 pub fn fold_interior_probe(
     ambient: [f32; 3],
     diffuse: [f32; 3],

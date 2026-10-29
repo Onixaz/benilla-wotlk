@@ -30,7 +30,7 @@ const ROSTER_REQUEST_THROTTLE_SECS: f64 = 10.0;
 /// One guild's identity, from `SMSG_GUILD_QUERY_RESPONSE`.
 #[derive(Clone, Debug, Default)]
 struct Identity {
-    /// Empty means no such guild, as the reference reads it (: cache insert or remove); cached as a
+    /// Empty means no such guild, as the reference reads it (cache insert or remove); cached as a
     /// negative so the query is not re-sent.
     name: String,
     /// The ten rank names, index 0 = guild master; empty past the guild's real rank count.

@@ -762,7 +762,7 @@ fn world(
         }
 
         // The link: the character park, the world, and back to the park on the same link after a
-        // logout or a refused character login (: the reference tears the world down and closes
+        // logout or a refused character login (the reference tears the world down and closes
         // nothing). Its first world entry starts the connection's ping block.
         let mut fresh_link = true;
         // The character screens read the AddOn index space before any world entry: the reply is

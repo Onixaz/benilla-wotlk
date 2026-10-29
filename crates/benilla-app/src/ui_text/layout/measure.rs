@@ -131,7 +131,7 @@ pub(crate) fn measure_text(
     }
     // Deviation: one pixel of headroom over the reference's measured width, kept because dropping
     // it narrows every auto-sized FontString, a look change. Height: N lines at the font em with no
-    // outline pad (: `N·S + (N-1)·gap`); an outlined ring pokes past it, as in the reference.
+    // outline pad (`N·S + (N-1)·gap`); an outlined ring pokes past it, as in the reference.
     (
         max_w.ceil() + 1.0,
         super::text_block_h(render_lines.len(), r.size, font.spacing),

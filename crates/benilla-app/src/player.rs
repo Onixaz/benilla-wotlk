@@ -143,7 +143,7 @@ pub(crate) const UNIT_FLAG_IN_COMBAT: u32 = 0x0008_0000;
 /// `SetStandState`'s third guard, the idle auto-AFK gate and `UnitOnTaxi`.
 pub(crate) const UNIT_FLAG_TAXI_FLIGHT: u32 = 0x0010_0000;
 
-/// A stand-state request for [`posture`]'s one setter, the client's `SetStandState` (: send
+/// A stand-state request for [`posture`]'s one setter, the client's `SetStandState` (send
 /// `CMSG_STANDSTATECHANGE` and apply locally). The posture emotes (`/sit`, `/sleep`, `/kneel`,
 /// `/stand`, `/lay`) send it, as `DoEmote`'s `EmoteSpecProc == 1` branch calls the setter the `X`
 /// key does; the server sets no posture for a state text emote (`ChatHandler.cpp:729-733`). States

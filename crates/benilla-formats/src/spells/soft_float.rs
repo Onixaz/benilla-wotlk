@@ -101,7 +101,7 @@ fn floor(x: u32) -> u32 {
 }
 
 /// Ceil; under one in magnitude a negative nonzero value is +0.0 and anything else 1.0, zero
-/// included (: the sign mask of a zero tests clear).
+/// included (the sign mask of a zero tests clear).
 fn ceil(x: u32) -> u32 {
     let v = f32::from_bits(x);
     if v.abs() < 1.0 {

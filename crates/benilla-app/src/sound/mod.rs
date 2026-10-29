@@ -352,7 +352,7 @@ fn world_audio_live(
 pub(crate) struct SoundPlugin;
 
 /// The sound CVars' change callback: volumes clamp to `[0, 1]`, enables are `!= 0` as the reference
-/// parses them (: `setne al`).
+/// parses them (`setne al`).
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut sound: ResMut<SoundConfig>) {
     let v = ev.num();
     match ev.key().as_str() {
@@ -511,7 +511,7 @@ fn update_audio_listener(
     self_av: Query<(&Transform, Option<&CameraPivot>), With<Embodied>>,
     cam: Query<&Transform, (With<WorldCamera>, Without<Embodied>)>,
 ) {
-    // A cinematic puts the listener on the camera ahead of the CVar (: `camera+0x50`, armed by the
+    // A cinematic puts the listener on the camera ahead of the CVar (`camera+0x50`, armed by the
     // cinematic start).
     let flying = cinematic
         .as_deref()

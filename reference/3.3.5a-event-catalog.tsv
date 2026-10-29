@@ -1,6 +1,5 @@
-# FrameScript C->Lua world-event catalog of the 3.3.5a client (WoW.exe build 12340): eventId -> name.
-# Source: the 0x2d2-slot event-name pointer array at 0xc24eb0, filled by 0x608880..0x60a111.
-# The caller at 0x52ab1b passes (0xc24eb0, 0x2d2) to the FrameScript event registry at 0x81b5f0.
+# The 3.3.5a client's (build 12340) in-world C->Lua event catalog: eventId -> name.
+# 722 slots, 646 of them named.
 eventId	name
 0	UNIT_PET
 2	UNIT_PET

@@ -82,7 +82,7 @@ impl StreamWindow {
     }
 }
 
-/// The inner half-width in chunks, `1 + trunc(farclip / 33.333)` (: `fmul −0.03`, `__ftol`,
+/// The inner half-width in chunks, `1 + trunc(farclip / 33.333)` (`fmul −0.03`, `__ftol`,
 /// `1 − eax`): 777 ⇒ 24, 350 ⇒ 11, 177 ⇒ 6.
 pub fn inner_radius(farclip: f32) -> i32 {
     1 + (farclip / CHUNK_SIZE).trunc() as i32

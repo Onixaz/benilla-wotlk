@@ -408,7 +408,7 @@ fn extract_one(
                     world_seat: owner.is_some_and(|o| super::nameplate::is_world_seated(model, o)),
                 }
             } else {
-                // The draw gate is the texture slot, never the colour (: empty `+0xcc` emits
+                // The draw gate is the texture slot, never the colour (empty `+0xcc` emits
                 // nothing); a vertex colour alone is a tint. A gradient fills the texture slot, so
                 // it draws, at its midpoint since a quad has one tint.
                 let fill = data.fill.or_else(|| data.gradient.map(|g| g.midpoint()));

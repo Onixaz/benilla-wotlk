@@ -353,7 +353,7 @@ impl Nameplates {
         self.live.contains_key(&unit)
     }
 
-    /// The line count of `unit`'s live name, for the raid marker's seat (: one pitch above the
+    /// The line count of `unit`'s live name, for the raid marker's seat (one pitch above the
     /// block, or at the bare anchor when no name shows).
     pub(crate) fn line_count(&self, unit: Entity) -> Option<usize> {
         self.live.get(&unit).map(|live| live.lines.len())

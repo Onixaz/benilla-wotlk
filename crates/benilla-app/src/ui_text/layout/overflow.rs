@@ -9,7 +9,7 @@ const ELLIPSIS: &str = "...";
 /// anchor-graph arithmetic, and a stray `1e-4` must not start or lose a line.
 const HEIGHT_EPS: f32 = 0.25;
 
-/// How many wrapped lines a `box_h`-tall box draws, the reference's line stack (: stop at
+/// How many wrapped lines a `box_h`-tall box draws, the reference's line stack (stop at
 /// `accum ≥ +0x40`): the smallest `n` with `n·pitch ≥ box_h`, never 0, `pitch` being the font
 /// height. The render law: fitting by it lets a four-line name overflow a three-line box.
 pub(super) fn lines_allowed(box_h: f32, pitch: f32) -> usize {

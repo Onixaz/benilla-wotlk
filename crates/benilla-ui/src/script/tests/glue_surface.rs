@@ -19,25 +19,20 @@ fn reference_rows(file: &str, header: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
-/// The tables FrameScript's Lua init (`FrameScript_Initialize`) registers into `_G`: the Lua base
-/// library and the base table `0xa443a8`.
-const BASE_TABLES: [&str; 2] = ["0xa47c80", "0xa443a8"];
+/// The tables the client's Lua init registers into `_G`: the Lua base library and the client's
+/// base table.
+const BASE_TABLES: [&str; 2] = ["t006", "t001"];
 
-/// The registrar tables the glue manager's `Resume` (`0x4da5f0`) shares with the in-game UI:
-/// system, frame script, sound, account messages and video options.
-const SHARED_TABLES: [&str; 5] = ["0xad2184", "0xaf5848", "0xb2d928", "0xacd418", "0xacd320"];
+/// The registrar tables the glue screens share with the in-game UI: system, frame script, sound,
+/// account messages and video options.
+const SHARED_TABLES: [&str; 5] = ["t093", "t100", "t113", "t038", "t037"];
 
 /// The glue-only registrar tables and their row counts: the glue core, character select, character
 /// create and the realm list.
-const GLUE_TABLES: [(&str, usize); 4] = [
-    ("0xac3e00", 113),
-    ("0xac4378", 13),
-    ("0xac4228", 32),
-    ("0xac4190", 14),
-];
+const GLUE_TABLES: [(&str, usize); 4] = [("t022", 113), ("t025", 13), ("t024", 32), ("t023", 14)];
 
 /// The global function aliases of the table, math and string libraries the compat chunk
-/// FrameScript's Lua init runs defines.
+/// the client's Lua init runs defines.
 const COMPAT: [&str; 42] = [
     "foreach", "foreachi", "getn", "tinsert", "tremove", "sort", "wipe", "abs", "acos", "asin",
     "atan", "atan2", "ceil", "cos", "deg", "exp", "floor", "frexp", "ldexp", "log", "log10", "max",
@@ -59,7 +54,7 @@ fn glue_state_names() -> (BTreeSet<String>, BTreeSet<String>) {
     let mut allowed: BTreeSet<String> = BTreeSet::new();
     let mut glue: BTreeSet<String> = BTreeSet::new();
     for f in &shapes {
-        let table = f[3].as_str();
+        let table = f[1].as_str();
         if BASE_TABLES.contains(&table) || SHARED_TABLES.contains(&table) {
             allowed.insert(f[0].clone());
         }
@@ -79,7 +74,7 @@ fn glue_state_names() -> (BTreeSet<String>, BTreeSet<String>) {
 fn the_glue_tables_hold_their_rows() {
     let shapes = reference_rows("3.3.5a-shapes.tsv", "name");
     for (table, rows) in GLUE_TABLES {
-        let n = shapes.iter().filter(|f| f[3] == table).count();
+        let n = shapes.iter().filter(|f| f[1] == table).count();
         assert_eq!(n, rows, "table {table}");
     }
 }
@@ -88,11 +83,11 @@ fn the_glue_tables_hold_their_rows() {
 /// shrinks: a verb is absent until built, never stubbed.
 const NOT_YET: &[(&str, &[&str])] = &[
     (
-        "character select's rename and declension (table 0xac4378)",
+        "character select's rename and declension (table t025)",
         &["RenameCharacter", "DeclineCharacter"],
     ),
     (
-        "the glue's credits text and its options defaults (table 0xac3e00)",
+        "the glue's credits text and its options defaults (table t022)",
         &[
             "GetCreditsText",
             "RestoreVideoEffectsDefaults",

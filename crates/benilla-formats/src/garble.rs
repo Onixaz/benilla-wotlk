@@ -293,7 +293,7 @@ mod tests {
         (1, 0, "hello hello", "kazum kazum"),
         (1, 0, "hello, world.", "kazum magan "),
         (1, 0, "don't", "re'ka"),
-        (1, 0, "", "moguna"),
+        (1, 0, "abc123", "moguna"),
         (1, 0, "12345", "regas"),
         (1, 0, "hello    world", "kazum magan"),
         (1, 0, "  hello  ", " kazum "),

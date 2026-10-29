@@ -1,6 +1,6 @@
 //! The NPC greeting voice, a per-display property apart from the body vocals of
 //! [`crate::creature_sound`]: `UNIT_FIELD_DISPLAYID` → `CreatureDisplayInfo.dbc`'s `NPCSoundID`
-//! (column 12 in 12340, after `PortraitTextureName`) → `NPCSounds.dbc` (: `ID`, `hello`, `goodbye`,
+//! (column 12 in 12340, after `PortraitTextureName`) → `NPCSounds.dbc` (`ID`, `hello`, `goodbye`,
 //! `pissed`, and `ack`, 0 on every row and never read). Each is a `SoundEntries` kit of type 17,
 //! no-duplicates (`0x20`), cut off at 45 yd, a 3D emitter at the NPC.
 //! `CreatureSoundData.NPCSoundID` is not on the path.

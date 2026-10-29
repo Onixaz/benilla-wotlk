@@ -93,7 +93,7 @@ pub struct PetStats {
     /// misses. Ungated like the family word; whether the reference gates it is untraced, and no
     /// warlock reaches its stock callers (`PetStable.lua:51`, `161-162`).
     pub icon: Option<String>,
-    /// `GetPetFoodTypes()`: the diet names the family's food mask selects, in record order (: bit
+    /// `GetPetFoodTypes()`: the diet names the family's food mask selects, in record order (bit
     /// `1 << (id - 1)` of `CreatureFamily` column 7, names from `ItemPetFood`). Empty for a zero
     /// mask (every warlock minion) or a failed hunter gate, which the app applies.
     pub food_types: Vec<String>,

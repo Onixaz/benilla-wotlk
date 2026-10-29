@@ -84,7 +84,7 @@ pub enum QuadContent {
         facing: f32,
         /// `SetModelScale`'s factor (1 default).
         model_scale: f32,
-        /// `SetPosition`'s offset, in the ortho leg's layout units (: the root is
+        /// `SetPosition`'s offset, in the ortho leg's layout units (the root is
         /// `T(pos · layoutScale) · R(facing) · S(…)`).
         position: (f32, f32, f32),
         /// The frame's own alpha, which the model draws at: `Frame:SetAlpha` pushes it into the

@@ -105,7 +105,7 @@ pub(crate) fn is_possessed_by(store: Option<&ObjectStore>, self_guid: Option<u64
 }
 
 /// `(player, corpse)`, the corpse's reaction gate: the reference compares the player's template
-/// (`UNIT_FIELD_FACTIONTEMPLATE`) toward the dead player's race's (: the race byte of
+/// (`UNIT_FIELD_FACTIONTEMPLATE`) toward the dead player's race's (the race byte of
 /// `CORPSE_FIELD_BYTES_1`, then `ChrRaces.dbc` column 2) with the template comparator alone, no
 /// reputation, and passes at friendly (`setge` 4). A missing row on either side is neutral, so it
 /// fails, as does a missing catalog or player.

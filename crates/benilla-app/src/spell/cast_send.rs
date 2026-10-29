@@ -10,8 +10,8 @@
 //! GCD. A refusal is local and pre-commit: no packet, no GCD, no pending arm, only the red line.
 //!
 //! An item use takes the same ladder: `CGItem::Use` calls, whose body is with the item as TryCast's
-//! third argument. Three rungs fork on it, hence [`CastCommit`]: the not-ready rung (: item
-//! cooldown and 0x28, else and 0x3c), the power gate (items skip it), and the opcode (: `0xab` vs
+//! third argument. Three rungs fork on it, hence [`CastCommit`]: the not-ready rung (item
+//! cooldown and 0x28, else and 0x3c), the power gate (items skip it), and the opcode (`0xab` vs
 //! `0x12e`).
 
 use std::time::Instant;
@@ -963,7 +963,7 @@ fn send_spell_cast(
     }
     // TryCast's post-send tail: a spell that initiates auto-attack (on-next-swing `0x404` or
     // `AttributesEx & 0x200`, not the GO-deferred Ex2 bit 20) starts the swing at its unit target
-    // (: sheath snap and `CMSG_ATTACKSWING`).
+    // (sheath snap and `CMSG_ATTACKSWING`).
     if let (Some(d), Some(guid)) = (def, target) {
         if d.initiates_auto_attack() {
             if let Ok((e, engaged)) = self_player.single() {
@@ -1541,7 +1541,11 @@ mod tests {
         );
         assert!(rx.try_recv().is_err(), "a held press sends nothing");
         assert!(world.resource::<CastErrors>().0.is_empty());
-        assert_eq!(press(&mut world, SERPENT_STING), None, "no bit");
+        assert_eq!(
+            press(&mut world, SERPENT_STING),
+            None,
+            "a spell without the bits"
+        );
 
         let (mut world, _rx) = combat_world(true);
         assert_eq!(press(&mut world, RAPTOR_STRIKE), None, "attacking");

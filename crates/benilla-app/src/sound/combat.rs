@@ -6,8 +6,8 @@
 //! - `$CSS`, the whoosh: victimState alone picks it ([`whiffed`]), the miss whoosh by handedness or
 //!   `WeaponSwingSounds2` by weapon weight ([`swing_weight`]).
 //! - Contact, at the `$AH0-3`/`$CAH` crossing ([`SwingImpact`]): first the attacker's weapon-sound
-//!   block (: the natural-weapon `CustomAttack[n]` column, else the landed impact for the victim's
-//!   slot), then the victim dispatch (: the parry or block clang, the deflect and absorb stubs, the
+//!   block (the natural-weapon `CustomAttack[n]` column, else the landed impact for the victim's
+//!   slot), then the victim dispatch (the parry or block clang, the deflect and absorb stubs, the
 //!   injury vocal). `$CAH` drives the victim's injury, never the attacker's exertion.
 //!
 //! Metal vs wood is `Material.dbc`'s `Flags & 1` throughout. Untraced: whether the generic impact
@@ -63,7 +63,7 @@ const ABSORB_KIT: u32 = 3334;
 const HITINFO_ABSORB_OR_RESIST: u32 = benilla_protocol::messages::hit_info::FULL_ABSORB
     | benilla_protocol::messages::hit_info::FULL_RESIST;
 
-/// The stub emitters' lift (: `fadd`), as the armor foley's; the generic weapon impact passes its
+/// The stub emitters' lift (`fadd`), as the armor foley's; the generic weapon impact passes its
 /// position through unlifted.
 const STUB_HEIGHT: f32 = 2.0;
 
@@ -537,7 +537,7 @@ fn combat_sounds(
             );
             if let (true, Some(row), Some(item)) = (defended, row, defending) {
                 let kit = defense_clang(row, Some(item), mats);
-                // The clang is lifted two yards (: `fadd`).
+                // The clang is lifted two yards (`fadd`).
                 let at = victim.map(|(t, ..)| t.translation).unwrap_or(pos) + Vec3::Y * STUB_HEIGHT;
                 play(
                     &mut kits,

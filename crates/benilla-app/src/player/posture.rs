@@ -58,7 +58,7 @@ pub(super) fn update(
     // and jump reach the stand wrapper from any nonzero state; a left-drag orbit does not, nor a
     // right-drag turn (the reference skips its stand arm while the button is held), though a
     // release within 200 ms is a right-click, whose action stands you. A knockback's move event
-    // stands us too (: `GetStandState`), read off the latch [`super::wire_in::apply_server_moves`]
+    // stands us too (`GetStandState`), read off the latch [`super::wire_in::apply_server_moves`]
     // armed this frame, as the mover runs later.
     let knocked_out_of_it = player.knockback.is_some();
     if (moving || turned || knocked_out_of_it || binds.fired(crate::bindings::Input::Jump))

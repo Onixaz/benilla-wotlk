@@ -222,7 +222,7 @@ fn ai_reaction_vocals(
         let Ok((net, transform, mount_child, store, is_you)) = units.get(r.unit) else {
             continue;
         };
-        // ALERT reads the mount-preferred row (: `+0xb44 ?: +0xb40`), so a mounted unit alerts in
+        // ALERT reads the mount-preferred row (`+0xb44 ?: +0xb40`), so a mounted unit alerts in
         // its mount's voice; HOSTILE, like death, reads the rider's own row.
         let display = if r.hostile {
             net.display_id
@@ -423,7 +423,7 @@ fn creature_body_loops(
         if !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
             continue;
         }
-        // The mount-preferred row (: `+0xb44 ?: +0xb40`): a mechanostrider's engine.
+        // The mount-preferred row (`+0xb44 ?: +0xb40`): a mechanostrider's engine.
         let display = mount_child
             .and_then(|mc| mounts.get(mc.0).ok())
             .and_then(|m| m.display_id)

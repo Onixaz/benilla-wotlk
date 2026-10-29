@@ -259,7 +259,7 @@ pub(super) fn drain_pet_actions(
         debug!("ui_pet: dropping queued pet intents — the bar is gone");
         return;
     }
-    // The repaint is `latch_press`'s alone, not every click's: a refused `TogglePetAutocast` (: any
+    // The repaint is `latch_press`'s alone, not every click's: a refused `TogglePetAutocast` (any
     // right-click on a token) signals nothing, so after `OnClick`'s `SetChecked(0)` that button
     // stays unlit until the next repaint, as in the reference.
     for slot in toggles {

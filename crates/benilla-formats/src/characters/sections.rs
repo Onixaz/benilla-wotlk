@@ -551,7 +551,7 @@ pub fn equip_region_candidates(layer: usize, name: &str, sex: u8) -> [String; 2]
 }
 
 /// Source-over blit of an overlay's mip pyramid at `tile`, level by level, from the overlay's own
-/// origin (: src `(0,0)`, extent the tile); an opaque texel copies, the client's REPLACE.
+/// origin (src `(0,0)`, extent the tile); an opaque texel copies, the client's REPLACE.
 fn blit_over(dst: &mut BlpMipChain, src: &BlpMipChain, tile: Tile, scale: u32) {
     // Both chains must be decoded RGBA: DXT blocks would blend into garbage without failing.
     debug_assert!(

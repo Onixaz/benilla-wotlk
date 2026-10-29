@@ -302,8 +302,8 @@ mod tests {
 
     #[test]
     fn snow_and_rain_mist_gains_are_separate_constants() {
-        assert!((MIST_Q_RAIN - 38.0).abs() < 1e-6, "rain shader Q =");
-        assert!((MIST_Q_SNOW - 48.0).abs() < 1e-6, "snow shader Q =");
+        assert!((MIST_Q_RAIN - 38.0).abs() < 1e-6, "rain shader Q");
+        assert!((MIST_Q_SNOW - 48.0).abs() < 1e-6, "snow shader Q");
         // Only `Q` splits: the knee and the doubling are shared.
         let at = |q: f32, d: f32| 2.0 * (d - 0.5f32).max(0.0) * q;
         assert!((at(MIST_Q_SNOW, 1.0) / at(MIST_Q_RAIN, 1.0) - 48.0 / 38.0).abs() < 1e-6);

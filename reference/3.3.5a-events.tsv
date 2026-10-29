@@ -1,5 +1,4 @@
-# The 3.3.5a client's FrameScript events and argument formats from attributed producer families.
-# Generated with the catalog and callsite passes in scripts/gen-reference-wotlk.py.
+# The 3.3.5a client's (build 12340) C->Lua events and argument formats from attributed producer families.
 #
 # This remains advisory: the unit-field bridge and unit-token fan-out are mapped, but other
 # computed-id producer paths may remain. `advisory` means the listed shapes are real but may not be

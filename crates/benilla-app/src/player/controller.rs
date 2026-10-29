@@ -30,7 +30,7 @@ pub(super) fn control(
         MessageReader<crate::net::SpeedChangeMessage>,
         // Root, water walk, feather fall and hover on our mover, acked with the live pose.
         MessageReader<crate::net::MoveModeMessage>,
-        // The hard-landing report (: the wound vocal and the dust).
+        // The hard-landing report (the wound vocal and the dust).
         MessageWriter<crate::creature_anim::HardLanding>,
         // The move edges the reference hands `AbortCast`, for the cast bar.
         ResMut<crate::spell::LocalMoveStart>,

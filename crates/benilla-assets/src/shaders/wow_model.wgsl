@@ -96,7 +96,7 @@ struct WowLight {
     // 3 rows per bone are `rig_from_joint × inverse_bindpose` from the rig's own origin.
     rig_table: array<u32, 2048>,
     // Per rig slot: the CM2 body tint (`model+0x184/188/18c`) packed `0xFFRRGGBB` like the
-    // reference's node value (: `param | 0xff000000`); 0 is identity.
+    // reference's node value (`param | 0xff000000`); 0 is identity.
     rig_tint: array<u32, 2048>,
     // Per rig slot: the world origin its palette rows are measured from.
     rig_origin: array<vec4<f32>, 2048>,

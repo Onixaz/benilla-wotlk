@@ -1292,7 +1292,7 @@ mod tests {
             (
                 "SkillFrame.xml",
                 "BuySkillTier",
-                "a 5875 binding (: marshals and delegates to a C++ \
+                "a 5875 binding (marshals and delegates to a C++ \
                  method/net-send) of the pre-1.12 skill-point purchase UI. the detail bar's LearnSkillButton calls it, and \
                  that button shows only while `UnitCharacterPoints`'s second value or a row's \
                  step/rank cost is non-zero — which no 1.12 server sends. Unreachable until the \
@@ -1301,7 +1301,7 @@ mod tests {
             (
                 "SkillFrame.xml",
                 "AddSkillUp",
-                "a 5875 binding (: marshals and delegates to a C++ \
+                "a 5875 binding (marshals and delegates to a C++ \
                  method/net-send) of the pre-1.12 skill-point purchase UI. the detail bar's RightArrow calls it, and \
                  that button shows only while `UnitCharacterPoints`'s second value or a row's \
                  step/rank cost is non-zero — which no 1.12 server sends. Unreachable until the \
@@ -1310,7 +1310,7 @@ mod tests {
             (
                 "SkillFrame.xml",
                 "RemoveSkillUp",
-                "a 5875 binding (: marshals and delegates to a C++ \
+                "a 5875 binding (marshals and delegates to a C++ \
                  method/net-send) of the pre-1.12 skill-point purchase UI. the detail bar's LeftArrow calls it, and \
                  that button shows only while `UnitCharacterPoints`'s second value or a row's \
                  step/rank cost is non-zero — which no 1.12 server sends. Unreachable until the \

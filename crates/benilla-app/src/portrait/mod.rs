@@ -1220,7 +1220,7 @@ fn attach_reset(attach: Option<u16>) -> bool {
 }
 
 /// The reference's hand grip for a widget's duplicate, `[right, left]`, from attachment occupancy
-/// after the reset (: attachment 2 closes hand 1, attachment 1 closes hand 0).
+/// after the reset (attachment 2 closes hand 1, attachment 1 closes hand 0).
 fn hand_grip(
     riders: &[&PortraitRider],
     billboards: &[&PortraitBillboard],

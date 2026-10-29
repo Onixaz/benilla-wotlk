@@ -41,7 +41,7 @@ pub(crate) fn region_bytes() -> u64 {
     MAX_RIG_SLOTS as u64 * SLOT_BYTES
 }
 
-/// Packs RGB as the reference does (: `param | 0xff000000`), so even black is never [`IDENTITY`].
+/// Packs RGB as the reference does (`param | 0xff000000`), so even black is never [`IDENTITY`].
 pub fn pack(rgb: [u8; 3]) -> u32 {
     0xff00_0000 | (u32::from(rgb[0]) << 16) | (u32::from(rgb[1]) << 8) | u32::from(rgb[2])
 }

@@ -281,7 +281,11 @@ mod tests {
         assert_eq!(flags(ASSIST_WORD), UNITS | ASSIST | ALIVE);
         assert_eq!(flags(ENEMY), UNITS | ATTACK | ALIVE);
         assert_eq!(flags(PARTY_WORD), UNITS | PARTY | ALIVE);
-        assert_eq!(flags(RAID), UNITS | PARTY | ALIVE, "raid asks too");
+        assert_eq!(
+            flags(RAID),
+            UNITS | PARTY | ALIVE,
+            "a raid word asks the party check too"
+        );
         // Resurrection: the ally corpse bit takes the assist flag, and a word in `0x8600` takes the
         // dead flag instead of the alive one.
         assert_eq!(flags(CORPSE_ALLY), UNITS | ASSIST | DEAD);

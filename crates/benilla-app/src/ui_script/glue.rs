@@ -159,8 +159,7 @@ mod tests {
     /// list, and the tables it shares with the in-game state).
     fn glue_surface() -> BTreeSet<String> {
         const TABLES: [&str; 9] = [
-            "0xac3e00", "0xac4378", "0xac4228", "0xac4190", "0xad2184", "0xaf5848", "0xb2d928",
-            "0xacd418", "0xacd320",
+            "t022", "t025", "t024", "t023", "t093", "t100", "t113", "t038", "t037",
         ];
         let path = format!(
             "{}/../../reference/3.3.5a-shapes.tsv",
@@ -171,7 +170,7 @@ mod tests {
             .lines()
             .filter(|l| !l.starts_with('#'))
             .map(|l| l.split('\t').collect::<Vec<_>>())
-            .filter(|f| f.len() > 3 && TABLES.contains(&f[3]))
+            .filter(|f| f.len() > 1 && TABLES.contains(&f[1]))
             .map(|f| f[0].to_string())
             .collect()
     }

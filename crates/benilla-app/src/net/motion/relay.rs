@@ -33,7 +33,7 @@ impl RelayMove {
     }
 }
 
-/// A scheduled relayed move, the reference's queued node (: fire-time at `node[+8]`, pose at
+/// A scheduled relayed move, the reference's queued node (fire-time at `node[+8]`, pose at
 /// `node[+0x10]`).
 #[derive(Clone)]
 pub(crate) struct PendingMove {
@@ -42,7 +42,7 @@ pub(crate) struct PendingMove {
     pub(crate) mv: RelayMove,
 }
 
-/// The skew clamp (: `skew + 0x1f4` saturated into `[0, 0x5dc]`).
+/// The skew clamp (`skew + 0x1f4` saturated into `[0, 0x5dc]`).
 const SKEW_MIN_MS: f64 = -500.0;
 const SKEW_MAX_MS: f64 = 1000.0;
 
