@@ -34,8 +34,15 @@ pub(crate) struct UiAuraPlugin;
 impl Plugin for UiAuraPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AuraFeedMemory>()
-            // Feed before the VM dispatch, drain after it.
-            .add_systems(Update, feed_auras.in_set(UnitFeed).in_set(AuraEvents))
+            // Feed before the VM dispatch, drain after it; after the book's own feeds, whose
+            // spells the `RAID` list reads.
+            .add_systems(
+                Update,
+                feed_auras
+                    .in_set(UnitFeed)
+                    .in_set(AuraEvents)
+                    .after(crate::ui_action::SlotIdentityFeed),
+            )
             .add_systems(Update, drain_aura_cancels.after(UiInput))
             .add_systems(OnExit(ClientState::InWorld), end_session_aura_state);
     }
