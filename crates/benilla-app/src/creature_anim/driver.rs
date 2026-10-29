@@ -269,6 +269,8 @@ type UnitData = (
         // A proc-11 rate node here (the freeze auras', `0x6201d0`) refuses the wound flinch.
         Option<&'static crate::aura_visual::AuraNodes>,
         &'static mut UnitAnimRng,
+        // A seated passenger's ride pose (`0x747b20`).
+        Option<&'static crate::vehicle::SeatPose>,
     ),
 );
 
@@ -546,6 +548,7 @@ fn drive_unit(
             move_modes,
             aura_nodes,
             mut unit_rng,
+            seat_pose,
         ),
     ) = item;
     let rng = unit_rng
@@ -613,6 +616,11 @@ fn drive_unit(
     // No sit/sleep/kneel pose holds in the saddle (the standState leg's `[+0xdc]==0` gate,
     // `0x5fd550`).
     if mounted {
+        mv.stand_state = 0;
+    }
+    // A live seated passenger holds its seat's ride pose (`0x7385c0`), out of any stand state.
+    let seat_pose = seat_pose.map(|p| p.0).filter(|_| !dead);
+    if seat_pose.is_some() {
         mv.stand_state = 0;
     }
     // The creep vis flag off the unit's own descriptor (`[[unit+0x110]+0x213] & 2`), never
@@ -1177,6 +1185,7 @@ fn drive_unit(
             moving,
             relaxed,
             mounted,
+            seat_pose,
             looting,
             engaged,
             airborne_frozen,

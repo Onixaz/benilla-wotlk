@@ -12,9 +12,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 mod passenger;
+mod ride;
 mod seats;
 
 pub(crate) use passenger::{Passenger, SEATED};
+pub(crate) use ride::SeatPose;
 
 use bevy::prelude::*;
 
@@ -110,6 +112,12 @@ impl Plugin for VehiclePlugin {
                     send_vehicle_requests
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(feed_vehicle_signals),
+                    // With the entity visuals, after the rigs are built and any mount re-seat.
+                    (ride::ride_seats, ride::sweep_seat_anchors)
+                        .chain()
+                        .in_set(crate::entities::EntityVisualsSet)
+                        .after(crate::entities::MountReseatSet)
+                        .after(passenger::track_passengers),
                 ),
             );
     }

@@ -434,6 +434,10 @@ pub(crate) struct VisualAttached;
 #[derive(SystemSet, Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) struct EntityVisualsSet;
 
+/// The mount re-seat in [`EntityVisualsSet`], which a vehicle seat follows.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct MountReseatSet;
+
 /// [`update_display_models`]' set: a creator of display-cache entries orders before it.
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct DisplayBuildSet;
@@ -697,7 +701,11 @@ impl Plugin for EntitiesPlugin {
                 // A mount change re-seats the rig on the mount's attachment 0 or back, as the
                 // reference re-parents the body model (`0x712f70`, `0x713020`).
                 // A clone asks for its caster's look once its model is in.
-                (reseat_mounts, mirror_image::request_mirror_images).chain(),
+                (
+                    reseat_mounts.in_set(MountReseatSet),
+                    mirror_image::request_mirror_images,
+                )
+                    .chain(),
                 // A display swap rebuilds, a scale change eases over the reference's 2 s, and a
                 // unit denied a palette rig rebuilds once the table has room.
                 (
