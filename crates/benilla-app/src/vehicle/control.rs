@@ -67,14 +67,16 @@ pub(super) fn on_mover_change(
     tables: Res<VehicleTables>,
     aim: Res<VehicleAim>,
     stop: Res<super::SeatStop>,
-    mut last: Local<u64>,
+    mut last: Local<crate::ui_script::VmMemo<u64>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
+    // A new VM hears the current mover afresh.
+    let last = last.get(&script);
     let now = mover.single().ok();
     let guid = now.map_or(0, |(g, ..)| g.0);
-    if std::mem::replace(&mut *last, guid) == guid {
+    if std::mem::replace(last, guid) == guid {
         return;
     }
     let passenger_of = |g: u64| {
