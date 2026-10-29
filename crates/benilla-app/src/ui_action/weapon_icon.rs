@@ -1,6 +1,6 @@
-//! The spells that show an equipped weapon's icon: the melee auto-attack (`0x4e6870`) and the
-//! ranged auto-repeat shots (`0x4e6990`). A weapon swap changes the icon without touching the
-//! action table, so the feed refreshes these every frame.
+//! The spells that show an equipped weapon's icon: the melee auto-attack and the ranged auto-repeat
+//! shots. A weapon swap changes the icon without touching the action table, so the feed refreshes
+//! these every frame.
 
 use benilla_formats::SpellDisplay;
 
@@ -11,16 +11,16 @@ use crate::net::{NetCommands, ObjectStore, Objects};
 
 const EQUIPMENT_SLOT_MAINHAND: u8 = 15;
 
-/// The ranged helper's read, `[ecx+0x88]` in `0x4e6990` (17 × 8).
+/// The ranged helper's read, `[ecx+0x88]` (17 × 8).
 const EQUIPMENT_SLOT_RANGED: u8 = 17;
 
-/// A thrown weapon keeps the spell's own icon (`0x4e6990` tests `0x5d9f90 == 0x10`).
+/// A thrown weapon keeps the spell's own icon.
 const ITEM_SUBCLASS_THROWN: u32 = 16;
 
-/// The unarmed auto-attack icon, hardcoded at `0x84bf58`, in place of Attack's own `Temp`.
+/// The unarmed auto-attack icon, hardcoded, in place of Attack's own `Temp`.
 const SPELL_RESET_ICON: &str = "Interface\\Buttons\\Spell-Reset";
 
-/// The disarmed guard's class test (`0x4e68df`): a main hand holding a non-weapon keeps its icon.
+/// The disarmed guard's class test: a main hand holding a non-weapon keeps its icon.
 const ITEM_CLASS_WEAPON: u32 = 2;
 
 /// The main-hand item's `(class, icon)`; the icon is `None` until its display row loads.
@@ -41,9 +41,8 @@ fn main_hand_item(
     Some((class, icon))
 }
 
-/// The melee auto-attack icon (`0x4e6870`), first match wins: the form's `AttackIconID`
-/// (`+0x34`, `0x4e68af`-`0x4e68da`), `Spell-Reset` while disarmed (`0x4e68df`), the main-hand
-/// icon, then `Spell-Reset` for an empty hand.
+/// The melee auto-attack icon, first match wins: the form's `AttackIconID` (`+0x34`), `Spell-Reset`
+/// while disarmed, the main-hand icon, then `Spell-Reset` for an empty hand.
 pub(crate) fn melee_auto_attack_icon(
     store: &ObjectStore,
     forms: &std::collections::HashMap<u32, benilla_formats::ShapeshiftForm>,
@@ -62,8 +61,7 @@ pub(crate) fn melee_auto_attack_icon(
         }
     }
     let main = main_hand_item(store, objects, items, icons, commands);
-    // The disarmed guard (`0x4e68df`): a disarmed weapon hand shows `Spell-Reset`, as its swing
-    // is unarmed.
+    // The disarmed guard: a disarmed weapon hand shows `Spell-Reset`, as its swing is unarmed.
     if store.0.unit_flags() & UNIT_FLAG_DISARMED != 0
         && main
             .as_ref()
@@ -75,8 +73,8 @@ pub(crate) fn melee_auto_attack_icon(
         .unwrap_or_else(|| SPELL_RESET_ICON.to_string())
 }
 
-/// The ranged weapon's icon (`0x4e6990`). `None` (no weapon, thrown, unstreamed) shows the
-/// spell's own icon, never `Spell-Reset` (`0x4e6a44`).
+/// The ranged weapon's icon. `None` (no weapon, thrown, unstreamed) shows the spell's own icon,
+/// never `Spell-Reset`.
 pub(crate) fn ranged_weapon_icon(
     store: &ObjectStore,
     objects: &Objects,
@@ -181,7 +179,7 @@ mod tests {
         })
     }
 
-    /// The disarmed guard (`0x4e68df`).
+    /// The disarmed guard.
     #[test]
     fn a_disarmed_character_shows_spell_reset_though_armed() {
         assert_eq!(icon(0, Some(2), 0), SWORD_ICON);
@@ -193,7 +191,7 @@ mod tests {
         assert_eq!(icon(DISARMED, None, 0), SPELL_RESET_ICON);
     }
 
-    /// `0x4e6870` tests the form before the disarmed guard.
+    /// The reference's melee icon tests the form before the disarmed guard.
     #[test]
     fn the_form_icon_outranks_the_disarmed_guard() {
         assert_eq!(icon(DISARMED, Some(2), 1), BEAR_ICON);

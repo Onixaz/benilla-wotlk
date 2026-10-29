@@ -15,8 +15,8 @@ use crate::Chain;
 /// One `WMOAreaTable` row's audio fields, `0` for none or inherit.
 #[derive(Clone)]
 pub struct WmoArea {
-    /// The row id, the client's indoor dedup key (`[0x86860c]`): while it stays the same, the
-    /// zone-text update is skipped.
+    /// The row id, the client's indoor dedup key: while it stays the same, the zone-text update is
+    /// skipped.
     pub id: u32,
     /// `SoundProviderPreferences` ids, `[dry, underwater]`.
     pub sound_provider: [u32; 2],
@@ -26,8 +26,8 @@ pub struct WmoArea {
     pub zone_music: u32,
     /// `ZoneIntroMusicTable.dbc` id, the entry fanfare.
     pub intro_sound: u32,
-    /// The `AreaTable.dbc` area this group counts as (0 = none), read by the area resolver
-    /// `0x670250` when the down-ray keeps the WMO over the terrain: Ironforge reports its own area.
+    /// The `AreaTable.dbc` area this group counts as (0 = none), read by the area resolver when the
+    /// down-ray keeps the WMO over the terrain: Ironforge reports its own area.
     pub area_table_id: u32,
     /// The interior's enUS display name, empty for an unnamed row.
     pub name: String,
@@ -42,16 +42,15 @@ pub struct WmoAreaCatalog {
 }
 
 impl WmoAreaCatalog {
-    /// The hit group's own row by exact key, the zone-text chain's second query (`0x69d8f0`, one
-    /// bsearch at `0x7ccd30` with no name-set retry, default fallback or overlay): its name, if
-    /// any, refills the subzone slot.
+    /// The hit group's own row by exact key, the zone-text chain's second query (one bsearch with
+    /// no name-set retry, default fallback or overlay): its name, if any, refills the subzone slot.
     pub fn group_row(&self, wmo_id: u32, name_set: u32, group_id: u32) -> Option<&WmoArea> {
         self.groups.get(&(wmo_id, name_set, group_id))
     }
 
-    /// The whole-WMO row by exact key, the zone-text chain's first query (`0x69d830` to
-    /// `0x7ccde0`, `push 0xffffffff`): a name unlike the subzone overrides the zone slot, an
-    /// unnamed row falls back to an `AreaTable` name, and a missing row never overrides.
+    /// The whole-WMO row by exact key, the zone-text chain's first query (`push 0xffffffff`): a
+    /// name unlike the subzone overrides the zone slot, an unnamed row falls back to an `AreaTable`
+    /// name, and a missing row never overrides.
     pub fn default_row(&self, wmo_id: u32, name_set: u32) -> Option<&WmoArea> {
         self.defaults.get(&(wmo_id, name_set))
     }

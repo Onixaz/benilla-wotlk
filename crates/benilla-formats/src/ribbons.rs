@@ -65,7 +65,7 @@ fn value_track<V: TrackValue>(t: M2Track<V>, default: V, band: (u32, u32)) -> Va
 #[derive(Debug, Clone)]
 pub struct RibbonEmitterDef {
     pub bone: u16,
-    /// The origin in the host bone's frame, times the bone matrix every frame (`0x718960`).
+    /// The origin in the host bone's frame, times the bone matrix every frame.
     pub position: [f32; 3],
     /// `textureIndices[0]`'s path; `None` if unresolved, and the ribbon is skipped.
     pub texture: Option<String>,

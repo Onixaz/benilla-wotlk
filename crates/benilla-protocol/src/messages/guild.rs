@@ -1,11 +1,11 @@
 //! The guild wire messages: roster, guild query, invitations, rank administration and the event
 //! broadcast (opcodes `0x54`/`0x55`, `0x81`-`0x93`, `0x231`-`0x235`, `0x2FC`).
 //!
-//! Deviation: string reads are unbounded. The reference `0x4191b0` caps each field, counting the
-//! NUL (roster name `0x30`, notes `0x80`, MOTD `0x200`, info `0x7d0`, guild name `0x60`, rank name
-//! `0x40`), and on overflow empties it and no-ops every later read in the packet. Unbounded reads
-//! cannot poison a packet, and every cap is far above the server's own length limits, so a
-//! legitimate packet reads the same.
+//! Deviation: string reads are unbounded. The reference caps each field, counting the NUL (roster
+//! name `0x30`, notes `0x80`, MOTD `0x200`, info `0x7d0`, guild name `0x60`, rank name `0x40`), and
+//! on overflow empties it and no-ops every later read in the packet. Unbounded reads cannot poison
+//! a packet, and every cap is far above the server's own length limits, so a legitimate packet
+//! reads the same.
 
 use std::io::{self, Read};
 
@@ -81,9 +81,8 @@ pub mod guild_rank_right {
     pub const ALL: u32 = 0x000F_F1FF;
 }
 
-/// A roster member's presence byte (`Guild/Guild.h:139-144`); only `0` changes the wire, adding
-/// the `f32 lastOnlineTime`. The reference tests DND before AFK (`0x4d13e4`, `0x4d13fb`), so a
-/// member flagged both shows as DND.
+/// A roster member's presence byte (`Guild/Guild.h:139-144`); only `0` changes the wire, adding the
+/// `f32 lastOnlineTime`. The reference tests DND before AFK, so a member flagged both shows as DND.
 pub mod guild_presence {
     /// Offline; only this value carries the `lastOnlineTime` float.
     pub const OFFLINE: u8 = 0x00;
@@ -95,15 +94,15 @@ pub mod guild_presence {
     pub const DND: u8 = 0x04;
 }
 
-/// `SMSG_GUILD_EVENT`'s leading byte (`Guild/Guild.h:121-137`), the arms of the reference
-/// handler's `switch` (jump table `0x5e74dc`).
+/// `SMSG_GUILD_EVENT`'s leading byte (`Guild/Guild.h:121-137`), the arms of the reference handler's
+/// `switch`.
 pub mod guild_event {
     /// `GE_PROMOTION`, params: promoter, promoted, new rank name.
     pub const PROMOTION: u8 = 0x00;
     /// `GE_DEMOTION`, params: demoter, demoted, new rank name.
     pub const DEMOTION: u8 = 0x01;
     /// `GE_MOTD`, param: the new MOTD. The reference routes it through the CVar-gated profanity
-    /// filter (`0x703f50`), not the normal event path.
+    /// filter, not the normal event path.
     pub const MOTD: u8 = 0x02;
     /// `GE_JOINED`, param: the joiner's name.
     pub const JOINED: u8 = 0x03;
@@ -120,7 +119,7 @@ pub mod guild_event {
     /// `GE_TABARDCHANGE`; the reference handles it in its default arm.
     pub const TABARD_CHANGE: u8 = 0x09;
     /// `GE_UPDATE_RANK_NAME`, params: rank id, new rank name. The reference writes it into the
-    /// roster cache (`0x560e30`) and fires no FrameScript event.
+    /// roster cache and fires no UI event.
     pub const UPDATE_RANK_NAME: u8 = 0x0A;
     /// `GE_UPDATE_ROSTER`: silent in the reference, and vmangos never sends it.
     pub const UPDATE_ROSTER: u8 = 0x0B;
@@ -224,7 +223,7 @@ pub struct GuildQueryResponse {
     /// The guild id we asked about.
     pub guild_id: u32,
     /// The guild's name; empty means no such guild, and the reference then drops the id from its
-    /// cache instead of inserting it (`0x5552ae`).
+    /// cache instead of inserting it.
     pub name: String,
     /// Indexed by rank id, uncreated ranks empty; the live rank count is the roster's
     /// `rank_rights` length.
@@ -243,8 +242,8 @@ pub struct GuildQueryResponse {
     pub background_color: i32,
 }
 
-/// Read `SMSG_GUILD_QUERY_RESPONSE` (`Server/Packets/Guild.cpp:118-131`, reference `0x62f260`):
-/// `u32` id, name, exactly ten rank-name cstrings with no count, then five `i32` tabard fields.
+/// Read `SMSG_GUILD_QUERY_RESPONSE` (`Server/Packets/Guild.cpp:118-131`): `u32` id, name, exactly
+/// ten rank-name cstrings with no count, then five `i32` tabard fields.
 pub(super) fn read_guild_query_response(r: &mut impl Read) -> io::Result<GuildQueryResponse> {
     let guild_id = read_u32_le(r)?;
     let name = read_cstring(r)?;
@@ -293,7 +292,7 @@ pub struct GuildRosterMember {
 
 impl GuildRosterMember {
     /// Any presence bit set. A whole-byte test, not `& ONLINE`, as it is the wire's condition for
-    /// `lastOnlineTime` in vmangos and in the reference (`0x4d0c12`, `0x4d0c1d`).
+    /// `lastOnlineTime` in vmangos and in the reference.
     pub fn is_online(&self) -> bool {
         self.presence != guild_presence::OFFLINE
     }
@@ -314,7 +313,7 @@ pub struct GuildRoster {
     /// Each rank's guild-bank half of the record, by rank id, as long as [`Self::rank_rights`].
     pub rank_bank: Vec<GuildRankBank>,
     /// The members in wire order, by low guid; the reference re-sorts its own copy after every
-    /// packet (`0x4d0d32`), so sorting is the consumer's job.
+    /// packet, so sorting is the consumer's job.
     pub members: Vec<GuildRosterMember>,
 }
 
@@ -365,7 +364,7 @@ pub(super) fn read_guild_permissions(r: &mut impl Read) -> io::Result<GuildPermi
     })
 }
 
-/// Body of the `MSG_GUILD_PERMISSIONS` ask: empty (`QueryPermissions` `0x5caa40`).
+/// Body of the `MSG_GUILD_PERMISSIONS` ask: empty (`0x5caa40`).
 pub fn guild_permissions() -> Vec<u8> {
     Vec::new()
 }
@@ -431,16 +430,16 @@ pub struct GuildEventNotice {
     /// A [`guild_event`] id; the reference sends anything above `0x0D` to its default arm.
     pub event: u8,
     /// Every string `strCount` announced, uncapped like the reference read loop; the reference
-    /// display passes none of them when there are four or more (`0x5e745f`).
+    /// display passes none of them when there are four or more.
     pub params: Vec<String>,
     /// The guildmate's guid, read only for [`guild_event::SIGNED_ON`] and
     /// [`guild_event::SIGNED_OFF`].
     pub guid: Option<u64>,
 }
 
-/// Read `SMSG_GUILD_EVENT` (`Server/Packets/Guild.cpp:133-141`, reference `0x5e7180`): `u8`
-/// event, `u8` count, that many cstrings, then a `u64` guid that the reference reads only for
-/// sign-on and sign-off; vmangos also sends it with `GE_JOINED` and `GE_LEFT`, unread there.
+/// Read `SMSG_GUILD_EVENT` (`Server/Packets/Guild.cpp:133-141`): `u8` event, `u8` count, that many
+/// cstrings, then a `u64` guid that the reference reads only for sign-on and sign-off; vmangos also
+/// sends it with `GE_JOINED` and `GE_LEFT`, unread there.
 pub(super) fn read_guild_event(r: &mut impl Read) -> io::Result<GuildEventNotice> {
     let event = read_u8(r)?;
     let param_count = read_u8(r)?;
@@ -481,7 +480,7 @@ pub(super) fn read_guild_command_result(r: &mut impl Read) -> io::Result<GuildCo
 
 /// `SMSG_GUILD_INFO`, answering `CMSG_GUILD_INFO`: founding date, member and account counts. The
 /// field names are vmangos's; the reference formats wire fields 2, 1, 3 into its enUS `M/D/Y`
-/// `GUILD_INFO_TEMPLATE` (`0x5e704d`), which fits day, month, year.
+/// `GUILD_INFO_TEMPLATE`, which fits day, month, year.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct GuildInfo {
     pub name: String,

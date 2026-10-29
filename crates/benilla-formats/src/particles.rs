@@ -23,11 +23,12 @@ pub enum ParticleShape {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ParticleBlend {
     /// `4` Add, `(SRC_ALPHA, ONE)`, and `3` NoAlphaAdd, which the reference draws `(ONE, ONE)`
-    /// (EGxBlend 10, the loader's switch at `0x833e21`): no depth write or sort. Flames and glows.
+    /// (device blend 10, the loader's switch at `0x833e21`): no depth write or sort. Flames and
+    /// glows.
     Add,
     /// `2` Alpha: `(SRC_ALPHA, ONE_MINUS_SRC_ALPHA)`. Smoke.
     Alpha,
-    /// `1` AlphaKey, for chips and debris: an alpha-tested opaque material (EGxBlend 1).
+    /// `1` AlphaKey, for chips and debris: an alpha-tested opaque material (device blend 1).
     AlphaKey,
     /// `0` Opaque: blending off, depth write on, no alpha test. Also any unknown byte.
     Opaque,
@@ -493,7 +494,7 @@ fn shape_of(v: u8) -> ParticleShape {
 }
 
 /// A display's particle colour override, one `ParticleColor.dbc` row: three sets of start, mid and
-/// end colours, raw `0..=255` RGB. `ReplaceParticleColor` (`0x4ea9e0`) hands set `i` to the
+/// end colours, raw `0..=255` RGB. The particle colour replace (`0x4ea9e0`) hands set `i` to the
 /// emitters whose `particleColorIndex` is `11 + i` (`0x825410`), and their colour track then lerps
 /// these at its located keys instead of its own values (`0x97a990`, `0x9795d0`).
 #[derive(Debug, Clone, Copy, PartialEq)]

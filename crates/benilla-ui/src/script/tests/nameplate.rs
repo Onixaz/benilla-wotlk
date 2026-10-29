@@ -169,7 +169,7 @@ fn the_region_and_child_tuples_are_six_and_one() {
 }
 
 /// `_Nameplates.lua:163` rejects a plate unless its name is anchored `BOTTOM` to `CENTER` and its
-/// level `CENTER` to `BOTTOMRIGHT`, the reference's own anchors (`0x7cb456`, `0x7cb7f5`).
+/// level `CENTER` to `BOTTOMRIGHT`, the reference's own anchors.
 #[test]
 fn the_two_fontstring_anchors_are_what_nameplates_validates() {
     let mut s = vm();
@@ -192,8 +192,8 @@ fn the_two_fontstring_anchors_are_what_nameplates_validates() {
         .unwrap());
 }
 
-/// `GetValue` (`0x78f5d0`) is raw health, `[bar+0x320]`, not the fill fraction (`0x783380`), and
-/// `GetMinMaxValues` is `(0, maxHealth)`; pfUI (`:595`) and CustomNameplates (`:471`) divide them.
+/// `GetValue` is raw health, `[bar+0x320]`, not the fill fraction, and `GetMinMaxValues` is
+/// `(0, maxHealth)`; pfUI (`:595`) and CustomNameplates (`:471`) divide them.
 #[test]
 fn the_healthbar_reports_raw_health_and_its_max() {
     let mut s = vm();
@@ -344,9 +344,9 @@ fn the_driver_does_not_overwrite_an_addons_takeover() {
         .unwrap());
 }
 
-/// The glow art has no alpha and is mostly black, so the reference blends it ADD (`0x7cb36a`); as
-/// BLEND it is an opaque box. Deviation: we paint no rim, which reads as hard edges in our
-/// pipeline, but the region stays shown, ADD and textured. The border check fails an empty extract.
+/// The glow art has no alpha and is mostly black, so the reference blends it ADD; as BLEND it is an
+/// opaque box. Deviation: we paint no rim, which reads as hard edges in our pipeline, but the
+/// region stays shown, ADD and textured. The border check fails an empty extract.
 #[test]
 fn a_hovered_plate_emits_no_glow_quad() {
     use crate::script::QuadContent;
@@ -544,7 +544,7 @@ fn a_plate_created_after_the_first_frame_is_laid_out() {
 }
 
 /// An addon's frame under `WorldFrame` (`pfUICombatScreen`, `_NameplatesFrame`) shares the list
-/// with the plates, whose `GetName` is always nil (`0x7a1390`).
+/// with the plates, whose `GetName` is always nil.
 #[test]
 fn an_addon_frame_under_the_worldframe_is_not_a_plate() {
     let mut s = vm();
@@ -574,9 +574,9 @@ fn an_addon_frame_under_the_worldframe_is_not_a_plate() {
     );
 }
 
-/// A plate is a mouse-enabled `Button` (`CSimpleButton`'s constructor writes `[+0xcc] = 0x4`), so
+/// A plate is a mouse-enabled `Button` (the button's constructor writes `[+0xcc] = 0x4`), so
 /// hovering it takes the mouse focus from the world; the widget layer then names the plate's unit,
-/// as the reference's OnEnter (`0x7cb850`) publishes `[0xb4e2c8]`.
+/// as the reference plate's `OnEnter` publishes it.
 #[test]
 fn hovering_a_plate_names_its_unit() {
     let mut s = vm();
@@ -593,8 +593,8 @@ fn hovering_a_plate_names_its_unit() {
     assert_eq!(s.hovered_nameplate(), None);
 }
 
-/// The reference's click slot (`0x7cb910`) ends in the same `SetSelection` as a click on the body,
-/// and fires on the up edge only: `RegisterForClicks(0x500)` at `0x7cb637`.
+/// The reference's click slot ends in the same selection set as a click on the body, and fires on
+/// the up edge only: `RegisterForClicks(0x500)`.
 #[test]
 fn a_completed_click_on_a_plate_reaches_the_app() {
     let mut s = vm();
@@ -619,9 +619,8 @@ fn a_completed_click_on_a_plate_reaches_the_app() {
     );
 }
 
-/// `0x500` includes RightButtonUp (`0x7cb637` writes `[this+0x330]`), where a plain `Button`
-/// registers LeftButtonUp alone; the slot forks on the mask: 1 selects (`0x4925d0`), 4 selects and
-/// interacts (`0x492820`).
+/// `0x500` includes RightButtonUp (the reference writes `[this+0x330]`), where a plain `Button`
+/// registers LeftButtonUp alone; the slot forks on the mask: 1 selects, 4 selects and interacts.
 #[test]
 fn a_physical_right_click_on_a_plate_reaches_the_app() {
     let mut s = vm();
@@ -671,9 +670,8 @@ fn a_scripted_click_selects_too() {
     assert_eq!(clicks[0].button, "RightButton");
 }
 
-/// Entering mouselook turns the mouse off on every plate and leaving turns it back on (`0x60f830`,
-/// from `0x483e80` and `0x483e70`), for a turn begun on the world that drags across a plate; a
-/// press on a plate never reaches mouselook (`0x7662c0`).
+/// Entering mouselook turns the mouse off on every plate and leaving turns it back on, for a turn
+/// begun on the world that drags across a plate; a press on a plate never reaches mouselook.
 #[test]
 fn freelook_hands_the_mouse_back() {
     let mut s = vm();
@@ -697,9 +695,9 @@ fn freelook_hands_the_mouse_back() {
     );
 }
 
-/// The plate's `+0x3c` hit test (`0x7cba30`) refuses the point while a ground-targeted spell is
-/// armed (`0x6e48a0() && 0x6e6320() && !0x6e6180()`), so it falls through to the `WorldFrame`.
-/// It never touches `[+0xcc]`: `IsMouseEnabled` stays true, unlike under mouselook (`0x60f830`).
+/// The plate's `+0x3c` hit test refuses the point while a ground-targeted spell is armed, so it
+/// falls through to the `WorldFrame`. It never touches `[+0xcc]`: `IsMouseEnabled` stays true,
+/// unlike under mouselook.
 #[test]
 fn a_ground_target_veto_refuses_the_hit_without_disabling_the_mouse() {
     let mut s = vm();

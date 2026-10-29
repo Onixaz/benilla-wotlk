@@ -79,7 +79,7 @@ fn vertex(vertex: Vertex) -> VertexOutput {
 // its additive particles add light with no coverage; every other texture is straight alpha.
 @group(2) @binding(8) var<uniform> premultiplied: u32;
 // Alpha-test reference, <= 0 disables; only the WMO-interior minimap tiles, which the reference
-// draws under EGxBlend 1: no blend, `glAlphaFunc(GL_GEQUAL, 224/255)` (`0x85ad20[1]`) on
+// draws under EGxBlend 1: no blend, `glAlphaFunc(GL_GEQUAL, 224/255)` on
 // `texel.a × frameAlpha`. The screen mask stays out: the reference cuts it at the offscreen blit.
 @group(2) @binding(9) var<uniform> alpha_ref: f32;
 // Uploaded undecoded (`BlpVariant::MapTile`, the minimap tiles): the texel is already the gamma

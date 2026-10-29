@@ -1,10 +1,9 @@
 //! Every unit's aura list but the player's, one per guid, and the unit-token resolver's inputs
-//! (`0x515970`, [`UnitGuids`]) that `UnitBuff 0x519500` and `UnitDebuff 0x5198f0` read them through:
-//! the guid globals, the group tables, and each held unit a `target` chain can reach. A list is the
-//! live unit's slots, gated as any unit's; a group member or pet with no live object diverts to its
-//! roster record's block (`0x519592`-`0x5195a4` to `0x519735`, `0x519b25`). Lists are built only for
-//! guids some token can name, once per guid whatever names it, and rebuilt only when what they are
-//! built from moves: a 40-man raid names up to 80 units, and their targets.
+//! ([`UnitGuids`]) that `UnitBuff` and `UnitDebuff` read them through: the guid globals, the group
+//! tables, and each held unit a `target` chain can reach. A list is the live unit's slots, gated as
+//! any unit's; a group member or pet with no live object diverts to its roster record's block.
+//! Lists are built only for guids some token can name, once per guid whatever names it, and rebuilt
+//! only when what they are built from moves: a 40-man raid names up to 80 units, and their targets.
 
 use std::collections::hash_map::{Entry, HashMap};
 
@@ -53,8 +52,8 @@ fn event_guid(g: &UnitGuids, i: usize) -> u64 {
 }
 
 /// The group tables of [`UnitGuids`]: `party1..4` are the own subgroup's slots and `partypetN`
-/// their pets (`0x4e81d0`); `raidN` is `GetRaidRosterInfo` row N, as every other raid-token reader
-/// resolves it, and `raidpetN` that row's pet (`0x491960`).
+/// their pets; `raidN` is `GetRaidRosterInfo` row N, as every other raid-token reader resolves it,
+/// and `raidpetN` that row's pet.
 fn fill_group<'a>(
     g: &mut UnitGuids,
     group: Option<&GroupState>,
@@ -93,7 +92,7 @@ pub(super) struct Inputs<'g, 'a, H, T, V> {
     pub(super) mouseover: u64,
     pub(super) npc: u64,
     pub(super) focus: u64,
-    /// The object manager's lookup (`0x468460`).
+    /// The object manager's lookup.
     pub(super) held: H,
     /// A held unit's aura table, by guid.
     pub(super) table_of: T,
@@ -138,9 +137,9 @@ pub(super) struct UnitAuras {
 }
 
 impl UnitAuras {
-    /// Build the resolver's inputs and every nameable guid's list, push what moved, and return
-    /// the tokens `UNIT_AURA` fires for: every event token naming a unit whose list moved
-    /// (`0x515e50`), or that names a new unit. A token clearing fires nothing.
+    /// Build the resolver's inputs and every nameable guid's list, push what moved, and return the
+    /// tokens `UNIT_AURA` fires for: every event token naming a unit whose list moved, or that
+    /// names a new unit. A token clearing fires nothing.
     pub(super) fn feed<'a, H, T, V>(
         &mut self,
         script: &mut UiScript,
@@ -465,7 +464,7 @@ mod tests {
     }
 
     /// A live member reads its own aura table; `UnitBuff` keeps the unit gate, open here through
-    /// `UNIT_FLAG_AURAS_VISIBLE` (`0x5195bc`).
+    /// `UNIT_FLAG_AURAS_VISIBLE`.
     #[test]
     fn a_live_members_auras_come_off_its_table() {
         let mut app = party_app();
@@ -496,8 +495,8 @@ mod tests {
         assert_eq!(seen(&mut app), ["party1"]);
     }
 
-    /// With no live object, both bindings walk the record's block (`0x519735`, `0x519b25`), with
-    /// no unit gate, a stack count of 1 (`0x51980f`), and nil for an offline record (`0x519741`).
+    /// With no live object, both bindings walk the record's block, with no unit gate, a stack count
+    /// of 1, and nil for an offline record.
     #[test]
     fn an_out_of_range_member_reads_the_stats_aura_block() {
         let mut app = party_app();
@@ -538,9 +537,9 @@ mod tests {
         assert!(listed(&mut app, "party1", true).is_empty());
     }
 
-    /// The list writes the record's online bit too (`0x4e8361`-`0x4e837b`), so a status-only
-    /// `SMSG_GROUP_LIST` for a member out of view takes their last auras: `UnitBuff` and
-    /// `UnitDebuff` answer nil behind a clear bit (`0x519741`, `0x519b31`), and an online list brings them back.
+    /// The list writes the record's online bit too, so a status-only `SMSG_GROUP_LIST` for a member
+    /// out of view takes their last auras: `UnitBuff` and `UnitDebuff` answer nil behind a clear
+    /// bit, and an online list brings them back.
     #[test]
     fn a_status_only_list_takes_an_out_of_view_members_auras_and_an_online_one_returns_them() {
         let mut app = party_app();
@@ -658,8 +657,8 @@ mod tests {
     }
 
     /// `partypetN` names the member's `CHARM`, else `SUMMON`, while the member is held, else the
-    /// record's pet guid (`0x4e81d0`); the pet's list is its own descriptor while held, else the
-    /// pet record's block (`0x496420`, `+0xe4`).
+    /// record's pet guid; the pet's list is its own descriptor while held, else the pet record's
+    /// block (`+0xe4`).
     #[test]
     fn a_party_pet_reads_its_descriptor_or_the_pet_block() {
         let mut app = party_app();
@@ -767,7 +766,7 @@ mod tests {
         assert_eq!(listed(&mut app, "raid5", true), [589]);
         assert!(
             listed(&mut app, "raid5", false).is_empty(),
-            "no factions, so `CanAssist` fails and the gate drops the buffs"
+            "no factions, so the assist check fails and the gate drops the buffs"
         );
         assert_eq!(seen(&mut app), ["raid5"]);
         for token in ["party1", "party2", "raid6"] {
@@ -807,8 +806,8 @@ mod tests {
         );
     }
 
-    /// `UNIT_AURA` fires for every token naming a unit whose list moved (`0x515e50`), and for
-    /// nothing else; a delta that moves no aura fires nothing.
+    /// `UNIT_AURA` fires for every token naming a unit whose list moved, and for nothing else; a
+    /// delta that moves no aura fires nothing.
     #[test]
     fn unit_aura_fires_for_each_token_naming_the_member_whose_list_moved() {
         let mut app = raid_app();
@@ -838,9 +837,8 @@ mod tests {
         assert!(seen(&mut app).is_empty());
     }
 
-    /// The raid roster's twin of the list write (`0x4ba947`-`0x4ba960`): a status-only raid list
-    /// hides an out-of-view row's auras under `raidN` and its party slot alike, and an online list
-    /// returns them.
+    /// The raid roster's twin of the list write: a status-only raid list hides an out-of-view row's
+    /// auras under `raidN` and its party slot alike, and an online list returns them.
     #[test]
     fn a_status_only_raid_list_takes_an_out_of_view_rows_auras_and_an_online_one_returns_them() {
         let mut app = raid_app();
@@ -989,9 +987,9 @@ mod tests {
         app
     }
 
-    /// `UnitDebuff` reads the list of whatever unit the token names, through the resolver
-    /// (`0x515970`, called at `0x519542`): the mouseover, a member's target, any depth of `target`
-    /// chain, in any case, and the player's own list at the end of a chain that comes back to us.
+    /// `UnitDebuff` reads the list of whatever unit the token names, through the resolver: the
+    /// mouseover, a member's target, any depth of `target` chain, in any case, and the player's own
+    /// list at the end of a chain that comes back to us.
     #[test]
     fn every_token_reads_the_list_of_the_unit_it_names() {
         let mut app = chain_app();
@@ -1019,7 +1017,7 @@ mod tests {
     }
 
     /// `UNIT_AURA` fires for the tokens it fired for before, never for a chain or the mouseover,
-    /// which the reference's fan-out (`0x515c50`) does not list.
+    /// which the reference's fan-out does not list.
     #[test]
     fn unit_aura_still_fires_for_the_fixed_tokens_alone() {
         let mut app = chain_app();
@@ -1056,7 +1054,7 @@ mod tests {
     }
 
     /// A nearer GameObject wins the pick, and the publisher writes its guid, which the resolver
-    /// rejects as a unit (`0x515bd9 je`): the unit behind it is no longer the mouseover.
+    /// rejects as a unit: the unit behind it is no longer the mouseover.
     #[test]
     fn a_nearer_gameobject_takes_the_mouseover_from_the_unit_behind_it() {
         let mut app = chain_app();
@@ -1076,7 +1074,7 @@ mod tests {
     }
 
     /// A raid member's target that is out of view but on the roster reads its record, as
-    /// `UnitDebuff`'s roster walk finds it (`0x519b25`); a hop off a unit not held is nobody.
+    /// `UnitDebuff`'s roster walk finds it; a hop off a unit not held is nobody.
     #[test]
     fn a_raid_members_target_reads_whatever_the_guid_holds() {
         let mut app = raid_app();

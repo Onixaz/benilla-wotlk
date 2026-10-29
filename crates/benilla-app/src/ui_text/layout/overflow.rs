@@ -1,36 +1,34 @@
-//! The pure side of the FontString overflow law: the height-limit line stack (`CGxString+0x40`)
-//! and the height-gated ellipsis truncate (`CSimpleFontString` `0x771ec0`). The tests run on stub
-//! row counts; [`super::ellipsize_to_fit`] binds the real one.
+//! The pure side of the FontString overflow law: the height-limit line stack (`[string+0x40]`) and
+//! the height-gated ellipsis truncate of the FontString. The tests run on stub row counts;
+//! [`super::ellipsize_to_fit`] binds the real one.
 
-/// The reference's truncation marker, three ASCII dots (`.rdata 0x800188`), not the `…` glyph.
+/// The reference's truncation marker, three ASCII dots (`.rdata`), not the `…` glyph.
 const ELLIPSIS: &str = "...";
 
 /// Slack on a rect height before the line counts: an auto-height rect is its measured block plus
 /// anchor-graph arithmetic, and a stray `1e-4` must not start or lose a line.
 const HEIGHT_EPS: f32 = 0.25;
 
-/// How many wrapped lines a `box_h`-tall box draws, the reference's line stack (`0x5cdc20`: stop
-/// at `accum ≥ +0x40`): the smallest `n` with `n·pitch ≥ box_h`, never 0, `pitch` being the font
+/// How many wrapped lines a `box_h`-tall box draws, the reference's line stack (stop at
+/// `accum ≥ +0x40`): the smallest `n` with `n·pitch ≥ box_h`, never 0, `pitch` being the font
 /// height. The render law: fitting by it lets a four-line name overflow a three-line box.
 pub(super) fn lines_allowed(box_h: f32, pitch: f32) -> usize {
     (((box_h - HEIGHT_EPS) / pitch).ceil() as usize).max(1)
 }
 
-/// How many wrapped lines fit wholly inside a `box_h`-tall box, the ellipsis's law:
-/// `GxuFont_GetMaxCharsWithinHeight` (`0x5c21c0`, via `0x44d960`) stops when
-/// `boxH + 2⁻²⁰ < accumH + lineH`, the largest `n` with `n·pitch ≤ box_h`, so it floors where
-/// [`lines_allowed`] ceils. Its 0 under one line is never acted on ([`ellipsize_in_box`]). The
-/// slack is [`HEIGHT_EPS`], not `2⁻²⁰`: `box_h` is anchor-graph arithmetic, and `12.0 - 1e-6`
-/// must not lose a line.
+/// How many wrapped lines fit wholly inside a `box_h`-tall box, the ellipsis's law: the reference's
+/// fit count stops when `boxH + 2⁻²⁰ < accumH + lineH`, the largest `n` with `n·pitch ≤ box_h`, so
+/// it floors where [`lines_allowed`] ceils. Its 0 under one line is never acted on
+/// ([`ellipsize_in_box`]). The slack is [`HEIGHT_EPS`], not `2⁻²⁰`: `box_h` is anchor-graph
+/// arithmetic, and `12.0 - 1e-6` must not lose a line.
 pub(super) fn lines_fitting(box_h: f32, pitch: f32) -> usize {
     ((box_h + HEIGHT_EPS) / pitch).floor().max(0.0) as usize
 }
 
 /// [`ellipsize`] by the fit law ([`lines_fitting`]), chosen here under test as
-/// [`super::ellipsize_to_fit`] needs a real atlas. The box first clamps up to one pitch, as
-/// `0x771ec0` does with `maxLines` 0 (`boxH := max(boxH, lineH+gap)`, `0x771f9e..0x771faa`, gap 0
-/// in shipped UI), so a box under one line still draws it, like the 36×10 action-button hotkey
-/// under a 12 px font.
+/// [`super::ellipsize_to_fit`] needs a real atlas. The box first clamps up to one pitch, as the
+/// reference does with `maxLines` 0 (`boxH := max(boxH, lineH+gap)`, gap 0 in shipped UI), so a box
+/// under one line still draws it, like the 36×10 action-button hotkey under a 12 px font.
 pub(super) fn ellipsize_in_box<F: FnMut(&str) -> usize>(
     text: &str,
     box_h: f32,
@@ -40,10 +38,10 @@ pub(super) fn ellipsize_in_box<F: FnMut(&str) -> usize>(
     ellipsize(text, lines_fitting(box_h.max(pitch), pitch), rows)
 }
 
-/// The height-gated ellipsis truncate (`0x771ec0`): past `allowed` rows, back off one char at a
-/// time (the reference skips UTF-8 continuation bytes) behind [`ELLIPSIS`] until `rows` fits; an
-/// empty prefix ships the bare `"..."`. `None`: the text fits and draws raw. The caller owns the
-/// gate (`boxW > 0 && boxH > 0`; `maxLines` is not modelled).
+/// The height-gated ellipsis truncate: past `allowed` rows, back off one char at a time (the
+/// reference skips UTF-8 continuation bytes) behind [`ELLIPSIS`] until `rows` fits; an empty prefix
+/// ships the bare `"..."`. `None`: the text fits and draws raw. The caller owns the gate
+/// (`boxW > 0 && boxH > 0`; `maxLines` is not modelled).
 pub(super) fn ellipsize<F: FnMut(&str) -> usize>(
     text: &str,
     allowed: usize,
@@ -80,7 +78,7 @@ mod overflow_tests {
         assert_eq!(lines_allowed(1.5, 12.0), 1);
     }
 
-    /// A line fits only if it lands wholly inside the box (`0x5c21c0`).
+    /// A line fits only if it lands wholly inside the box.
     #[test]
     fn lines_fitting_is_the_height_fit_law() {
         // The loot row's 38-tall item name: 4 lines drawn, 3 fit.

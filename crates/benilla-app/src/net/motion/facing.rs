@@ -1,7 +1,7 @@
-//! Facing: resolving the wire's `MonsterMoveFacing`, and the unit display-facing smoother (the
-//! 1.12 client's `0x600cd0` goal chain and `+0xc98` box filter) with the turn-shuffle latch.
+//! Facing: resolving the wire's `MonsterMoveFacing`, and the unit display-facing smoother (the 1.12
+//! client's goal chain and `+0xc98` box filter) with the turn-shuffle latch.
 //!
-//! A unit has a raw wire facing (`CMovement+0x1c`) and a display facing (`CGUnit+0xc94`) that the
+//! A unit has a raw wire facing (movement `+0x1c`) and a display facing (unit `+0xc94`) that the
 //! client turns every frame toward a goal from an ordered chain; two goals are local and never
 //! sent: squaring up on `UNIT_FIELD_TARGET`, and an NPC facing you while its window is open.
 //! `Transform.rotation` is the display facing; [`DisplayFacing::wire`] keeps the raw one, the
@@ -16,42 +16,42 @@ use bevy::prelude::*;
 use super::super::{ActiveMover, GuidIndex, NetEntity, ObjectStore, SelfPlayer};
 use super::{yaw_of, RemoteMotion, Spline};
 
-/// The turn-shuffle latch's sign band, `[0x80c5c8]` = +1e-5 and `[0x80c5c4]` = -1e-5
-/// (`0x60843b`-`0x608473`), tested on the yaw the pump applied: above it latches bit `0x800`
-/// (ShuffleLeft 11), below it `0x1000` (ShuffleRight 12). Shared with the remote facing interp.
+/// The turn-shuffle latch's sign band, +1e-5 and -1e-5, tested on the yaw the pump applied: above
+/// it latches bit `0x800` (ShuffleLeft 11), below it `0x1000` (ShuffleRight 12). Shared with the
+/// remote facing interp.
 pub(super) const TURN_LATCH_BAND: f32 = 1.0e-5;
 
-/// `[0x8029d0]`, in radians, tested inclusively on the unfolded goal-minus-current delta
-/// (`600eb5`-`600ec0`); inside it the goal is taken verbatim and the ring resets.
+/// The goal dead band in radians, tested inclusively on the unfolded goal-minus-current delta;
+/// inside it the goal is taken verbatim and the ring resets.
 const DEAD_BAND: f32 = 0.01;
 
-/// `[0x8029b0]`: a plain mean over the 4-sample ring.
+/// A plain mean over the 4-sample ring.
 const RING_AVG: f32 = 0.25;
 
-/// `[0x7ffa24]`: with the overshoot clamp binding, the error halves every pump.
+/// With the overshoot clamp binding, the error halves every pump.
 const STEP_FRACTION: f32 = 0.5;
 
 /// `UNIT_FLAG_STUNNED`, goal-chain row 4.
 const UNIT_FLAG_STUNNED: u32 = 0x0004_0000;
 
-/// The `EmoteFlags` bit that permits the target and interaction facing during a state emote
-/// (`600d98 test ch,0x20`); the name is ours, the tested bit is the reference's.
+/// The `EmoteFlags` bit that permits the target and interaction facing during a state emote; the
+/// name is ours, the tested bit is the reference's.
 const EMOTE_PERMITS_FACING: u32 = benilla_formats::EMOTE_FLAG_INTERACTION;
 
-/// A stationary unit's display-facing state, the client's `CGUnit+0xc98` goal and
+/// A stationary unit's display-facing state, the client's unit `+0xc98` goal and
 /// `+0xc9c..+0xca8` delta ring; present only while [`drive_display_facing`] governs the unit.
 /// Sparse, as it comes and goes.
 #[derive(Component)]
 #[component(storage = "SparseSet")]
 pub(crate) struct DisplayFacing {
-    /// The raw wire yaw (`CMovement+0x1c`), never written client-side.
+    /// The raw wire yaw (movement `+0x1c`), never written client-side.
     wire: f32,
     /// A zero head means the next pump takes the ring-fill leg.
     hist: [f32; 4],
 }
 
-/// The signed yaw the facing pump applied this frame (positive turns left), the client's
-/// `0x607ed0` shuffle latch input; removed the frame the body stops moving.
+/// The signed yaw the facing pump applied this frame (positive turns left), the client's shuffle
+/// latch input; removed the frame the body stops moving.
 #[derive(Component)]
 pub(crate) struct FacingStep(pub(crate) f32);
 
@@ -100,9 +100,9 @@ fn bearing(from: [f32; 3], to: [f32; 3]) -> Option<f32> {
     (dx * dx + dy * dy >= 1.0e-4).then(|| dy.atan2(dx))
 }
 
-/// Goal-chain row 3 (`600d6c`-`600d9d`): a state emote (`UNIT_NPC_EMOTESTATE`) whose
-/// `Emotes.dbc` flags lack [`EMOTE_PERMITS_FACING`] pins the unit to its raw facing; an absent
-/// or unknown emote suppresses nothing.
+/// Goal-chain row 3: a state emote (`UNIT_NPC_EMOTESTATE`) whose `Emotes.dbc` flags lack
+/// [`EMOTE_PERMITS_FACING`] pins the unit to its raw facing; an absent or unknown emote suppresses
+/// nothing.
 fn emote_suppresses_facing(emote_state: u32, flags: impl FnOnce(u32) -> Option<u32>) -> bool {
     if emote_state == 0 {
         return false;
@@ -113,8 +113,8 @@ fn emote_suppresses_facing(emote_state: u32, flags: impl FnOnce(u32) -> Option<u
     }
 }
 
-/// One pump of the client's `+0xc98` box filter (`0x600cd0`, `600ea8`-`600fd5`). It has no `dt`:
-/// the reference halves the error per frame, not per second.
+/// One pump of the client's `+0xc98` box filter. It has no `dt`: the reference halves the error per
+/// frame, not per second.
 fn filter_step(cur: f32, goal: f32, hist: &mut [f32; 4]) -> f32 {
     use std::f32::consts::TAU;
     let raw_delta = goal - cur;
@@ -123,18 +123,18 @@ fn filter_step(cur: f32, goal: f32, hist: &mut [f32; 4]) -> f32 {
         return goal.rem_euclid(TAU);
     }
     let delta = crate::creature_anim::wrap_pi(raw_delta);
-    // A reversal empties the ring (`600f12`-`600f3b`).
+    // A reversal empties the ring.
     if delta * hist[0] < 0.0 {
         hist[0] = 0.0;
     }
     let step = if hist[0] == 0.0 {
-        *hist = [delta; 4]; // the ring-fill leg, no averaging (`600f50`-`600f6a`)
+        *hist = [delta; 4]; // the ring-fill leg, no averaging
         delta
     } else {
-        hist.copy_within(0..3, 1); // `600f76 memmove(+0xca0, +0xc9c, 12)`
+        hist.copy_within(0..3, 1); // `memmove(+0xca0, +0xc9c, 12)`
         hist[0] = delta;
         let avg = hist.iter().sum::<f32>() * RING_AVG;
-        // Never overshoot the goal (`600f9e`-`600fc9`).
+        // Never overshoot the goal.
         if avg.abs() > delta.abs() {
             delta
         } else {
@@ -144,8 +144,8 @@ fn filter_step(cur: f32, goal: f32, hist: &mut [f32; 4]) -> f32 {
     (cur + step * STEP_FRACTION).rem_euclid(TAU)
 }
 
-/// Turns every stationary unit toward the goal the client's `0x600cd0` chain picks, in its
-/// branch order (the order is the behaviour):
+/// Turns every stationary unit toward the goal the client's chain picks, in its branch order (the
+/// order is the behaviour):
 ///
 /// | row | test | goal |
 /// |---|---|---|
@@ -154,7 +154,7 @@ fn filter_step(cur: f32, goal: f32, hist: &mut [f32; 4]) -> f32 {
 /// | 2 | `standState != 0` | raw |
 /// | 3 | a state emote lacking [`EMOTE_PERMITS_FACING`] | raw |
 /// | 4 | [`UNIT_FLAG_STUNNED`] | raw |
-/// | 5 | the combat override `+0xc58 & 1` to `+0xcac` (writer `0x624f10`) | not built |
+/// | 5 | the combat override `+0xc58 & 1` to `+0xcac` | not built |
 /// | 6 | a remote player | raw, excluded by [`RemoteMotion`] |
 /// | 7 | `UNIT_FIELD_TARGET` resolves | bearing to that unit |
 /// | 9 | this unit is the interaction NPC | bearing to the local player |
@@ -219,7 +219,7 @@ pub(crate) fn drive_display_facing(
             goals.push((e, Some(goal), GoalSource::Target));
             continue;
         }
-        // Row 9: `InteractNpc` stands for the client's global `[0xb4e2d0]`, the open NPC window.
+        // Row 9: `InteractNpc` stands for the client's open-NPC-window global.
         let facing_me = (interact_npc == Some(e))
             .then_some(self_pos)
             .flatten()
@@ -238,7 +238,7 @@ pub(crate) fn drive_display_facing(
         let cur = yaw_of(tf.rotation).rem_euclid(std::f32::consts::TAU);
         let Ok(mut state) = facings.get_mut(e) else {
             // First frame governed: the transform still holds the wire's facing, so seed from it
-            // with a clean ring (`0x601020`).
+            // with a clean ring.
             commands.entity(e).insert(DisplayFacing {
                 wire: cur,
                 hist: [0.0; 4],
@@ -254,7 +254,7 @@ pub(crate) fn drive_display_facing(
         if tf.rotation != rot {
             tf.rotation = rot;
         }
-        // The latch tests the yaw this pump applied (`0x607ed0`'s `param_2`, the increment
+        // The latch tests the yaw this pump applied (the shuffle latch's input, the increment
         // written to `+0xc94`), not the gap left; folded because a pump may cross the wrap.
         let step = crate::creature_anim::wrap_pi(new - cur);
         if step.abs() > TURN_LATCH_BAND {

@@ -57,9 +57,9 @@ impl super::UiScript {
     }
 }
 
-/// `CGPlayer_C::IsRAFPlayer` (`0x6d7590`): a held player answers its `UNIT_DYNAMIC_FLAGS` bit 0x40
-/// (`0x6d75b9`), else a friend its status bit 0x08 (`0x6d7612`). The group-record leg between them
-/// (status bit 0x100, `0x6d75e9`) is not built: the VM holds no roster record status.
+/// The player's recruit-a-friend test (`0x6d7590`): a held player answers its `UNIT_DYNAMIC_FLAGS`
+/// bit 0x40 (`0x6d75b9`), else a friend its status bit 0x08 (`0x6d7612`). The group-record leg
+/// between them (status bit 0x100, `0x6d75e9`) is not built: the VM holds no roster record status.
 pub(crate) fn is_raf_player(model: &Model, unit: Option<&UnitState>) -> bool {
     let Some(unit) = unit else {
         return false;
@@ -75,7 +75,7 @@ pub(crate) fn is_raf_player(model: &Model, unit: Option<&UnitState>) -> bool {
             .any(|f| f.guid == unit.guid && f.raf)
 }
 
-/// `CGPartyInfo::IsMember` or `IsGuidInMyRaid`: a party slot or a raid row holds the guid.
+/// The party or raid membership test: a party slot or a raid row holds the guid.
 fn in_my_group(model: &Model, guid: u64) -> bool {
     model.unit_guids.party.contains(&guid) || model.party.raid.iter().any(|m| m.guid == guid)
 }
@@ -119,7 +119,7 @@ fn flag_value(b: bool) -> Value {
     }
 }
 
-/// The spell's book slot is cooling down, as `Spell_C_GetSpellCooldown` answers non-zero.
+/// The spell's book slot is cooling down, as the spell cooldown read answers non-zero.
 fn spell_cooling(model: &Model, spell: u32, now: f64) -> bool {
     model
         .spellbook
@@ -132,7 +132,7 @@ fn spell_cooling(model: &Model, spell: u32, now: f64) -> bool {
         })
 }
 
-/// `CGPlayer_C::CanSummonFriend` (`0x6d7630`): 0 when the summon may go, else the refusal code.
+/// The player's summon-friend check (`0x6d7630`): 0 when the summon may go, else the refusal code.
 fn summon_friend_refusal(model: &Model, token: &str, now: f64) -> u8 {
     let unit = model.unit(token).filter(|u| u.exists);
     let Some(guid) = unit.map(|u| u.guid).filter(|&g| g != 0) else {
@@ -155,7 +155,8 @@ fn summon_friend_refusal(model: &Model, token: &str, now: f64) -> u8 {
     }
 }
 
-/// `CGPlayer_C::CanGrantLevel` (`0x6de9e0`): 0 when a level may be granted, else the refusal code.
+/// The player's grant-level check (`0x6de9e0`): 0 when a level may be granted, else the refusal
+/// code.
 fn grant_level_refusal(model: &Model, token: &str) -> u8 {
     let unit = model.unit(token).filter(|u| u.exists);
     if unit.is_none_or(|u| u.guid == 0) {
@@ -190,7 +191,8 @@ fn grant_level_refusal(model: &Model, token: &str) -> u8 {
     }
 }
 
-/// A token or a roster name to its guid, as `Script_GetGUIDFromToken(…, false)` (`0x60abf0`).
+/// A token or a roster name to its guid, as the token-to-guid read with its flag false
+/// (`0x60abf0`).
 pub(super) fn guid_of(model: &Model, unit: &str) -> Option<u64> {
     if let Some(u) = model.unit(unit).filter(|u| u.exists) {
         return Some(u.guid);

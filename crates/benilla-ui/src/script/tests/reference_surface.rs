@@ -134,10 +134,9 @@ fn the_uncalled_hooks_are_absent() {
     }
 }
 
-/// The strata table (`0x8119f8`) has eight rows, `BACKGROUND` to `TOOLTIP`, walked by `0x6f17d0`:
-/// `SetFrameStrata("BLIZZARD")` raises `%s:SetFrameStrata(): Unknown frame strata: %s` naming the
-/// frame or `<unnamed>` (`0x774450`) and leaves the stratum, and the XML attribute warns and skips
-/// (`0x769978`).
+/// The strata table has eight rows, `BACKGROUND` to `TOOLTIP`, walked: `SetFrameStrata("BLIZZARD")`
+/// raises `%s:SetFrameStrata(): Unknown frame strata: %s` naming the frame or `<unnamed>` and
+/// leaves the stratum, and the XML attribute warns and skips.
 #[test]
 fn blizzard_is_no_frame_strata() {
     let s = script();
@@ -164,8 +163,8 @@ fn blizzard_is_no_frame_strata() {
     assert!(crate::script::object::strata_from_str("tooltip").is_some());
 }
 
-/// `SetDrawLayer` (`0x79a780`) reads the layer name alone against the five-row table (`0x811a80`):
-/// a third argument orders nothing, and a name off the table raises the Usage line (`0x87c42c`).
+/// `SetDrawLayer` reads the layer name alone against the five-row table: a third argument orders
+/// nothing, and a name off the table raises the Usage line.
 #[test]
 fn set_draw_layer_reads_the_layer_alone() {
     let s = script();
@@ -209,10 +208,9 @@ fn set_draw_layer_reads_the_layer_alone() {
     );
 }
 
-/// `Set<State>Texture` has no colour form (`0x781970`): a number takes the path leg through
-/// `lua_isstring` (`0x781b23`) and loads as its decimal name, so `SetNormalTexture(1, 1, 1, 0)`
-/// is the file `"1"`; a boolean or no argument raises the Usage line (`0x87a1b4`, the highlight
-/// setter's own at `0x87a240`).
+/// `Set<State>Texture` has no colour form: a number takes the path leg through `lua_isstring` and
+/// loads as its decimal name, so `SetNormalTexture(1, 1, 1, 0)` is the file `"1"`; a boolean or no
+/// argument raises the Usage line.
 #[test]
 fn a_state_texture_setter_reads_a_number_as_a_path() {
     let s = script();
@@ -255,7 +253,7 @@ fn a_state_texture_setter_reads_a_number_as_a_path() {
     }
 }
 
-/// `PickupContainerItem` (`0x4f9b30`) returns nothing on every path.
+/// `PickupContainerItem` returns nothing on every path.
 #[test]
 fn pickup_container_item_answers_nothing() {
     let s = script();
@@ -264,8 +262,8 @@ fn pickup_container_item_answers_nothing() {
     }
 }
 
-/// `Texture:GetTexture()` (`0x79ba70`/`0x79baf0`/`0x835708`): one value, nil when unset, the path
-/// without its extension, and the literal `"Solid Texture"` for a colour fill.
+/// `Texture:GetTexture()`: one value, nil when unset, the path without its extension, and the
+/// literal `"Solid Texture"` for a colour fill.
 #[test]
 fn get_texture_returns_the_stripped_path_and_solid_texture_for_a_fill() {
     let s = crate::script::UiScript::new().unwrap();
@@ -319,7 +317,7 @@ fn get_texture_returns_the_stripped_path_and_solid_texture_for_a_fill() {
 }
 
 /// A FontString's shadow accessors; `GetShadowColor` returns four values, alpha included
-/// (`0x79dd2f`, `mov eax,0x4`).
+/// (`mov eax,0x4`).
 #[test]
 fn region_shadow_accessors_round_trip_four_values() {
     let s = crate::script::UiScript::new().unwrap();
@@ -354,9 +352,8 @@ fn region_shadow_accessors_round_trip_four_values() {
     );
 }
 
-/// `Region:SetParent` (`0x7a1550`, reached by both leaf lookups' fallback: `0x79c650`, `0x79ee50`)
-/// moves the region's draw-list membership and leaves its anchors alone; a non-Frame argument
-/// raises (`IsA(FrameTag)` at `0x7a16ea`).
+/// `Region:SetParent` (reached by both leaf lookups' fallback) moves the region's draw-list
+/// membership and leaves its anchors alone; a non-Frame argument raises (`IsA(FrameTag)`).
 #[test]
 fn region_set_parent_relinks_the_draw_owner_and_leaves_anchors_alone() {
     /// The resolved rect of the one texture quad whose path contains `needle`, if it draws at all.
@@ -445,9 +442,9 @@ fn region_set_parent_relinks_the_draw_owner_and_leaves_anchors_alone() {
     );
 }
 
-/// `Button:SetFont` (`0x780880`) returns nothing, discarding the shared impl's `1`/nil
-/// (`xor eax,eax`), and sets the button's normal font without touching the label pointer
-/// (`+0x338`), so a bare Button makes no label; `GetFont` returns three values off that font.
+/// `Button:SetFont` returns nothing, discarding the shared impl's `1`/nil (`xor eax,eax`), and sets
+/// the button's normal font without touching the label pointer (`+0x338`), so a bare Button makes
+/// no label; `GetFont` returns three values off that font.
 #[test]
 fn button_set_font_returns_nothing_and_is_a_no_op_without_a_label() {
     let s = crate::script::UiScript::new().unwrap();
@@ -536,8 +533,8 @@ fn button_set_font_returns_nothing_and_is_a_no_op_without_a_label() {
     );
 }
 
-/// FontString's `SetNonSpaceWrap`/`CanNonSpaceWrap` (`0x79e9f0`/`0x79ead0`): on by default, the
-/// getter answers `1` or nil, and a bare `SetNonSpaceWrap()` turns it on.
+/// FontString's `SetNonSpaceWrap`/`CanNonSpaceWrap`: on by default, the getter answers `1` or nil,
+/// and a bare `SetNonSpaceWrap()` turns it on.
 #[test]
 fn non_space_wrap_defaults_on_and_answers_one_or_nil() {
     let s = crate::script::UiScript::new().unwrap();
@@ -573,10 +570,10 @@ fn non_space_wrap_defaults_on_and_answers_one_or_nil() {
     );
 }
 
-/// EditBox's registrar table (`.data 0x87bb68`, 48 entries, `mov edx,0x30` at `0x799ab5`) opens
-/// with the font block each text-bearing type re-declares over the shared impl `0x79f210`: its
-/// sixteen font verbs answer, `SetSpacing`/`GetSpacing` (#10, #11, 3.3.5a `0x9756d0`) among them,
-/// and other tables' names do not leak onto it.
+/// EditBox's registrar table (`.data`, 48 entries, `mov edx,0x30`) opens with the font block each
+/// text-bearing type re-declares over the shared impl: its sixteen font verbs answer,
+/// `SetSpacing`/`GetSpacing` (#10, #11, 3.3.5a `0x9756d0`) among them, and other tables' names do
+/// not leak onto it.
 #[test]
 fn editbox_carries_the_font_block_its_registrar_table_declares() {
     let s = crate::script::UiScript::new().unwrap();
@@ -625,9 +622,8 @@ fn editbox_carries_the_font_block_its_registrar_table_declares() {
 }
 
 /// Each EditBox font binding returns what the shared implementation returns (no `mov eax,N` or
-/// `xor eax,eax` after the call), so unlike `Button:SetFont` (`0x780880`), `EditBox:SetFont`
-/// (`0x797210` → `0x79f210`) answers the number `1` or nil (`0x79f345`/`0x79f361`), and
-/// `GetShadowColor` returns four values (`0x79f9b3 mov eax,0x4`).
+/// `xor eax,eax` after the call), so unlike `Button:SetFont`, `EditBox:SetFont` answers the number
+/// `1` or nil, and `GetShadowColor` returns four values.
 #[test]
 fn editbox_font_block_return_shapes_are_the_shared_implementations() {
     let s = crate::script::UiScript::new().unwrap();
@@ -751,9 +747,9 @@ fn the_dewdrop_editbox_font_shape_resolves_and_paints() {
         .unwrap();
 }
 
-/// The justify enum (`.rdata 0x811ad0`) keeps both axes in one dword, bits 0-2 horizontal and 3-5
-/// vertical: an unknown token raises (`0x87c77c`), and a token from the other axis masks to
-/// nothing, so `GetJustifyH()` answers `"UNKNOWN"` (`0x6f1a00`, `.data 0x838044`).
+/// The justify enum (`.rdata`) keeps both axes in one dword, bits 0-2 horizontal and 3-5 vertical:
+/// an unknown token raises, and a token from the other axis masks to nothing, so `GetJustifyH()`
+/// answers `"UNKNOWN"` (`.data`).
 #[test]
 fn editbox_justify_masks_to_its_axis_and_answers_unknown() {
     let s = crate::script::UiScript::new().unwrap();
@@ -761,7 +757,7 @@ fn editbox_justify_masks_to_its_axis_and_answers_unknown() {
         .unwrap();
 
     // A fresh EditBox is LEFT: its ctor turns the font default `0x212` (CENTER | MIDDLE | 0x200)
-    // into `0x211` (`0x779bcd`, stored at `0x779be4`).
+    // into `0x211`.
     assert_eq!(
         s.eval::<String>("return EBJustify:GetJustifyH()").unwrap(),
         "LEFT"
@@ -794,10 +790,10 @@ fn editbox_justify_masks_to_its_axis_and_answers_unknown() {
     assert!(s.run(r#"EBJustify:SetJustifyH("SIDEWAYS")"#).is_err());
 }
 
-/// `EditBox:SetJustifyV` reaches the getter (`0x79fd73` reads the font instance) but never the
-/// pixels: `SetMultiLine 0x77a4a0`, which the ctor always calls (`0x779c2f`), clears the vertical
-/// inherit bits (`CSimpleFontString+0x124`, over the drawn justify `+0x120`) and writes TOP or
-/// MIDDLE itself; nothing sets those bits back, so `0x77086e` masks the setter's value out.
+/// `EditBox:SetJustifyV` reaches the getter but never the pixels: `SetMultiLine`, which the ctor
+/// always calls, clears the vertical inherit bits (font string `+0x124`, over the drawn justify
+/// `+0x120`) and writes TOP or MIDDLE itself; nothing sets those bits back, so the reference masks
+/// the setter's value out.
 #[test]
 fn editbox_justify_v_echoes_but_multiline_alone_decides_the_pixels() {
     let mut s = crate::script::UiScript::new().unwrap();
@@ -826,7 +822,7 @@ fn editbox_justify_v_echoes_but_multiline_alone_decides_the_pixels() {
             .expect("the box draws its text")
     }
 
-    // A single-line box renders MIDDLE, the `0x77a599` leg.
+    // A single-line box renders MIDDLE, the leg.
     assert_eq!(drawn_v(&s), crate::script::JustifyV::Middle);
 
     s.run(r#"EBJV:SetJustifyV("TOP")"#).unwrap();
@@ -841,7 +837,7 @@ fn editbox_justify_v_echoes_but_multiline_alone_decides_the_pixels() {
         "SetJustifyV is masked out of the rendered justify — multiLine alone decides it"
     );
 
-    // Multi-line moves it, the `0x77a509` leg.
+    // Multi-line moves it, the leg.
     s.run("EBJV:SetMultiLine(true)").unwrap();
     assert_eq!(drawn_v(&s), crate::script::JustifyV::Top);
     assert_eq!(
@@ -850,9 +846,9 @@ fn editbox_justify_v_echoes_but_multiline_alone_decides_the_pixels() {
     );
 }
 
-/// `Texture:SetDesaturated` (`0x79c1e0`) answers `shaderSupported`, `1` or nil; benilla's renderer
-/// greys, so it answers `1`, and stock `ItemButtonTemplate.lua:69` keeps the caller's tint rather
-/// than its 0.5 fallback.
+/// `Texture:SetDesaturated` answers `shaderSupported`, `1` or nil; benilla's renderer greys, so it
+/// answers `1`, and stock `ItemButtonTemplate.lua:69` keeps the caller's tint rather than its 0.5
+/// fallback.
 #[test]
 fn set_desaturated_reports_shader_support_and_does_not_raise() {
     let s = crate::script::UiScript::new().unwrap();
@@ -894,9 +890,9 @@ fn set_desaturated_reports_shader_support_and_does_not_raise() {
         .unwrap();
 }
 
-/// `UnitCreatureType` (`0x51a280`) answers the type the snapshot carries, which the app resolved
-/// as `0x605570` does (form, else template, else race), for a creature and a player alike: nil
-/// for a token that names no unit or a snapshot with no type (`0x51a2b8`, `0x51a2c3`).
+/// `UnitCreatureType` answers the type the snapshot carries, which the app resolved as the
+/// reference does (form, else template, else race), for a creature and a player alike: nil for a
+/// token that names no unit or a snapshot with no type.
 #[test]
 fn unit_creature_type_answers_the_snapshots_resolved_type() {
     let mut s = script();
@@ -945,9 +941,9 @@ fn unit_creature_type_answers_the_snapshots_resolved_type() {
     );
 }
 
-/// `GetInventorySlotInfo` (`0x4c81b0`) matches the whole name case-insensitively (`0x4c8215`,
-/// `_strnicmp`) and returns three values, the third the number 1 for `RangedSlot` alone; a miss
-/// raises the reference's message, with no `Usage:` and no name.
+/// `GetInventorySlotInfo` matches the whole name case-insensitively (`_strnicmp`) and returns three
+/// values, the third the number 1 for `RangedSlot` alone; a miss raises the reference's message,
+/// with no `Usage:` and no name.
 #[test]
 fn get_inventory_slot_info_folds_case_and_flags_only_the_ranged_slot() {
     let s = script();
@@ -1022,12 +1018,11 @@ fn get_inventory_slot_info_folds_case_and_flags_only_the_ranged_slot() {
     );
 }
 
-/// Every Region-map name is callable on a Texture and a FontString, whose
-/// lookups fall back to it (FontString's `0x79ee20` chains its own `0xcf5400`); a Font object's
-/// lookup (`0x7a1100`) has no fallback.
+/// Every Region-map name is callable on a Texture and a FontString, whose lookups fall back to it;
+/// a Font object's lookup has no fallback.
 #[test]
 fn every_region_map_method_is_callable_on_a_texture_and_a_fontstring() {
-    /// All of them, `GetObjectType`/`IsObjectType` (`0x7a11d0`/`0x7a1290`) among them.
+    /// All of them, `GetObjectType`/`IsObjectType` among them.
     const REGION_MAP: [&str; 24] = crate::script::REGION_MAP_METHODS;
     let mut s = crate::script::UiScript::new().unwrap();
     s.set_screen_size(800.0, 600.0);
@@ -1054,7 +1049,7 @@ fn every_region_map_method_is_callable_on_a_texture_and_a_fontstring() {
     }
     assert!(
         absent.is_empty(),
-        "the Region map 0xcf54b4 is missing from our regions: {absent:?}"
+        "the Region map is missing from our regions: {absent:?}"
     );
 }
 
@@ -1125,7 +1120,7 @@ fn the_region_map_readers_answer_the_way_the_edges_do() {
     );
 }
 
-/// A region's `GetObjectType`/`IsObjectType` (`0x7a11d0`/`0x7a1290`).
+/// A region's `GetObjectType`/`IsObjectType`.
 #[test]
 fn the_type_identity_verbs_answer_what_the_binary_answers() {
     let s = crate::script::UiScript::new().unwrap();
@@ -1183,7 +1178,7 @@ fn the_type_identity_verbs_answer_what_the_binary_answers() {
         .unwrap()
         .is_none());
 
-    // Case-insensitive and whole-string (`SStrCmpI`).
+    // Case-insensitive and whole-string.
     for spelling in ["texture", "TEXTURE", "TeXtUrE", "region", "REGION"] {
         assert_eq!(
             s.eval::<i64>(&format!("return TITex:IsObjectType('{spelling}')"))
@@ -1243,8 +1238,8 @@ fn the_type_identity_verbs_answer_what_the_binary_answers() {
     );
 }
 
-/// Frames also carry 1.12's frame-side pair, `GetFrameType 0x773640`/`IsFrameType 0x773700`
-/// (`CSimpleFrameScript.cpp`), beside `CScriptRegion`'s `GetObjectType`/`IsObjectType`.
+/// Frames also carry 1.12's frame-side pair, `GetFrameType`/`IsFrameType`, beside the region's
+/// `GetObjectType`/`IsObjectType`.
 #[test]
 fn the_frame_side_type_identity_verbs_are_1_12s_own_names() {
     let s = crate::script::UiScript::new().unwrap();
@@ -1340,7 +1335,7 @@ fn a_frames_type_chain_matches_the_roster() {
             "MessageFrame",
             &["MessageFrame", "Frame", "Region"],
         ),
-        // Not via MessageFrame, despite the name (roster `0x787940`).
+        // Not via MessageFrame, despite the name.
         (
             "ScrollingMessageFrame",
             "ScrollingMessageFrame",
@@ -1365,9 +1360,9 @@ fn a_frames_type_chain_matches_the_roster() {
         ("Minimap", "Minimap", &["Minimap", "Frame", "Region"]),
         // A `Frame` subtype, not a `Model` (`0x5ebe70`), whatever the 1.12 template made it.
         ("Cooldown", "Cooldown", &["Cooldown", "Frame", "Region"]),
-        // `PlayerModel` derives from `Model` (`0x505830`/`0x5057c0`), so a `SetUnit` portrait pane
-        // has `SetCamera` too; `DressUpModel`, like `TabardModel`, derives from `PlayerModel`: the
-        // roster's maximum depth, 5.
+        // `PlayerModel` derives from `Model`, so a `SetUnit` portrait pane has `SetCamera` too;
+        // `DressUpModel`, like `TabardModel`, derives from `PlayerModel`: the roster's maximum
+        // depth, 5.
         (
             "PlayerModel",
             "PlayerModel",

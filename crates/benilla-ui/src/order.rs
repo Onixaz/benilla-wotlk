@@ -4,9 +4,9 @@
 //! The 1.12 client draws in one flat painter's order, not a tree walk: every visible frame, child
 //! or not, is an entry in a per-`(strata, level)` bucket (`root+0xcd4`), so a child with a lower
 //! strata or level draws before its parent. Inside a bucket the draw layer outranks the frame: the
-//! five layer batches belong to the level node (`levelNode+0x1c`), and the emitter `0x765920` loops
-//! layers outside and frames inside, so every frame's BACKGROUND draws before any frame's BORDER.
-//! Within a layer, `0x76fb00` drains every quad, then every string, then the render callbacks.
+//! five layer batches belong to the level node (`levelNode+0x1c`), and the emitter loops layers
+//! outside and frames inside, so every frame's BACKGROUND draws before any frame's BORDER. Within a
+//! layer, drains every quad, then every string, then the render callbacks.
 //!
 //! The frame term is the client's live intrusive-list position: a frame relinks at its bucket's
 //! tail when shown and when a shown frame's strata or level changes, and the later link draws on
@@ -14,16 +14,16 @@
 //! same within a bucket. The is-region bit is benilla's: the client has no frame drawable, and the
 //! frame's own slot (backdrop, scissor) must precede its regions.
 //!
-//! Deviation: textures in one layer keep link order where the client sorts them by texture handle
-//! (`0x7731a0`, comparator `0x7731c0`), because benilla allocates its handles differently; no
-//! content may depend on the order of two overlapping textures in one layer.
+//! Deviation: textures in one layer keep link order where the client sorts them by texture handle,
+//! because benilla allocates its handles differently; no content may depend on the order of two
+//! overlapping textures in one layer.
 
 use crate::widget::{FrameHandle, RegionHandle, RegionKind, WidgetArena};
 
 // ── Strata: the top-level draw buckets ───────────────────────────────────────────────────────
 
 /// The frame strata in draw order; `World` through `Tooltip` are the client's nine buckets (the
-/// `CSimpleTop` constructor's loop at `0x764180`).
+/// UI root's constructor loop).
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Strata {
@@ -61,7 +61,7 @@ impl Strata {
 }
 
 impl Default for Strata {
-    /// The frame constructor writes 3 (`0x7690c2`).
+    /// The frame constructor writes 3.
     fn default() -> Strata {
         Strata::Medium
     }
@@ -112,8 +112,8 @@ impl Default for DrawLayer {
 // its parent, and the tie lets the bar's ARTWORK fill draw under the parent's OVERLAY border.
 //
 // The sub-level is the engine's own ordering within a layer, set only for the EditBox caret: 1.12
-// gives Lua and XML none (`0x76a860` takes only region and layer and inserts at the head, and
-// `SetDrawLayer` `0x79a780` reads the layer alone).
+// gives Lua and XML none (the reference takes only region and layer and inserts at the head, and
+// `SetDrawLayer` reads the layer alone).
 
 const STRATUM_SHIFT: u32 = 60;
 const LEVEL_SHIFT: u32 = 44;
@@ -128,16 +128,16 @@ const DECL_SHIFT: u32 = 0;
 pub(crate) const INSERTION_BITS: u32 = 18;
 const DECL_BITS: u32 = 12;
 
-/// Which of a layer batch's arrays an entry drains from, in `0x76fb00`'s order: quads at `+0x10`
-/// (a texture appends at `0x7706e0`), a `CGxStringBatch` at `+0x18` (a font string at `0x772e50`)
-/// and a render-callback list at `+0x1c` (ctor `0x772e80`). So in one `(strata, level, layer)`
-/// every texture precedes every font string, and every font string every model scene.
+/// Which of a layer batch's arrays an entry drains from, in the batch drain's order: quads at
+/// `+0x10`, a string batch at `+0x18` and a render-callback list at `+0x1c`. So in one
+/// `(strata, level, layer)` every texture precedes every font string, and every font string every
+/// model scene.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u8)]
 pub enum BatchRank {
     Quad = 0,
     Text = 1,
-    /// A `Model` frame's scene, registered for ARTWORK only (`0x76d17f`).
+    /// A `Model` frame's scene, registered for ARTWORK only.
     Callback = 2,
 }
 
@@ -213,8 +213,8 @@ impl ZKey {
     }
 
     /// The key for a `Model` frame's scene: its frame slot moved into its region band at `layer`
-    /// with the callback rank, after every texture and font string of the layer, as `0x76d160`
-    /// registers the scene into the layer batch whose callbacks `0x76fb00` drains last.
+    /// with the callback rank, after every texture and font string of the layer, as the reference
+    /// registers the scene into the layer batch whose callbacks drain last.
     #[inline]
     #[must_use]
     pub const fn callback(self, layer: DrawLayer) -> ZKey {
@@ -327,11 +327,11 @@ fn walk(arena: &WidgetArena, mut f: impl FnMut(ZTarget, ZKey)) {
     }
 }
 
-/// The render list in the client's `0x765650` order, sorted by [`ZKey`], with no two keys tied.
-/// Only effective-visible frames contribute, as the client skips a hidden frame's whole subtree
-/// (`0x76ae10`, `0x76ad50`). Every region of such a frame is listed; hidden ones (`region+0xc4`,
-/// set by `0x77fcb0`) are dropped by [`UiScript::extract`](crate::script::UiScript::extract), and
-/// where the client skips them at draw time is untraced. An unchanged walk returns the last list.
+/// The render list in the client's order, sorted by [`ZKey`], with no two keys tied. Only
+/// effective-visible frames contribute, as the client skips a hidden frame's whole subtree. Every
+/// region of such a frame is listed; hidden ones (`region+0xc4`) are dropped by
+/// [`UiScript::extract`](crate::script::UiScript::extract), and where the client skips them at draw
+/// time is untraced. An unchanged walk returns the last list.
 pub fn traversal(arena: &WidgetArena) -> DrawList {
     let mut cache = arena.order_cache.0.borrow_mut();
     // An exact compare with the last walk, not a hash: a collision would draw in a wrong order.
@@ -362,16 +362,14 @@ pub fn traversal(arena: &WidgetArena) -> DrawList {
 
 // ── Hit-testing: the mouse-focus capture walk ────────────────────────────────────────────────
 
-/// The frame the cursor captures, by the client's sweep `0x7660d0`: strata high to low, and in one
+/// The frame the cursor captures, by the client's sweep: strata high to low, and in one
 /// `(strata, level)` plane the earlier-linked frame first. The first frame that takes the mouse
-/// ends the sweep whatever its handler does (`0x7663f7` overwrites the result of the call at
-/// `0x7663f4`), so a disabled button still eats the click.
+/// ends the sweep whatever its handler does, so a disabled button still eats the click.
 ///
-/// Equal levels go to the earlier link (`0x764aa0` appends after equals). A parent is linked before
-/// its children (show at `0x76ae85`, then `0x76aeb6`; `SetFrameLevel` likewise), so it wins a tie
-/// with its child, which `TargetFrame.lua:33` relies on; and the first-declared sibling wins, so a
-/// full-area `<Button>` declared first, mouse-enabled by its constructor, swallows its window.
-/// Drawing still puts the later link on top.
+/// Equal levels go to the earlier link. A parent is linked before its children (`SetFrameLevel`
+/// likewise), so it wins a tie with its child, which `TargetFrame.lua:33` relies on; and the
+/// first-declared sibling wins, so a full-area `<Button>` declared first, mouse-enabled by its
+/// constructor, swallows its window. Drawing still puts the later link on top.
 ///
 /// `sorted` is [`traversal`]'s ascending list and `hits` says whether a frame is a candidate at the
 /// cursor; regions never capture.
@@ -553,9 +551,9 @@ mod tests {
         );
     }
 
-    /// Showing a frame relinks it at its bucket's tail (`0x76ae10`): `MiniMapTrackingFrame`,
-    /// declared hidden before `MinimapBackdrop` (`Minimap.xml:109`, `:415`), draws over the
-    /// backdrop once shown. A strata or level change relinks a shown frame, not a hidden one.
+    /// Showing a frame relinks it at its bucket's tail: `MiniMapTrackingFrame`, declared hidden
+    /// before `MinimapBackdrop` (`Minimap.xml:109`, `:415`), draws over the backdrop once shown. A
+    /// strata or level change relinks a shown frame, not a hidden one.
     #[test]
     fn showing_a_frame_moves_it_to_its_buckets_tail() {
         let mut a = WidgetArena::new();

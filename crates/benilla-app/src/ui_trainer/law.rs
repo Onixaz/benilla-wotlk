@@ -124,9 +124,9 @@ pub(super) fn service_tooltip(wire_spell: u32, spells: &SpellCatalog) -> Trainer
     wire_only
 }
 
-/// `AddServices`' group key (`0x596450`). A tradeskill trainer drops nothing: 3 for a passive, 1
-/// for a skill step, else 2, labelled `TRADESKILL_SERVICE_*` (`0x594e80`). Elsewhere the taught
-/// spell's skill line (`GetSkillLineFromService` `0x594ae0`), and 0 drops the service.
+/// The service list's group key (`0x596450`). A tradeskill trainer drops nothing: 3 for a passive,
+/// 1 for a skill step, else 2, labelled `TRADESKILL_SERVICE_*` (`0x594e80`). Elsewhere the taught
+/// spell's skill line (`0x594ae0`), and 0 drops the service.
 pub(super) fn service_group(
     wire_spell: u32,
     trainer_type: u32,

@@ -1,6 +1,6 @@
 //! The stock `UIMenu` kit as the chat menu uses it: rows fixed at 104x16 by `UIMenu_Initialize`,
 //! the label the button's own text, the shortcut a sibling anchored RIGHT. `SetText` anchors a new
-//! label by the normal font's `justifyH` (`CSimpleButton::SetFontString`, `0x96f7b0`).
+//! label by the normal font's `justifyH` (the button's font-string set, `0x96f7b0`).
 
 use benilla_ui::script::UiScript;
 

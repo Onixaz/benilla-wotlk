@@ -1,20 +1,18 @@
-//! The tutorial system (the reference's `[0x4b5150, 0x4b5a60)`) behind the stock
-//! `TutorialFrame.xml`: two bit banks, the fire-once trigger, the acknowledge-and-send setter,
-//! the timers, the popup sound and the trigger sites.
+//! The tutorial system behind the stock `TutorialFrame.xml`: two bit banks, the fire-once trigger,
+//! the acknowledge-and-send setter, the timers, the popup sound and the trigger sites.
 //!
-//! Both banks (`0xb711b8`, `0xb711e4`) are filled from the same `SMSG_TUTORIAL_FLAGS`; until it
-//! lands nothing fires. Bank A is fire-once: [`Tutorials::trigger`] tests and sets it and raises
-//! `TUTORIAL_TRIGGER(id + 1)`, never sending. Bank B is acknowledged: [`Tutorials::acknowledge`]
-//! tests it, sets both banks, cancels the id's timer and sends `CMSG_TUTORIAL_FLAG`. So A ⊇ B, and
-//! doing the thing suppresses its tutorial, account-wide.
+//! Both banks are filled from the same `SMSG_TUTORIAL_FLAGS`; until it lands nothing fires. Bank A
+//! is fire-once: [`Tutorials::trigger`] tests and sets it and raises `TUTORIAL_TRIGGER(id + 1)`,
+//! never sending. Bank B is acknowledged: [`Tutorials::acknowledge`] tests it, sets both banks,
+//! cancels the id's timer and sends `CMSG_TUTORIAL_FLAG`. So A ⊇ B, and doing the thing suppresses
+//! its tutorial, account-wide.
 //!
-//! `TriggerTutorial(id, delayMs)` (`0x4b5390`): with a zero delay the `TutorialPopup` cue plays and
-//! the event fires now; otherwise a timer holds it (the 10 s Targeting popup is the one site). The
-//! reference bounds-checks nothing; an id past the bank is a no-op here.
+//! `TriggerTutorial(id, delayMs)`: with a zero delay the `TutorialPopup` cue plays and the event
+//! fires now; otherwise a timer holds it (the 10 s Targeting popup is the one site). The reference
+//! bounds-checks nothing; an id past the bank is a no-op here.
 //!
-//! The reference has fifty-one trigger sites and seven acknowledge sites (the callers of
-//! `0x4b5390` and `0x4b54c0`); the ones this app can produce reach here through
-//! [`TutorialEvent`] or the self-descriptor edges below.
+//! The reference has fifty-one trigger sites and seven acknowledge sites; the ones this app can
+//! produce reach here through [`TutorialEvent`] or the self-descriptor edges below.
 
 use std::time::{Duration, Instant};
 
@@ -27,7 +25,7 @@ use crate::net::{ClientCommand, EnteredWorldMessage, NetCommands, ObjectStore, S
 use crate::player::Player;
 use crate::ui_script::{UiFeed, UiInput};
 
-/// The popup cue `0x4b5390` plays on both legs (`0x846b68`).
+/// The popup cue plays on both legs.
 const TUTORIAL_POPUP_SOUND: &str = "TutorialPopup";
 
 /// The internal (0-based) ids of the sites this app produces, named by their published title.
@@ -65,8 +63,8 @@ pub(crate) mod id {
     pub(crate) const THREAT: u32 = 0x35;
 }
 
-/// The level-gated arm of the `SMSG_LEVELUP_INFO` handler (`0x5e38c0`): in the handler's own order,
-/// each fires when the new level is at least its threshold.
+/// The level-gated arm of the `SMSG_LEVELUP_INFO` handler: in the handler's own order, each fires
+/// when the new level is at least its threshold.
 const LEVEL_TRIGGERS: [(u32, u32); 8] = [
     (3, 0x16),  // Chatting
     (4, 0x0d),  // Trainers
@@ -78,11 +76,11 @@ const LEVEL_TRIGGERS: [(u32, u32); 8] = [
     (10, 0x0c), // Learning Talents
 ];
 
-/// The Targeting popup's delay at its one site (`0x514a8d mov edx,0x2710`).
+/// The Targeting popup's delay at its one site.
 pub(crate) const TARGETING_DELAY_MS: u32 = 10_000;
 
-/// The Movement popup's silence window (`0x482ff7`: elapsed - stamp - 90000 >= 0), taken as 90 s
-/// after world enter with no movement input; what the stamp (`0x5143e0`) holds is untraced.
+/// The Movement popup's silence window, taken as 90 s after world enter with no movement input;
+/// what the stamp holds is untraced.
 const MOVEMENT_SILENCE: Duration = Duration::from_millis(90_000);
 
 /// A site's ask of the tutorial system, written from wherever the reference's site lives.
@@ -90,7 +88,7 @@ const MOVEMENT_SILENCE: Duration = Duration::from_millis(90_000);
 pub(crate) enum TutorialEvent {
     /// `TriggerTutorial(id, delayMs)`: the fire-once leg.
     Trigger { id: u32, delay_ms: u32 },
-    /// `SetTutorialFlag(id)` (`0x4b54c0`): the acknowledge-and-send leg.
+    /// The reference's flag setter, by id: the acknowledge-and-send leg.
     Acknowledge { id: u32 },
 }
 
@@ -123,16 +121,16 @@ fn set_bank_bit(bank: &mut [u8], id: u32) {
 /// The two banks, the timers, and what the frame owes the VM and the wire.
 #[derive(Resource, Default)]
 pub(crate) struct Tutorials {
-    /// Bank A (`0xb711b8`…): fire-once. `None` until the packet lands.
+    /// Bank A: fire-once. `None` until the packet lands.
     fire_once: Option<Vec<u8>>,
-    /// Bank B (`0xb711e4`…): acknowledged.
+    /// Bank B: acknowledged.
     acknowledged: Option<Vec<u8>>,
     /// The delayed triggers (`TUTORIALTIMER` nodes): `(id, due)`.
     timers: Vec<(u32, Instant)>,
     /// Published ids (`id + 1`) whose event and cue are owed this frame.
     fired: Vec<u32>,
     sends: Vec<TutorialSend>,
-    /// Item pushes for us since the last feed (`0x491a60`'s sites): `(entry, bag, slot)`.
+    /// Item pushes for us since the last feed: `(entry, bag, slot)`.
     pushes: Vec<(u32, u8, u32)>,
     /// `showTutorials` off: a trigger flags its tutorial seen, with no popup (`0x530871`).
     muted: bool,
@@ -145,7 +143,7 @@ impl Tutorials {
         self.acknowledged = Some(bytes.to_vec());
     }
 
-    /// The bring-up `0x4b5330`: both banks zeroed if present (the bit count stays).
+    /// The bring-up: both banks zeroed if present (the bit count stays).
     fn world_enter(&mut self) {
         for bank in [&mut self.fire_once, &mut self.acknowledged]
             .into_iter()
@@ -155,12 +153,12 @@ impl Tutorials {
         }
     }
 
-    /// The teardown `0x4b5380`: every pending timer flushed.
+    /// The teardown: every pending timer flushed.
     fn world_leave(&mut self) {
         self.timers.clear();
     }
 
-    /// `TriggerTutorial(id, delayMs)` (`0x4b5390`).
+    /// `TriggerTutorial(id, delayMs)`.
     pub(crate) fn trigger(&mut self, id: u32, delay_ms: u32, now: Instant) {
         let Some(bank) = self.fire_once.as_mut() else {
             return; // no bank yet: silent
@@ -187,7 +185,7 @@ impl Tutorials {
         }
     }
 
-    /// `SetTutorialFlag(id)` (`0x4b54c0`): bank B's bit gates, both banks set, the id's timer
+    /// The reference's flag setter, by id: bank B's bit gates, both banks set, the id's timer
     /// cancelled, the 0-based id sent. The reference dereferences an absent bank B; here it is a
     /// no-op.
     pub(crate) fn acknowledge(&mut self, id: u32) {
@@ -228,7 +226,7 @@ impl Tutorials {
         self.sends.push(TutorialSend::Reset);
     }
 
-    /// `ProcessTutorialTimers`: every due node publishes as an immediate trigger does.
+    /// The tutorial timer tick: every due node publishes as an immediate trigger does.
     fn tick(&mut self, now: Instant) {
         let mut due = Vec::new();
         self.timers.retain(|&(id, at)| {
@@ -256,8 +254,8 @@ impl Tutorials {
     }
 }
 
-/// The self descriptor's last-seen fields, for the edge-triggered `0x4b5390` sites: the level-up
-/// arm, the ghost flag, the resting flag, the PvP flag, the rest state.
+/// The self descriptor's last-seen fields, for the edge-triggered sites: the level-up arm, the
+/// ghost flag, the resting flag, the PvP flag, the rest state.
 #[derive(Default)]
 struct SelfWatch {
     level: Option<u32>,
@@ -275,7 +273,7 @@ const UNIT_FLAG_PVP_ATTACKABLE: u32 = 0x1000;
 const HEARTHSTONE: u32 = 6948;
 const INVTYPE_RANGED: u32 = 15;
 const CLASS_HUNTER: u8 = 3;
-/// The keyring bag and its slot band (`OnItemPushResult`: bag `0xff`, `slot - 0x56 <= 0x1f`,
+/// The keyring bag and its slot band (the item-push handler: bag `0xff`, `slot - 0x56 <= 0x1f`,
 /// `0x523bf9`).
 const KEYRING_BAG: u8 = 0xff;
 const KEYRING_SLOTS: std::ops::RangeInclusive<u32> = 0x56..=0x75;
@@ -300,8 +298,8 @@ fn feed_tutorials(
     }
 
     // The item-received sites: Backpack always; Equippable Items for any non-zero inventory type
-    // (the reference's 23-bit mask `0x809200` is not decoded); Hearthstones by entry; Ranged
-    // Weapons for a ranged type on a non-hunter; Keyrings by the slot band.
+    // (the reference's 23-bit mask is not decoded); Hearthstones by entry; Ranged Weapons for a
+    // ranged type on a non-hunter; Keyrings by the slot band.
     let pushes = std::mem::take(&mut tutorials.pushes);
     let class = self_q.single().ok().and_then(|s| s.0.unit_class());
     for (entry, bag, slot) in pushes {
@@ -343,10 +341,9 @@ fn feed_tutorials(
     }
 }
 
-/// The self descriptor's `0x4b5390` edge sites: the `SMSG_LEVELUP_INFO` arm on the level rising,
-/// the ghost and resting flags, the PvP flag, the rested table's one live row, and the mover
-/// entering water. Each fires on a change, never on the login descriptor; the bring-up resets the
-/// memory.
+/// The self descriptor's edge sites: the `SMSG_LEVELUP_INFO` arm on the level rising, the ghost and
+/// resting flags, the PvP flag, the rested table's one live row, and the mover entering water. Each
+/// fires on a change, never on the login descriptor; the bring-up resets the memory.
 fn watch_self(
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
     player: Res<Player>,
@@ -456,9 +453,8 @@ fn on_world_enter(
     }
 }
 
-/// The enter-world cascade `0x4908c0`'s two unconditional triggers, Welcome (`0x490a48`) then
-/// Questgivers (`0x490a51`), once per world session when the local player exists; and the
-/// Movement popup's silence window.
+/// The reference enter-world cascade's two unconditional triggers, Welcome then Questgivers, once
+/// per world session when the local player exists; and the Movement popup's silence window.
 #[derive(Resource, Default)]
 pub(crate) struct WorldEnterCascade {
     armed: bool,
@@ -488,8 +484,8 @@ fn run_world_enter_cascade(
     }
 }
 
-/// The world-input sites (`0x514840`), bundled for the controller: a movement input
-/// acknowledges Movement and arms the 10 s Targeting popup; a mouse-look acknowledges Cameras.
+/// The world-input sites, bundled for the controller: a movement input acknowledges Movement and
+/// arms the 10 s Targeting popup; a mouse-look acknowledges Cameras.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct InputHooks<'w> {
     /// Optional, so a controller test's partial app runs without the tutorial plugin.
@@ -520,9 +516,9 @@ impl InputHooks<'_> {
     }
 }
 
-/// The window edges the reference's handlers fire from: the trainer list (Trainers acknowledged,
-/// `0x4d74ae`), the vendor list (Vendors, `0x4fad32`), the taxi map (Travel, `0x4dbaa2`), and the
-/// group turning raid (Raid Groups, `0x4ba60d`, taken as the raid-type edge).
+/// The window edges the reference's handlers fire from: the trainer list (Trainers acknowledged),
+/// the vendor list (Vendors), the taxi map (Travel), and the group turning raid (Raid Groups, taken
+/// as the raid-type edge).
 #[derive(Default)]
 struct WindowWatch {
     trainer: Option<u64>,

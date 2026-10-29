@@ -1,5 +1,5 @@
-//! Runtime `SetParent` (`0x7a1550`): strata and level re-assignment, the hide and show round-trip,
-//! and the binding's errors.
+//! Runtime `SetParent`: strata and level re-assignment, the hide and show round-trip, and the
+//! binding's errors.
 
 use super::common::script;
 
@@ -139,7 +139,7 @@ fn a_visible_reparent_refires_onhide_then_onshow() {
     );
 }
 
-/// 12340's `CSimpleFrame::SetParent` (`0x4911b0`) runs the show half for a shown frame (`+0xdc`)
+/// 12340's frame `SetParent` (`0x4911b0`) runs the show half for a shown frame (`+0xdc`)
 /// under a visible parent (`+0xe0`), so a frame moved out of a hidden parent shows, firing
 /// `OnShow` once; it hid nothing, so no `OnHide`.
 #[test]
@@ -170,8 +170,7 @@ fn a_shown_frame_moved_out_of_a_hidden_parent_shows() {
     );
 }
 
-/// A cycle, self included, raises (`0x87cb14`); an absent argument takes the bad-name raise, not
-/// the nil path.
+/// A cycle, self included, raises; an absent argument takes the bad-name raise, not the nil path.
 #[test]
 fn the_binding_raises_on_cycle_bad_name_and_absent_argument() {
     let s = script();
@@ -212,7 +211,7 @@ fn the_binding_raises_on_cycle_bad_name_and_absent_argument() {
     assert_eq!(
         s.eval::<i64>("return B:GetFrameLevel()").unwrap(),
         9,
-        "0x76ab20 skips everything — the level is not re-derived"
+        "the same-parent call skips everything — the level is not re-derived"
     );
 }
 

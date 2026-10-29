@@ -17,10 +17,10 @@ pub enum CastOutcome {
     Ok,
     Failed {
         reason: u8,
-        /// The `%s` of the client's message (`0x6e1d8e`): a `SpellFocusObject.dbc` id for
-        /// `REQUIRES_SPELL_FOCUS` (0x5e), an `AreaTable.dbc` id for `REQUIRES_AREA` (0x5d), an
-        /// `EquippedItemClass` for 0x19-0x1b, a permanent-cooldown flag for `NOT_READY` (0x3c);
-        /// the item for `NEED_MORE_ITEMS` (0x97), the `SkillLine` for `MIN_SKILL` (0x90).
+        /// The `%s` of the client's message: a `SpellFocusObject.dbc` id for `REQUIRES_SPELL_FOCUS`
+        /// (0x5e), an `AreaTable.dbc` id for `REQUIRES_AREA` (0x5d), an `EquippedItemClass` for
+        /// 0x19-0x1b, a permanent-cooldown flag for `NOT_READY` (0x3c); the item for
+        /// `NEED_MORE_ITEMS` (0x97), the `SkillLine` for `MIN_SKILL` (0x90).
         arg: Option<u32>,
         /// The second word (`0x808200`): the count `NEED_MORE_ITEMS` asks for, the skill value
         /// `MIN_SKILL` needs.
@@ -1015,15 +1015,15 @@ mod tests {
     }
 }
 
-/// `SMSG_SPELL_UPDATE_CHAIN_TARGETS`: a beam's hop list (vmangos `Spell.cpp:4970-4997`, client
-/// `0x6e9820`). vmangos sends it only for channeled spells; the 1.12 client also fills the same
-/// hop array from `SMSG_SPELL_GO`'s hits (`0x6e800d`), which is how Chain Lightning draws.
+/// `SMSG_SPELL_UPDATE_CHAIN_TARGETS`: a beam's hop list (vmangos `Spell.cpp:4970-4997`). vmangos
+/// sends it only for channeled spells; the 1.12 client also fills the same hop array from
+/// `SMSG_SPELL_GO`'s hits, which is how Chain Lightning draws.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpellChainTargets {
     pub caster: u64,
     pub spell_id: u32,
-    /// In wire order. The client (`0x605780`) skips any entry equal to the caster; that filter is
-    /// the consumer's.
+    /// In wire order. The client skips any entry equal to the caster; that filter is the
+    /// consumer's.
     pub targets: Vec<u64>,
 }
 

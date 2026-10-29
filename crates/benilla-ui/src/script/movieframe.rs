@@ -1,5 +1,5 @@
-//! The `MovieFrame` methods (`CSimpleMovieFrame`, method table `0xb2cd30`): `StartMovie`
-//! (`0x970660`), `StopMovie` (`0x970730`) and `EnableSubtitles` (`0x970770`).
+//! The `MovieFrame` methods (method table `0xb2cd30`): `StartMovie` (`0x970660`), `StopMovie`
+//! (`0x970730`) and `EnableSubtitles` (`0x970770`).
 //!
 //! Deviation: benilla plays no pre-rendered movie (#130), so `StartMovie` answers nil, the
 //! reference's "could not start" when the file does not parse or open (`0x95eb30`, `0x9706e8`).

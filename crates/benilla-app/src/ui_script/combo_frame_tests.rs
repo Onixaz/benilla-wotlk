@@ -33,7 +33,7 @@ fn play_as(s: &mut UiScript, class_id: u32, target: Option<u64>) {
     );
 }
 
-/// One `SMSG_UPDATE_COMBO_POINTS`: the bank, then the event to `"player"` (`0x519780`).
+/// One `SMSG_UPDATE_COMBO_POINTS`: the bank, then the event to `"player"`.
 fn bank(s: &mut UiScript, points: u8, on: u64) {
     s.set_combo_points(points, on);
     s.fire_event("UNIT_COMBO_POINTS", vec![ScriptValue::Str("player".into())]);

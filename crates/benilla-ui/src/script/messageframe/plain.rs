@@ -1,8 +1,7 @@
 //! The `MessageFrame` methods over [`MessageFrameState`](crate::widget::MessageFrameState):
-//! `CSimpleMessageFrame` (ctor `0x785640`), `UIErrorsFrame`'s class and what
-//! `CreateFrame("MessageFrame")` makes. Its `AddMessage(text [, r, g, b [, a]])` (`0x795590`) takes
-//! a real alpha and reads nothing after it, where the scrolling class's (`0x792900`) takes an id
-//! there and forces alpha opaque. `SetInsertMode` and `GetInsertMode` (`0x794ed0`, `0x794ff0`)
+//! `UIErrorsFrame`'s class and what `CreateFrame("MessageFrame")` makes. Its
+//! `AddMessage(text [, r, g, b [, a]])` takes a real alpha and reads nothing after it, where the
+//! scrolling class's takes an id there and forces alpha opaque. `SetInsertMode` and `GetInsertMode`
 //! exist on this class only.
 
 use mlua::{Lua, Table, Value};
@@ -47,11 +46,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // The justify quartet, on both classes ([`super::install_justify`]).
     super::install_justify(lua, &m, "MessageFrame")?;
 
-    // AddMessage(text [, r, g, b [, a]]) (`0x795590`). An unusable text is a silent no-op
+    // AddMessage(text [, r, g, b [, a]]). An unusable text is a silent no-op
     // ([`super::message_text`]). r, g and b count only as a trio, else white, and a bad colour
-    // still adds the line in white (`0x79581c`); the alpha defaults to 1.0 (`0x795752`). The
-    // closure's arity drops a sixth argument, as the binding reads five: addons that pass a hold
-    // time there get the frame's `displayDuration`, as on the reference.
+    // still adds the line in white; the alpha defaults to 1.0. The closure's arity drops a sixth
+    // argument, as the binding reads five: addons that pass a hold time there get the frame's
+    // `displayDuration`, as on the reference.
     m.set(
         "AddMessage",
         lua.create_function(
@@ -85,8 +84,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| with_mf(lua, &this, MessageFrameState::clear))?,
     )?;
 
-    // SetInsertMode (`0x794ed0`) compares against "BOTTOM" (`0x871404`), so anything else is
-    // TOP; the ctor default is BOTTOM.
+    // SetInsertMode compares against "BOTTOM", so anything else is TOP; the ctor default is BOTTOM.
     m.set(
         "SetInsertMode",
         lua.create_function(|lua, (this, mode): (Table, Value)| {
@@ -122,7 +120,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             with_mf(lua, &this, |mf| mf.fading_enabled = on)
         })?,
     )?;
-    // 1 or nil, the 1.12 predicate shape (`0x795170`).
+    // 1 or nil, the 1.12 predicate shape.
     m.set(
         "GetFading",
         lua.create_function(|lua, this: Table| {
@@ -152,10 +150,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| with_mf(lua, &this, |mf| mf.fade_duration))?,
     )?;
 
-    // ── the shared font block ───────────────────────────────────────────────────────────────
-    // The ten font verbs are on this class's own table (`GetShadowColor` `0x794810`), as on
-    // FontString, Font, EditBox, ScrollingMessageFrame and SimpleHTML; Button's (`0x879d00`) has
-    // none.
+    // ── the shared font block ─────────────────────────────────────────────────────────────── The
+    // ten font verbs are on this class's own table (`GetShadowColor`), as on FontString, Font,
+    // EditBox, ScrollingMessageFrame and SimpleHTML; Button's has none.
     let resolve: crate::script::font_block::ResolveRegion = |lua, this| {
         let h = frame_handle_of(lua, this)?;
         super::ensure_font_region(lua, h).ok_or_else(|| mlua::Error::runtime("not a MessageFrame"))
@@ -202,19 +199,19 @@ mod tests {
         );
     }
 
-    /// Only an unusable text is silent (`0x795590` jumps to its epilogue): a bad colour still adds
-    /// the line, and the receiver check still raises.
+    /// Only an unusable text is silent: a bad colour still adds the line, and the receiver check
+    /// still raises.
     #[test]
     fn addmessage_swallows_a_text_it_cannot_use_and_only_the_text() {
         let s = UiScript::new().unwrap();
         s.run("CreateFrame('MessageFrame', 'MF')").unwrap();
 
-        // `lua_isstring` (`0x6f3510`) passes strings and numbers only; the rest jump to `0x79582b`.
+        // `lua_isstring` passes strings and numbers only; the rest jump.
         for bad in ["nil", "", "true", "{}", "print"] {
             s.run(&format!("MF:AddMessage({bad})"))
                 .unwrap_or_else(|e| panic!("AddMessage({bad}) must not raise: {e}"));
         }
-        // The empty string has its own check (`0x79564b`).
+        // The empty string has its own check.
         s.run("MF:AddMessage('')").unwrap();
         assert_eq!(
             num_messages(&s, "MF"),
@@ -222,12 +219,11 @@ mod tests {
             "nil, absent, boolean, table, function and \"\" each add NOTHING"
         );
 
-        // A number is a text, retagged in place (`0x6f7c80`).
+        // A number is a text, retagged in place.
         s.run("MF:AddMessage(42)").unwrap();
         assert_eq!(num_messages(&s, "MF"), 1, "a number is a text");
 
-        // A bad colour jumps to `0x79581c`, which still adds the line in the white staged at
-        // `0x795658`.
+        // A bad colour jumps, which still adds the line in the white staged.
         s.run("MF:AddMessage('kept', {}, nil, 'x')").unwrap();
         assert_eq!(
             num_messages(&s, "MF"),
@@ -235,7 +231,7 @@ mod tests {
             "a bad colour still adds the line"
         );
 
-        // The receiver check still raises (`0x847ef8`).
+        // The receiver check still raises.
         assert!(
             s.run("MF.AddMessage('dot')").is_err(),
             "a '.'-instead-of-':' call still raises"
@@ -419,7 +415,7 @@ mod tests {
         assert_eq!(num_messages(&s, "MF"), 0);
     }
 
-    /// The ctor defaults: timeVisible (`0x81cc2c`) and fadeDuration (`0x81cc30`).
+    /// The ctor defaults: timeVisible and fadeDuration.
     #[test]
     fn ctor_defaults_and_the_fade_accessors() {
         let s = UiScript::new().unwrap();

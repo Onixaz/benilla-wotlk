@@ -2,17 +2,14 @@
 //! animation clock) while it lives; the kit's attach-point models are
 //! [`arm_aura_state_fx`](crate::creature_anim::arm_aura_state_fx)'s.
 //!
-//! In the reference an aura slot change (`0x604d00` → `0x6123f0`) reaches `0x5ff350`, which plays
-//! the spell's state kit (`SpellVisual` field 4) at stage 2, and the kit's tail (`0x60f35c`) runs
-//! the CharProc dispatcher `0x60d7c0` over its four proc slots (`SpellVisualKit` fields 15-34).
-//! Three procs act on the body: 14 installs an alpha node (`0x60d972`), 1 a tint node
-//! (`0x60d840`), 11 an animation rate (`0x60db7e`). A node is keyed by spell id and linked at the
-//! head of its list, only the head counts, and the aura's removal drops its spell's nodes
-//! (`0x5ff290`).
+//! In the reference an aura slot change plays the spell's state kit (`SpellVisual` field 4) at
+//! stage 2, and the kit's tail runs the CharProc dispatcher over its four proc slots
+//! (`SpellVisualKit` fields 15-34). Three procs act on the body: 14 installs an alpha node, 1 a
+//! tint node, 11 an animation rate. A node is keyed by spell id and linked at the head of its list,
+//! only the head counts, and the aura's removal drops its spell's nodes.
 //!
 //! `UNIT_FIELD_BYTES_1` byte 3's stealth and ghost bits drive no body render in the reference: its
-//! readers (`0x5ff80d`, `0x607101`, `0x60f62e`) only suppress nameplates and markers. The body
-//! keys on the aura, never on the flag.
+//! readers only suppress nameplates and markers. The body keys on the aura, never on the flag.
 //!
 //! Proc types 2, 7 and 13 also appear on state kits; their mechanism is untraced, so [`node_for`]
 //! ignores them.
@@ -25,9 +22,9 @@ use benilla_assets::materials::WowModelMaterial;
 use benilla_world::interior::InteriorLit;
 use benilla_world::model_fade::{fade_alpha, FadeMaterials, PendingAppearFade, RenderFade};
 
-/// The aura-alpha ramp, `StartAlphaFade(target, 1000 ms)` (`0x614f80`) eased `clamp01(t)³` by
-/// [`fade_alpha`] (`0x614a90`). A code constant, not a kit column: the ghost kit's proc 14 carries
-/// no `1000.0` yet ramps over the same second.
+/// The aura-alpha ramp, a 1000 ms alpha fade to the target eased `clamp01(t)³` by [`fade_alpha`]. A
+/// code constant, not a kit column: the ghost kit's proc 14 carries no `1000.0` yet ramps over the
+/// same second.
 pub(crate) const AURA_ALPHA_FADE_SECS: f32 = 1.0;
 
 /// Under half a step of the tag's 6-bit alpha field (1/64): a ramp this close has arrived.
@@ -45,7 +42,7 @@ pub(crate) enum AuraNode {
 }
 
 /// One unit's CharProc node lists (the reference's `unit+0xb50` alpha and `unit+0xce0` tint lists)
-/// and its alpha ramp. On the net entity root: the reference keeps one per CGUnit, and every
+/// and its alpha ramp. On the net entity root: the reference keeps one per unit object, and every
 /// attached model renders off its owner's.
 #[derive(Component, Debug, Default)]
 pub(crate) struct AuraNodes {
@@ -55,8 +52,8 @@ pub(crate) struct AuraNodes {
     tint: Vec<(u32, [u8; 3])>,
     /// Proc-11 `(spell id, rate)` nodes, newest first; the head drives the unit's clocks.
     rate: Vec<(u32, f32)>,
-    /// `baseAlpha`, the display row's `CreatureModelAlpha / 255` for every unit, players included
-    /// (`0x60d2d0`); kept current by [`refresh_base_alpha`].
+    /// `baseAlpha`, the display row's `CreatureModelAlpha / 255` for every unit, players included;
+    /// kept current by [`refresh_base_alpha`].
     base: f32,
     /// The ramp's live value, which the parts render at.
     current: f32,
@@ -80,8 +77,8 @@ impl AuraNodes {
         }
     }
 
-    /// `0x60d180`: `baseAlpha` times the head alpha node's factor alone, never a product over the
-    /// list; an empty list leaves `baseAlpha` (`0x60d195`).
+    /// `baseAlpha` times the head alpha node's factor alone, never a product over the list; an
+    /// empty list leaves `baseAlpha`.
     fn target(&self) -> f32 {
         let head = self.alpha.first().map_or(1.0, |(_, f)| *f);
         (self.base * head).clamp(0.0, 1.0)
@@ -109,7 +106,7 @@ impl AuraNodes {
         self.current < 1.0 - ALPHA_EPS
     }
 
-    /// The head tint node's RGB, which the reference's per-frame apply reads (`0x60cbd9`).
+    /// The head tint node's RGB, which the reference's per-frame apply reads.
     pub(crate) fn head_tint(&self) -> Option<[u8; 3]> {
         self.tint.first().map(|(_, rgb)| *rgb)
     }
@@ -130,8 +127,8 @@ impl AuraNodes {
 }
 
 /// Publish every rig's head tint to [`benilla_world::instance_tint`], keyed on its rig slot. The
-/// reference writes the tint as it changes, with none of the alpha's ramp (`unit+0xd04` →
-/// `0x710cf0`). A frame with no aura node, chain link or rig slot moved writes nothing.
+/// reference writes the tint as it changes, with none of the alpha's ramp (`unit+0xd04`). A frame
+/// with no aura node, chain link or rig slot moved writes nothing.
 #[allow(clippy::type_complexity)] // one Bevy system's full input set
 pub(crate) fn apply_aura_tint(
     rigs: Query<(Entity, Ref<benilla_world::rig_palette::RigSkin>)>,
@@ -176,7 +173,7 @@ pub(crate) fn apply_aura_tint(
 
 /// The tint a rig renders with: its own head node, else the nearest up its
 /// [`benilla_world::model_fade::ParentModel`] chain, as the reference composes an attached model's
-/// colours onto its parent's (`0x714000`); only this walk reaches a rigged item's own slot.
+/// colours onto its parent's; only this walk reaches a rigged item's own slot.
 fn chained_tint(
     chain: &Query<(
         Option<&AuraNodes>,
@@ -215,16 +212,15 @@ fn tint_probe() -> Option<[u8; 3]> {
 }
 
 /// Marker: a proc-11 aura holds this rig's clocks. It saves no speeds, unlike the reference's
-/// per-bone save and restore (`0x6203e0`): here a rate belongs to a clip, and `transplant_up` arms
-/// clips under the freeze with speeds copied from frozen ones, so a saved speed restores as 0.
+/// per-bone save and restore: here a rate belongs to a clip, and `transplant_up` arms clips under
+/// the freeze with speeds copied from frozen ones, so a saved speed restores as 0.
 #[derive(Component, Default, Debug)]
 pub(crate) struct AnimRateFreeze;
 
-/// Pause the clocks of every unit whose head proc-11 rate is 0, its own rig and its mount's (the
-/// two models `0x6201d0` writes), and resume them when the aura goes; effect models and global
-/// sequences keep running. The pause is reasserted every frame, since the reference's rate lives
-/// on the bone (`+0xb0`, read by the clock at `0x71458e`) and arming leaves it alone
-/// (`0x7121a0`), and after the animation driver, so a cast armed this frame freezes too.
+/// Pause the clocks of every unit whose head proc-11 rate is 0, its own rig and its mount's, and
+/// resume them when the aura goes; effect models and global sequences keep running. The pause is
+/// reasserted every frame, since the reference's rate lives on the bone (`+0xb0`) and arming leaves
+/// it alone, and after the animation driver, so a cast armed this frame freezes too.
 ///
 /// Deviation: a non-zero rate is ignored, because the only one shipped (`8947848.0` on kit 1744, a
 /// packed grey in the rate column) is noise on the reference's integer-ms clock and has no faithful
@@ -294,18 +290,17 @@ pub(crate) enum AuraProc {
         /// The kit's proc nodes, in slot order (the client walks all four and dispatches each).
         nodes: Vec<AuraNode>,
     },
-    /// The aura left the slots: drop every node this spell id installed (`0x5ff290`).
+    /// The aura left the slots: drop every node this spell id installed.
     Reap { entity: Entity, spell_id: u32 },
 }
 
-/// The node one `SpellVisualKit` CharProc installs (the dispatcher's jump table `0x60dbfc`), or
-/// `None` for a proc type whose mechanism is untraced.
+/// The node one `SpellVisualKit` CharProc installs, or `None` for a proc type whose mechanism is
+/// untraced.
 pub(crate) fn node_for(proc: benilla_formats::CharProc) -> Option<AuraNode> {
     use benilla_formats::char_proc_type as ty;
     match proc.ty {
         ty::ALPHA => Some(AuraNode::Alpha(proc.params[0])),
-        // A float holding an integral `0x00RRGGBB`, rounded (`0x60d8cc`): the ghost's 9222653.0
-        // is 0x8CB9FD.
+        // A float holding an integral `0x00RRGGBB`, rounded: the ghost's 9222653.0 is `0x8CB9FD`.
         ty::TINT => {
             let packed = proc.params[0].round().clamp(0.0, 0xff_ffff as f32) as u32;
             Some(AuraNode::Tint([
@@ -314,7 +309,7 @@ pub(crate) fn node_for(proc: benilla_formats::CharProc) -> Option<AuraNode> {
                 packed as u8,
             ]))
         }
-        // A playback rate, passed through: `0x60db7e` hands it to `SetBoneAnimSpeed` (`0x712910`)
+        // A playback rate, passed through: the reference hands it to the bone speed setter
         // unexamined.
         ty::ANIM_RATE => Some(AuraNode::AnimRate(proc.params[0])),
         _ => None,
@@ -372,7 +367,7 @@ pub(crate) fn drain_aura_procs(
     }
 }
 
-/// Drop every node one spell installed (`0x5ff290`) and re-aim the ramp.
+/// Drop every node one spell installed and re-aim the ramp.
 fn reap(n: &mut AuraNodes, spell_id: u32, now: f32) {
     n.alpha.retain(|(s, _)| *s != spell_id);
     n.tint.retain(|(s, _)| *s != spell_id);
@@ -419,8 +414,8 @@ fn trace_edge(what: &str, entity: Entity, spell_id: u32, n: &AuraNodes) {
     );
 }
 
-/// `baseAlpha` (`0x60d2d0`): the current display row's `CreatureModelAlpha / 255`, players
-/// included (Ghost Wolf's display 4613 reads 102); no row reads 1.0 (`0x60d2e4`).
+/// `baseAlpha`: the current display row's `CreatureModelAlpha / 255`, players included (Ghost
+/// Wolf's display 4613 reads 102); no row reads 1.0.
 fn base_alpha(
     entity: Entity,
     units: &Query<&crate::net::NetEntity>,
@@ -446,11 +441,10 @@ fn display_base_alpha(
     }
 }
 
-/// Re-resolve a unit's base alpha when its display changes and ramp to it over the same 1000 ms,
-/// as the reference's DISPLAYID watcher does (`0x604990` → `0x60abe0`, the row cached at
-/// `0x60afb0`, → `0x60ad9f` → `0x60d180`): a display below 255 alpha is translucent with no aura.
-/// `Changed<NetEntity>` stands for its record-change gate (`0x60ae10`); the base compare ignores a
-/// scale-only change.
+/// Re-resolve a unit's base alpha when its display changes and ramp to it over the same 1000 ms, as
+/// the reference's DISPLAYID watcher does: a display below 255 alpha is translucent with no aura.
+/// `Changed<NetEntity>` stands for its record-change gate; the base compare ignores a scale-only
+/// change.
 pub(crate) fn refresh_base_alpha(
     time: Res<Time>,
     creatures: Option<Res<crate::entities::Creatures>>,
@@ -511,10 +505,10 @@ type AuraParts<'w, 's> = Query<
 /// Drive every unit's aura-alpha ramp and write its parts' render alpha and material;
 /// [`AuraNodes::authoring`] latches the release.
 ///
-/// Each part gets the reference's product (`0x614baa` → `0x710cb0`, `0x707680`): the ramped aura
-/// alpha × the batch's animated colour alpha × its appear/despawn ramp, recomputed from state so a
-/// rerun cannot compound. A cutout or opaque batch ignores instance alpha, so a translucent unit's
-/// parts move to their blend material, keyed on the instance alpha alone.
+/// Each part gets the reference's product: the ramped aura alpha × the batch's animated colour
+/// alpha × its appear/despawn ramp, recomputed from state so a rerun cannot compound. A cutout or
+/// opaque batch ignores instance alpha, so a translucent unit's parts move to their blend material,
+/// keyed on the instance alpha alone.
 pub(crate) fn apply_aura_alpha(
     time: Res<Time>,
     mut commands: Commands,

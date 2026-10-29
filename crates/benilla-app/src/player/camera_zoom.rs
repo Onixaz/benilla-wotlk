@@ -5,27 +5,27 @@ use bevy::prelude::*;
 
 use super::camera::CameraControl;
 
-/// The zoom floor, yd (`ds:0x8089a8` = 0.0): at 0 the eye sits at the framing pivot, inside the
-/// head, and the avatar fades out. Deviation: the starting zoom, [`CAM_DIST_DEFAULT`], is 15 yd
-/// where the reference's `cameraDistance` is 5.55 (`0x84f488`), for a wider view.
+/// The zoom floor, yd (`ds:` = 0.0): at 0 the eye sits at the framing pivot, inside the head, and
+/// the avatar fades out. Deviation: the starting zoom, [`CAM_DIST_DEFAULT`], is 15 yd where the
+/// reference's `cameraDistance` is 5.55, for a wider view.
 pub(super) const CAM_DIST_MIN: f32 = 0.0;
-/// The zoom ceiling, yd (`ds:0x8089a4` = 50.0): the cap on [`ZoomLimit`] (`0x511309`) and the top
-/// of the distance validator `0x50b310`; also the clamp for a distance read back off disk.
+/// The zoom ceiling, yd (`ds:` = 50.0): the cap on [`ZoomLimit`] and the top of the distance
+/// validator; also the clamp for a distance read back off disk.
 pub(super) const CAM_DIST_MAX: f32 = 50.0;
 pub(super) const CAM_DIST_DEFAULT: f32 = 15.0;
-/// `cameraDistanceMax`'s registered default, "15.0" (`0x84fbd0`).
+/// `cameraDistanceMax`'s registered default, "15.0".
 const CAM_DISTANCE_MAX_DEFAULT: f32 = 15.0;
-/// `cameraDistanceMaxFactor`'s registered default, "1.0" (`0x82e92c`). The CVar has no validator:
-/// the options slider's 1 to 2 (`UIOptionsFrame.lua:90`) bounds the slider, not the value.
+/// `cameraDistanceMaxFactor`'s registered default, "1.0". The CVar has no validator: the options
+/// slider's 1 to 2 (`UIOptionsFrame.lua:90`) bounds the slider, not the value.
 const CAM_DISTANCE_MAX_FACTOR_DEFAULT: f32 = 1.0;
-/// `cameraDistanceMax`'s validator (`0x50b310` → `0x50b330(v, 0.0, 50.0)`) accepts `0 ≤ v ≤ 50`;
-/// anything else, NaN included (`fcom` unordered sets C0), is refused and the old value stands.
+/// `cameraDistanceMax`'s validator (`(v, 0.0, 50.0)`) accepts `0 ≤ v ≤ 50`; anything else, NaN
+/// included (`fcom` unordered sets C0), is refused and the old value stands.
 pub(crate) const CAM_DISTANCE_MAX_RANGE: std::ops::RangeInclusive<f32> =
     CAM_DIST_MIN..=CAM_DIST_MAX;
 /// Yards per wheel notch, the stock bindings' `CameraZoomIn(1.0)` (`Bindings.xml:707`).
 const CAM_ZOOM_STEP: f32 = 1.0;
 /// Zoom speed in yd/s, `cameraDistanceMoveSpeed`'s default: the reference glides the distance to
-/// the wheel target at this constant speed (`0x5112d0`), not an ease.
+/// the wheel target at this constant speed, not an ease.
 const CAM_MOVE_SPEED: f32 = 8.33;
 
 /// The max orbit distance, yd, from `cameraDistanceMax` and `cameraDistanceMaxFactor`: 15 at the
@@ -83,10 +83,10 @@ impl ZoomLimit {
     }
 }
 
-/// The reference's orbit limit (`0x5112d6`–`0x51131e`): `cameraDistanceMax × cameraDistanceMaxFactor`
-/// through two ordered x87 compares. Below 0.0 (`fcom ds:0x8089a8`, C0 alone) it is 0.0; else
-/// below 50.0 (`fcom ds:0x8089a4`, C0 alone) it stands; else it is 50.0. A NaN product compares
-/// unordered (C0, C2 and C3 all set), which passes the first test and fails the second: 50.0.
+/// The reference's orbit limit: `cameraDistanceMax × cameraDistanceMaxFactor` through two ordered
+/// x87 compares. Below 0.0 (`fcom ds:`, C0 alone) it is 0.0; else below 50.0 (`fcom ds:`, C0 alone)
+/// it stands; else it is 50.0. A NaN product compares unordered (C0, C2 and C3 all set), which
+/// passes the first test and fails the second: 50.0.
 fn orbit_limit(distance_max: f32, factor: f32) -> f32 {
     let product = distance_max * factor;
     if product < CAM_DIST_MIN {

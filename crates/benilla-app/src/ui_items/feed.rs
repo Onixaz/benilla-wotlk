@@ -40,8 +40,8 @@ pub(crate) struct FeedMemory {
 }
 
 /// The item guids in the player's bag and vault slots, as the reference's watchers read them
-/// (`0x5dd8a0` installs `0x5ddcf0` over the guid fields): which item, where a pushed slot view only
-/// says what it looks like, so two identical items swapped still register.
+/// (installs over the guid fields): which item, where a pushed slot view only says what it looks
+/// like, so two identical items swapped still register.
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 pub(crate) struct SlotGuids {
     /// The bag in containers 1..=11 (equipped, then bank bags), indexed `id - 1`.
@@ -53,17 +53,17 @@ pub(crate) struct SlotGuids {
 /// The containers a bag sits in: 1..=4 worn, 5..=11 in the bank.
 const BAG_IDS: usize = BANK_BAG_ID_LAST as usize;
 
-/// A spell's `$`-substituted description, for item trigger and set-bonus lines. An empty one
-/// yields `None` and the caller drops the whole line, prefix included: the item builder
-/// (`0x52d8a0`) expands it (`0x5075f0`), tests the first byte (`0x52da29`) and on zero skips the
-/// trigger block (`0x52da31`), so an undescribed spell such as a key's `Opening` prints no line.
+/// A spell's `$`-substituted description, for item trigger and set-bonus lines. An empty one yields
+/// `None` and the caller drops the whole line, prefix included: the item builder expands it, tests
+/// the first byte and on zero skips the trigger block, so an undescribed spell such as a key's
+/// `Opening` prints no line.
 fn spell_desc_text(
     spells: Option<&crate::ui_action::Spells>,
     id: u32,
     // The player's skill in a spell's line, the `$`-tokens' level (`TokenContext::skill`).
     skill: &dyn Fn(u32) -> u32,
     home_area: Option<&str>,
-    // The active player's `UNIT_FIELD_BYTES_0` byte 2, the `$g`/`$G` branch's input (`0x508214`).
+    // The active player's `UNIT_FIELD_BYTES_0` byte 2, the `$g`/`$G` branch's input.
     gender: &dyn Fn() -> u8,
     mods: Option<&crate::spell::SpellModifiers>,
     // The VM's strings for the keyed `$d`/`$s` tokens.
@@ -138,10 +138,10 @@ fn bonuses_have_mod_tokens(
         .any(|&(_, spell)| spell_has_mod_tokens(spells, spell))
 }
 
-/// The tooltip's "N Charges" count, 0 for no line. The builder (`0x52d8a0`) reads a template 0 as
-/// `-1` (`0x52da01`), prints nothing for `-1` (`0x52db51`) and otherwise the absolute value
-/// (`0x52db56`): food's `-1` shows no line, a `-5` pool "5 Charges". It prints per spell slot; one
-/// line here, as no vmangos `item_template` row has two pools.
+/// The tooltip's "N Charges" count, 0 for no line. The builder reads a template 0 as `-1`, prints
+/// nothing for `-1` and otherwise the absolute value: food's `-1` shows no line, a `-5` pool "5
+/// Charges". It prints per spell slot; one line here, as no vmangos `item_template` row has two
+/// pools.
 fn charges_count(spells: &[benilla_protocol::messages::ItemSpellEntry]) -> i32 {
     spells
         .iter()
@@ -151,7 +151,7 @@ fn charges_count(spells: &[benilla_protocol::messages::ItemSpellEntry]) -> i32 {
 }
 
 /// A reputation rank (0..=7) to `FACTION_STANDING_LABEL{rank+1}`, the unsuffixed key the reference
-/// builds (`0x84b5dc`), from the player's own `GlobalStrings.lua`.
+/// builds, from the player's own `GlobalStrings.lua`.
 fn standing_label(rank: u32, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     get(&format!("FACTION_STANDING_LABEL{}", rank.min(7) + 1))
 }
@@ -165,7 +165,7 @@ fn template_view(
     skill: &dyn Fn(u32) -> u32,
     skill_lines: Option<&benilla_formats::SkillLineCatalog>,
     home_area: Option<&str>,
-    // The active player's gender byte, the trigger text's `$g`/`$G` branch (`0x508214`).
+    // The active player's gender byte, the trigger text's `$g`/`$G` branch.
     gender: &dyn Fn() -> u8,
     factions: Option<&benilla_formats::FactionCatalog>,
     sub_classes: Option<&benilla_formats::ItemSubClassCatalog>,
@@ -191,8 +191,8 @@ fn template_view(
         inventory_type: t.inventory_type,
         proficiency_alt: sub_classes.and_then(|c| c.proficiency_alt(t.class, t.subclass)),
         hide_subclass: sub_classes.is_some_and(|c| c.hides_name(t.class, t.subclass)),
-        // `GetItemInfo`'s type pair: the subclass is `name()`, verbose name first (`0x48e311`),
-        // so a one-handed sword is "One-Handed Swords" to an addon and "Sword" on the tooltip.
+        // `GetItemInfo`'s type pair: the subclass is `name()`, verbose name first, so a one-handed
+        // sword is "One-Handed Swords" to an addon and "Sword" on the tooltip.
         item_type: classes.and_then(|c| c.name(t.class)).map(str::to_string),
         item_sub_type: sub_classes
             .and_then(|c| c.name(t.class, t.subclass))
@@ -238,8 +238,8 @@ fn template_view(
             .flatten(),
         required_honor_rank: t.required_honor_rank,
         required_city_rank: t.required_city_rank,
-        // `ITEM_REQ_REPUTATION`, the reference's key for this line (`0x854b8c`): faction, then
-        // standing; an install missing a key shows no line.
+        // `ITEM_REQ_REPUTATION`, the reference's key for this line: faction, then standing; an
+        // install missing a key shows no line.
         required_rep_line: (t.required_rep_faction != 0)
             .then(|| {
                 let faction = factions.and_then(|c| c.faction_name(t.required_rep_faction))?;
@@ -648,8 +648,8 @@ pub(super) fn feed_player_req(
             continue;
         };
         if s.skill_id != 0 {
-            // The requirement checks (`0x5eaae0`, `0x5ea930`) read the value plus the permanent
-            // bonus, never the temporary one; the bonus is never negative in live data.
+            // The requirement checks read the value plus the permanent bonus, never the temporary
+            // one; the bonus is never negative in live data.
             skills.insert(
                 u32::from(s.skill_id),
                 u32::from(s.value).saturating_add_signed(i32::from(s.perm_bonus)),
@@ -672,7 +672,8 @@ pub(super) fn feed_player_req(
             );
         }
     }
-    // The reference's `0xc4d770`: a known spell whose Effect[0] is 40 (`SPELL_EFFECT_DUAL_WIELD`).
+    // The reference's dual-wield test: a known spell whose Effect[0] is 40
+    // (`SPELL_EFFECT_DUAL_WIELD`).
     let can_dual_wield = spells.as_deref().is_some_and(|s| {
         actions
             .spells
@@ -747,7 +748,7 @@ fn resolve_slot(
                     .and_then(|g| names.resolve(g, commands).map(str::to_string)),
                 // The tooltip's unlocked (0x4) and wrapped (0x8) bits.
                 fields.item_flags().unwrap_or(0),
-                // `0x5da2c0`: soulbound, or carrying a binding enchant, off the raw descriptor.
+                // Soulbound, or carrying a binding enchant, off the raw descriptor.
                 crate::items::already_bound(fields, rolls.enchants),
                 // The roll behind the name's suffix; its enchants are already in slots 2..6.
                 fields.item_random_properties_id(),
@@ -804,8 +805,8 @@ fn resolve_slot(
         quest_item: t.bonding == 4,
         start_quest: t.start_quest,
         // A charter's guild name and master, keyed by the petition id the server puts in
-        // enchantment slot 0 (`PetitionsHandler.cpp:126`), where the reference reads it
-        // (`0x5ef337`) and its enchant lines skip it (`0x52c9e0`). The first hover sends the query.
+        // enchantment slot 0 (`PetitionsHandler.cpp:126`), where the reference reads it and its
+        // enchant lines skip it. The first hover sends the query.
         petition: (t.flags & benilla_protocol::messages::ITEM_FLAG_CHARTER != 0)
             .then(|| {
                 let id = objects
@@ -822,8 +823,8 @@ fn resolve_slot(
         durability,
         quality: Some(t.quality),
         item_id: entry,
-        // The link carries the roll in `randomPropertyId` and in the suffixed name (`0x5d8b00`);
-        // the tooltip reads its name back off it.
+        // The link carries the roll in `randomPropertyId` and in the suffixed name; the tooltip
+        // reads its name back off it.
         link: Some(crate::ui_items::item_link_full(
             entry,
             0,
@@ -852,9 +853,9 @@ fn resolve_slot(
 
 /// Reason 16's `%s`, the target bag's `BagFamily` name ("Only Arrows can be placed in that."), or
 /// `None` to keep the generic line. `bag_slot` is the bag's player-array slot, and the reference's
-/// `0x5ede00` names nothing for 255 (the player's own array) or for a slot at or past
-/// `[player+0x1d38]`, 113 for the local player, so equipped bags (19..22) and bank bags (67..73)
-/// both resolve. It reads the bag family, not the subclass the errorId's name suggests.
+/// names nothing for 255 (the player's own array) or for a slot at or past `[player+0x1d38]`, 113
+/// for the local player, so equipped bags (19..22) and bank bags (67..73) both resolve. It reads
+/// the bag family, not the subclass the errorId's name suggests.
 fn bag_family_name(
     player: Option<&ObjectStore>,
     bag_slot: u8,
@@ -1013,11 +1014,11 @@ pub(crate) fn feed_containers(
         props: catalogs.1.as_deref(),
     };
     // Refusals become the red error line through `equip_error_key`. An empty or missing string
-    // prints nothing, as the reference's sink guard (`0x4945b4`) drops it; that silences 59.
+    // prints nothing, as the reference's sink guard drops it; that silences 59.
     let player = inv.self_store.iter().next();
     let mut refusals = Vec::new();
     for e in equip_errors.0.drain(..) {
-        // Reason 16 names the bag's family when the bag resolves, as `0x5ede00` does.
+        // Reason 16 names the bag's family when the bag resolves, as the reference does.
         let subclass_fill = (e.reason == 16)
             .then(|| {
                 bag_family_name(
@@ -1330,9 +1331,9 @@ pub(crate) fn feed_containers(
 /// `BAG_UPDATE(bagID)` (`PLAYERBANKSLOTS_CHANGED` for the vault), the lock transitions, `BAG_OPEN`.
 ///
 /// `None` is an absent self store (before login, or the logout despawn frames before the VM shuts
-/// down), never "no items": the VM keeps its last push, as the reference's UI shutdown
-/// (`0x490bd0`) runs with the inventory intact, where a burst of size-0 `BAG_UPDATE`s would have a
-/// bag-saving addon record empty bags. Lock events still flush, never to fire into a later VM.
+/// down), never "no items": the VM keeps its last push, as the reference's UI shutdown runs with
+/// the inventory intact, where a burst of size-0 `BAG_UPDATE`s would have a bag-saving addon record
+/// empty bags. Lock events still flush, never to fire into a later VM.
 pub(crate) fn apply_container_source(
     script: &mut UiScript,
     memory: &mut FeedMemory,
@@ -1350,13 +1351,13 @@ pub(crate) fn apply_container_source(
     }
     // After the push, so a repaint reads the corrected `locked`.
     pushed |= !transitioned.is_empty();
-    // Located as `CGItem_C::SignalEvent` (`0x60bfe0`) does: stock slot buttons repaint only on
+    // Located as the item's event signal (`0x60bfe0`) does: stock slot buttons repaint only on
     // their own `(bag, slot)` or inventory slot.
     for (bag, slot) in transitioned {
         script.fire_event("ITEM_LOCK_CHANGED", item_lock_args(bag, slot));
     }
-    // The reference fires `BAG_OPEN(id)` from the handler (`0x5e3b35`); here it follows this
-    // frame's `BAG_UPDATE`s, so the frame shown paints the bag as it is.
+    // The reference fires `BAG_OPEN(id)` from the handler; here it follows this frame's
+    // `BAG_UPDATE`s, so the frame shown paints the bag as it is.
     pushed |= !opened.is_empty();
     for bag in opened {
         script.fire_event("BAG_OPEN", vec![ScriptValue::Int(bag)]);
@@ -1366,14 +1367,14 @@ pub(crate) fn apply_container_source(
 }
 
 /// The item guid in vault slot `i` (0-based; player slots 39..66), 0 when empty. The reference's
-/// band `0x5dd8a0` watches these fields with `0x5ddcf0`.
+/// band watches these fields with.
 fn vault_slot_guid(store: &ObjectStore, i: u8) -> u64 {
     store.0.player_bank_slot(i).unwrap_or(0)
 }
 
 /// The guid of the bag in container `id` (1..=11, equipped then bank bags), 0 when empty or for any
-/// other id. These are the eleven slots whose watcher (`0x4f8cc0` installs `0x4f8ec0`) can close a
-/// window; the backpack and keyring loops (`0x4f8db0`) never reach the event.
+/// other id. These are the eleven slots whose watcher can close a window; the backpack and keyring
+/// loops never reach the event.
 fn bag_slot_guid(store: &ObjectStore, id: i64) -> u64 {
     match id {
         1..=4 => store.0.player_inv_slot(BAG_SLOT_FIRST + (id as u8 - 1)),
@@ -1392,9 +1393,9 @@ fn diff_and_push(
     fresh: HashMap<i64, ContainerState>,
     guids: SlotGuids,
 ) -> bool {
-    // `BAG_CLOSED` (one fire site, `0x4f92b5`) is the only thing that hides a bag window. It fires
-    // when the bag's guid changes from nonzero (`0x4f923d`, `0x4f9247`), so a swapped bag closes
-    // and then updates; diffed on the guid, as two identical bags swapped leave the states equal.
+    // `BAG_CLOSED` (one fire site) is the only thing that hides a bag window. It fires when the
+    // bag's guid changes from nonzero, so a swapped bag closes and then updates; diffed on the
+    // guid, as two identical bags swapped leave the states equal.
     let closed: Vec<i64> = (1..=BANK_BAG_ID_LAST)
         .filter(|&id| {
             let (was, now) = (
@@ -1404,7 +1405,7 @@ fn diff_and_push(
             was != 0 && now != was
         })
         .collect();
-    // A removed bag fires `BAG_CLOSED` and no `BAG_UPDATE` (`0x4f92cc`).
+    // A removed bag fires `BAG_CLOSED` and no `BAG_UPDATE`.
     let emptied: Vec<i64> = closed
         .iter()
         .copied()
@@ -1415,11 +1416,10 @@ fn diff_and_push(
         script.fire_event("BAG_CLOSED", vec![ScriptValue::Int(*id)]);
     }
     // `PLAYERBANKSLOTS_CHANGED(slot)` has two producers in the reference, the slot's guid changing
-    // (`InventoryUpdate` `0x6dedd0`) and the same item's fields changing (`UpdateItem` `0x5e84c0`),
-    // both passing the bank slot, 1-28 for the vault (`0x5e857f`: player slot less 38). So the
-    // slot's guid decides, not its view: two identical stacks swapped push equal views and still
-    // fire twice. Planned before `memory` is rewritten, fired after the push, outside the `changed`
-    // gate.
+    // (`0x6dedd0`) and the same item's fields changing (`0x5e84c0`), both passing the bank slot,
+    // 1-28 for the vault (`0x5e857f`: player slot less 38). So the slot's guid decides, not its
+    // view: two identical stacks swapped push equal views and still fire twice. Planned before
+    // `memory` is rewritten, fired after the push, outside the `changed` gate.
     let vault: Vec<u32> = {
         let empty = HashMap::new();
         let now = fresh.get(&BANK_CONTAINER).map_or(&empty, |c| &c.slots);
@@ -1457,8 +1457,9 @@ fn diff_and_push(
                 .join(" ")
         );
         for &bag in &changed {
-            // Every changed bag but the vault fires `BAG_UPDATE`: `0x4f8cc0` installs no container
-            // listener over the vault's fields, which fire only `PLAYERBANKSLOTS_CHANGED`.
+            // Every changed bag but the vault fires `BAG_UPDATE`: the reference installs no
+            // container listener over the vault's fields, which fire only
+            // `PLAYERBANKSLOTS_CHANGED`.
             if bag != BANK_CONTAINER && !emptied.contains(&bag) {
                 script.fire_event("BAG_UPDATE", vec![ScriptValue::Int(bag)]);
             }
@@ -1660,8 +1661,8 @@ mod tests {
         assert!(pushed, "and the feed reports that it spoke to the VM");
     }
 
-    /// `BAG_CLOSED` (`0x4f92b5`): a swap fires it, an unequip fires it without `BAG_UPDATE`, and
-    /// two identical bags swapped still close both windows.
+    /// `BAG_CLOSED`: a swap fires it, an unequip fires it without `BAG_UPDATE`, and two identical
+    /// bags swapped still close both windows.
     #[test]
     fn bag_closed_fires_on_the_bag_guid_moving_and_only_off_a_non_empty_slot() {
         let mut s = UiScript::new().unwrap();
@@ -1693,7 +1694,7 @@ mod tests {
         let mut guids = NO_BAGS;
         let mut memory = FeedMemory::default();
 
-        // Equipped into an empty slot: `BAG_UPDATE` only (`0x4f9247`).
+        // Equipped into an empty slot: `BAG_UPDATE` only.
         guids.bags[0] = 0xAAAA;
         apply_container_source(
             &mut s,
@@ -1858,7 +1859,7 @@ mod tests {
     }
 
     /// A stack ticking down is a `BAG_UPDATE` alone: 12340 fires `ITEM_LOCK_CHANGED` only from
-    /// `CGItem_C::Lock`/`Unlock` (`0x706fe0`, `0x707020`), located as `0x60bfe0` locates the item.
+    /// the item lock and unlock (`0x706fe0`, `0x707020`), located as `0x60bfe0` locates the item.
     #[test]
     fn a_stack_ticking_down_is_a_bag_update_and_a_lock_names_its_slot() {
         use benilla_ui::script::ContainerSlot;
@@ -2001,7 +2002,7 @@ mod tests {
         ));
     }
 
-    /// The builder's charge gate (`0x52da01`, `0x52db51`).
+    /// The builder's charge gate.
     #[test]
     fn charge_gate_matches_the_real_builder() {
         // Food and water carry `-1` in vmangos `item_template` (bread 4540, water 159 and 5350).
@@ -2017,7 +2018,7 @@ mod tests {
     }
 
     /// On the real Spell.dbc, an undescribed spell such as a key's `Opening` builds no trigger
-    /// line (`0x52da29`-`0x52da31`), and a described one does.
+    /// line, and a described one does.
     #[test]
     fn an_undescribed_spell_prints_no_trigger_line_on_real_data() {
         let Some(spells) = real_spells() else { return };
@@ -2067,8 +2068,8 @@ mod tests {
         );
     }
 
-    /// The trigger text's `$g` branch reads the gender handed in (`0x508214`): Conjure Food 587's
-    /// "providing the mage and `$ghis:her;` allies" takes "her" on 1, "his" on 0.
+    /// The trigger text's `$g` branch reads the gender handed in: Conjure Food 587's "providing the
+    /// mage and `$ghis:her;` allies" takes "her" on 1, "his" on 0.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn a_trigger_texts_gender_branch_follows_the_player() {
@@ -2092,7 +2093,7 @@ mod tests {
     }
 
     /// The item feeds re-substitute a held `$`-text when what the tokens read moves: the gender
-    /// byte `$g`/`$G` branch on (`0x508214`), and no other byte of `UNIT_FIELD_BYTES_0`.
+    /// byte `$g`/`$G` branch on, and no other byte of `UNIT_FIELD_BYTES_0`.
     #[test]
     fn the_token_reads_move_with_the_gender_byte_alone() {
         let store = |bytes: u32| {

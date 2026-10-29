@@ -46,9 +46,9 @@ fn on_open_container(
     }
 }
 
-/// The reference's `BAG_OPEN` raiser (`0x4f9410`): our own guid is the backpack (0), an equipped
-/// bag (slots 19..22) is 1..4, a bank bag 5..10, and any other guid fires nothing. vmangos sends
-/// the packet when an auto-equip puts a bag in a bag slot.
+/// The reference's `BAG_OPEN` raiser: our own guid is the backpack (0), an equipped bag (slots
+/// 19..22) is 1..4, a bank bag 5..10, and any other guid fires nothing. vmangos sends the packet
+/// when an auto-equip puts a bag in a bag slot.
 pub(super) fn container_of(
     self_guid: Option<u64>,
     store: Option<&ObjectFields>,

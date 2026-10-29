@@ -1,7 +1,7 @@
 //! A door-family transition ends on the object layer, not the loop bit: the completion callback
-//! fires once at the arm's window (span × replay `R`), and slot 14 `0x5f4120` advances Close to
-//! Closed. `G_Crate01.m2`'s lid runs Open 0° to 75°, Opened, Close 75° to 0°, Closed, and all four
-//! loop (`flags` bit 0 clear, `0x714585`).
+//! fires once at the arm's window (span × replay `R`), and slot 14 advances Close to Closed.
+//! `G_Crate01.m2`'s lid runs Open 0° to 75°, Opened, Close 75° to 0°, Closed, and all four loop
+//! (`flags` bit 0 clear).
 
 use benilla_formats::{open_chain, parse_m2_animation_lookup, parse_m2_animations};
 
@@ -29,7 +29,7 @@ fn the_crate_lid_transition_is_bounded_by_the_window_not_the_loop_bit() {
             .unwrap_or_else(|| panic!("the crate authors animation id {id}"))
     };
 
-    // The whole family is authored, so the remap leg (`0x5f3972`) never runs.
+    // The whole family is authored, so the remap leg never runs.
     let lookup = parse_m2_animation_lookup(&bytes);
     for id in [CLOSE, CLOSED, OPEN, OPENED] {
         assert!(
@@ -46,7 +46,7 @@ fn the_crate_lid_transition_is_bounded_by_the_window_not_the_loop_bit() {
         );
     }
 
-    // `R = max(1, min + roll)`, and an empty replay range rolls 1 (`0x712692`..`0x7126cd`).
+    // `R = max(1, min + roll)`, and an empty replay range rolls 1.
     for id in [CLOSE, CLOSED, OPEN, OPENED] {
         let s = seq(id);
         assert_eq!(
@@ -82,7 +82,7 @@ fn the_crate_lid_transition_is_bounded_by_the_window_not_the_loop_bit() {
         lo < 1e-3 && hi > 0.5,
         "Open must sweep from shut (|y| {lo}) to open (|y| {hi})"
     );
-    // Each rest pose is where its motion lands, so the `0x5f4120` advance onto it is seamless.
+    // Each rest pose is where its motion lands, so the advance onto it is seamless.
     for q in lid(CLOSED) {
         assert!(q[1].abs() < 1e-3, "Closed holds the SHUT lid, got {}", q[1]);
     }

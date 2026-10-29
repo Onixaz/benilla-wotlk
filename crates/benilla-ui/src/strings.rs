@@ -1,9 +1,10 @@
 //! Fills the `%` holes of a `GlobalStrings.lua` or `GlueStrings.lua` template read at runtime, as
-//! the client's `SStrPrintf` does: `%s`, `%d`, `%c`, `%f` and `%g` take the next argument left to
+//! the client's formatter does: `%s`, `%d`, `%c`, `%f` and `%g` take the next argument left to
 //! right, `%N$s` takes argument N without moving that cursor (`DUEL_WINNER_RETREAT` reorders its
-//! two names), `%%` is `%`, and the width, `-`/`0` flags and precision are the template's. A hole with no argument, or one
-//! this does not know, is copied through literally so a mis-modelled template shows. Reals round
-//! as the MSVC CRT behind `SStrPrintf` does: half up on the decimal digits ([`crt_digits`]).
+//! two names), `%%` is `%`, and the width, `-`/`0` flags and precision are the template's. A hole
+//! with no argument, or one this does not know, is copied through literally so a mis-modelled
+//! template shows. Reals round as the MSVC CRT behind that formatter does: half up on the decimal
+//! digits ([`crt_digits`]).
 
 use std::fmt::Write as _;
 
@@ -141,11 +142,10 @@ fn crt_f(x: f64, p: usize, out: &mut String) {
 }
 
 /// The CRT's decimal digits of a finite `a >= 0` and its point position `decpt` (the value is
-/// `0.d1d2… × 10^decpt`): `_fltout2` takes 17 significant digits, then `_fptostr 0x40fef0` keeps
-/// `keep(decpt)` of them and rounds on the next digit, half up (`40ff3d: cmp byte [ecx],0x35`),
-/// a carry out of the first digit moving the point (`40ff4f`). A negative count keeps nothing
-/// and rounds nothing (`40ff3b`). So 41.25 at one decimal is 41.3, where Rust's `{:.1}` rounds
-/// the tie to even.
+/// `0.d1d2… × 10^decpt`): `_fltout2` takes 17 significant digits, then `_fptostr` keeps
+/// `keep(decpt)` of them and rounds on the next digit, half up, a carry out of the first digit
+/// moving the point. A negative count keeps nothing and rounds nothing. So 41.25 at one decimal is
+/// 41.3, where Rust's `{:.1}` rounds the tie to even.
 fn crt_digits(a: f64, keep: impl FnOnce(i32) -> i32) -> (Vec<u8>, i32) {
     let sci = format!("{a:.16e}");
     let (mantissa, exp) = sci.split_once('e').unwrap_or((sci.as_str(), "0"));
@@ -261,8 +261,8 @@ fn parse_spec(chars: &[char], after_percent: usize) -> Option<Spec> {
 }
 
 /// A string from the VM's globals, where the install's `GlobalStrings.lua` is loaded at boot;
-/// `None`, and so no line, when absent or empty. `FrameScript_GetText` returns an empty string
-/// (`0x882748`) for a missing key, and callers test both (`GetPVPRankInfo`, `0x51aa1c`/`0x51aa20`).
+/// `None`, and so no line, when absent or empty. The script layer's text read returns an empty
+/// string for a missing key, and callers test both (`GetPVPRankInfo`).
 pub fn global(lua: &mlua::Lua, key: &str) -> Option<String> {
     // Bound before the filter so `globals().get::<String>` stays one unbroken substring, which is
     // what `benilla-app/tests/reference_strings.rs` matches as a key lookup.
@@ -270,11 +270,11 @@ pub fn global(lua: &mlua::Lua, key: &str) -> Option<String> {
     value.filter(|s| !s.is_empty())
 }
 
-/// `GetText(token, nil, ordinal)`'s plural pick: `0x52fa50` formats the key and `0x703bf0`
-/// pcalls the Lua `GetText`, where `GetPluralIndex` (`LocaleProperties.lua:56`) is singular for
+/// `GetText(token, nil, ordinal)`'s plural pick: the reference formats the key and then pcalls the
+/// Lua `GetText`, where `GetPluralIndex` (`LocaleProperties.lua:56`) is singular for
 /// `not ordinal or ordinal == 1`. So one or no ordinal takes the bare token, anything else the
-/// `_P1` twin, falling back to the bare token. Zero is plural: the test at `0x703c89` is signed,
-/// only a negative becomes nil, and the number `0` is truthy in Lua.
+/// `_P1` twin, falling back to the bare token. Zero is plural: the test is signed, only a negative
+/// becomes nil, and the number `0` is truthy in Lua.
 pub fn plural(
     token: &str,
     ordinal: Option<u32>,

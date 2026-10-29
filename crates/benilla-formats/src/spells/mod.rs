@@ -56,8 +56,8 @@ const SPELL: &str = "DBFilesClient\\Spell.dbc";
 const SPELL_FIELDS: usize = 234;
 /// `Category` (`+0x4`): the shared-cooldown `SpellCategory.dbc` id, such as potions 4.
 const COL_CATEGORY: usize = 1;
-/// `RecoveryTime` (`+0x74`) and `CategoryRecoveryTime` (`+0x78`), in ms, read by `StartCooldown`
-/// (`0x6e2c60`) and the `SMSG_SPELL_COOLDOWN` handler (`0x806dd0`).
+/// `RecoveryTime` (`+0x74`) and `CategoryRecoveryTime` (`+0x78`), in ms, read by the cooldown start
+/// and the `SMSG_SPELL_COOLDOWN` handler (`0x806dd0`).
 const COL_RECOVERY_TIME: usize = 29;
 const COL_CATEGORY_RECOVERY_TIME: usize = 30;
 /// The three interrupt masks (`+0x7c`, `+0x80`, `+0x84`): cast, applied aura, running channel.
@@ -71,27 +71,27 @@ const COL_MANA_COST_PCT: usize = 204;
 const COL_MANA_COST_PER_LEVEL: usize = 43;
 const COL_MANA_PER_SECOND: usize = 44;
 const COL_MANA_PER_SECOND_PER_LEVEL: usize = 45;
-/// `rangeIndex` (`+0xb8`), resolved by `GetMinMaxRange` (`0x6e3480`).
+/// `rangeIndex` (`+0xb8`), resolved by the range lookup.
 const COL_RANGE_INDEX: usize = 46;
 /// `modalNextSpell` (`+0xc0`): 52 of its 57 nonzero rows are hunter shots naming Auto Shot.
 const COL_MODAL_NEXT_SPELL: usize = 48;
-/// `StartRecoveryCategory` (`+0x334`) and `StartRecoveryTime` (`+0x338`): the global cooldown
-/// `StartGlobalCooldown` (`0x6e2de0`) starts at the cast send (`0x6e58fb`).
+/// `StartRecoveryCategory` (`+0x334`) and `StartRecoveryTime` (`+0x338`): the global cooldown the
+/// client starts at the cast send.
 const COL_START_RECOVERY_CATEGORY: usize = 205;
 const COL_START_RECOVERY_TIME: usize = 206;
 const COL_PREVENTION_TYPE: usize = 214;
 const COL_SPELL_FAMILY_NAME: usize = 208;
 const COL_SPELL_FAMILY_FLAGS_LOW: usize = 209;
-/// `Targets` (`+0x40`): the seed the cast arm loads into its targeting word (`0x6e525a`).
+/// `Targets` (`+0x40`): the seed the cast arm loads into its targeting word.
 const COL_TARGETS: usize = 16;
-/// `TargetCreatureType` (`+0x44`): the creature-type mask `BindTarget` (`0x6e5c26`) and
-/// `SpellCanTargetUnit`'s mirror (`0x6e6544`) test the unit's type against, bit `type - 1`.
+/// `TargetCreatureType` (`+0x44`): the creature-type mask the target bind and
+/// `SpellCanTargetUnit`'s mirror test the unit's type against, bit `type - 1`.
 const COL_TARGET_CREATURE_TYPE: usize = 17;
-/// `EffectImplicitTargetA[0]` (`+0x158`), the key of the cast arm's 62-case switch (`0x6e5484`).
+/// `EffectImplicitTargetA[0]` (`+0x158`), the key of the cast arm's 62-case switch.
 const COL_IMPLICIT_TARGET_A1: usize = 86;
-/// `EffectImplicitTargetB[0]` (`+0x164`), walked beside A by the classifier `0x6ea280`.
+/// `EffectImplicitTargetB[0]` (`+0x164`), walked beside A by the classifier.
 const COL_IMPLICIT_TARGET_B1: usize = 89;
-/// The usable walk's gate columns (`IsSpellUsableNow` `0x6e3d60`).
+/// The usable walk's gate columns.
 const COL_STANCES: usize = 12;
 const COL_STANCES_HIGH: usize = 13;
 const COL_STANCES_NOT: usize = 14;
@@ -102,7 +102,7 @@ const COL_REAGENT_1: usize = 52;
 const COL_REAGENT_COUNT_1: usize = 60;
 const COL_EQUIPPED_ITEM_CLASS: usize = 68;
 const COL_EQUIPPED_ITEM_SUBCLASS_MASK: usize = 69;
-/// `EquippedItemInventoryTypeMask` (`+0x118`), read by the item-target gate `0x495d60`.
+/// `EquippedItemInventoryTypeMask` (`+0x118`), read by the item-target gate.
 const COL_EQUIPPED_ITEM_INVENTORY_TYPE_MASK: usize = 70;
 const COL_REQUIRES_SPELL_FOCUS: usize = 18;
 const COL_DISPEL: usize = 2;
@@ -117,7 +117,7 @@ const COL_ATTRIBUTES_EX: usize = 5;
 const COL_ATTRIBUTES_EX2: usize = 6;
 const COL_ATTRIBUTES_EX3: usize = 7;
 /// `AttributesEx4` (`+0x20`), the dword after `AttributesEx3`: the pet-bar spell arm tests its
-/// `0x20` at `0x4bd355`.
+/// `0x20`.
 const COL_ATTRIBUTES_EX4: usize = 8;
 /// `AttributesExE` (`+0x24`): `0x200` and `0x2000` reach the description's over-time and haste
 /// terms.
@@ -142,8 +142,7 @@ const COL_EFFECT_TRIGGER_1: usize = 116;
 /// `SPELL_EFFECT_LEARN_SPELL`: teaches its `EffectTriggerSpell`, as a trainer's wrapper does.
 pub const SPELL_EFFECT_LEARN_SPELL: u32 = 36;
 
-/// One `Effect[]` slot as the trainer's state re-evaluator reads it
-/// (`Trainer_ReEvaluateServices`, `0x596b00`).
+/// One `Effect[]` slot as the trainer's state re-evaluator reads it (`0x596b00`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LearnEffect {
     /// `Effect` 0: the slot is skipped (`0x596bcc`).
@@ -158,21 +157,21 @@ pub enum LearnEffect {
     /// stands for itself (`0x596cb6`).
     Other,
 }
-/// `SPELL_EFFECT_LEARN_PET_SPELL`: the trainer's icon accepts it or 36 in any slot (`0x4d8ff5`),
-/// but [`SpellCatalog::learned_spell`] follows 36 only.
+/// `SPELL_EFFECT_LEARN_PET_SPELL`: the trainer's icon accepts it or 36 in any slot, but
+/// [`SpellCatalog::learned_spell`] follows 36 only.
 pub const SPELL_EFFECT_LEARN_PET_SPELL: u32 = 57;
-/// `SPELL_EFFECT_SKILL_STEP`: raises a profession's cap; a tradeskill trainer's tree partitions
-/// on it alone, in the wire spell's three slots (`0x4d77b6`).
+/// `SPELL_EFFECT_SKILL_STEP`: raises a profession's cap; a tradeskill trainer's tree partitions on
+/// it alone, in the wire spell's three slots.
 pub const SPELL_EFFECT_SKILL_STEP: u32 = 44;
 
-/// `SPELL_EFFECT_OPEN_LOCK`, which the GameObject interact-cast matches (`0x5f84a1`).
+/// `SPELL_EFFECT_OPEN_LOCK`, which the GameObject interact-cast matches.
 const SPELL_EFFECT_OPEN_LOCK: u32 = 0x21;
-/// `baseLevel` (`+0x98`, not `spellLevel`), read by the effect-value walk at `0x6e3854`.
+/// `baseLevel` (`+0x98`, not `spellLevel`), read by the effect-value walk.
 const COL_BASE_LEVEL: usize = 38;
 /// `maxLevel` (`+0x94`): 0 is uncapped, as on the profession openers, not a cap of 0.
 const COL_MAX_LEVEL: usize = 37;
 const COL_SPELL_LEVEL: usize = 39;
-/// `EffectApplyAuraName[0]`, `71 + 8 × 3`; the stance bar admits by it (`0x4b2810`).
+/// `EffectApplyAuraName[0]`, `71 + 8 × 3`; the stance bar admits by it.
 const COL_EFFECT_APPLY_AURA_1: usize = 95;
 /// `SPELL_AURA_MOD_SHAPESHIFT`: its `EffectMiscValue` is the `SpellShapeshiftForm.dbc` id.
 const SPELL_AURA_MOD_SHAPESHIFT: u32 = 36;
@@ -184,9 +183,9 @@ const SPELL_AURA_MOD_INVISIBILITY_DETECT: u32 = 19;
 const AURA_VISION_STEALTH: u8 = 0x20;
 const AURA_VISION_INVISIBILITY: u8 = 0x40;
 const COL_ICON_ID: usize = 133;
-/// `ActiveIconID` (`+0x218`, read at `0x4b4754`): druid forms carry 122, the dismiss paw.
+/// `ActiveIconID` (`+0x218`): druid forms carry 122, the dismiss paw.
 const COL_ACTIVE_ICON_ID: usize = 134;
-/// `StanceBarOrder` (`+0x35c`, signed): `0x4b2bb0` sorts ascending, -1 last, ties by spell id;
+/// `StanceBarOrder` (`+0x35c`, signed): the reference sorts ascending, -1 last, ties by spell id;
 /// Stealth is -1.
 const COL_STANCE_BAR_ORDER: usize = 215;
 const COL_VISUAL_ID: usize = 131;
@@ -195,9 +194,9 @@ const COL_NAME_SUBTEXT_ENUS: usize = 153;
 const COL_DESCRIPTION_ENUS: usize = 170;
 const COL_AURA_DESCRIPTION_ENUS: usize = 187;
 
-/// `DurationIndex` (`+0xa0`): `Spell_C::GetSpellDuration` (`0x6ea000`) looks it up at `0xc0d828`.
+/// `DurationIndex` (`+0xa0`): the duration read looks it up.
 const COL_DURATION_INDEX: usize = 40;
-/// `CastingTimeIndex` (`+0x70`): `Spell_C::GetCastTime` (`0x6e3340`) looks it up at `0xc0d878`.
+/// `CastingTimeIndex` (`+0x70`): the cast-time read looks it up.
 const COL_CASTING_TIME_INDEX: usize = 28;
 const COL_PROC_FLAGS: usize = 34;
 const COL_PROC_CHANCE: usize = 35;
@@ -225,11 +224,10 @@ const COL_EFFECT_MULTIPLE_VALUE_1: usize = 101;
 const COL_EFFECT_CHAIN_TARGETS_1: usize = 104;
 const COL_EFFECT_ITEM_TYPE_1: usize = 107;
 
-/// `SPELL_ATTR3_NORMAL_RANGED_ATTACK`: damage floats melee white (`0x6128b0`).
+/// `SPELL_ATTR3_NORMAL_RANGED_ATTACK`: damage floats melee white.
 const ATTR_EX3_NORMAL_RANGED_ATTACK: u32 = 0x8000;
 /// `SPELL_ATTR_EX4_ALLOW_CLIENT_TARGETING` (vmangos `SpellDefines.h:953`): a pet-bar press casts
-/// through the generic entry `0x6e4b60` (`0x4bd355`, `0x4bd378`) instead of sending the pet
-/// action.
+/// through the generic entry instead of sending the pet action.
 const ATTR_EX4_ALLOW_CLIENT_TARGETING: u32 = 0x20;
 /// `SPELL_ATTR_EX3_NO_CASTING_BAR_TEXT` (vmangos `SpellDefines.h:907`).
 const ATTR_EX3_NO_CASTING_BAR_TEXT: u32 = 0x4;
@@ -243,58 +241,57 @@ const ATTR_TARGET_MAIN_HAND_ITEM: u32 = 0x200;
 /// `SPELL_ATTR_EX2_AUTO_REPEAT`: Auto Shot and wand Shoot.
 const ATTR_EX2_AUTO_REPEAT: u32 = 0x20;
 /// `SPELL_ATTR_EX2_ALLOW_DEAD_TARGET` (vmangos `SpellDefines.h:868`): the bind's dead-unit gate
-/// tests it at `0x6e5c85`.
+/// tests it.
 const ATTR_EX2_ALLOW_DEAD_TARGET: u32 = 0x1;
 const ATTR_EX2_DO_NOT_RESET_COMBAT_TIMERS: u32 = 0x20000;
 /// `SPELL_ATTR_PASSIVE`: the spellbook grays the spell (`SpellBookFrame.lua:379-390`).
 const ATTR_PASSIVE: u32 = 0x40;
-/// `SPELL_ATTR_ABILITY`, read by the 1.12 client only to word the learn line (`0x4b29a9`).
+/// `SPELL_ATTR_ABILITY`, read by the 1.12 client only to word the learn line.
 const ATTR_ABILITY: u32 = 0x10;
 /// `SPELL_ATTR_DO_NOT_DISPLAY`: languages, proficiencies, hidden racials, internal proc auras.
 const ATTR_DO_NOT_DISPLAY: u32 = 0x80;
 /// `SPELL_ATTR_IS_TRADESKILL`: a profession or recipe spell, kept out of the book; a trainer
-/// service with it shows an item tooltip (`SetTrainerService` `0x5338b0` at `0x533a1b`).
+/// service with it shows an item tooltip (`SetTrainerService`).
 pub const SPELL_ATTR_IS_TRADESKILL: u32 = 0x20;
 /// `SPELL_ATTR_EX_NO_AURA_ICON`: hidden from the aura bar, as all three warrior stances are.
 const ATTR_EX_NO_AURA_ICON: u32 = 0x1000_0000;
 /// `SPELL_ATTR_EX_EXCLUDE_CASTER` (vmangos `SpellDefines.h:851`): the targeting cursor never takes
-/// the caster (`0x6e61cf`, `0x6e6507`).
+/// the caster.
 const ATTR_EX_EXCLUDE_CASTER: u32 = 0x0008_0000;
 
 /// `SPELL_EFFECT_ATTACK`: only 6603 "Attack" has it, but the client tests the effect, not the id.
 const SPELL_EFFECT_ATTACK: u32 = 78;
 
-/// The tracking aura types, which no aura display shows (`IsAuraDisplayable` `0x519860`).
+/// The tracking aura types, which no aura display shows.
 const TRACKING_AURA_TYPES: [u32; 3] = [44, 45, 151];
 
-/// The on-next-swing pair `0x4` and `0x400`, always tested as one mask (`0x6e34fb`, `0x6e5200`).
+/// The on-next-swing pair `0x4` and `0x400`, always tested as one mask.
 const ATTR_ON_NEXT_SWING: u32 = 0x404;
-/// `SPELL_ATTR_EX_INITIATES_COMBAT`: casting starts auto-attack, on the client (`0x6e5200`); the
-/// server reads it only for pet AI (vmangos `Spell.cpp:4377`).
+/// `SPELL_ATTR_EX_INITIATES_COMBAT`: casting starts auto-attack, on the client; the server reads it
+/// only for pet AI (vmangos `Spell.cpp:4377`).
 const ATTR_EX_INITIATES_COMBAT: u32 = 0x200;
-/// `AttributesEx` `0x4` or `0x40`: the two channeled variants, tested as one mask (`0x52ec27`).
+/// `AttributesEx` `0x4` or `0x40`: the two channeled variants, tested as one mask.
 const ATTR_EX_CHANNELED: u32 = 0x44;
-/// `SPELL_ATTR_EX2_INITIATE_COMBAT_POST_CAST`: auto-attack starts at the spell's `SMSG_SPELL_GO`
-/// (`0x6e83c0`), not at the send: the stealth openers, positional strikes and Judgement.
+/// `SPELL_ATTR_EX2_INITIATE_COMBAT_POST_CAST`: auto-attack starts at the spell's `SMSG_SPELL_GO`,
+/// not at the send: the stealth openers, positional strikes and Judgement.
 const ATTR_EX2_INITIATE_COMBAT_POST_CAST: u32 = 0x0010_0000;
 
 /// `SPELL_ATTR_COOLDOWN_ON_EVENT`: held by the `SMSG_SPELL_COOLDOWN` handler (`0x801220`).
 const ATTR_COOLDOWN_ON_EVENT: u32 = 0x0200_0000;
 
-/// The usable walk's attribute gates (`0x6e3d60`): bit 23 castable while dead (`0x6e3dbd`), bit
-/// 17 only while stealthed (`0x6e3ee3`, the creep flag), bit 16 not while shapeshifted, bit 28
-/// only out of combat (`0x6e3f01`).
+/// The usable walk's attribute gates: bit 23 castable while dead, bit 17 only while stealthed (the
+/// creep flag), bit 16 not while shapeshifted, bit 28 only out of combat.
 pub const ATTR_CASTABLE_WHILE_DEAD: u32 = 0x0080_0000;
 pub const ATTR_ONLY_STEALTHED: u32 = 0x0002_0000;
 const ATTR_NOT_SHAPESHIFT: u32 = 0x0001_0000;
 pub const ATTR_NOT_IN_COMBAT: u32 = 0x1000_0000;
 /// `SPELL_ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED`: waives the form requirement while unshifted.
 const ATTR_EX2_ALLOW_WHILE_NOT_SHAPESHIFTED: u32 = 0x0008_0000;
-/// The combo-point consumers, `AttributesEx` bits 20 and 22 (vmangos `NeedsComboPoints`), read
-/// by the usable walk at `0x6e3e7a`: the rogue and druid finishers, and Overpower.
+/// The combo-point consumers, `AttributesEx` bits 20 and 22 (vmangos `NeedsComboPoints`), read by
+/// the usable walk: the rogue and druid finishers, and Overpower.
 const ATTR_EX_FINISHING_MOVE: u32 = 0x0050_0000;
-/// `SPELL_EFFECT_TRADE_SKILL`: usable with no other gate (`0x6e3d99`), and `TryCast`
-/// (`0x6e4b60`) opens the crafting window itself instead of sending the cast.
+/// `SPELL_EFFECT_TRADE_SKILL`: usable with no other gate, and the cast attempt opens the crafting
+/// window itself instead of sending the cast.
 pub const SPELL_EFFECT_TRADE_SKILL: u32 = 47;
 /// `SPELL_EFFECT_CREATE_ITEM`: a recipe's product, its `EffectItemType`.
 pub const SPELL_EFFECT_CREATE_ITEM: u32 = 24;
@@ -311,10 +308,9 @@ pub const SPELL_EFFECT_ENCHANT_ITEM_TEMPORARY: u32 = 54;
 /// `SPELL_EFFECT_APPLY_GLYPH`: its `EffectMiscValue` is the `GlyphProperties.dbc` id (`0x80c4a0`).
 pub const SPELL_EFFECT_APPLY_GLYPH: u32 = 74;
 
-/// `SPELL_EFFECT_PROSPECTING`: handled by the client (`0x495f39`, `0x6e4cd4`, `0x6e3bdc`) but on
-/// no 5875 spell, so the cast-fail reasons only its legs raise, `0x83`, `0x84` and `0x90`, never
-/// show. The number is this build's own: `TryCast` pairs 99 with disenchant (`0x6e4ca2`) and 127
-/// with prospect (`0x6e4cd4`).
+/// `SPELL_EFFECT_PROSPECTING`: handled by the client but on no 5875 spell, so the cast-fail reasons
+/// only its legs raise, `0x83`, `0x84` and `0x90`, never show. The number is this build's own:
+/// the cast attempt pairs 99 with disenchant and 127 with prospect.
 pub const SPELL_EFFECT_PROSPECTING: u32 = 127;
 
 /// `Spell.dbc` joined with `SpellIcon.dbc`, plus the learn-spell map: a trainer offers a learn
@@ -445,9 +441,9 @@ impl SpellCatalog {
     }
 
     /// The `Languages.dbc` id a spell declares: `EffectMiscValue_1` when `Effect_1` is 39. The
-    /// client fills its language table (`0xb700ac`) on spell add (`0x4b25b0`), a later learn
-    /// overwriting, so fold this over the known spells. On 12340 Demon Tongue (815) and Old Tongue
-    /// (817) declare Common (7), so Demonic (8) and Kalimag (12) are always garbled.
+    /// client fills its language table on spell add, a later learn overwriting, so fold this over
+    /// the known spells. On 12340 Demon Tongue (815) and Old Tongue (817) declare Common (7), so
+    /// Demonic (8) and Kalimag (12) are always garbled.
     pub fn declared_language(&self, spell: u32) -> Option<u32> {
         self.declared_language.get(&spell).copied()
     }
@@ -537,7 +533,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
     let dispel_types = load_spell_dispel_types(chain)?;
     let description_variables = load_spell_description_variables(chain)?;
     // Categories whose `SpellCategory.dbc` flags carry `0x2` match every cooldown query
-    // (`GetCooldownInfo` `0x6e13e0`); only wand Shoot's 351 does.
+    // (the cooldown info read); only wand Shoot's 351 does.
     let wildcard_categories: std::collections::HashSet<u32> = {
         let bytes = chain
             .read_file("DBFilesClient\\SpellCategory.dbc")
@@ -593,8 +589,8 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
         {
             learn_effects.insert(id, effects);
         }
-        // The language declaration (`0x4b2656`) reads slot 0 only, `+0xf4` and `+0x1a8`, unlike
-        // the learn hop's scan of all three.
+        // The language declaration reads slot 0 only, `+0xf4` and `+0x1a8`, unlike the learn hop's
+        // scan of all three.
         if u32_at(r, COL_EFFECT_1) == Some(SPELL_EFFECT_LANGUAGE) {
             if let Some(lang) = i32_at(r, COL_EFFECT_MISC_1).filter(|&l| l > 0) {
                 declared_language.insert(id, lang as u32);
@@ -663,7 +659,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 }),
                 dispel: u32_at(r, COL_DISPEL).unwrap_or(0),
                 category: u32_at(r, COL_CATEGORY).unwrap_or(0),
-                // Resolved at load, read off the armed record (`0x6e1563`).
+                // Resolved at load, read off the armed record.
                 category_wildcard: u32_at(r, COL_CATEGORY)
                     .is_some_and(|c| wildcard_categories.contains(&c)),
                 recovery_ms: u32_at(r, COL_RECOVERY_TIME).unwrap_or(0),
@@ -709,7 +705,7 @@ pub fn load_spell_catalog(chain: &mut Chain) -> Result<SpellCatalog> {
                 equipped_item_inventory_type_mask: u32_at(r, COL_EQUIPPED_ITEM_INVENTORY_TYPE_MASK)
                     .unwrap_or(0),
                 requires_spell_focus: u32_at(r, COL_REQUIRES_SPELL_FOCUS).unwrap_or(0),
-                // The first MOD_SHAPESHIFT effect's `EffectMiscValue` is the form (`0x4b4690`).
+                // The first MOD_SHAPESHIFT effect's `EffectMiscValue` is the form.
                 shapeshift_form: (0..3).find_map(|i| {
                     (effect_apply_aura[i] == SPELL_AURA_MOD_SHAPESHIFT)
                         .then(|| u32_at(r, COL_EFFECT_MISC_1 + i).unwrap_or(0))

@@ -1,7 +1,6 @@
 //! 3.3.5a's title verbs over `CharTitles.dbc` and the player's title fields: the character sheet's
 //! picker (`PlayerTitleFrame_UpdateTitles`) and `SetCurrentTitle`'s `CMSG_SET_TITLE`, and the
-//! chosen-title name `UnitPVPName`, the unit tooltip and the overhead name share
-//! (`CGUnit_C::GetUnitChosenTitle` `0x72a290`).
+//! chosen-title name `UnitPVPName`, the unit tooltip and the overhead name share (`0x72a290`).
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -60,7 +59,7 @@ impl TitleThrottle {
     }
 }
 
-/// The row whose mask id is `mask` (`GetRecordForTitle` `0x719900`, a walk in file order).
+/// The row whose mask id is `mask` (`0x719900`, a walk in file order).
 pub fn title_row(rows: &[TitleRow], mask: i64) -> Option<&TitleRow> {
     rows.iter().find(|r| i64::from(r.mask_id) == mask)
 }
@@ -98,7 +97,7 @@ fn strip_name_slot(format: &str) -> String {
     out
 }
 
-/// `GetUnitChosenTitle`'s title leg (`0x72a290`): a player's chosen title (above 0) with the name
+/// The chosen-title name's title leg (`0x72a290`): a player's chosen title (above 0) with the name
 /// in its `%s`, and the `PVP_MEDAL<n>` line under it for a set medal byte (`PLAYER_BYTES_3` byte
 /// 2), its text from `medal_text`. `None` for no title, where the caller shows the plain name.
 ///

@@ -2,12 +2,12 @@
 //! shine, the pings, the item-push card and the map arrow to an addon's `CreateFrame("Model")`.
 //!
 //! The reference draws a pane straight into the back buffer, every batch once and LEQUAL over a
-//! depth buffer cleared for the widget's rect (`0x76d240`, `0x70b360`), through the file camera
-//! the widget names or, with none, orthographically over the frame's rect. Here each pane renders
-//! into its own cell of one shared atlas, through the sheet's one orthographic camera or a pooled
-//! perspective one, and [`compose_tiles`] draws each cell as a quad at the pane's callback rank.
-//! `PlayerModel`, `DressUpModel` and `TabardModel` are booths instead (`crate::portrait`): the
-//! reference frames them through camera 1 frozen at load.
+//! depth buffer cleared for the widget's rect, through the file camera the widget names or, with
+//! none, orthographically over the frame's rect. Here each pane renders into its own cell of one
+//! shared atlas, through the sheet's one orthographic camera or a pooled perspective one, and
+//! [`compose_tiles`] draws each cell as a quad at the pane's callback rank. `PlayerModel`,
+//! `DressUpModel` and `TabardModel` are booths instead (`crate::portrait`): the reference frames
+//! them through camera 1 frozen at load.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -52,7 +52,7 @@ pub(crate) fn trace_on() -> bool {
 }
 
 /// One pane's tile request, published by the extract's `ModelPane` arm: its device size, the unit
-/// ladder `0x76d1a0` derives from it, and the Lua-set scene.
+/// ladder derives from it, and the Lua-set scene.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct TileRequest {
     /// The `SetModel` path, as written.
@@ -73,10 +73,10 @@ pub(crate) struct TileRequest {
     pub root_scale: f32,
     /// The perspective leg's root translation: `SetPosition · layoutScale`, model units.
     pub root_pos: Vec3,
-    /// The installed camera index (ctor 0, `SetCamera(n)`); `None` is the NULL camera an index
-    /// past the file's cameras installs (`0x76cec0`), the orthographic leg of every shipped pane.
+    /// The installed camera index (ctor 0, `SetCamera(n)`); `None` is the NULL camera an index past
+    /// the file's cameras installs, the orthographic leg of every shipped pane.
     pub camera: Option<u32>,
-    /// The pane's embedded `CGLight`, disabled on a fresh `<Model>`, so a lit batch draws black.
+    /// The pane's embedded light, disabled on a fresh `<Model>`, so a lit batch draws black.
     pub light: ModelLight,
     pub fog: Option<ModelFog>,
     /// `ReplaceIconTexture`'s path, the texture of the file's type-14 batches.
@@ -85,7 +85,7 @@ pub(crate) struct TileRequest {
     pub rect: Rect,
     /// `ZKey::callback(Artwork)`: after every texture and font string of the pane's layer.
     pub z_key: u64,
-    /// The frame's own alpha, which the composite draws at (`0x76d120`).
+    /// The frame's own alpha, which the composite draws.
     pub alpha: f32,
     /// The enclosing ScrollFrame's clip, in the quad pass's space.
     pub clip: Option<Rect>,
@@ -113,8 +113,8 @@ pub(crate) struct UiModelTiles {
     pub dpi: f32,
 }
 
-/// A pane's light input: its embedded `CGLight` and its armed fog. Panes with the same scene
-/// share one light buffer and twin cache; the default, a disabled light and no fog, is slot 0.
+/// A pane's light input: its embedded light and its armed fog. Panes with the same scene share one
+/// light buffer and twin cache; the default, a disabled light and no fog, is slot 0.
 #[derive(Clone, Copy, PartialEq)]
 struct TileScene {
     light: ModelLight,
@@ -131,10 +131,10 @@ impl TileScene {
     }
 
     /// The light buffer the reference's collector finalizes for this scene. It gathers only what
-    /// `0x76d680` stages, the fog when armed and the light when enabled: a directional light
-    /// folds ambient and one diffuse lobe into the SH (`0x71bc70`, `0x71bce0`), a point light
-    /// joins the 4-nearest heap with no ambient (`0x71bf90`). The ambient and the lobe land in
-    /// probe slot 0, which every tile part's `MeshTag` names; the rig lane reads no rows 0-2.
+    /// the reference stages, the fog when armed and the light when enabled: a directional light
+    /// folds ambient and one diffuse lobe into the SH, a point light joins the 4-nearest heap with
+    /// no ambient. The ambient and the lobe land in probe slot 0, which every tile part's `MeshTag`
+    /// names; the rig lane reads no rows 0-2.
     fn blob(&self) -> LightBlob {
         let l = self.light;
         let (ambient, lobes, point) = match (l.enabled, l.omni) {
@@ -145,9 +145,9 @@ impl TileScene {
                 Vec::new(),
                 Some((benilla_assets::coords::wow_to_bevy(l.vector), l.diffuse)),
             ),
-            // Type 0, directional: `CGLight+0x24` is the direction the light travels. The SH
-            // lobe takes it negated (`fchs` at `0x71be7c`, `0x71be81`, `0x71be86` in `0x71bce0`),
-            // while the moments at `collector+0x18…+0x50` take it as is.
+            // Type 0, directional: the light's `+0x24` is the direction the light travels. The SH
+            // lobe takes it negated (`fchs`), while the moments at `collector+0x18…+0x50` take it
+            // as is.
             (true, false) => (
                 l.ambient,
                 vec![(
@@ -478,8 +478,8 @@ fn setup_tiles(
         layer: layer.clone(),
         lights: Vec::new(),
     };
-    // Slot 0, the `<Model>` ctor's scene (`0x76c8e0`). A twin binds its own light buffer, whose
-    // palette and mat-anim rows the tiles read, so every pool buffer joins both mirror lists.
+    // Slot 0, the `<Model>` ctor's scene. A twin binds its own light buffer, whose palette and
+    // mat-anim rows the tiles read, so every pool buffer joins both mirror lists.
     rig.slot_for(
         TileScene::default_scene(),
         &device,
@@ -521,8 +521,8 @@ fn setup_tiles(
             booth_view_shape(),
             Camera {
                 order: TILE_CAMERA_ORDER + 1 + slot as isize,
-                // Load, never clear: the orthographic camera clears the atlas first. Depth
-                // clears per camera, the reference's per-widget `GxClear(2)` (`0x76d5e1`).
+                // Load, never clear: the orthographic camera clears the atlas first. Depth clears
+                // per camera, the reference's per-widget depth clear.
                 clear_color: ClearColorConfig::None,
                 is_active: false,
                 ..default()
@@ -573,7 +573,7 @@ pub(crate) fn spawn_warm_tile_cam(
 }
 
 /// Bevy space to tile-camera space: WoW `+X` right, `+Y` up, `+Z` toward the viewer, the ortho
-/// leg's axes (`0x7ad7f0`). A proper rotation, so winding survives.
+/// leg's axes. A proper rotation, so winding survives.
 fn wow_to_screen() -> Quat {
     Quat::from_mat3(&Mat3::from_cols(
         Vec3::new(0.0, -1.0, 0.0),
@@ -966,9 +966,9 @@ fn sync_tiles(
         };
 
         // ── The leg ────────────────────────────────────────────────────────────────────
-        // Perspective (`0x7ac640`): the file's camera frames the pane from this tile's camera,
-        // viewport the cell, and the eye and target ride the model's root (`0x718960`).
-        // Orthographic: one model unit is `1280 · modelScale · layoutScale` FrameXML units.
+        // Perspective: the file's camera frames the pane from this tile's camera, viewport the
+        // cell, and the eye and target ride the model's root. Orthographic: one model unit is
+        // `1280 · modelScale · layoutScale` FrameXML units.
         let perspective = tile.cam_slot.zip(req.camera).and_then(|(slot, idx)| {
             let cam = assets.m2s.get(&tile.m2)?.cameras.get(idx as usize)?;
             Some((slot, cam.clone()))
@@ -1075,10 +1075,10 @@ fn sync_tiles(
         });
         let gseq_s = pane.clock_ms as f64 / 1000.0;
         // The bone global sequences read the pane's clock too: the kernel's cursor,
-        // `[[model+0x2c]+0xc] − [model+0x68]` (`0x714260`), is the owning scene's clock minus the
-        // attach snapshot, and a `<Model>` owns a private `CM2Scene` (`CSimpleModel+0x314`) that
-        // only its `OnUpdate` advances (`0x76d7f0`). So the ping's 4833 ms spinner resumes where
-        // the last ping stopped; the drive anchors on its first tick, the attach.
+        // `[[model+0x2c]+0xc] − [model+0x68]`, is the owning scene's clock minus the attach
+        // snapshot, and a `<Model>` owns a private scene (`+0x314` on the widget) that only its
+        // `OnUpdate` advances. So the ping's 4833 ms spinner resumes where the last ping stopped;
+        // the drive anchors on its first tick, the attach.
         if let Some(mut d) = drive {
             d.set_clock(gseq_s);
         }
@@ -1098,7 +1098,7 @@ fn sync_tiles(
                 trace_alphas.push(a);
             }
             if let Ok((mut tag, mut pvis)) = parts.get_mut(part.entity) {
-                // The `A ≤ 0` cull (`0x707b3a`): a batch keyed off in this sequence is skipped.
+                // The `A ≤ 0` cull: a batch keyed off in this sequence is skipped.
                 let want = if a > 0.0 {
                     Visibility::Inherited
                 } else {
@@ -1146,7 +1146,7 @@ fn sync_tiles(
             );
         }
         // A particle's half-extent is in eye space: the ortho leg's is the cell's pixels at
-        // `768·√(a²+1)` FrameXML units per model unit (`0x7b2a50`); the perspective leg's is 1.0.
+        // `768·√(a²+1)` FrameXML units per model unit; the perspective leg's is 1.0.
         let star = if tile.cam_slot.is_some() && req.camera.is_some() {
             1.0
         } else {
@@ -1223,8 +1223,8 @@ fn sync_tiles(
 
 /// The perspective leg's rig, pure so the reference's worked numbers test without a world.
 struct PerspectiveRig {
-    /// The model's root, `T(pos · layoutScale) · R(facing, +Z) · S(s)` in Bevy model space:
-    /// `0x76d1a0`'s `model+0xbc` without the orthographic leg's pixel ladder.
+    /// The model's root, `T(pos · layoutScale) · R(facing, +Z) · S(s)` in Bevy model space: the
+    /// reference's `model+0xbc` without the orthographic leg's pixel ladder.
     root: Transform,
     /// The camera, `lookAt(eye, target, up)`, with the eye as the view origin.
     camera: Transform,
@@ -1232,17 +1232,17 @@ struct PerspectiveRig {
     projection: WowPortraitProjection,
 }
 
-/// Build the rig. The authored eye and target ride the root transform (`0x718960` publishes
+/// Build the rig. The authored eye and target ride the root transform (the camera publish computes
 /// `eye = (position_base + posTrack) · M_root`), so `SetModelScale` and `SetPosition` cancel for
-/// framing. Scale still matters: near and far are copied unscaled (`0x70ebd0`) while eye depth
-/// scales with `s`, so a large scale pushes it through the far plane, a small one the near.
+/// framing. Scale still matters: near and far are copied unscaled while eye depth scales with `s`,
+/// so a large scale pushes it through the far plane, a small one the near.
 ///
-/// `0x7ac640` builds up from `CCamera` fields the publish never writes, as
-/// `(sin(a₆)·sin(roll), −cos(a₆)·sin(roll), cos(roll))`; `a₆` has no writer and stays 0, so at
-/// roll 0 up is model-space `+Z`, the axis `SetFacing` turns about, and the facing cancels too.
+/// The reference builds up from camera fields the publish never writes, as
+/// `(sin(a₆)·sin(roll), −cos(a₆)·sin(roll), cos(roll))`; `a₆` has no writer and stays 0, so at roll
+/// 0 up is model-space `+Z`, the axis `SetFacing` turns about, and the facing cancels too.
 ///
-/// Deviation: the reference's paint (`0x76d240`) reads the eye before it rebuilds the root, so a
-/// facing change draws one frame late; not reproduced, because it is an ordering quirk.
+/// Deviation: the reference's paint reads the eye before it rebuilds the root, so a facing change
+/// draws one frame late; not reproduced, because it is an ordering quirk.
 fn perspective_rig(
     record: &benilla_assets::PortraitCamera,
     req: &TileRequest,
@@ -1398,7 +1398,7 @@ pub(crate) fn composite_quads(bridge: &UiModelTiles) -> Vec<UiQuad> {
                 z_key: req.z_key,
                 texture: Some(atlas.clone()),
                 uv: UvRect::from_tex_coords([u0, u1, v0, v1]),
-                // The widget's own alpha (`0x76d120`).
+                // The widget's own alpha.
                 color: [1.0, 1.0, 1.0, req.alpha],
                 // A render target is premultiplied.
                 premultiplied: true,
@@ -1522,8 +1522,8 @@ fn build_tile(
             sub.texture.clone()
         };
         let world = render.mats.steady(sub, texture, (i + 1) as u16)?;
-        // The twin: this rig's light buffer, and when the pane armed fog the batch's authored
-        // fog policy, so an `UNFOGGED` material stays unfogged (`0x70bb24`); no fog forces it off.
+        // The twin: this rig's light buffer, and when the pane armed fog the batch's authored fog
+        // policy, so an `UNFOGGED` material stays unfogged; no fog forces it off.
         let lane = if fogged {
             VariantLane::RigFogged
         } else {
@@ -2065,10 +2065,10 @@ mod tests {
         }
     }
 
-    /// The client's `0x5c3cc0`, a diagonal fov: `t = tan(fovy / (2·√(aspect²+1)))`,
-    /// `m11 = 1/t`, `m00 = m11/aspect`. The numbers are the reference's worked checks:
-    /// `θ = 0.287938 · fov` at 318×224, `0.346523 · fov` at 233×224, and `t = 0.1449700` for the
-    /// fallback camera's `fov = 0.5`.
+    /// The client's projection, a diagonal fov: `t = tan(fovy / (2·√(aspect²+1)))`, `m11 = 1/t`,
+    /// `m00 = m11/aspect`. The numbers are the reference's worked checks: `θ = 0.287938 · fov` at
+    /// 318×224, `0.346523 · fov` at 233×224, and `t = 0.1449700` for the fallback camera's
+    /// `fov = 0.5`.
     #[test]
     fn the_perspective_projection_is_the_clients_diagonal_fov_matrix() {
         use bevy::camera::CameraProjection;
@@ -2101,8 +2101,8 @@ mod tests {
         }
     }
 
-    /// The eye and target ride the root the geometry is drawn through (`0x718960`), so a model
-    /// point's clip-space `x/w` and `y/w` do not move with scale or offset.
+    /// The eye and target ride the root the geometry is drawn through, so a model point's
+    /// clip-space `x/w` and `y/w` do not move with scale or offset.
     #[test]
     fn scale_and_position_cancel_on_the_perspective_leg() {
         use bevy::camera::CameraProjection;
@@ -2161,9 +2161,9 @@ mod tests {
         );
     }
 
-    /// At roll 0 the up `0x7ac640` builds is model-space `+Z`, the axis `SetFacing` turns about, so
-    /// eye, target, geometry and up turn together; on `<PlayerModel>`'s frozen camera (`0x7acf10`)
-    /// a facing does show.
+    /// At roll 0 the up the reference builds is model-space `+Z`, the axis `SetFacing` turns about,
+    /// so eye, target, geometry and up turn together; on `<PlayerModel>`'s frozen camera a facing
+    /// does show.
     #[test]
     fn facing_cancels_on_the_perspective_leg_too() {
         use bevy::camera::CameraProjection;

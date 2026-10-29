@@ -1,20 +1,19 @@
-//! `SendChatMessage(text [, chatType [, language [, target]]])` (`0x49f1e0`): the engine verb an
-//! addon speaks through, with no FrameXML between it and the wire. `chatType` defaults to
-//! `"SAY"`; the fourth argument is the whisper target or the channel's number.
+//! `SendChatMessage(text [, chatType [, language [, target]]])`: the engine verb an addon speaks
+//! through, with no FrameXML between it and the wire. `chatType` defaults to `"SAY"`; the fourth
+//! argument is the whisper target or the channel's number.
 //!
 //! It queues a [`ChatSend`] rather than going through the edit box, whose drain runs the slash
 //! grammar: an addon's `SendChatMessage("/dance")` says the characters. The reference splits the
 //! same way, `ChatEdit_SendText` parsing and `SendChatMessage` not.
 //!
-//! `language` starts as the speaker's race base language (`0x5ec890`, at `0x49f2aa`). A string or
-//! number third argument is matched by name, case-insensitively, against every `Languages.dbc`
-//! row (`0x49f8a0`), known to the character or not, and a miss raises `Unknown language`
-//! (`0x844afc`, at `0x49f2e1`): a number is its text, so `7` raises. Refusing a tongue the
-//! character never learned is the server's (vmangos `ChatHandler.cpp:175`).
+//! `language` starts as the speaker's race base language. A string or number third argument is
+//! matched by name, case-insensitively, against every `Languages.dbc` row, known to the character
+//! or not, and a miss raises `Unknown language`: a number is its text, so `7` raises. Refusing a
+//! tongue the character never learned is the server's (vmangos `ChatHandler.cpp:175`).
 //!
-//! Deviation: no truncation at 255 characters (`0x49f604`), because vmangos refuses a longer line
-//! itself (`Chat.cpp:2177`): it is dropped where the reference sends its first 255. The server
-//! throttles in both.
+//! Deviation: no truncation at 255 characters, because vmangos refuses a longer line itself
+//! (`Chat.cpp:2177`): it is dropped where the reference sends its first 255. The server throttles
+//! in both.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -35,17 +34,17 @@ pub struct ChatSend {
     /// The chat type token (`"SAY"`, `"WHISPER"`, `"CHANNEL"`, …), uppercased, since the
     /// reference's compare ignores case.
     pub chat_type: String,
-    /// The fourth argument as `lua_tostring` gives it (`0x49f306`): the whisper target, or the
-    /// channel number the app resolves to a joined channel's name.
+    /// The fourth argument as `lua_tostring` gives it: the whisper target, or the channel number
+    /// the app resolves to a joined channel's name.
     pub target: Option<String>,
     /// The `Languages.dbc` id the third argument named; `None` is the speaker's default.
     pub language: Option<u32>,
 }
 
 impl ChatSend {
-    /// The empty-line gate (`0x49f28d`-`0x49f2a1`): a line whose first byte is NUL ends the call,
-    /// before the language is read or anything is sent, unless its type is AFK (`0x14`) or DND
-    /// (`0x15`). The chat-type lookup and its "Unknown chat type" (`0x49f27f`) come first.
+    /// The empty-line gate: a line whose first byte is NUL ends the call, before the language is
+    /// read or anything is sent, unless its type is AFK (`0x14`) or DND (`0x15`). The chat-type
+    /// lookup and its "Unknown chat type" come first.
     pub fn ends_at_empty_line(&self) -> bool {
         ends_at_empty_line(&self.text, &self.chat_type)
     }
@@ -58,14 +57,14 @@ fn ends_at_empty_line(text: &str, chat_type: &str) -> bool {
 
 impl super::UiScript {
     /// Push `Languages.dbc` as `(ID, Name_lang)` rows in file order, the table `SendChatMessage`
-    /// matches its language name against (`[0xc0db40]`, count `[0xc0db44]`).
+    /// matches its language name against.
     pub fn set_language_table(&mut self, rows: Vec<(u32, String)>) {
         set_field!(self, language_table, rows);
     }
 }
 
-/// `0x49f8a0`: the first row, in file order, whose name equals `name` ignoring case (`SStrCmpI`
-/// `0x64a4c0`, unbounded length), checked against every row, not only the known languages.
+/// The first row, in file order, whose name equals `name` ignoring case (a case-insensitive compare
+/// of unbounded length), checked against every row, not only the known languages.
 fn language_id(table: &[(u32, String)], name: &str) -> Option<u32> {
     table
         .iter()
@@ -75,8 +74,8 @@ fn language_id(table: &[(u32, String)], name: &str) -> Option<u32> {
 
 impl super::UiScript {
     /// The languages this character knows, in `Languages.dbc` row order: a language counts when a
-    /// known spell with `Effect_1 == 39` teaches it (`0x4b25b0`) and its skill line is in the skill
-    /// block (`0x5ec720`). A change fires `LANGUAGE_LIST_CHANGED` (`0x49b970`, event 0x102).
+    /// known spell with `Effect_1 == 39` teaches it and its skill line is in the skill block. A
+    /// change fires `LANGUAGE_LIST_CHANGED` (event 0x102).
     pub fn set_known_languages(&mut self, names: Vec<String>) {
         let changed = {
             let mut model = self.model_mut();
@@ -129,9 +128,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
-    // GetDefaultLanguage(), `0x49fcd0`: one string (`0x6f3890`), or zero values, never `nil`, on
-    // all four failure edges (`0x49fd2a`). It reads no arguments, so an addon's
-    // `GetDefaultLanguage("player")` is ignored.
+    // GetDefaultLanguage(): one string, or zero values, never `nil`, on all four failure edges. It
+    // reads no arguments, so an addon's `GetDefaultLanguage("player")` is ignored.
     lua.globals().set(
         "GetDefaultLanguage",
         lua.create_function(|lua, _ignored: MultiValue| {
@@ -171,8 +169,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     }
                     _ => None,
                 };
-                // `lua_isstring` then `lua_tostring` (`0x49f2f6`, `0x49f306`): a number is its
-                // text, so `2.7` reaches the channel's `SStrToInt` as "2.7", which reads 2.
+                // `lua_isstring` then `lua_tostring`: a number is its text, so `2.7` reaches the
+                // channel's string-to-int as "2.7", which reads 2.
                 let target = super::binding_abi::optional_string(lua, &target);
                 crate::script::model_mut_of(lua).chat_sends.push(ChatSend {
                     text,
@@ -244,7 +242,7 @@ mod tests {
         assert_eq!(
             sent[3].target.as_deref(),
             Some("2.7"),
-            "not rounded: the app's `SStrToInt` reads 2"
+            "not rounded: the app's string-to-int reads 2"
         );
         assert_eq!(sent[4].target, None, "a table is no string");
         assert_eq!(sent[1].chat_type, "CHANNEL");
@@ -271,7 +269,7 @@ mod tests {
             .unwrap();
         let sent = s.take_chat_sends();
         assert_eq!(sent[0].language, Some(2), "Darnassian's row ID");
-        assert_eq!(sent[1].language, Some(2), "SStrCmpI ignores case");
+        assert_eq!(sent[1].language, Some(2), "the compare ignores case");
         assert_eq!(
             sent[2].language,
             Some(1),

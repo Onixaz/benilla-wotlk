@@ -1,5 +1,5 @@
-//! The `WorldFrame` kind (vtable `0x8043e8`): a `Frame` to Lua, creatable once, born in stratum
-//! `WORLD` with mouse and wheel on, and a hit the app can tell apart.
+//! The `WorldFrame` kind: a `Frame` to Lua, creatable once, born in stratum `WORLD` with mouse and
+//! wheel on, and a hit the app can tell apart.
 
 use crate::script::UiScript;
 

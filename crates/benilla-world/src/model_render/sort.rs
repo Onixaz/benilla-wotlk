@@ -1,9 +1,9 @@
-//! The reference's transparent order for M2 batches. `CM2Scene::Animate` (`0x821a20`) gives each
-//! transparent element two depths in view space and `CM2Scene::SortTransparent` (`0x81ef30`)
-//! orders by sort depth farther first, then the priority plane, then the element depth farther
-//! first, then the material layer and the batch index:
+//! The reference's transparent order for M2 batches. The model scene's animate (`0x821a20`) gives
+//! each transparent element two depths in view space and its transparent sort (`0x81ef30`) orders
+//! by sort depth farther first, then the priority plane, then the element depth farther first, then
+//! the material layer and the batch index:
 //!
-//! - Under global flag `0x10` the sort depth is the model's (`m_scaleSq`, its origin's squared
+//! - Under global flag `0x10` the sort depth is the model's (its origin's squared
 //!   distance) and the element depth the section's sort centre's, so the plane decides inside the
 //!   model.
 //! - Otherwise both are the section's sort centre, pushed along the view ray by its sort radius

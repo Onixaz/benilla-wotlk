@@ -13,7 +13,7 @@ use crate::net::{ClientCommand, MoveKind};
 use super::Player;
 
 /// The `MSG_MOVE_HEARTBEAT` period (s) while moving: the reference arms its send deadline
-/// `[mgr+0x130]` to now + 500 ms (`0x615b80`).
+/// `[mgr+0x130]` to now + 500 ms.
 const HEARTBEAT_INTERVAL: f32 = 0.5;
 /// The flag bits we send, each with its tail where it has one (`FALLING` the jump quad, `SWIMMING`
 /// the pitch, `ON_TRANSPORT` the deck pose). `FALLING_FAR` changes no opcode; it rides the arc's
@@ -70,8 +70,8 @@ pub(super) struct ArcEdges {
     pub(super) jumped: bool,
     /// The take-off came from the server, a knockback or the jump a hover grant owes
     /// ([`super::Player::hover_launch`]), so it sends no `MSG_MOVE_JUMP`: that packet's one
-    /// emission site is the move-command drain's jump arm (`0x615ed1`); the hover handler
-    /// `0x61a620` sends nothing and the knockback arm sends its ack (`0xf0`).
+    /// emission site is the move-command drain's jump arm; the hover handler sends nothing and the
+    /// knockback arm sends its ack (`0xf0`).
     pub(super) wire_launch: bool,
     /// The standstill air nudge fired ([`super::mover::step`]): the one mid-air press that moves
     /// us, so the one that breaks the airborne silence.
@@ -85,10 +85,10 @@ pub(super) struct ArcEdges {
 }
 
 /// Streams this frame's movement as the reference does: a `MSG_MOVE_*` per axis transition (its
-/// broadcaster `0x61a820` picks the opcode from the flag delta, `0x619f00`), a `SET_FACING` each
-/// frame the facing changes off the turn axis, and a heartbeat every 500 ms while moving. Airborne,
-/// the forward, back and strafe transitions go silent and their live bits ride the packets that do
-/// go out. Sends are fire-and-forget; updates `player`'s last-sent flags, facing and heartbeat.
+/// broadcaster picks the opcode from the flag delta), a `SET_FACING` each frame the facing changes
+/// off the turn axis, and a heartbeat every 500 ms while moving. Airborne, the forward, back and
+/// strafe transitions go silent and their live bits ride the packets that do go out. Sends are
+/// fire-and-forget; updates `player`'s last-sent flags, facing and heartbeat.
 pub(super) fn stream_self_movement(
     sender: &Sender<ClientCommand>,
     player: &mut Player,
@@ -153,10 +153,9 @@ pub(super) fn stream_self_movement(
     }
 
     // The knockback ack goes out on the take-off frame with the take-off pose, as the reference
-    // applies the launch and then sends (`0x61624d` call `0x6179c0`, then `0x616261` push `0xf0`).
-    // `launch` is echoed bit for bit, as the reference copies its live fields: vmangos matches the
-    // four floats within 0.01 (`Unit.cpp:7097-7100`), and a re-derived quad has no direction at
-    // `xy_speed == 0`.
+    // applies the launch and then sends (push `0xf0`). `launch` is echoed bit for bit, as the
+    // reference copies its live fields: vmangos matches the four floats within 0.01
+    // (`Unit.cpp:7097-7100`), and a re-derived quad has no direction at `xy_speed == 0`.
     if let Some(k) = knock_ack {
         let _ = sender.send(ClientCommand::KnockBackAck {
             guid: k.guid,
@@ -209,18 +208,17 @@ pub(super) fn stream_self_movement(
     const STRAFE: u32 = move_flags::STRAFE_LEFT | move_flags::STRAFE_RIGHT;
     const TURN: u32 = move_flags::TURN_LEFT | move_flags::TURN_RIGHT;
     // Airborne, the forward, back and strafe transitions are silent: while FALLING the reference's
-    // `StartMove` (`0x7c6ae0`) defers a press into an inert latch (`0x20000`/`0x40000`), so the
-    // broadcaster `0x61a820` sees no flag delta. It defers nothing with nothing moving, so the
-    // standstill air nudge does send, carrying the re-seeded jump tail.
+    // move start defers a press into an inert latch (`0x20000`/`0x40000`), so the broadcaster sees
+    // no flag delta. It defers nothing with nothing moving, so the standstill air nudge does send,
+    // carrying the re-seeded jump tail.
     let falling = wire_flags & move_flags::FALLING != 0;
     // The arc is JUMP at a keyboard take-off and FALL_LAND at the end, with no trailing Stop, as a
     // mid-air release only updated the flags. A jumpless fall opens with nothing: the broadcaster
-    // sends only on a locomotion-nibble change (`0x61a99d` test al,0xf), and vmangos would read
-    // the JUMPING bit as movement and stand a seated player up (`Unit.cpp:10398-10399`). A
-    // server-driven take-off sends no JUMP: vmangos flags a JUMP faster than run speed as a cheat,
-    // knockbacks included (`MovementAnticheat.cpp:650`).
-    // A flight edge's report, then the resync it triggers (`0x7413f0`), so a held key's
-    // `START_ASCEND` follows it.
+    // sends only on a locomotion-nibble change (0xf), and vmangos would read the JUMPING bit as
+    // movement and stand a seated player up (`Unit.cpp:10398-10399`). A server-driven take-off
+    // sends no JUMP: vmangos flags a JUMP faster than run speed as a cheat, knockbacks included
+    // (`MovementAnticheat.cpp:650`). A flight edge's report, then the resync it triggers
+    // (`0x7413f0`), so a held key's `START_ASCEND` follows it.
     if std::mem::take(&mut player.set_fly_owed) {
         send_move!(MoveKind::SetFly);
     }
@@ -234,10 +232,10 @@ pub(super) fn stream_self_movement(
     } else if landed {
         send_move!(MoveKind::FallLand);
     }
-    // `START_SWIM` (0xca) and `STOP_SWIM` (0xcb) go out the frame `SWIMMING` flips, enqueued by
-    // the swim decision `0x6030c0`; airborne and swimming never overlap, so the arc cannot race.
-    // A take-off out of the water sends no STOP: StartFalling clears SWIMMING itself (`0x988370`),
-    // and the decision's stop arm runs only on a swimmer below the leave depth (`0x730e83`).
+    // `START_SWIM` (0xca) and `STOP_SWIM` (0xcb) go out the frame `SWIMMING` flips, enqueued by the
+    // swim decision; airborne and swimming never overlap, so the arc cannot race. A take-off out of
+    // the water sends no STOP: the fall start clears SWIMMING itself (`0x988370`), and the
+    // decision's stop arm runs only on a swimmer below the leave depth (`0x730e83`).
     if added & move_flags::SWIMMING != 0 {
         send_move!(MoveKind::StartSwim);
     } else if removed & move_flags::SWIMMING != 0 && !jumped {
@@ -245,7 +243,7 @@ pub(super) fn stream_self_movement(
     }
     // `SET_WALK_MODE` (0xc3) and `SET_RUN_MODE` (0xc2) go out the frame the bit flips, airborne or
     // standing still: the reference's `ToggleRun` enqueues its own event, since the broadcaster
-    // gates on the locomotion nibble (`0x61a99d` test al,0xf) and would drop it.
+    // gates on the locomotion nibble (0xf) and would drop it.
     if added & move_flags::WALK_MODE != 0 {
         send_move!(MoveKind::SetWalkMode);
     } else if removed & move_flags::WALK_MODE != 0 {
@@ -278,9 +276,9 @@ pub(super) fn stream_self_movement(
         send_move!(MoveKind::StopTurn);
     }
     // One `SET_FACING` per frame the facing changed, moving or not, with no rate limit: the
-    // reference drains each facing set into a send (`0x615fc6` push `0xda`). None while a turn bit
-    // is set, which already rotates the mover for observers, and not gated on `sent`: the facing
-    // report and the broadcaster are independent emitters.
+    // reference drains each facing set into a send (push `0xda`). None while a turn bit is set,
+    // which already rotates the mover for observers, and not gated on `sent`: the facing report and
+    // the broadcaster are independent emitters.
     if wire_flags & TURN == 0 && facing != player.last_facing {
         send_move!(MoveKind::SetFacing);
     }
@@ -289,8 +287,8 @@ pub(super) fn stream_self_movement(
     if !sent && (added | removed) & move_flags::ON_TRANSPORT != 0 {
         send_move!(MoveKind::Heartbeat);
     }
-    // The heartbeat runs under [`HEARTBEAT_FLAGS`] alone. Every send re-arms its deadline
-    // (`0x600a30` → `0x615b80`), hence the stamp on any send below.
+    // The heartbeat runs under [`HEARTBEAT_FLAGS`] alone. Every send re-arms its deadline, hence
+    // the stamp on any send below.
     if !sent
         && wire_flags & HEARTBEAT_FLAGS != 0
         && now - player.last_heartbeat >= HEARTBEAT_INTERVAL
@@ -361,11 +359,11 @@ pub(crate) fn heartbeat_now(sender: &Sender<ClientCommand>, player: &mut Player,
 }
 
 /// `CMSG_MOVE_TIME_SKIPPED`: the milliseconds the mover advanced through without integrating. The
-/// reference's common senders are its no-geometry pair (`0x634154`, `0x635742`), time with no
-/// world to resolve against, which is our settle hold; its long-frame site (`0x616642`) has no
-/// counterpart, as we integrate a long frame whole. Deviation: a hold is summed and sent once on
-/// release, without the send's `[mgr+0x130] += lag` heartbeat push, because ours lasts seconds
-/// where the reference's lasts a substep.
+/// reference's common senders are its no-geometry pair, time with no world to resolve against,
+/// which is our settle hold; its long-frame site has no counterpart, as we integrate a long frame
+/// whole. Deviation: a hold is summed and sent once on release, without the send's
+/// `[mgr+0x130] += lag` heartbeat push, because ours lasts seconds where the reference's lasts a
+/// substep.
 fn stream_skipped_time(sender: &Sender<ClientCommand>, player: &mut Player, skip: SkipClock) {
     if skip.held {
         player.skipped_ms += skip.dt * 1000.0;
@@ -380,8 +378,7 @@ fn stream_skipped_time(sender: &Sender<ClientCommand>, player: &mut Player, skip
     let Some(guid) = skip.mover else {
         return;
     };
-    // The reference's builder `0x600be0` sends only for the active mover (`0x600bec`/`0x600bfb`
-    // against `[0xc4da98]`/`[0xc4da9c]`); we name only the one we drive.
+    // The reference's builder sends only for the active mover; we name only the one we drive.
     super::move_trace::skipped_time(guid, lag_ms);
     let _ = sender.send(ClientCommand::MoveTimeSkipped { guid, lag_ms });
 }
@@ -429,10 +426,10 @@ pub(super) fn wire_transport(player: &Player) -> Option<TransportPose> {
 }
 
 /// Acks forced speed changes on a frame the controller does not drive (a server spline, a fear, a
-/// mover hand-off), as the reference's per-mover drain acks whoever drives (`0x616142`,
-/// `0x61812d`). Unacked, vmangos enforces the change after 4 s, counts the miss for anticheat and
-/// holds the graveyard repop (`Player.cpp:1332`). The payload is our last reported flags minus the
-/// airborne pair, as no arc runs on these frames.
+/// mover hand-off), as the reference's per-mover drain acks whoever drives. Unacked, vmangos
+/// enforces the change after 4 s, counts the miss for anticheat and holds the graveyard repop
+/// (`Player.cpp:1332`). The payload is our last reported flags minus the airborne pair, as no arc
+/// runs on these frames.
 pub(super) fn ack_speeds_undriven(
     sender: &Sender<ClientCommand>,
     player: &Player,

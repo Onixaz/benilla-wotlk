@@ -10,7 +10,7 @@ use super::LfgRequest;
 use crate::script::binding_abi::{bool_or_default, number_arg};
 use crate::script::{Model, ModelCell};
 
-/// `s_lfgTypeTokens` (`0xacd644`), `GetLFGTypes`' seven `GlobalStrings` keys.
+/// The type token table (`0xacd644`), `GetLFGTypes`' seven `GlobalStrings` keys.
 const TYPE_TOKENS: [&str; 7] = [
     "LFG_TYPE_NONE",
     "LFG_TYPE_DUNGEON",
@@ -51,7 +51,7 @@ fn raise(msg: &str) -> mlua::Error {
     mlua::Error::RuntimeError(msg.into())
 }
 
-/// A registered CVar's value, `None` for one the host never registered (a null `s_cv*`).
+/// A registered CVar's value, `None` for one the host never registered (a null CVar pointer).
 fn cvar(model: &Model, name: &str) -> Option<String> {
     model
         .cvars
@@ -81,7 +81,7 @@ fn set_array_bit(lua: &Lua, name: &str, index: i32, on: bool) {
     }
 }
 
-/// `FilterRolesByClass` (`0x553b50`).
+/// The roles filtered by class (`0x553b50`).
 fn filter_roles(lfg: &LfgModel, roles: u32) -> u32 {
     roles & u32::from(class_roles(lfg.class_id))
 }
@@ -104,7 +104,7 @@ fn out_table(lua: &Lua, arg: Value, usage: &'static str) -> mlua::Result<Table> 
     }
 }
 
-/// `PushDungeonInfo` (`0x5553f0`): fourteen values, or none for an id with no row.
+/// The dungeon info push (`0x5553f0`): fourteen values, or none for an id with no row.
 fn dungeon_info(lua: &Lua, lfg: &LfgModel, id: i32) -> mlua::Result<Vec<Value>> {
     let Some(d) = lfg.catalog.dungeon(id) else {
         return Ok(Vec::new());
@@ -129,7 +129,7 @@ fn dungeon_info(lua: &Lua, lfg: &LfgModel, id: i32) -> mlua::Result<Vec<Value>> 
     ])
 }
 
-/// `PushLFDChoiceInfo` (`0x554e60`): a header's name and type, or a dungeon's fourteen fields
+/// The choice info push (`0x554e60`): a header's name and type, or a dungeon's fourteen fields
 /// with its group negated, into a fresh table.
 fn choice_info(lua: &Lua, lfg: &LfgModel, id: i32) -> mlua::Result<Table> {
     let t = lua.create_table()?;
@@ -160,7 +160,7 @@ fn all_entries(lfg: &LfgModel) -> impl Iterator<Item = Entry> + '_ {
     )
 }
 
-/// `PushDungeonEncounterInfo` (`0x5538b0`): the `index`-th encounter of the map and difficulty.
+/// The encounter info push (`0x5538b0`): the `index`-th encounter of the map and difficulty.
 fn encounter_info(
     lua: &Lua,
     lfg: &LfgModel,
@@ -828,7 +828,7 @@ pub(in crate::script) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetLastQueueStatusIndex() (`0x559ff0`): the last status slot's place in the queued list.
-    // `s_lastQueueSlot` (`[0xbeaa0c]`) has no writer in 12340, so it stays 0 and this answers nil
+    // The last queue slot (`[0xbeaa0c]`) has no writer in 12340, so it stays 0 and this answers nil
     // unless slot 0 is queued.
     g.set(
         "GetLastQueueStatusIndex",

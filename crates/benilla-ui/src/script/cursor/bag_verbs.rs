@@ -35,17 +35,16 @@ const BAG0_SLOT: u8 = 20;
 /// The seven bank bag slots' ids (`BankButtonIDToInvSlotID(5..=11, isBag)`).
 pub(super) const BANK_BAG_INV_SLOTS: std::ops::RangeInclusive<u32> = 68..=74;
 
-/// Whether the held item is a container, the reference's `TYPEMASK_CONTAINER` test (`0x4c7dc4`):
-/// only `INVTYPE_BAG` maps to the bag slots in `FindEquipSlot`, so no other item names Bag0Slot.
+/// Whether the held item is a container, the reference's `TYPEMASK_CONTAINER` test: only
+/// `INVTYPE_BAG` maps to the bag slots in `FindEquipSlot`, so no other item names Bag0Slot.
 fn is_container(item: &CursorItem) -> bool {
     item.equip_slots.contains(&BAG0_SLOT)
 }
 
 /// Whether the held item may go in doll slot `id`: its `equip_slots`, or a bank bag slot for a
 /// container, which `FindEquipSlot` never names. The reference's fit check behind
-/// `CursorCanGoInSlot` (`0x5ea720`) passes any item at a bank bag slot, as `IsValidForSlot`
-/// answers 1 for every 0-based slot from 23 (`0x5da215`); the server's `CanBankItem` referees
-/// either way.
+/// `CursorCanGoInSlot` passes any item at a bank bag slot, as its slot test answers 1 for every
+/// 0-based slot from 23; the server's `CanBankItem` referees either way.
 pub(super) fn fits_slot(item: &CursorItem, id: u32) -> bool {
     if BANK_BAG_INV_SLOTS.contains(&id) {
         return is_container(item);
@@ -53,16 +52,15 @@ pub(super) fn fits_slot(item: &CursorItem, id: u32) -> bool {
     u8::try_from(id).is_ok_and(|id| item.equip_slots.contains(&id))
 }
 
-/// `PutItemInBag(inventorySlot)` (`0x4c7c00`): true (the reference's `1`) when the click was
-/// consumed against an occupied slot, else false (nil). An empty cursor's nil is what lets
-/// `BagSlotButton_OnClick` open the bag.
+/// `PutItemInBag(inventorySlot)`: true (the reference's `1`) when the click was consumed against an
+/// occupied slot, else false (nil). An empty cursor's nil is what lets `BagSlotButton_OnClick` open
+/// the bag.
 pub(super) fn put_item_in_bag(model: &mut Model, live: u32) -> bool {
     if !accepts(live) {
         return false;
     }
-    // An empty or non-item cursor answers nil and sends nothing. At an occupied slot the
-    // reference clears such a cursor (`0x4c7ce4`, `0x4c7eaf`), buying a held vendor row first
-    // (`0x4c7e66`).
+    // An empty or non-item cursor answers nil and sends nothing. At an occupied slot the reference
+    // clears such a cursor, buying a held vendor row first.
     let Some(CursorPayload::Item(held)) = model.cursor.clone() else {
         return false;
     };
@@ -72,8 +70,8 @@ pub(super) fn put_item_in_bag(model: &mut Model, live: u32) -> bool {
         .is_some();
 
     if !occupied {
-        // An empty slot: the doll handler equips the bag (`0x4c7300`), and the answer is nil
-        // whether or not it went in (`0x4c7cae xor eax,eax`).
+        // An empty slot: the doll handler equips the bag, and the answer is nil whether or not it
+        // went.
         pickup_inventory_item(model, live);
         return false;
     }
@@ -87,8 +85,8 @@ pub(super) fn put_item_in_bag(model: &mut Model, live: u32) -> bool {
     }
 
     if is_container(&held) || held.bag == EQUIPMENT_BAG {
-        // A swap (`0x5e0c40`); an item from a bag equipment slot enters this fork too, hence the
-        // `||`. A split stack cannot swap and stays held: the reference splits only when storing.
+        // A swap; an item from a bag equipment slot enters this fork too, hence the `||`. A split
+        // stack cannot swap and stays held: the reference splits only when storing.
         if held.count.is_none() {
             model.cursor = None;
             model.container_moves.push(ContainerMove {
@@ -123,9 +121,9 @@ pub(super) fn put_item_in_bag(model: &mut Model, live: u32) -> bool {
     true
 }
 
-/// `PutItemInBackpack()`, a thunk to `PutItemInBag(0xFF)` (`0x4c7ed0`) whose target is the
-/// player's own guid: the empty-slot leg is unreachable and `0x4c7d3e` skips the swap, so even a
-/// bag is stored into the backpack.
+/// `PutItemInBackpack()`, a thunk to `PutItemInBag(0xFF)` whose target is the player's own guid:
+/// the empty-slot leg is unreachable and the reference skips the swap, so even a bag is stored into
+/// the backpack.
 pub(super) fn put_item_in_backpack(model: &mut Model) -> bool {
     let Some(CursorPayload::Item(held)) = model.cursor.clone() else {
         return false;
@@ -142,11 +140,10 @@ pub(super) fn put_item_in_backpack(model: &mut Model) -> bool {
     true
 }
 
-/// `PickupBagFromSlot(inventorySlot)` (`0x4c7b00`): clears a held payload before it looks at the
-/// slot, where the reference clears only a held item (`0x4c7b70`, `0x4c7b79`); with nothing held it
-/// skips the clear and its `CURSOR_UPDATE`, as the reference does. Takes only a container
-/// (`0x4c7bb3`), and never places or swaps. The client has no empty-bag rule: the server refuses
-/// with `EQUIP_ERR_CAN_ONLY_DO_WITH_EMPTY_BAGS`.
+/// `PickupBagFromSlot(inventorySlot)`: clears a held payload before it looks at the slot, where the
+/// reference clears only a held item; with nothing held it skips the clear and its `CURSOR_UPDATE`,
+/// as the reference does. Takes only a container, and never places or swaps. The client has no
+/// empty-bag rule: the server refuses with `EQUIP_ERR_CAN_ONLY_DO_WITH_EMPTY_BAGS`.
 pub(super) fn pickup_bag_from_slot(model: &mut Model, live: u32) {
     if !accepts(live) {
         return;
@@ -181,7 +178,7 @@ pub(super) fn pickup_bag_from_slot(model: &mut Model, live: u32) {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // The number 1 or nil, never a boolean: `0x6f3810` pushes Lua tag 3, a number.
+    // The number 1 or nil, never a boolean: the reference pushes Lua tag 3, a number.
     fn consumed(yes: bool) -> mlua::Result<MultiValue> {
         Ok(MultiValue::from_vec(vec![if yes {
             Value::Number(1.0)
@@ -230,8 +227,8 @@ mod tests {
         InventorySlots, UiScript,
     };
 
-    /// With nothing held the reference skips the clear (`0x4c7b6a`-`0x4c7b70`), so a drag from an
-    /// empty bag slot signals nothing.
+    /// With nothing held the reference skips the clear, so a drag from an empty bag slot signals
+    /// nothing.
     #[test]
     fn an_empty_cursor_skips_the_clear_and_its_signal() {
         let s = UiScript::new().unwrap();
@@ -301,7 +298,7 @@ mod tests {
         assert!(s.take_bag_autostores().is_empty());
     }
 
-    /// The nil after the equip is the reference's (`0x4c7cae`), so the same click opens the bag.
+    /// The nil after the equip is the reference's, so the same click opens the bag.
     #[test]
     fn an_empty_bag_slot_equips_the_held_bag_and_still_answers_nil() {
         let mut s = UiScript::new().unwrap();

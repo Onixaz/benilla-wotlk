@@ -322,7 +322,8 @@ pub struct M2Model {
     /// `AnimationData.dbc` id `i`, `0xffff` for none; it ends past the highest authored id.
     pub animation_lookup: Vec<u16>,
     /// The header's global flags (`+0x10`); `0x8` makes the batch shader word a
-    /// [`Self::texture_combiner_combos`] index (`CM2Shared::SubstituteSimpleShaders 0x836980`).
+    /// [`Self::texture_combiner_combos`] index (the shared model's shader substitution,
+    /// `0x836980`).
     pub global_flags: u32,
     /// The texture combiner ops (header `0x130`), read only under global flag `0x8`.
     pub texture_combiner_combos: Vec<u16>,

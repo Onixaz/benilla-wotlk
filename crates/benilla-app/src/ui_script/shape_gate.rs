@@ -1,11 +1,11 @@
 //! The return-shape gate: `reference/3.3.5a-shapes.tsv`, a harvest of every binding the 1.12 client
 //! registers, against what this client answers.
 //!
-//! A 1.12 predicate answers `1` or `nil`, never a boolean (`IsPetAttackActive` aside), so kinds
-//! are gated with arity. The table says per row what to trust: `arity_conf = exact`, kinds only
-//! where `kinds_conf = agree`, never `argc_conf`. Only query verbs are probed, a call that raises
-//! is skipped, and a name registered from several tables (`GetBuildInfo` is 5 in the glue table
-//! `0x8373b8`, 3 in-game at `0x83de68`) is read at its non-glue row.
+//! A 1.12 predicate answers `1` or `nil`, never a boolean (`IsPetAttackActive` aside), so kinds are
+//! gated with arity. The table says per row what to trust: `arity_conf = exact`, kinds only where
+//! `kinds_conf = agree`, never `argc_conf`. Only query verbs are probed, a call that raises is
+//! skipped, and a name registered from several tables (`GetBuildInfo` is 5 in the glue table) is
+//! read at its non-glue row.
 
 /// Globals known to answer the wrong arity: a name, the reference's arity and the reason. The
 /// list may only shrink.
@@ -23,11 +23,11 @@ const WIDGET_NOT_YET_ASSERTED: &[&str] = &[];
 
 /// The glue registrar table. This VM is the in-game one, so a duplicated name is read at its
 /// other row.
-const GLUE_TABLE: &str = "0xac3e00";
+const GLUE_TABLE: &str = "t022";
 
 struct Row {
     name: String,
-    table_va: String,
+    table: String,
     arity: usize,
     /// The `kinds` column verbatim, `|`-separated alternatives; empty unless trustworthy.
     kinds: String,
@@ -37,8 +37,8 @@ fn rows() -> Vec<Row> {
     rows_of_kind("global")
 }
 
-/// The `arity_conf = exact` rows of one `table_kind`: `global` is the registrar surface,
-/// `baselib` the 36-entry Lua base array looped into `_G` at `0x811e28`.
+/// The `arity_conf = exact` rows of one `table_kind`: `global` is the registrar surface, `baselib`
+/// the 36-entry Lua base array looped into `_G`.
 fn rows_of_kind(kind: &str) -> Vec<Row> {
     let tsv = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -49,20 +49,20 @@ fn rows_of_kind(kind: &str) -> Vec<Row> {
         .filter(|l| !l.starts_with('#') && !l.starts_with("name\t"))
         .filter_map(|l| {
             let f: Vec<&str> = l.split('\t').collect();
-            // name fn pair_va table_va table_kind argc argc_conf arity arity_conf kinds …
-            if f.len() < 9 || f[4] != kind || f[8] != "exact" {
+            // name table table_kind argc argc_conf arity arity_conf kinds kinds_conf notes
+            if f.len() < 7 || f[2] != kind || f[6] != "exact" {
                 return None;
             }
             // A `delegated-push` row's callee pushes on its behalf, unseen by the push trace, so
             // its kinds cover the binding's own ops only; its arity, read from `eax`, holds.
-            let delegated = f.len() > 11 && f[11].contains("delegated-push");
+            let delegated = f.len() > 9 && f[9].contains("delegated-push");
             Some(Row {
                 name: f[0].to_string(),
-                table_va: f[3].to_string(),
-                arity: f[7].parse().ok()?,
+                table: f[1].to_string(),
+                arity: f[5].parse().ok()?,
                 // Kinds are advisory unless `kinds_conf` is `agree`, so such a row carries none.
-                kinds: if f.len() > 10 && f[10] == "agree" && !delegated {
-                    f[9].to_string()
+                kinds: if f.len() > 8 && f[8] == "agree" && !delegated {
+                    f[7].to_string()
                 } else {
                     String::new()
                 },
@@ -112,7 +112,7 @@ fn every_query_binding_answers_the_reference_s_return_arity() {
         let candidates: Vec<&&Row> = if rs.len() == 1 {
             rs.iter().collect()
         } else {
-            rs.iter().filter(|r| r.table_va != GLUE_TABLE).collect()
+            rs.iter().filter(|r| r.table != GLUE_TABLE).collect()
         };
         // Still ambiguous after dropping glue: skip rather than guess.
         let Some(first) = candidates.first() else {
@@ -194,7 +194,7 @@ const BASELIB_PROBES: &[(&str, &str)] = &[
     ("collectgarbage", ""),
     ("date", ""),
     // `debugbreak`, `debugdump`, `debuginfo`, `debugload`, `debugprint` and `debugtimestamp` are
-    // the reference's six `xor eax,eax; ret` stubs (`0x7027e0` to `0x702830`), safe to call.
+    // the reference's six `xor eax,eax; ret` stubs, safe to call.
     ("debugbreak", ""),
     ("debugdump", ""),
     ("debuginfo", ""),
@@ -219,8 +219,8 @@ const BASELIB_PROBES: &[(&str, &str)] = &[
     ("rawget", "{}, 1"),
     ("rawset", "{}, 1, 1"),
     // These write, but namespaced or inert, so every later probe sees the same VM. The bare VM's
-    // handler slot is empty and takes a function alone (`0x702900`), so the probe hands it a no-op,
-    // which nothing here dispatches to.
+    // handler slot is empty and takes a function alone, so the probe hands it a no-op, which
+    // nothing here dispatches to.
     ("seterrorhandler", "function() end"),
     ("setglobal", "\"BenillaShapeGateProbe\", 1"),
     ("setmetatable", "{}, nil"),
@@ -332,37 +332,37 @@ fn the_base_library_answers_the_reference_s_return_arity_and_kinds() {
 
 /// The widget registrar tables with their class and an instance name. A method name can sit in
 /// several tables at different arities, so each method is probed on its own table's class; an
-/// unmapped table is skipped.
+/// unmapped table is skipped. The 3.3.5a table ids are not mapped yet (#54), so every one is.
 const WIDGET_PROBES: &[(&str, &str, &str)] = &[
-    ("0x878ec0", "Frame", "PGFrame"),
-    ("0x879d00", "Button", "PGButton"),
-    ("0x87bf74", "CheckButton", "PGCheck"),
-    ("0x87bb68", "EditBox", "PGEdit"),
-    ("0x87b260", "Slider", "PGSlider"),
-    ("0x87b010", "StatusBar", "PGStatus"),
-    ("0x87b3c0", "ScrollFrame", "PGScroll"),
-    ("0x87ba80", "SimpleHTML", "PGHtml"),
-    ("0x87abb0", "ColorSelect", "PGColor"),
-    ("0x87b960", "MessageFrame", "PGMessage"),
-    ("0x87b5c0", "ScrollingMessageFrame", "PGScrollMsg"),
-    ("0x878948", "Model", "PGModel"),
-    ("0x854198", "GameTooltip", "PGTip"),
-    ("0x84c538", "Minimap", "PGMinimap"),
-    ("0x84ee40", "TabardModel", "PGTabard"),
-    ("0x84f190", "DressUpModel", "PGDress"),
+    ("unmapped-1", "Frame", "PGFrame"),
+    ("unmapped-2", "Button", "PGButton"),
+    ("unmapped-3", "CheckButton", "PGCheck"),
+    ("unmapped-4", "EditBox", "PGEdit"),
+    ("unmapped-5", "Slider", "PGSlider"),
+    ("unmapped-6", "StatusBar", "PGStatus"),
+    ("unmapped-7", "ScrollFrame", "PGScroll"),
+    ("unmapped-8", "SimpleHTML", "PGHtml"),
+    ("unmapped-9", "ColorSelect", "PGColor"),
+    ("unmapped-10", "MessageFrame", "PGMessage"),
+    ("unmapped-11", "ScrollingMessageFrame", "PGScrollMsg"),
+    ("unmapped-12", "Model", "PGModel"),
+    ("unmapped-13", "GameTooltip", "PGTip"),
+    ("unmapped-14", "Minimap", "PGMinimap"),
+    ("unmapped-15", "TabardModel", "PGTabard"),
+    ("unmapped-16", "DressUpModel", "PGDress"),
     // `PlayerModel` is `Model` plus three verbs, in a table of its own.
-    ("0x84f1fc", "PlayerModel", "PGPlayerModel"),
-    ("0x87ab4c", "MovieFrame", "PGMovie"),
+    ("unmapped-17", "PlayerModel", "PGPlayerModel"),
+    ("unmapped-18", "MovieFrame", "PGMovie"),
     // The base every widget falls back to (`REGION_MAP_METHODS`' 19 names), probed on a Frame.
-    ("0x87c9b8", "Frame", "PGRegionBase"),
+    ("unmapped-19", "Frame", "PGRegionBase"),
 ];
 
 /// The classes `CreateFrame` cannot make: the two regions, made by a frame, and the font object.
 const REGION_PROBES: &[(&str, &str)] = &[
-    ("0x87c128", "PGFrame:CreateTexture('PGTex')"),
-    ("0x87c1d8", "PGFrame:CreateFontString('PGFS')"),
+    ("unmapped-r1", "PGFrame:CreateTexture('PGTex')"),
+    ("unmapped-r2", "PGFrame:CreateFontString('PGFS')"),
     // The font object (`CreateFont`), not a FontString: 22 methods of its own.
-    ("0x87c7c8", "CreateFont('PGFontObject')"),
+    ("unmapped-r3", "CreateFont('PGFontObject')"),
 ];
 
 /// The widget arity gate: the global gate's rules, with each method called on an instance of its
@@ -406,10 +406,10 @@ fn every_widget_method_answers_the_reference_s_return_arity() {
         .filter(|l| !l.starts_with('#') && !l.starts_with("name\t"))
     {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 9 || f[4] != "widget" || f[8] != "exact" {
+        if f.len() < 7 || f[2] != "widget" || f[6] != "exact" {
             continue;
         }
-        let (name, table) = (f[0], f[3]);
+        let (name, table) = (f[0], f[1]);
         if !["Get", "Is", "Has", "Can", "Num"]
             .iter()
             .any(|p| name.starts_with(p))
@@ -417,7 +417,7 @@ fn every_widget_method_answers_the_reference_s_return_arity() {
             continue;
         }
         let Some(obj) = made.get(table) else { continue };
-        let Ok(want) = f[7].parse::<usize>() else {
+        let Ok(want) = f[5].parse::<usize>() else {
             continue;
         };
 
@@ -474,8 +474,8 @@ fn kind_alternatives(cell: &str) -> Vec<Vec<String>> {
 }
 
 /// Whether an observed Lua `type()` satisfies one reference slot. `string?` is string-or-nil:
-/// `lua_pushstring` (`0x6f3890`) pushes nil for a NULL pointer, and the harvest writes plain
-/// `string` only for a constant literal. `any` and `value` are slots the trace could not narrow.
+/// `lua_pushstring` pushes nil for a NULL pointer, and the harvest writes plain `string` only for a
+/// constant literal. `any` and `value` are slots the trace could not narrow.
 fn slot_accepts(want: &str, got: &str) -> bool {
     match want {
         "any" | "value" => true,
@@ -526,7 +526,7 @@ fn every_query_binding_answers_the_reference_s_return_kinds() {
         let candidates: Vec<&&Row> = if rs.len() == 1 {
             rs.iter().collect()
         } else {
-            rs.iter().filter(|r| r.table_va != GLUE_TABLE).collect()
+            rs.iter().filter(|r| r.table != GLUE_TABLE).collect()
         };
         let Some(first) = candidates.first() else {
             continue;
@@ -638,10 +638,10 @@ fn every_widget_method_answers_the_reference_s_return_kinds() {
         .filter(|l| !l.starts_with('#') && !l.starts_with("name\t"))
     {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 11 || f[4] != "widget" || f[8] != "exact" || f[10] != "agree" {
+        if f.len() < 9 || f[2] != "widget" || f[6] != "exact" || f[8] != "agree" {
             continue;
         }
-        let (name, table) = (f[0], f[3]);
+        let (name, table) = (f[0], f[1]);
         if !["Get", "Is", "Has", "Can", "Num"]
             .iter()
             .any(|p| name.starts_with(p))
@@ -649,7 +649,7 @@ fn every_widget_method_answers_the_reference_s_return_kinds() {
             continue;
         }
         let Some(obj) = made.get(table) else { continue };
-        let want = kind_alternatives(f[9]);
+        let want = kind_alternatives(f[7]);
         if want.is_empty() {
             continue;
         }
@@ -691,7 +691,7 @@ fn every_widget_method_answers_the_reference_s_return_kinds() {
             }
             mismatches.push(format!(
                 "{obj}:{name} answers ({observed}), reference states {}",
-                f[9]
+                f[7]
             ));
         }
     }
@@ -825,10 +825,10 @@ fn no_widget_method_answers_a_lua_boolean() {
         .filter(|l| !l.starts_with('#') && !l.starts_with("name\t"))
     {
         let f: Vec<&str> = line.split('\t').collect();
-        if f.len() < 9 || f[4] != "widget" || f[8] != "exact" {
+        if f.len() < 7 || f[2] != "widget" || f[6] != "exact" {
             continue;
         }
-        let (name, table) = (f[0], f[3]);
+        let (name, table) = (f[0], f[1]);
         if !["Get", "Is", "Has", "Can", "Num"]
             .iter()
             .any(|p| name.starts_with(p))

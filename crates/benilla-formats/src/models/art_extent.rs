@@ -24,7 +24,7 @@ pub struct ArtExtent {
 /// The aspect every glue composition was made for, the `1024×768` design space.
 pub const GLUE_AUTHORED_ASPECT: f32 = 4.0 / 3.0;
 
-/// The 1.12 client's alpha test passes a texel at `alpha ≥ 224` (`0x70c256`, `GEQUAL`).
+/// The 1.12 client's alpha test passes a texel at `alpha ≥ 224` (`GEQUAL`).
 pub const ALPHA_KEY_REF: u8 = 224;
 
 /// One degree: every authored glue fov is a whole number of degrees, to the last `f32` bit.

@@ -425,7 +425,7 @@ fn a_tooltip_line_flipping_wrapped_to_plain_costs_no_graph_derivation() {
         FlipOwner:SetWidth(10); FlipOwner:SetHeight(10)
         flip_n = 0
         -- The two shapes a hover alternates between. The trailing `1` on the wrap arm is
-        -- `AddLine`'s positional wrapText flag (the byte-pinned 0x531630 signature) — it is what
+        -- `AddLine`'s positional wrapText flag — it is what
         -- pins the line's wrap column, and what un-pins it again on the plain arm.
         function flip_change()
             flip_n = flip_n + 1
@@ -530,7 +530,7 @@ fn a_hover_sweep_across_owners_costs_no_graph_derivation() {
 
 /// An action-bar hover sweep costs zero derivations. With `UberTooltips` at its 1.12 default "1",
 /// an action button anchors through `GameTooltip_SetDefaultAnchor` (`ActionButton.lua:365-367`):
-/// `SetOwner(owner, "ANCHOR_NONE")`, which drops the tooltip's anchors (`ResetPosition`
+/// `SetOwner(owner, "ANCHOR_NONE")`, which drops the tooltip's anchors (the position reset
 /// `0x61b040` clears at `0x61b070` for every mode but PRESERVE), then an explicit `SetPoint`.
 #[test]
 fn an_action_bar_hover_sweep_costs_no_graph_derivation() {
@@ -583,7 +583,7 @@ fn an_action_bar_hover_sweep_costs_no_graph_derivation() {
     assert_eq!(
         derives, 0,
         "24 action-bar hovers derived the layout graph {derives} times. `SetOwner`'s ANCHOR_NONE \
-         arm clears the anchors (`0x52fec2 call 0x767ed0`), and so does the `ClearAllPoints()` \
+         arm clears the anchors, and so does the `ClearAllPoints()` \
          on `GameTooltip_SetDefaultAnchor`'s next line: each is a retarget to the EMPTY target \
          set and must name its node like any other."
     );

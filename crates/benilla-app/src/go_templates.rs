@@ -28,8 +28,8 @@ pub(crate) struct GoTemplate {
     /// Mouseover eligibility for the two types that read a column (12340 property `0x12`):
     /// GENERIC(5) `data[1]` and CAPTURE_POINT(29) `data[19]` (`0x70ff80`).
     pub(crate) highlight_column: bool,
-    /// 12340 `CGGameObject_C::FloatingTooltip` (`0x70f630`, property `0x13`): the tooltip follows
-    /// the cursor instead of taking the default corner.
+    /// 12340's floating-tooltip test (`0x70f630`, property `0x13`): the tooltip follows the cursor
+    /// instead of taking the default corner.
     /// Placement, not eligibility: a hoverable object can still be corner-seated.
     pub(crate) floating_tooltip: bool,
     /// MEETINGSTONE (type 23) only.
@@ -43,8 +43,8 @@ pub(crate) struct GoTemplate {
     pub(crate) quest_material: Option<u32>,
 }
 
-/// A MEETINGSTONE template's slots, 12340 properties `0x33` to `0x35` (`0x7121e0`, `0x7108d0`).
-/// The area feeds the type's highlightable slot `0x5f6990`, the levels the use refusal
+/// A MEETINGSTONE template's slots, 12340 properties `0x33` to `0x35` (`0x7121e0`, `0x7108d0`). The
+/// area feeds the type's highlightable slot, the levels the use refusal
 /// `ERR_MEETING_STONE_INVALID_LEVEL`.
 #[derive(Clone, Copy)]
 pub(crate) struct MeetingStoneTemplate {
@@ -126,7 +126,7 @@ impl GameObjectTemplates {
             .and_then(|slot| data.get(slot))
             .map(|&v| v.max(0) as u32)
             .unwrap_or(0);
-        // 12340 resolves both slots by `CGameObjectDef::GetPropNum(type, 0x12)` (`0x746190`).
+        // 12340 resolves both slots by its per-type property lookup, `(type, 0x12)` (`0x746190`).
         let highlight_column = match type_id {
             5 => data[1] != 0,
             29 => data[19] != 0,
@@ -187,7 +187,8 @@ fn floating_tooltip_slot(type_id: u32) -> Option<usize> {
     }
 }
 
-/// The `data[]` slot of a type's lockId, 12340 `GetLockRec` (`0x70ef30`) by `GetPropNum(type, 4)`.
+/// The `data[]` slot of a type's lockId, as 12340's lock lookup (`0x70ef30`) finds it by property
+/// `(type, 4)`.
 fn go_lock_slot(type_id: u32) -> Option<usize> {
     match type_id {
         // DOOR(0), BUTTON(1): data[0] = startOpen, data[1] = lockId.
@@ -234,7 +235,7 @@ mod tests {
         assert_eq!(go_lock_slot(19), None); // MAILBOX opens by USE
     }
 
-    /// `0x5f5950`: QUESTGIVER (2) and TEXT (9) read `data[2]`, GOOBER (10) `data[9]`.
+    /// QUESTGIVER (2) and TEXT (9) read `data[2]`, GOOBER (10) `data[9]`.
     #[test]
     fn insert_captures_the_quest_material_by_type() {
         let mut t = GameObjectTemplates::default();

@@ -1,4 +1,4 @@
-//! Four verbs of the reference's inventory registrar (`0x8484d0`) beside the paper-doll getters in
+//! Four verbs of the reference's inventory registrar beside the paper-doll getters in
 //! [`super::char_stats`]: the keyring's slot map, the doll's sell cursor, the doll portrait setter
 //! and the alert recompute.
 
@@ -9,9 +9,9 @@ use super::char_stats::{alert_events, inventory_slot_reader_accepts, recompute_i
 use super::container::UiCursorMode;
 use super::region::{clear_texture, this_texture};
 
-/// `0x4c8520`, the registrar's shared slot reader: `is-number`, `tonumber`, the truncating cast,
-/// then `dec` into the 0-based slot and the whitelist; a failure of either raises `message`. The
-/// 0-based slot, `-1` for Lua 0, the ammo leg.
+/// The registrar's shared slot reader: `is-number`, `tonumber`, the truncating cast, then `dec`
+/// into the 0-based slot and the whitelist; a failure of either raises `message`. The 0-based slot,
+/// `-1` for Lua 0, the ammo leg.
 fn inventory_slot_arg(lua: &Lua, v: Value, message: &'static str) -> mlua::Result<i32> {
     let slot0 = number_arg(lua, v, message)?.wrapping_sub(1);
     if !inventory_slot_reader_accepts(slot0) {
@@ -34,11 +34,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // ShowInventorySellCursor(slot) (`0x4c90b0`): the Buy cursor over a worn item. The armed-spell
-    // and base-cursor gates run before the argument is read (`0x4c90b7`, `0x4c90c9`), so under
-    // either a bad slot does not raise; past them a slot outside the reader's whitelist raises,
-    // and the ammo slot, an empty slot or a locked item leave the cursor as it was. Zero returns.
-    // The stock doll's call is commented out (`PaperDollFrame.lua:754-756`).
+    // ShowInventorySellCursor(slot): the Buy cursor over a worn item. The armed-spell and
+    // base-cursor gates run before the argument is read, so under either a bad slot does not raise;
+    // past them a slot outside the reader's whitelist raises, and the ammo slot, an empty slot or a
+    // locked item leave the cursor as it was. Zero returns. The stock doll's call is commented out
+    // (`PaperDollFrame.lua:754-756`).
     g.set(
         "ShowInventorySellCursor",
         lua.create_function(|lua, slot: Value| {
@@ -46,7 +46,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 let model = lua
                     .app_data_ref::<crate::script::ModelCell>()
                     .expect("model app_data");
-                // `[0xbe2c4c] == 1`: repair mode (`0x4fbce3`) and the targeting arm move the base.
+                // Repair mode and the targeting arm move the base.
                 if model.spell_targeting || model.repair_mode {
                     return Ok(());
                 }
@@ -72,11 +72,11 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetInventoryPortaitTexture(texture, unit, slot) (`0x4c9150`, the reference's spelling):
-    // the texture is cleared (`0x4c91ed`) before arguments 2 and 3 are read, each of which raises
-    // on a bad value. The unit is then read from argument 1 (`0x4c9247`), the texture itself,
-    // which `lua_tostring` answers NULL for, so the token resolves no unit (`0x515940`) and the
-    // item's icon is never painted: the call only blanks the texture. No stock caller.
+    // SetInventoryPortaitTexture(texture, unit, slot) (the reference's spelling): the texture is
+    // cleared before arguments 2 and 3 are read, each of which raises on a bad value. The unit is
+    // then read from argument 1, the texture itself, which `lua_tostring` answers NULL for, so the
+    // token resolves no unit and the item's icon is never painted: the call only blanks the
+    // texture. No stock caller.
     g.set(
         "SetInventoryPortaitTexture",
         lua.create_function(|lua, (texture, unit, slot): (Value, Value, Value)| {
@@ -247,7 +247,7 @@ mod tests {
         }
     }
 
-    /// The two cursor gates come before the argument read (`0x4c90b7`, `0x4c90c9`).
+    /// The two cursor gates come before the argument read.
     #[test]
     fn inventory_sell_cursor_under_repair_mode_is_silent() {
         let mut s = UiScript::new().unwrap();
@@ -283,7 +283,7 @@ mod tests {
             0
         );
 
-        // The clear precedes the argument checks (`0x4c91ed`).
+        // The clear precedes the argument checks.
         s.run(r#"PortTex:SetTexture("Interface\\Icons\\INV_Misc_Bag_08")"#)
             .unwrap();
         let err = s

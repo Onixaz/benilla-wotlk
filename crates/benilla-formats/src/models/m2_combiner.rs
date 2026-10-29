@@ -1,8 +1,8 @@
-//! A 3.3.5a M2 batch's pixel combiner, as the skin profile's load decides it
-//! (`CM2Shared::InitializeSkinProfile 0x837a40`): `SubstituteSimpleShaders` (`0x836980`) turns each
-//! batch's shader word into its stages' ops, `SubstituteSpecializedShaders` (`0x837680`) folds a
-//! base batch and its layer into one specialized shader and parks the layer (`0x8000`, never
-//! drawn, `0x821e97`), and `GetEffect` (`0x836600`, `0x836c90`) names the shader.
+//! A 3.3.5a M2 batch's pixel combiner, as the skin profile's load decides it (`0x837a40`): the
+//! simple substitution (`0x836980`) turns each batch's shader word into its stages' ops, the
+//! specialized substitution (`0x837680`) folds a base batch and its layer into one specialized
+//! shader and parks the layer (`0x8000`, never drawn, `0x821e97`), and the effect lookup
+//! (`0x836600`, `0x836c90`) names the shader.
 
 use benilla_m2::{M2Model, SkinBatch};
 
@@ -81,7 +81,7 @@ pub(super) fn batch_effects(model: &M2Model, batches: &[SkinBatch]) -> Vec<Batch
             .is_some_and(|m| m.flags.bits() & 1 != 0)
     };
 
-    // `SubstituteSimpleShaders`: without global flag 0x8 the op is the blend's (opaque or
+    // The simple substitution: without global flag 0x8 the op is the blend's (opaque or
     // modulate); with it the shader word indexes the combiner ops, stage 0 opaque under blend 0.
     // A stage on generated coordinates (`> 2`) sets its op's bit 3.
     for w in &mut work {
@@ -190,7 +190,7 @@ fn two_stage(op0: u16, op1: u16) -> Option<CombinerShader> {
     })
 }
 
-/// `SubstituteSpecializedShaders` (`0x837680`), on models with a layered batch: an opaque
+/// The specialized substitution (`0x837680`), on models with a layered batch: an opaque
 /// two-stage base whose stage 1 is a sphere map (`Mod2x`/`Mod2xNA`), followed by a one-stage
 /// alpha layer of the same texture and weight, becomes `0x8001`; an opaque one-stage base
 /// followed by an env layer (blend 4 or 6) takes that layer as its stage 1 (`0x8002`, or `0xE`,

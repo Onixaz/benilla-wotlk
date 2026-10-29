@@ -1,15 +1,14 @@
 //! Frame methods: movable and resizable windows, and the drag pumps behind `StartMoving` and
-//! `StartSizing`. The gesture that usually calls them, `OnDragStart`/`OnDragStop` (`0x76bf70`/
-//! `0x76c040`), is [`crate::script::cursor`]'s.
+//! `StartSizing`. The gesture that usually calls them, `OnDragStart`/`OnDragStop`, is
+//! [`crate::script::cursor`]'s.
 //!
-//! The flags are bits of `[frame+0xb4]`, set by `0x76a3c0`: movable `0x100`, resizable `0x200`,
-//! userPlaced `0x1000`. A drag (`CSimpleTop::StartMoveOrResizeFrame` `0x494060`) flattens the frame
-//! to one TOPLEFT against the screen at its current rect with an explicit size
-//! (`CLayoutFrame::FlattenFrame` `0x48a5f0`), so a frame a clamp holds off its anchors moves from
-//! where it is drawn; it then raises it, sets userPlaced and takes the one drag slot. The pump
-//! (`MoveOrResizeFrame` `0x493ce0` → `DragBy` `0x48abd0`) adds each cursor delta, over the frame's
-//! scale, into that anchor's offsets; stopping (`StopMoveOrResizeFrame` `0x493a10`) unflattens it to
-//! the nearest of the screen's nine points (`UnflattenFrame` `0x48a840`).
+//! The flags are bits of `[frame+0xb4]`, set: movable `0x100`, resizable `0x200`, userPlaced
+//! `0x1000`. A drag (the drag start, `0x494060`) flattens the frame to one TOPLEFT against the
+//! screen at its current rect with an explicit size (the flatten, `0x48a5f0`), so a frame a clamp
+//! holds off its anchors moves from where it is drawn; it then raises it, sets userPlaced and takes
+//! the one drag slot. The pump (`0x493ce0` → `0x48abd0`) adds each cursor delta, over the frame's
+//! scale, into that anchor's offsets; stopping (`0x493a10`) unflattens it to the nearest of the
+//! screen's nine points (the unflatten, `0x48a840`).
 
 use mlua::{Lua, MultiValue, Table, Value};
 
@@ -27,7 +26,7 @@ pub(crate) struct FrameMove {
     frame: FrameHandle,
     /// The cursor position at the last pump (`root+0xd08`/`+0xd0c`), UI px, y-up.
     sample: (f32, f32),
-    /// Whether mouse-up ends the move, the drag mode as Lua sees it: `0x766420` ends modes 1
+    /// Whether mouse-up ends the move, the drag mode as Lua sees it: the reference ends modes 1
     /// (modifier drag) and 2 (title region), never 3 (`StartMoving`).
     pub(crate) auto_stop: bool,
 }
@@ -46,8 +45,8 @@ pub(crate) struct FrameSizing {
 
 /// Populate `m`'s movable and resizable methods.
 pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
-    // SetMovable / IsMovable (`0x776420`/`0x7764d0`): a pure flag write, so clearing it mid-drag
-    // stops nothing. The argument is Lua truthiness, as the reference's `toboolean`.
+    // SetMovable / IsMovable: a pure flag write, so clearing it mid-drag stops nothing. The
+    // argument is Lua truthiness, as the reference's `toboolean`.
     m.set(
         "SetMovable",
         lua.create_function(|lua, (this, flag): (Table, bool)| {
@@ -58,7 +57,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         "IsMovable",
         lua.create_function(|lua, this: Table| get_flag(lua, &this, Flag::Movable))?,
     )?;
-    // SetResizable / IsResizable (`0x776590`/`0x776640`): the same pure flag write.
+    // SetResizable / IsResizable: the same pure flag write.
     m.set(
         "SetResizable",
         lua.create_function(|lua, (this, flag): (Table, bool)| {
@@ -71,10 +70,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
     // ── Resize bounds ──
     //
-    // `SetMinResize 0x776020`, `GetMinResize 0x775f20`, `SetMaxResize 0x7762a0`,
-    // `GetMaxResize 0x7761a0`. Both arguments must pass `lua_isnumber` (`0x6f34d0`), else `Usage:`
-    // (`0x8797b8`/`0x8797e4`); the pair is stored raw, with no layout touch and no `min > max`
-    // check. The getters always answer two numbers, 0 meaning unbounded.
+    // `SetMinResize`, `GetMinResize`, `SetMaxResize`, `GetMaxResize`. Both arguments must pass
+    // `lua_isnumber`, else `Usage:`; the pair is stored raw, with no layout touch and no
+    // `min > max` check. The getters always answer two numbers, 0 meaning unbounded.
     for (name, upper) in [("MinResize", false), ("MaxResize", true)] {
         m.set(
             format!("Set{name}"),
@@ -141,9 +139,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         )?;
     }
 
-    // SetUserPlaced / IsUserPlaced (`0x776a50`/`0x776b40`): the bit that makes the layout cache
-    // save the frame's position; the one guarded setter, refusing a frame that is neither movable
-    // nor resizable (`0x776adb`).
+    // SetUserPlaced / IsUserPlaced: the bit that makes the layout cache save the frame's position;
+    // the one guarded setter, refusing a frame that is neither movable nor resizable.
     m.set(
         "SetUserPlaced",
         lua.create_function(|lua, (this, flag): (Table, bool)| {
@@ -174,9 +171,9 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             start_moving(&mut model, h)
         })?,
     )?;
-    // StartSizing(point) (`0x776830`; stock caller `FloatingChatFrame.lua:600`): a resize from the
-    // named grip, ended by `StopMovingOrSizing`. The reference's per-grip switch (`0x768710`)
-    // moves the named edges with the cursor and keeps the opposite ones.
+    // StartSizing(point) (stock caller `FloatingChatFrame.lua:600`): a resize from the named grip,
+    // ended by `StopMovingOrSizing`. The reference's per-grip switch moves the named edges with the
+    // cursor and keeps the opposite ones.
     m.set(
         "StartSizing",
         lua.create_function(|lua, (this, point): (Table, Option<String>)| {
@@ -192,18 +189,18 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let p = point.unwrap_or_default().to_ascii_uppercase();
             let (left, right) = (p.contains("LEFT"), p.contains("RIGHT"));
             let (top, bottom) = (p.contains("TOP"), p.contains("BOTTOM"));
-            // The raise and userPlaced belong to the drag entry `0x7652b0`, whatever the grip.
+            // The raise and userPlaced belong to the drag entry, whatever the grip.
             flatten(&mut model, h);
             super::toplevel::raise(&mut model, h);
             set_user_placed(&mut model, h);
             let sample = model.cursor_pos;
             // A CENTER grip is a move: the pump's case 4 shifts the anchor offsets and returns
-            // before the size clamp (`0x768bfb`).
+            // before the size clamp.
             if p == "CENTER" {
                 model.moving = Some(FrameMove {
                     frame: h,
                     sample,
-                    // `StartSizing` enters as drag mode 3 (`0x7652b0`), which mouse-up never ends.
+                    // `StartSizing` enters as drag mode 3, which mouse-up never ends.
                     auto_stop: false,
                 });
                 return Ok(());
@@ -220,7 +217,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // StopMovingOrSizing (`0x776990` → `0x765640`): clears the slot only when it holds this frame.
+    // StopMovingOrSizing: clears the slot only when it holds this frame.
     m.set(
         "StopMovingOrSizing",
         lua.create_function(|lua, this: Table| {
@@ -279,8 +276,8 @@ fn get_flag(lua: &Lua, this: &Table, which: Flag) -> mlua::Result<Value> {
     ))
 }
 
-/// The family's refusal, naming the frame as the reference does. The wording is ours: the strings
-/// at `0x879810`, `0x879828` and `0x879844` are unread, known only by their symbol names.
+/// The family's refusal, naming the frame as the reference does. The wording is ours: the
+/// reference's own strings are unread, known only by their symbol names.
 fn not_flagged(model: &Model, h: FrameHandle, want: &str) -> mlua::Error {
     let who = model
         .arena
@@ -290,19 +287,19 @@ fn not_flagged(model: &Model, h: FrameHandle, want: &str) -> mlua::Error {
     mlua::Error::runtime(format!("Frame {who} is not {want}"))
 }
 
-/// `StartMoving` (`0x776700` → `0x7652b0`): errors on a frame that is not movable (`0x77678b`),
-/// ignores a second move, then raises the frame, sets userPlaced and takes the slot, in that order.
+/// `StartMoving`: errors on a frame that is not movable, ignores a second move, then raises the
+/// frame, sets userPlaced and takes the slot, in that order.
 fn start_moving(model: &mut Model, h: FrameHandle) -> mlua::Result<()> {
     if !model.arena.frame(h).is_some_and(|f| f.movable) {
         return Err(not_flagged(model, h, "movable"));
     }
-    // The `root+0xcfc != 0` guard (`0x7767e8`); what the reference does beyond not starting a
-    // second move is untraced.
+    // The `root+0xcfc != 0` guard; what the reference does beyond not starting a second move is
+    // untraced.
     if model.moving.is_some() {
         return Ok(());
     }
     flatten(model, h);
-    // The drag-start raise (`0x7652d7`); the worker applies the toplevel gate.
+    // The drag-start raise; the worker applies the toplevel gate.
     super::toplevel::raise(model, h);
     set_user_placed(model, h);
     model.moving = Some(FrameMove {
@@ -314,8 +311,8 @@ fn start_moving(model: &mut Model, h: FrameHandle) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Begin a title-region move, drag mode 2 (`0x7662c0` → `0x765320` → `0x7652b0`), with no movable
-/// check, since nothing on that path reads the bit. False when a move is already in flight.
+/// Begin a title-region move, drag mode 2, with no movable check, since nothing on that path reads
+/// the bit. False when a move is already in flight.
 pub(crate) fn start_title_move(model: &mut Model, h: FrameHandle) -> bool {
     if model.moving.is_some() {
         return false;
@@ -338,7 +335,7 @@ pub(crate) fn stop_auto_move(model: &mut Model) {
     }
 }
 
-/// `FlattenFrame` (`0x48a5f0`) against the screen: one TOPLEFT at the frame's current rect, clamp
+/// The flatten (`0x48a5f0`) against the screen: one TOPLEFT at the frame's current rect, clamp
 /// included, and that rect's size made explicit, in the frame's own units.
 fn flatten(model: &mut Model, h: FrameHandle) {
     crate::script::UiScript::resolve_layout(model);
@@ -361,7 +358,7 @@ fn flatten(model: &mut Model, h: FrameHandle) {
     set_single_anchor(model, h, anchor, Some(size));
 }
 
-/// `UnflattenFrame` (`0x48a840`): re-anchor to whichever of the screen's nine points lies nearest
+/// The unflatten (`0x48a840`): re-anchor to whichever of the screen's nine points lies nearest
 /// its counterpart on the frame, keeping the size, so a later screen change carries it along.
 fn unflatten(model: &mut Model, h: FrameHandle) {
     crate::script::UiScript::resolve_layout(model);
@@ -369,7 +366,8 @@ fn unflatten(model: &mut Model, h: FrameHandle) {
         return;
     };
     let screen = model.screen;
-    // `Point`'s order, row by row from the top-left, as `GetRectFramePoints` lays them out.
+    // `Point`'s order, row by row from the top-left, as the reference's rect-points helper lays
+    // them out.
     let at = |r: &crate::layout::Rect, i: usize| {
         let x = [r.left, (r.left + r.right) * 0.5, r.right][i % 3];
         let y = [r.top, (r.top + r.bottom) * 0.5, r.bottom][i / 3];
@@ -413,14 +411,14 @@ fn set_single_anchor(model: &mut Model, h: FrameHandle, anchor: Anchor, size: Op
     model.touch_layout_retarget_frame(h, &old, &[SCREEN]);
 }
 
-/// Set userPlaced as the drag entry `0x7652b0` does.
+/// Set userPlaced as the drag entry does.
 fn set_user_placed(model: &mut Model, h: FrameHandle) {
     if let Some(f) = model.arena.frame_mut(h) {
         f.user_placed = true;
     }
 }
 
-/// Apply the `SetMinResize`/`SetMaxResize` bounds to a proposed size per axis, as `0x768710`
+/// Apply the `SetMinResize`/`SetMaxResize` bounds to a proposed size per axis, as the reference
 /// does: only an exact 0.0 is unbounded, min applies before max so max wins a crossed pair, and
 /// with no bound there is no floor, so a size can go negative.
 fn clamp_resize(model: &Model, h: FrameHandle, w: f32, hgt: f32) -> (f32, f32) {
@@ -473,11 +471,11 @@ pub(crate) fn advance_size(model: &mut Model, pos: (f32, f32)) {
     else {
         return;
     };
-    // The resize bounds are read only here, as only `0x76a660` reads them in the reference.
+    // The resize bounds are read only here, as only the resize pump reads them in the reference.
     let (new_w, new_h) = clamp_resize(model, sz.frame, w0 + dw, h0 + dh);
-    // The rebate (`0x768770`/`0x7687a2`): the residual a clamp swallowed comes back out of the
-    // drag delta, so the moving edge stops at the bound instead of the window walking. The delta
-    // is already in local units, and an ungripped axis is not rebated.
+    // The rebate: the residual a clamp swallowed comes back out of the drag delta, so the moving
+    // edge stops at the bound instead of the window walking. The delta is already in local units,
+    // and an ungripped axis is not rebated.
     let rebate = |d: f32, want: f32, got: f32, grew: bool, gripped: bool| {
         if !gripped {
             return d;
@@ -498,7 +496,8 @@ pub(crate) fn advance_size(model: &mut Model, pos: (f32, f32)) {
     input.height = new_h;
     let mut moved = input.width.to_bits() != w0.to_bits() || input.height.to_bits() != h0.to_bits();
     // The flattened frame hangs from its TOPLEFT, so a LEFT or TOP grip moves that point with its
-    // edge and the opposite edges stay (`DragBy` `0x48abd0`); RIGHT and BOTTOM change the size alone.
+    // edge and the opposite edges stay (the drag step, `0x48abd0`); RIGHT and BOTTOM change the
+    // size alone.
     if !input.anchors.is_empty() && (sz.left || sz.top) {
         for a in &mut input.anchors {
             if sz.left {
@@ -519,7 +518,7 @@ pub(crate) fn advance_size(model: &mut Model, pos: (f32, f32)) {
     model.sizing = Some(FrameSizing { sample: pos, ..sz });
 }
 
-/// Pump an in-flight move to the cursor at `pos` (`0x7655b0`). Called from
+/// Pump an in-flight move to the cursor at `pos`. Called from
 /// [`crate::script::UiScript::mouse_move`] before its hover-boundary early return, since a frame
 /// dragged under the cursor crosses no boundary.
 pub(crate) fn advance_move(model: &mut Model, pos: (f32, f32)) {
@@ -532,8 +531,8 @@ pub(crate) fn advance_move(model: &mut Model, pos: (f32, f32)) {
     if dx == 0.0 && dy == 0.0 {
         return;
     }
-    // Anchor offsets are in the frame's own units, so the screen delta divides by its scale, as
-    // `0x768710`'s case 4 does.
+    // Anchor offsets are in the frame's own units, so the screen delta divides by its scale, as the
+    // reference's case 4 does.
     let inv = 1.0 / eff_scale(model, mv.frame);
     let (dx, dy) = (dx * inv, dy * inv);
     if let Some(input) = model.layout_inputs.get_mut(&mv.frame) {

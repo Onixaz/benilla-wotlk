@@ -30,9 +30,9 @@ pub(super) fn control(
         MessageReader<crate::net::SpeedChangeMessage>,
         // Root, water walk, feather fall and hover on our mover, acked with the live pose.
         MessageReader<crate::net::MoveModeMessage>,
-        // The hard-landing report (`0x602d00`: the wound vocal and the dust).
+        // The hard-landing report (the wound vocal and the dust).
         MessageWriter<crate::creature_anim::HardLanding>,
-        // The move edges the reference hands `AbortCast` (`0x6e4940`), for the cast bar.
+        // The move edges the reference hands its cast abort, for the cast bar.
         ResMut<crate::spell::LocalMoveStart>,
         // The mounted Space flourish plays locally at send; the net drain drops its echo.
         MessageWriter<crate::creature_anim::MountFlourish>,
@@ -44,7 +44,7 @@ pub(super) fn control(
         // A knockback on our mover: latched by `wire_in`, flown below, acked after the launch.
         MessageReader<crate::net::KnockBackMessage>,
         crate::tutorial::InputHooks,
-        // The loot window's move-start close (`0x60e990`).
+        // The loot window's move-start close.
         ResMut<crate::ui_loot::LootMoveStart>,
         // `SMSG_STANDSTATE_UPDATE`, applied locally and ungated, with nothing sent back.
         MessageReader<super::ServerStandState>,
@@ -136,7 +136,8 @@ pub(super) fn control(
         follow_command,
     } = input::look_input(binds, &player, &rig);
 
-    // Last frame's word, as `0x50fee0` reads it: its caller `0x514446` precedes the mover lookup.
+    // Last frame's word, as the reference's mouse-motion handler reads it: its caller precedes the
+    // mover lookup.
     let dynamics = camera_dynamics::DynamicsInput {
         options: *pointer.4,
         nearclip: pointer.5.nearclip,
@@ -160,7 +161,7 @@ pub(super) fn control(
                 .ok()
                 .and_then(|(_, _, _, _, _, store, ..)| store)
                 .is_some_and(|s| s.0.unit_mount_display_id() > 0),
-            // `GetCurrentSpeed` (`0x7c4c90`) on the mover's speeds and last frame's word.
+            // The current speed off the mover's speeds and last frame's word.
             speed: body
                 .single()
                 .ok()
@@ -176,11 +177,10 @@ pub(super) fn control(
     let mut opts_shadow = cursor_opts.bypass_change_detection().clone();
     // The facing before the look session, restored below when the mouse may not turn the body.
     let yaw_before_look = player.face_yaw;
-    // Off the driven body's descriptor. Stunned is `UNIT_FIELD_FLAGS & 0x40000` (`0x5145b0`),
-    // which skips the turn and pitch emitters (`0x514755`). Dead fails the shared precondition
-    // `0x5144e0` (health above zero), so a corpse is stunned to the input tick; a ghost has
-    // health 1. The stand state gates the mouse alone: `0x5145e0` wants the predicted
-    // `GetStandState() == 0` (`0x5ed570`; `stand_pending` is `[player+0x1d68]`).
+    // Off the driven body's descriptor. Stunned is `UNIT_FIELD_FLAGS & 0x40000`, which skips the
+    // turn and pitch emitters. Dead fails the shared precondition (health above zero), so a corpse
+    // is stunned to the input tick; a ghost has health 1. The stand state gates the mouse alone:
+    // the reference wants the predicted stand state at 0 (`stand_pending` is `[player+0x1d68]`).
     let (stunned, dead, stand_byte) = body
         .single()
         .ok()
@@ -195,9 +195,9 @@ pub(super) fn control(
         })
         .unwrap_or((false, false, 0));
     let stand_state = player.stand_pending.unwrap_or(stand_byte);
-    // The shared precondition `0x5144e0`, once per tick. Its far-sight conjunct,
-    // `!(IsActivePlayer(mover) && [mover+0x1c70] & 1)`, reads the resolved subject (`0x5ee290`
-    // latches only once resolved) and spares a possessed mover, which sets the same field.
+    // The shared precondition, once per tick. Its far-sight conjunct, refusing an active-player
+    // mover with `[mover+0x1c70] & 1`, reads the resolved subject (the reference latches only once
+    // resolved) and spares a possessed mover, which sets the same field.
     let mover = state::MoverInput {
         dead,
         view_is_out: state::view_is_out(
@@ -205,12 +205,13 @@ pub(super) fn control(
             view_subject.remote.is_some(),
         ),
     };
-    // `0x5145b0` now, for the mouse turn; its translate sibling waits for this frame's root edge.
+    // The stun test now, for the mouse turn; its translate sibling waits for this frame's root
+    // edge.
     let may_turn = mover.may_turn(stunned);
-    // `0x5145e0`: `may_turn` and standing; a turn key stands a seated body up instead.
+    // `may_turn` and standing; a turn key stands a seated body up instead.
     let mouse_turns_body = mover.mouse_may_turn_body(stunned, stand_state);
     // The drunk wobble, for the veer and the swim porpoise; zero when turning is refused, as the
-    // reference's sits behind `0x5145b0` (`0x60aa47`).
+    // reference's sits behind the stun test.
     let drunk_wobble = {
         let f = body
             .single()
@@ -250,16 +251,16 @@ pub(super) fn control(
         time.elapsed_secs(),
         focused,
     );
-    // The look's end is `DisableFreeLook(keep)` (`0x604850`): the sticky stop keeps the camera
-    // where the drag left it, any other end lets it return.
+    // The look's end is the freelook disable with its keep flag (`0x604850`): the sticky stop keeps
+    // the camera where the drag left it, any other end lets it return.
     if was_looking && rig.look.is_none() {
         rig.follow.sticky = binds.keep_smoothing();
     }
-    // The mouse turns the view, but the body hand-off (`0x514474`) skips a body that is stunned,
-    // dead or seated (`0x5145e0`) or not ours to drive (`control_lost`, `reseat`), while the
-    // camera rotate (`0x514444`) still runs. The reference never writes the facing; writing and
-    // restoring is the same downstream. Standing up hands the camera's yaw back at the next
-    // motion sample, a snap, as `0x5103e0` commits the camera's facing rather than a delta.
+    // The mouse turns the view, but the body hand-off skips a body that is stunned, dead or seated
+    // or not ours to drive (`control_lost`, `reseat`), while the camera rotate still runs. The
+    // reference never writes the facing; writing and restoring is the same downstream. Standing up
+    // hands the camera's yaw back at the next motion sample, a snap, as the reference's hand-off
+    // commits the camera's facing rather than a delta.
     if !mouse_turns_body || player.control_lost || player.reseat {
         player.face_yaw = yaw_before_look;
     }
@@ -340,8 +341,8 @@ pub(super) fn control(
                 player.pos,
                 head,
                 body.single().ok().and_then(|(_, _, _, pivot, .., net)| {
-                    // The pivot preset follows the body's own SWIMMING (`0x50f880`), here the
-                    // last streamed word, which `wire_in` merges from the server's poses.
+                    // The pivot preset follows the body's own SWIMMING, here the last streamed
+                    // word, which `wire_in` merges from the server's poses.
                     body_pose::pivot_target(
                         pivot,
                         net,
@@ -368,7 +369,7 @@ pub(super) fn control(
             movement_net::ack_speeds_undriven(&net.0 .0, &player, &speed_acks);
             return;
         }
-        // `0x514560`, after `apply_server_moves`, so this frame's root edge is already in `modes`.
+        // After `apply_server_moves`, so this frame's root edge is already in `modes`.
         let may_translate = mover.may_translate(player.modes.rooted);
         let axes = input::move_axes(
             binds,
@@ -414,16 +415,16 @@ pub(super) fn control(
             if turn_right {
                 turn -= 1.0;
             }
-            // 0.75× while translating or falling (`flags & 0x200f`, `0x7c5c73`).
+            // 0.75× while translating or falling (`flags & 0x200f`).
             let slowed = translating || player.airborne_since.is_some();
             let rate = turn_rate * if slowed { TURN_RATE_MOVING } else { 1.0 };
             turn_delta = turn * rate * dt;
             player.face_yaw += turn_delta;
         }
         // The drunk veer: while moving, the wobble adds to the facing every frame and commits
-        // through the facing setter, so it streams like a turn (`0x60aa70`-`0x60aab7`,
-        // `0x60de30`); a held keyboard turn skips it (`0x60aa5a`). Both yaw conventions grow
-        // leftward, and it joins `turn_delta`, so the camera follows the meander.
+        // through the facing setter, so it streams like a turn; a held keyboard turn skips it. Both
+        // yaw conventions grow leftward, and it joins `turn_delta`, so the camera follows the
+        // meander.
         if drunk_wobble != 0.0 && translating && !turning {
             player.face_yaw += drunk_wobble;
             turn_delta = drunk_wobble;
@@ -445,19 +446,19 @@ pub(super) fn control(
             _ => {}
         }
         // Translation dies here, but a root leaves turning live: the reference's allow-list permits
-        // the turn, pitch, run/walk and SetFacing commands (`0x615c71`, `0x618054`). A stun, which
-        // vmangos applies with a root (`SpellAuras.cpp:3502`), or death stops the turn as well.
+        // the turn, pitch, run/walk and SetFacing commands. A stun, which vmangos applies with a
+        // root (`SpellAuras.cpp:3502`), or death stops the turn as well.
         if !may_translate {
             dir = Vec3::ZERO;
         }
         let moving = dir != Vec3::ZERO;
-        // A keyboard turn or the veer stands a seated body; a mouse turn does not, since the
-        // facing commit refuses a seated player (`0x51460c`, `0x51520a`) and the turn emitter
-        // skips its stand arm while the right button is held (`0x514f6d`). A right-click stands
-        // you instead (`0x514ae0`, `camera::PressGesture::is_click`; `crate::target::click`).
+        // A keyboard turn or the veer stands a seated body; a mouse turn does not, since the facing
+        // commit refuses a seated player and the turn emitter skips its stand arm while the right
+        // button is held. A right-click stands you instead (`camera::PressGesture::is_click`;
+        // `crate::target::click`).
         let turned = turn_delta != 0.0;
         // `TOGGLERUN` before the speed select, which reads the bit this frame's press left: the
-        // mover reads `CMovement+0x40` after the input phase.
+        // mover reads its `+0x40` word after the input phase.
         walk::update(&mut player, &body, binds);
         // The stand state and the sheath toggle, which interlock; returns the committed stand.
         let stand_now = posture::update(
@@ -484,9 +485,9 @@ pub(super) fn control(
                 ..Default::default()
             },
         };
-        // `GetCurrentSpeed` (`0x7c4c90`), shared with the remote extrapolator: the walk arm comes
-        // before the backward min, so walking backwards is walk speed. It takes this frame's gait
-        // intent, since the wire word is built after the mover.
+        // The current speed, shared with the remote extrapolator: the walk arm comes before the
+        // backward min, so walking backwards is walk speed. It takes this frame's gait intent,
+        // since the wire word is built after the mover.
         let speed = crate::net::current_speed(
             &speeds,
             if net_backward {
@@ -555,9 +556,9 @@ pub(super) fn control(
             move_trace::flight(player.flying, feet);
         }
 
-        // Swim or walk, latched with hysteresis at the `0x6030c0` boundary against flicker.
+        // Swim or walk, latched with hysteresis at the swim decision's boundary against flicker.
         let surface_y = swim::surface_over_feet(world, player.pos);
-        // For the camera's water corridor, which reads it a frame late, as `0x670630` does.
+        // For the camera's water corridor, which reads it a frame late, as the reference's does.
         player.liquid_surface = surface_y;
         if benilla_assets::trace::enabled() {
             let claim = world.claim(benilla_world::world_point::Subject::Player);
@@ -568,12 +569,12 @@ pub(super) fn control(
         if let Some(surface) = surface_y {
             move_trace::swim(player.pos.y, surface, swimming, player.collision_height.0);
         }
-        // Into the water a flyer swims: StartSwim clears FLYING (`0x989660`).
+        // Into the water a flyer swims: the swim start clears FLYING (`0x989660`).
         if swimming {
             player.flying = false;
         }
-        // A swimmer leaves through the top by a jump, which clears SWIMMING before the mover
-        // (StartFalling `0x988370`), so this frame's mover, flags and wire see a jump. The swim
+        // A swimmer leaves through the top by a jump, which clears SWIMMING before the mover (the
+        // fall start, `0x988370`), so this frame's mover, flags and wire see a jump. The swim
         // decision jumps an ascent within a third of a yard of the swim depth (`0x730e52`), reading
         // the latch it enters with; a root refuses it, as every jump (`0x9883f0`). Mounted and
         // still, `0x72eb80` would take its flourish arm instead; that arm is not built here.
@@ -584,8 +585,8 @@ pub(super) fn control(
                     .vertical
                     .surface_hop(s - player.pos.y, player.collision_height.0)
             });
-        // The `Jump(force = 0)` a hover grant owes: `force` 0 skips the hover refusal (`0x7c6236`),
-        // so it launches a body already hovering; root and falling still refuse it (`0x7c625c`).
+        // The `Jump(force = 0)` a hover grant owes: `force` 0 skips the hover refusal, so it
+        // launches a body already hovering; root and falling still refuse it.
         let wire_jump = player.take_wire_jump();
         // The knockback: horizontal `(cos, sin) · xy_speed` in absolute world XY, vertical
         // `−zspeed`, since the wire's take-off speed is down-positive, as in the jump tail.
@@ -603,8 +604,8 @@ pub(super) fn control(
             player.swimming = false;
         }
         let swimming = swimming && !breach && !knock_breach;
-        // A knockback ends a flight and takes `CAN_FLY` with it (`Launch` `0x6e9ff0`), sending no
-        // `CMSG_MOVE_SET_FLY`; the land mover flies it.
+        // A knockback ends a flight and takes `CAN_FLY` with it (the knockback launch, `0x6e9ff0`),
+        // sending no `CMSG_MOVE_SET_FLY`; the land mover flies it.
         if player.flying && knock_launch.is_some() {
             flight::land(&mut player);
             player.modes.can_fly = false;
@@ -623,10 +624,10 @@ pub(super) fn control(
             (0.0, 0.0)
         };
 
-        // The mounted Space flourish, the jump-key handler `0x60dea0`: mounted, still and grounded
-        // plays MountSpecial (94) locally, then sends `CMSG_MOUNTSPECIAL_ANIM`; moving jumps;
-        // turning in place eats the press. Airborne, the press falls through and the mover drops
-        // it (the reference's ground-clearance test `0x605650`; the airborne arc stands in).
+        // The mounted Space flourish, the jump-key handler: mounted, still and grounded plays
+        // MountSpecial (94) locally, then sends `CMSG_MOUNTSPECIAL_ANIM`; moving jumps; turning in
+        // place eats the press. Airborne, the press falls through and the mover drops it (the
+        // airborne arc stands in).
         if want_jump && !moving && !swimming && player.airborne_since.is_none() {
             if let Ok((e, .., store, _, _, _, _, _)) = body.single() {
                 if store.is_some_and(|s| s.0.unit_mount_display_id() != 0) {
@@ -639,12 +640,12 @@ pub(super) fn control(
             }
         }
 
-        // The mover pitch (`CMovement+0x20`), in every mode: held when unsteered (`0x7c4f80`) and
-        // set by mouse look to the aim through `SetPitch` (`0x7c6f70`), an unconditional store
-        // clamped ±89° (the ±π/2 clamp is the pitch keys'), whose write precedes its SWIMMING test
-        // (`0x7c6f91`). A left-drag orbit steers nothing. It is written per mouse motion (event
-        // `0x400500cb`), not per frame, so other writers survive a still mouse. The aim includes
-        // the pivot bias, as `0x5103e0` passes `[cam+0x104] + [cam+0xf4]`.
+        // The mover pitch (the movement block's `+0x20`), in every mode: held when unsteered and
+        // set by mouse look to the aim through the pitch setter, an unconditional store clamped
+        // ±89° (the ±π/2 clamp is the pitch keys'), whose write precedes its SWIMMING test. A
+        // left-drag orbit steers nothing. It is written per mouse motion (event `0x400500cb`), not
+        // per frame, so other writers survive a still mouse. The aim includes the pivot bias, as
+        // the reference passes `[cam+0x104] + [cam+0xf4]`.
         let aim_pitch = cam.pitch + rig.smart_pivot.bias();
         if mouselook && aim_pitch != player.aim_pitch_seen {
             player.aim_pitch_seen = aim_pitch;
@@ -709,8 +710,8 @@ pub(super) fn control(
             )
         } else {
             // Water walking hands the mover the liquid surface as ground ([`mover::water_floor`]),
-            // where the reference ORs the liquid layers into the walk trace's class mask
-            // (`0x63162e`); liquid is queried here rather than swept.
+            // where the reference ORs the liquid layers into the walk trace's class mask; liquid is
+            // queried here rather than swept.
             let water_floor = mover::water_floor(
                 player.modes.water_walking,
                 swimming,
@@ -729,8 +730,8 @@ pub(super) fn control(
                 wire_jump,
                 knock_launch,
                 water_floor,
-                // The air nudge speed is `min(walk, run)`, live (`0x7c4c90(1)`, `0x7c4d19`), with
-                // the default walk speed until the server sends speeds.
+                // The air nudge speed is `min(walk, run)`, live, with the default walk speed until
+                // the server sends speeds.
                 mover_speeds.map_or(super::AIR_NUDGE_SPEED, |s| s.walk.min(s.run)),
             )
         };
@@ -740,9 +741,8 @@ pub(super) fn control(
             move_trace::knockback(knocked, k.launch);
         }
 
-        // Our FALLING: never while swimming or flying, and a root ends it outright (`SetRoot`
-        // `0x7c7340` calls `StopFalling` `0x7c6290`), leaving the body hanging; `grounded` keeps
-        // true contact.
+        // Our FALLING: never while swimming or flying, and a root ends it outright (the root calls
+        // the fall stop), leaving the body hanging; `grounded` keeps true contact.
         let afloat = swimming || flying;
         let airborne = !afloat && !held && !player.modes.rooted && (!grounded || jumped);
         // Airborne keeps the attachment, so a jump above a deck lands where it took off.
@@ -791,7 +791,7 @@ pub(super) fn control(
         // The camera sweep's root: the capsule's top hemisphere centre, not the framing pivot.
         let head = player.pos + Vec3::Y * (CAPSULE_HEIGHT - CAPSULE_RADIUS);
         // The spyglass lock (aura 76): re-parking each frame stands in for the reference's camera
-        // flag `0x8`, which makes `SetCameraView` return early.
+        // flag `0x8`, which makes the camera's view set return early.
         if scoped.active() {
             rig.park_distance(0.0);
         }
@@ -843,10 +843,10 @@ pub(super) fn control(
         );
 
         // The cast bar's self-cancel: a new directional start, a jump, or autorun's on edge (the
-        // interrupt mask `0x10f0` at `0x5150ce` is forward, back, strafe and autorun, and a clear
-        // edge returns early at `0x5150c8`); turning and pitch never cancel. Only our own
-        // character's moves count: vmangos breaks a channel on the caster's own movement
-        // (`Spell::update`), so a possessed creature's steps must not end Mind Control.
+        // interrupt mask `0x10f0` is forward, back, strafe and autorun, and a clear edge returns
+        // early); turning and pitch never cancel. Only our own character's moves count: vmangos
+        // breaks a channel on the caster's own movement (`Spell::update`), so a possessed
+        // creature's steps must not end Mind Control.
         let steering_ourselves = player.foreign_mover.is_none();
         if steering_ourselves
             && (move_flags_now & move_flags::ANY_MOVE & !player.move_flags != 0
@@ -855,9 +855,9 @@ pub(super) fn control(
         {
             net.7 .0 = true;
         }
-        // The loot window's walk-away, the movement-start guard `0x60e990`: forward, back, strafe,
-        // keyboard turn, pitch and jump close it, mouse-look facing does not, and only for our
-        // own character.
+        // The loot window's walk-away, the movement-start guard: forward, back, strafe, keyboard
+        // turn, pitch and jump close it, mouse-look facing does not, and only for our own
+        // character.
         if steering_ourselves
             && (move_flags_now
                 & (move_flags::ANY_MOVE | move_flags::TURN_LEFT | move_flags::TURN_RIGHT)
@@ -884,8 +884,8 @@ pub(super) fn control(
             swim_pitch,
             movement_net::ArcEdges {
                 jumped,
-                // Wire launches send no `MSG_MOVE_JUMP`: the hover grant's jump sends nothing
-                // (`0x61a620`) and a knockback sends its ack instead.
+                // Wire launches send no `MSG_MOVE_JUMP`: the hover grant's jump sends nothing and a
+                // knockback sends its ack instead.
                 wire_launch: knocked || wire_jump,
                 air_nudged,
                 landed,
@@ -893,7 +893,7 @@ pub(super) fn control(
             },
             now,
             &speed_acks,
-            // Acked only if flown: under root the reference drops the record unacked (`0x615c71`).
+            // Acked only if flown: under root the reference drops the record unacked.
             knockback.filter(|_| knocked),
             wire_transport,
             skip,

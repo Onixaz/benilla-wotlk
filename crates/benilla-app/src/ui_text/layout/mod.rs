@@ -54,33 +54,33 @@ pub(crate) struct FontSpec<'a> {
     /// The logical height, seam already folded in ([`super::drawn_px`]); the engine rounds it to
     /// whole device pixels ([`TextEngine::ppem`]).
     pub height: Option<f32>,
-    /// The glyph outline: it picks the ring-and-fill cell and, for THICK only, the step law's
-    /// extra `+1` (`GlyphStepBase` `0x5ca2b0`), so it changes measured width too.
+    /// The glyph outline: it picks the ring-and-fill cell and, for THICK only, the step law's extra
+    /// `+1`, so it changes measured width too.
     pub outline: Outline,
     /// The `SetAlphaGradient` reveal `(start, length)`; on the spec, shadows fade with their fill.
     pub alpha_gradient: Option<(f32, f32)>,
     /// The line gap (`SetSpacing`), seam folded in like [`Self::height`]: lines step the font
-    /// height plus it (`CSimpleFontString::UpdateString` hands `+0xf8` to the text block).
+    /// height plus it (the FontString's string update hands `+0xf8` to the text block).
     pub spacing: f32,
 }
 
 /// A block of `lines` lines at height `size` and gap `spacing`: `N·S + (N-1)·gap`, as the text
-/// block lays it (`0x5c2070`).
+/// block lays it.
 pub(crate) fn text_block_h(lines: usize, size: f32, spacing: f32) -> f32 {
     lines as f32 * size + lines.saturating_sub(1) as f32 * spacing
 }
 
-/// The reference's per-glyph step in device px: the FreeType advance floored plus one (glyph
-/// rasterizer `0x5d1120`, `out[5]`), one more for THICK (`GlyphStepBase` `0x5ca2b0`), both in
-/// `step_extra`. Divided by the DPI once per line: flooring logical px instead over-tracks.
+/// The reference's per-glyph step in device px: the FreeType advance floored plus one (`out[5]`),
+/// one more for THICK, both in `step_extra`. Divided by the DPI once per line: flooring logical px
+/// instead over-tracks.
 ///
-/// Deviation: `ComputeStep`'s (`0x5ca2d0`) negative-only pair kern is dropped, because at UI sizes
-/// it rounds to 0 almost always.
+/// Deviation: the reference's negative-only pair kern is dropped, because at UI sizes it rounds to
+/// 0 almost always.
 fn client_step(raw_physical_advance: f32, step_extra: f32) -> f32 {
     raw_physical_advance.floor() + step_extra
 }
 
-/// [`client_step`]'s bias: `+1`, or `+2` for THICK, as `GlyphStepBase` (`0x5ca2b0`) tests the THICK
+/// [`client_step`]'s bias: `+1`, or `+2` for THICK, as the reference's step base tests the THICK
 /// flag alone; a NORMAL outline steps like a plain font, though its cell grows.
 fn step_extra_of(outline: Outline) -> f32 {
     match outline {
@@ -94,9 +94,9 @@ fn snap_block_top(y: f32) -> f32 {
     snap_block_top_law(y) + UI_SEAT_NUDGE
 }
 
-/// The reference's one vertical anchor snap (`0x5cdf70` at `0x5ce051`): the block top rounds once,
-/// and the line ladder and ascender add as integers after it. Rounding in y-up, a half-pixel tie
-/// moves the block up: `ceil(y - 0.5)` in y-down, in logical units on the 768-tall design grid.
+/// The reference's one vertical anchor snap: the block top rounds once, and the line ladder and
+/// ascender add as integers after it. Rounding in y-up, a half-pixel tie moves the block up:
+/// `ceil(y - 0.5)` in y-down, in logical units on the 768-tall design grid.
 fn snap_block_top_law(y: f32) -> f32 {
     (y - 0.5).ceil()
 }
@@ -182,7 +182,8 @@ fn layout_text_quads_inner(
 ) -> Vec<UiQuad> {
     let gradient = font.alpha_gradient;
     let r = measure::resolve(e, &font);
-    // One pass fills the caches, as `AllGlyphsCached` (`0x5c9fa0`); the layout below is lookups.
+    // One pass fills the caches, as the reference's all-glyphs-cached pass; the layout below is
+    // lookups.
     e.ensure_str(r.face, r.ppem, r.radius, text);
     let e = &*e;
     let dpi = e.dpi();
@@ -193,8 +194,8 @@ fn layout_text_quads_inner(
 
     // The same lines the measure counted ([`fontstring_lines`]), or a MIDDLE block seats wrong.
     let lines = fontstring_lines(text, base_color);
-    // THICK ink sits 1 logical px above the plain baseline: the reference's THICK quad shift (-2,
-    // `0x5cd0e1`) against its blit's baked seat; NORMAL cancels exactly.
+    // THICK ink sits 1 logical px above the plain baseline: the reference's THICK quad shift (-2)
+    // against its blit's baked seat; NORMAL cancels exactly.
     let thick_rise = f32::from(u8::from(matches!(font.outline, Outline::Thick)));
 
     // Wrap only within a pinned width; `rect` is in the pen's own space, so no conversion.
@@ -206,8 +207,8 @@ fn layout_text_quads_inner(
     } else {
         lines
     };
-    // The line stack (`CGxString+0x40` in `0x5cdc20`): a height-pinned rect stops emitting lines
-    // once the pitch sum passes it, even for a caller that skips the ellipsis seam.
+    // The line stack (`[string+0x40]`): a height-pinned rect stops emitting lines once the pitch
+    // sum passes it, even for a caller that skips the ellipsis seam.
     if rect.height() > HEIGHT_LIMIT_MIN {
         render_lines.truncate(overflow::lines_allowed(
             rect.height() + font.spacing,
@@ -230,9 +231,9 @@ fn layout_text_quads_inner(
     } else {
         0.0
     };
-    // The first baseline hangs at the face's pixel ascender, `[CGxFont+0x17c] = round(size ·
-    // asc/(asc+|desc|))`, as the placement kernel `0x5d1360` sets `baseline = cellTop + ascender`;
-    // the FreeType hhea `asc/upem` is not on that path and seats text ~3 px low.
+    // The first baseline hangs at the face's pixel ascender, `[font+0x17c] = round(size ·
+    // asc/(asc+|desc|))`, as the placement kernel sets `baseline = cellTop + ascender`; the
+    // FreeType hhea `asc/upem` is not on that path and seats text ~3 px low.
     let ascent_ratio = e.ascent_ratio_of(r.face);
     let baseline_in_cell = (f64::from(r.size) * f64::from(ascent_ratio) + 0.5).floor() as f32;
     let block_top = if seat == TextSeat::UiGrid && rect.height() > f32::EPSILON {
@@ -350,8 +351,7 @@ fn layout_text_quads_inner(
 mod seat_tests {
     use super::*;
 
-    /// One line's MIDDLE seat from the box top, `d = H - round_half_away((H+h)/2)` in y-up
-    /// (`0x5cdf70`).
+    /// One line's MIDDLE seat from the box top, `d = H - round_half_away((H+h)/2)` in y-up.
     fn middle_d(box_h: f32, block_h: f32) -> f32 {
         snap_block_top_law((box_h - block_h) * 0.5)
     }
@@ -515,8 +515,8 @@ mod measure_fits_render {
 
     /// A tagged quest log title capped to `275 - 15 - tagWidth` (`QuestLogFrame.lua:197-205`)
     /// ellipsizes on one line: the 300x16 row's 10-tall ButtonText
-    /// (`QuestLogFrame.xml:5-7, 92-103`) arms both the ellipsis gate (`boxW > 0 && boxH > 0`,
-    /// `0x771ec0`) and the line stack, and the reference draws `prefix + "..."`.
+    /// (`QuestLogFrame.xml:5-7, 92-103`) arms both the ellipsis gate (`boxW > 0 && boxH > 0`) and
+    /// the line stack, and the reference draws `prefix + "..."`.
     #[test]
     fn a_capped_quest_log_title_ellipsizes_on_one_line() {
         let Some(mut e) = test_engine(1.0) else {

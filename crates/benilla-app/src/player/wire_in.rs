@@ -41,14 +41,14 @@ const LOGIN_PITCH: f32 = -0.45;
 
 /// Give our own body back on a hand-over: the stop, then `CMSG_MOVE_NOT_ACTIVE_MOVER` (`0x2D1`).
 /// That packet is only ever about our own character: the reference sends it from `SetActiveMover`
-/// (`0x6006e0`) for the local player only (`0x5fa6d0`), and vmangos rejects a guid that is not its
-/// confirmed mover, or another unit still being moved (`MovementHandler.cpp:891-908`).
+/// for the local player only, and vmangos rejects a guid that is not its confirmed mover, or
+/// another unit still being moved (`MovementHandler.cpp:891-908`).
 ///
 /// Never on a fear, confuse or mind control, where our body stays the mover: the packet clears
 /// `m_clientMoverGuid` (`MovementHandler.cpp:913`), so vmangos refuses the ack each later spline
 /// arms (`MoveSplineInit.cpp:131-132`, `MovementHandler.cpp:804`) and drops our movement until a
 /// map change (`MovementHandler.cpp:295-296`, `Map.cpp:448`). Skipped while a server spline owns
-/// the body, as in the reference (`0x619d50`).
+/// the body, as in the reference.
 fn yield_own_body(net_cmds: &NetCommands, player: &mut Player, self_guid: Option<u64>) {
     movement_net::park_mover(&net_cmds.0, player);
     let Some(me) = self_guid else { return };
@@ -65,7 +65,7 @@ fn yield_own_body(net_cmds: &NetCommands, player: &mut Player, self_guid: Option
     });
 }
 
-/// The world-entry grant of `OnActivePlayerInit` (`0x6e7f50`): our body is in control again
+/// The world-entry grant of the active player's init (`0x6e7f50`): our body is in control again
 /// (`0x6e80b6`) and the UI's flag is re-seeded with no event (`0x513880`). A possession in hand
 /// keeps its own state.
 fn hand_back_control(player: &mut Player) {
@@ -156,9 +156,9 @@ pub(super) fn apply_server_moves(
                 let _ = net_cmds.0.send(ClientCommand::SetActiveMover { guid });
             }
             // vmangos sends this on unpossess, after `Restored`, and when the possessed unit is
-            // feared or confused (`Unit.cpp:11157`). As in the reference (`0x5fa600`), only the
-            // unit we drive matters: we keep it but may not move it. Clearing `foreign_mover`
-            // would walk our own body while the server applies our steps to the creature.
+            // feared or confused (`Unit.cpp:11157`). As in the reference, only the unit we drive
+            // matters: we keep it but may not move it. Clearing `foreign_mover` would walk our own
+            // body while the server applies our steps to the creature.
             ControlVerdict::Released(guid) => {
                 if player.foreign_mover == Some(guid) {
                     player.control_lost = true;
@@ -231,9 +231,9 @@ pub(super) fn apply_server_moves(
     // Same-map teleport: snap and echo the ack, without which the server freezes our movement.
     for t in teleports.read() {
         snap_near_teleport(player, &mut cam.yaw, t, time.elapsed_secs());
-        // The echo is the whole handshake: the reference echoes on its next movement tick
-        // (`0x60e0a0`) and sends nothing else, and vmangos relocates us only when it lands
-        // (`ExecuteTeleportNear`, `MovementHandler.cpp:237`).
+        // The echo is the whole handshake: the reference echoes on its next movement tick and sends
+        // nothing else, and vmangos relocates us only when it lands (`ExecuteTeleportNear`,
+        // `MovementHandler.cpp:237`).
         let _ = net_cmds.0.send(ClientCommand::TeleportAck {
             guid: t.guid,
             counter: t.counter,
@@ -257,9 +257,9 @@ pub(super) fn apply_server_moves(
     // reference does. vmangos kicks a root apply-ack without `MOVEFLAG_ROOT`, or defers the root to
     // landing when the ack carries `JUMPING` or `FALLINGFAR` (`MovementHandler.cpp:715-729`).
     //
-    // Root also parks the walk stream and ends the arc, as the reference's `SetRoot` (`0x7c7340`)
-    // clears the direction bits and stops the fall (`0x7c6290`); moving bits beside ROOT freeze
-    // the reference and raise vmangos's `CHEAT_TYPE_ROOT_MOVE`. Turn bits are not moving bits.
+    // Root also parks the walk stream and ends the arc, as the reference's root clears the
+    // direction bits and stops the fall; moving bits beside ROOT freeze the reference and raise
+    // vmangos's `CHEAT_TYPE_ROOT_MOVE`. Turn bits are not moving bits.
     for m in mode_msgs.read() {
         player.modes.set(m.mode, m.apply);
         if m.mode == MoveMode::Root && m.apply {
@@ -268,19 +268,19 @@ pub(super) fn apply_server_moves(
             player.vel_y = 0.0;
             player.fall_far = false;
         }
-        // A hover grant jumps you (`Player::hover_launch`): the reference's handler (`0x61a620`)
-        // runs `CMovement::Jump` (`0x7c6230`) on enable and `StartFalling` (`0x7c61c0`) on disable
-        // before it sets the flag (`0x7c7310`), so Levitate cast while swimming leaves the water.
-        // Disable needs nothing: with `hover_offset` at zero the body falls from rest by itself.
+        // A hover grant jumps you (`Player::hover_launch`): the reference's handler runs the
+        // mover's jump on enable and the fall start on disable before it sets the flag, so Levitate
+        // cast while swimming leaves the water. Disable needs nothing: with `hover_offset` at zero
+        // the body falls from rest by itself.
         else if m.mode == MoveMode::Hover && m.apply {
             player.hover_launch = true;
         }
-        // A revoke ends a flight in progress before its ack (`0x6ef860` event 48, StopFlying
+        // A revoke ends a flight in progress before its ack (`0x6ef860` event 48, the flight stop
         // `0x98c240`), with no `CMSG_MOVE_SET_FLY` of its own.
         else if m.mode == MoveMode::CanFly && !m.apply && player.flying {
             super::flight::land(player);
         }
-        // Gravity off stops a fall where it is (`0x6eba60`: StopFalling, then the landing); on
+        // Gravity off stops a fall where it is (`0x6eba60`: the fall stop, then the landing); on
         // again, an unsupported body falls by itself.
         else if m.mode == MoveMode::DisableGravity && m.apply {
             player.vel_y = 0.0;
@@ -303,12 +303,13 @@ pub(super) fn apply_server_moves(
         );
     }
 
-    // A knockback is only latched here; the mover launches it and acks. The reference enqueues it
-    // (`0x617a30`), and its frame update (`0x616620`) applies it (`0x6179c0`, called at `0x61624d`)
-    // and then acks (`0x616261`), so the wire carries the post-launch `MovementInfo`.
+    // A knockback is only latched here; the mover launches it and acks. The reference enqueues it,
+    // and its frame update applies it and then acks, so the wire carries the post-launch
+    // `MovementInfo`.
     //
     // Two in one frame collapse to the last, where the reference queues both: the motion is the
-    // same, as `0x6179c0` replaces the velocity, but the first ack is lost (`OnFailedToAckChange`).
+    // same, as the reference replaces the velocity, but the first ack is lost (the reference's
+    // failed-ack path).
     for k in knock_msgs.read() {
         player.knockback = Some(super::state::PendingKnockback {
             guid: k.guid,
@@ -325,7 +326,7 @@ pub(super) fn apply_server_moves(
             let first = !player.active;
             player.reseat = false;
             // A mover change tears down the outgoing mover's state, as the reference's
-            // `SetActiveMover` (`0x6006e0`) resets its flags and click-to-move. A login needs none:
+            // `SetActiveMover` resets its flags and click-to-move. A login needs none:
             // `release_on_session_end` already reset the whole resource.
             if !first {
                 player.vel_y = 0.0;
@@ -398,8 +399,8 @@ pub(super) fn apply_server_moves(
 /// Apply one same-map teleport's snap (`MSG_MOVE_TELEPORT_ACK` inbound); the caller echoes it.
 fn snap_near_teleport(player: &mut Player, cam_yaw: &mut f32, t: &TeleportMessage, now: f32) {
     // A near teleport arrives detached: vmangos takes this path only off a transport
-    // (`Player.cpp:1866-1893`), and the reference's apply (`0x6186b0`) re-parents to the packet's
-    // transport guid, zero here. A kept ride would carry us back onto the deck.
+    // (`Player.cpp:1866-1893`), and the reference's apply re-parents to the packet's transport
+    // guid, zero here. A kept ride would carry us back onto the deck.
     player.ride = None;
     player.pos = wow_to_bevy(t.position);
     player.face_yaw = t.orientation;
@@ -415,9 +416,9 @@ fn snap_near_teleport(player: &mut Player, cam_yaw: &mut f32, t: &TeleportMessag
     player.ride_abort = true;
 }
 
-/// Our body's create-block mover state, forced over a zeroed word (`SetUpdateInfo` `0x6f1520`,
-/// `0x77fffdff` with force set): the modes, root included, swimming, flight, the gait and the
-/// pitch, so a login mid-flight is flying from its first frame.
+/// Our body's create-block mover state, forced over a zeroed word (the create block's movement
+/// apply, `0x6f1520`, `0x77fffdff` with force set): the modes, root included, swimming, flight, the
+/// gait and the pitch, so a login mid-flight is flying from its first frame.
 fn apply_self_create(player: &mut Player, c: &SelfCreateMover) {
     player.modes.merge_from_wire(c.flags);
     player.modes.rooted = c.flags & move_flags::ROOT != 0;
@@ -427,17 +428,16 @@ fn apply_self_create(player: &mut Player, c: &SelfCreateMover) {
     player.mover_pitch = c.pitch;
 }
 
-/// The reference's masked merge of a server-authored `MOVEMENTFLAGS` (`0x618c30` at `0x618deb`:
-/// `old ^ ((old ^ wire) & 0x75a07dff)`). `ON_TRANSPORT` is outside the mask, so a server pose never
-/// boards or deboards us.
+/// The reference's masked merge of a server-authored `MOVEMENTFLAGS` (`old ^ ((old ^ wire) &
+/// 0x75a07dff)`). `ON_TRANSPORT` is outside the mask, so a server pose never boards or deboards us.
 pub(super) fn merge_server_flags(local: u32, wire: u32) -> u32 {
     move_flags::merge_server_authored(local, wire)
 }
 
 /// Apply one bare self-addressed `MSG_MOVE_*`, a pose the server wrote for our mover (`.go`,
 /// `.cheat fly`, an anticheat snap-back): a hard snap with no ack. The reference writes the pose
-/// into its live cell and its integrator base (`0x7c6420`), one cell for us ([`Player::pos`]), and
-/// our next heartbeat carries it home.
+/// into its live cell and its integrator base, one cell for us ([`Player::pos`]), and our next
+/// heartbeat carries it home.
 ///
 /// Deviation: applied at arrival, because our own avatar has no motion to de-jitter; the reference
 /// routes it through the replay chain remotes use, which paces to the sender's cadence and can hold
@@ -460,8 +460,7 @@ fn apply_self_move(
     let now_falling = player.move_flags & move_flags::FALLING != 0;
 
     // Lift the merged modes into typed state, as `move_flags` is rebuilt every frame; the
-    // reference's merge applies swimming too (`0x61a1af` → `0x61a230`). `.cheat fly` sends
-    // SWIMMING with LEVITATING.
+    // reference's merge applies swimming too. `.cheat fly` sends SWIMMING with LEVITATING.
     player.swimming = player.move_flags & move_flags::SWIMMING != 0;
     // 3.3.5a's own-mover mask holds FLYING too (`0x6eb730`, `0x77e00dff`).
     player.flying = player.move_flags & move_flags::FLYING != 0;
@@ -500,8 +499,8 @@ fn apply_self_move(
         }
     }
 
-    // The arc follows the merged `FALLING` bit: seeded from the wire when set (`0x7c6490`), ended
-    // when it just cleared.
+    // The arc follows the merged `FALLING` bit: seeded from the wire when set, ended when it just
+    // cleared.
     match (was_falling, now_falling) {
         (_, true) => {
             let (vel_y, xy) = crate::net::jump_seed(m.jump, m.fall_time, player.modes.feather_fall);
@@ -532,7 +531,7 @@ fn apply_self_move(
 /// On a `/logout` or a lost session, reset the whole resource to its boot state, so the next login
 /// owes nothing to the ended one. Whole, not by field: `/logout` roots us for the countdown
 /// (`MiscHandler.cpp:329`) and the next session never unroots, so any kept mover state persists.
-/// The reference also keeps no mover state, shutting the game down on logout (`0x491180`).
+/// The reference also keeps no mover state, shutting the game down on logout.
 pub(super) fn release_on_session_end(
     mut logouts: MessageReader<crate::net::LoggedOutMessage>,
     mut lost: MessageReader<crate::net::DisconnectedMessage>,

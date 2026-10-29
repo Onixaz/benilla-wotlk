@@ -1,7 +1,6 @@
-//! `Logs\FrameXML.log` (`0x842ecc`): the UI loads' records ([`benilla_ui::status`]), written a
-//! line at a time as the reference's log layer writes one (`0x65ac20`): the stamp
-//! `"%u/%u %02u:%02u:%02u.%03u  "` (`0x866aa0`), the text, then `"\r\n"` (`0x82edfc`). The glue
-//! build writes its own `Logs\GlueXML.log` (`0x837024`, opened at `0x46a8ce`) the same way.
+//! `Logs\FrameXML.log`: the UI loads' records ([`benilla_ui::status`]), written a line at a time as
+//! the reference's log layer writes one: the stamp `"%u/%u %02u:%02u:%02u.%03u  "`, the text, then
+//! `"\r\n"`. The glue build writes its own `Logs\GlueXML.log` the same way.
 
 use std::io::Write as _;
 
@@ -15,9 +14,8 @@ const FILE: &str = "FrameXML.log";
 /// The glue log's name, the reference's.
 const GLUE_FILE: &str = "GlueXML.log";
 
-/// Write the in-game VM's drains in the order they were made. A drain with no lines opens
-/// nothing, so a clean UI load leaves the last load's file in place, as the reference's lazy open
-/// does (`0x65a930`).
+/// Write the in-game VM's drains in the order they were made. A drain with no lines opens nothing,
+/// so a clean UI load leaves the last load's file in place, as the reference's lazy open does.
 pub(super) fn write(writes: Vec<LogWrite>) {
     write_named(FILE, writes);
 }

@@ -11,7 +11,7 @@ use benilla_formats::{impassable_at, world_to_tile, TileMesh, CHUNK_SIZE, TILE_S
 const MAP_CENTER: f32 = 32.0 * TILE_SIZE;
 
 /// Global chunk index of a world coordinate on either axis, row from x and column from y, falling
-/// from `MAP_CENTER` as the client's per-chunk lookups do (`0x69b350`).
+/// from `MAP_CENTER` as the client's per-chunk lookups do.
 fn chunk_index(coord: f32) -> i32 {
     ((MAP_CENTER - coord) / CHUNK_SIZE).floor() as i32
 }

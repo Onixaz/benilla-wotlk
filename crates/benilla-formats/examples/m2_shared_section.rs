@@ -1,10 +1,9 @@
 //! M2 batches that share a skin section, and so the same triangles, with another batch. The
 //! reference draws both from one vertex array under depth-write and LEQUAL, so the later one wins
-//! the tie exactly (`0x70b3f6`, `0x70c190`). We match that only when both take the same vertex
-//! path: a consolidator (`static_gx`, `terrain_stream::merge`) bakes positions on the CPU, which
-//! differ from the GPU's in the last ULPs, so a section it splits z-fights (a `SPLIT` line).
-//! Output is Blizzard data: never commit it.
-//! `cargo run -p benilla-formats --example m2_shared_section -- [path-substring]`
+//! the tie exactly. We match that only when both take the same vertex path: a consolidator
+//! (`static_gx`, `terrain_stream::merge`) bakes positions on the CPU, which differ from the GPU's
+//! in the last ULPs, so a section it splits z-fights (a `SPLIT` line). Output is Blizzard data:
+//! never commit it. `cargo run -p benilla-formats --example m2_shared_section -- [path-substring]`
 
 /// What every consolidator excludes on: a `true` batch stays on the entity path whatever its
 /// siblings do.

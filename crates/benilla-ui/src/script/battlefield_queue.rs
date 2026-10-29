@@ -1,9 +1,9 @@
-//! The queue half of `CGBattlefieldInfo` (bindings `0x549ad0`-`0x54e6d0`): the battleground and
-//! arena lists `PVPBattlegroundFrame.lua`, `BattlefieldFrame.lua` and `ArenaFrame.lua` read, the
-//! two queue slots behind the minimap icon, and the Wintergrasp queue. The VM owns what the
-//! bindings write (the listed type, the instances, the selection, the battlemaster); the app
-//! pushes `BattlemasterList.dbc` resolved for the player, each list packet as it lands and the
-//! slots every frame, since their clocks move.
+//! The queue half of the reference's battlefield engine (bindings `0x549ad0`-`0x54e6d0`): the
+//! battleground and arena lists `PVPBattlegroundFrame.lua`, `BattlefieldFrame.lua` and
+//! `ArenaFrame.lua` read, the two queue slots behind the minimap icon, and the Wintergrasp queue.
+//! The VM owns what the bindings write (the listed type, the instances, the selection, the
+//! battlemaster); the app pushes `BattlemasterList.dbc` resolved for the player, each list packet
+//! as it lands and the slots every frame, since their clocks move.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -28,7 +28,7 @@ pub struct BattlemasterRow {
     pub max_group_size: i32,
     pub groups_allowed: bool,
     pub min_level: i32,
-    /// `GetBracketForLevel` (`0x54ba00`): the player's level is in one of the first map's
+    /// The bracket-for-level lookup (`0x54ba00`): the player's level is in one of the first map's
     /// `PvpDifficulty.dbc` brackets, or 80 for the random battleground.
     pub can_enter: bool,
     /// The row's holiday world state is set.
@@ -83,14 +83,14 @@ pub struct BattlefieldQueueSlot {
     pub time_waited_ms: u32,
 }
 
-/// The one world-PvP queue (`m_worldPvPQueues`, `0xbea4a8`) as the app resolved it.
+/// The one world-PvP queue (`0xbea4a8`) as the app resolved it.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct WorldPvpQueueView {
     pub queue_id: i32,
     /// 0 none, 1 queued, 2 confirm, 3 active.
     pub status: u32,
     pub area_name: Option<String>,
-    /// Status 2's `expire − GetUITime()`, seconds; 0 otherwise.
+    /// Status 2's expiry less the UI clock, seconds; 0 otherwise.
     pub expire_in: i32,
 }
 
@@ -98,11 +98,11 @@ pub struct WorldPvpQueueView {
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct BattlefieldFrame {
     pub slots: [BattlefieldQueueSlot; 2],
-    /// The slot whose instance the player is in (`m_activeIndex`, `0xacd16c`).
+    /// The slot whose instance the player is in (`0xacd16c`).
     pub active: Option<u8>,
-    /// The active map's `InstanceType` (`m_instanceType`, `0xbea570`): 4 inside an arena.
+    /// The active map's `InstanceType` (`0xbea570`): 4 inside an arena.
     pub instance_type: u32,
-    /// `m_arenaFaction` (`0xbea54a`).
+    /// The arena faction (`0xbea54a`).
     pub arena_faction: u8,
     /// `GetBattlefieldInstanceExpiration()`, ms.
     pub instance_expiration_ms: u32,
@@ -142,22 +142,22 @@ pub enum BattlefieldMgrRequest {
     ExitRequest { queue_id: i32 },
 }
 
-/// The VM's `CGBattlefieldInfo` mirror.
+/// The VM's mirror of the reference's battlefield engine.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct BattlefieldInfo {
     /// Every `BattlemasterList.dbc` row, as pushed.
     rows: Vec<BattlemasterRow>,
-    /// `m_battlegroundTypes` (`0xbea720`): the battleground rows' ids in their sorted order.
+    /// The battleground types (`0xbea720`): the battleground rows' ids in their sorted order.
     order: Vec<u32>,
-    /// `m_bgTypeID` (`0xbea53c`), the type the list and the join name.
+    /// The battleground type id (`0xbea53c`), the type the list and the join name.
     bg_type: u32,
-    /// `m_instances` (`0xbea5bc`).
+    /// The instance list (`0xbea5bc`).
     instances: Vec<u32>,
-    /// `m_battlemaster` (`0xbea568`), 0 for the PvP window's list.
+    /// The battlemaster (`0xbea568`), 0 for the PvP window's list.
     battlemaster: u64,
-    /// `m_selectedInstance` (`0xbea538`), an instance id.
+    /// The selected instance (`0xbea538`), an instance id.
     selected: u32,
-    /// `m_allowJoin` (`0xacd174`).
+    /// The join allowance (`0xacd174`).
     allow_join: bool,
     holiday: BattlefieldRewardView,
     random: BattlefieldRewardView,
@@ -203,8 +203,8 @@ impl BattlefieldInfo {
         self.rows.iter().find(|r| r.id == id)
     }
 
-    /// `QSortBattlefields` (`0x54a650`) as a key: the random battleground first, then a running
-    /// holiday, then the lower minimum level, then the lower id.
+    /// The battlefield list sort (`0x54a650`) as a key: the random battleground first, then a
+    /// running holiday, then the lower minimum level, then the lower id.
     fn sort_order(&mut self) {
         let rows = &self.rows;
         self.order.sort_by_key(|&id| {
@@ -240,7 +240,7 @@ fn status_text(status: u32) -> &'static str {
     }
 }
 
-/// The active player's gate (`ClntObjMgrObjectPtr(active, TYPEMASK_PLAYER)`).
+/// The active player's gate: the object manager resolves the active guid as `TYPEMASK_PLAYER`.
 fn player_exists(model: &Model) -> bool {
     model.unit("player").is_some_and(|u| u.exists)
 }
@@ -261,8 +261,9 @@ fn event(model: &mut Model, name: &str) {
 }
 
 impl super::UiScript {
-    /// Push `BattlemasterList.dbc` resolved for the player. The first push builds the type list
-    /// as `InitializeGame` does (`0x54e720`), before any holiday is known; `SortBGList` re-sorts.
+    /// Push `BattlemasterList.dbc` resolved for the player. The first push builds the type list as
+    /// the game initialization does (`0x54e720`), before any holiday is known; `SortBGList`
+    /// re-sorts.
     pub fn set_battlemaster_rows(&mut self, rows: Vec<BattlemasterRow>) {
         if self.model_ref().battlefield.rows == rows {
             return;
@@ -290,7 +291,7 @@ impl super::UiScript {
     }
 
     /// `SMSG_BATTLEFIELD_LIST` (`0x54e390`): the type, rewards and instances, then the event its
-    /// source names. A battlemaster opens the session (`SetBattlemaster`, `0x5496d0`).
+    /// source names. A battlemaster opens the session (the battlemaster setter, `0x5496d0`).
     pub fn apply_battlefield_list(&mut self, list: BattlefieldListPush) {
         let mut model = self.model_mut();
         let bf = &mut model.battlefield;
@@ -314,7 +315,8 @@ impl super::UiScript {
         }
     }
 
-    /// The battlemaster walked out of range or the session ended: `SetBattlemaster(0)`.
+    /// The battlemaster walked out of range or the session ended: the battlemaster setter with
+    /// none.
     pub fn close_battlemaster(&mut self) {
         let mut model = self.model_mut();
         if model.battlefield.battlemaster == 0 {

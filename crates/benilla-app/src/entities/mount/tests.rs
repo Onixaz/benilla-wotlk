@@ -151,8 +151,8 @@ impl Standing {
     }
 }
 
-/// The reference re-parents the body model onto the mount (`0x712f70`) and never re-creates it:
-/// the same anchor, held item and glow root, now under the mount's seat.
+/// The reference re-parents the body model onto the mount and never re-creates it: the same anchor,
+/// held item and glow root, now under the mount's seat.
 #[test]
 fn mounting_re_seats_the_rig_and_destroys_nothing_on_the_rider() {
     let mut s = stand();
@@ -181,7 +181,7 @@ fn mounting_re_seats_the_rig_and_destroys_nothing_on_the_rider() {
     );
 }
 
-/// Dismount (`0x607ce0`) detaches the body onto its own frame and destroys the mount model.
+/// Dismount detaches the body onto its own frame and destroys the mount model.
 #[test]
 fn dismounting_puts_the_rig_back_on_its_own_frame_and_keeps_the_glow() {
     let mut s = stand();
@@ -204,7 +204,8 @@ fn dismounting_puts_the_rig_back_on_its_own_frame_and_keeps_the_glow() {
     assert!(s.attachments_alive(), "the rider's own visual is untouched");
 }
 
-/// A re-mount is `0x5ffa50`'s two calls in order: tear the old seat down, then build the new one.
+/// A re-mount is the reference's two calls in order: tear the old seat down, then build the new
+/// one.
 #[test]
 fn a_re_mount_tears_the_old_seat_down_before_it_builds_the_new_one() {
     let mut s = stand();
@@ -214,7 +215,7 @@ fn a_re_mount_tears_the_old_seat_down_before_it_builds_the_new_one() {
     s.field(2405);
     assert!(
         s.app.world().get_entity(first).is_err(),
-        "the old mount model is destroyed first (`0x607ce0`)",
+        "the old mount model is destroyed first",
     );
     assert_eq!(s.frame(), s.rider, "…the body detached onto its own frame");
     assert_eq!(s.applied(), 0);
@@ -267,7 +268,7 @@ fn a_field_that_moves_mid_load_drops_the_pending_mount() {
     );
 }
 
-/// A mount with no attachment 0 fails `0x60ce70`'s present test: the reference logs and leaves the
+/// A mount with no attachment 0 fails the reference's seat-present test: it logs and leaves the
 /// body at the unit matrix. The field is still stamped, so the diff cannot churn.
 #[test]
 fn a_mount_without_a_seat_leaves_the_body_at_the_unit_matrix() {
@@ -288,8 +289,7 @@ fn a_mount_without_a_seat_leaves_the_body_at_the_unit_matrix() {
 }
 
 /// A mount child rides its rider's appear ramp: it carries the rider's arrival, which the arrival
-/// stamp leaves alone, as the reference writes the unit's one fade onto the mount model
-/// (`0x614ae6`–`0x614af4`, `0x614b9e`–`0x614bba`).
+/// stamp leaves alone, as the reference writes the unit's one fade onto the mount model.
 #[test]
 fn a_mount_child_carries_its_riders_arrival() {
     use crate::entities::Arrival;

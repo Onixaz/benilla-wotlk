@@ -44,11 +44,10 @@ fn on_session_end(In(_): In<SessionEvent>, mut trade: ResMut<TradeSession>) {
     trade.clear_session();
 }
 
-/// `SMSG_TRADE_STATUS`, arm for arm the reference's 23-case dispatcher `0x4bf720` (called from the
-/// handler `0x5d47c0`): an arm may print ([`status_message`]), only `CANCELED`, `COMPLETE` and
-/// `CLOSE_WINDOW` close the window, and the handler's tail then clears the network cells
-/// ([`TradeSession::clear_pending`]). `BEGIN_TRADE` only records the request for
-/// [`super::answer_trade_request`].
+/// `SMSG_TRADE_STATUS`, arm for arm the reference's 23-case dispatcher: an arm may print
+/// ([`status_message`]), only `CANCELED`, `COMPLETE` and `CLOSE_WINDOW` close the window, and the
+/// handler's tail then clears the network cells ([`TradeSession::clear_pending`]). `BEGIN_TRADE`
+/// only records the request for [`super::answer_trade_request`].
 fn trade_status(
     status: TradeStatus,
     trade: &mut TradeSession,
@@ -58,7 +57,7 @@ fn trade_status(
     bevy::log::info!(target: "trade", "SMSG_TRADE_STATUS {status:?}");
 
     // The line first: a naming arm reads the guid cells before the tail clears them, the
-    // reference's order (`0x5d4923` dispatches, `0x5d4931` clears). A `%s` line waits for a name.
+    // reference's order. A `%s` line waits for a name.
     match status_message(status) {
         Some(Line::Plain(key)) => errors.0.push(UiError::key(key)),
         Some(Line::Naming(key)) => {
@@ -66,7 +65,7 @@ fn trade_status(
                 trade.owe_named_line(NamedLine {
                     key,
                     who,
-                    // The arm reads the live `CGUnit`; the feed applies that guard.
+                    // The arm reads the live unit; the feed applies that guard.
                     needs_live_object: true,
                 });
             }
@@ -77,23 +76,23 @@ fn trade_status(
     match status {
         TradeStatus::BeginTrade { partner } => trade.request(partner),
         TradeStatus::OpenWindow { trade_id } => trade.open_window(trade_id),
-        // Case 4 (`0x4bf80b`) sets the partner's accept flag and case 9 (`0x4bf821`) clears it;
-        // neither touches ours, closes anything or is in the tail's clear set.
+        // Case 4 sets the partner's accept flag and case 9 clears it; neither touches ours, closes
+        // anything or is in the tail's clear set.
         TradeStatus::Accept => trade.partner_accepted(),
         TradeStatus::Rejected => trade.partner_unaccepted(),
-        // Case 7 (`0x4bf81a`) drops both accepts, ours through `0x4bf230(0)`, which sends
-        // `CMSG_UNACCEPT_TRADE` when the flag was up; vmangos then passes a `BACK_TO_TRADE` on to
-        // the partner (`TradeHandler.cpp:539`).
+        // Case 7 drops both accepts, ours through the unaccept, which sends `CMSG_UNACCEPT_TRADE`
+        // when the flag was up; vmangos then passes a `BACK_TO_TRADE` on to the partner
+        // (`TradeHandler.cpp:539`).
         TradeStatus::BackToTrade => {
             if trade.we_accepted() {
                 let _ = commands.0.send(ClientCommand::UnacceptTrade);
             }
             trade.back_to_trade();
         }
-        // The three that close the window; `CANCELED` signals `TRADE_REQUEST_CANCEL` (`0x4bf832`)
-        // before the close. The reference also sends `CMSG_CANCEL_TRADE` from inside `0x4bf4e0`;
-        // benilla sends none on a server-driven close (the frame's `CloseTrade` drains after the
-        // session is clear), and vmangos ignores it once the trade is gone (`Player.cpp:11739`).
+        // The three that close the window; `CANCELED` signals `TRADE_REQUEST_CANCEL` before the
+        // close. The reference also sends `CMSG_CANCEL_TRADE`; benilla sends none on a
+        // server-driven close (the frame's `CloseTrade` drains after the session is clear), and
+        // vmangos ignores it once the trade is gone (`Player.cpp:11739`).
         TradeStatus::Canceled => {
             trade.signal_request_cancel();
             trade.close_window();
@@ -118,7 +117,7 @@ fn trade_status(
         | TradeStatus::YouLogout
         | TradeStatus::TargetLogout
         | TradeStatus::TrialAccount => trade.clear_pending(),
-        // Past `0x16`: the bare epilogue `0x4bfa02`, as for case 13; vmangos never sends one.
+        // Past `0x16`: the bare epilogue, as for case 13; vmangos never sends one.
         TradeStatus::Unknown(_) => {}
     }
 }
@@ -129,12 +128,12 @@ enum Line {
     Naming(&'static str),
 }
 
-/// The `GlobalStrings` key each status arm raises through `DisplayError`, or `None`. The catalog
+/// The `GlobalStrings` key each status arm raises through the error display, or `None`. The catalog
 /// row's `+0x04`, not the key, decides chat, yellow or red: the two successful outcomes are the
 /// yellow ones, and `ERR_TRADE_WRONG_REALM`'s text is the conjured-items sentence.
 ///
-/// Not built: `CLOSE_WINDOW` (12) prints an id `0x4bfd70` computes from `result` (61 ids, the rest
-/// through `0x622630`, `0x1d1` printing nothing); vmangos never sends 12, so it closes silently.
+/// Not built: `CLOSE_WINDOW` (12) prints an id computed from `result` (61 ids, `0x1d1` printing
+/// nothing); vmangos never sends 12, so it closes silently.
 fn status_message(status: TradeStatus) -> Option<Line> {
     Some(match status {
         TradeStatus::Busy | TradeStatus::Busy2 => Line::Naming("ERR_PLAYER_BUSY_S"),
@@ -328,7 +327,8 @@ mod tests {
         assert_eq!(kind_of("ERR_TRADE_TARGET_DEAD"), MsgKind::Error);
     }
 
-    /// `0x4bf4e0` has four call sites in the dispatcher: one opens the window, three close it.
+    /// The trade-partner set has four call sites in the dispatcher: one opens the window, three
+    /// close it.
     #[test]
     fn only_canceled_complete_and_close_window_tear_the_window_down() {
         let closes: Vec<u32> = every_status()
@@ -418,8 +418,8 @@ mod tests {
         }
     }
 
-    /// Cases 0, 5 and 14 print only under the initiate latch `[0xc4bec8]`, so the refuser stays
-    /// silent when vmangos echoes `IGNORE_YOU` to both sides (`TradeHandler.cpp:46`).
+    /// Cases 0, 5 and 14 print only under the initiate latch, so the refuser stays silent when
+    /// vmangos echoes `IGNORE_YOU` to both sides (`TradeHandler.cpp:46`).
     #[test]
     fn the_naming_lines_are_gated_on_having_initiated() {
         for status in [

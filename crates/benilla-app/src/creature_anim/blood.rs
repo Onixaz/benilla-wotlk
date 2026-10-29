@@ -1,6 +1,5 @@
-//! The melee blood spurt (`0x624530` → `0x625010`): a self-terminating particle model on the
-//! victim, front or back by where the attacker stands, large on a crushing blow, colored by the
-//! victim's blood type.
+//! The melee blood spurt: a self-terminating particle model on the victim, front or back by where
+//! the attacker stands, large on a crushing blow, colored by the victim's blood type.
 
 use bevy::prelude::*;
 
@@ -14,13 +13,13 @@ use super::spell_visual::FxSlot;
 use super::spell_visual::SpellVisuals;
 use super::{SpellKitFx, SwingImpact, SwingMessage};
 
-/// The gore level's ceiling, `s_maxViolenceLevel[locale]` (`0xaf4e14`): 2 for enUS, 1 for koKR and
-/// zhCN, whose blood turns green. `violenceLevel` (0 none, 1 green, 2 true colors) registers at it
-/// (`0x7f3a10`).
+/// The gore level's ceiling, the reference's per-locale table (`0xaf4e14`): 2 for enUS, 1 for koKR
+/// and zhCN, whose blood turns green. `violenceLevel` (0 none, 1 green, 2 true colors) registers at
+/// it (`0x7f3a10`).
 const MAX_VIOLENCE_LEVEL: usize = 2;
 
-/// `violenceLevel` as `ViolenceLevelChanged` (`0x7f39b0`) holds it: a value outside `[0, max]`
-/// reads as the ceiling.
+/// `violenceLevel` as its change handler (`0x7f39b0`) holds it: a value outside `[0, max]` reads as
+/// the ceiling.
 pub(super) fn violence_level(cvars: Option<&crate::cvars::Cvars>) -> usize {
     match cvars.and_then(|c| c.num("violenceLevel")).map(|v| v as i64) {
         Some(level) if (0..=MAX_VIOLENCE_LEVEL as i64).contains(&level) => level as usize,
@@ -28,7 +27,7 @@ pub(super) fn violence_level(cvars: Option<&crate::cvars::Cvars>) -> usize {
     }
 }
 
-/// The victim attachments the spurt hangs on, `0xf` front and `0x10` back (`0x625010`).
+/// The victim attachments the spurt hangs on, `0xf` front and `0x10` back.
 const ATTACH_FRONT: u16 = 15;
 const ATTACH_BACK: u16 = 16;
 
@@ -102,8 +101,8 @@ pub(super) fn blood_spurts(
             info!("blood: dropped — display {display_id} unknown to the creature catalog");
             continue;
         };
-        // The three-tier row resolve (`0x60afb0`). Its tier-3 records-base fallback is real blood,
-        // never "no blood": Quilboar, crocolisks and gnolls land there.
+        // The three-tier row resolve. Its tier-3 records-base fallback is real blood, never "no
+        // blood": Quilboar, crocolisks and gnolls land there.
         let Some(blood_id) = blood.0.level_key(disp_blood, model_blood) else {
             info!("blood: dropped — UnitBloodLevels is empty");
             continue;
@@ -135,9 +134,9 @@ pub(super) fn blood_spurts(
             spell_id: 0, // no spell: a self-terminating effect is never reaped by id
             persistent: false,
             class: super::FxClass::Hold,
-            // Not a kit stage (`CEffect::AddEffect` off the melee path), but it too plays once.
+            // Not a kit stage (an effect added straight off the melee path), but it too plays once.
             stage: super::FxStage::OneShot,
-            // One spurt per (record, tag) on a body: a new one replaces the old (`0x6208e0`, which
+            // One spurt per (record, tag) on a body: a new one replaces the old (a replace
             // `resolve_spell_fx` runs for every slot), so a busy fight does not stack them.
             effects: vec![FxSlot {
                 tag: if front { ATTACH_FRONT } else { ATTACH_BACK },
@@ -160,8 +159,8 @@ mod tests {
     use super::{violence_level, MAX_VIOLENCE_LEVEL};
     use crate::cvars::Cvars;
 
-    /// `ViolenceLevelChanged` (`0x7f39b0`): a level inside `[0, max]` holds, anything else reads
-    /// as the ceiling, as does a missing registry.
+    /// The `violenceLevel` change handler (`0x7f39b0`): a level inside `[0, max]` holds, anything
+    /// else reads as the ceiling, as does a missing registry.
     #[test]
     fn the_violence_level_holds_inside_its_ceiling() {
         assert_eq!(violence_level(None), MAX_VIOLENCE_LEVEL);

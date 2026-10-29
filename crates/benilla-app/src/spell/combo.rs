@@ -1,7 +1,6 @@
 //! Combo points, which 3.3.5a keeps off the descriptor: `SMSG_UPDATE_COMBO_POINTS` banks ours on
-//! one unit (`CGGameUI::UpdateComboPoints` `0x519780`), `SMSG_PET_UPDATE_COMBO_POINTS` the pet's
-//! (`CGPetInfo::SetComboPoints` `0x5d34b0`). Every packet fires `UNIT_COMBO_POINTS`, changed or
-//! not; the UI feed reads the epochs.
+//! one unit in the game UI, `SMSG_PET_UPDATE_COMBO_POINTS` the pet's in the pet info (`0x5d34b0`).
+//! Every packet fires `UNIT_COMBO_POINTS`, changed or not; the UI feed reads the epochs.
 
 use benilla_protocol::SessionEvent;
 use bevy::prelude::*;
@@ -26,7 +25,7 @@ impl Banked {
     }
 }
 
-/// `CGGameUI`'s combo bank (`0xbd08a8` target, `0xbd084d` count) and `CGPetInfo`'s, each with a
+/// The game UI's combo bank (`0xbd08a8` target, `0xbd084d` count) and the pet info's, each with a
 /// count of the packets applied.
 #[derive(Resource, Default, Debug)]
 pub(crate) struct ComboPoints {
@@ -44,7 +43,7 @@ pub(super) fn register(app: &mut App) {
         .net_handler(K::PetComboPoints, on_combo_points);
 }
 
-/// Both packets. The pet's is kept only for the pet `CGPetInfo` holds (`0x5d36a0`).
+/// Both packets. The pet's is kept only for the pet the pet info holds (`0x5d36a0`).
 fn on_combo_points(
     In(ev): In<SessionEvent>,
     mut combo: ResMut<ComboPoints>,
@@ -69,8 +68,7 @@ fn on_combo_points(
     }
 }
 
-/// The session's start zeroes both banks (`CGGameUI::InitializeGame` `0x52b550`,
-/// `CGPetInfo::InitializeGame` `0x5d6d90`).
+/// The session's start zeroes both banks (`0x52b550`, `0x5d6d90`).
 pub(super) fn clear_combo_points(mut combo: ResMut<ComboPoints>) {
     combo.player = Banked::default();
     combo.pet = Banked::default();

@@ -8,7 +8,7 @@ use benilla_protocol::ServerPacket;
 use common::hx;
 
 /// Every swing refusal has an empty body (vmangos `Server/Packets/Combat.cpp`). DEADTARGET (0x148)
-/// and CANT_ATTACK (0x149) share the reference's arm `0x625ab8`, so they decode alike.
+/// and CANT_ATTACK (0x149) share the reference's arm, so they decode alike.
 #[test]
 fn attack_swing_refusal_wire() {
     use benilla_protocol::messages::AttackSwingError;
@@ -48,14 +48,14 @@ fn attack_swing_refusal_wire() {
             messages::parse_server(messages::opcode::SMSG_CANCEL_COMBAT, &[]).unwrap(),
             ServerPacket::CancelCombat
         ),
-        "SMSG_CANCEL_COMBAT is registered (`0x5e3308` -> `0x5e7dd0`), just not by the combat TU"
+        "SMSG_CANCEL_COMBAT is registered, just not by the combat TU"
     );
     assert!(matches!(
         decode(ServerPacket::CancelCombat).pop().unwrap(),
         SessionEvent::CancelCombat
     ));
 
-    // SMSG_FEIGN_DEATH_RESISTED: in the reference only a `DisplayError(421)` (`0x6e9800`).
+    // SMSG_FEIGN_DEATH_RESISTED: in the reference only an error-display line, error id 421.
     assert!(matches!(
         messages::parse_server(messages::opcode::SMSG_FEIGN_DEATH_RESISTED, &[]).unwrap(),
         ServerPacket::FeignDeathResisted
@@ -65,8 +65,8 @@ fn attack_swing_refusal_wire() {
         SessionEvent::FeignDeathResisted
     ));
 
-    // 0x147 SMSG_ATTACKSWING_NOTSTANDING stays unknown: the reference never registers it (default
-    // arm `0x625ade`) and vmangos never sends it.
+    // 0x147 SMSG_ATTACKSWING_NOTSTANDING stays unknown: the reference never registers it and
+    // vmangos never sends it.
     assert!(
         matches!(
             messages::parse_server(0x0147, &[]).unwrap(),
@@ -210,7 +210,7 @@ fn progression_wire_golden() {
 }
 
 /// Raw caster guid, u32 spellId, u32 count, raw guids (vmangos `Spell.cpp:4974-4997`); in the
-/// reference (`0x6e9820`) the only writer of the beams' chain-target array (`unit+0xd44`).
+/// reference the only writer of the beams' chain-target array (`unit+0xd44`).
 #[test]
 fn spell_chain_targets_wire() {
     use benilla_protocol::messages::SpellChainTargets;

@@ -2,10 +2,10 @@
 //! [`super::addons::Source`]; the parse, `<Include>` and `<Script file=>` resolution and chunk
 //! naming are [`super::addons::Addon`]'s.
 //!
-//! The core is the chain's own `FrameXML.toc` ([`core`]), its rows in its order, as `UI_Init`
+//! The core is the chain's own `FrameXML.toc` ([`core`]), its rows in its order, as the UI init
 //! walks it; benilla's layer (`assets/ui/layer.toc`) follows it. An entry with a path separator
-//! comes off the chain, a bare filename is a file we ship ([`is_chain_entry`]). Without client
-//! data the chain files are absent, and the log says so once.
+//! comes off the chain, a bare filename is a file we ship ([`is_chain_entry`]). Without client data
+//! the chain files are absent, and the log says so once.
 
 use std::sync::OnceLock;
 
@@ -27,14 +27,14 @@ pub(super) fn is_chain_entry(entry: &str) -> bool {
     entry.contains('\\') || entry.contains('/')
 }
 
-/// The stock interface's table of contents, which `UI_Init` (`0x48fbf0`) hands to the `.toc`
-/// runner (`0x6edb90`) at `0x48ffed`, once per UI build, `ReloadUI` included.
+/// The stock interface's table of contents, which the UI init hands to the `.toc` runner, once per
+/// UI build, `ReloadUI` included.
 pub(super) const TOC: &str = r"Interface\FrameXML\FrameXML.toc";
 
-/// The stock key-binding commands, which `UI_Init` loads after the [`TOC`] walk (`0x490018`).
+/// The stock key-binding commands, which the UI init loads after the [`TOC`] walk.
 pub(super) const BINDINGS: &str = r"Interface\FrameXML\Bindings.xml";
 
-/// The default key set, which `UI_Init` reads through `0x4b62b0` (`0x4900c7`).
+/// The default key set, which the UI init reads.
 pub(super) const DEFAULT_BINDINGS: &str = r"WTF\DefaultBindings.wtf";
 
 /// The core interface: the chain's own [`TOC`], patched or not, as an [`Addon`] over the chain, or
@@ -44,14 +44,13 @@ pub(super) fn core() -> Option<Addon> {
 }
 
 /// The core over `toc`'s text: each file line prefixed with the toc's own directory, in the toc's
-/// order, as the runner builds its paths (`0x6edbe5`, `0x6edcf4`, `0x6edd0c`) and dispatches each
-/// in turn (`0x6edd51`).
+/// order, as the runner builds its paths and dispatches each in turn.
 pub(super) fn core_from(toc: &str) -> Addon {
     toc_addon(NAME, TOC, toc)
 }
 
-/// The glue screens' table of contents, which the glue builder (`0x46a7b0`) hands to the same
-/// `.toc` runner (`0x6edb90`) at `0x46a9b3`, once per glue build.
+/// The glue screens' table of contents, which the glue builder hands to the same `.toc` runner,
+/// once per glue build.
 pub(super) const GLUE_TOC: &str = r"Interface\GlueXML\GlueXML.toc";
 
 /// The name the stock glue files load under, as [`NAME`] is the in-game core's.
@@ -130,8 +129,8 @@ fn read_loose(req: &str) -> Option<Vec<u8>> {
         benilla_formats::wow_data()
             .map(|data| {
                 let install = data.parent().map(std::path::Path::to_path_buf);
-                // `Data\` and its locale alternate, `Data\<locale>\` (`SFile::SetDataPathAlternate`
-                // `0x421b50`), where the login screen's agreements are.
+                // `Data\` and its locale alternate, `Data\<locale>\`, where the login screen's
+                // agreements are.
                 let locale = benilla_formats::data_locale(&data)
                     .ok()
                     .map(|l| data.join(l));
@@ -495,7 +494,7 @@ mod tests {
         );
 
         // Of two definitions of a plain Lua global the later stands; `publish_global`'s
-        // non-overwriting rule (`0x701bd0`) applies to frames only.
+        // non-overwriting rule applies to frames only.
         s.run("function _order_probe() return 1 end").unwrap();
         s.run("function _order_probe() return 2 end").unwrap();
         assert_eq!(
@@ -509,9 +508,8 @@ mod tests {
     /// Which unmigrated stock FrameXML window loads clean on top of the shipped manifest, each
     /// asked of the real loader in a fresh VM. Clean means it loads, not that it works: nothing
     /// behind a click or an event runs. A failure in a frame name a file of ours also declares is
-    /// suspect: `publish_global` does not overwrite (`0x701bd0`), so `_G` keeps our frame while
-    /// the stock handlers write to theirs; re-measure with ours removed. Run with `--ignored
-    /// --nocapture`.
+    /// suspect: `publish_global` does not overwrite, so `_G` keeps our frame while the stock
+    /// handlers write to theirs; re-measure with ours removed. Run with `--ignored --nocapture`.
     #[test]
     #[ignore = "instrument: run by hand when choosing the next window to migrate"]
     fn chain_readiness_report() {
@@ -899,9 +897,9 @@ mod tests {
                 }
             }
             // A method is never a global, so `own` and `have` do not apply to it. The load pass
-            // sees what neither census can, a missing widget type. A window we
-            // also ship is suspect there: `publish_global` does not overwrite (`0x701bd0`), so
-            // `_G` keeps our frame while the stock handlers write to theirs.
+            // sees what neither census can, a missing widget type. A window we also ship is suspect
+            // there: `publish_global` does not overwrite, so `_G` keeps our frame while the stock
+            // handlers write to theirs.
             let ours_too = !migrated.contains(f)
                 && std::fs::metadata(
                     std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1294,7 +1292,7 @@ mod tests {
             (
                 "SkillFrame.xml",
                 "BuySkillTier",
-                "a 5875 binding (`0x4d3e50`: marshals and delegates to a C++ \
+                "a 5875 binding (marshals and delegates to a C++ \
                  method/net-send) of the pre-1.12 skill-point purchase UI. the detail bar's LearnSkillButton calls it, and \
                  that button shows only while `UnitCharacterPoints`'s second value or a row's \
                  step/rank cost is non-zero — which no 1.12 server sends. Unreachable until the \
@@ -1303,7 +1301,7 @@ mod tests {
             (
                 "SkillFrame.xml",
                 "AddSkillUp",
-                "a 5875 binding (`0x4d3c30`: marshals and delegates to a C++ \
+                "a 5875 binding (marshals and delegates to a C++ \
                  method/net-send) of the pre-1.12 skill-point purchase UI. the detail bar's RightArrow calls it, and \
                  that button shows only while `UnitCharacterPoints`'s second value or a row's \
                  step/rank cost is non-zero — which no 1.12 server sends. Unreachable until the \
@@ -1312,7 +1310,7 @@ mod tests {
             (
                 "SkillFrame.xml",
                 "RemoveSkillUp",
-                "a 5875 binding (`0x4d3c70`: marshals and delegates to a C++ \
+                "a 5875 binding (marshals and delegates to a C++ \
                  method/net-send) of the pre-1.12 skill-point purchase UI. the detail bar's LeftArrow calls it, and \
                  that button shows only while `UnitCharacterPoints`'s second value or a row's \
                  step/rank cost is non-zero — which no 1.12 server sends. Unreachable until the \
@@ -1357,7 +1355,7 @@ mod tests {
             (
                 "StaticPopup.xml",
                 "ReplaceTradeEnchant",
-                "a registered 1.12 binding (`0x48d330`) whose body is not yet known; it is built \
+                "a registered 1.12 binding whose body is not yet known; it is built \
                  once it is. Reached by TRADE_REPLACE_ENCHANT's Accept, an event this engine does not fire yet.",
             ),
         ];
@@ -2024,8 +2022,7 @@ mod tests {
             ("DISPLAY_SIZE_CHANGED", "the four paperdoll files"),
             (
                 "GMSURVEY_DISPLAY",
-                "HelpFrame.lua — the post-ticket survey. A real 1.12 event (fired at \
-                 `0x5e797b`, id 538) whose whole UI is the LoadOnDemand `Blizzard_GMSurveyUI`; \
+                "HelpFrame.lua — the post-ticket survey. A real 1.12 event (id 538) whose whole UI is the LoadOnDemand `Blizzard_GMSurveyUI`; \
                  we have neither the producer nor the addon on the chain, and the ticket \
                  flow works without it",
             ),

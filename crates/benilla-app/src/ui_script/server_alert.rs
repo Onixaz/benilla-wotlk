@@ -1,30 +1,27 @@
 //! The server alert (`SHOW_SERVER_ALERT`): the one background fetch of the text the login screen
 //! shows over its boxes, and the verb that opens a link in it.
 //!
-//! The glue manager's init (`0x46a400`) reads the Lua global `SERVER_ALERT_URL` by name (`0x46a541`
-//! → `0x703bf0`, after the GlueXML load at `0x46a505`, so `GlueLocalization` overrides the stock
-//! `GlueStrings` value), sets `alertPending` and clears `alertReady` and the buffer
-//! (`0xb41e28`, `0xb41e2c`, `0xb414f8`), and starts the download once (`0x46a564` → `0x7a6ee0`):
-//! `GET`, agent `Blizzard Web Client` (`0x87d3b0`), a 5000 ms connect and receive timeout
-//! (`0x7a6ee6`), redirects followed. Only a 2xx status reads the body (`0x7a6a0e`-`0x7a6a21`); each
-//! read of up to 0x4000 bytes (`0x7a6a56`) reaches the callback (`0x46a580`) with its size, and the
-//! callback appends it to the 0x800-byte buffer ([`AlertBuffer`]). When the connection handle
-//! closes (`[esi+4]` at `0x7a6be3`, the `InternetConnect` handle of `0x7a6ddf`), the callback runs
-//! once more with the done flag (`0x7a6c4b`), and a buffer that begins `SERVERALERT:` case-folded
-//! (`0x836ed8`) sets `alertReady` (`0x46a5f1`). Every failure is silent, and nothing refetches.
+//! The glue manager's init reads the Lua global `SERVER_ALERT_URL` by name (so `GlueLocalization`
+//! overrides the stock `GlueStrings` value), sets `alertPending` and clears `alertReady` and the
+//! buffer, and starts the download once: `GET`, agent `Blizzard Web Client`, a 5000 ms connect and
+//! receive timeout, redirects followed. Only a 2xx status reads the body; each read of up to 0x4000
+//! bytes reaches the callback with its size, and the callback appends it to the 0x800-byte buffer
+//! ([`AlertBuffer`]). When the connection handle closes (`[esi+4]`, the `InternetConnect` handle),
+//! the callback runs once more with the done flag, and a buffer that begins `SERVERALERT:`
+//! case-folded sets `alertReady`. Every failure is silent, and nothing refetches.
 //!
 //! An `https://` URL shows nothing in the reference either: `InternetConnect` asks for the HTTP
-//! service (`0x7a6dcf`) and `HttpOpenRequest` passes `0x84000200` (`0x7a6e34`), without
-//! `INTERNET_FLAG_SECURE`, so it speaks plain HTTP to the URL's port (443 for `https://`) and gets
-//! no 2xx. benilla does not dial an `https://` URL, with the same result, and logs one line. The
-//! client sets neither redirect flag (`0x4000`, `0x8000`); what WinINet does with an
-//! http-to-https redirect is the OS's, not in the client's bytes, and benilla does not follow one.
+//! service and `HttpOpenRequest` passes `0x84000200`, without `INTERNET_FLAG_SECURE`, so it speaks
+//! plain HTTP to the URL's port (443 for `https://`) and gets no 2xx. benilla does not dial an
+//! `https://` URL, with the same result, and logs one line. The client sets neither redirect flag
+//! (`0x4000`, `0x8000`); what WinINet does with an http-to-https redirect is the OS's, not in the
+//! client's bytes, and benilla does not follow one.
 //!
-//! Deviation: the body is read with 0x4000-byte reads filled to the end of the body, so what a
-//! read returns does not depend on how the network cut the packets; and the reading stops once
-//! the buffer is full, since no later byte can change it.
-//! Deviation: the connection is direct. The reference opens its session with access type 0
-//! (`InternetOpenA`, `0x7a6d97`), the system's proxy settings, which benilla does not read.
+//! Deviation: the body is read with 0x4000-byte reads filled to the end of the body, so what a read
+//! returns does not depend on how the network cut the packets; and the reading stops once the
+//! buffer is full, since no later byte can change it. Deviation: the connection is direct. The
+//! reference opens its session with access type 0 (`InternetOpenA`), the system's proxy settings,
+//! which benilla does not read.
 
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -32,13 +29,13 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 
-/// What `0x46b957` skips to find the text: the prefix `0x836ed8` names (`0x836b3c` points at it).
+/// The prefix the glue update skips to find the alert's text.
 const PREFIX: &[u8] = b"SERVERALERT:";
-/// The buffer `0xb414f8` and the stack copy in the callback, both 0x800 bytes with their NUL.
+/// The alert buffer and the stack copy in the callback, both 0x800 bytes with their NUL.
 const BUFFER: usize = 0x800;
-/// One read (`0x7a6a56`).
+/// One read's size.
 const CHUNK: usize = 0x4000;
-/// The user agent (`0x87d3b0`).
+/// The user agent.
 const AGENT: &str = "Blizzard Web Client";
 /// Redirects followed before the fetch gives up.
 const MAX_REDIRECTS: usize = 5;
@@ -46,7 +43,7 @@ const MAX_REDIRECTS: usize = 5;
 const MAX_LINE: usize = 8192;
 const MAX_HEADERS: usize = 100;
 
-/// The connect and receive timeouts, `0x1388` ms each (`0x7a6ee6`).
+/// The connect and receive timeouts, `0x1388` ms each.
 #[derive(Clone, Copy, Debug)]
 pub(super) struct Timeouts {
     pub connect: Duration,
@@ -60,18 +57,18 @@ impl Timeouts {
     };
 }
 
-/// The callback's buffer (`0xb414f8`): what the chunks of a response add up to.
+/// The callback's buffer: what the chunks of a response add up to.
 #[derive(Debug, Default)]
 pub(super) struct AlertBuffer {
     buf: Vec<u8>,
 }
 
 impl AlertBuffer {
-    /// One read's bytes (`0x46a580`). An empty read adds nothing. Otherwise the callback copies the
-    /// chunk into a 0x800-byte stack string with `SStrCopy` (`0x64a5a0`, size `min(len, 0x800)`),
-    /// which stops at a NUL and leaves room for its own, so the chunk's last byte is lost; then it
-    /// appends that to the buffer with `SStrPack` (`0x64a760`, size 0x800), so chunks add up to
-    /// 0x7ff bytes and no more.
+    /// One read's bytes. An empty read adds nothing. Otherwise the callback copies the chunk into a
+    /// 0x800-byte stack string with a bounded string copy (size `min(len, 0x800)`), which stops at
+    /// a NUL and leaves room for its own, so the chunk's last byte is lost; then it appends that to
+    /// the buffer with a bounded string append (size 0x800), so chunks add up to 0x7ff bytes and no
+    /// more.
     pub(super) fn push(&mut self, chunk: &[u8]) {
         if chunk.is_empty() {
             return;
@@ -87,9 +84,8 @@ impl AlertBuffer {
         self.buf.len() >= BUFFER - 1
     }
 
-    /// The done call (`0x46a5c0`): the text after the prefix when the buffer begins with it, any
-    /// case (`SStrCmpI` over the prefix's length, `0x46a5e8`); a shorter or different buffer is no
-    /// alert.
+    /// The done call: the text after the prefix when the buffer begins with it, any case (compared
+    /// over the prefix's length); a shorter or different buffer is no alert.
     pub(super) fn finish(self) -> Option<Vec<u8>> {
         let head = self.buf.get(..PREFIX.len())?;
         head.eq_ignore_ascii_case(PREFIX)
@@ -437,7 +433,7 @@ pub(super) fn download(
         let mut reader = BufReader::with_capacity(CHUNK, stream);
         let head = read_head(&mut reader)?;
         match head.status {
-            // `0x7a6a11`-`0x7a6a21`: 200 up to 299 reads the body.
+            // 200 up to 299 reads the body.
             200..=299 => {
                 if head.status == 204 {
                     return Ok(());
@@ -498,11 +494,11 @@ pub(super) fn allowed() -> bool {
 }
 
 /// Whether the first glue VM of the process has been seen: the reference initialises its glue
-/// manager once (`0x46a400`), so the fetch happens once however many glue VMs follow.
+/// manager once, so the fetch happens once however many glue VMs follow.
 static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// The fetch for the glue manager's init (`0x46a564`): started once per process, and only for a
-/// URL that is not empty, when the run [`allowed`] it.
+/// The fetch for the glue manager's init: started once per process, and only for a URL that is not
+/// empty, when the run [`allowed`] it.
 pub(super) fn begin_once(url: &str) -> Option<crossbeam_channel::Receiver<Option<Vec<u8>>>> {
     if STARTED.swap(true, std::sync::atomic::Ordering::SeqCst) || !allowed() || url.is_empty() {
         return None;
@@ -510,12 +506,12 @@ pub(super) fn begin_once(url: &str) -> Option<crossbeam_channel::Receiver<Option
     Some(spawn_fetch(url.to_string()))
 }
 
-/// `LaunchURL` reaching the host (`0x5abd00`): a URL that passed the verb's whitelist.
+/// `LaunchURL` reaching the host: a URL that passed the verb's whitelist.
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 pub(crate) struct LaunchUrl(pub(crate) String);
 
-/// Open each launched URL in the player's browser (`0x429ff0`'s `ShellExecute "open"`), never in
-/// a test or an unattended run.
+/// Open each launched URL in the player's browser (`ShellExecute "open"`, as the reference does),
+/// never in a test or an unattended run.
 pub(crate) fn open_launched(mut urls: MessageReader<LaunchUrl>) {
     for LaunchUrl(url) in urls.read() {
         // The verb gated it, and the opener does not take the message's word for it.

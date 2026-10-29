@@ -1,10 +1,10 @@
-//! The ground-decal projector, the reference's `0x6d7330` → `0x6d6fa0` → `0x6d7480` chain: the
-//! triangles of every [`GroundDecalSurface`] collider (terrain and WMO faces, never doodads or
-//! GameObjects) in a box, clipped to it and emitted as world-space [`EffectVertex`] triangles with
-//! planar top-down UVs, so a vertical face smears its texel column as in the reference. They are
-//! coplanar with the drawn surface only through the world shaders' `clip_from_world`
-//! (`DECAL_WORLD_CLIP`). Collector flags: the ring `0x200122`, the blob shadow `0x2f0122`, which
-//! adds liquid; liquid is not a receiver here yet.
+//! The ground-decal projector, after the reference's projector chain: the triangles of every
+//! [`GroundDecalSurface`] collider (terrain and WMO faces, never doodads or GameObjects) in a box,
+//! clipped to it and emitted as world-space [`EffectVertex`] triangles with planar top-down UVs, so
+//! a vertical face smears its texel column as in the reference. They are coplanar with the drawn
+//! surface only through the world shaders' `clip_from_world` (`DECAL_WORLD_CLIP`). Collector flags:
+//! the ring `0x200122`, the blob shadow `0x2f0122`, which adds liquid; liquid is not a receiver
+//! here yet.
 
 use avian3d::parry::bounding_volume::{Aabb as ParryAabb, BoundingVolume};
 use avian3d::prelude::Collider;
@@ -75,7 +75,7 @@ impl DecalFrame {
 
 /// Project a decal into `out` as world-space, fan-unrolled white triangles, alpha from
 /// `alpha(x', y_rel, z')` and UVs from `uv(x', z')`. `false` when no surface is in the box: the
-/// caller hides the decal, the reference's no-ground gate (`0x6d74b5` skips the whole draw).
+/// caller hides the decal, the reference's no-ground gate (it skips the whole draw).
 pub(crate) fn project_decal(
     out: &mut Vec<EffectVertex>,
     surfaces: &Query<&Collider, With<GroundDecalSurface>>,
@@ -173,7 +173,7 @@ pub struct WorldDecal<'w, 's> {
 }
 
 impl WorldDecal<'_, '_> {
-    /// [`project_decal`] over the receiving surfaces; `false` means hide the decal (`0x6d74b5`).
+    /// [`project_decal`] over the receiving surfaces; `false` means hide the decal.
     pub fn project(
         &self,
         out: &mut Vec<crate::particles::buffer::EffectVertex>,

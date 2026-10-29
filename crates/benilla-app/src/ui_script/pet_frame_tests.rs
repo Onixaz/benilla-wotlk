@@ -1,7 +1,6 @@
-//! The stock pet frame, `PetFrame.xml`, over `"pet"` snapshots built from synthetic descriptors
-//! and the feed's events.
-//! `UNIT_PET` names the owner (`arg1 == "player"`, `0x4bc84f`) and every other `UNIT_*` names the
-//! pet: a frame that mixes the two repaints off the player's health.
+//! The stock pet frame, `PetFrame.xml`, over `"pet"` snapshots built from synthetic descriptors and
+//! the feed's events. `UNIT_PET` names the owner (`arg1 == "player"`) and every other `UNIT_*`
+//! names the pet: a frame that mixes the two repaints off the player's health.
 
 use benilla_ui::script::{
     AuraState, QuadContent, ScriptValue, SelectionRequest, UiScript, UnitState,

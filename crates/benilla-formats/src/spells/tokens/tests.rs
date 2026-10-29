@@ -178,7 +178,7 @@ fn spread(min: i32, max: i32) -> SpellDisplay {
     }
 }
 
-/// `GetDurationString` asks `GetText(key, -1)`, whose plural index is 1: a `_P1` twin wins for any
+/// The duration string asks `GetText(key, -1)`, whose plural index is 1: a `_P1` twin wins for any
 /// count, and without one the bare key serves every count.
 #[test]
 fn the_duration_ladder_picks_its_unit_and_the_twin_wins_whatever_the_count() {
@@ -228,8 +228,8 @@ fn the_duration_ladder_picks_its_unit_and_the_twin_wins_whatever_the_count() {
     assert_eq!(d(8, &c), "<forever>");
 }
 
-/// `GenderConditional`: the first form on gender 0, the second on anything else, the chosen
-/// form trimmed of spaces; without a player the token fails.
+/// The gender conditional: the first form on gender 0, the second on anything else, the chosen form
+/// trimmed of spaces; without a player the token fails.
 #[test]
 fn gender_takes_the_players_side_of_the_branch() {
     let durations = SpellDurationCatalog::default();
@@ -290,7 +290,7 @@ fn duration_modifier_updates_description_and_overtime_total() {
     );
 }
 
-/// `TimeFractionBelow`: a duration a hundredth off its unit prints the float template.
+/// The time-fraction test: a duration a hundredth off its unit prints the float template.
 #[test]
 fn fractional_minutes_take_the_float_template() {
     let mut durations = SpellDurationCatalog::default();
@@ -431,8 +431,8 @@ fn the_plural_keys_on_the_whole_bound_or_two() {
     assert_eq!(plural("$M1 $lpoint", &points(1)), "1 point");
 }
 
-/// `GetEffectModifierType` `0x7fd440`: School Damage rounds and takes op 0; a dummy effect does
-/// neither; a zero maximum ceils to 1.
+/// The effect's modifier type (`0x7fd440`): School Damage rounds and takes op 0; a dummy effect
+/// does neither; a zero maximum ceils to 1.
 #[test]
 fn a_rounding_effect_floors_and_ceils_its_modified_bounds() {
     let durations = SpellDurationCatalog::default();

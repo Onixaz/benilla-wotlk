@@ -1,6 +1,6 @@
 //! `ItemGroupSounds.dbc`: an item's pickup, put-down and use sounds. A row is an id and four
-//! `SoundEntries` ids indexed by the client's gesture (`0x458024`); no caller reads the fourth.
-//! An item reaches its group through `ItemDisplayInfo.field11`, and a 0 slot is silent.
+//! `SoundEntries` ids indexed by the client's gesture; no caller reads the fourth. An item reaches
+//! its group through `ItemDisplayInfo.field11`, and a 0 slot is silent.
 
 use std::collections::HashMap;
 
@@ -12,7 +12,7 @@ use crate::dbc::{parse, u32_at};
 
 const ITEM_GROUP_SOUNDS: &str = "DBFilesClient\\ItemGroupSounds.dbc";
 
-/// The gesture index `SndInterfacePlayItemSound`'s callers pass in `ecx` (`0x457ff0`, `0x457fb0`).
+/// The gesture index `SndInterfacePlayItemSound`'s callers pass in `ecx`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ItemGesture {
     /// Grabbed onto the cursor.
@@ -29,8 +29,8 @@ pub struct ItemGroupSoundsCatalog {
 }
 
 impl ItemGroupSoundsCatalog {
-    /// The `SoundEntries` id for a group's gesture; an unknown group (`0x45800f`, `0x45801d`) or a
-    /// 0 slot plays nothing in the client.
+    /// The `SoundEntries` id for a group's gesture; an unknown group or a 0 slot plays nothing in
+    /// the client.
     pub fn kit(&self, group: u32, gesture: ItemGesture) -> Option<u32> {
         self.groups
             .get(&group)

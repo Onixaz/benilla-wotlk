@@ -8,8 +8,8 @@
 //! `ConfirmAcceptQuest()` and No sends nothing.
 //!
 //! Deviation: a member's name not yet cached holds its line for a bounded retry, where the
-//! reference reads its name cache (`0xc0e228` via `0x55f080`) with a null callback and drops the
-//! message on a miss, because benilla's cache may not hold a party member yet.
+//! reference reads its name cache with a null callback and drops the message on a miss, because
+//! benilla's cache may not hold a party member yet.
 
 use benilla_protocol::messages::{QuestConfirmAccept, QuestShareMsg};
 use benilla_ui::script::{ScriptValue, UiScript};

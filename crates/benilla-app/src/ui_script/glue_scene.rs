@@ -10,7 +10,7 @@
 //! (`SetCharacterSelectFacing`).
 //!
 //! The scene fills the pane at the pane's own aspect, as the reference frames it, and starts over
-//! with each `SetModel` instance; the pane's showing resets the glue glow (`0x46fa60`).
+//! with each `SetModel` instance; the pane's showing resets the glue glow.
 
 use bevy::prelude::*;
 
@@ -41,8 +41,8 @@ fn stock_preview(
             pane.path
         );
     }
-    // The character and the facing are the select frame's scene's (`[0xb42174]`) and the create
-    // frame's (`m_charCustomizeFrame`, the character attached at `0x4e0040`) alone.
+    // The character and the facing are the select frame's scene's and the create frame's
+    // (its customize frame, the character attached at `0x4e0040`) alone.
     let (look, yaw) = if pane.select {
         (
             standing.map(|c| GlueLook::Select(SelectLook::from(c))),
@@ -132,7 +132,7 @@ pub(crate) fn feed_stock_glue_preview(
     };
     // A new VM's panes are new frames: the memo starts over with it.
     let feed = feed.get_for(script.as_deref());
-    // A pane that was not the one shown last frame has just shown: its OnShow (`0x46fa60`).
+    // A pane that was not the one shown last frame has just shown: its OnShow.
     let shown = pane.as_ref().map(|p| p.handle);
     if shown.is_some() && shown != feed.shown {
         preview.shown = preview.shown.wrapping_add(1);

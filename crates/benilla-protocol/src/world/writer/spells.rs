@@ -101,8 +101,8 @@ impl WorldWriter {
         )
     }
 
-    /// `CMSG_CANCEL_CAST`, one `u32` spell id: sent by the wand auto-repeat handoff (reference:
-    /// `0x6095b8`) and when movement or Esc cancels a cast.
+    /// `CMSG_CANCEL_CAST`, one `u32` spell id: sent by the wand auto-repeat handoff and when
+    /// movement or Esc cancels a cast.
     pub fn cancel_cast(&mut self, spell_id: u32) -> Result<()> {
         self.send(opcode::CMSG_CANCEL_CAST, &spell_id.to_le_bytes())
     }

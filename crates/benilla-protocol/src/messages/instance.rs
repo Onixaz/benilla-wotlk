@@ -1,15 +1,15 @@
 //! The instance lockout messages and `CMSG_RESET_INSTANCES`. The 1.12 client prints a system chat
-//! line for a new save (`INSTANCE_SAVED`), a raid warning, a reset (`INSTANCE_RESET_SUCCESS`,
-//! which also clears the last instance) and a failed reset, and keeps the last instance and the
+//! line for a new save (`INSTANCE_SAVED`), a raid warning, a reset (`INSTANCE_RESET_SUCCESS`, which
+//! also clears the last instance) and a failed reset, and keeps the last instance and the
 //! permanent-bind flag as state. Maps travel as `Map.dbc` ids; the reference looks the name up
-//! itself (`0xc0daa8`) and prints the id when the row is missing.
+//! itself and prints the id when the row is missing.
 
 use std::io;
 
 use crate::wire::read_u32_le;
 
 /// `SMSG_RAID_INSTANCE_MESSAGE`'s `type` (`Objects/Player.h:568-573`). Outside 1-4 the reference
-/// prints nothing (jump table `0x49e45c`), even for 5, later clients' `RAID_INSTANCE_EXPIRED`.
+/// prints nothing, even for 5, later clients' `RAID_INSTANCE_EXPIRED`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RaidInstanceWarning {
     /// 1: `RAID_INSTANCE_WARNING_HOURS`, filled with `resetTime / 3600`.
@@ -33,7 +33,7 @@ impl RaidInstanceWarning {
         }
     }
 
-    /// The reference's GlobalStrings token (`0x49e276`, `0x49e2e5`, `0x49e354`, `0x49e40b`).
+    /// The reference's GlobalStrings token.
     pub fn token(self) -> &'static str {
         match self {
             Self::Hours => "RAID_INSTANCE_WARNING_HOURS",
@@ -54,8 +54,8 @@ pub struct RaidInstanceMessage {
     pub reset: u32,
 }
 
-/// `SMSG_INSTANCE_RESET_FAILED`'s `reason` (ladder at `0x49e5b7`; vmangos
-/// `Maps/MapPersistentStateMgr.h:270-276`, whose `INSTANCERESET_FAIL_SILENTLY` is 3).
+/// `SMSG_INSTANCE_RESET_FAILED`'s `reason` (vmangos `Maps/MapPersistentStateMgr.h:270-276`, whose
+/// `INSTANCERESET_FAIL_SILENTLY` is 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstanceResetFailure {
     /// 0: `INSTANCE_RESET_FAILED`, players still inside.
@@ -78,7 +78,7 @@ impl InstanceResetFailure {
         }
     }
 
-    /// The reference's GlobalStrings token (`0x49e61b`, `0x49e5f6`, `0x49e5d1`).
+    /// The reference's GlobalStrings token.
     pub fn token(self) -> &'static str {
         match self {
             Self::General => "INSTANCE_RESET_FAILED",
@@ -96,8 +96,7 @@ pub struct InstanceResetFailed {
     pub map: u32,
 }
 
-/// Read `SMSG_RAID_INSTANCE_MESSAGE`: type, map, seconds to reset (reference reads `0x49e1cd`,
-/// `0x49e1d8`, `0x49e1e3`).
+/// Read `SMSG_RAID_INSTANCE_MESSAGE`: type, map, seconds to reset.
 pub(super) fn read_raid_instance_message(r: &mut &[u8]) -> io::Result<RaidInstanceMessage> {
     Ok(RaidInstanceMessage {
         message_type: read_u32_le(r)?,
@@ -106,7 +105,7 @@ pub(super) fn read_raid_instance_message(r: &mut &[u8]) -> io::Result<RaidInstan
     })
 }
 
-/// Read `SMSG_INSTANCE_RESET_FAILED`: `u32 reason`, `u32 mapId` (`0x49e54d`/`0x49e558`).
+/// Read `SMSG_INSTANCE_RESET_FAILED`: `u32 reason`, `u32 mapId`.
 pub(super) fn read_instance_reset_failed(r: &mut &[u8]) -> io::Result<InstanceResetFailed> {
     Ok(InstanceResetFailed {
         reason: read_u32_le(r)?,
@@ -114,21 +113,20 @@ pub(super) fn read_instance_reset_failed(r: &mut &[u8]) -> io::Result<InstanceRe
     })
 }
 
-/// Read a one-`u32` body: `SMSG_INSTANCE_RESET`'s map (`0x49e481`), `SMSG_UPDATE_LAST_INSTANCE`'s
-/// map (`0x49e676`), `SMSG_UPDATE_INSTANCE_OWNERSHIP`'s permanent-bind flag (`0x49e6c6`) and
-/// `SMSG_INSTANCE_SAVE_CREATED`'s flag (`0x4e7e6c`).
+/// Read a one-`u32` body: `SMSG_INSTANCE_RESET`'s map, `SMSG_UPDATE_LAST_INSTANCE`'s map,
+/// `SMSG_UPDATE_INSTANCE_OWNERSHIP`'s permanent-bind flag and `SMSG_INSTANCE_SAVE_CREATED`'s flag.
 pub(super) fn read_u32_body(r: &mut &[u8]) -> io::Result<u32> {
     read_u32_le(r)
 }
 
-/// Body of `CMSG_RESET_INSTANCES`: empty (reference `ResetInstances`, `0x48a6b0`).
+/// Body of `CMSG_RESET_INSTANCES`: empty (reference `ResetInstances`).
 pub fn reset_instances() -> Vec<u8> {
     Vec::new()
 }
 
-/// `SMSG_RAID_GROUP_ONLY` (reference `0x5e48f1`): a nonzero `delay_ms` arms the instance-boot
-/// deadline (`INSTANCE_BOOT_START`); `0` clears it (`INSTANCE_BOOT_STOP`), and then `reason` 1 or
-/// 2 shows `ERR_RAID_GROUP_ONLY` or `ERR_RAID_GROUP_FULL`.
+/// `SMSG_RAID_GROUP_ONLY`: a nonzero `delay_ms` arms the instance-boot deadline
+/// (`INSTANCE_BOOT_START`); `0` clears it (`INSTANCE_BOOT_STOP`), and then `reason` 1 or 2 shows
+/// `ERR_RAID_GROUP_ONLY` or `ERR_RAID_GROUP_FULL`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RaidGroupOnly {
     pub delay_ms: u32,

@@ -1,7 +1,6 @@
-//! The action-bar cursor verbs. The bar is client-authoritative: placing onto an occupied slot
-//! hops the displaced action onto the cursor (`PlaceAction`, `0x4e62e0`). `model.actions` is an
-//! optimistic mirror of the app's table; each change queues one `CMSG_SET_ACTION_BUTTON`, so a
-//! drag-swap is two sends.
+//! The action-bar cursor verbs. The bar is client-authoritative: placing onto an occupied slot hops
+//! the displaced action onto the cursor (`PlaceAction`). `model.actions` is an optimistic mirror of
+//! the app's table; each change queues one `CMSG_SET_ACTION_BUTTON`, so a drag-swap is two sends.
 
 use mlua::Lua;
 
@@ -10,8 +9,8 @@ use crate::script::{ActionSlot, Model};
 
 use super::{queue_cursor_update, CursorAction, CursorPayload};
 
-/// The passive-spell refusal's error, errorId `0x9e`: entry `0xb4c0f0` of the table at `0xb4b498`
-/// (stride `0x14`) names this key (`0x84133c`).
+/// The passive-spell refusal's error, errorId `0x9e`: entry of the table (stride `0x14`) names this
+/// key.
 const PASSIVE_ON_BAR_ERROR: &str = "ERR_PASSIVE_ABILITY";
 
 /// The `CMSG_SET_ACTION_BUTTON` slot word.
@@ -46,11 +45,11 @@ pub(super) fn pickup_action(model: &mut Model, id: u32) -> bool {
 /// slot's action hops onto the cursor with `id` as its source; an item stays in its bag, since a
 /// bar item is a reference, not a move. Returns whether to repaint.
 pub(crate) fn place_action(model: &mut Model, id: u32) -> bool {
-    // The two accept filters (`0x4e62e0`) refuse with a bare return: nothing stored or sent, and
-    // the payload stays held. An item needs an on-use spell or an equip slot (`0x4e6571`), so a
-    // bag is placeable; a passive spell (`Attributes & 0x40`) also raises errorId `0x9e` through
-    // `DisplayError` (`0x4e63ad`, `0x496720`), where the item refusal is mute.
-    // A totem slot takes only a spell of its element, else refuses and keeps it held (`0x5ab24b`).
+    // The two accept filters refuse with a bare return: nothing stored or sent, and the payload
+    // stays held. An item needs an on-use spell or an equip slot, so a bag is placeable; a passive
+    // spell (`Attributes & 0x40`) also raises errorId `0x9e` through the error display, where the
+    // item refusal is mute. A totem slot takes only a spell of its element, else refuses and keeps
+    // it held (`0x5ab24b`).
     if model.cursor.is_some() {
         let spell = match &model.cursor {
             Some(CursorPayload::Spell(s)) => Some(s.spell_id),
@@ -79,9 +78,9 @@ pub(crate) fn place_action(model: &mut Model, id: u32) -> bool {
         CursorPayload::Action(a) => Some((a.kind, a.action, a.texture.clone())),
         CursorPayload::Item(i) => Some((ACTION_KIND_ITEM, i.item_id, i.texture.clone())),
         CursorPayload::Spell(s) => Some((ACTION_KIND_SPELL, s.spell_id, s.texture.clone())),
-        // `PlaceAction` accepts modes 1, 3, 7 and 8 (`0x4e62e0`): a macro, mode 8, packs its id
-        // under the macro tag. Pet actions (4), coins (2), stabled pets (10) and vendor rows (5)
-        // are refused and stay held.
+        // `PlaceAction` accepts modes 1, 3, 7 and 8: a macro, mode 8, packs its id under the macro
+        // tag. Pet actions (4), coins (2), stabled pets (10) and vendor rows (5) are refused and
+        // stay held.
         CursorPayload::Macro(m) => Some((ACTION_KIND_MACRO, m.index, m.texture.clone())),
         // Mode 13, a set, packs its id under the set tag.
         CursorPayload::EquipmentSet(e) => Some((
@@ -380,7 +379,7 @@ mod tests {
         );
         assert!(
             s.take_ui_errors().is_empty(),
-            "the ITEM refusal is MUTE — only the SPELL arm carries a DisplayError (`4e63ad`); a \
+            "the ITEM refusal is MUTE — only the SPELL arm raises an error; a \
              toast here would be ours, not the reference's"
         );
     }

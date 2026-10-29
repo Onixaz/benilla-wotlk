@@ -3,17 +3,17 @@
 //! `?`. This module renders them; [`query`] decides when to ask, and the answers land in
 //! [`QuestGiver`].
 //!
-//! - Attach (`0x6074c0`): a child of the unit's body M2 at attachment 18, or 29
-//!   (`PlayerNameMounted`) when a mount model exists and the body authors it ([`overhead_slot`]).
-//!   With neither, the marker is never parented and so invisible. The reference re-runs the attach
-//!   from the `UNIT_FIELD_MOUNTDISPLAYID` watch (`0x5ffa50`), so a mount moves the slot.
-//! - Scale (`0x607570`): `1/L`, `L = ‖row0‖` of the attach point's world matrix, computed once at
-//!   attach into the marker's base matrix (`marker+0xbc`); not distance-based, no clamp. The
-//!   compose is `marker+0xfc = marker+0xbc × parentAttachMatrix` (`0x71439b`), so `1/L` cancels the
-//!   whole attach basis, model scale included. [`bake_seat_scale`] has the reference's race.
-//! - Animation (`0x6076c0`): the marker's own looping bob, anim 0 at the attach point (WoW z 0 to
-//!   −0.089), anim 190 raised (+0.517 to +0.427) while the unit has a live overhead name
-//!   (`unit+0xc7c`, via `0x6c7950`), clear of the text.
+//! - Attach: a child of the unit's body M2 at attachment 18, or 29 (`PlayerNameMounted`) when a
+//!   mount model exists and the body authors it ([`overhead_slot`]). With neither, the marker is
+//!   never parented and so invisible. The reference re-runs the attach from the
+//!   `UNIT_FIELD_MOUNTDISPLAYID` watch, so a mount moves the slot.
+//! - Scale: `1/L`, `L = ‖row0‖` of the attach point's world matrix, computed once at attach into
+//!   the marker's base matrix (`marker+0xbc`); not distance-based, no clamp. The compose is
+//!   `marker+0xfc = marker+0xbc × parentAttachMatrix`, so `1/L` cancels the whole attach basis,
+//!   model scale included. [`bake_seat_scale`] has the reference's race.
+//! - Animation: the marker's own looping bob, anim 0 at the attach point (WoW z 0 to −0.089), anim
+//!   190 raised (+0.517 to +0.427) while the unit has a live overhead name (`unit+0xc7c`), clear of
+//!   the text.
 //!
 //! Every marker M2 is one bone with a three-key translation bob. A seat entity under the unit's
 //! overhead joint carries the `1/L`. The `!` models (a plain bone) animate through the doodad rail
@@ -44,7 +44,8 @@ use bevy::mesh::MeshTag;
 
 use crate::entities::overhead_slot;
 
-/// The bobs `0x6076c0` arms: low, and raised while the unit shows a name ([`Nameplates::shows`]).
+/// The bobs the reference arms: low, and raised while the unit shows a name
+/// ([`Nameplates::shows`]).
 const ANIM_MARKER_LOW: u16 = 0;
 const ANIM_MARKER_RAISED: u16 = 190;
 
@@ -58,8 +59,8 @@ fn seq_loop(info: &BillboardInfo, anim_id: u16) -> Option<BoneScaleAnim> {
 
 /// The marker M2 per dialog status: 12340 maps the status to a row through `0xa34f5c` and the row
 /// to a file through `0xadaca0` (12-byte rows of handle, scale and path), loading the `.mdx` names
-/// as `.m2`. The low-level statuses 2-4 draw only under the minimap's low-level quest tracking
-/// (`UpdateInteractIcon` reads `IsTrackingTrivialQuests 0x57bf30`); NONE 0 draws nothing.
+/// as `.m2`. The low-level statuses 2-4 draw only under the minimap's low-level quest tracking (the
+/// interact icon's update reads the trivial-quest tracking test, `0x57bf30`); NONE 0 draws nothing.
 fn marker_model(status: u32, trivial: bool) -> Option<&'static str> {
     use benilla_protocol::messages::dialog_status::*;
     match status {
@@ -76,7 +77,7 @@ fn marker_model(status: u32, trivial: bool) -> Option<&'static str> {
     }
 }
 
-/// One live marker's root and model; a status change swaps the whole instance (`0x607480`).
+/// One live marker's root and model; a status change swaps the whole instance.
 struct MarkerInst {
     root: Entity,
     path: &'static str,
@@ -123,7 +124,7 @@ fn despawn_marker(commands: &mut Commands, roots: &Query<&QuestMarkerRoot>, root
 
 /// Spawns, swaps and despawns marker roots to match two sources for the one overhead slot: the
 /// questgiver status, and the flight master's green `!` while its node is unknown
-/// ([`crate::ui_taxi::FlightMasterStatus`], `0x607480` with file index 4).
+/// ([`crate::ui_taxi::FlightMasterStatus`]).
 ///
 /// Deviation: a quest marker outranks the green, where the reference's two handlers race
 /// last-write-wins on the slot, because a fixed order is deterministic; the two meet only on a
@@ -148,7 +149,7 @@ fn sync_markers(
     let trivial = trivial.is_some_and(|t| t.0);
     // Rebuild the whole instance, never part of it (that duplicates the root's cards), when the
     // seat is gone with a rebuilt visual or the slot moved on a mount or dismount, which keeps the
-    // seat. The reference re-runs the attach from the mount watch (`0x5ffa50` calls `0x6074c0`).
+    // seat. The reference re-runs the attach from the mount watch.
     let rebuild: Vec<u64> =
         live.iter()
             .filter(|(&npc, inst)| {
@@ -267,7 +268,7 @@ fn build_markers(
         else {
             continue;
         };
-        // This pass's slot, `0x6074c0`'s pick: 29 while mounted if the body authors it, else 18.
+        // This pass's slot, the reference's pick: 29 while mounted if the body authors it, else 18.
         // Neither: never parented, so invisible, as in the reference.
         let Some((slot, joint, offset)) =
             overhead_slot(anchor, mounts.contains(unit)).and_then(|slot| {
@@ -395,14 +396,13 @@ fn build_markers(
     }
 }
 
-/// Swaps each built marker between the low (anim 0) and raised (anim 190) bob, `0x6076c0`'s
+/// Swaps each built marker between the low (anim 0) and raised (anim 190) bob, the reference's
 /// selector: raised while the unit's name object (`unit+0xc7c`) is live. The reference arms at
-/// attach and re-arms on the frame the name's shown state flips (an edge in `0x6c6e90`), never
-/// per frame.
+/// attach and re-arms on the frame the name's shown state flips, never per frame.
 ///
-/// Deviation: a live V-plate ([`VPlates`](crate::vplates::VPlates)) raises the marker too,
-/// because the reference's marker sits low behind the plate: it arms anim 0 under a plate, whose
-/// name suppression nulls the `desc+0x8` handle `0x6c7950` tests.
+/// Deviation: a live V-plate ([`VPlates`](crate::vplates::VPlates)) raises the marker too, because
+/// the reference's marker sits low behind the plate: it arms anim 0 under a plate, whose name
+/// suppression nulls the `desc+0x8` handle the name test reads.
 #[allow(clippy::type_complexity)] // a Bevy system: each param is one resource, the app's convention
 fn pose_markers(
     plates: Res<Nameplates>,
@@ -464,14 +464,14 @@ fn pose_markers(
     }
 }
 
-/// Bakes each new seat's `1/L` once, as `0x607570` does at attach, skipped at exactly 1.0 (the
+/// Bakes each new seat's `1/L` once, as the reference does at attach, skipped at exactly 1.0 (the
 /// reference's identity guard).
 ///
 /// Deviation: we wait for propagation to settle the joint matrix, so the marker is always constant
 /// size. The reference reads the parent's `model+0xbc` as it stands at attach, and a parent still
-/// at its constructor identity (a body still streaming, or a mount model pending, `0x6075ac`)
-/// leaves the marker unscaled and proportional to the NPC for good. We keep the settled read
-/// because it is deterministic and is what the reference shows over a placed NPC.
+/// at its constructor identity (a body still streaming, or a mount model pending) leaves the marker
+/// unscaled and proportional to the NPC for good. We keep the settled read because it is
+/// deterministic and is what the reference shows over a placed NPC.
 fn bake_seat_scale(
     mut seats: Query<(&mut MarkerSeat, &ChildOf, &mut Transform)>,
     joints: Query<&GlobalTransform, Without<MarkerSeat>>,
@@ -558,10 +558,10 @@ mod tests {
         }
     }
 
-    /// A mount keeps the rider's visual and so the seat, so only this comparison sees the slot
-    /// move between 18 and 29.
-    /// `s_questStatusIcons` (`0xa34f5c`) maps the low-level statuses to rows 1-3 of the file
-    /// table (`0xadaca0`), shown only while the low-level quest type is tracked.
+    /// A mount keeps the rider's visual and so the seat, so only this comparison sees the slot move
+    /// between 18 and 29. The quest status icon table (`0xa34f5c`) maps the low-level statuses to
+    /// rows 1-3 of the file table (`0xadaca0`), shown only while the low-level quest type is
+    /// tracked.
     #[test]
     fn low_level_markers_show_only_under_trivial_quest_tracking() {
         for status in 2..=4 {
@@ -609,7 +609,7 @@ mod tests {
         assert!(!seat_is_stale(&unbuilt, true, Some(29)));
     }
 
-    /// `0x607570`: `1/L` baked once, never re-baked on a later rescale, and skipped at 1.0.
+    /// `1/L` baked once, never re-baked on a later rescale, and skipped at 1.0.
     #[test]
     fn seat_counter_scale_bakes_once_from_the_attach_basis() {
         let mut app = App::new();

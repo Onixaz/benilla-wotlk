@@ -35,7 +35,7 @@ pub struct RigRider {
 /// propagation and the billboard joint pass, before the publish. A missing host, pose or bone
 /// leaves the rows at their last frame; [`RigPalettes::write_rider`] is idempotent, so a standing
 /// unit's riders cost a compare. A rider with its own pose, the ranged weapon the reference
-/// re-arms on `[CGUnit+0xd24]`'s instance (BowPull 160 at `$BWP`, BowRelease 161 or Stand 0 at
+/// re-arms on the unit's `[+0xd24]` instance (BowPull 160 at `$BWP`, BowRelease 161 or Stand 0 at
 /// `$BWR`), writes row `b` as `F × own.model[b] × ibp[b]`, every frame.
 pub(crate) fn write_rig_riders(
     riders: Query<(Entity, &RigRider)>,

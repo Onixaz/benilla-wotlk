@@ -1,7 +1,7 @@
 //! `LiquidType.dbc` and `LiquidMaterial.dbc`: what a 3.3.5a liquid is, by the `LiquidType` id an
 //! MH2O instance, an MCLQ block or a WMO group stores. The id picks the vertex format through its
-//! material (`0x7c5690`), the depth swatch (`0x79e3c0`), the ambient loop (`0x4d2390`) and the
-//! class the kind is drawn from.
+//! material (`0x7c5690`), the depth swatch, the ambient loop (`0x4d2390`) and the class the kind is
+//! drawn from.
 
 use std::collections::HashMap;
 
@@ -24,7 +24,7 @@ const SOUND_BANK: usize = 3;
 const SOUND_ID: usize = 4;
 const MATERIAL_ID: usize = 14;
 const TEXTURES: std::ops::RangeInclusive<usize> = 15..=20;
-/// `Int[0]`: which depth table the swatch V reads (`0x79e3c0`'s `s_depthCoordTables`).
+/// `Int[0]`: which depth table the swatch V reads (the reference's depth-coordinate tables).
 const DEPTH_TABLE: usize = 41;
 
 /// `LiquidType.Flags` bit: the loop is not played while the player is inside (`0x4d2390`).
@@ -61,7 +61,7 @@ impl VertexFormat {
 }
 
 /// The swatch V a depth byte maps to: the river ramp `clamp((d/9)/4.6667)` or the ocean ramp
-/// `d/255`, the two tables `0x79e3c0` builds.
+/// `d/255`, the two tables builds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DepthRamp {
     River,
@@ -94,7 +94,7 @@ pub struct LiquidTypeRow {
     pub sound_id: u32,
     /// The material's vertex format; `None` where the material row is missing.
     pub vertex_format: Option<VertexFormat>,
-    /// The depth table index; `None` where the material takes no depth (`0x79e3c0`'s caller
+    /// The depth table index; `None` where the material takes no depth (the reference's caller
     /// returns no table unless the LVF is 0 or 2).
     pub depth_ramp: Option<DepthRamp>,
 }
@@ -211,7 +211,7 @@ pub fn load_liquid_types(chain: &Chain) -> Result<LiquidTypes> {
 mod tests {
     use super::*;
 
-    /// The ramps are `0x79e3c0`'s tables: the river saturates near byte 42, the ocean at 255.
+    /// The ramps are the reference's tables: the river saturates near byte 42, the ocean at 255.
     #[test]
     fn depth_ramps_are_the_two_reference_tables() {
         assert_eq!(DepthRamp::River.v(0), 0.0);

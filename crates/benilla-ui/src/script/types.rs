@@ -65,7 +65,7 @@ pub enum QuadContent {
     Minimap {
         /// The outdoor zoom index, `0..MINIMAP_ZOOM_LEVELS`, 0 the widest.
         zoom: u8,
-        /// The indoor zoom index (`0x86f69c`), sent too so the renderer picks by its own test.
+        /// The indoor zoom index, sent too so the renderer picks by its own test.
         inside_zoom: u8,
         /// The player texture's `[width, height]`, scaled like the rect.
         player_texture: [f32; 2],
@@ -84,24 +84,24 @@ pub enum QuadContent {
         facing: f32,
         /// `SetModelScale`'s factor (1 default).
         model_scale: f32,
-        /// `SetPosition`'s offset, in the ortho leg's layout units (`0x76d1a0`: the root is
+        /// `SetPosition`'s offset, in the ortho leg's layout units (the root is
         /// `T(pos · layoutScale) · R(facing) · S(…)`).
         position: (f32, f32, f32),
         /// The frame's own alpha, which the model draws at: `Frame:SetAlpha` pushes it into the
-        /// instance without the parent chain (`0x76d120`).
+        /// instance without the parent chain.
         own_alpha: f32,
         /// `ReplaceIconTexture`'s path, the type-14 texture override.
         icon: Option<String>,
         /// The camera, a raw index into the file's camera table: `None` renders orthographic, the
         /// model laid flat over the rect, and `Some(n)` in perspective through camera `n`.
         camera: Option<u32>,
-        /// The embedded `CGLight`, off on every shipped pane; a lit batch under it draws black, as
+        /// The embedded light, off on every shipped pane; a lit batch under it draws black, as
         /// in the reference.
         light: crate::widget::ModelLight,
         /// The fog the scene draws with ([`crate::widget::ModelState::armed_fog`]); a material
         /// with the UNFOGGED bit ignores it.
         fog: Option<crate::widget::ModelFog>,
-        /// A `ModelFFX` (`0x46fa00`): the glue screens' scene, which the app's glue booth draws.
+        /// A `ModelFFX`: the glue screens' scene, which the app's glue booth draws.
         ffx: bool,
     },
     /// A `Texture` region: a BLP path, a solid or vertex colour, or both (a tinted texture).
@@ -118,7 +118,7 @@ pub enum QuadContent {
         /// `path` and `color`.
         portrait_unit: Option<String>,
         /// Rotation about the centre, radians counterclockwise; always 0, since 1.12 registers
-        /// `SetRotation` on PlayerModel alone (`0x84f1fc`).
+        /// `SetRotation` on PlayerModel alone.
         rotation: f32,
         /// `SetDesaturated`: the texel draws as its luminance, then is tinted by `color`, since
         /// `SetItemButtonDesaturated` passes a dim tint with the flag.
@@ -126,8 +126,7 @@ pub enum QuadContent {
     },
     /// A `ColorSelect`'s `<ColorWheelTexture>` disc, generated: the pixel at normalised offset
     /// `(nx, ny)` from the centre is `HSV(atan2(ny, nx)·180/π + 180, min(|n|, 1), 1)`, inverting
-    /// the pick law (`0x78bd80`); the fill draws every texel at `V = 1` (`0x78b68b`), so no colour
-    /// travels.
+    /// the pick law; the fill draws every texel at `V = 1`, so no colour travels.
     ColorWheel,
     /// A `ColorSelect`'s `<ColorValueTexture>` strip: the hue and saturation, black at the
     /// bottom, the inverse of its pick law `V = clamp((y − bottom)/(top − bottom), 0, 1)`.
@@ -195,9 +194,9 @@ pub enum JustifyV {
     Bottom,
 }
 
-/// A Texture's blend mode, the client's `alphaMode` enum (`0x811aa8`), set by XML `alphaMode=`
-/// or `SetBlendMode`; BLEND is the constructor's (`0x76fc64 mov [esi+0xd0],2`). The renderer
-/// acts only on ADD: the others draw as straight alpha, their reference blending not built.
+/// A Texture's blend mode, the client's `alphaMode` enum, set by XML `alphaMode=` or
+/// `SetBlendMode`; BLEND is the constructor's. The renderer acts only on ADD: the others draw as
+/// straight alpha, their reference blending not built.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum BlendMode {
     /// `DISABLE` (0): `GL_ONE, GL_ZERO`, alpha reference 0.
@@ -226,7 +225,7 @@ impl BlendMode {
         }
     }
 
-    /// The name `GetBlendMode()` answers (the name column of `0x811aa8`).
+    /// The name `GetBlendMode()` answers.
     pub const fn name(self) -> &'static str {
         match self {
             BlendMode::Disable => "DISABLE",
@@ -258,9 +257,9 @@ impl Outline {
         }
     }
 
-    /// Parse a Lua `SetFont` flags string, shared by every `SetFont` (`0x79f210`) and matched by
-    /// substring against `{0x1 OUTLINE, 0x4 THICKOUTLINE, 0x2 MONOCHROME}` (`0x811b10`): THICK
-    /// first, since `THICKOUTLINE` contains `OUTLINE`. MONOCHROME is ignored, its mode not built.
+    /// Parse a Lua `SetFont` flags string, shared by every `SetFont` and matched by substring
+    /// against `{0x1 OUTLINE, 0x4 THICKOUTLINE, 0x2 MONOCHROME}`: THICK first, since `THICKOUTLINE`
+    /// contains `OUTLINE`. MONOCHROME is ignored, its mode not built.
     pub fn flags(s: &str) -> Outline {
         let s = s.to_ascii_uppercase();
         if s.contains("THICK") {
@@ -325,8 +324,8 @@ pub struct ExtractedQuad {
     pub content: QuadContent,
     /// The ScrollFrame clip of a scroll child and its descendants, nested ones intersecting.
     pub clip: Option<Rect>,
-    /// The owner's `effective_scale` (`0x76ac90`), already in `rect`; a `Text` quad's font and
-    /// shadow offset must be scaled by it too.
+    /// The owner's `effective_scale`, already in `rect`; a `Text` quad's font and shadow offset
+    /// must be scaled by it too.
     pub scale: f32,
 }
 
@@ -356,24 +355,24 @@ pub(crate) struct RegionData {
     /// `Show`/`Hide` and XML `hidden=`: a hidden region emits no quad, whatever its owner's state.
     pub(crate) hidden: bool,
     /// `SetAlpha`, XML `alpha=`; `None` is 1. Drawn times the owner frame's alpha, one hop only:
-    /// frame `SetAlpha` (`0x76a690`) cascades to child frames and only invalidates regions.
+    /// frame `SetAlpha` cascades to child frames and only invalidates regions.
     ///
     /// Deviation: kept apart from [`Self::vertex_color`], which the reference's `Texture:SetAlpha`
-    /// (`0x79b580`) rewrites, because the drawn product differs only on a region that sets both,
-    /// which no stock code does, and a FontString's `SetAlpha` then keeps its font colour.
+    /// rewrites, because the drawn product differs only on a region that sets both, which no stock
+    /// code does, and a FontString's `SetAlpha` then keeps its font colour.
     pub(crate) alpha: Option<f32>,
     /// A texture path (`SetTexture("Interface\\...")`).
     pub(crate) texture: Option<String>,
     /// `SetTexture(r, g, b, a)` or an XML `<Color>` with no `file=`, sharing `+0xcc` with
-    /// [`Self::texture`]: setting one clears the other. The reference makes an 8×8 texture of it
-    /// (`0x770360` → `0x44a9c0` → `0x5c5350`), so its alpha multiplies with the vertex colour's.
+    /// [`Self::texture`]: setting one clears the other. The reference makes an 8×8 texture of it,
+    /// so its alpha multiplies with the vertex colour's.
     pub(crate) fill: Option<[f32; 4]>,
     /// `SetGradientAlpha`/`SetGradient`, stored whole and drawn as its midpoint: the renderer has
     /// one tint per quad, so the reference's gradient is not built.
     pub(crate) gradient: Option<Gradient>,
-    /// `SetVertexColor` (`0x79abd0` → `0x77f750`, `+0xb8`), `SetStatusBarColor` or a text colour,
-    /// drawn as `texel × colour` per channel, alpha included: a `<Color 1,1,1,0.2>` tinted
-    /// `(0, 0, 0.75, 0.5)` draws at alpha 0.1, as `SkillFrame`'s row trough does.
+    /// `SetVertexColor` (`+0xb8`), `SetStatusBarColor` or a text colour, drawn as `texel × colour`
+    /// per channel, alpha included: a `<Color 1,1,1,0.2>` tinted `(0, 0, 0.75, 0.5)` draws at alpha
+    /// 0.1, as `SkillFrame`'s row trough does.
     pub(crate) vertex_color: Option<[f32; 4]>,
     /// A portrait (`SetPortraitToTexture`, `SetPortraitTexture`), masked to the inscribed circle.
     pub(crate) circular: bool,
@@ -392,23 +391,22 @@ pub(crate) struct RegionData {
     pub(crate) size: Option<(f32, f32)>,
     /// `SetPoint`, XML `<Anchors>`, relative to the owner frame unless naming a frame or sibling
     /// region. An edge they leave unset comes from the region's own size, measured text or texel
-    /// extent, never the owner's rect; one still unset leaves the region unresolved (`0x767a20`).
-    /// Empty is a Lua region nobody anchored, which never draws: every other has an authored or
-    /// creation-time anchor ([`super::region::implicit_creation_anchor`]).
+    /// extent, never the owner's rect; one still unset leaves the region unresolved. Empty is a Lua
+    /// region nobody anchored, which never draws: every other has an authored or creation-time
+    /// anchor ([`super::region::implicit_creation_anchor`]).
     pub(crate) anchors: Vec<Anchor>,
-    /// `SetDesaturated` (`0x79c1e0`): the renderer greys the texel, so the binding reports support.
+    /// `SetDesaturated`: the renderer greys the texel, so the binding reports support.
     pub(crate) desaturated: bool,
-    /// `SetNonSpaceWrap`/`CanNonSpaceWrap` (`0x79e9f0`/`0x79ead0`), `None` on. Stored, not applied:
-    /// the reference's flag `0x40` drives a mid-word wrap and the ellipsis fit count (`0x771ec0`).
+    /// `SetNonSpaceWrap`/`CanNonSpaceWrap`, `None` on. Stored, not applied: the reference's flag
+    /// `0x40` drives a mid-word wrap and the ellipsis fit count.
     pub(crate) non_space_wrap: Option<bool>,
-    /// The client's dword at `CSimpleFontString+0x120`: bits 0-2 horizontal, 3-5 vertical, `0x212`
+    /// The client's dword at the font string's `+0x120`: bits 0-2 horizontal, 3-5 vertical, `0x212`
     /// from the constructor. A cleared axis answers `"UNKNOWN"` to the getter and draws centred.
     pub(crate) justify: crate::justify::Justify,
     /// The `<TexCoords>`/`SetTexCoord` mapping; `None` is the full texture.
     pub(crate) tex_coords: Option<TexCoords>,
-    /// `SetTexCoordModifiesRect`, the reference's `+0x124` (written only at `0x79c113`, in
-    /// `0x79c080`). Stored, not applied: there a set flag makes `SetTexCoord` re-derive the rect
-    /// from the UV quad (`0x770462`); no stock or corpus code sets it.
+    /// `SetTexCoordModifiesRect`, the reference's `+0x124`. Stored, not applied: there a set flag
+    /// makes `SetTexCoord` re-derive the rect from the UV quad; no stock or corpus code sets it.
     pub(crate) tex_coord_modifies_rect: bool,
     /// Rotation about the centre, radians counterclockwise; always 0: 1.12 has no Texture setter.
     pub(crate) rotation: f32,
@@ -422,8 +420,8 @@ pub(crate) struct RegionData {
     pub(crate) font_path: Option<String>,
     /// Resolved font height in logical px; `None` is the renderer's default.
     pub(crate) font_height: Option<f32>,
-    /// A `SetTextHeight` override: a FontString is one-to-one by default (bit `0x200`, capped at
-    /// 32 px), and only `SetTextHeight 0x771600` clears that, drawing the size uncapped.
+    /// A `SetTextHeight` override: a FontString is one-to-one by default (bit `0x200`, capped at 32
+    /// px), and only `SetTextHeight` clears that, drawing the size uncapped.
     pub(crate) text_height: Option<f32>,
     /// Resolved glyph outline (`SetFont` flags or the font object).
     pub(crate) outline: Outline,
@@ -465,9 +463,9 @@ pub(crate) struct MeasuredText {
     /// The laid-out extent, wrapped in any declared width, which auto-size and `GetWidth` read.
     pub(crate) w: f32,
     pub(crate) h: f32,
-    /// The unwrapped width `GetStringWidth` answers, the only one the reference keeps
-    /// (`0x79e510` → `0x772890`, cached at `+0xfc`); answering `w` would feed back through
-    /// `PanelTemplates_TabResize`, which sets the string's width from it.
+    /// The unwrapped width `GetStringWidth` answers, the only one the reference keeps (cached at
+    /// `+0xfc`); answering `w` would feed back through `PanelTemplates_TabResize`, which sets the
+    /// string's width from it.
     pub(crate) natural_w: f32,
     /// The [`RegionData::measure_key`] it was measured under; a mismatch re-measures.
     pub(crate) key: u64,
@@ -510,8 +508,7 @@ impl RegionData {
         self.text_height.map(f32::to_bits).hash(&mut hasher);
         let wrap_width = self.size.map(|s| s.0).filter(|w| *w > 0.0);
         wrap_width.map(f32::to_bits).hash(&mut hasher);
-        // The outline changes the measure: a THICK one steps each glyph 1 px further
-        // (`GlyphStepBase 0x5ca2b0`).
+        // The outline changes the measure: a THICK one steps each glyph 1 px further.
         (self.outline as u8).hash(&mut hasher);
         self.font_spacing.to_bits().hash(&mut hasher);
         scale.to_bits().hash(&mut hasher);
@@ -520,18 +517,18 @@ impl RegionData {
 }
 
 /// The focused EditBox's advance-table request, answered via
-/// [`UiScript::set_editbox_advances`](super::UiScript::set_editbox_advances) with the width at
-/// each byte of `text` (len+1 entries, `[0] = 0`, a continuation byte repeating its lead's), for
-/// the engine's click-to-caret and selection (the reference's click handler is `0x77b800`).
+/// [`UiScript::set_editbox_advances`](super::UiScript::set_editbox_advances) with the width at each
+/// byte of `text` (len+1 entries, `[0] = 0`, a continuation byte repeating its lead's), for the
+/// engine's click-to-caret and selection.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditBoxAdvanceRequest {
     /// Opaque frame id; pass it back verbatim.
     pub id: u32,
     pub font: Option<String>,
     pub height: Option<f32>,
-    /// A THICK outline adds 1 px to every glyph step (`GlyphStepBase 0x5ca2b0`).
+    /// A THICK outline adds 1 px to every glyph step.
     pub outline: Outline,
-    /// The font's line gap: a row steps `height + spacing` (`UpdateVisibleCursor 0x964a90`).
+    /// The font's line gap: a row steps `height + spacing` (`0x964a90`).
     pub spacing: f32,
     /// The box's `effective_scale`. The host measures at `height × scale × seam` but divides by
     /// the seam alone, so advances come back in screen UI units, like the mouse feed and the
@@ -568,7 +565,7 @@ pub struct EditBoxTextUi {
     pub caret_on: bool,
     /// Per-row `(row, x0, x1)` px spans from each row's origin; single-line has at most one.
     pub selection: Vec<(usize, f32, f32)>,
-    /// `SetHighlightColor`; the constructor's default is opaque `0x606060` grey.
+    /// `SetHighlightColor`; the constructor's default is opaque grey.
     pub highlight_color: [f32; 4],
 }
 
@@ -580,11 +577,11 @@ pub struct MeasureRequest {
     pub id: u32,
     pub font: Option<String>,
     pub height: Option<f32>,
-    /// The `SetTextHeight` override, measured uncapped at the drawn size (`0x772890`).
+    /// The `SetTextHeight` override, measured uncapped at the drawn size.
     pub text_height: Option<f32>,
     /// Set when the region's width is pinned (explicit `<Size x>`), else single-line.
     pub wrap_width: Option<f32>,
-    /// A THICK outline adds 1 px to every glyph step (`GlyphStepBase 0x5ca2b0`).
+    /// A THICK outline adds 1 px to every glyph step.
     pub outline: Outline,
     /// The line gap in logical px (`SetSpacing`), added between wrapped lines.
     pub spacing: f32,

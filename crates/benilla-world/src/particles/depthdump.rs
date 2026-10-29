@@ -1,8 +1,8 @@
 //! `$WOW_PARTICLE_DEPTHDUMP=<at>[,<frames>]`: from `at` seconds, for `frames` frames (default 8),
-//! the depth each world-lane particle quad brings to the compare: centre, half-extent, view z,
-//! NDC depth and its corners' span (the reference gives all four the centre's, `0x7b2a50`), and
-//! its rect in physical pixels. Pair it with `WOW_DEPTH` inside that rect (MSAA off): reverse-Z,
-//! the fragment survives iff `dquad ≥ d_buffer`.
+//! the depth each world-lane particle quad brings to the compare: centre, half-extent, view z, NDC
+//! depth and its corners' span (the reference gives all four the centre's), and its rect in
+//! physical pixels. Pair it with `WOW_DEPTH` inside that rect (MSAA off): reverse-Z, the fragment
+//! survives iff `dquad ≥ d_buffer`.
 
 use bevy::camera::Projection;
 use bevy::prelude::*;

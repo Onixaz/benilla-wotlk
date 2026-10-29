@@ -1,5 +1,5 @@
 //! The emission shape kernel and its RNG: one birth's position and direction, as the reference's
-//! three spawn generators make them (`0x7b8890` plane, `0x7b8d70` sphere, `0x7b9500` spline).
+//! three spawn generators make them.
 
 use benilla_formats::ParticleEmitterDef;
 use bevy::prelude::*;
@@ -19,18 +19,18 @@ pub(crate) fn rand01(state: &mut u32) -> f32 {
     (next_u32(state) >> 8) as f32 / (1u32 << 24) as f32
 }
 
-/// Uniform in (−1, 1): the reference's `S11` draw (`0x7b88dd`), same distribution, not stream.
+/// Uniform in (−1, 1): the reference's `S11` draw, same distribution, not stream.
 pub(super) fn rand_s11(state: &mut u32) -> f32 {
     rand01(state) * 2.0 - 1.0
 }
 
 /// One birth's position and unit direction in the emitter's local WoW frame (Z up, origin at the
 /// record's `position`), before the caller's speed roll and space mode:
-/// - plane (`0x7b8890`): uniform in the ±½·area rectangle, x from `areaLength` (`rt+0x290`) and
-///   y from `areaWidth` (`rt+0x294`), in a cone about +Z at θ = S11·verticalRange and
-///   φ = S11·horizontalRange;
-/// - sphere (`0x7b8d70`): radius uniform in [areaLength, areaWidth], on the shell at those two
-///   angles as latitude and longitude, direction radial (`sphere_up`: +Z);
+/// - plane: uniform in the ±½·area rectangle, x from `areaLength` (`rt+0x290`) and y from
+///   `areaWidth` (`rt+0x294`), in a cone about +Z at θ = S11·verticalRange and φ =
+///   S11·horizontalRange;
+/// - sphere: radius uniform in [areaLength, areaWidth], on the shell at those two angles as
+///   latitude and longitude, direction radial (`sphere_up`: +Z);
 /// - any shape with `zSource ≠ 0`: direction radial from the pivot `(0, 0, zSource)`.
 pub(super) fn emit_local(
     def: &ParticleEmitterDef,
@@ -39,13 +39,13 @@ pub(super) fn emit_local(
 ) -> (Vec3, Vec3) {
     let origin = Vec3::from(def.position);
     // The emitter frame's R(+Z, 90°), applied at every return, spline included: the reference
-    // prepends it per emitter, whatever the shape (`0x71907f`).
+    // prepends it per emitter, whatever the shape.
     let rot90 = |v: Vec3| Vec3::new(-v.y, v.x, v.z);
-    // Spline (`0x7b9500`): born on the authored Bézier chain at arc fraction t in [tMin, tMax]
-    // (the area fields). Direction: radial from the zSource pivot when authored; else +Z turned
-    // about the tangent by S11·spin (`vertical_range`; the reference's −ψ is the same
-    // distribution) and jittered along it by U01·scatter (`horizontal_range`); else zero. No
-    // parsed chain falls through to the plane kernel.
+    // Spline: born on the authored Bézier chain at arc fraction t in [tMin, tMax] (the area
+    // fields). Direction: radial from the zSource pivot when authored; else +Z turned about the
+    // tangent by S11·spin (`vertical_range`; the reference's −ψ is the same distribution) and
+    // jittered along it by U01·scatter (`horizontal_range`); else zero. No parsed chain falls
+    // through to the plane kernel.
     if let (benilla_formats::ParticleShape::Spline, Some(spline)) = (def.shape, &def.spline) {
         let (t0, t1) = (
             now.area_length.clamp(0.0, 1.0),
@@ -69,7 +69,7 @@ pub(super) fn emit_local(
         return (origin + rot90(pos - origin), rot90(dir));
     }
     // A sphere's one lat/lon unit vector is both the shell point and the radial direction (the
-    // reference reuses the sincos pair, `0x7b8fba`), so a zero-radius sphere still sprays.
+    // reference reuses the sincos pair), so a zero-radius sphere still sprays.
     let (local, shell) = if def.shape == benilla_formats::ParticleShape::Sphere {
         let r = now.area_length + rand01(rng) * (now.area_width - now.area_length).max(0.0);
         let lat = rand_s11(rng) * now.vertical_range;
@@ -106,8 +106,8 @@ pub(super) fn emit_local(
         Vec3::new(st * cp, st * sp, ct)
     };
     // The reference prepends a fixed +90° about local +Z to every M2 particle emitter's matrix
-    // (`0x719114`..`0x719142`, into `rt+0x1fc`), on the kernel-relative vectors only, not the
-    // record position; applied here at emission, every consumer inherits it.
+    // (into `rt+0x1fc`), on the kernel-relative vectors only, not the record position; applied here
+    // at emission, every consumer inherits it.
     (origin + rot90(local), rot90(dir))
 }
 
@@ -124,8 +124,8 @@ pub(crate) mod tests {
         crate::testing::particle_def(shape)
     }
 
-    /// The cone is symmetric (`0x7b8890`), and after the R(+Z, 90°) frame width lies along x and
-    /// length along y, pinned on an anisotropic 2 × 4 area (a square one passes either way).
+    /// The cone is symmetric, and after the R(+Z, 90°) frame width lies along x and length along y,
+    /// pinned on an anisotropic 2 × 4 area (a square one passes either way).
     #[test]
     fn plane_kernel_rect_bounds_and_symmetric_cone() {
         let d = def(ParticleShape::Plane);
@@ -183,7 +183,7 @@ pub(crate) mod tests {
         }
     }
 
-    /// The direction is the shell unit vector (`0x7b8fba`), not the zero offset normalized.
+    /// The direction is the shell unit vector, not the zero offset normalized.
     #[test]
     fn zero_radius_sphere_still_disperses() {
         let d = def(ParticleShape::Sphere);
@@ -213,7 +213,7 @@ pub(crate) mod tests {
         );
     }
 
-    /// `0x7b9500`: no spin, no velocity; a spin range fans +Z about the tangent, scatter along it.
+    /// No spin, no velocity; a spin range fans +Z about the tangent, scatter along it.
     #[test]
     fn spline_kernel_births_on_the_chain() {
         let x = |v: f32| [v, 0.0, 0.0];

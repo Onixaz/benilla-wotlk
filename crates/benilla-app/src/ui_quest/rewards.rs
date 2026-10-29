@@ -59,8 +59,8 @@ impl RewardInputs<'_, '_> {
             || self.auras.iter().any(|a| a.is_changed())
     }
 
-    /// A faction's raw standing, as `CGReputationInfo::GetFactionStanding` (`0x5d05b0`) reads it:
-    /// the wire slot plus the race/class base, 0 without a slot.
+    /// A faction's raw standing, as the reference's reputation lookup (`0x5d05b0`) reads it: the
+    /// wire slot plus the race/class base, 0 without a slot.
     fn standing(&self, store: &ObjectFields, faction: u32) -> i32 {
         let Some(catalog) = self.factions.as_ref().map(|f| f.catalog()) else {
             return 0;

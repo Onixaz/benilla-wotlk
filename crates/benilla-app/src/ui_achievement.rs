@@ -1,8 +1,8 @@
 //! The achievement feed: the three DBC tables, pushed once per VM, and the packets of 3.3.5a's
-//! achievement engine (`CGAchievementInfo`, handlers `0x5b32f0`, `0x5b3020`, `0x5b3160`,
-//! `0x5b34a0`, `0x5b36f0`, `0x5b3610`). The app keeps the book a fresh VM is seeded with and hands
-//! each packet on to the live VM, which applies it and fires its events. The book empties when
-//! the world session ends, as `ShutdownGame` clears every list (`0x5b4f00`).
+//! achievement engine (handlers `0x5b32f0`, `0x5b3020`, `0x5b3160`, `0x5b34a0`, `0x5b36f0`,
+//! `0x5b3610`). The app keeps the book a fresh VM is seeded with and hands each packet on to the
+//! live VM, which applies it and fires its events. The book empties when the world session ends, as
+//! the game shutdown clears every list (`0x5b4f00`).
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;

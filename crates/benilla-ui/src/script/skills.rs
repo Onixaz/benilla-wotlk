@@ -1,16 +1,16 @@
 //! The skills-pane bindings behind the stock `SkillFrame`. The app pushes a flat snapshot of known
 //! skill lines, resolved from `SkillLine.dbc` and `SkillLineCategory.dbc`, and the engine groups,
-//! sorts and folds it as the client's list build (`0x4d2cb0`, comparator `0x4d3070`) does: one
-//! header per category, by `category_order` (category id breaks a tie), and within a category the
-//! untrained lines (rank 0) after the trained ones, each by name. A push re-expands every group.
-//! Every Lua index is 1-based into the visible rows, headers plus the entries of expanded groups;
-//! the selection is held by skill id, so it survives a re-push, and selecting a header clears it.
-//! Which lines reach the engine at all is the app's half (`feed_skills`).
+//! sorts and folds it as the client's list build does: one header per category, by `category_order`
+//! (category id breaks a tie), and within a category the untrained lines (rank 0) after the trained
+//! ones, each by name. A push re-expands every group. Every Lua index is 1-based into the visible
+//! rows, headers plus the entries of expanded groups; the selection is held by skill id, so it
+//! survives a re-push, and selecting a header clears it. Which lines reach the engine at all is the
+//! app's half (`feed_skills`).
 //!
 //! `numTempPoints` answers 0: the model carries no temp points, and on 1.12's data nothing a player
-//! holds moves the reference's field (`+0x10`), which only `AddSkillUp` increments (`0x4d345b`).
-//! `stepCost` and `rankCost` are always nil, by the data: `SkillLine.skillCostsID` is 0 in every
-//! row and no line a player holds carries the step-cost flags.
+//! holds moves the reference's field (`+0x10`), which only `AddSkillUp` increments. `stepCost` and
+//! `rankCost` are always nil, by the data: `SkillLine.skillCostsID` is 0 in every row and no line a
+//! player holds carries the step-cost flags.
 
 use std::collections::HashMap;
 
@@ -30,19 +30,18 @@ pub struct SkillEntry {
     /// The raw max rank off the descriptor; [`Self::mono`] overrides it at the API return.
     pub max: u32,
     /// `SkillRaceClassInfo.flags & 0x400` (`SKILL_FLAG_MONO_VALUE`): a single-rank line, whose
-    /// `skillMaxRank` the client reports as 1 whatever the descriptor says (`0x4d3610`), so
-    /// vmangos's 300/300 Beast Mastery reads as a proficiency.
+    /// `skillMaxRank` the client reports as 1 whatever the descriptor says, so vmangos's 300/300
+    /// Beast Mastery reads as a proficiency.
     pub mono: bool,
     /// The temporary bonus, possibly negative: `skillModifier`, a signed read of the descriptor's
     /// temp half alone (`+0x850`).
     pub temp_bonus: i32,
     /// The permanent bonus (`+0x852`), possibly negative, folded into both ranks when they are
-    /// nonzero (`0x4d380c`/`0x4d385d`).
+    /// nonzero.
     pub perm_bonus: i32,
-    /// `SkillRaceClassInfo.reqLevel`, `GetSkillLineInfo`'s 11th return (`0x4d39ef`).
+    /// `SkillRaceClassInfo.reqLevel`, `GetSkillLineInfo`'s 11th return.
     pub min_level: u32,
-    /// `SkillRaceClassInfo.skillCostID`; the 12th return is this plus one (`0x4d3a06`), added by
-    /// the engine.
+    /// `SkillRaceClassInfo.skillCostID`; the 12th return is this plus one, added by the engine.
     pub cost_index: u32,
     /// `SkillLine.dbc` categoryId.
     pub category_id: u32,
@@ -53,7 +52,7 @@ pub struct SkillEntry {
     /// `SkillLine.dbc` description (enUS column 12), `GetSkillLineInfo`'s 13th return.
     pub description: String,
     /// `isAbandonable`, the 8th return: a nonzero skill step and `SkillRaceClassInfo.flags & 0x20`
-    /// (`SKILL_FLAG_UNLEARNABLE`), both checked by the client (`0x4d3953`–`0x4d3975`).
+    /// (`SKILL_FLAG_UNLEARNABLE`), both checked by the client.
     pub abandonable: bool,
 }
 
@@ -75,8 +74,7 @@ pub(crate) struct SkillGroup {
 
 impl super::UiScript {
     /// Replace the skills snapshot: rebuild the tree, re-expand every group (the client's rebuild
-    /// stores `expandedMask = 0xFFFFFFFF` at `0x4d2ce2`) and keep the selection if its skill is
-    /// still present.
+    /// stores `expandedMask = 0xFFFFFFFF`) and keep the selection if its skill is still present.
     pub fn set_skills(&mut self, state: SkillsState) {
         let mut model = self.model_mut();
         let groups = build_groups(&state.entries);
@@ -128,8 +126,8 @@ fn build_groups(entries: &[SkillEntry]) -> Vec<SkillGroup> {
     }
     let mut groups: Vec<SkillGroup> = map.into_values().collect();
     for g in &mut groups {
-        // Untrained below trained, then by name (`0x4d3070` compares the untrained byte, set at
-        // `0x4d2e19`, before the `stricmp` at `0x4d318d`).
+        // Untrained below trained, then by name (the reference compares the untrained byte, before
+        // the `stricmp`).
         g.entries.sort_by(|&a, &b| {
             (entries[a].value == 0)
                 .cmp(&(entries[b].value == 0))
@@ -200,10 +198,10 @@ fn set_collapsed(model: &mut Model, id: usize, collapse: bool) {
     }
 }
 
-/// `GetSkillLineInfo`'s out-of-range answer, thirteen values (`0x4d3a2c`…`0x4d3a98`): the
-/// reference's one unsigned bounds test (`0x4d3675`) sends index 0, a negative or past-the-end
-/// index, no player and a missing DBC row here. Slots 4 and 5 must be numbers: stock
-/// `SkillFrame.lua:194` adds them unguarded, and `SkillFrame_OnLoad` calls `SetSelectedSkill(0)`.
+/// `GetSkillLineInfo`'s out-of-range answer, thirteen values: the reference's one unsigned bounds
+/// test sends index 0, a negative or past-the-end index, no player and a missing DBC row here.
+/// Slots 4 and 5 must be numbers: stock `SkillFrame.lua:194` adds them unguarded, and
+/// `SkillFrame_OnLoad` calls `SetSelectedSkill(0)`.
 fn out_of_range_tuple(_lua: &Lua) -> mlua::Result<MultiValue> {
     Ok(MultiValue::from_vec(vec![
         Value::Nil,        // 1  skillName
@@ -237,7 +235,7 @@ fn selected_index(model: &Model) -> u32 {
         .map_or(0, |p| (p + 1) as u32)
 }
 
-/// `GetSkillLineInfo`'s `(skillRank, skillMaxRank)`, in the client's order (`0x4d380c`–`0x4d38cb`):
+/// `GetSkillLineInfo`'s `(skillRank, skillMaxRank)`, in the client's order:
 ///
 /// ```text
 /// skillRank    = rank > 0 ? rank + permBonus : rank
@@ -277,9 +275,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetSkillLineInfo(index) → 13 values on a skill row (`0x4d3a20`), 12 on a header
-    // (`0x4d3768`); out of range, the 13-value tuple (`0x4d3a2a`), whose nil first slot drives
-    // stock `SkillFrame.lua:211`'s early return.
+    // GetSkillLineInfo(index) → 13 values on a skill row, 12 on a header; out of range, the
+    // 13-value tuple, whose nil first slot drives stock `SkillFrame.lua:211`'s early return.
     g.set(
         "GetSkillLineInfo",
         lua.create_function(|lua, index: usize| {
@@ -327,7 +324,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                         Value::Nil,
                         Value::Nil,
                         Value::Integer(i64::from(e.min_level)), // minLevel
-                        // skillCostType: the cost index plus one (`0x4d3a06`).
+                        // skillCostType: the cost index plus one.
                         Value::Integer(i64::from(e.cost_index) + 1),
                         Value::String(lua.create_string(&e.description)?), // skillDescription
                     ]))
@@ -355,7 +352,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // SetSelectedSkill(index) / GetSelectedSkill(): visible indices, held by skill id;
-    // `GetSelectedSkill` (`0x4d4090`) always answers one number, 0 included.
+    // `GetSelectedSkill` always answers one number, 0 included.
     g.set(
         "SetSelectedSkill",
         lua.create_function(|lua, index: u32| {
@@ -375,8 +372,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetAdjustedSkillPoints() → 0 here; the reference answers `PLAYER_CHARACTER_POINTS2` less the
-    // points `AddSkillUp` has pending (`0x4d3cb0`). The stock pane reads it only under its
-    // `stepCost` and `rankCost` branches, which 1.12 data never opens.
+    // points `AddSkillUp` has pending. The stock pane reads it only under its `stepCost` and
+    // `rankCost` branches, which 1.12 data never opens.
     g.set(
         "GetAdjustedSkillPoints",
         lua.create_function(|_, ()| Ok(0i64))?,
@@ -395,8 +392,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // CancelSkillUps() (`0x4d3e30`): zeroes every `numTempPoints` (`0x4d35c9`); the stock Close
-    // button calls it (`SkillFrame.xml:352`). No temp points are modelled, so nothing resets.
+    // CancelSkillUps(): zeroes every `numTempPoints`; the stock Close button calls it
+    // (`SkillFrame.xml:352`). No temp points are modelled, so nothing resets.
     g.set("CancelSkillUps", lua.create_function(|_, ()| Ok(()))?)?;
 
     Ok(())
@@ -580,7 +577,7 @@ mod tests {
         let mut s = UiScript::new().unwrap();
         s.set_skills(state());
 
-        // Header row 1: twelve values, no description (`0x4d3768`).
+        // Header row 1: twelve values, no description.
         let (name, is_header, is_expanded, rank, temp, modifier, max) = s
             .eval::<(String, i64, Option<i64>, i64, i64, i64, i64)>(
                 "local n,h,e,r,t,m,mx = GetSkillLineInfo(1) return n,h,e,r,t,m,mx",

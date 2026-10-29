@@ -90,9 +90,9 @@ struct Case {
     apply: fn(&mut Rig),
     /// What `0x5d3e80` answers.
     usable: bool,
-    /// Whether `PickupPetAction`'s own gate lets the drag start: the pet's object must resolve
-    /// (`0x4be1f7`) and not be `UNIT_FLAG_POSSESSED` (`0x4be20a`), which is no exit of the
-    /// predicate, whose possession never blocks and whose unresolved pet is one of its exits.
+    /// Whether `PickupPetAction`'s own gate lets the drag start: the pet's object must resolve and
+    /// not be `UNIT_FLAG_POSSESSED`, which is no exit of the predicate, whose possession never
+    /// blocks and whose unresolved pet is one of its exits.
     draggable: bool,
 }
 
@@ -399,9 +399,8 @@ fn each_exit_alone_stops_the_menus_dismiss() {
     }
 }
 
-/// `0x4bc9d0`, from the drop `0x4bce33` and the pickup's blank `0x4be27f`: lifting Claw and
-/// dropping it on the next slot writes and sends nothing on an unusable pet, and two writes on a
-/// usable one.
+/// From the drop and the pickup's blank: lifting Claw and dropping it on the next slot writes and
+/// sends nothing on an unusable pet, and two writes on a usable one.
 #[test]
 fn each_exit_alone_stops_the_drags_writes() {
     for Case {
@@ -442,10 +441,10 @@ fn each_exit_alone_stops_the_drags_writes() {
     }
 }
 
-/// `0x4be1f7`-`0x4be20a`: `PickupPetAction` looks the pet up and returns at once with no object,
-/// then again on `UNIT_FLAG_POSSESSED`, so a drag from an unstreamed or a possessed pet's bar lifts
-/// nothing. Every other state lifts the action, an unusable pet included: `0x4bc9d0` refuses only
-/// the pickup's blank, never the lift (`0x4be25d`).
+/// `PickupPetAction` looks the pet up and returns at once with no object, then again on
+/// `UNIT_FLAG_POSSESSED`, so a drag from an unstreamed or a possessed pet's bar lifts nothing.
+/// Every other state lifts the action, an unusable pet included: the bar write refuses only the
+/// pickup's blank, never the lift.
 #[test]
 fn the_pickup_lifts_only_with_the_pets_object_held_and_not_possessed() {
     for Case {
@@ -474,7 +473,7 @@ fn the_pickup_lifts_only_with_the_pets_object_held_and_not_possessed() {
 }
 
 /// The same lookup sits above the cursor fork, so a held action is neither dropped nor cleared
-/// while the pet's object is gone: the drop's `ClearCursor` (`0x4be220`) is past it.
+/// while the pet's object is gone: the drop's `ClearCursor` is past it.
 #[test]
 fn a_held_action_stays_held_while_the_pet_is_out_of_view() {
     let mut rig = scene();
@@ -624,8 +623,8 @@ fn the_stock_bar_greys_a_stunned_pet_and_its_click_sends_nothing() {
     assert_eq!(pet_actions(&rig.sent()), 1);
 }
 
-/// `0x5d3310` reads three flags and never the pet's health: a dead pet's bar is usable,
-/// its press goes out, and only the Attack order's own validator refuses it (`0x612e10`).
+/// `0x5d3310` reads three flags and never the pet's health: a dead pet's bar is usable, its press
+/// goes out, and only the Attack order's own validator refuses it.
 #[test]
 fn a_dead_pet_is_still_usable() {
     let mut rig = scene();

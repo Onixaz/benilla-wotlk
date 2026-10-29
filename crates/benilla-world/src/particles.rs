@@ -34,8 +34,8 @@ pub struct ViewThrottled;
 /// A backstop cap on one emitter's live particles; a campfire's steady state is about 30 + 24.
 const MAX_PARTICLES: usize = 1024;
 
-/// The emission scalar, `ParticleSystemManager`'s `s_scaler`, which only the `particleDensity`
-/// callback (`0x78d860`) writes, through `SetScaler 0x980f70`.
+/// The emission scalar, the particle manager's global scale, which only the `particleDensity`
+/// callback (`0x78d860`) writes, through its setter (`0x980f70`).
 #[derive(Resource)]
 pub struct ParticleTuning {
     /// It scales emission rate only (its getter's two callers are the spawn-count `fmul`s), never
@@ -50,7 +50,7 @@ impl Default for ParticleTuning {
 }
 
 impl ParticleTuning {
-    /// `SetScaler 0x980f70`: clamp to [0.0, 1.0] and store.
+    /// The scale setter (`0x980f70`): clamp to [0.0, 1.0] and store.
     pub fn set_density(&mut self, density: f32) {
         self.density = density.clamp(0.0, 1.0);
     }
@@ -62,10 +62,9 @@ impl ParticleTuning {
 
 /// One live particle, in the frame file flag `0x10` picks. Clear (world mode): `pos`/`vel` are
 /// world coordinates, Bevy axes (a transport's deck while riding one); the birth bakes bone pose,
-/// rotation, scale and position through the live emitter matrix (`0x7b8acf`/`0x7b8b0f`) and the
-/// draw folds nothing back (`0x7b3f48` omits `rt+0x1fc`), so a moving host leaves a trail. Set
-/// (model mode): `pos`/`vel` are WoW model space, Z up, and the draw re-applies the live placement
-/// (`0x7b8aa5`/`0x7b3efb`), the rigid ride of a carried torch.
+/// rotation, scale and position through the live emitter matrix and the draw folds nothing back
+/// (omits `rt+0x1fc`), so a moving host leaves a trail. Set (model mode): `pos`/`vel` are WoW model
+/// space, Z up, and the draw re-applies the live placement, the rigid ride of a carried torch.
 struct Particle {
     pos: Vec3,
     vel: Vec3,
@@ -85,10 +84,10 @@ struct Particle {
     cell: u16,
     /// A random twinkle-table phase; the reference hashes the particle's pointer to the same end.
     phase: u32,
-    /// `particle+0xd` bit 1: the first integrate skips the follow-delta add (`0x7b2680`).
+    /// `particle+0xd` bit 1: the first integrate skips the follow-delta add.
     fresh: bool,
-    /// Geometry particles only (`0x7b2420`, integrator `0x7b28e0`): stored-frame orientation and
-    /// body-frame angular velocity; a quad particle carries identity and zero.
+    /// Geometry particles only: stored-frame orientation and body-frame angular velocity; a quad
+    /// particle carries identity and zero.
     quat: Quat,
     angvel: Vec3,
 }
@@ -187,19 +186,19 @@ pub struct ParticleEmitter {
     def: ParticleEmitterDef,
     /// Model to world, Bevy space, refreshed from [`Self::owner`] when set.
     placement: Transform,
-    /// World-mode particles' frame: world, or a ridden transport's deck ([`crate::ride_frame`]),
-    /// as the reference divides the ride matrix out at birth (`rt+0x1fc = srcMx · A⁻¹`) and folds
-    /// it back at draw (`0xcf5b68 = A · T · S`), so a rider's cloud does not trail the vehicle.
+    /// World-mode particles' frame: world, or a ridden transport's deck ([`crate::ride_frame`]), as
+    /// the reference divides the ride matrix out at birth (`rt+0x1fc = srcMx · A⁻¹`) and folds it
+    /// back at draw (`= A · T · S`), so a rider's cloud does not trail the vehicle.
     pub(crate) ride: crate::ride_frame::StoredFrame,
     /// The entity followed, whose world transform becomes [`Self::placement`] each frame.
     owner: Option<Entity>,
     on_owner_loss: OwnerLoss,
     /// Draining after the owner's loss: no emission, the pool ages out in place, then despawns, as
-    /// the reference's `HasLiveParticles` latch (`0x7b5f60`) keeps a disabled emitter ticking.
+    /// the reference's live-particles latch keeps a disabled emitter ticking.
     draining: bool,
     /// The model instance whose composed alpha multiplies this cloud: the reference's
-    /// `emitter+0x1a8`, a per-frame copy of the model's `+0x19c` (`0x718960` @`0x719073`) folded
-    /// in by the over-life sampler (`0x7b9b10` @`0x7b9b42`). A doodad multiplies its distance fade.
+    /// `emitter+0x1a8`, a per-frame copy of the model's `+0x19c` folded in by the over-life
+    /// sampler. A doodad multiplies its distance fade.
     alpha_src: Option<Entity>,
     alpha: f32,
     /// The model (never the bone joint) whose live translation is this pool's sort point, and
@@ -212,15 +211,15 @@ pub struct ParticleEmitter {
     anchor_pos: Vec3,
     particles: Vec<Particle>,
     accumulator: f32,
-    /// The emitter origin's world position last frame, the reference's `rt+0x248` (`0x7b5230`
-    /// @`0x7b5265`): the delta behind follow-delta and velocity inherit.
+    /// The emitter origin's world position last frame, the reference's `rt+0x248`: the delta behind
+    /// follow-delta and velocity inherit.
     emitter_prev: Option<Vec3>,
-    /// Velocity inherit (file flag `0x40`, `0x7b5230`): the ~30 Hz trigger accumulator
-    /// (`rt+0x254`) and the velocity held between triggers (`rt+0x258`).
+    /// Velocity inherit (file flag `0x40`): the ~30 Hz trigger accumulator (`rt+0x254`) and the
+    /// velocity held between triggers (`rt+0x258`).
     inherit_accum: f32,
     inherit_vel: Vec3,
     /// Last frame's `enabled && rate > 0`: a burst emitter (file flag `0x8000`) births its one
-    /// `ftol(rate)` puff on the rising edge (the reference's `block+0x168`, `0x718f06`).
+    /// `ftol(rate)` puff on the rising edge (the reference's `block+0x168`).
     gate_prev: bool,
     /// Seconds since spawn, the clip clock of a pinned lane's rate track.
     age: f32,
@@ -241,13 +240,13 @@ pub struct ParticleEmitter {
     /// The owner's freeze, for a scene its camera cannot report (all `<Model>` tile panes share one
     /// camera): it holds pool and age, but never on a [`Self::draining`] emitter.
     frozen: bool,
-    /// The pending recursion model (`0x7b5dd0`); [`wire_child_emitters`] turns up to 4 of its
-    /// emitters (`0x7b5dfe`) into [`Self::children`].
+    /// The pending recursion model; [`wire_child_emitters`] turns up to 4 of its emitters into
+    /// [`Self::children`].
     recursion: Option<Handle<benilla_assets::M2Model>>,
     /// Child emitters, driven once per live parent particle per frame, never ambiently.
     children: Vec<ChildEmitter>,
-    /// The geometry model (`0x7b1c80`, spawn driver `0x7b5550`): when authored, particles draw as
-    /// its instances instead of quads ([`model::update_model_particles`]).
+    /// The geometry model: when authored, particles draw as its instances instead of quads
+    /// ([`model::update_model_particles`]).
     geometry: Option<Handle<benilla_assets::M2Model>>,
     /// One instance per drawn particle, grown on demand and hidden past the live count.
     model_instances: Vec<model::ModelInstance>,
@@ -295,7 +294,7 @@ impl ChildEmitter {
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
 pub enum OwnerLoss {
     /// The owner model was destroyed (an item replaced, a unit streamed out): free the pool with
-    /// it, as the reference frees a model's emitters at its dtor (`0x70e313`).
+    /// it, as the reference frees a model's emitters at its dtor.
     Free,
     /// The effect ended (a missile impacted): stop emitting and let the pool age out in place, as
     /// the reference's model outlives its draining emitters.
@@ -392,10 +391,10 @@ impl ParticleEmitter {
     }
 
     /// Switch to [`OwnerLoss::Drain`]: the effect is ending, so its particles finish rather than
-    /// pop. The reference's `CEffect` teardown (`0x6203e0`) only hides and queues the node, which
-    /// stops emission; the draw admits by live-particle count (`emitter+0x64`, `0x7b4b46`), so the
-    /// survivors age out, and `0x61f680` frees the node once `CM2Model+0x3d8` reads zero. An
-    /// attached instance spawns `Free`, since a model dtor frees its emitters at once.
+    /// pop. The reference's effect teardown only hides and queues the node, which stops emission;
+    /// the draw admits by live-particle count (`emitter+0x64`), so the survivors age out, and the
+    /// reference frees the node once the model's `+0x3d8` reads zero. An attached instance
+    /// spawns `Free`, since a model dtor frees its emitters at once.
     pub fn drain_on_owner_loss(&mut self) {
         self.on_owner_loss = OwnerLoss::Drain;
     }
@@ -480,8 +479,8 @@ pub struct EmitterFade {
     pub(crate) instance: Option<Entity>,
     /// The rooms of [`Self::instance`] naming the owner, built with it in `terrain_stream::spawn`:
     /// the reference admits a WMO prop to the frame's scene only for the groups its portal walk
-    /// reaches (`0x685d70` → `0x6838f0`), so a prop in a culled room has no emitters to tick. By
-    /// value, since a `WmoGroupVis` component would enlist the emitter in `apply_model_visibility`.
+    /// reaches, so a prop in a culled room has no emitters to tick. By value, since a `WmoGroupVis`
+    /// component would enlist the emitter in `apply_model_visibility`.
     pub(crate) room: Option<crate::wmo_portal::WmoGroupVis>,
 }
 
@@ -512,7 +511,7 @@ impl EmitterFade {
     ///    admits a never-fading owner (a brazier) at any distance,
     /// 3. `lateral_in_frustum`, the side and near planes,
     /// 4. `exterior_admitted`: the reference links a doodad into the worklist through the
-    ///    per-window populate walk (`0x683700`), and an unlinked one emits nothing,
+    ///    per-window populate walk, and an unlinked one emits nothing,
     /// 5. `room_admitted`, the portal PVS of the owner's room ([`Self::room_admitted`]).
     pub fn in_draw_set(
         &self,
@@ -647,10 +646,10 @@ pub fn spawn_emitter(
 }
 
 /// The depth bias that draws a model's effects after its own transparent batches, as the reference
-/// brackets a model's emitters after its batches (`0x70d8b0`). Sort keys are view z plus bias,
-/// ascending ([`crate::sky_order`]); every batch centre lies within `reach` world yards of the
-/// origin and view z is 1-Lipschitz, so a rung above `reach` clears them. All of a model's effects
-/// take one rung, as the reference draws them in file order within the one bracket;
+/// brackets a model's emitters after its batches. Sort keys are view z plus bias, ascending
+/// ([`crate::sky_order`]); every batch centre lies within `reach` world yards of the origin and
+/// view z is 1-Lipschitz, so a rung above `reach` clears them. All of a model's effects take one
+/// rung, as the reference draws them in file order within the one bracket;
 /// [`benilla_formats::owner_last_rung`] rounds it.
 pub(crate) fn owner_last_bias(reach: f32) -> f32 {
     benilla_formats::owner_last_rung(reach)
@@ -660,8 +659,8 @@ pub(crate) fn owner_last_bias(reach: f32) -> f32 {
 #[derive(Component)]
 pub(crate) struct PendingChildren;
 
-/// Once a parent's recursion model resolves, make up to 4 of its emitters (`0x7b5dfe`) the
-/// parent's children, as the reference does at the model's async-load completion (`0x7b5dd0`).
+/// Once a parent's recursion model resolves, make up to 4 of its emitters the parent's children, as
+/// the reference does at the model's async-load completion.
 pub(crate) fn wire_child_emitters(
     mut commands: Commands,
     models: Res<Assets<benilla_assets::M2Model>>,
@@ -727,14 +726,14 @@ pub enum EmitClock {
     /// fresh per play, so its global-sequence loops open at phase 0 with it.
     Effect(Option<usize>),
     /// A live `AnimationPlayer` picks the slot and clip time each frame, as the reference's animate
-    /// kernel samples the current sequence (`0x714260`).
+    /// kernel samples the current sequence.
     Host(Entity),
 }
 
 /// Load `accumulator` with this frame's owed births (the reference's emitter pass and spawn
-/// driver, `0x718960`/`0x7b5550`), gated on `emitting && rate > 0`. A continuous emitter (file flag
-/// `0x8000` clear) pours `rate · scale · dt`; a burst loads `ftol(rate · scale)` once on the gate's
-/// rising edge and re-arms when it falls. Returns the burst, for the `fx` trace.
+/// driver), gated on `emitting && rate > 0`. A continuous emitter (file flag `0x8000` clear) pours
+/// `rate · scale · dt`; a burst loads `ftol(rate · scale)` once on the gate's rising edge and
+/// re-arms when it falls. Returns the burst, for the `fx` trace.
 fn accumulate_emission(
     is_burst: bool,
     rate: f32,
@@ -854,7 +853,7 @@ pub(crate) mod tests {
     }
 
     /// An attached instance spawns `Free`, so a model dtor takes its pool; an ending effect flips
-    /// it to `Drain` (`0x6203e0` hides the node, `0x61f680` frees it once drained).
+    /// it to `Drain` (frees it once drained).
     #[test]
     fn an_ending_instance_switches_its_emitters_from_free_to_drain() {
         use bevy::ecs::system::RunSystemOnce;
@@ -1116,8 +1115,8 @@ pub(crate) mod tests {
         assert_eq!(acc, 0.0, "disabled zeroes the owed fraction");
     }
 
-    /// The follow-delta response (`0x7b5d30`): the line through the two authored (speed,
-    /// fraction) samples, zeroed for equal speeds as in the reference.
+    /// The follow-delta response: the line through the two authored (speed, fraction) samples,
+    /// zeroed for equal speeds as in the reference.
     #[test]
     fn follow_line_matches_the_authored_two_point_response() {
         let mut d = super::emit::tests::def(ParticleShape::Plane);

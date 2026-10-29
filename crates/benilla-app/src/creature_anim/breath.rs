@@ -1,12 +1,11 @@
 //! Cold breath: the vapour a unit puffs from its mouth in a cold zone.
 //!
-//! The classifier `0x607710` runs on every unit with a loaded model and caches its verdict for
-//! 10 s ([`classify_breath`]). A cold area is `AreaTable.Flags & 0x1`, inherited one hop from the
-//! parent zone unless the leaf sets `0x2` (`0x67e9c0`); weather and indoors play no part. On `$BTH`
-//! the handler `0x5ffbd0` runs `drunk ≥ 50 → underwater → cold → nothing`, exclusively
-//! ([`fire_breath`]), and the cold puff (`SpellVisualEffectName` 107, a 1.5 s one-shot) hangs at
-//! the mouth. `$BTH` is authored across the idle family and nothing latches it, so the puff
-//! recurs with every idle loop.
+//! The classifier runs on every unit with a loaded model and caches its verdict for 10 s
+//! ([`classify_breath`]). A cold area is `AreaTable.Flags & 0x1`, inherited one hop from the parent
+//! zone unless the leaf sets `0x2`; weather and indoors play no part. On `$BTH` the handler runs
+//! `drunk ≥ 50 → underwater → cold → nothing`, exclusively ([`fire_breath`]), and the cold puff
+//! (`SpellVisualEffectName` 107, a 1.5 s one-shot) hangs at the mouth. `$BTH` is authored across
+//! the idle family and nothing latches it, so the puff recurs with every idle loop.
 //!
 //! Not built: the underwater rung, whose bubbles the reference shows once
 //! `5.0 + SCALE_X · boxHeight < liquidSurfaceZ − unitZ`, with `boxHeight` the M2 header's render
@@ -14,8 +13,8 @@
 //! HumanMale, so a diving unit in a cold zone puffs vapour here. Nor are the drunk bubbles (the
 //! drunk rung still gates) or a WMO interior area for any unit but the player.
 //!
-//! Deviation: a new puff inside the last one's clip is declined instead of replacing it
-//! (`0x6208e0`), because one-shot effects carry no reap key; either way two never overlap.
+//! Deviation: a new puff inside the last one's clip is declined instead of replacing it, because
+//! one-shot effects carry no reap key; either way two never overlap.
 
 use bevy::ecs::entity::EntityHashMap;
 use bevy::prelude::*;
@@ -27,21 +26,20 @@ use crate::net::{NetEntity, ObjectStore, SelfPlayer};
 use super::events::AnimSoundEvent;
 use super::spell_visual::{FxClass, FxSlot, FxStage, SpellKitFx, SpellVisuals};
 
-/// The breath event (`0x5fffad` compares against it).
+/// The breath event.
 const BTH: [u8; 4] = *b"$BTH";
 
-/// Hardcoded effect 3's name (`0x8617b8`, resolved at boot by `0x61f5b0`): `SpellVisualEffectName`
-/// row 107, `Particles\ColdBreath.m2`.
+/// Hardcoded effect 3's name: `SpellVisualEffectName` row 107, `Particles\ColdBreath.m2`.
 const COLD_BREATH_EFFECT: &str = "HARDCODED Breath Cold";
 
-/// The `$BTH` attach tag (entries 2, 3 and 7 of `0x80c968`), a raw M2 `AttachmentID`: resolve it
-/// through the model's `attachment_lookup`, never use it as an index (17 on HumanMale, 2 on Wolf).
+/// The `$BTH` attach tag (entries 2), a raw M2 `AttachmentID`: resolve it through the model's
+/// `attachment_lookup`, never use it as an index (17 on HumanMale, 2 on Wolf).
 const BREATH_ATTACH: u16 = 0x11;
 
 /// `[unit+0xc18] = now + 0x2710`: a unit is reclassified at most every 10 s.
 const RECLASSIFY_SECS: f32 = 10.0;
 
-/// `PLAYER_BYTES_3` byte 1 clamped to 100, `× 0.01 ≥ 0.5` (`0x5ffbd0`); players only (`0x600018`).
+/// `PLAYER_BYTES_3` byte 1 clamped to 100, `× 0.01 ≥ 0.5`; players only.
 const DRUNK_THRESHOLD: u8 = 50;
 
 /// `ColdBreath.m2`'s one non-looping sequence, 3333 to 4833 ms: no second puff inside it.
@@ -67,7 +65,7 @@ pub(crate) struct BreathEnv {
 #[derive(Resource, Default)]
 pub(super) struct LastPuff(EntityHashMap<f32>);
 
-/// The classifier `0x607710` for each unit whose stamp expired; a new unit classifies at once.
+/// The classifier for each unit whose stamp expired; a new unit classifies at once.
 pub(super) fn classify_breath(
     mut commands: Commands,
     time: Res<Time>,
@@ -102,8 +100,8 @@ pub(super) fn classify_breath(
     }
 }
 
-/// The `$BTH` handler `0x5ffbd0`. The puff goes on the model that fired the event (a rider's body,
-/// not the mount), while the ladder reads the composite root's state.
+/// The `$BTH` handler. The puff goes on the model that fired the event (a rider's body, not the
+/// mount), while the ladder reads the composite root's state.
 pub(super) fn fire_breath(
     mut events: MessageReader<AnimSoundEvent>,
     time: Res<Time>,
@@ -173,7 +171,7 @@ pub(super) fn fire_breath(
             spell_id: 0,
             persistent: false,
             class: FxClass::Hold,
-            // `0x5fbf50`: destroyed at its first completion.
+            // Destroyed at its first completion.
             stage: FxStage::OneShot,
             effects: vec![FxSlot {
                 tag: BREATH_ATTACH,

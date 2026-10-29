@@ -1,7 +1,7 @@
 //! Targeting: the selection, the mouseover pick, click-to-select and the ground selection ring
-//! ([`ring`]). The pick is the reference's (`0x481190` → `0x7089c0`, [`hover::update_hover`]): a
-//! nameplate under the pointer first, then the posed-mesh pick, clamped by the world trace; a click
-//! acts on what the press was over ([`PressPick`]).
+//! ([`ring`]). The pick is the reference's ([`hover::update_hover`]): a nameplate under the pointer
+//! first, then the posed-mesh pick, clamped by the world trace; a click acts on what the press was
+//! over ([`PressPick`]).
 
 use bevy::prelude::*;
 
@@ -67,7 +67,7 @@ pub(crate) use cursor_mode::{
 pub(crate) use lock::GO_FLAG_LOCKED;
 // This frame's combat-flash verdict, for the ring's material and the nameplate colour gate.
 pub(crate) use flash::CombatFlash;
-// The discount `0x612b80` the repair cost and the taxi fare take off their DBC prices.
+// The discount the repair cost and the taxi fare take off their DBC prices.
 pub(crate) use price_discount::vendor_price_discount;
 #[cfg(test)]
 pub(crate) use price_discount::{stormwind_fixture, HUMAN_WARRIOR};
@@ -80,7 +80,7 @@ pub(crate) use relations::{
 pub(crate) use scan::{AttackNearestRequest, AttackPick};
 // The chat layer's by-name asks (`/target`, `/assist`).
 pub(crate) use by_name::{AssistRequest, Match as NameMatch, PlayerLookup, TargetByNameRequest};
-// The one SetSelection path, for the loot response's select (`0x48f3a0`).
+// The one selection-set path, for the loot response's select.
 pub(crate) use by_name::SelectCommit;
 // The reaction decode and its faction catalog, which also tint the target frame
 // (`TargetFrame_CheckFaction`); `duel_rung` is the same walk, for `/reaction`.
@@ -100,15 +100,15 @@ pub use click::Interact;
 pub(crate) struct Selection {
     pub(crate) target: Option<Entity>,
     pub(crate) guid: Option<u64>,
-    /// The last-target pair `[0xb4e2e0]` that `TargetLastTarget` reads: `SetSelection` stamps the
-    /// outgoing selection, none included, on every change it makes, a select or a deselect
-    /// (`0x49361d`-`0x493628`); a teardown clear (`0x493910` alone) leaves it.
+    /// The last-target pair that `TargetLastTarget` reads: the selection set stamps the outgoing
+    /// selection, none included, on every change it makes, a select or a deselect; a teardown clear
+    /// leaves it.
     pub(crate) last: Option<u64>,
 }
 
 /// This frame's character-model pick, by [`hover::update_hover`]. At most one slot is set: the
-/// reference makes one pick over all CGObjects and switches on type at the end (`0x480df0` →
-/// `0x7089c0`), and a corpse (`CGCorpse_C`) is not a unit, so it never answers as `target`.
+/// reference makes one pick over all objects and switches on type at the end, and a corpse is not a
+/// unit, so it never answers as `target`.
 #[derive(Resource, Default, Clone, Copy)]
 pub(crate) struct Hovered {
     /// The hovered unit or player, the selectable slot.
@@ -116,14 +116,14 @@ pub(crate) struct Hovered {
     pub(crate) guid: Option<u64>,
     /// Ray distance to the pick, refused or not; a plate hover is `0.0`, so UI wins any tie.
     pub(crate) distance: f32,
-    /// The hovered corpse: the reference's `CGCorpse_C` fills the interact slot `+0x60`
-    /// (`0x5d6bf0`), never `SetTarget`.
+    /// The hovered corpse: the reference's corpse object fills the interact slot `+0x60`, never the
+    /// target.
     pub(crate) corpse: Option<Entity>,
     /// The hovered corpse's guid, which `CMSG_LOOT` and `CMSG_RECLAIM_CORPSE` carry.
     pub(crate) corpse_guid: Option<u64>,
-    /// The `IsSelectable` grader refused the winning pick (`0x482982`): both slots are empty but
-    /// [`Self::distance`] holds the hit, so a chest behind the unit does not inherit the mouseover.
-    /// To [`click::select_on_click`] it is an object hit, which clears no selection.
+    /// The selectable grader refused the winning pick: both slots are empty but [`Self::distance`]
+    /// holds the hit, so a chest behind the unit does not inherit the mouseover. To
+    /// [`click::select_on_click`] it is an object hit, which clears no selection.
     pub(crate) refused: bool,
 }
 
@@ -133,10 +133,9 @@ impl Hovered {
         self.target.or(self.corpse)
     }
 
-    /// The unit `"mouseover"` names: the hovered unit, unless a nearer GameObject won the pick.
-    /// The publisher `0x492890` writes whatever won to `0xb4e2c8`/`0xb4e2cc` (`0x492927`,
-    /// `0x492938`), and the token resolver re-resolves it as a unit (`0x515bca mov ecx,8`), so a
-    /// GameObject, a corpse or nothing names nobody (`0x515bd9 je`).
+    /// The unit `"mouseover"` names: the hovered unit, unless a nearer GameObject won the pick. The
+    /// publisher writes whatever won, and the token resolver re-resolves it as a unit, so a
+    /// GameObject, a corpse or nothing names nobody.
     pub(crate) fn mouseover(&self, go: &HoveredObject) -> Option<(Entity, u64)> {
         self.target
             .zip(self.guid)
@@ -155,13 +154,13 @@ pub(crate) struct HoveredObject {
 }
 
 /// This frame's world hit along the cursor ray, by [`hover::update_pick_occlusion`]: a unit or
-/// GameObject behind a wall is not hoverable (`0x480df0`).
+/// GameObject behind a wall is not hoverable.
 #[derive(Resource, Clone, Copy)]
 pub(crate) struct PickOcclusion {
     pub(crate) distance: f32,
     /// The world hit point, which the ground-targeting cursor rides, as in the reference.
     pub(crate) point: Option<Vec3>,
-    /// The cursor ray's direction, which a right-click on the sky walks along (`0x492d6c`).
+    /// The cursor ray's direction, which a right-click on the sky walks along.
     pub(crate) ray: Option<Dir3>,
 }
 
@@ -176,16 +175,16 @@ impl Default for PickOcclusion {
 }
 
 /// The pick latched on the button's down edge, which a world click of either button acts on: the
-/// reference picks once per press (`0x481f00`) into the WorldFrame (state `+0x350`, guid `+0x358`,
-/// point `+0x360`, distance `+0x36c`), so a drag can orbit the camera and still select. The hover
-/// is another matter: the reference blanks it during freelook (`0x483e80` sets `[wf+0x38c]&2`).
+/// reference picks once per press into the WorldFrame (state `+0x350`, guid `+0x358`, point
+/// `+0x360`, distance `+0x36c`), so a drag can orbit the camera and still select. The hover is
+/// another matter: the reference blanks it during freelook (it sets `[wf+0x38c]&2`).
 #[derive(Resource, Default, Clone, Copy)]
 pub(crate) struct PressPick {
     pub(crate) hovered: Hovered,
     pub(crate) object: HoveredObject,
     pub(crate) occlusion: PickOcclusion,
     /// The context cursor as of the press, which the right-click ladder forks on; the reference's
-    /// new-target validation (`0x5ecb70`) also reads the press's pick, not a live one.
+    /// new-target validation also reads the press's pick, not a live one.
     pub(crate) cursor: cursor_mode::WorldCursor,
     /// The unit dispatcher's attack fork as of the press, which the sword alone cannot carry: the
     /// sword also needs the player's own legs, and a refused player still takes the attack arm.
@@ -193,7 +192,7 @@ pub(crate) struct PressPick {
 }
 
 impl PressPick {
-    /// Whether the press was an Attack-cursor press, for `0x5ecb70`'s new-target validation.
+    /// Whether the press was an Attack-cursor press, for the reference's new-target validation.
     pub(crate) fn attack(&self) -> bool {
         self.cursor.kind == cursor_mode::CursorKind::Attack
     }
@@ -211,8 +210,8 @@ pub(crate) fn latch_press_pick(
     attack_fork: Res<cursor_mode::AttackFork>,
     mut press: ResMut<PressPick>,
 ) {
-    // Either button's down edge arms a pick (`0x514810`, clickModes 1 and 2); a chord does not
-    // re-latch, as `0x51481a` refuses to arm while the other button is held.
+    // Either button's down edge arms a pick (clickModes 1 and 2); a chord does not re-latch, as the
+    // reference refuses to arm while the other button is held.
     let left = buttons.just_pressed(MouseButton::Left) && !buttons.pressed(MouseButton::Right);
     let right = buttons.just_pressed(MouseButton::Right) && !buttons.pressed(MouseButton::Left);
     if !(left || right) {
@@ -228,7 +227,7 @@ pub(crate) fn latch_press_pick(
 }
 
 /// Whether the hovered GameObject, not the character pick, is what a click acts on. The reference
-/// makes one pick over all CGObjects; benilla makes two and keeps the GameObject only when strictly
+/// makes one pick over all objects; benilla makes two and keeps the GameObject only when strictly
 /// nearer. A corpse or a refused pick holds the ground as a unit does.
 pub(crate) fn go_is_nearest(character: &Hovered, go: &HoveredObject) -> bool {
     match (character.any().is_some() || character.refused, go.target) {
@@ -239,8 +238,8 @@ pub(crate) fn go_is_nearest(character: &Hovered, go: &HoveredObject) -> bool {
 }
 
 /// A unit's model-local ring radius, `sqrt(0.5 · sqrt(dx² + dy²))` over the Stand sequence box's
-/// horizontal extents (`0x608e00`/`0x60aee0`); the ring scales it by `OBJECT_FIELD_SCALE_X`.
-/// Stamped at attach; a model-less unit has none and takes the ring's fallback radius.
+/// horizontal extents; the ring scales it by `OBJECT_FIELD_SCALE_X`. Stamped at attach; a
+/// model-less unit has none and takes the ring's fallback radius.
 #[derive(Component, Clone, Copy)]
 pub(crate) struct SelectionRadius(pub(crate) f32);
 
@@ -251,7 +250,7 @@ pub(crate) struct TargetUpdate;
 
 /// `deselectOnClick`, behind the Controls panel's Sticky Targeting checkbox, which shows it
 /// inverted (`self.invert`). On by default, as in the reference: an empty-world click clears the
-/// target (`HandleWorldClick 0x5278c0`, `OnTerrainClick 0x527360`).
+/// target (`0x5278c0`, `0x527360`).
 #[derive(Resource)]
 pub(crate) struct ClickConfig {
     pub(crate) deselect_on_click: bool,
@@ -265,13 +264,12 @@ impl Default for ClickConfig {
     }
 }
 
-/// `assistAttack`, 1.12's "Attack on assist" option (`[0xb4d8f8]`, registered at `0x48fc50` with
-/// default "0"). When set, `/assist`'s shared tail also calls `StartAttack 0x5ecb70` on the new
-/// target (`0x489c02`, `0x489d02`), which stands you and sends `CMSG_ATTACKSWING`.
+/// `assistAttack`, 1.12's "Attack on assist" option. When set, `/assist`'s shared tail also calls
+/// `StartAttack` on the new target, which stands you and sends `CMSG_ATTACKSWING`.
 #[derive(Resource, Default)]
 pub(crate) struct AssistAttack(pub(crate) bool);
 
-/// `stopAutoAttackOnTargetChange` (`[0xbd0924]`, default "0"), read at `CGGameUI::Target`'s tail
+/// `stopAutoAttackOnTargetChange` (`[0xbd0924]`, default "0"), read at the UI target change's tail
 /// (`0x524f59`): on, a new target cancels auto-repeat; off, a player in melee swings on at it.
 #[derive(Resource, Default)]
 pub(crate) struct StopAttackOnTargetChange(pub(crate) bool);
@@ -335,9 +333,9 @@ impl Plugin for TargetPlugin {
                     hover::update_hover,
                     hover::update_hovered_object,
                     cursor_mode::classify_cursor,
-                    // The right press's two legs of the reference's OnMouseDown hook (`0x492c20`),
-                    // the targeting cancel and the repair-mode reset, before the cursor drive, so
-                    // the press frame already reads both modes cleared.
+                    // The right press's two legs of the reference's OnMouseDown hook, the targeting
+                    // cancel and the repair-mode reset, before the cursor drive, so the press frame
+                    // already reads both modes cleared.
                     (
                         crate::spell::targeting::cancel_targeting_on_right_press,
                         crate::ui_merchant::end_repair_mode_on_right_press,
@@ -346,7 +344,7 @@ impl Plugin for TargetPlugin {
                     // reference's dispatcher runs this branch before the object classifier.
                     crate::spell::targeting::drive_targeting_cursor,
                     // Reads that verdict: `WorldCursor.unable` is the frame's range state, as the
-                    // reference's one `CheckGroundPointInRange` caller feeds both.
+                    // reference's one caller of its ground-point range check feeds both.
                     reticle::update_reticle,
                     click::world_right_click_payload,
                     // A plate click replayed as a click, then the select that reads it.
@@ -442,7 +440,7 @@ mod tests {
         assert!(!go_is_nearest(&corpse(true, 4.0), &obj(true, 10.0)));
         assert!(!go_is_nearest(&corpse(true, 5.0), &obj(true, 5.0)));
         assert!(go_is_nearest(&corpse(true, 10.0), &obj(true, 4.0)));
-        // So does a pick the `IsSelectable` grader refused, and then nothing is hovered at all.
+        // So does a pick the selectable grader refused, and then nothing is hovered at all.
         let refused = |d: f32| Hovered {
             refused: true,
             distance: d,
@@ -491,8 +489,8 @@ mod tests {
         );
     }
 
-    /// The reference refuses to arm while another button is down (`0x51481a`) and kills the
-    /// pending click (`0x514ac1`), so neither release of a both-button run selects.
+    /// The reference refuses to arm while another button is down and kills the pending click, so
+    /// neither release of a both-button run selects.
     #[test]
     fn a_chord_does_not_relatch_the_pick() {
         let mut world = World::new();

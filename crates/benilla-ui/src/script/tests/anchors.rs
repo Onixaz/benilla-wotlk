@@ -50,8 +50,8 @@ fn setpoint_resolve_size_and_rect() {
     assert_eq!(w, 200.0);
     assert_eq!(h, 50.0);
 
-    // Hand-computed against the reference rect assembly (`0x767a20`): TOPLEFT anchored to screen
-    // [0,0,600,800] at (10,-5), size 200×50 → Rect(bottom 545, left 10, top 595, right 210).
+    // Hand-computed against the reference rect assembly: TOPLEFT anchored to screen [0,0,600,800]
+    // at (10,-5), size 200×50 → Rect(bottom 545, left 10, top 595, right 210).
     let quads = s.extract();
     let frame_rect = quads
         .iter()
@@ -72,10 +72,9 @@ fn getwidth_falls_back_to_explicit_size_before_resolve() {
     assert_eq!(w, 123.0);
 }
 
-/// A named `relativeTo` that does not resolve raises and abandons the call, with no fallback
-/// (`0x87ccd4`); the region path raises the same, both quoting the receiver's name, `<unnamed>`
-/// (`0x84c7f0`) when it has none. An XML anchor's miss warns instead (`Loader::apply_anchor`,
-/// `0x767800`).
+/// A named `relativeTo` that does not resolve raises and abandons the call, with no fallback; the
+/// region path raises the same, both quoting the receiver's name, `<unnamed>` when it has none. An
+/// XML anchor's miss warns instead (`Loader::apply_anchor`).
 #[test]
 fn setpoint_unresolved_name_raises() {
     let mut s = script();
@@ -228,8 +227,8 @@ fn an_omitted_relative_to_is_the_parent() {
     assert_eq!(s.eval::<f32>("return OmitFlag:GetBottom()").unwrap(), 100.0);
 }
 
-/// An explicit `nil` `relativeTo` is the screen root, not the parent (`0x7a2710` loads it from
-/// `0xcf0bd8`); the one stock site is `UIParent.lua:1549`.
+/// An explicit `nil` `relativeTo` is the screen root, not the parent; the one stock site is
+/// `UIParent.lua:1549`.
 #[test]
 fn an_explicit_nil_relative_to_is_the_screen_not_the_parent() {
     let mut s = script();

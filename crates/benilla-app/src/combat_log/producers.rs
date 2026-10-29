@@ -1,6 +1,5 @@
-//! The 12340 combat-log producers (`UnitCombatLog_C.cpp`): each builds its entry and fires what the
-//! reference fires beside it, the centre text (`COMBAT_TEXT_UPDATE`), `UNIT_COMBAT` and the
-//! floating word or number.
+//! The 12340 combat-log producers: each builds its entry and fires what the reference fires beside
+//! it, the centre text (`COMBAT_TEXT_UPDATE`), `UNIT_COMBAT` and the floating word or number.
 
 use benilla_formats::SpellDisplay;
 use benilla_protocol::messages::power_display_scale;
@@ -50,12 +49,12 @@ fn logged(d: &SpellDisplay) -> bool {
     d.attributes & ATTR_NOT_LOGGED == 0 && !d.name.is_empty()
 }
 
-/// `SpellIsHiddenInCombatLog` (`0x74d3f0`): unlogged, a learn effect (36), or `AttributesExD & 1`.
+/// The hidden-in-log check (`0x74d3f0`): unlogged, a learn effect (36), or `AttributesExD & 1`.
 fn hidden_in_log(d: &SpellDisplay) -> bool {
     !logged(d) || d.effects.contains(&36) || d.attributes_ex4 & EX4_HIDDEN != 0
 }
 
-/// `GetPowerString` (`0x7fe4b0`): the power token the energize text carries.
+/// The power token (`0x7fe4b0`) the energize text carries.
 fn power_word(power: u32) -> &'static str {
     match power {
         0 => "MANA",
@@ -69,7 +68,7 @@ fn power_word(power: u32) -> &'static str {
     }
 }
 
-/// `ShowSpellMissFeedback`'s action word, `0xadbfac` by miss code.
+/// The miss feedback's action word, `0xadbfac` by miss code.
 fn miss_action(code: u8) -> Option<&'static str> {
     Some(match code {
         0 => "NONE",
@@ -122,17 +121,17 @@ impl LogCtx<'_, '_> {
         self.index.0.get(&guid).copied()
     }
 
-    /// A streamed unit (`ClntObjMgrObjectPtr`, unit mask).
+    /// A streamed unit (an object lookup with the unit mask).
     fn unit(&self, guid: u64) -> bool {
         self.store(guid).is_some_and(ObjectStore::is_unit)
     }
 
-    /// The combat-text unit, `s_combatTextActiveUnit` (`0x74d430`): the player.
+    /// The combat-text unit (`0x74d430`): the player.
     fn is_text_unit(&self, guid: u64) -> bool {
         self.me() == Some(guid)
     }
 
-    /// `GetObjectNameFromGuid`: the name now, or empty while it is asked.
+    /// The name by GUID: the name now, or empty while it is asked.
     fn name_of(&self, guid: u64) -> String {
         self.names
             .resolve_unit(guid, self.store(guid), &self.net)
@@ -155,7 +154,7 @@ impl LogCtx<'_, '_> {
         }
     }
 
-    /// `GetSpellCastingTime` (`0x71ad20`, the player's `0x6d68d0`) is nonzero: a ranged spell
+    /// The spell's cast time (`0x71ad20`, the player's `0x6d68d0`) is nonzero: a ranged spell
     /// always, else the level-scaled row, the player's own after its cast-time modifiers.
     fn has_cast_time(&self, caster: u64, d: &SpellDisplay) -> bool {
         if d.attributes & 0x2 != 0 {
@@ -197,7 +196,7 @@ impl LogCtx<'_, '_> {
         scaled.min(row.max_ms) > 30_000
     }
 
-    /// `IsOwnedByActivePlayer` (`0x7190a0`).
+    /// Whether the active player owns the source (`0x7190a0`).
     fn owner_class(&self, source: u64) -> Option<DamageSource> {
         crate::combat_text::owned_by_active_player(source, self.me(), |g| self.store(g))
     }
@@ -246,7 +245,7 @@ pub(crate) struct Log<'w, 's> {
 }
 
 impl Log<'_, '_> {
-    /// `GetCombatLogEntry` and `QueueCombatLogEntry` (`0x750400`, `0x74ff20`).
+    /// The entry's allocation and queueing (`0x750400`, `0x74ff20`).
     pub(crate) fn queue(
         &mut self,
         event: CombatLogEvent,
@@ -285,19 +284,19 @@ impl Log<'_, '_> {
         self.ctx.spell(spell).filter(|d| logged(d))
     }
 
-    /// `ShowCombatFeedback` and `SignalUnitCombat` (`0x513380`, `0x5132c0`).
+    /// The combat feedback and its `UNIT_COMBAT` signal (`0x513380`, `0x5132c0`).
     pub(crate) fn combat_feedback(&mut self, guid: u64, amount: u32, school: u32, flags: u32) {
         self.unit_combat(guid, "WOUND", amount as i32, school, flags);
     }
 
-    /// `ShowHealingFeedback` (`0x513480`): physical school, the crit bit.
+    /// The healing feedback (`0x513480`): physical school, the crit bit.
     fn healing_feedback(&mut self, guid: u64, amount: u32, crit: bool) {
         if amount != 0 {
             self.unit_combat(guid, "HEAL", amount as i32, 1, if crit { 0x200 } else { 0 });
         }
     }
 
-    /// `SignalUnitCombat` (`0x5132c0`): the descriptor by the amount's sign and the flags.
+    /// The `UNIT_COMBAT` signal (`0x5132c0`): the descriptor by the amount's sign and the flags.
     fn unit_combat(&mut self, guid: u64, action: &'static str, amount: i32, school: u32, f: u32) {
         let flags = if amount <= 0 {
             if f & 0x20 != 0 {
@@ -327,7 +326,7 @@ impl Log<'_, '_> {
         });
     }
 
-    /// `ShowSpellMissFeedback` (`0x513410`): the miss word, no amount, physical school.
+    /// The spell-miss feedback (`0x513410`): the miss word, no amount, physical school.
     pub(crate) fn miss_feedback(&mut self, guid: u64, code: u8) {
         if let Some(action) = miss_action(code) {
             self.out.feedback.write(UnitCombatFeedback {
@@ -358,7 +357,7 @@ impl Log<'_, '_> {
         Some((anchor, damage_color(*self.out.gates, class, melee)?))
     }
 
-    /// `AddWorldText` (`0x71f990`): the outcome word over `target`.
+    /// The floating word (`0x71f990`): the outcome word over `target`.
     pub(crate) fn world_word(
         &mut self,
         target: u64,
@@ -381,8 +380,8 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `AddWorldDamageText` (`0x722340`): the number over `target`, category 2 on a crit; a damage
-    /// shield passes no record and colours as a spell.
+    /// The floating damage number (`0x722340`): the number over `target`, category 2 on a crit; a
+    /// damage shield passes no record and colours as a spell.
     fn world_damage(
         &mut self,
         target: u64,
@@ -416,7 +415,7 @@ impl Log<'_, '_> {
         });
     }
 
-    /// `AddWorldHealingText` (`0x722440`): `+%d` over `target`, the player's own heals only,
+    /// The floating heal number (`0x722440`): `+%d` over `target`, the player's own heals only,
     /// under `CombatHealing`, category 7 on a crit.
     fn world_heal(&mut self, target: u64, source: u64, amount: u32, crit: bool) {
         if amount == 0 || self.ctx.me() == Some(target) || !self.out.gates.healing {
@@ -438,8 +437,7 @@ impl Log<'_, '_> {
 
     // ── melee ────────────────────────────────────────────────────────────────────────────────
 
-    /// `UnitCombatLog(ATTACKROUNDINFO)` (`0x7512b0`): the swing's entry, and its centre text over
-    /// the player.
+    /// The attack-round entry (`0x7512b0`): the swing's entry, and its centre text over the player.
     pub(crate) fn swing(&mut self, s: &benilla_protocol::messages::AttackerState) {
         use benilla_protocol::messages::hit_info as h;
         let Some((event, info)) = entries::swing_entry(s) else {
@@ -487,7 +485,7 @@ impl Log<'_, '_> {
 
     // ── damage ───────────────────────────────────────────────────────────────────────────────
 
-    /// `SendDamageEvent` (`0x750660`): the damage entry, and its centre text over the player in
+    /// The damage event (`0x750660`): the damage entry, and its centre text over the player in
     /// the spell words for `SPELL_DAMAGE` alone.
     fn damage_event(
         &mut self,
@@ -546,7 +544,7 @@ impl Log<'_, '_> {
         self.out.center(ty, args);
     }
 
-    /// `UnitCombatLogSpellDamage` (`0x751c40`): a landed hit, else its absorbed, blocked or
+    /// The spell-damage entry (`0x751c40`): a landed hit, else its absorbed, blocked or
     /// resisted miss.
     pub(crate) fn spell_damage(
         &mut self,
@@ -625,7 +623,7 @@ impl Log<'_, '_> {
         );
     }
 
-    /// `UnitCombatLogSplitDamage` (`0x752de0`): `DAMAGE_SPLIT`, then `SPLIT_DAMAGE` over the player.
+    /// The split-damage entry (`0x752de0`): `DAMAGE_SPLIT`, then `SPLIT_DAMAGE` over the player.
     pub(crate) fn split_damage(
         &mut self,
         source: u64,
@@ -658,7 +656,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `HandleSpellNonMeleeDamageLog` (`0x6d3840`).
+    /// `SMSG_SPELLNONMELEEDAMAGELOG` (`0x6d3840`).
     pub(crate) fn spell_damage_log(&mut self, s: &benilla_protocol::messages::SpellDamageLog) {
         use benilla_protocol::messages::spell_hit_info as h;
         let crit = s.hit_info & h::CRIT != 0;
@@ -705,7 +703,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `HandlePeriodicAuraLog` (`0x7531f0`): nothing without the record or a streamed target.
+    /// `SMSG_PERIODICAURALOG` (`0x7531f0`): nothing without the record or a streamed target.
     pub(crate) fn periodic_aura_log(&mut self, l: &benilla_protocol::messages::PeriodicAuraLog) {
         use benilla_protocol::messages::PeriodicTick as T;
         let Some(feedback) = self
@@ -777,7 +775,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `UnitCombatLogDamageShield` (`0x752c90`) and the packet's tail (`0x6d3750`): the bearer
+    /// The damage-shield entry (`0x752c90`) and the packet's tail (`0x6d3750`): the bearer
     /// strikes the attacker, whose number floats as a spell's.
     pub(crate) fn damage_shield(&mut self, s: &benilla_protocol::messages::DamageShield) {
         if self.logged(s.spell_id).is_some() {
@@ -805,8 +803,8 @@ impl Log<'_, '_> {
         self.combat_feedback(s.attacker, s.damage, s.school, 0);
     }
 
-    /// `UnitCombatLog(guid, type, …)` (`0x751150`) behind `HandleEnvironmentDamage` (`0x755270`):
-    /// a streamed unit, some amount, a known type.
+    /// The environmental entry (`0x751150`) behind `SMSG_ENVIRONMENTALDAMAGELOG` (`0x755270`): a
+    /// streamed unit, some amount, a known type.
     pub(crate) fn environmental(&mut self, e: &benilla_protocol::messages::EnvironmentalDamageLog) {
         // `0xa2d394`: fatigue, drowning and falling are physical, lava and fire fire, slime nature.
         const SCHOOLS: [u32; 6] = [0, 0, 0, 2, 3, 2];
@@ -854,7 +852,7 @@ impl Log<'_, '_> {
 
     // ── misses ───────────────────────────────────────────────────────────────────────────────
 
-    /// `QueueMissedSpellText` (`0x750500`): the miss entry, and its word over the player.
+    /// The missed-spell text (`0x750500`): the miss entry, and its word over the player.
     fn missed_spell_text(
         &mut self,
         source: u64,
@@ -892,7 +890,7 @@ impl Log<'_, '_> {
         );
     }
 
-    /// `UnitCombatLogSpellMissed` (`0x751b80`): `shield` a damage shield's miss, `periodic` a
+    /// The spell-missed entry (`0x751b80`): `shield` a damage shield's miss, `periodic` a
     /// periodic immunity, else `SPELL_MISSED` or `RANGE_MISSED`.
     pub(crate) fn spell_missed(
         &mut self,
@@ -938,7 +936,7 @@ impl Log<'_, '_> {
         self.spell_missed(source, target, spell, code, false, false);
     }
 
-    /// `HandleSpellLogMiss` (`0x6d3090`): a damage shield's misses; a debug log logs nothing.
+    /// `SMSG_SPELLLOGMISS` (`0x6d3090`): a damage shield's misses; a debug log logs nothing.
     pub(crate) fn spell_log_miss(&mut self, m: &benilla_protocol::messages::SpellLogMiss) {
         let shown = self
             .ctx
@@ -976,7 +974,7 @@ impl Log<'_, '_> {
 
     // ── heals and power ──────────────────────────────────────────────────────────────────────
 
-    /// `UnitCombatLogHeal` (`0x751f70`) and `SendHealEvent` (`0x750860`).
+    /// The heal entry (`0x751f70`) and the heal event (`0x750860`).
     pub(crate) fn heal(
         &mut self,
         source: u64,
@@ -1045,7 +1043,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `HandleSpellHealLog` (`0x6d3c30`).
+    /// `SMSG_SPELLHEALLOG` (`0x6d3c30`).
     pub(crate) fn spell_heal_log(&mut self, h: &benilla_protocol::messages::SpellHealLog) {
         let Some((feedback, periodic)) = self.ctx.spell(h.spell_id).map(|d| {
             (
@@ -1066,8 +1064,8 @@ impl Log<'_, '_> {
         );
     }
 
-    /// `UnitCombatLogEnergize` (`0x752040`) and `SendEnergizeEvent` (`0x750a90`): the shown
-    /// amount, and the power gain over the player.
+    /// The energize entry (`0x752040`) and the energize event (`0x750a90`): the shown amount, and
+    /// the power gain over the player.
     pub(crate) fn energize(
         &mut self,
         source: u64,
@@ -1107,7 +1105,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `HandleSpellLogEnergizeLog` (`0x6d3df0`).
+    /// `SMSG_SPELLENERGIZELOG` (`0x6d3df0`).
     pub(crate) fn spell_energize_log(&mut self, e: &benilla_protocol::messages::SpellEnergizeLog) {
         let Some(periodic) = self
             .ctx
@@ -1119,8 +1117,8 @@ impl Log<'_, '_> {
         self.energize(e.caster, e.target, e.spell_id, e.power, e.amount, periodic);
     }
 
-    /// `UnitCombatLogPowerDrain` (`0x752100`) and `AddPowerDrainEntry` (`0x750b60`): a happiness
-    /// drain is a pet line instead.
+    /// The power-drain entry and its queueing (`0x752100`, `0x750b60`): a happiness drain is a pet
+    /// line instead.
     pub(crate) fn power_drain(
         &mut self,
         source: u64,
@@ -1193,7 +1191,7 @@ impl Log<'_, '_> {
         );
     }
 
-    /// `UnitCombatLogInstakill` (`0x752210`).
+    /// The instakill entry (`0x752210`).
     pub(crate) fn instakill(&mut self, k: &benilla_protocol::messages::SpellInstaKillLog) {
         if self.logged(k.spell_id).is_some() {
             self.queue(
@@ -1206,7 +1204,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `UnitCombatLogUnitDead` (`0x752ed0`) from `OnDeathAnimate` (`0x7561e0`): a creature that
+    /// The unit-dead entry (`0x752ed0`) from the death animation (`0x7561e0`): a creature that
     /// does not log its death (`0x718a90`: type flag `0x400`, or no template yet) logs nothing,
     /// and a gas cloud dissipates.
     pub(crate) fn unit_dead(&mut self, guid: u64) {
@@ -1235,7 +1233,7 @@ impl Log<'_, '_> {
 
     // ── casts ────────────────────────────────────────────────────────────────────────────────
 
-    /// `UnitCombatLogCastStart` (`0x751920`): a streamed caster's spell with a cast time.
+    /// The cast-start entry (`0x751920`): a streamed caster's spell with a cast time.
     pub(crate) fn cast_start(&mut self, caster: u64, spell: u32) {
         if !self.ctx.unit(caster) {
             return;
@@ -1255,7 +1253,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `UnitCombatLogCastGo` (`0x7519e0`): an instant spell's success, and its name over the
+    /// The cast-success entry (`0x7519e0`): an instant spell's success, and its name over the
     /// player for an `AttributesExF & 0x40` spell.
     pub(crate) fn cast_go(&mut self, caster: u64, target: u64, spell: u32) {
         if !self.ctx.unit(caster) {
@@ -1283,7 +1281,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `UnitCombatLogProcGo` (`0x74d700`): a hidden proc only floats its name over the player.
+    /// The proc entry (`0x74d700`): a hidden proc only floats its name over the player.
     pub(crate) fn proc_go(&mut self, caster: u64, spell: u32) {
         let name = self
             .ctx
@@ -1345,7 +1343,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `UnitCombatLogSpellFail` (`0x751ad0`): the player's own failure, with the error shown.
+    /// The spell-failed entry (`0x751ad0`): the player's own failure, with the error shown.
     pub(crate) fn spell_fail(&mut self, spell: u32, reason: &str) {
         if reason.is_empty() || self.logged(spell).is_none() {
             return;
@@ -1375,7 +1373,7 @@ impl Log<'_, '_> {
         })
     }
 
-    /// `UnitCombatLogAuraAddedOrRemoved` (`0x752710`): a dead unit's removals do not log.
+    /// The aura applied-or-removed entry (`0x752710`): a dead unit's removals do not log.
     pub(crate) fn aura_added_or_removed(
         &mut self,
         unit: u64,
@@ -1427,7 +1425,7 @@ impl Log<'_, '_> {
         self.out.center(ty, vec![text(name)]);
     }
 
-    /// `UnitCombatLogAuraDose` (`0x752860`): a stacking aura's count moved.
+    /// The aura-dose entry (`0x752860`): a stacking aura's count moved.
     pub(crate) fn aura_dose(
         &mut self,
         unit: u64,
@@ -1458,7 +1456,7 @@ impl Log<'_, '_> {
         );
     }
 
-    /// `UnitCombatLogAuraRefreshed` (`0x752ba0`): the same aura, a new expiry.
+    /// The aura-refresh entry (`0x752ba0`): the same aura, a new expiry.
     pub(crate) fn aura_refreshed(&mut self, unit: u64, caster: u64, spell: u32, harmful: bool) {
         if self.aura_logs(spell).is_none() {
             return;
@@ -1543,7 +1541,8 @@ impl Log<'_, '_> {
         });
     }
 
-    /// `HandleSpellRemoveLog` (`0x6ce2b0`): a break removes, a dispel or steal replaces.
+    /// `SMSG_SPELLBREAKLOG`, `SMSG_SPELLDISPELLOG` and `SMSG_SPELLSTEALLOG` (`0x6ce2b0`): a break
+    /// removes, a dispel or steal replaces.
     pub(crate) fn spell_remove_log(&mut self, l: &benilla_protocol::messages::SpellRemoveLog) {
         use benilla_protocol::messages::SpellRemoveKind as K;
         for &(aura, harmful) in &l.auras {
@@ -1561,7 +1560,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `AddAuraReplacedEntry` (`0x752930`): `SPELL_DISPEL` or `SPELL_STOLEN`, the removed aura as
+    /// The aura-replaced entry (`0x752930`): `SPELL_DISPEL` or `SPELL_STOLEN`, the removed aura as
     /// the second spell.
     fn aura_replaced(
         &mut self,
@@ -1600,7 +1599,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `AddSpellRemoveEntry` (`0x752a40`): `SPELL_AURA_BROKEN`, or `_BROKEN_SPELL` naming the
+    /// The aura-removed entry (`0x752a40`): `SPELL_AURA_BROKEN`, or `_BROKEN_SPELL` naming the
     /// breaking spell; a breaker spell with `AttributesExD & 0x2000` names no source.
     fn aura_broken(&mut self, source: u64, dest: u64, breaker: u32, aura: u32, harmful: bool) {
         let mut remover = source;
@@ -1705,7 +1704,7 @@ impl Log<'_, '_> {
 
     // ── spell effects ────────────────────────────────────────────────────────────────────────
 
-    /// `HandleSpellLogExecute` (`0x6d3220`): one producer per effect arm.
+    /// `SMSG_SPELLLOGEXECUTE` (`0x6d3220`): one producer per effect arm.
     pub(crate) fn spell_log_execute(&mut self, x: &benilla_protocol::messages::SpellLogExecute) {
         use benilla_protocol::messages::ExecuteLog as E;
         let Some(periodic) = self
@@ -1790,15 +1789,15 @@ impl Log<'_, '_> {
         }
     }
 
-    /// The spell-only entries: `AddSpellCastEntry`, `AddSpellResurrectEntry` and the all-items
-    /// durability entry (`0x7522a0`, `0x752340`, `0x752680`).
+    /// The spell-only entries: the cast, resurrect and all-items durability entries (`0x7522a0`,
+    /// `0x752340`, `0x752680`).
     fn simple(&mut self, event: CombatLogEvent, source: u64, dest: u64, spell: u32) {
         if self.logged(spell).is_some() {
             self.queue(event, source, dest, Some(spell), CombatLogInfo::default());
         }
     }
 
-    /// `AddSpellDamageEntry` (`0x752520`): the extra-attack count, and `EXTRA_ATTACKS` over the
+    /// The extra-attacks entry (`0x752520`): the extra-attack count, and `EXTRA_ATTACKS` over the
     /// player.
     fn extra_attacks(&mut self, source: u64, dest: u64, spell: u32, count: u32) {
         if count == 0 || self.logged(spell).is_none() {
@@ -1819,7 +1818,7 @@ impl Log<'_, '_> {
         }
     }
 
-    /// `UnitCombatLogInterrupt` (`0x7523d0`): both spells must log; `INTERRUPT` over the player
+    /// The interrupt entry (`0x7523d0`): both spells must log; `INTERRUPT` over the player
     /// names the interrupted one.
     fn interrupt(&mut self, source: u64, dest: u64, spell: u32, interrupted: u32) {
         if self.logged(spell).is_none() {
@@ -1845,7 +1844,7 @@ impl Log<'_, '_> {
         self.mechanic_effect(dest, source, spell, MECHANIC_INTERRUPT);
     }
 
-    /// `GetSpellLogLinkInfo` (`0x50ebe0`): an opened item or game object's chat line.
+    /// The log's link info (`0x50ebe0`): an opened item or game object's chat line.
     fn open_lock(&mut self, source: u64, target: u64, spell: u32) {
         let Some(spell_name) = self.logged(spell).map(|d| d.name.clone()) else {
             return;

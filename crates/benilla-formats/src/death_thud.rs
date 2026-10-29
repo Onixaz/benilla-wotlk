@@ -1,9 +1,9 @@
-//! The death thud a corpse makes as it lands, fired on the `$DTH` animation event (`0x6236e0`,
-//! beside the same event's camera shake `0x625c30`). `DeathThudLookups.dbc` joins the creature's
-//! size class (0 Small to 4 Colossal; the display's, else the model's) with the footsteps' terrain
-//! sound to a land and a water `SoundEntries` kit, so every creature with a `$DTH` key thuds.
-//! `TerrainTypeSounds.dbc` is read for its id domain, `1..=9`, which the reference sizes its baked
-//! array by and bounds-checks against (`0x623771`).
+//! The death thud a corpse makes as it lands, fired on the `$DTH` animation event (beside the same
+//! event's camera shake). `DeathThudLookups.dbc` joins the creature's size class (0 Small to 4
+//! Colossal; the display's, else the model's) with the footsteps' terrain sound to a land and a
+//! water `SoundEntries` kit, so every creature with a `$DTH` key thuds. `TerrainTypeSounds.dbc` is
+//! read for its id domain, `1..=9`, which the reference sizes its baked array by and bounds-checks
+//! against.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -42,7 +42,7 @@ impl DeathThudCatalog {
     }
 
     /// Every size class a row names, ascending: `0..=4` in 5875, so the reference's
-    /// `sizeClass >= 5` gate (`0x623744`) never fires.
+    /// `sizeClass >= 5` gate never fires.
     pub fn size_classes(&self) -> BTreeSet<u32> {
         self.lookup.keys().map(|(sc, _)| *sc).collect()
     }

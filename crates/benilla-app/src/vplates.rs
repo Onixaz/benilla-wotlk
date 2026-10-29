@@ -1,23 +1,21 @@
-//! V-key nameplates, `CGNamePlateFrame` (ctor `0x7cb250`): health-bar plates drawn as a 2-D
-//! overlay that replaces a unit's overhead name. This file owns the world side (gate, anchor,
-//! projection, seat, basis); the widgets live in [`benilla_ui::script::nameplate`].
+//! V-key nameplates, the client's nameplate frames: health-bar plates drawn as a 2-D overlay that
+//! replaces a unit's overhead name. This file owns the world side (gate, anchor, projection, seat,
+//! basis); the widgets live in [`benilla_ui::script::nameplate`].
 //!
 //! - Toggles: the per-character CVars `nameplateShowEnemies` and `nameplateShowFriends`, both
-//!   `"0"` at registration, which `ShouldShowNamePlate` (`0x72b060`) tests per category.
+//!   `"0"` at registration, which the nameplate show test (`0x72b060`) reads per category.
 //! - Gate: `0x72b060`, [`plate_shown`] for the unit's own legs, then 41 yd from the
 //!   camera's unit outside arenas; no occlusion; a unit not projected into view loses its plate.
 //! - Seat: `nameplateAllowOverlap` "1" hangs each plate on its point (`[0xbd09d8]`, read at `0x7258c1`); "0" solves it
 //!   off the plates already placed.
-//! - Anchor: the overhead head point (`0x608640`) plus 2/3 yd (`[0x80abfc]`), projected every
-//!   frame (`0x483ee0`), the plate's top centre on it (`0x509ec0`), sized in gx units of the
-//!   screen diagonal (`0x41ad10`), outside uiScale. Deviation: the basis is damped past
-//!   [`PLATE_DIAG_KNEE`], because the reference's unbounded growth (`0x7705b0`) draws plates too
-//!   large and soft at high resolutions.
-//! - Highlight: the mouseover or the target (`0x606f20` into `0x607080`) lights the plate.
-//!   Deviation: the bar fill brightens by `LIT_BOOST` in place of the reference's ADD
-//!   `Nameplate-Glow` rim, which reads as hard edge lines under benilla's linear blending.
-//!   Hovering a plate makes its unit the mouseover (`0x7cb850`) and turns the name yellow; a
-//!   click on it selects.
+//! - Anchor: the overhead head point plus 2/3 yd, projected every frame, the plate's top centre on
+//!   it, sized in gx units of the screen diagonal, outside uiScale. Deviation: the basis is damped
+//!   past [`PLATE_DIAG_KNEE`], because the reference's unbounded growth draws plates too large and
+//!   soft at high resolutions.
+//! - Highlight: the mouseover or the target lights the plate. Deviation: the bar fill brightens by
+//!   `LIT_BOOST` in place of the reference's ADD `Nameplate-Glow` rim, which reads as hard edge
+//!   lines under benilla's linear blending. Hovering a plate makes its unit the mouseover and turns
+//!   the name yellow; a click on it selects.
 //! - With a target, every other plate dims ([`DIM_ALPHA`]).
 
 use bevy::ecs::entity::EntityHashSet;
@@ -141,21 +139,19 @@ pub(crate) fn plate_shown(mode: &VPlateMode, s: &PlateSubject) -> bool {
 pub(crate) struct VPlates(pub(crate) EntityHashSet);
 
 /// The unit whose plate the pointer is inside, from last frame's layout: the plate's OnEnter
-/// publishing the mouseover (`0x7cb850` into `[0xb4e2c8]`), since the world pick stands down
-/// over UI.
+/// publishing the mouseover, since the world pick stands down over UI.
 #[derive(Resource, Default)]
 pub(crate) struct PlateHover(pub(crate) Option<Entity>);
 
 /// Completed plate clicks, physical or an addon's `plate:Click`, waiting for the targeting chain:
-/// the reference's click slot (`0x7cb910`) ends in the same `SetSelection` as a body click.
+/// the reference's click slot ends in the same `SetSelection` as a body click.
 #[derive(Resource, Default)]
 pub(crate) struct PlateClicks {
     pub(crate) left: Vec<Entity>,
     pub(crate) right: Vec<Entity>,
 }
 
-/// The plate frame in gx units (`[0x87d9cc]`, `[0x87d9d0]`); child offsets from `0x7cb250` and
-/// `0x7cb6d0`.
+/// The plate frame in gx units; child offsets.
 const PLATE_W: f32 = 0.1;
 const PLATE_H: f32 = 0.025;
 /// The health bar: BOTTOMLEFT at the plate's BOTTOMLEFT plus the offset.
@@ -171,10 +167,9 @@ const LEVEL_H: f32 = 0.0086;
 const LEVEL_OFF_X: f32 = 0.0092;
 const LEVEL_OFF_Y: f32 = 0.0071;
 const SKULL_SIZE: f32 = 0.01;
-/// The raid-target icon (`0x7cb250`): its RIGHT on the border's LEFT, hanging off the plate's
-/// left edge.
+/// The raid-target icon: its RIGHT on the border's LEFT, hanging off the plate's left edge.
 const RAID_ICON_SIZE: f32 = 0.02;
-/// `[0x80abfc]`.
+/// The plate's lift above the unit's head, in yards.
 const PLATE_LIFT: f32 = 2.0 / 3.0;
 /// 41 yd from the camera's unit (`[0xadaa7c]` = 1681, `0x72b331`).
 const MAX_DIST_SQ: f32 = 1681.0;
@@ -184,13 +179,13 @@ const INSTANCE_TYPE_ARENA: u32 = 4;
 /// far to read.
 const DIM_ALPHA: f32 = 178.0 / 255.0;
 
-/// The bar-fill palette, the dwords at `0xcf60d0`/`e8`/`c8`/`dc`, in sRGB.
+/// The bar-fill palette, the dwords/`e8`/`c8`/`dc`, in sRGB.
 const PLATE_HOSTILE: [f32; 4] = [1.0, 0.0, 0.0, 1.0];
 const PLATE_NEUTRAL: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const PLATE_FRIENDLY: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
 const PLATE_PLAYER: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 
-/// The class bar colours, `s_classColors` at `0xb2da20`, by `UNIT_FIELD_BYTES_0` byte 1.
+/// The class bar colours, the client's table at `0xb2da20`, by `UNIT_FIELD_BYTES_0` byte 1.
 const PLATE_CLASS: [[u8; 3]; 12] = [
     [0x00, 0x00, 0x00],
     [0xc6, 0x9b, 0x6d],
@@ -206,7 +201,7 @@ const PLATE_CLASS: [[u8; 3]; 12] = [
     [0xff, 0x7c, 0x0a],
 ];
 
-/// `UpdateColorDisplay`'s test order (`0x98ee30`): a hostile player in its class colour while
+/// The plate colour's test order (`0x98ee30`): a hostile player in its class colour while
 /// `ShowClassColorInNameplate` is on, then reaction 1 or less red, else a player blue, else 4 or
 /// more green, else (2 and 3) yellow.
 fn plate_tint(rank: u8, is_player: bool, class: Option<u8>) -> [f32; 4] {
@@ -227,15 +222,15 @@ fn plate_tint(rank: u8, is_player: bool, class: Option<u8>) -> [f32; 4] {
     }
 }
 
-/// The level con palette, `0x7cbd50`'s dwords, not FrameXML's `QuestDifficultyColor`.
+/// The level con palette, the con colour's dwords, not FrameXML's `QuestDifficultyColor`.
 const CON_RED: [f32; 4] = [1.0, 25.0 / 255.0, 25.0 / 255.0, 1.0];
 const CON_ORANGE: [f32; 4] = [1.0, 127.0 / 255.0, 63.0 / 255.0, 1.0];
 const CON_YELLOW: [f32; 4] = [1.0, 1.0, 0.0, 1.0];
 const CON_GREEN: [f32; 4] = [63.0 / 255.0, 178.0 / 255.0, 63.0 / 255.0, 1.0];
 const CON_GRAY: [f32; 4] = [127.0 / 255.0, 127.0 / 255.0, 127.0 / 255.0, 1.0];
 
-/// The con colour (`0x7cbd50`): +5 or more red, +3/+4 orange, -2..+2 yellow, then green until
-/// the shared grey test ([`unit_is_grey`], table `[0x81dda8]`) says gray.
+/// The con colour: +5 or more red, +3/+4 orange, -2..+2 yellow, then green until the shared grey
+/// test ([`unit_is_grey`]) says gray.
 fn con_color(pl_level: u32, unit_level: u32) -> [f32; 4] {
     let diff = i64::from(unit_level) - i64::from(pl_level);
     if diff >= 5 {
@@ -258,15 +253,15 @@ pub(crate) fn device_snap(v: f32, scale: f32) -> f32 {
     (v * scale).round() / scale
 }
 
-/// Deviation: the reference's plates grow with the diagonal without limit (`0x7705b0`), which
-/// reads too big and soft; past this diagonal, where the frame is the border art's native
-/// 128x32 px, the basis grows at [`PLATE_GROWTH_DAMP`] of that rate.
+/// Deviation: the reference's plates grow with the diagonal without limit, which reads too big and
+/// soft; past this diagonal, where the frame is the border art's native 128x32 px, the basis grows
+/// at [`PLATE_GROWTH_DAMP`] of that rate.
 const PLATE_DIAG_KNEE: f32 = 1280.0;
 /// 0 pins the native size, 1 is the reference's rate.
 const PLATE_GROWTH_DAMP: f32 = 0.5;
 
-/// One gx unit in pixels: the screen diagonal (`0x41ad10`), never uiScale, damped past
-/// [`PLATE_DIAG_KNEE`]. Shared with the chat bubble so its text holds the plate's em.
+/// One gx unit in pixels: the screen diagonal, never uiScale, damped past [`PLATE_DIAG_KNEE`].
+/// Shared with the chat bubble so its text holds the plate's em.
 pub(crate) fn plate_basis(viewport: Vec2) -> f32 {
     let d = viewport.x.hypot(viewport.y);
     if d <= PLATE_DIAG_KNEE {
@@ -281,15 +276,14 @@ pub(crate) fn gx_px(v: f32, basis: f32) -> f32 {
     (v * basis).round()
 }
 
-/// A plate FontString height to its em, `min(32, round(h * basis))`: the reference's
-/// `0x44d040` and `0x5ca030` net `h` times the diagonal, capped at the 32 px atlas cell, and
-/// re-rasterize on every resize (`0x5c2b50`).
+/// A plate FontString height to its em, `min(32, round(h * basis))`: the reference's net `h` times
+/// the diagonal, capped at the 32 px atlas cell, and re-rasterize on every resize.
 pub(crate) fn text_px(h: f32, basis: f32) -> f32 {
     (h * basis).round().min(32.0)
 }
 
 /// Re-read the two CVars whenever the registry moved; read rather than observed, so the silent
-/// per-character drop at logout (`CVar::DeleteCharacterCVars` `0x767350`) turns them off too.
+/// per-character drop at logout (`0x767350`) turns them off too.
 pub(crate) fn read_plate_cvars(
     cvars: Option<Res<crate::cvars::Cvars>>,
     mut mode: ResMut<VPlateMode>,
@@ -355,11 +349,11 @@ struct PlateWorld<'w, 's> {
     factions: Option<Res<'w, Factions>>,
     reputations: Res<'w, Reputations>,
     selection: Res<'w, Selection>,
-    // With `selection`, the highlight's pair: the watcher's globals `[0xb4e2c8]`/`[0xb4e2d8]`.
+    // With `selection`, the highlight's pair: the watcher's globals.
     hovered: Res<'w, Hovered>,
     camera: Query<'w, 's, (&'static Camera, &'static Transform), With<WorldCamera>>,
     window: Query<'w, 's, &'static Window, With<bevy::window::PrimaryWindow>>,
-    // The pending ground-target cast, for the plate's hit-test veto (`0x7cba30`).
+    // The pending ground-target cast, for the plate's hit-test veto.
     targeting: Res<'w, crate::spell::SpellTargeting>,
     // An owner guid to its unit, for the owned-unit categories.
     index: Res<'w, crate::net::GuidIndex>,
@@ -399,7 +393,7 @@ fn drive_vplates(
     plate_hover.0 = None;
     bucket.clear();
     // Every early return retires the plates first, or the widgets stay on screen; the reference
-    // hides each live plate and returns it to the pool (`0x608a10`).
+    // hides each live plate and returns it to the pool.
     let retire_all = |script: Option<NonSendMut<benilla_ui::script::UiScript>>| {
         if let Some(mut script) = script {
             script.retire_nameplates();
@@ -431,16 +425,15 @@ fn drive_vplates(
     let basis = plate_basis(viewport);
     let gx = |v: f32| gx_px(v, basis);
     let window = world.window.single().ok();
-    // Plates stop taking the mouse in freelook (`0x60f830`, called from `0x483e80`/`0x483e70` on
-    // the transitions), written on the edge per VM.
+    // Plates stop taking the mouse in freelook, written on the edge per VM.
     let looking = rig.is_looking();
     if *mouse_told.get(&script) != Some(looking) {
         *mouse_told.get(&script) = Some(looking);
         script.set_nameplate_mouse(!looking);
     }
-    // While a ground-targeted spell is armed (`0x6e6320`'s `flag & 0x60`), plates refuse the hit
-    // test (`0x7cba30`, the `+0x3c` override) without clearing the mouse-enabled bit, so
-    // `IsMouseEnabled()` is unchanged.
+    // While a ground-targeted spell is armed (the spell cursor's `flag & 0x60`), plates refuse the
+    // hit test (the `+0x3c` override) without clearing the mouse-enabled bit, so `IsMouseEnabled()`
+    // is unchanged.
     script.set_nameplate_hit_test_veto(
         world
             .targeting
@@ -460,8 +453,8 @@ fn drive_vplates(
     let mut states: Vec<PlateState> = Vec::new();
 
     // Plates seat in squared-distance order from the gx point (0.4, 0.3), Y mirrored from the
-    // reference's Y-up space (`0x608870`, `0x6089a0`, walked by `0x608ce0`); each later plate is
-    // solved off those already claimed. The undamped diagonal: this is position, not size.
+    // reference's Y-up space; each later plate is solved off those already claimed. The undamped
+    // diagonal: this is position, not size.
     let diag = viewport.length();
     let sort_pt = Vec2::new(0.4 * diag, viewport.y - 0.3 * diag);
     let in_arena = world
@@ -475,14 +468,13 @@ fn drive_vplates(
         if !matches!(net.kind, EntityKind::Unit | EntityKind::Player) {
             continue;
         }
-        // `NOT_SELECTABLE` (flags bit 25) never gets a plate, re-tested every tick (`0x60f622`,
-        // from CGUnit's OnUpdate `0x607ed0`). A plate hover publishes the mouseover with no
-        // selectability check (`0x7cb869`, unlike the world hover at `0x482982`), so this gate is
-        // what keeps such a unit's tooltip away.
+        // `NOT_SELECTABLE` (flags bit 25) never gets a plate, re-tested every tick. A plate hover
+        // publishes the mouseover with no selectability check (unlike the world hover), so this
+        // gate is what keeps such a unit's tooltip away.
         if store.is_some_and(|s| s.0.unit_flags() & (1 << 25) != 0) {
             continue;
         }
-        // `0x60f600`'s first test: health 0 or less (absent reads 0) has no plate. Feign death
+        // The plate gate's first test: health 0 or less (absent reads 0) has no plate. Feign death
         // keeps health, so it passes here.
         if store.is_none_or(|s| s.0.unit_health().unwrap_or(0) == 0) {
             continue;
@@ -555,7 +547,7 @@ fn drive_vplates(
         if !plate_shown(&mode, &subject) {
             continue;
         }
-        // Behind the camera or outside the viewport there is no plate: `0x60f600` destroys it
+        // Behind the camera or outside the viewport there is no plate: the plate gate destroys it
         // before the seat, never clamping it in from off-screen.
         let anchor = overhead_anchor(
             entity,
@@ -599,8 +591,8 @@ fn drive_vplates(
         // `WOW_VPLATE_TRACE=1` prints each plate rect in logical px.
         static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         let trace = *TRACE.get_or_init(|| std::env::var("WOW_VPLATE_TRACE").as_deref() == Ok("1"));
-        // The seat (`0x509ec0`): the plate hangs from its top centre on the projected point, is
-        // solved off the plates already claimed, then clamped half a plate inside the screen.
+        // The seat: the plate hangs from its top centre on the projected point, is solved off the
+        // plates already claimed, then clamped half a plate inside the screen.
         let desired = Rect::new(
             screen.x - pw * 0.5,
             screen.y,
@@ -684,8 +676,8 @@ fn drive_vplates(
             // addons cache per plate on it.
             key: guid.0,
             top_centre: (x_units, y_units),
-            // Raw health, not a fraction: `healthbar:GetValue()` is `[bar+0x320]` (`0x78f5d0`),
-            // and addons divide it by the max.
+            // Raw health, not a fraction: `healthbar:GetValue()` is `[bar+0x320]`, and addons
+            // divide it by the max.
             health: store.and_then(|s| s.0.unit_health()).unwrap_or(0) as f32,
             max_health: store
                 .and_then(|s| s.0.unit_max_health())
@@ -696,9 +688,9 @@ fn drive_vplates(
                 .resolve_unit(guid.0, store, &net_commands)
                 .map(str::to_owned)
                 .unwrap_or_default(),
-            // The skull (`0x7cbb40`): rank 3 through `gated_rank` (so a charmed boss shows its
-            // level), or a hostile 10 or more levels up that is not grey (`0x5f0700`, vacuous
-            // there but transcribed). A unit with no level yet shows neither.
+            // The skull: rank 3 through `gated_rank` (so a charmed boss shows its level), or a
+            // hostile 10 or more levels up that is not grey (vacuous there but transcribed). A unit
+            // with no level yet shows neither.
             level: store.and_then(|s| s.0.unit_level()),
             skull: store.and_then(|s| s.0.unit_level()).is_some_and(|level| {
                 crate::names::gated_rank(
@@ -781,7 +773,7 @@ impl Plugin for VPlatesPlugin {
 mod tests {
     use super::*;
 
-    /// `0x7cbd50` at level 30 (grayband[6] = 7: green down to 23, gray at 22) and the low edge.
+    /// The con colour at level 30 (grayband[6] = 7: green down to 23, gray at 22) and the low edge.
     #[test]
     fn con_color_matches_the_byte_table() {
         assert_eq!(con_color(30, 35), CON_RED);

@@ -8,8 +8,8 @@ use std::io;
 use crate::wire::{read_cstring, read_u32_le};
 
 /// Body of `CMSG_PAGE_TEXT_QUERY` (`0x005A`): `u32 pageId`, then the asking object's `u64 guid`,
-/// which the 1.12 client appends (`0x564730`, at `0x56485d`) and vmangos reads only if present,
-/// then discards (`QueryPageText::ReadFromWorldPacket`).
+/// which the 1.12 client appends and vmangos reads only if present, then discards
+/// (`QueryPageText::ReadFromWorldPacket`).
 pub fn page_text_query(page_id: u32, guid: u64) -> Vec<u8> {
     let mut body = Vec::with_capacity(12);
     body.extend_from_slice(&page_id.to_le_bytes());

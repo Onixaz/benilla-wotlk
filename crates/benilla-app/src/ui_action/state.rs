@@ -1,10 +1,9 @@
-//! Each action slot's per-frame state behind `IsUsableAction`, `IsActionInRange`,
-//! `IsCurrentAction` and `GetActionCooldown`, diff-pushed into the VM with the reference's events
-//! on each change: the cooldown trio (`0x4b31b0`, `0x4f93d0`), the usable pair (`0x4b31c0`, on a
-//! cache change only, `0x4e5c00`), the state pair (`0x4b3250`), combat enter and leave
-//! (`0x6256ff`, `0x625778`), and autorepeat start and stop (`0x6e5952`, `0x6ea170`). Usability is
-//! `IsSpellUsableNow 0x6e3d60` ([`crate::spell::usable`]), auto-repeat the `0xceac30` key, and
-//! range the squared distance against `GetMinMaxRange 0x6e3480`.
+//! Each action slot's per-frame state behind `IsUsableAction`, `IsActionInRange`, `IsCurrentAction`
+//! and `GetActionCooldown`, diff-pushed into the VM with the reference's events on each change: the
+//! cooldown trio, the usable pair (on a cache change only), the state pair, combat enter and leave,
+//! and autorepeat start and stop. Usability is the reference's usable walk
+//! ([`crate::spell::usable`]), auto-repeat the reference's auto-repeat spell cell, and range the
+//! squared distance against the spell range lookup.
 
 use crate::ui_items::carried_counts;
 use std::collections::HashMap;
@@ -72,22 +71,22 @@ fn reactive_spells(known: &std::collections::BTreeSet<u32>, catalog: &SpellCatal
     out
 }
 
-/// A slot after the macro indirection (`0x4e5a50`), as the usable compute `0x4e5050` reads it.
+/// A slot after the macro indirection, as the usable compute reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SlotResolve {
     /// A spell or item slot, or a macro whose bound spell is live (`[rec+0x564] > 0`).
     Action(u8, u32),
-    /// A macro that casts nothing (`[rec+0x564] == 0`): usable while it exists (`0x4e5030`),
-    /// with no cooldown, range or check (`0x4e50f4`-`0x4e516f`).
+    /// A macro that casts nothing (`[rec+0x564] == 0`): usable while it exists, with no cooldown,
+    /// range or check.
     BareMacro,
-    /// Grey with nothing to report: a `/cast` that did not resolve (`-1`, refused at
-    /// `0x4e518b`), or a macro that no longer exists.
+    /// Grey with nothing to report: a `/cast` that did not resolve (`-1`), or a macro that no
+    /// longer exists.
     Dead,
 }
 
 /// Resolves a slot through its macro: every `Is*Action`/`GetActionCooldown` binding goes through
-/// `0x4e5a50`, so a macro that casts Fireball is the Fireball slot, its own icon aside. Spells
-/// only: 1.12 has no `/use`, so no macro names an item.
+/// it, so a macro that casts Fireball is the Fireball slot, its own icon aside. Spells only: 1.12
+/// has no `/use`, so no macro names an item.
 fn resolve_through_macro(
     kind: u8,
     action: u32,
@@ -211,8 +210,7 @@ pub(super) fn feed_action_state(
     let current_cast = pending.current(now).or(casting_spell);
     let caster = range_units.caster();
     let self_pos = me.map(|(_, t, _, _)| t.translation);
-    // The target's reach, motion and squared distance (the reference tests dx²+dy²+dz²,
-    // `0x6e47b0`).
+    // The target's reach, motion and squared distance (the reference tests dx²+dy²+dz²).
     let target_entity = selection.guid.and_then(|g| objects.entity(g));
     let target = target_entity.and_then(|e| units.get(e).ok());
     let target_unit = target_entity
@@ -230,9 +228,9 @@ pub(super) fn feed_action_state(
         let (kind, id) = match resolve_through_macro(button.kind, button.action, bound) {
             SlotResolve::Action(kind, id) => (kind, id),
             SlotResolve::BareMacro => {
-                // `0x4e5050`'s spell-less leg: usable. It also greys every spell-less macro and
-                // item while the player-control flag `[0xb4b3e4]` is clear (taxi, fear, charm,
-                // `0x4958e0`; set at boot, `0x48f626`); that gate is not built.
+                // The usable compute's spell-less leg: usable. It also greys every spell-less macro
+                // and item while the player-control flag is clear (taxi, fear, charm; set at boot);
+                // that gate is not built.
                 st.usable = true;
                 fresh.insert(action, st);
                 continue;
@@ -255,22 +253,22 @@ pub(super) fn feed_action_state(
                     continue;
                 };
                 st.is_attack = d.is_melee_auto_attack();
-                // `IsCurrentAction 0x4e53a0`: Attack while engaged; a spell while in flight
-                // (`0xceca88`, which a queued on-swing strike holds), channelled (`0xceac58`), or
-                // when its form is ours (`0x4e5556`). The form arm is not the icon's aura scan:
-                // a form granted by another spell lights the check but not the icon.
+                // `IsCurrentAction`: Attack while engaged; a spell while in flight (which a queued
+                // on-swing strike holds), channelled, or when its form is ours. The form arm is not
+                // the icon's aura scan: a form granted by another spell lights the check but not
+                // the icon.
                 st.current = if st.is_attack {
                     engaged
                 } else {
                     current_cast == Some(button.action)
                         || queued_melee.current() == Some(button.action)
                         || channel.current(now) == Some(button.action)
-                        // Checked while its ground click is pending (`0x4e54d0`, `0x6e48e0`).
+                        // Checked while its ground click is pending.
                         || targeting.spell() == Some(button.action)
                         || (form_byte != 0 && d.shapeshift_form == Some(u32::from(form_byte)))
                 };
                 st.auto_repeat = auto_repeat.0 == Some(button.action);
-                // The usable walk (`0x6e3d60`); only its power gate sets `notEnoughMana`.
+                // The usable walk; only its power gate sets `notEnoughMana`.
                 if let (Some((store, _, _, _)), Some(sp)) = (me, spells.as_deref()) {
                     let ctx = usable::UsableCtx {
                         store,
@@ -299,16 +297,16 @@ pub(super) fn feed_action_state(
                     st.usable = true;
                 }
                 let row = spells.as_ref().and_then(|s| s.ranges.get(d.range_index));
-                // `ActionHasRange 0x4e5810` asks `GetMinMaxRange` with a null target (`0x4e5852`)
-                // and tests `|min|` and `|max|` against `FLT_EPSILON`. The auto-attack target the
-                // melee arm falls back to cannot move that: its max is at least the 5.0 floor.
+                // `ActionHasRange` asks the spell range lookup with a null target and tests `|min|`
+                // and `|max|` against `FLT_EPSILON`. The auto-attack target the melee arm falls
+                // back to cannot move that: its max is at least the 5.0 floor.
                 st.has_range = spell_mods
                     .min_max_range(d, row, caster, RangeTargets::default())
                     .is_some_and(|(min, max)| min.abs() > f32::EPSILON || max.abs() > f32::EPSILON);
-                // `IsActionInRange 0x4e56f0` runs `CanTargetUnit 0x6e4440`, which binds the selected
-                // target, then `IsTargetInRange 0x6e47b0`, which hands `GetMinMaxRange` that target
-                // (`0x6e47ca`): its reach pads a ranged row, and its motion with the caster's earns
-                // the moving bonus. Nil without a target.
+                // `IsActionInRange` runs the target check, which binds the selected target, then
+                // the range test, which hands the spell range lookup that target: its reach pads a
+                // ranged row, and its motion with the caster's earns the moving bonus. Nil without
+                // a target.
                 st.in_range = match dist_sq {
                     Some(d2) if st.has_range => {
                         let targets = RangeTargets {
@@ -348,8 +346,8 @@ pub(super) fn feed_action_state(
                 let use_spell = items
                     .template(button.action, 0, &commands)
                     .and_then(|t| t.use_spell);
-                // `IsConsumableAction` (`0x4e5250`) reads only the template, so the identity
-                // feed pushes it with the count it gates, not this one.
+                // `IsConsumableAction` reads only the template, so the identity feed pushes it with
+                // the count it gates, not this one.
                 let count = carried.get(&button.action).copied().unwrap_or(0);
                 // `IsEquippedAction`, the green border: worn in any equipment slot (0..18).
                 st.equipped = me.is_some_and(|(s, _, _, _)| {
@@ -360,9 +358,9 @@ pub(super) fn feed_action_state(
                             == Some(button.action)
                     })
                 });
-                // `0x4e5050`'s item arm runs the count, `IsItemOnCooldown` and the on-use spell
-                // through the same `0x6e3d60` walk. With no player the reference answers (0, 0)
-                // (`0x4e5080`), the default state.
+                // The usable compute's item arm runs the count, the item cooldown test and the
+                // on-use spell through the same walk. With no player the reference answers (0, 0),
+                // the default state.
                 if let Some((store, _, _, _)) = me {
                     let ctx = usable::UsableCtx {
                         store,
@@ -542,7 +540,7 @@ mod tests {
     }
     use benilla_formats::SpellDisplay;
 
-    /// `[rec+0x564]`'s three values (`0x4e5a50`): a live spell, a bare macro, and grey.
+    /// `[rec+0x564]`'s three values: a live spell, a bare macro, and grey.
     #[test]
     fn a_macro_slot_resolves_through_its_bound_spell() {
         use crate::ui_macro::BoundSpell;
@@ -647,10 +645,10 @@ mod tests {
         );
     }
 
-    /// `IsActionInRange` (`0x4e56f0`) hands `GetMinMaxRange` the selected unit, so a ranged row
-    /// pads by that unit's reach and the player's alone: a Fireball (0-35) button reads in range
-    /// out to 38 yards from a 1.5-reach target, whoever the player swings at, and `ActionHasRange`
-    /// (`0x4e5810`, a null target) says the button has a range.
+    /// `IsActionInRange` hands the spell range lookup the selected unit, so a ranged row pads by
+    /// that unit's reach and the player's alone: a Fireball (0-35) button reads in range out to 38
+    /// yards from a 1.5-reach target, whoever the player swings at, and `ActionHasRange` (a null
+    /// target) says the button has a range.
     #[test]
     fn a_ranged_button_pads_its_range_by_the_selected_target_alone() {
         use benilla_protocol::messages::ActionButton;
@@ -766,9 +764,9 @@ mod tests {
         );
     }
 
-    /// `IsActionInRange` hands `GetMinMaxRange` the selected unit, so a melee button reads in
+    /// `IsActionInRange` hands the spell range lookup the selected unit, so a melee button reads in
     /// range out to 7.667 yards while the player and the selected mob both run, and to the 5.0
-    /// floor otherwise (`0x6e3648`-`0x6e36a2`).
+    /// floor otherwise.
     #[test]
     fn a_melee_button_reaches_the_moving_bonus_while_both_units_run() {
         use benilla_protocol::messages::ActionButton;
@@ -898,8 +896,8 @@ mod tests {
         assert_eq!(verdict(false, false, 4.9), 1, "the floor");
     }
 
-    /// An item slot's on-use spell takes the `0x6e3d60` walk (`0x4e5050`), and every shipped
-    /// Food/Drink spell has `Attributes` bit 28, `ATTR_NOT_IN_COMBAT` (the walk's leg 8).
+    /// An item slot's on-use spell takes the usable walk, and every shipped Food/Drink spell has
+    /// `Attributes` bit 28, `ATTR_NOT_IN_COMBAT` (the walk's leg 8).
     #[test]
     fn food_on_the_bar_greys_while_the_player_is_in_combat() {
         use benilla_protocol::messages::{ActionButton, ItemUseSpell};

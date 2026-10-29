@@ -234,7 +234,7 @@ fn the_getters_answer_empties_before_anything_is_pending() {
     );
 }
 
-/// The binding truncates ms to whole seconds (`0x48b660`); the dialog seeds its countdown from it.
+/// The binding truncates ms to whole seconds; the dialog seeds its countdown from it.
 #[test]
 fn the_time_left_getter_truncates_to_whole_seconds() {
     let mut s = UiScript::new().unwrap();

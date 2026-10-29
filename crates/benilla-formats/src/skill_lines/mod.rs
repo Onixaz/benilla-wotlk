@@ -3,12 +3,12 @@
 //!
 //! - `SkillLine.dbc`, 56 fields: `ID`, `categoryId`, `skillCostID`, the name (3-19), the
 //!   description (20-36), `spellIcon` (37), the alternate verb (38-54) and `canLink`.
-//! - `SkillLineAbility.dbc`, 14 fields: every row of a spell, resolved per race and class as
-//!   `SpellTableLookupAbility` (`0x812410`) does; `forward_spellid` is the first non-zero across
+//! - `SkillLineAbility.dbc`, 14 fields: every row of a spell, resolved per race and class as the
+//!   reference's ability lookup (`0x812410`) does; `forward_spellid` is the first non-zero across
 //!   the spell's rows, as in vmangos's `SpellMgr::GetSpellBookSuccessorSpellId`.
-//! - `SkillRaceClassInfo.dbc`, `SkillRaceClassInfofmt = "diiiiiix"`: the row admitting the
-//!   player's race and class, which the reference resolves at `0x6ddf90`; here the first such row.
-//!   With flag `0x80`, or with no such row, a spell's tab is General.
+//! - `SkillRaceClassInfo.dbc`, `SkillRaceClassInfofmt = "diiiiiix"`: the row admitting the player's
+//!   race and class, which the reference resolves; here the first such row. With flag `0x80`, or
+//!   with no such row, a spell's tab is General.
 //! - `SkillLineCategory.dbc`, 19 fields read off the raw file: the skills-pane headers in
 //!   `displayOrder`. `Not Displayed` (12) is an ordinary header; the reference hides
 //!   `GENERIC (DND)` by `SkillRaceClassInfo.flags & 0x2`, not by category.
@@ -69,18 +69,18 @@ const SKILL_FLAG_DISPLAY_SORTED: u32 = 0x80;
 /// flags a `CMSG_UNLEARN_SKILL` for a line without it (`SkillHandler.cpp`).
 const SKILL_FLAG_UNLEARNABLE: u32 = 0x20;
 
-/// Flag `0x1`: the Skills tab lists the line even at rank 0 (`0x4d2cb0`); unnamed in mangos.
+/// Flag `0x1`: the Skills tab lists the line even at rank 0; unnamed in mangos.
 const SKILL_FLAG_ALWAYS_DISPLAY: u32 = 0x1;
 
-/// Flag `0x2`: the Skills tab drops the line (`0x4d2d9f`); it also silences skill-ups, hence
-/// mangos's name, `SKILL_FLAG_NO_SKILLUP_MESSAGE`.
+/// Flag `0x2`: the Skills tab drops the line; it also silences skill-ups, hence mangos's name,
+/// `SKILL_FLAG_NO_SKILLUP_MESSAGE`.
 const SKILL_FLAG_HIDDEN: u32 = 0x2;
 
 /// Flag `0x4`: an untrained line shows from the row's `reqLevel`; unnamed in mangos.
 const SKILL_FLAG_TRAINABLE_AT_LEVEL: u32 = 0x4;
 
 /// Flag `0x400` (vmangos `SKILL_FLAG_MONO_VALUE`): `GetSkillLineInfo` returns `skillMaxRank` 1
-/// whatever the descriptor says (`0x4d3610`), so `SkillFrame.lua` draws a proficiency bar.
+/// whatever the descriptor says, so `SkillFrame.lua` draws a proficiency bar.
 const SKILL_FLAG_MONO_VALUE: u32 = 0x400;
 
 /// A skill line's display: the spellbook tab's name and icon, and its skills-pane category.
@@ -111,7 +111,7 @@ pub struct LinkAbility {
 }
 
 impl LinkAbility {
-    /// `SpellTableMatchRaceClass` (`0x810320`) with no exclusions: a zero mask admits all.
+    /// The race and class match (`0x810320`) with no exclusions: a zero mask admits all.
     pub fn admits(&self, race: u8, class: u8) -> bool {
         let bit = |n: u8| 1u32.wrapping_shl(u32::from(n).wrapping_sub(1));
         (self.race_mask == 0 || self.race_mask & bit(race) != 0)
@@ -128,14 +128,14 @@ struct SrciRow {
 }
 
 /// The `SkillRaceClassInfo.dbc` fields the reference's Skills tab reads for a line, race and class
-/// (the list build `0x4d2cb0`, `GetSkillLineInfo` `0x4d3610`).
+/// (`GetSkillLineInfo`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SkillRaceClass {
     /// `flags`, column 4.
     pub flags: u32,
     /// `reqLevel`, column 5: the level an untrained `0x4` line starts showing at.
     pub min_level: u32,
-    /// `skillCostID`, column 7: `GetSkillLineInfo`'s 12th return is this plus one (`0x4d3a06`).
+    /// `skillCostID`, column 7: `GetSkillLineInfo`'s 12th return is this plus one.
     pub cost_index: u32,
 }
 
@@ -151,9 +151,8 @@ impl SkillRaceClass {
         self.flags & SKILL_FLAG_MONO_VALUE != 0
     }
 
-    /// Whether a rank change prints no skill-up line: the reference's watcher (`0x5de180`) skips it
-    /// when the flags carry `0x402`, tested at `0x5de358` on the row `0x6ddf90` resolves, never on
-    /// a `SkillLine.dbc` field.
+    /// Whether a rank change prints no skill-up line: the reference's watcher skips it when the
+    /// flags carry `0x402`, tested on the row resolves, never on a `SkillLine.dbc` field.
     pub fn skill_up_silent(self) -> bool {
         self.flags & (SKILL_FLAG_MONO_VALUE | SKILL_FLAG_HIDDEN) != 0
     }
@@ -164,7 +163,7 @@ impl SkillRaceClass {
         self.flags & SKILL_FLAG_UNLEARNABLE != 0
     }
 
-    /// Whether a rank-0 line gets a row at `player_level` (`0x4d2cb0`); a trained line never asks.
+    /// Whether a rank-0 line gets a row at `player_level`; a trained line never asks.
     pub fn displays_untrained(self, player_level: u32) -> bool {
         self.flags & SKILL_FLAG_ALWAYS_DISPLAY != 0
             || (self.flags & SKILL_FLAG_TRAINABLE_AT_LEVEL != 0 && player_level >= self.min_level)
@@ -172,7 +171,7 @@ impl SkillRaceClass {
 }
 
 /// A spell's `SkillLineAbility.dbc` row: its line, required rank, and the trivial ranks the
-/// crafting book's difficulty colours band on (`0x4fca20`).
+/// crafting book's difficulty colours band on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SlaInfo {
     /// `skillId`, column 1.
@@ -210,7 +209,7 @@ impl SlaRow {
         }
     }
 
-    /// `SpellTableMatchRaceClass` (`0x810320`): an exclude flag inverts its mask, a zero mask
+    /// The race and class match (`0x810320`): an exclude flag inverts its mask, a zero mask
     /// admits all.
     fn admits(&self, race: u8, class: u8) -> bool {
         let bit = |n: u8| 1u32.wrapping_shl(u32::from(n).wrapping_sub(1));
@@ -286,7 +285,7 @@ impl SkillLineCatalog {
 
     /// A spell's `SkillLineAbility` row for a 1-based `race` and `class`: the last row in file
     /// order whose line has a `SkillRaceClassInfo` row admitting the pair and whose own masks admit
-    /// it, the bucket head `SpellTableLookupAbility` (`0x812410`) returns, since each admitted row
+    /// it, the bucket head the ability lookup (`0x812410`) returns, since each admitted row
     /// links at the head (`0x811cc0`). Before the descriptor (race or class 0), the first row.
     pub fn ability(&self, spell_id: u32, race: u8, class: u8) -> Option<&SlaInfo> {
         let rows = self.abilities.get(&spell_id)?;
@@ -322,8 +321,8 @@ impl SkillLineCatalog {
         head
     }
 
-    /// Whether a higher rank of `spell_id` is known, the reference's `KnownHigherRank`
-    /// (`0x60c8d0`); the trainer's colouring and state re-evaluator OR it with plain known-ness.
+    /// Whether a higher rank of `spell_id` is known, the reference's higher-rank test; the
+    /// trainer's colouring and state re-evaluator OR it with plain known-ness.
     pub fn higher_rank_known(
         &self,
         spell_id: u32,
@@ -377,7 +376,7 @@ impl SkillLineCatalog {
         s
     }
 
-    /// A linkable line's rows in link-bit order (`SpellTableGetSkillLineLinkInfo 0x8104a0`).
+    /// A linkable line's rows in link-bit order (`0x8104a0`).
     pub fn link_run(&self, line_id: u32) -> Option<&[LinkAbility]> {
         self.link_runs.get(&line_id).map(Vec::as_slice)
     }
@@ -442,7 +441,7 @@ impl SkillLineCatalog {
     }
 
     /// The row the reference resolves for `line_id`, `race` and `class`; with none, its list build
-    /// drops the line (`0x4d2cb0`), and so must the pane.
+    /// drops the line, and so must the pane.
     pub fn race_class(&self, line_id: u32, race: u8, class: u8) -> Option<SkillRaceClass> {
         self.srci_row(line_id, race, class).map(|r| r.row)
     }
@@ -454,7 +453,7 @@ impl SkillLineCatalog {
     }
 
     /// Whether a rank change in `line_id` prints a skill-up line for `race`/`class`; with no
-    /// admitting row the reference stays silent too (`0x5de352`).
+    /// admitting row the reference stays silent too.
     pub fn announces_skill_ups(&self, line_id: u32, race: u8, class: u8) -> bool {
         self.race_class(line_id, race, class)
             .is_some_and(|rc| !rc.skill_up_silent())

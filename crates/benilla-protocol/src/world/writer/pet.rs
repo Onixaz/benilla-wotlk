@@ -1,6 +1,6 @@
 //! The pet sends. No reply answers a bar send: the 1.12 client applies the press to its own state
-//! (`0xb71468`, `PET_BAR_UPDATE`) before sending, and the bar changes only on a fresh
-//! `SMSG_PET_SPELLS`. The server drops a send naming a pet we do not control (`PetHandler.cpp`).
+//! (`PET_BAR_UPDATE`) before sending, and the bar changes only on a fresh `SMSG_PET_SPELLS`. The
+//! server drops a send naming a pet we do not control (`PetHandler.cpp`).
 
 use anyhow::Result;
 
@@ -42,8 +42,7 @@ impl WorldWriter {
     }
 
     /// `CMSG_PET_CANCEL_AURA`: a bar click on a spell already on the pet sends only this, not
-    /// `CMSG_PET_ACTION` (reference: `0x4bd25f`, predicate `0x4bcea0`). Not pre-applied: the aura
-    /// leaves by a `UNIT_FIELD_AURA` delta.
+    /// `CMSG_PET_ACTION`. Not pre-applied: the aura leaves by a `UNIT_FIELD_AURA` delta.
     pub fn pet_cancel_aura(&mut self, pet_guid: u64, spell_id: u32) -> Result<()> {
         self.send(
             opcode::CMSG_PET_CANCEL_AURA,

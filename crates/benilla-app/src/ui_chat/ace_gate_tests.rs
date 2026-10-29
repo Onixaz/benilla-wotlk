@@ -126,7 +126,7 @@ fn the_auto_join_walk_names_the_channels_the_server_resolves() {
     let mut chain = benilla_formats::open_chain(&data).expect("open chain");
     let cat = benilla_formats::load_chat_channels_catalog(&mut chain).expect("ChatChannels.dbc");
 
-    // The city word: `AreaTable.dbc` row 3459, `Flags & 0x200`, cached at `0xb4e4f0`.
+    // The city word: `AreaTable.dbc` row 3459, `Flags & 0x200`, cached.
     let areas = benilla_formats::load_area_table_catalog(&mut chain).expect("AreaTable.dbc");
     let city = super::channels::city_word(&areas);
     assert_eq!(

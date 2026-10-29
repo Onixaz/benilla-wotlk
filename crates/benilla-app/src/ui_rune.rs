@@ -1,4 +1,4 @@
-//! The player's runes (12340 `CGRuneInfo`): the three rune packets, the rune block of our own
+//! The player's runes (12340's rune table): the three rune packets, the rune block of our own
 //! casts, the regen tick, and the table the rune verbs read, with `RUNE_POWER_UPDATE` and
 //! `RUNE_TYPE_UPDATE`.
 
@@ -100,7 +100,7 @@ fn feed_runes(
     clock: Res<crate::ui_script::UiClock>,
     mut pushed: Local<crate::ui_script::VmMemo<Option<RuneState>>>,
 ) {
-    // `CGGameUI::EnterWorld` starts a fresh table (`0x528294` into `0x5edef0`).
+    // The UI's world entry starts a fresh table (`0x528294` into `0x5edef0`).
     if entered.read().count() > 0 {
         runes.state = RuneState::default();
     }

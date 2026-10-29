@@ -16,14 +16,14 @@ use crate::ui_quest_log::QuestLog;
 /// One quest chat line, raised in order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum QuestLine {
-    /// `ERR_QUEST_ACCEPTED_S` (`0x89`) with the quest's title (`0x5dde66`).
+    /// `ERR_QUEST_ACCEPTED_S` (`0x89`) with the quest's title.
     Accepted(u32),
     /// `ERR_QUEST_COMPLETE_S` with the title, for every turn-in; the next quest in the chain only
     /// decides whether the window stays (`0x6d10ca`).
     Completed(u32),
-    /// `ERR_QUEST_REWARD_EXP_I` (`0x95`, `0x5dc4f9`).
+    /// `ERR_QUEST_REWARD_EXP_I` (`0x95`).
     Experience(u32),
-    /// `ERR_QUEST_REWARD_MONEY_S` (`0x97`, `0x5dc609`) with the coin string.
+    /// `ERR_QUEST_REWARD_MONEY_S` (`0x97`) with the coin string.
     Money(u32),
     /// `ERR_QUEST_REWARD_ITEM_S` with the item's link.
     Item(u32),
@@ -125,7 +125,7 @@ fn feed_quest_lines(
     );
     show_messages(&mut script, &mut sink, "ui_quest", shown);
     // `QUEST_ACCEPTED` with the quest's log row follows the accept line, both raised once the
-    // template is cached (`QuestAcceptCallback` `0x6df2b0`, `OnUpdateQuest` `0x6df370`).
+    // template is cached (the accept callback `0x6df2b0`, then the log update `0x6df370`).
     for id in accepted {
         let index = script.quest_log_index(id) as i64;
         script.fire_event(

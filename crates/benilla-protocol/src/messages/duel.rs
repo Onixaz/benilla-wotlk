@@ -1,5 +1,5 @@
-//! The duel family: challenge, countdown, bounds, completion and the winner line. The 1.12
-//! client's handlers are registered at `0x4d4710`; the two bounds messages have empty bodies.
+//! The duel family: challenge, countdown, bounds, completion and the winner line. The 1.12 client's
+//! handlers are registered; the two bounds messages have empty bodies.
 
 use std::io::{self, Read};
 
@@ -12,7 +12,7 @@ pub struct DuelRequested {
     /// `PLAYER_DUEL_ARBITER` value, and the guid echoed on accept and cancel.
     pub arbiter: u64,
     /// Who challenged; when it is us, the 1.12 client shows "You have requested a duel." and
-    /// auto-accepts (`0x4d49d0`).
+    /// auto-accepts.
     pub challenger: u64,
 }
 
@@ -25,7 +25,7 @@ pub fn read_duel_requested(r: &mut impl Read) -> io::Result<DuelRequested> {
 }
 
 /// Read `SMSG_DUEL_COMPLETE`'s `started` flag; false means the duel ended before it began, which
-/// the 1.12 client reports as `ERR_DUEL_CANCELLED` (`0x4d4b20`).
+/// the 1.12 client reports as `ERR_DUEL_CANCELLED`.
 pub fn read_duel_complete(r: &mut impl Read) -> io::Result<bool> {
     Ok(read_u8(r)? != 0)
 }
@@ -34,7 +34,7 @@ pub fn read_duel_complete(r: &mut impl Read) -> io::Result<bool> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DuelWinner {
     /// True when the loser fled or forfeited (`DUEL_WINNER_RETREAT`), false for a knockout
-    /// (`DUEL_WINNER_KNOCKOUT`); the 1.12 client picks the line by it (`0x4d4bd9`).
+    /// (`DUEL_WINNER_KNOCKOUT`); the 1.12 client picks the line by it.
     pub fled: bool,
     /// The winner's name, `%1$s`.
     pub winner: String,
@@ -52,19 +52,19 @@ pub fn read_duel_winner(r: &mut impl Read) -> io::Result<DuelWinner> {
 }
 
 /// Read `SMSG_DUEL_COUNTDOWN` as whole seconds: the wire carries ms (vmangos sends 3000) and the
-/// 1.12 client truncates them to seconds (`0x4d4aef`).
+/// 1.12 client truncates them to seconds.
 pub fn read_duel_countdown(r: &mut impl Read) -> io::Result<u32> {
     Ok(read_u32_le(r)? / 1000)
 }
 
-/// `CMSG_DUEL_ACCEPTED` body: the arbiter guid from the request, as the 1.12 client sends it
-/// (`0x4d4830`); vmangos ignores it.
+/// `CMSG_DUEL_ACCEPTED` body: the arbiter guid from the request, as the 1.12 client sends it;
+/// vmangos ignores it.
 pub fn duel_accepted(arbiter: u64) -> Vec<u8> {
     arbiter.to_le_bytes().to_vec()
 }
 
-/// `CMSG_DUEL_CANCELLED` body: the arbiter guid (`0x4d48b0`). The server reads it by duel state as
-/// a decline, a countdown cancel, or once started a forfeit that hands the opponent the win.
+/// `CMSG_DUEL_CANCELLED` body: the arbiter guid. The server reads it by duel state as a decline, a
+/// countdown cancel, or once started a forfeit that hands the opponent the win.
 pub fn duel_cancelled(arbiter: u64) -> Vec<u8> {
     arbiter.to_le_bytes().to_vec()
 }
@@ -125,7 +125,7 @@ mod tests {
         );
     }
 
-    /// The bytes `0x4d4830` and `0x4d48b0` push.
+    /// The bytes push.
     #[test]
     fn accept_and_cancel_carry_the_arbiter_guid() {
         let guid = 0x0000_00F1_DEAD_BEEFu64;

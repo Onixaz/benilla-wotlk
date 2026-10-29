@@ -1,15 +1,13 @@
 //! The sound bindings: `PlaySound`, `PlaySoundFile`, `PlayMusic` and `StopMusic` each queue a
 //! plain request for the app to drain, since the engine does not touch the app's mixer.
 //!
-//! `PlaySound` takes a kit name (`0x4586d0` reaches only `PlaySoundByName`, `0x458030`); a number
-//! is `lua_tostring`'s decimal name, which no `SoundEntries` row carries, so it plays nothing (the
-//! client plays a kit id internally, through `0x458850`). It answers nothing; `PlaySoundFile`
-//! answers one value (`0x458780`).
+//! `PlaySound` takes a kit name (the reference reaches only its by-name kit play); a number is
+//! `lua_tostring`'s decimal name, which no `SoundEntries` row carries, so it plays nothing (the
+//! client plays a kit id internally). It answers nothing; `PlaySoundFile` answers one value.
 //!
-//! The music pair drives its own slot: the reference gives Lua a stream of its own (`[0xb06ccc]`,
-//! opened in `0x460450` at `0x4604a7`) beside the zone track's (`[0xb06cc4]`), one of the client's
-//! two endlessly looping streams (`0x7a5592`). `StopMusic` (`0x458770`) is `0x460450` with a null
-//! name, so a [`MusicRequest`] is the argument, not the verb. Neither answers anything.
+//! The music pair drives its own slot: the reference gives Lua a stream of its own beside the zone
+//! track's, one of the client's two endlessly looping streams. `StopMusic` is the music play with a
+//! null name, so a [`MusicRequest`] is the argument, not the verb. Neither answers anything.
 
 use mlua::{Lua, Value};
 
@@ -27,7 +25,7 @@ pub enum SoundRequest {
 pub enum MusicRequest {
     /// `PlayMusic("path")`: start the caller's looping stream.
     Play(String),
-    /// `StopMusic()`: `0x460450` with no name.
+    /// `StopMusic()`: the reference's music play with no name.
     Stop,
 }
 
@@ -57,9 +55,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     install_drivers(lua)?;
     lua.globals().set(
         "PlaySoundFile",
-        // `0x458780`: `lua_isstring`, so a number is a file name, else the literal at `0x835f98`.
-        // It answers 1 when the play started and nil when `0x7a5450` refused it. Deviation: the
-        // app plays the queued file after the call, so the refusals (the bus-3 cap, a muted SFX
+        // `lua_isstring`, so a number is a file name, else the usage literal. It answers 1 when the
+        // play started and nil when the reference's sound layer refused it. Deviation: the app
+        // plays the queued file after the call, so the refusals (the bus-3 cap, a muted SFX
         // channel, a missing file) come too late to answer, and a queued file answers 1.
         lua.create_function(|lua, args: mlua::MultiValue| {
             let path = super::binding_abi::string_arg(
@@ -74,8 +72,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     lua.globals().set(
         "PlaySound",
-        // `0x4586d0`: `lua_isstring`, then `lua_tostring`, so a number becomes its decimal name,
-        // else the literal at `0x835f60`; no return value on any path.
+        // `lua_isstring`, then `lua_tostring`, so a number becomes its decimal name, else the usage
+        // literal; no return value on any path.
         lua.create_function(|lua, args: mlua::MultiValue| {
             let name = super::binding_abi::string_arg(
                 lua,
@@ -83,8 +81,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 "Usage: PlaySound(\"sound\")",
             )?;
             let mut model = crate::script::model_mut_of(lua);
-            // During the UI load a by-name play is dropped before any other gate (`0x458046`,
-            // `0x45804d`).
+            // During the UI load a by-name play is dropped before any other gate.
             if model.sound_suppression == 0 {
                 model.sound_queue.push(SoundRequest::KitName(name));
             }
@@ -94,9 +91,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     lua.globals().set(
         "PlayMusic",
         lua.create_function(|lua, args: mlua::MultiValue| {
-            // `0x458720`: `lua_isstring` (`0x6f3510`), then `lua_tostring` (`0x6f3690`), so a
-            // number becomes a file name and anything else raises this literal (`0x835f7c`,
-            // `0x458758`); the path goes to the file layer verbatim.
+            // `lua_isstring`, then `lua_tostring`, so a number becomes a file name and anything
+            // else raises this literal; the path goes to the file layer verbatim.
             let path = super::binding_abi::string_arg(
                 lua,
                 args.front().cloned().unwrap_or(Value::Nil),
@@ -110,7 +106,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
     lua.globals().set(
         "StopMusic",
-        // Reads no argument (`0x458770`), so an extra one is ignored.
+        // Reads no argument, so an extra one is ignored.
         lua.create_function(|lua, ()| {
             crate::script::model_mut_of(lua)
                 .music_queue
@@ -142,7 +138,7 @@ impl super::UiScript {
 fn install_drivers(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
     // `Sound_GameSystem_GetNumOutputDrivers` (`0x985c70`): the cached count, the host's devices
-    // plus "System Default" (`SE2::GetNumOutputDrivers 0x878450`); 0 with no engine.
+    // plus "System Default" (the sound engine's driver count, `0x878450`); 0 with no engine.
     g.set(
         "Sound_GameSystem_GetNumOutputDrivers",
         lua.create_function(|lua, _: mlua::MultiValue| {
@@ -156,9 +152,9 @@ fn install_drivers(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     // `Sound_GameSystem_GetOutputDriverNameByIndex` (`0x985ca0`): a number or the usage error, then
-    // `SI2::GetOutputDriverName_Cached` (`0x8792b0`): 0 is `SYSTEM_DEFAULT`'s text, `i` the
-    // host's device `i - 1`. Deviation: an index past the cache reads "" where the reference
-    // reads past its array.
+    // the sound interface's cached driver name (`0x8792b0`): 0 is `SYSTEM_DEFAULT`'s text, `i` the
+    // host's device `i - 1`. Deviation: an index past the cache reads "" where the reference reads
+    // past its array.
     g.set(
         "Sound_GameSystem_GetOutputDriverNameByIndex",
         lua.create_function(|lua, index: Value| {
@@ -220,8 +216,8 @@ fn install_drivers(lua: &Lua) -> mlua::Result<()> {
             })?,
         )?;
     }
-    // `Sound_GameSystem_RestartSoundSystem` (`0x985d30`): `SI2::ShutDown(1)` then `Init(1)`, which
-    // the host runs after the frame ([`crate::script::UiScript::take_sound_restart`]).
+    // `Sound_GameSystem_RestartSoundSystem` (`0x985d30`): the sound interface's shutdown then its
+    // init, which the host runs after the frame ([`crate::script::UiScript::take_sound_restart`]).
     g.set(
         "Sound_GameSystem_RestartSoundSystem",
         lua.create_function(|lua, _: mlua::MultiValue| {
@@ -261,7 +257,8 @@ fn install_drivers(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// The in-game voice verbs (`ChatFrame` and `ComSatClient` tables), which the glue does not have.
+/// The in-game voice verbs (the chat frame's and the voice client's tables), which the glue does
+/// not have.
 ///
 /// Deviation: benilla has no voice chat (see [`install_drivers`]), so these answer as the reference
 /// does on a server that offers none, whatever `SMSG_FEATURE_SYSTEM_STATUS` says: the Voice page
@@ -333,8 +330,8 @@ mod tests {
     use super::{MusicRequest, SoundRequest};
     use crate::script::UiScript;
 
-    /// `PlaySound` names a kit and answers nothing (`0x4586d0`); a number is its decimal name,
-    /// never a `SoundEntries` id. `PlaySoundFile` answers one value, 1 for a play (`0x458780`).
+    /// `PlaySound` names a kit and answers nothing; a number is its decimal name, never a
+    /// `SoundEntries` id. `PlaySoundFile` answers one value, 1 for a play.
     #[test]
     fn playsound_queues_by_name_and_answers_nothing() {
         let mut s = UiScript::new().unwrap();

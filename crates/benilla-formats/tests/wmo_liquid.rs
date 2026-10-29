@@ -114,7 +114,7 @@ fn hole_corner_heights_never_reach_the_mesh_bounds() {
     }
 }
 
-/// `0x6b62e0`'s category 0 splits on the group's `MOGP.flags & 0x48`: the exterior arm binds
+/// The reference's category 0 splits on the group's `MOGP.flags & 0x48`: the exterior arm binds
 /// `MapObjExtWater0.bls` and lights a vertex normal; the interior arm is fixed-function, unlit, and
 /// takes its body colour from `MOMT[materialId].diffColor`. Each pool carries a per-vertex opacity.
 #[test]
@@ -173,7 +173,7 @@ fn the_two_water_arms_carry_their_own_inputs() {
     }
 }
 
-/// WMO water repeats its texture once per 4.167-yd grid cell: `0x6b6630` writes `u = i, v = j`
+/// WMO water repeats its texture once per 4.167-yd grid cell: the reference writes `u = i, v = j`
 /// from loop counters that start at 0.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]

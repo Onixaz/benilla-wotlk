@@ -1,6 +1,6 @@
 //! `RAID_ROSTER_UPDATE` as the reference signals it: once per group list that rebuilds the raid
-//! roster with no member name pending (`0x4babef`) and once per list that drops the roster held
-//! (`0x4ba57b`), with the roster edge standing in for the two signals no list carries.
+//! roster with no member name pending and once per list that drops the roster held, with the roster
+//! edge standing in for the two signals no list carries.
 
 use super::super::pets::tests::{app, app_with, flag, frame, member, ME};
 use super::*;
@@ -86,7 +86,7 @@ fn dead(app: &mut App, row: u32) -> Option<f64> {
 
 /// The reported shape: a raid member dies, then releases, out of view. The list that says so moves
 /// their status alone, no guid, rank, subgroup or online bit, and the writer signals all the same
-/// (`0x4babef`, with no compare against the old roster).
+/// (with no compare against the old roster).
 #[test]
 fn a_raid_list_that_moves_only_a_members_dead_bit_fires_raid_roster_update() {
     let mut app = app();
@@ -120,8 +120,8 @@ fn an_identical_raid_list_fires_raid_roster_update_again() {
     assert_eq!(fired(&mut app), 0, "a frame with no list is silent");
 }
 
-/// A party's list runs no roster writer: the raid leg of the handler is the only caller (`0x5e6eb4`),
-/// and the other leg finds no roster to drop (`0x4ba550`).
+/// A party's list runs no roster writer: the raid leg of the handler is the only caller, and the
+/// other leg finds no roster to drop.
 #[test]
 fn a_party_list_fires_no_raid_roster_update() {
     let mut app = app();
@@ -140,9 +140,8 @@ fn a_party_list_fires_no_raid_roster_update() {
     );
 }
 
-/// With a member name pending the writer signals nothing (`0x4babdf`); the name answer does later
-/// (`0x4bada6`), which is not built, so the roster edge signals a list that moves the roster's
-/// identity, as it always has.
+/// With a member name pending the writer signals nothing; the name answer does later, which is not
+/// built, so the roster edge signals a list that moves the roster's identity, as it always has.
 #[test]
 fn a_raid_list_with_a_name_pending_fires_only_on_the_roster_edge() {
     let mut app = app();
@@ -160,8 +159,8 @@ fn a_raid_list_with_a_name_pending_fires_only_on_the_roster_edge() {
     assert_eq!(fired(&mut app), 1, "the names held: the list fires");
 }
 
-/// A list that is not a raid, with a raid held, drops it and signals once (`0x4ba57b`): the raid
-/// turned party and the all-zero list alike, each list of the drain apiece.
+/// A list that is not a raid, with a raid held, drops it and signals once: the raid turned party
+/// and the all-zero list alike, each list of the drain apiece.
 #[test]
 fn a_list_that_drops_the_raid_fires_raid_roster_update_once() {
     let mut app = app();
@@ -203,8 +202,8 @@ fn each_raid_list_of_one_drain_fires_its_own_raid_roster_update() {
     assert_eq!(fired(&mut app), 3);
 }
 
-/// World entry fills in our own row (`0x4ba1a2`), with no list behind it: the roster edge fires as
-/// our row arrives, once.
+/// World entry fills in our own row, with no list behind it: the roster edge fires as our row
+/// arrives, once.
 #[test]
 fn our_own_row_arriving_fires_raid_roster_update_once() {
     let mut app = app();

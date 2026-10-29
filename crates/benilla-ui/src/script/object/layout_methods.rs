@@ -123,7 +123,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             ))
         },
     )?;
-    // GetNumPoints(): on the Region method table (`0x87c9b8`), so every widget answers it.
+    // GetNumPoints(): on the Region method table, so every widget answers it.
     set_shared(lua, m, Side::Frame, "GetNumPoints", |lua, this: Table| {
         let h = frame_handle_of(lua, &this)?;
         let model = lua
@@ -135,7 +135,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             .map_or(0, |i| i.anchors.len() as i64))
     })?;
     // SetAllPoints([relativeTo]): pins TOPLEFT and BOTTOMRIGHT to the target, default the parent,
-    // as XML `setAllPoints="true"` does (`0x767800`).
+    // as XML `setAllPoints="true"` does.
     set_shared(
         lua,
         m,
@@ -246,8 +246,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 
     // GetEffectiveScale(): parent scale times own scale, from a root of 1: `uiScale` is applied at
     // the raster seam (a screen `768/uiScale` units tall), so every coordinate Lua sees,
-    // `GetCursorPosition()` included, is already in UI units. The reference instead makes
-    // `uiScale` `UIParent`'s own scale (`0x494550` calls `SetScale`), so there
+    // `GetCursorPosition()` included, is already in UI units. The reference instead makes `uiScale`
+    // `UIParent`'s own scale (its UI setup calls `SetScale`), so there
     // `UIParent:GetEffectiveScale()` answers it.
     m.set(
         "GetEffectiveScale",
@@ -260,8 +260,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetLeft/GetRight/GetTop/GetBottom: the resolved edges in the frame's own units, y-up from
-    // the screen bottom (`GetRect 0x768320`); nil before the first resolve.
+    // GetLeft/GetRight/GetTop/GetBottom: the resolved edges in the frame's own units, y-up from the
+    // screen bottom (`GetRect`); nil before the first resolve.
     for (name, pick) in [
         ("GetLeft", 0u8),
         ("GetRight", 1u8),
@@ -288,8 +288,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
 
 /// Resolve the layout now if anything moved, as the reference answers a geometry query against
 /// current layout; a settled tree costs one epoch compare. Deviation: `OnSizeChanged` fires at the
-/// next `UiScript::resolve`, a tick after the reference's (`ApplyRect 0x76b580`), because running
-/// Lua handlers inside a binding risks a borrow panic or unbounded recursion.
+/// next `UiScript::resolve`, a tick after the reference's (in its rect apply), because running Lua
+/// handlers inside a binding risks a borrow panic or unbounded recursion.
 pub(in crate::script) fn settle(lua: &Lua) {
     let mut model = crate::script::model_mut_of(lua);
     // A settle that solved nothing moved no rect: the mutation count stands (`ModelCell`).
@@ -315,10 +315,10 @@ pub(crate) fn eff_scale(model: &Model, h: FrameHandle) -> f32 {
 }
 
 /// `GetWidth`/`GetHeight`: the resolved span in the frame's own units (screen ÷ effective scale),
-/// else the size it was given, where 0 means derived, as in the reference.
-/// `GetWidth`/`GetHeight` (`0x49d3b0`/`0x49d550`): the set size when it is nonzero, read with no
-/// resolve, even where anchors stretch the frame past it; only a zero size, unless `ignoreRect`
-/// (Lua truthiness, `0x815500`), resolves and answers from the rect.
+/// else the size it was given, where 0 means derived, as in the reference. `GetWidth`/`GetHeight`
+/// (`0x49d3b0`/`0x49d550`): the set size when it is nonzero, read with no resolve, even where
+/// anchors stretch the frame past it; only a zero size, unless `ignoreRect` (Lua truthiness),
+/// resolves and answers from the rect.
 fn size_get(lua: &Lua, this: &Table, ignore_rect: &Value, width: bool) -> mlua::Result<f32> {
     let h = frame_handle_of(lua, this)?;
     let set = {
@@ -353,8 +353,8 @@ fn size_read(model: &Model, h: FrameHandle, width: bool) -> f32 {
         .unwrap_or(0.0)
 }
 
-/// `SetPoint` (`0x7a2540`) for a frame: the argument ladder is [`super::anchor_args`], shared with
-/// regions; this side supplies the default parent and commits the anchor.
+/// `SetPoint` for a frame: the argument ladder is [`super::anchor_args`], shared with regions; this
+/// side supplies the default parent and commits the anchor.
 fn set_point(lua: &Lua, this: &Table, args: &MultiValue) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let (who, base) = frame_ladder_context(lua, h);
@@ -425,7 +425,7 @@ pub(crate) fn anchor_bits_eq(a: &Anchor, b: &Anchor) -> bool {
         && a.y_off.to_bits() == b.y_off.to_bits()
 }
 
-/// The default `relativeTo`: the parent, or [`SCREEN`] for a top-level frame (`0x76c6e0`).
+/// The default `relativeTo`: the parent, or [`SCREEN`] for a top-level frame.
 fn default_parent_id(model: &mut Model, h: FrameHandle) -> u32 {
     match model.arena.frame(h).and_then(|f| f.parent) {
         Some(p) => model.frame_id(p),

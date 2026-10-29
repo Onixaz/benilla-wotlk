@@ -1,4 +1,4 @@
-//! The frame object model (`0x701bd0`).
+//! The frame object model.
 
 use super::common::script;
 

@@ -1,7 +1,7 @@
 //! The minimap blip layer: AreaPOI landmarks, quest and tracking dots, rim arrows and the hover
 //! tooltip.
 //!
-//! Landmarks (selection `0x6d9a90`, candidates `0x6d8e10`, draw `0x4ed148`/`0x4ee170`):
+//! Landmarks:
 //! - Candidates: `ContinentID` is the current map and `Flags & 1`, no faction or importance gate.
 //! - In range (`d / viewRadius ≤ 0.8`): the `POIIcons.blp` cell of the `Icon` column, only for
 //!   rows with `Flags & 2` (the world-PvP towers in 1.12 data); other rows draw nothing.
@@ -12,19 +12,19 @@
 //! master and the tracking masks each give a cell of `ObjectIcons.blp`, culled at 0.8 of the view
 //! radius and drawn last.
 //!
-//! Blip sizes are frozen once by the CGMinimapFrame ctor against a 140.8-px basis.
+//! Blip sizes are frozen once by the minimap frame's constructor against a 140.8-px basis.
 //!
-//! Not built: the landmark `WorldStateID` gate (`0x6d9b27`); the per-source rim-arrow z-order
-//! (bottom to top landmark, party, quest, gossip, corpse, from `+0x48` as a frame-level offset),
-//! which conflicts with `0x4ed7b7` drawing the dots last and is unsettled; and static blip slot 0,
-//! `SelectQuestLogEntry()`'s gold guide arrow at the quest's POI (`0x4def70`).
+//! Not built: the landmark `WorldStateID` gate; the per-source rim-arrow z-order (bottom to top
+//! landmark, party, quest, gossip, corpse, from `+0x48` as a frame-level offset), which conflicts
+//! with the reference drawing the dots last and is unsettled; and static blip slot 0,
+//! `SelectQuestLogEntry()`'s gold guide arrow at the quest's POI.
 //!
 //! Deviation: blips re-project every frame, where the reference rebuilds them about once a second
 //! (`0x581e80`), because that staleness is a throttle quirk.
 //!
 //! The cross-interior grey (`0xffb0b0b0`) comes from an indoor-containment mismatch; the
-//! reference's compare (`0x670540`) is untraced. The tooltip sits at the cursor; its exact seat
-//! is untraced, since `0x4eb0c0` gives only its content.
+//! reference's compare is untraced. The tooltip sits at the cursor; its exact seat is untraced,
+//! since the reference's tooltip builder gives only its content.
 
 mod dots;
 
@@ -44,16 +44,16 @@ use crate::names::NameCache;
 use crate::net::{Embodied, Guid, GuidIndex, NetCommands, NetEntity, ObjectStore, SelfPlayer};
 use crate::ui_pass::{UiQuad, UiQuads, UvRect};
 
-/// The landmark rank radius in yards (`0x8116cc`).
+/// The landmark rank radius in yards.
 const LANDMARK_RANK_YD: f32 = 694.444;
-/// The in-range split and the rim radius as a fraction of the half-disc (`0x811730`).
+/// The in-range split and the rim radius as a fraction of the half-disc.
 const BLIP_EDGE_RATIO: f32 = 0.8;
-/// AreaPOI `Flags` bit 0, the candidacy gate (`0x6d8e10`).
+/// AreaPOI `Flags` bit 0, the candidacy gate.
 const FLAG_CANDIDATE: u32 = 0x1;
-/// AreaPOI `Flags` bit 1, draw the in-range icon (`0x6d9a90`).
+/// AreaPOI `Flags` bit 1, draw the in-range icon.
 const FLAG_IN_RANGE_ICON: u32 = 0x2;
 /// The basis every blip size is frozen against: the stock 140-unit widget at 140.8 px on the
-/// 1024×768 screen, computed once by the CGMinimapFrame ctor (`0x4edbc0`).
+/// 1024×768 screen, computed once by the minimap frame's constructor.
 pub(super) const BLIP_BASIS_PX: f32 = 140.8;
 /// The player arrow's art, on the minimap and the world map, whose stock `WorldMapFrame.lua`
 /// `SetModel`s a pane to the same M2.
@@ -63,10 +63,10 @@ pub(crate) const PLAYER_ARROW_TEXTURE: &str = "Interface\\Minimap\\MinimapArrow"
 const ARROW_QUAD_PX: f32 = 38.4;
 
 /// Which rim-arrow art a blip source draws. The minimap's one arrow model,
-/// `Rotating-MinimapArrow.m2`, picks among four arrow layers by sequence (`0x4ed349`): in each
-/// looping sequence exactly one layer's stepped alpha is 1.0, untinted, so one flat sprite per
-/// source is exact. `AnimationData.dbc` names them 165 `GroupArrow`, 166 `Arrow`, 167
-/// `CorpseArrow`, 168 `GuideArrow`.
+/// `Rotating-MinimapArrow.m2`, picks among four arrow layers by sequence: in each looping sequence
+/// exactly one layer's stepped alpha is 1.0, untinted, so one flat sprite per source is exact.
+/// `AnimationData.dbc` names them 165 `GroupArrow`, 166 `Arrow`, 167 `CorpseArrow`, 168
+/// `GuideArrow`.
 ///
 /// The selector is `0xa7` when the output record's `+0x48 == 2`, else `0xa6 + 2·(v != -2)`, so
 /// everything but a DBC landmark and the corpse draws the guide arrow.
@@ -74,8 +74,7 @@ const ARROW_QUAD_PX: f32 = 38.4;
 pub(crate) enum RimArrow {
     /// An `AreaPOI.dbc` landmark: sequence `0xa6`, `+0x48 == -2`, the white one.
     Landmark,
-    /// A party or raid member, or your pet: sequence `0xa5`, armed once at `0x4ee1e3` and never
-    /// re-armed.
+    /// A party or raid member, or your pet: sequence `0xa5`, armed once and never re-armed.
     Group,
     /// Your own corpse: sequence `0xa7`, `+0x48 == 2`.
     Corpse,
@@ -128,7 +127,7 @@ impl RimArrowArt {
         self.0.iter().any(Option::is_some)
     }
 }
-/// An in-range POI icon's quad, 16 px (`[0xbc7658]`, frozen by the ctor).
+/// An in-range POI icon's quad, 16 px (frozen by the constructor).
 const POI_ICON_PX: f32 = 16.0;
 
 /// The blip under the cursor this frame, for [`drive_blip_tooltip`].
@@ -221,7 +220,7 @@ pub(super) struct BlipCtx {
 
 impl BlipCtx {
     /// A WoW world point's screen offset from the widget centre: north up (+X up, +Y left), then
-    /// turned with the map (`point *= rotation`, `RenderObjectBlips` `0x5803de`).
+    /// turned with the map (`point *= rotation`, `0x5803de`).
     pub(super) fn offset(&self, w: [f32; 3]) -> Vec2 {
         super::turn_offset(
             Vec2::new(
@@ -233,7 +232,7 @@ impl BlipCtx {
     }
 }
 
-/// The landmark selection's two draw lists (`0x6d9a90`).
+/// The landmark selection's two draw lists.
 pub(super) struct LandmarkSelection<'a> {
     /// In-range rows with [`FLAG_IN_RANGE_ICON`], drawn at their position.
     pub(super) icons: Vec<&'a AreaPoi>,
@@ -241,9 +240,9 @@ pub(super) struct LandmarkSelection<'a> {
     pub(super) arrows: Vec<(f32, &'a AreaPoi, RimArrow)>,
 }
 
-/// The landmark selection (module doc). `marker`, the guard-directions POI, is appended after
-/// the DBC scan as the reference appends its static blip slot: it skips the candidacy gate but
-/// not the 694.444-yd cut, which `0x6d9cc2` spares only the corpse slot `0xcea848`.
+/// The landmark selection (module doc). `marker`, the guard-directions POI, is appended after the
+/// DBC scan as the reference appends its static blip slot: it skips the candidacy gate but not the
+/// 694.444-yd cut, which the reference spares only for the corpse slot.
 pub(super) fn select_landmarks<'a>(
     pois: impl Iterator<Item = &'a AreaPoi>,
     marker: Option<&'a AreaPoi>,
@@ -277,7 +276,7 @@ pub(super) fn select_landmarks<'a>(
     LandmarkSelection { icons, arrows }
 }
 
-/// The `POIIcons.blp` 8×8-grid cell for an `Icon`, gated `Icon < 0x40` (`0x4ed15e`).
+/// The `POIIcons.blp` 8×8-grid cell for an `Icon`, gated `Icon < 0x40`.
 fn poi_icon_cell(icon: u32) -> Option<[f32; 4]> {
     if icon >= 64 {
         return None;
@@ -385,13 +384,13 @@ pub(crate) fn party_member_pos(
         .map(|(x, y)| (f32::from(x), f32::from(y)))
 }
 
-/// The party and corpse rim arrows, the out-of-range half of the party placement `0x6dad10`,
-/// drawn before the player arrow.
+/// The party and corpse rim arrows, the out-of-range half of the party placement, drawn before the
+/// player arrow.
 ///
-/// This differs from the reference, not built yet: its slot 4 is the pet (`UNIT_FIELD_CHARM`,
-/// else `UNIT_FIELD_SUMMON`, at `0x6dad60`), and the corpse is static blip slot 2 on the POI path,
-/// at `Importance` -1 and exempt from the 694.444-yd cut, taking one of the three rim slots.
-/// So there is no pet blip here, and four rim arrows can draw where the reference draws three.
+/// This differs from the reference, not built yet: its slot 4 is the pet (`UNIT_FIELD_CHARM`, else
+/// `UNIT_FIELD_SUMMON`), and the corpse is static blip slot 2 on the POI path, at `Importance` -1
+/// and exempt from the 694.444-yd cut, taking one of the three rim slots. So there is no pet blip
+/// here, and four rim arrows can draw where the reference draws three.
 pub(super) fn emit_party_arrows(
     ctx: &BlipCtx,
     group: &crate::ui_party::GroupState,

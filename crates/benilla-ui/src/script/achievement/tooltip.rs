@@ -1,4 +1,4 @@
-//! `GameTooltip:SetHyperlink` on an `achievement:` link (`0x62de04` arm → `SetAchievement`
+//! `GameTooltip:SetHyperlink` on an `achievement:` link (`0x62de04` arm → the achievement fill
 //! `0x627220`): title, who earned it and when, the description, and the criteria two to a line,
 //! green where the link's bits mark them met.
 
@@ -11,7 +11,7 @@ use crate::strings::{fill, global, Arg};
 const WHITE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const GOLD: [f32; 4] = [1.0, 210.0 / 255.0, 0.0, 1.0];
 const GREEN: [f32; 4] = [0.0, 1.0, 0.0, 1.0];
-/// `s_skillColors[1]` and `[0]`: a met and an unmet criterion.
+/// The reference's skill colours 1 and 0: a met and an unmet criterion.
 const MET: [f32; 4] = [64.0 / 255.0, 192.0 / 255.0, 64.0 / 255.0, 1.0];
 const UNMET: [f32; 4] = [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0];
 
@@ -28,7 +28,7 @@ pub(crate) struct AchievementLink {
     pub(crate) bits: [u32; 4],
 }
 
-/// `SStrToInt`: an optional sign and leading digits, 0 for none.
+/// The reference's string-to-int: an optional sign and leading digits, 0 for none.
 fn leading_int(s: &str) -> i64 {
     let s = s.trim_start();
     let (neg, digits) = match s.strip_prefix('-') {

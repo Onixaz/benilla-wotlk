@@ -1,6 +1,6 @@
-//! The auction-house messages of the 12340 client (`CGAuctionHouse`): hello, the three list
-//! pages and the pending sales, sell, bid, cancel, the command result and three notifications.
-//! Every guid is a plain `u64`, and the auctioneer guid heads every CMSG.
+//! The auction-house messages of the 12340 client: hello, the three list pages and the pending
+//! sales, sell, bid, cancel, the command result and three notifications. Every guid is a plain
+//! `u64`, and the auctioneer guid heads every CMSG.
 
 use std::io;
 
@@ -53,7 +53,7 @@ pub mod auction_duration {
 }
 
 /// The sort columns a criterion carries on `CMSG_AUCTION_LIST_ITEMS`, numbered as the reference's
-/// `SortTypeToName` (`0x59a7c0`) names them.
+/// sort-name table (`0x59a7c0`) names them.
 pub mod auction_sort {
     pub const LEVEL: u8 = 0;
     pub const QUALITY: u8 = 1;

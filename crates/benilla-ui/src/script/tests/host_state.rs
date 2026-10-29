@@ -141,9 +141,8 @@ fn rewinding_the_old_clock_name_leaves_the_session_clock_running() {
 }
 
 /// The getters answer what the host pushed, in the reference's shapes: the four zone texts one
-/// string each, never nil (`0x48a0a0`..`0x48a100`); `GetZonePVPInfo` nothing without a type, two
-/// or three values with one (`0x51ba50`); `GetGameTime` two numbers (`0x515ee0`); `GetTime` one
-/// (`0x515ea0`).
+/// string each, never nil; `GetZonePVPInfo` nothing without a type, two or three values with one
+/// (`0x51ba50`); `GetGameTime` two numbers; `GetTime` one.
 #[test]
 fn the_getters_answer_the_pushed_state_in_their_reference_shapes() {
     let mut s = script();
@@ -225,10 +224,9 @@ fn the_getters_answer_the_pushed_state_in_their_reference_shapes() {
     );
 }
 
-/// The reference's handler slot starts empty (`[0x8722cc]` = -1 at `0x7039e0`), so
-/// `geterrorhandler()` (`0x702950`) answers one nil until FrameXML sets `_ERRORMESSAGE`.
-/// `seterrorhandler` (`0x702900`) takes a function alone, raising `Usage: seterrorhandler(errfunc)`
-/// (`0x872a30`) on anything else and keeping the slot, and returns nothing.
+/// The reference's handler slot starts empty, so `geterrorhandler()` answers one nil until FrameXML
+/// sets `_ERRORMESSAGE`. `seterrorhandler` takes a function alone, raising
+/// `Usage: seterrorhandler(errfunc)` on anything else and keeping the slot, and returns nothing.
 #[test]
 fn the_error_handler_slot_starts_empty_and_takes_only_a_function() {
     let s = script();
@@ -254,8 +252,8 @@ fn the_error_handler_slot_starts_empty_and_takes_only_a_function() {
     }
 }
 
-/// The engine calls the handler in its slot on a caught error (`0x703b40`), not whatever the
-/// `geterrorhandler` global answers, so an addon replacing that global redirects nothing.
+/// The engine calls the handler in its slot on a caught error, not whatever the `geterrorhandler`
+/// global answers, so an addon replacing that global redirects nothing.
 #[test]
 fn the_engine_reads_the_handler_slot_not_the_geterrorhandler_global() {
     let mut s = script();

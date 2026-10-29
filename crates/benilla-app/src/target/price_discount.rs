@@ -1,24 +1,21 @@
-//! The reference's price discount `0x612b80(vendor, player)`, which the client takes off the two
-//! prices it computes from its own DBCs: the repair cost (`0x4faf30`, caller `0x4faf8a`) and the
-//! taxi map's fare (`0x4dc3d0`, callers `0x4dc45d` and `0x4dc4a2`). The merchant's goods and the
-//! trainer's services are the server's prices, shown as sent.
+//! The reference's price discount `(vendor, player)`, which the client takes off the two prices it
+//! computes from its own DBCs: the repair cost and the taxi map's fare. The merchant's goods and
+//! the trainer's services are the server's prices, shown as sent.
 
 use crate::net::{ObjectStore, Reputations};
 
 use super::{ring_reaction, Factions, GroupMembers};
 
-/// `0x801620`, the f32 0.1 the reputation term loads (`0x612b9d`).
+/// The f32 0.1 the reputation term loads.
 const REPUTATION_TERM: f32 = 0.1;
-/// `0x8029c8`, the f32 0.05 each honor step adds (`0x612bcf`, `0x612bd7`).
+/// The f32 0.05 each honor step adds.
 const HONOR_STEP: f32 = 0.05;
-/// `UNIT_FLAG_PVP`, bit 12 of the vendor's `UNIT_FIELD_FLAGS`, which the honor steps need
-/// (`0x612bb4 shr ecx,0xc`).
+/// `UNIT_FLAG_PVP`, bit 12 of the vendor's `UNIT_FIELD_FLAGS`, which the honor steps need.
 const UNIT_FLAG_PVP: u32 = 0x1000;
 
-/// `0x612b80`: 0.1 when the vendor's reaction to the player is at least 5, Honored (`0x612b98`,
-/// signed), then, only at a vendor flagged `UNIT_FLAG_PVP`, 0.05 at an honor rank byte of 6 and
-/// 0.05 more at 8 (`0x612bc9`, `0x612bcd`, unsigned), whatever the reaction. The f32 terms are
-/// summed in f64 and never narrowed, so 0.15 is no f32.
+/// 0.1 when the vendor's reaction to the player is at least 5, Honored (signed), then, only at a
+/// vendor flagged `UNIT_FLAG_PVP`, 0.05 at an honor rank byte of 6 and 0.05 more at 8 (unsigned),
+/// whatever the reaction. The f32 terms are summed in f64 and never narrowed, so 0.15 is no f32.
 fn price_discount(reaction: u8, vendor_unit_flags: u32, pvp_rank: u8) -> f64 {
     let mut d = if reaction >= 5 {
         f64::from(REPUTATION_TERM)
@@ -35,9 +32,9 @@ fn price_discount(reaction: u8, vendor_unit_flags: u32, pvp_rank: u8) -> f64 {
 }
 
 /// [`price_discount`] for `vendor` and the player: the vendor's reaction toward the player
-/// ([`ring_reaction`], `vendor->UnitReaction(player)` at `0x612b93`), the vendor's own
-/// `UNIT_FIELD_FLAGS` (`[[vendor+0x110]+0xa0]`) and the player's current honor rank,
-/// `PLAYER_BYTES_3` byte 3 (`[[player+0xe68]+0x1f]`), not the highest rank held.
+/// ([`ring_reaction`], `vendor->UnitReaction(player)`), the vendor's own `UNIT_FIELD_FLAGS`
+/// (`[[vendor+0x110]+0xa0]`) and the player's current honor rank, `PLAYER_BYTES_3` byte 3
+/// (`[[player+0xe68]+0x1f]`), not the highest rank held.
 pub(crate) fn vendor_price_discount(
     factions: Option<&Factions>,
     reputations: &Reputations,
@@ -88,15 +85,15 @@ mod tests {
     use benilla_protocol::field::{FIELD_UNIT_FACTIONTEMPLATE, FIELD_UNIT_FLAGS};
     use benilla_protocol::ObjectFields;
 
-    /// The five values `0x612b80` can return, as the f64 bits its `st0` holds.
+    /// The five values can return, as the f64 bits its `st0` holds.
     const ZERO: u64 = 0;
     const D05: u64 = 0x3fa9_9999_a000_0000;
     const D10: u64 = 0x3fb9_9999_a000_0000;
     const D15: u64 = 0x3fc3_3333_3800_0000;
     const D20: u64 = 0x3fc9_9999_a000_0000;
 
-    /// Every branch of `0x612b80`: the reputation term at reaction 5 only, the honor steps only at a
-    /// PvP-flagged vendor, rank 6 and 8 the thresholds, and a Friendly (4) player still earning them.
+    /// Every branch: the reputation term at reaction 5 only, the honor steps only at a PvP-flagged
+    /// vendor, rank 6 and 8 the thresholds, and a Friendly (4) player still earning them.
     #[test]
     fn the_discount_is_the_references_sum_bit_for_bit() {
         for (reaction, flags, rank, want) in [
@@ -124,8 +121,8 @@ mod tests {
             (5, UNIT_FLAG_PVP, 7, D15),
             (5, UNIT_FLAG_PVP, 8, D20),
             (5, UNIT_FLAG_PVP, 19, D20),
-            // Revered, which Exalted reads too (`0x606439`), passes the same signed `cmp eax,5`;
-            // Neutral does not.
+            // Revered, which Exalted reads too, passes the same signed `cmp eax,5`; Neutral does
+            // not.
             (6, UNIT_FLAG_PVP, 19, D20),
             (3, UNIT_FLAG_PVP, 19, D10),
             // Every other flag bit set but the PvP one: no honor step.

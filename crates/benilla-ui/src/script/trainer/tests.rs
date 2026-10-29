@@ -422,7 +422,7 @@ fn buy_queues_an_available_services_spell_id_and_refuses_every_other_row() {
     );
 }
 
-/// `FilterAndSortServices` picks the first visible available service on a list, a filter or a
+/// The filter-and-sort picks the first visible available service on a list, a filter or a
 /// collapse; `SelectTrainerService` (`0x5943a0`) overrides it until the next.
 #[test]
 fn every_resort_picks_the_first_available_service() {
@@ -522,7 +522,7 @@ fn unresolved_skill_line_is_dropped() {
     assert_eq!(s.eval::<i64>("return GetNumTrainerServices()").unwrap(), 5);
 }
 
-/// `QSortSkillLines` (`0x5941b0`): a line whose every service costs points sorts after the rest.
+/// The skill-line order (`0x5941b0`): a line whose every service costs points sorts after the rest.
 #[test]
 fn a_line_of_point_cost_services_sorts_last() {
     let mut s = script_all();
@@ -568,7 +568,7 @@ fn a_tradeskill_trainer_has_its_flag_and_unnamed_lines() {
     );
 }
 
-/// A blacksmith's list in the order `QSortServices_Tradeskill` (`0x5949a0`) and the raw line keys
+/// A blacksmith's list in the order the tradeskill service sort (`0x5949a0`) and the raw line keys
 /// (`0x593ce0`) give it: the skill step first under its own header, `reqLevel` inert, the recipes
 /// by `reqSkillValue` then name.
 #[test]

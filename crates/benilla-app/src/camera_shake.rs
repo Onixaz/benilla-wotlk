@@ -1,11 +1,11 @@
 //! Camera shake: a heavy creature's footfall, its death thud, and spell effects, all spawned
-//! through the reference's one spawner, `AddShake(id, worldPos)` (`0x511d40`).
+//! through the reference's one spawner, which takes a preset id and a world position.
 //!
 //! `CreatureModelData.FootstepShakeSize` (field 11, on the visual footfall tags, not `$FSD`) and
 //! `DeathThudShakeSize` (field 12, on `$DTH`) name a `CameraShakes.dbc` preset. `SpellVisualKit`
 //! field 14 and the `$SHK` event name a `SpellEffectCameraShakes.dbc` group of up to three.
 //!
-//! Per live record, per frame (`0x511760`/`0x5116e0`):
+//! Per live record, per frame:
 //!
 //! ```text
 //! t = (now − start) + phase                 // seconds; phase is a time pre-roll, not an angle
@@ -39,14 +39,14 @@ use benilla_protocol::EntityKind;
 use benilla_world::schedule::WorldStage;
 use benilla_world::view::WorldCamera;
 
-/// Beyond 80 yd a record contributes nothing but is not retired (`0x5116e9`).
+/// Beyond 80 yd a record contributes nothing but is not retired.
 const CULL_DISTANCE_SQ: f32 = 6400.0;
 /// Inside 9 yd a shake plays at full authored strength.
 const FULL_DISTANCE_SQ: f32 = 81.0;
 /// Beyond 9 yd the amplitude falls by 0.7 per 9 yd.
 const FALLOFF_BASE: f32 = 0.7;
 const FALLOFF_SPAN: f32 = 9.0;
-/// `CameraShakes.Amplitude` is in inches; the client scales it at spawn (`0x511d78`).
+/// `CameraShakes.Amplitude` is in inches; the client scales it at spawn.
 const INCHES_TO_YARDS: f32 = 1.0 / 36.0;
 
 /// One live shake.
@@ -74,9 +74,9 @@ impl CameraShakes {
         });
     }
 
-    /// Enqueue a `SpellEffectCameraShakes` group (`0x6ecb40`): its three slots in order, zeros
-    /// skipped, a preset the table lacks dropped (`0x511d40`'s bounds check). A slot repeated
-    /// (group 4 is `15 · 14 · 15`) enqueues twice and the copy loses the tie-break.
+    /// Enqueue a `SpellEffectCameraShakes` group: its three slots in order, zeros skipped, a preset
+    /// the table lacks dropped. A slot repeated (group 4 is `15 · 14 · 15`) enqueues twice and the
+    /// copy loses the tie-break.
     fn add_group(
         &mut self,
         group: &SpellShakeGroup,
@@ -89,8 +89,8 @@ impl CameraShakes {
         }
     }
 
-    /// Retire what has expired and compose this frame's offset. A suspended frame (`0x50ea87`,
-    /// `0x50ea8b` → `0x50eb01`) yields zero and expires nothing, so a shake resumes afterwards.
+    /// Retire what has expired and compose this frame's offset. A suspended frame yields zero and
+    /// expires nothing, so a shake resumes afterwards.
     fn evaluate(&mut self, eye: Vec3, facing_yaw: f32, now: f32, suspended: bool) -> Vec3 {
         if suspended {
             return Vec3::ZERO;
@@ -131,7 +131,7 @@ impl LiveShake {
     }
 
     /// This record's `(compare key, signed offset)` at `eye`; the key is the distance-attenuated
-    /// amplitude, which the reference compares at `0x5118a5`.
+    /// amplitude, which the reference compares.
     fn sample(&self, eye: Vec3, now: f32) -> Option<(f32, f32)> {
         let d2 = eye.distance_squared(self.pos);
         if d2 > CULL_DISTANCE_SQ {
@@ -224,8 +224,8 @@ fn fire_shakes(
             continue;
         };
         if shk {
-            // `$SHK` names a group; only the GameObject (`0x5f3e20`) and DynamicObject
-            // (`0x5d58c0`) handlers decode it, so on a creature it does nothing.
+            // `$SHK` names a group; only the GameObject and DynamicObject handlers decode it, so on
+            // a creature it does nothing.
             if !matches!(net.kind, EntityKind::GameObject | EntityKind::DynamicObject) {
                 continue;
             }
@@ -237,8 +237,8 @@ fn fire_shakes(
             live.add_group(group, &shakes.0, at, now);
             continue;
         }
-        // The root unit's own model row and state: a rider gets its mount's footprints but not
-        // its shake (`0x607a00` writes only the decal fields).
+        // The root unit's own model row and state: a rider gets its mount's footprints but not its
+        // shake.
         let mut root = ev.entity;
         while let Ok(child_of) = parents.get(root) {
             root = child_of.parent();
@@ -260,12 +260,12 @@ fn fire_shakes(
             continue;
         };
         if thud {
-            // The death thud (`0x625c30`): no gates, at the unit's own position, not a bone.
+            // The death thud: no gates, at the unit's own position, not a bone.
             live.add(*row, transform.translation(), now);
             continue;
         }
-        // The footstep gates in the reference's order (`0x5fbf70`): hover, stealth, ghost, then
-        // 50 yd from the camera, outside the `showfootprints` gate.
+        // The footstep gates in the reference's order: hover, stealth, ghost, then 50 yd from the
+        // camera, outside the `showfootprints` gate.
         if movement.is_some_and(|m| m.flags & move_flags::HOVER != 0) {
             continue;
         }
@@ -285,11 +285,11 @@ fn fire_shakes(
 }
 
 /// Fire the shake group a spell-visual kit's field 14 names, once per kit play, with no stage test
-/// and no cancel (`0x620e11`, or `0x60f4e6` when the play created no effect node).
+/// and no cancel, whether or not the play created an effect node.
 ///
-/// The shake spawns at the kit play's position. The reference reads `&node+0x48` before
-/// `0x62101d` writes it, so a bone-attached first node (`0x61fdd0`) shakes at the origin and is
-/// culled, silencing 26 of the 58 shipped shake kits; that read-before-write is not copied.
+/// The shake spawns at the kit play's position. The reference reads `&node+0x48` before it is
+/// written, so a bone-attached first node shakes at the origin and is culled, silencing 26 of the
+/// 58 shipped shake kits; that read-before-write is not copied.
 fn fire_kit_shakes(
     mut events: MessageReader<SpellKitShake>,
     time: Res<Time>,
@@ -313,7 +313,7 @@ fn fire_kit_shakes(
             SpellKitShake::PlayAt { pos, group } => (group, pos),
         };
         let Some(row) = shakes.0.group(group) else {
-            continue; // a group the table lacks; the reference bounds-checks too (`0x6ecb4d`)
+            continue; // a group the table lacks; the reference bounds-checks too
         };
         live.add_group(row, &shakes.0, at, now);
     }
@@ -326,9 +326,9 @@ type FollowedUnit = (
     Option<&'static Spline>,
 );
 
-/// The reference's two suspend gates on the followed unit (`0x50ea87`, `0x50ea8b`): swimming
-/// (move flag `0x200000`), or a live, not-done spline (`[[unit+0x118]+0xa4]`) carrying `0x200`,
-/// the shared fly-or-swim bit (`0x616cb0`). A ground spline such as Charge does not suspend.
+/// The reference's two suspend gates on the followed unit: swimming (move flag `0x200000`), or a
+/// live, not-done spline (`[[unit+0x118]+0xa4]`) carrying `0x200`, the shared fly-or-swim bit. A
+/// ground spline such as Charge does not suspend.
 fn suspended(mv: Option<&MovementState>, spline: Option<&Spline>) -> bool {
     mv.is_some_and(|m| m.flags & move_flags::SWIMMING != 0) || spline.is_some_and(|s| !s.grounded)
 }
@@ -336,10 +336,10 @@ fn suspended(mv: Option<&MovementState>, spline: Option<&Spline>) -> bool {
 /// Add this frame's shake to the seated eye.
 ///
 /// Filtered on [`WorldCamera`], never `Camera3d`: the portrait booths are `Camera3d`s too. Runs
-/// after the camera is seated, so it reads the un-shaken eye, and a zero offset writes nothing so
-/// a still camera stays bit-stable. The body frame and suspend gates come from the followed unit
+/// after the camera is seated, so it reads the un-shaken eye, and a zero offset writes nothing so a
+/// still camera stays bit-stable. The body frame and suspend gates come from the followed unit
 /// (`[cam+0x88/0x8c]`, the far-sight subject when there is one), never the active player; a
-/// non-unit subject reads as not suspended, as the reference's unit-only gate (`0x50e90d`) does.
+/// non-unit subject reads as not suspended, as the reference's unit-only gate does.
 pub(crate) fn apply_camera_shake(
     mut live: ResMut<CameraShakes>,
     time: Res<Time>,

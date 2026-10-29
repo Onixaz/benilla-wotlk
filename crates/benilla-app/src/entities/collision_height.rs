@@ -1,4 +1,4 @@
-//! The per-unit collision height ([`CollisionHeight`]), the reference's `CMovement+0xb4`, derived
+//! The per-unit collision height ([`CollisionHeight`]), the movement object's `+0xb4`, derived
 //! from the unit's display id and stamped on every streamed entity.
 
 use bevy::prelude::*;
@@ -7,25 +7,23 @@ use crate::net::{NetEntity, ObjectStore};
 
 use super::Creatures;
 
-/// A unit's collision height in yards, the reference's `CMovement+0xb4`: the `h` whose fractions
-/// are the depth lines (swim `0.75·h`, splash `0.4·h`, foam gate `max(2·h, 1.0)`; `0x6030c0`,
-/// `0x5fa760`). It is `CreatureModelData.collisionHeight`, the MD20 collision box's Z extent in
-/// model units, times `k = max(SCALE_X, CreatureDisplayInfo.creatureModelScale)`: `0x60b270`
-/// passes the larger (`0x60b312`) to `0x6174b0`, which stores the product (`0x617501`), and the
-/// unit model build `0x5fb9dd` runs it for every unit.
+/// A unit's collision height in yards, the movement object's `+0xb4`: the `h` whose fractions
+/// are the depth lines (swim `0.75·h`, splash `0.4·h`, foam gate `max(2·h, 1.0)`). It is
+/// `CreatureModelData.collisionHeight`, the MD20 collision box's Z extent in model units, times
+/// `k = max(SCALE_X, CreatureDisplayInfo.creatureModelScale)`: the reference passes the larger to
+/// the setter that stores the product, and the unit model build runs it for every unit.
 ///
 /// The `max` is a floor, not a second multiplier: `SCALE_X` already folds the DBC scales in
-/// (vmangos `Unit.cpp:9579`) and is the whole render scale (`0x613fc9`); it bites only where a
-/// shrink aura or a `display_scale` override sinks `SCALE_X` under the display's column. The
-/// display is the native one (`UNIT_FIELD_NATIVEDISPLAYID`, index 132 at `0x60b270`), so a
-/// transform keeps the unit's own depth lines. Not the movement capsule,
-/// [`crate::player::CAPSULE_HEIGHT`].
+/// (vmangos `Unit.cpp:9579`) and is the whole render scale; it bites only where a shrink aura or a
+/// `display_scale` override sinks `SCALE_X` under the display's column. The display is the native
+/// one (`UNIT_FIELD_NATIVEDISPLAYID`), so a transform keeps the unit's own depth lines. Not the
+/// movement capsule, [`crate::player::CAPSULE_HEIGHT`].
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CollisionHeight(pub(crate) f32);
 
 impl Default for CollisionHeight {
-    /// The `CMovement` ctor's default, never `0.0`, at which every depth line collapses and the
-    /// unit swims on dry land.
+    /// The movement object's constructor default, never `0.0`, at which every depth line collapses
+    /// and the unit swims on dry land.
     fn default() -> Self {
         Self(crate::player::DEFAULT_COLLISION_HEIGHT)
     }

@@ -1,10 +1,10 @@
 //! Model particles: an emitter whose record names a geometry model draws each particle as a small
-//! instance of it (Whirlwind's blades), placed after the sim each frame (`0x7b4840` →
-//! `0x7b4510`): its quaternion at its position, scaled by over-life size, colour in a per-instance
-//! tint, alpha in the `MeshTag`. Each blended instance sorts by its own depth in the transparent
-//! pass; the reference visits an emitter's particles back to front only under `rt+0x1ac & 0x10`,
-//! and the order its model pass draws them in is untraced. Rigged models are not animated: every
-//! spell geometry model probed is static.
+//! instance of it (Whirlwind's blades), placed after the sim each frame: its quaternion at its
+//! position, scaled by over-life size, colour in a per-instance tint, alpha in the `MeshTag`. Each
+//! blended instance sorts by its own depth in the transparent pass; the reference visits an
+//! emitter's particles back to front only under `rt+0x1ac & 0x10`, and the order its model pass
+//! draws them in is untraced. Rigged models are not animated: every spell geometry model probed is
+//! static.
 
 use benilla_assets::coords::wow_to_bevy;
 use benilla_assets::M2Model;
@@ -86,7 +86,7 @@ pub(super) fn update_model_particles(
                         sub.no_depth_test,
                         sub.fog_policy,
                         sub.env_map, // texture_unit_lookup > 2 ⇒ the runtime generates this batch's UVs
-                        // Lit like every entity M2 (`0x69e280`).
+                        // Lit like every entity M2.
                         ShadeSel::Lit,
                         0,
                         None,

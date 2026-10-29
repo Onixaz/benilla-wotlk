@@ -1,4 +1,4 @@
-//! The 3.3.5a combat log (`UnitCombatLog_C.cpp`): entry store, filters, verbs and events.
+//! The 3.3.5a combat log: entry store, filters, verbs and events.
 
 use std::collections::VecDeque;
 
@@ -261,7 +261,7 @@ pub struct CombatLogItem {
     pub name: Option<String>,
 }
 
-/// What an entry says past its spell, one field per `m_infoFlags` bit, pushed in `0x74e290`'s
+/// What an entry says past its spell, one field per info-flag bit, pushed in `0x74e290`'s
 /// order: `0x1`, `0x2`, `0x4`, `0x8`, `0x10`, the miss amounts, `0x20`, `0x40`, `0x80`, `0x100`,
 /// `0x1000`, `0x200`, `0x400`, `0x800`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -334,7 +334,7 @@ struct Filter {
 }
 
 impl Filter {
-    /// `CombatLogFilter::MatchesFilter` (`0x74e1a0`).
+    /// The reference's filter match (`0x74e1a0`).
     fn matches(&self, e: &CombatLogEntry) -> bool {
         if self.events & (1 << e.event as u8) == 0 {
             return false;
@@ -375,7 +375,7 @@ pub struct CombatLogStore {
 }
 
 impl CombatLogStore {
-    /// `CombatLogEntry::MatchesFilter` (`0x74f6c0`): no filter passes everything.
+    /// The reference's entry match (`0x74f6c0`): no filter passes everything.
     fn passes(&self, e: &CombatLogEntry) -> bool {
         self.filters.is_empty() || self.filters.iter().any(|f| f.matches(e))
     }
@@ -580,7 +580,7 @@ fn args(e: &CombatLogEntry, unknown: &str) -> Vec<ScriptValue> {
     out
 }
 
-/// The `UNKNOWNOBJECT` global, as `FrameScript_GetText` reads it.
+/// The `UNKNOWNOBJECT` global, as the reference's string lookup reads it.
 fn unknown_text(lua: &Lua) -> String {
     lua.globals()
         .get::<Option<String>>(UNKNOWN_OBJECT)
@@ -589,7 +589,7 @@ fn unknown_text(lua: &Lua) -> String {
         .unwrap_or_else(|| UNKNOWN_OBJECT.to_string())
 }
 
-/// `0x74d0d0`: `0x` and sixteen upper-case hex digits.
+/// `0x` and sixteen upper-case hex digits.
 fn guid_text(guid: u64) -> String {
     format!("0x{guid:016X}")
 }

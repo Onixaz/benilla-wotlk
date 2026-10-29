@@ -1,9 +1,8 @@
-//! The app half of `CGBattlefieldInfo`'s queue (`0x549ad0`-`0x54e720`): the two queue slots
-//! `SMSG_BATTLEFIELD_STATUS` writes, the instance list a battlemaster or the PvP window opens,
-//! the join verdicts and the Wintergrasp queue, fed to the stock `PVPBattlegroundFrame.lua`,
+//! The app half of the reference's battlefield queue (`0x549ad0`-`0x54e720`): the two queue slots
+//! `SMSG_BATTLEFIELD_STATUS` writes, the instance list a battlemaster or the PvP window opens, the
+//! join verdicts and the Wintergrasp queue, fed to the stock `PVPBattlegroundFrame.lua`,
 //! `BattlefieldFrame.lua`, `ArenaFrame.lua` and the minimap icon. The scoreboard is
-//! [`crate::ui_battlefield_score`]'s, the teammate positions
-//! [`crate::ui_battlefield_positions`]'.
+//! [`crate::ui_battlefield_score`]'s, the teammate positions [`crate::ui_battlefield_positions`]'.
 //!
 //! The VM owns what the bindings write (the listed type, the selection, the battlemaster); a
 //! list packet is handed on as it lands, and the slots are pushed every frame because their
@@ -52,19 +51,19 @@ const INSTANCE_TYPE_BATTLEGROUND: u32 = 3;
 /// `AreaTable.dbc`'s world-PvP flag, `CanHearthAndResurrectFromArea`'s test (`0x54c810`).
 const AREA_FLAG_HEARTH_AND_RESURRECT: u32 = 0x0800_0000;
 
-/// The two queue slots (`m_status`, `0xbea4b8`), each stamped with the moment its status landed,
+/// The two queue slots (`0xbea4b8`), each stamped with the moment its status landed,
 /// and the active instance's state beside them.
 #[derive(Resource, Default)]
 pub(crate) struct BattlefieldQueue {
     slots: [Option<(BattlefieldStatus, Instant)>; 2],
-    /// `m_activeIndex` (`0xacd16c`), set by status 3.
+    /// The active slot (`0xacd16c`), set by status 3.
     active: Option<usize>,
-    /// `m_activeMapID` (`0xbea564`): kept when a later status drops the active index, cleared
+    /// The active map id (`0xbea564`): kept when a later status drops the active index, cleared
     /// with the slot.
     active_map: u32,
-    /// `m_arenaFaction` (`0xbea54a`).
+    /// The arena faction (`0xbea54a`).
     arena_faction: u8,
-    /// `m_instanceExpiration` and `m_instanceStartTime`, the second kept as the status's arrival
+    /// The instance's expiration and start time, the second kept as the status's arrival
     /// and the wire's elapsed span so no `Instant` precedes the clock's origin.
     instance_expiration: Option<Instant>,
     run_started: Option<(Instant, Duration)>,
@@ -124,8 +123,8 @@ impl BattlefieldQueue {
         self.slots[index] = Some((status, now));
     }
 
-    /// The world-enter reset (`EnterWorld`, `0x54ca50`): both statuses go to none until the
-    /// server answers the status request.
+    /// The world-enter reset (`0x54ca50`): both statuses go to none until the server answers the
+    /// status request.
     fn zero_statuses(&mut self) {
         for (s, _) in self.slots.iter_mut().flatten() {
             s.status = 0;
@@ -176,7 +175,7 @@ fn millis(d: Duration) -> u32 {
     d.as_millis().min(u128::from(u32::MAX)) as u32
 }
 
-/// The world-PvP queue (`m_worldPvPQueues`, `0xbea4a8`), one slot.
+/// The world-PvP queue (`0xbea4a8`), one slot.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct WorldPvpQueue {
     queue_id: u32,
@@ -187,8 +186,8 @@ struct WorldPvpQueue {
 }
 
 impl WorldPvpQueue {
-    /// `SetWorldPvPQueue` (`0x549500`): the slot holding the queue, else a free one; a zero area
-    /// or expiry keeps the old.
+    /// The world PvP queue's write (`0x549500`): the slot holding the queue, else a free one; a
+    /// zero area or expiry keeps the old.
     fn set(&mut self, queue_id: u32, status: u32, area_id: u32, expire: u32) {
         if self.queue_id != queue_id && self.queue_id != 0 && self.status != 0 {
             return;
@@ -480,7 +479,7 @@ fn port_refusal(
 }
 
 /// `BattlemasterList.dbc` resolved for the player, before `PLAYER_ENTERING_WORLD`: the reference
-/// builds the type list at `InitializeGame` (`0x54e720`), and stock `PVPBattlegroundFrame.lua`
+/// builds the type list at the game's start (`0x54e720`), and stock `PVPBattlegroundFrame.lua`
 /// hides the PvP window's tabs at that event when no type reads `canEnter`.
 fn feed_battlemaster_rows(
     script: Option<NonSendMut<UiScript>>,
@@ -564,13 +563,14 @@ fn feed_battlefield(
         .flatten()
         .unwrap_or(0);
     let area_id = area.as_deref().and_then(|a| a.0).unwrap_or(0);
-    // `IsCurrentMapArena` (`0x54a700`) despite its name tests for a battleground map, type 3.
+    // The current-map arena test (`0x54a700`) despite its name tests for a battleground map,
+    // type 3.
     let on_battleground_map = maps
         .zip(map.as_deref())
         .and_then(|(m, id)| m.instance_type(id.0))
         == Some(INSTANCE_TYPE_BATTLEGROUND);
     let world_pvp = &state.world_pvp;
-    // `GetUITime`, without the server's offset, as `GetWintergraspWaitTime` reads it.
+    // The UI clock, without the server's offset, as `GetWintergraspWaitTime` reads it.
     let ui_now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i32);
@@ -773,9 +773,9 @@ fn drain_battlefield(
     }
 }
 
-/// The world-enter cascade's battlefield init (`EnterWorld`, `0x54ca50`): the selection, type and
-/// battlemaster clear, both statuses go to none, and the bodyless `CMSG_BATTLEFIELD_STATUS` goes
-/// out, answered slot by slot.
+/// The world-enter cascade's battlefield init (`0x54ca50`): the selection, type and battlemaster
+/// clear, both statuses go to none, and the bodyless `CMSG_BATTLEFIELD_STATUS` goes out, answered
+/// slot by slot.
 pub(crate) fn reset_on_world_enter(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
     mut state: ResMut<Battlefield>,
@@ -845,8 +845,8 @@ mod net {
         }
     }
 
-    /// The queue and the session end with the session, as `InitializeGame` (`0x54e720`) zeroes
-    /// them at every login.
+    /// The queue and the session end with the session, as the game's start (`0x54e720`) zeroes them
+    /// at every login.
     fn on_session_end(
         In(_): In<SessionEvent>,
         mut queue: ResMut<BattlefieldQueue>,

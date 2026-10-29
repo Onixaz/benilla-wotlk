@@ -41,8 +41,8 @@ impl WorldWriter {
         self.send(opcode::CMSG_SET_ACTIVE_MOVER, &messages::full_guid(guid))
     }
 
-    /// `CMSG_FAR_SIGHT`, one `u8`: 1 when the view attaches, 0 when it releases (reference:
-    /// `0x5ee290`). It names no object; the server reads its own `PLAYER_FARSIGHT`.
+    /// `CMSG_FAR_SIGHT`, one `u8`: 1 when the view attaches, 0 when it releases. It names no
+    /// object; the server reads its own `PLAYER_FARSIGHT`.
     pub fn far_sight(&mut self, engage: bool) -> Result<()> {
         self.send(opcode::CMSG_FAR_SIGHT, &[u8::from(engage)])
     }

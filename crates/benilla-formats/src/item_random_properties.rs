@@ -1,12 +1,12 @@
 //! `ItemRandomProperties.dbc`, the random-suffix table: the "of the Monkey" roll an item carries
-//! and the enchants it grants. The name formatter `0x5d8b00` joins name and suffix through
-//! `ITEM_SUFFIX_TEMPLATE` (`"%s %s"`), taking its plain-name exit (`0x5d8ba5`) for an id that is
-//! `0`, negative, past the table or suffix-less and its suffix exit (`0x5d8b84`) otherwise. The
-//! tooltip (`0x52b7bf`-`0x52b7fb`) copies the row's five enchant ids (`row+0x8..+0x18`) into its
-//! enchant slots 2..6 for `0x52c991` to print, so a linked item shows its stat lines, not
-//! `<Random enchantment>`. An item object carries its own enchants (`ITEM_FIELD_ENCHANTMENT`
-//! 2..6) and reads the table only for the name, off `ITEM_FIELD_RANDOM_PROPERTIES_ID`. The
-//! localized suffix is columns 7..22 in 12340 (sixteen locales, then its mask), enUS at `0x1c`.
+//! and the enchants it grants. The name formatter joins name and suffix through
+//! `ITEM_SUFFIX_TEMPLATE` (`"%s %s"`), taking its plain-name exit for an id that is `0`, negative,
+//! past the table or suffix-less and its suffix exit otherwise. The tooltip copies the row's five
+//! enchant ids (`row+0x8..+0x18`) into its enchant slots 2..6 for to print, so a linked item shows
+//! its stat lines, not `<Random enchantment>`. An item object carries its own enchants
+//! (`ITEM_FIELD_ENCHANTMENT` 2..6) and reads the table only for the name, off
+//! `ITEM_FIELD_RANDOM_PROPERTIES_ID`. The localized suffix is columns 7..22 in 12340 (sixteen
+//! locales, then its mask), enUS at `0x1c`.
 
 use std::collections::HashMap;
 
@@ -21,8 +21,8 @@ const ITEM_RANDOM_PROPERTIES: &str = "DBFilesClient\\ItemRandomProperties.dbc";
 /// The enchant slots a row grants, the item's enchant slots 2..6 (0 permanent, 1 temporary).
 pub const RANDOM_PROPERTY_SLOTS: usize = 5;
 
-/// The item-enchant slot the first random-property enchant lands in: `0x52b7e0`-`0x52b7fb`
-/// copies the row's five dwords to the tooltip session's `+0x3d8..+0x3e8`, slots 2..6.
+/// The item-enchant slot the first random-property enchant lands in: the reference copies the row's
+/// five dwords to the tooltip session's `+0x3d8..+0x3e8`, slots 2..6.
 pub const RANDOM_PROPERTY_FIRST_SLOT: u8 = 2;
 
 /// One `ItemRandomProperties` row: the suffix the name takes, and the enchants the roll grants.
@@ -41,13 +41,13 @@ pub struct RandomPropertyCatalog {
 }
 
 impl RandomPropertyCatalog {
-    /// The row for a random-property id, taken signed because `0x5d8b00` gates it so: `0`,
+    /// The row for a random-property id, taken signed because the reference gates it so: `0`,
     /// negative and unknown ids name none.
     pub fn get(&self, id: i32) -> Option<&RandomProperty> {
         (id > 0).then(|| self.rows.get(&(id as u32)))?
     }
 
-    /// The display name as `0x5d8b00` builds it: `ITEM_SUFFIX_TEMPLATE` (`"%s %s"`) for a
+    /// The display name as the reference builds it: `ITEM_SUFFIX_TEMPLATE` (`"%s %s"`) for a
     /// resolved suffix, else the plain name.
     pub fn suffixed_name(&self, name: &str, id: i32) -> String {
         match self.get(id) {

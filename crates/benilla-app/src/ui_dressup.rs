@@ -20,15 +20,14 @@ const LOOK_SLOTS: [u8; 14] = [0, 2, 3, 4, 5, 6, 7, 8, 9, 14, 15, 16, 17, 18];
 /// Main hand, off hand and ranged: three slots for the widget's two held lanes ([`held_lanes`]).
 const HELD_SLOTS: [usize; 3] = [15, 16, 17];
 
-/// The widget's two held lanes. `TryOn` (`0x504d90`) installs into lane `0x0f` (HandRight) or
-/// `0x10` (HandLeft, or the Shield point): a bow (15) takes the off lane, a gun, crossbow, wand
-/// (26) or thrown (25) the main one. An item the other lane cannot coexist with evicts it
-/// (`0x504bc0`), and a ranged weapon coexists with nothing.
+/// The widget's two held lanes. `TryOn` installs into lane `0x0f` (HandRight) or `0x10` (HandLeft,
+/// or the Shield point): a bow (15) takes the off lane, a gun, crossbow, wand (26) or thrown (25)
+/// the main one. An item the other lane cannot coexist with evicts it, and a ranged weapon coexists
+/// with nothing.
 ///
-/// Deviation: the base is the player's melee pair, held drawn, because the booth shares the
-/// select screen's assembly; the reference clones the live model with its attachments, drawn or
-/// sheathed (`0x5059a0`, `0x70ea00`). A worn ranged weapon, shown only while ranged-drawn, appears
-/// once tried on.
+/// Deviation: the base is the player's melee pair, held drawn, because the booth shares the select
+/// screen's assembly; the reference clones the live model with its attachments, drawn or sheathed.
+/// A worn ranged weapon, shown only while ranged-drawn, appears once tried on.
 fn held_lanes(equipment: &mut [CharEnumItem; 19], room: &DressUpRoom) {
     // The player's own melee pair; substitutions replay below.
     let base = |slot: usize| {
@@ -73,9 +72,9 @@ fn held_lanes(equipment: &mut [CharEnumItem; 19], room: &DressUpRoom) {
     }
 }
 
-/// `0x504bc0(main, off, dualWield)`: a one-hand main (13, 21) coexists with a shield or holdable
-/// (14, 23), and with a one-hand off (13, 22) under dual-wield; anything else evicts. Dual-wield is
-/// taken as allowed here; the reference reads it from `[0xc4d770]`, whose source is untraced.
+/// `(main, off, dualWield)`: a one-hand main (13, 21) coexists with a shield or holdable (14, 23),
+/// and with a one-hand off (13, 22) under dual-wield; anything else evicts. Dual-wield is taken as
+/// allowed here; the reference reads it, whose source is untraced.
 fn lanes_coexist(main: u8, off: u8) -> bool {
     matches!(main, 13 | 21) && matches!(off, 13 | 14 | 22 | 23)
 }
@@ -86,7 +85,7 @@ pub(crate) struct DressUpRoom {
     /// False after `Close`: the booth is empty.
     open: bool,
     /// `Undress()` has taken off the player's own pieces until the next `Dress`. The hands keep
-    /// theirs here; the reference's `0x504490` clears bodyslots `0..0xb` and both hand lanes.
+    /// theirs here; the reference's clears bodyslots `0..0xb` and both hand lanes.
     bare: bool,
     /// Resolved substitutions by equipment slot.
     worn: [Option<CharEnumItem>; 19],
@@ -234,9 +233,8 @@ fn player_look(
         if room.bare && !HELD_SLOTS.contains(&idx) {
             continue;
         }
-        // Hidden in the world, hidden here: `SetUnit` (`0x505d70`) clones the live player's
-        // bodyslot display pointers verbatim (`0x476cb0`). A try-on, handled above, gates on
-        // nothing.
+        // Hidden in the world, hidden here: `SetUnit` clones the live player's bodyslot display
+        // pointers verbatim. A try-on, handled above, gates on nothing.
         if (idx == 0 && s.player_hides_helm()) || (idx == 14 && s.player_hides_cloak()) {
             continue;
         }
@@ -497,7 +495,7 @@ mod tests {
             assert_eq!(
                 (look.equipment[15].display_id, look.equipment[16].display_id),
                 (0, 0),
-                "…and a ranged weapon coexists with neither melee lane (0x504bc0)"
+                "…and a ranged weapon coexists with neither melee lane"
             );
         }
     }
@@ -600,8 +598,8 @@ mod tests {
         }
     }
 
-    /// The room inherits hide-helm and hide-cloak through the clone (`SetUnit` `0x505d70`, copying
-    /// display pointers at `0x476cb0`); a try-on overrides them.
+    /// The room inherits hide-helm and hide-cloak through the clone (`SetUnit`, copying display
+    /// pointers); a try-on overrides them.
     #[test]
     fn a_hidden_helm_stays_hidden_on_the_mannequin_until_one_is_tried_on() {
         let (cmds, _rx) = commands();

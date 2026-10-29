@@ -48,13 +48,12 @@ const fn required(path: &'static str) -> BaseArchive {
     }
 }
 
-/// The client's layout when `Data\common.MPQ` exists (`0x402b90`; without it the client falls back
-/// to the 1.x names, which no 3.3.5a install ships). The mounter (`0x405dd0`) walks the table at
-/// `0xab6168` from priority 63 down, so the table reads highest first; this list is it reversed,
-/// the entries for that mode only. `common`, `locale-*` and `speech-*` are required ("Failed to
-/// open archive"); the rest are skipped when missing. Patches start at 64 (`0x405ab0`):
-/// `patch-<loc>.MPQ`, `patch.MPQ`, then both globs' matches by full path, sorted descending with
-/// `strnicmp` (`0x401200`) and mounted walking backwards.
+/// The client's layout when `Data\common.MPQ` exists (without it the client falls back to the 1.x
+/// names, which no 3.3.5a install ships). The mounter walks the table from priority 63 down, so the
+/// table reads highest first; this list is it reversed, the entries for that mode only. `common`,
+/// `locale-*` and `speech-*` are required ("Failed to open archive"); the rest are skipped when
+/// missing. Patches start at 64: `patch-<loc>.MPQ`, `patch.MPQ`, then both globs' matches by full
+/// path, sorted descending with `strnicmp` and mounted walking backwards.
 const LAYOUT: ArchiveLayout = ArchiveLayout {
     base: &[
         optional("{locale}/lichking-speech-{locale}.MPQ"),
@@ -70,7 +69,7 @@ const LAYOUT: ArchiveLayout = ArchiveLayout {
     ],
     patches: &["{locale}/patch-{locale}.MPQ", "patch.MPQ"],
     patch_globs: &["patch-?.MPQ", "{locale}/patch-{locale}-?.MPQ"],
-    // Mounted above the patches and overlaid into each of them (`0x405f30`).
+    // Mounted above the patches and overlaid into each of them.
     unsupported: &["alternate.MPQ"],
 };
 

@@ -1,10 +1,9 @@
 //! `Material.dbc`: the armor foley a body makes as it moves, and the flags behind weapon-impact
-//! sounds. A footfall is two sounds: `$FSD` (`0x623390`) plays the foley (`0x623610` for a unit,
-//! `0x62fa30` for a player) before the terrain step and its gates, so a creature of footstep class
-//! 0 still rustles; the foley is on the uncapped bus 0, the step on bus 9 (cap 6). `FoleySoundID`
-//! (row `+0x8`, read at `0x4584e0`) plays at the feet plus 2.0 yd (`0x45851d`, `[0x801628]`) at
-//! volume 1.0; only chain, plate and leather have one. The weapon draw and stow sounds are its
-//! `SheatheSoundID` and `UnsheatheSoundID` (`0x4d07b0`).
+//! sounds. A footfall is two sounds: `$FSD` plays the foley before the terrain step and its gates,
+//! so a creature of footstep class 0 still rustles; the foley is on the uncapped bus 0, the step on
+//! bus 9 (cap 6). `FoleySoundID` (row `+0x8`) plays at the feet plus 2.0 yd at volume 1.0; only
+//! chain, plate and leather have one. The weapon draw and stow sounds are its `SheatheSoundID` and
+//! `UnsheatheSoundID` (`0x4d07b0`).
 
 use std::collections::HashMap;
 
@@ -25,23 +24,21 @@ pub struct MaterialCatalog {
 
 impl MaterialCatalog {
     /// The foley kit for a material id; `None` for no foley or no row, where the reference's
-    /// negative and past-the-end misses (`0x4584e6`, `0x4584ea`) land too.
+    /// negative and past-the-end misses land too.
     pub fn foley_kit(&self, material: u32) -> Option<u32> {
         self.foley.get(&material).copied().filter(|&k| k != 0)
     }
 
-    /// Whether a material is metal-bodied, `Flags & 0x1` (`0x5d9a50`, tested at `0x5d9a68`): the
-    /// metal or wood half of `WeaponImpactSounds`, for the weapon's row and the parry slot
-    /// (`0x457e80`, asked twice by `0x457dc0`). Leather, cloth, liquid and an absent material
-    /// (id 0) are not metal, so this is not `material != WOOD`.
+    /// Whether a material is metal-bodied, `Flags & 0x1`: the metal or wood half of
+    /// `WeaponImpactSounds`, for the weapon's row and the parry slot. Leather, cloth, liquid and an
+    /// absent material (id 0) are not metal, so this is not `material != WOOD`.
     pub fn is_metal(&self, material: u32) -> bool {
         self.flags.get(&material).is_some_and(|f| f & 0x1 != 0)
     }
 
-    /// The `WeaponImpactSounds` target slot a player's chest material presents (`0x62fb70`):
-    /// `Flags` bit 1 gives 2 (plate), else bit 2 gives 1 (chain), else 0 (flesh), where leather and
-    /// cloth land. Creatures take theirs from `CreatureSoundData` through `{0, 8, 7, 9}`
-    /// (`0x6238f0`).
+    /// The `WeaponImpactSounds` target slot a player's chest material presents: `Flags` bit 1 gives
+    /// 2 (plate), else bit 2 gives 1 (chain), else 0 (flesh), where leather and cloth land.
+    /// Creatures take theirs from `CreatureSoundData` through `{0, 8, 7, 9}`.
     pub fn armor_impact_slot(&self, material: u32) -> u32 {
         let Some(&flags) = self.flags.get(&material) else {
             return 0;

@@ -1,10 +1,10 @@
-//! The language gate, `0x49a870`'s share of garbling: the exemptions, and how well the character
-//! knows the language, the second argument of the substitution [`benilla_formats::garble`]
-//! (`0x49b560`). Fluency is `0x5ec720`'s client-side chain; the server sends no language list:
+//! The language gate, the chat display's share of garbling: the exemptions, and how well the
+//! character knows the language, the second argument of the substitution
+//! [`benilla_formats::garble`]. Fluency is a client-side chain; the server sends no language list:
 //! language → the known spell whose effect 39 declares it → its `SkillLineAbility` row → the
 //! `PLAYER_SKILL_INFO` value. At 300 a line passes whole; below, each word passes when
-//! `hash % 300 < skill`. The fold runs spell → language over known spells only (`0x4b2656`, on
-//! spell add): five spells declare Common, so the inverse would map Common to Old Tongue.
+//! `hash % 300 < skill`. The fold runs spell → language over known spells only (on spell add): five
+//! spells declare Common, so the inverse would map Common to Old Tongue.
 
 use std::collections::HashMap;
 
@@ -15,11 +15,11 @@ use crate::net::{ObjectStore, SelfPlayer};
 use crate::ui_action::{PlayerActions, Spells};
 use crate::ui_spellbook::SkillLines;
 
-/// The GM bit of `PLAYER_FLAGS` (descriptor 190), as `0x49a9cc` reads it.
+/// The GM bit of `PLAYER_FLAGS` (descriptor 190), as the reference reads it.
 const PLAYER_FLAGS_GM: u32 = 0x8;
 
-/// Chat types forced to language 0 whatever the wire says (`0x49a970`-`0x49a986`), which drops
-/// both the garble and the `[Language]` header.
+/// Chat types forced to language 0 whatever the wire says, which drops both the garble and the
+/// `[Language]` header.
 const ALWAYS_UNIVERSAL: [u8; 4] = [
     benilla_protocol::messages::CHAT_MSG_EMOTE,
     benilla_protocol::messages::CHAT_MSG_SYSTEM,
@@ -36,22 +36,23 @@ pub(crate) struct ChatLanguages {
     skill: HashMap<u32, u32>,
     /// `PLAYER_FLAGS & 0x8`: a GM reads every line plain, with no `[Language]` header.
     gm: bool,
-    /// With no local player a line is copied verbatim (`0x49b597`), not garbled for want of skill.
+    /// With no local player a line is copied verbatim, not garbled for want of skill.
     have_player: bool,
 }
 
 impl ChatLanguages {
-    /// This character's skill in `language`, the second argument of `0x49b560`.
+    /// This character's skill in `language`, the garble's second argument.
     pub(crate) fn skill(&self, language: u32) -> u32 {
         self.skill.get(&language).copied().unwrap_or(0)
     }
 
-    /// Whether the viewer is a GM (`0x49a9cc`); the spam filter reads the same bit (`0x49ab03`).
+    /// Whether the viewer is a GM; the spam filter reads the same bit.
     pub(crate) fn is_gm(&self) -> bool {
         self.gm
     }
 
-    /// The language a line renders as after `0x49a870`'s exemptions; 0 renders plain, no header.
+    /// The language a line renders as after the chat display's exemptions; 0 renders plain, no
+    /// header.
     pub(crate) fn effective_language(&self, chat_type: u8, language: u32) -> u32 {
         if self.gm || !self.have_player || ALWAYS_UNIVERSAL.contains(&chat_type) {
             return 0;
@@ -127,12 +128,12 @@ pub(super) fn feed_language_skills(
                 continue;
             };
             let Some(line) = lines.catalog.spell_to_line(known, race, class) else {
-                // Spell 25674 declares Draconic but has no `SkillLineAbility` row (`0x6de040`),
-                // so Draconic is never understood.
+                // Spell 25674 declares Draconic but has no `SkillLineAbility` row, so Draconic is
+                // never understood.
                 continue;
             };
-            // The later spell id wins, as the reference's plain store `[0xb700ac][lang] = spellId`
-            // over the sorted initial spell batch.
+            // The later spell id wins, as the reference's plain store `[lang] = spellId` over the
+            // sorted initial spell batch.
             skill.insert(language, skill_value(&store, line));
         }
     }
@@ -168,8 +169,8 @@ pub(super) fn feed_default_language(
     }
 }
 
-/// A skill's `PLAYER_SKILL_INFO` value as `0x5ec720` sums it: base, plus the permanent bonus only
-/// when base is non-zero, plus the signed temporary bonus; 0 with no row.
+/// A skill's `PLAYER_SKILL_INFO` value as the reference sums it: base, plus the permanent bonus
+/// only when base is non-zero, plus the signed temporary bonus; 0 with no row.
 fn skill_value(store: &ObjectStore, line: u32) -> u32 {
     for i in 0..benilla_protocol::messages::PLAYER_SKILL_SLOTS {
         let Some(s) = store.0.player_skill(i) else {

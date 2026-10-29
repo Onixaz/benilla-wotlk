@@ -1,6 +1,6 @@
-//! The calendar's Lua bindings, 12340's `s_ScriptFunctions` (`0xad0030`, registered by
-//! `CalendarRegisterScriptFunctions` `0x5b8c30`). Days and indices are 1-based, the month offset
-//! -1, 0 or 1 (the shown month's neighbours).
+//! The calendar's Lua bindings, 12340's calendar script table (`0xad0030`, registered at
+//! `0x5b8c30`). Days and indices are 1-based, the month offset -1, 0 or 1 (the shown month's
+//! neighbours).
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -10,7 +10,7 @@ use super::{fire_signals, with_calendar};
 use crate::script::get_text::global_text;
 use crate::script::{Model, ModelCell};
 
-/// `s_monthNames` (`0xacffb4`).
+/// The reference's month-name table (`0xacffb4`).
 const MONTH_NAMES: [&str; 12] = [
     "MONTH_JANUARY",
     "MONTH_FEBRUARY",
@@ -26,7 +26,7 @@ const MONTH_NAMES: [&str; 12] = [
     "MONTH_DECEMBER",
 ];
 
-/// `s_weekdayNames` (`0xad0014`).
+/// The reference's weekday-name table (`0xad0014`).
 const WEEKDAY_NAMES: [&str; 7] = [
     "WEEKDAY_SUNDAY",
     "WEEKDAY_MONDAY",
@@ -37,7 +37,7 @@ const WEEKDAY_NAMES: [&str; 7] = [
     "WEEKDAY_SATURDAY",
 ];
 
-/// `s_eventTypeStrings` (`0xad1694`).
+/// The reference's event-type string table (`0xad1694`).
 const EVENT_TYPES: [&str; 5] = [
     "CALENDAR_TYPE_RAID",
     "CALENDAR_TYPE_DUNGEON",
@@ -46,7 +46,7 @@ const EVENT_TYPES: [&str; 5] = [
     "CALENDAR_TYPE_OTHER",
 ];
 
-/// `s_eventRepeatStrings` (`0xad1684`).
+/// The reference's event-repeat string table (`0xad1684`).
 const REPEAT_OPTIONS: [&str; 4] = [
     "CALENDAR_REPEAT_NEVER",
     "CALENDAR_REPEAT_WEEKLY",
@@ -54,7 +54,7 @@ const REPEAT_OPTIONS: [&str; 4] = [
     "CALENDAR_REPEAT_MONTHLY",
 ];
 
-/// `s_eventStatusStrings` (`0xad16a8`); status 7 has none (`GetEventStatusString` `0x5f1000`).
+/// The reference's event-status string table (`0xad16a8`); status 7 has none (`0x5f1000`).
 const STATUS_STRINGS: [&str; 9] = [
     "CALENDAR_STATUS_INVITED",
     "CALENDAR_STATUS_ACCEPTED",
@@ -70,7 +70,8 @@ const STATUS_STRINGS: [&str; 9] = [
 /// The invite sort's criteria by number (`0x5b8570`).
 const SORT_CRITERIA: [&str; 6] = ["name", "level", "class", "status", "party", "notes"];
 
-/// `s_expansionMaxLevels` (`0xa18684`), `CalendarDefaultGuildFilter`'s level bounds.
+/// The reference's per-expansion level caps (`0xa18684`), `CalendarDefaultGuildFilter`'s level
+/// bounds.
 const EXPANSION_MAX_LEVELS: [f64; 3] = [60.0, 70.0, 80.0];
 
 fn model(lua: &Lua) -> mlua::AppDataRef<'_, ModelCell> {
@@ -167,7 +168,7 @@ fn date4(d: &WowTime) -> MultiValue {
     MultiValue::from_vec(out)
 }
 
-/// `GetSequenceLabel` (`0x5b8040`): a holiday's run position.
+/// The sequence label (`0x5b8040`): a holiday's run position.
 fn sequence_label(e: &DayEvent) -> &'static str {
     if e.kind & kind::HOLIDAY == 0 || e.sequence_length <= 1 {
         ""
@@ -180,7 +181,7 @@ fn sequence_label(e: &DayEvent) -> &'static str {
     }
 }
 
-/// `GetInviteRoleLabel` (`0x5b8080`).
+/// The invite role label (`0x5b8080`).
 fn role_label(e: &DayEvent) -> &'static str {
     if e.flags & mark::CREATOR != 0 {
         "CREATOR"
@@ -191,7 +192,7 @@ fn role_label(e: &DayEvent) -> &'static str {
     }
 }
 
-/// `IsSignUpInvite` (`0x5b80b0`): a guild event the player has not been invited to.
+/// The sign-up test (`0x5b80b0`): a guild event the player has not been invited to.
 fn is_sign_up(e: &DayEvent) -> bool {
     e.kind & kind::GUILD_EVENT != 0 && e.flags & mark::SIGN_UP != 0
 }
@@ -206,7 +207,8 @@ fn difficulty_name(lua: &Lua, model: &Model, map: u32, difficulty: u32) -> Strin
         .unwrap_or_default()
 }
 
-/// `PushDayEventTexture` (`0x5c0fb0`): a holiday's texture, a fetched event's dungeon texture.
+/// The day event's texture push (`0x5c0fb0`): a holiday's texture, a fetched event's dungeon
+/// texture.
 fn day_texture(model: &Model, e: &DayEvent) -> String {
     let cal = &model.calendar;
     if e.kind & kind::HOLIDAY != 0 {

@@ -299,7 +299,7 @@ fn texture_room(model: &Model, slot: crate::widget::RegionHandle) -> f32 {
     w + crate::widget::TOOLTIP_TEXTURE_GAP
 }
 
-/// `CGTooltip::AddTexture` (`0x61c8b0`): the next free slot goes on the last line, TOPRIGHT to its
+/// `:AddTexture` (`0x61c8b0`): the next free slot goes on the last line, TOPRIGHT to its
 /// TOPLEFT less the gap, the line indents by the slot's room, or by none under a slot on the line
 /// above, and the line after it is pulled back by the same room. Nothing with no slot left or
 /// fewer than 2 lines. `tint` is the slot's vertex colour, white from Lua.
@@ -401,7 +401,7 @@ pub(super) fn clear_content(model: &mut Model, h: FrameHandle) {
         t.texture_lines.clear();
         t.min_width = 0.0;
         t.min_width_forced = false;
-        // Clear drops the subject and unregisters its health watcher (`0x5300ad`, `0x53007c`).
+        // Clear drops the subject and unregisters its health watcher.
         t.unit_guid = None;
         t.item_id = 0;
         t.world_owned = false;
@@ -435,10 +435,10 @@ pub(super) fn fire_cleared(lua: &Lua, h: FrameHandle) {
 
 /// A content `Set*`'s tail: `Show` with lines, hidden without.
 ///
-/// Deviation: an empty render hides without the `HideThis` override (`0x61eb20`), keeping the
-/// owner, where the reference's `Hide` clears it. benilla answers some content lazily, so a
-/// render the reference fills at once can come up empty and replay when answered, under the same
-/// owner, which the hover loop's `IsOwned` also reads.
+/// Deviation: an empty render hides without the tooltip's hide override (`0x61eb20`), keeping the
+/// owner, where the reference's `Hide` clears it. benilla answers some content lazily, so a render
+/// the reference fills at once can come up empty and replay when answered, under the same owner,
+/// which the hover loop's `IsOwned` also reads.
 pub(super) fn show_or_hide_empty(lua: &Lua, h: FrameHandle) {
     let lines = {
         let mut model = crate::script::model_mut_of(lua);
@@ -464,8 +464,8 @@ fn cancel_fade(model: &mut Model, h: FrameHandle) {
     }
 }
 
-/// `SetAlpha(255)`, unconditional: the SetOwner core `0x52ffe0` does it first (`0x52fff4`), and
-/// Show (`0x530a80`) and its self-hide (`0x530a60`, the core with no owner) reach it too.
+/// `SetAlpha(255)`, unconditional: the SetOwner core does it first, and Show and its self-hide (the
+/// core with no owner) reach it too.
 fn full_alpha(model: &mut Model, h: FrameHandle) {
     if let Ok(t) = tip_mut(model, h) {
         t.fade_start = None;
@@ -483,15 +483,15 @@ pub(super) fn set_shown(lua: &Lua, h: FrameHandle, shown: bool) {
     event::set_shown(lua, h, shown);
 }
 
-/// The default line colour, gold `0xffffd200` (stored at `0xc0d3e8` by `0x528e50`). The zone
-/// tooltip's `AddLine(text, "", 1.0, 1.0, 1.0)` (`Minimap.lua:40`) renders in it: the `""` r-slot
-/// drops the whole colour, and the last `1.0` lands in the wrap slot.
+/// The default line colour, gold `0xffffd200`. The zone tooltip's
+/// `AddLine(text, "", 1.0, 1.0, 1.0)` (`Minimap.lua:40`) renders in it: the `""` r-slot drops the
+/// whole colour, and the last `1.0` lands in the wrap slot.
 pub(in crate::script) const DEFAULT_TEXT_GOLD: [f32; 4] = [1.0, 210.0 / 255.0, 0.0, 1.0];
 
-/// The client's duration formatter (`0x52fa50`): days, hours, minutes or seconds by threshold,
-/// each dividing by its own unit. `round_up` ceils every arm but seconds, which truncates, so 61 s
-/// reads "2 minutes" and 3 599 999 ms "60 minutes". The text is the player's own
-/// `GlobalStrings.lua` through `get`; a missing key renders no line.
+/// The client's duration formatter: days, hours, minutes or seconds by threshold, each dividing by
+/// its own unit. `round_up` ceils every arm but seconds, which truncates, so 61 s reads "2 minutes"
+/// and 3 599 999 ms "60 minutes". The text is the player's own `GlobalStrings.lua` through `get`; a
+/// missing key renders no line.
 pub(in crate::script) fn duration_text(
     ms: u32,
     key_prefix: &str,
@@ -522,8 +522,8 @@ pub(in crate::script) fn duration_text(
 }
 
 /// [`crate::strings::plural`], the `_P1` pick of `GetText(token, gender, n)`. There is no gender:
-/// the formatter passes a literal 0 (`0x52fa50`), which `0x703bf0` reads as nil. With neither key
-/// present the lookup yields "" (`0x882748`), which the line core drops, so no line either way.
+/// the formatter passes a literal 0, which the string lookup reads as nil. With neither key present
+/// the lookup yields "", which the line core drops, so no line either way.
 pub(in crate::script) fn plural_template(
     token: &str,
     n: u32,
@@ -543,8 +543,8 @@ fn color_num(v: Option<&Value>) -> Option<f32> {
 }
 
 /// A wrap flag: nil, false, 0 and the strings "0", "off" and "disabled" are false, anything else
-/// true. The reference reads it with `GetBoolOrDefault` (`0x6f1c10`,
-/// `binding_abi::bool_or_default`), where "false", "no" and 0.5 are false too.
+/// true. The reference reads it with its boolean coercion (`binding_abi::bool_or_default`), where
+/// "false", "no" and 0.5 are false too.
 fn bool_arg(v: Option<&Value>) -> bool {
     match v {
         None | Some(Value::Nil) | Some(Value::Boolean(false)) => false,
@@ -557,7 +557,7 @@ fn bool_arg(v: Option<&Value>) -> bool {
     }
 }
 
-/// An `AddLine`-family colour, gated on the r-slot alone (`lua_isnumber`, `0x6f34d0`), else
+/// An `AddLine`-family colour, gated on the r-slot alone (`lua_isnumber`), else
 /// [`DEFAULT_TEXT_GOLD`]; past the gate a non-number g or b reads 0, and alpha is always opaque.
 fn parse_line_color(r: Option<&Value>, g: Option<&Value>, b: Option<&Value>) -> [f32; 4] {
     match color_num(r) {
@@ -571,8 +571,8 @@ fn parse_line_color(r: Option<&Value>, g: Option<&Value>, b: Option<&Value>) -> 
     }
 }
 
-/// An `AddLine` tail, positional `r, g, b, wrap` (`0x531630`); the wrap flag is read whatever the
-/// colour gate decides.
+/// An `AddLine` tail, positional `r, g, b, wrap`; the wrap flag is read whatever the colour gate
+/// decides.
 fn parse_line_tail(args: &[Value]) -> ([f32; 4], bool) {
     (
         parse_line_color(args.first(), args.get(1), args.get(2)),
@@ -598,8 +598,7 @@ fn text_of(v: Option<&Value>) -> String {
 }
 
 /// Appends one line and cancels any fade, without showing the tooltip: `AddLine` callers call
-/// `Show`. The reference's line core drops a line whose sides are both empty (`0x530270`); this
-/// appends it.
+/// `Show`. The reference's line core drops a line whose sides are both empty; this appends it.
 pub(super) fn append_line(
     lua: &Lua,
     this: &Table,
@@ -642,19 +641,19 @@ pub(super) fn append_line(
 mod verbs;
 pub(super) use verbs::install;
 
-/// `Hide` (`0x48f620`), whose `HideThis` is the override below. `SetOwner`'s first step, a `Show`
+/// `Hide` (`0x48f620`), whose hide step is the override below. `SetOwner`'s first step, a `Show`
 /// with no owner or no lines and the end of a fade all take it.
 pub(super) fn hide_tooltip(lua: &Lua, h: FrameHandle) {
     set_shown(lua, h, false);
 }
 
-/// `CGTooltip::HideThis` (`0x61eb20`), before the base step on every hide that reaches the
+/// The tooltip's hide override (`0x61eb20`), before the base step on every hide that reaches the
 /// tooltip, its own or an ancestor's: the `SetOwner` core with no owner.
 pub(in crate::script) fn hide_this_override(lua: &Lua, h: FrameHandle) {
     set_owner_core(lua, h, None, TooltipAnchor::Left, (0.0, 0.0));
 }
 
-/// `CGTooltip::ShowThis` (`0x61cff0`), before the base step on every show that reaches the
+/// The tooltip's show override (`0x61cff0`), before the base step on every show that reaches the
 /// tooltip: with no owner or no lines it takes `Hide` instead and answers false; otherwise full
 /// alpha with the fade disarmed, and true.
 pub(in crate::script) fn show_this_override(lua: &Lua, h: FrameHandle) -> bool {
@@ -712,11 +711,11 @@ pub(super) fn set_owner_core(
     reset_position(&mut model, h);
 }
 
-/// `ResetPosition` (`0x61b040`, always called with 1): nothing without an owner or in PRESERVE;
-/// otherwise the points clear (`0x61b070`), and modes 0..7 set one on the owner at the offsets.
-/// The clear lets `GameTooltip_SetDefaultAnchor` (GameTooltip.lua:76-77) set one point with no
-/// stale owner anchor. An unchanged point is left alone, so the bag hover's per-frame `SetOwner`
-/// does not dirty the layout; a change is a named retarget.
+/// The tooltip's position reset (`0x61b040`, always called with 1): nothing without an owner or in
+/// PRESERVE; otherwise the points clear (`0x61b070`), and modes 0..7 set one on the owner at the
+/// offsets. The clear lets `GameTooltip_SetDefaultAnchor` (GameTooltip.lua:76-77) set one point
+/// with no stale owner anchor. An unchanged point is left alone, so the bag hover's per-frame
+/// `SetOwner` does not dirty the layout; a change is a named retarget.
 pub(super) fn reset_position(model: &mut Model, h: FrameHandle) {
     let (owner, mode, (x, y)) = match model.arena.frame(h).map(|f| &f.kind_state) {
         Some(KindState::Tooltip(t)) => (t.owner, t.anchor, t.offset),
@@ -756,7 +755,7 @@ pub(super) fn reset_position(model: &mut Model, h: FrameHandle) {
     }
 }
 
-/// The name a binding's error gives the tooltip: `GetName`, or `<unnamed>` (`0x9ea280`).
+/// The name a binding's error gives the tooltip: `GetName`, or `<unnamed>`.
 pub(super) fn display_name(lua: &Lua, h: FrameHandle) -> String {
     let model = lua
         .app_data_ref::<crate::script::ModelCell>()
@@ -779,8 +778,8 @@ fn cell(model: &Model, rh: crate::widget::RegionHandle) -> Cell {
         return None;
     }
     if text.is_empty() {
-        // One unit each way, the floor of the line's own rect: the reference's `GetHeight`
-        // (`0x772a60`) clamps to one unit, so no FontString reads back 0.
+        // One unit each way, the floor of the line's own rect: the reference's `GetHeight` clamps
+        // to one unit, so no FontString reads back 0.
         return Some((
             super::layout::FONTSTRING_MIN_SPAN,
             super::layout::FONTSTRING_MIN_SPAN,
@@ -789,11 +788,11 @@ fn cell(model: &Model, rh: crate::widget::RegionHandle) -> Cell {
     d.measured.map(|m| (m.w, m.h))
 }
 
-/// The cursor modes, re-anchored every frame by `OnLayerUpdate` (`0x61b2e0`): one `SetPoint` on
-/// the root's BOTTOMLEFT (`[0xb499a8]`) at the cursor over the tooltip's own scale. CURSOR (8,
-/// `0x61b2fd`) pins the plate's BOTTOM there, centred above the cursor, offsets unused;
-/// CURSOR_RIGHT (11, `0x61b363`) pins its BOTTOMLEFT there plus the offsets. There is no clear,
-/// and `SetPoint`'s no-op gate keeps a still cursor free.
+/// The cursor modes, re-anchored every frame by the tooltip's layer update (`0x61b2e0`): one
+/// `SetPoint` on the root's BOTTOMLEFT (`[0xb499a8]`) at the cursor over the tooltip's own scale.
+/// CURSOR (8, `0x61b2fd`) pins the plate's BOTTOM there, centred above the cursor, offsets unused;
+/// CURSOR_RIGHT (11, `0x61b363`) pins its BOTTOMLEFT there plus the offsets. There is no clear, and
+/// `SetPoint`'s no-op gate keeps a still cursor free.
 fn cursor_anchor(model: &mut Model, h: FrameHandle) {
     let (mode, (ox, oy)) = match model.arena.frame(h).map(|f| &f.kind_state) {
         Some(KindState::Tooltip(t)) => (t.anchor, t.offset),
@@ -818,7 +817,7 @@ fn cursor_anchor(model: &mut Model, h: FrameHandle) {
         ),
     };
     let input = model.layout_inputs.entry(h).or_default();
-    // `0x767c70`'s change detect: the one slot is replaced only on a real change.
+    // The anchor set's change detect: the one slot is replaced only on a real change.
     let same =
         input.anchors.len() == 1 && crate::script::object::anchor_bits_eq(&input.anchors[0], &new);
     if same {
@@ -829,7 +828,7 @@ fn cursor_anchor(model: &mut Model, h: FrameHandle) {
     model.touch_layout_retarget_frame(h, &old_targets, &[super::SCREEN]);
 }
 
-/// The auto-size (`CGTooltip::CalculateSize` `0x61caf0`), run before every resolve's gate: the
+/// The auto-size (the tooltip's size pass `0x61caf0`), run before every resolve's gate: the
 /// reference sizes at each Show, line add and item build, so the floor `SetTooltipMoney` writes
 /// after a mid-call `GetWidth` still lands. Its inputs (lines, floor, padding) name no node, so
 /// it touches only what it moves, and an unchanged tooltip leaves the gate shut.
@@ -933,7 +932,7 @@ pub(super) fn layout_tooltips(model: &mut Model) {
     }
 }
 
-/// The fade step of `CGTooltip::OnLayerUpdate` (`0x61b2e0`), in the tooltip's walk slot: alpha
+/// The fade step of the tooltip's layer update (`0x61b2e0`), in the tooltip's walk slot: alpha
 /// ramps from 1 to 0 over [`TOOLTIP_FADE_SECS`], then the full hide.
 pub(super) fn update(lua: &Lua, h: FrameHandle) {
     let t = now(lua);

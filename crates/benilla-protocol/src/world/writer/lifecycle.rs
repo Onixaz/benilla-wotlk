@@ -37,8 +37,7 @@ impl WorldWriter {
         self.send(opcode::CMSG_QUERY_TIME, &messages::query_time())
     }
 
-    /// `CMSG_OPENING_CINEMATIC`, empty: Lua's `OpeningCinematic()` (`0x48c8c0`, opcode `0xf9` put
-    /// at `0x48c8c9`, sent through `0x5ab630`).
+    /// `CMSG_OPENING_CINEMATIC`, empty: Lua's `OpeningCinematic()` (opcode `0xf9` put).
     pub fn opening_cinematic(&mut self) -> Result<()> {
         self.send(opcode::CMSG_OPENING_CINEMATIC, &[])
     }
@@ -51,8 +50,8 @@ impl WorldWriter {
     }
 
     /// `CMSG_NEXT_CINEMATIC_CAMERA`, empty: sent as each shot is armed, the first included, just
-    /// before its narration (reference: shot arm `0x48edf0`, not the advance `0x48efe0`). Every
-    /// 1.12 `CinematicSequences` row has one camera, so a race intro sends exactly one.
+    /// before its narration. Every 1.12 `CinematicSequences` row has one camera, so a race intro
+    /// sends exactly one.
     pub fn next_cinematic_camera(&mut self) -> Result<()> {
         self.send(opcode::CMSG_NEXT_CINEMATIC_CAMERA, &[])
     }

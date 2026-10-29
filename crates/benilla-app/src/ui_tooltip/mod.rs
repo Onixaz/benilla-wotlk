@@ -62,8 +62,8 @@ enum LastHover {
 /// ceiling.
 #[derive(bevy::ecs::system::SystemParam)]
 pub(crate) struct HoverMemo<'s> {
-    /// Which world plate is up. On an unchanged mouseover the reference makes no call (`0x482090`
-    /// returns at `0x4820b5`), so a plate Lua takes mid-hover stays gone.
+    /// Which world plate is up. On an unchanged mouseover the reference makes no call, so a plate
+    /// Lua takes mid-hover stays gone.
     last: Local<'s, crate::ui_script::VmMemo<LastHover>>,
     /// The line-affecting fields the current unit plate was built from, so a late-arriving name or
     /// creature-info rebuilds it under the same hover.
@@ -85,8 +85,8 @@ fn lines_view(s: &UnitState) -> UnitState {
 }
 
 /// The "Locked" line's colour (`0x6267fa`-`0x626840`): red while locked; opened by a known spell
-/// and no key, `GetSkillColor`'s rung for the match; else (a key, no requirement, no `Lock.dbc`
-/// row) the ramp's green. The line never takes the colourblind prefix.
+/// and no key, the skill colour ramp's rung for the match; else (a key, no requirement, no
+/// `Lock.dbc` row) the ramp's green. The line never takes the colourblind prefix.
 fn locked_line_tint(
     outcome: Option<crate::target::lock::LockOutcome>,
     matched: Option<crate::target::lock::LockMatch>,
@@ -170,8 +170,8 @@ fn drive_mouseover_tooltip(
             store,
             self_store,
         );
-        // The hovered guid, the pair `0x492890` writes to `0xb4e2c8`/`0xb4e2cc` and the token
-        // resolver `0x515970` reads for `"mouseover"`, so `UnitIsUnit` can match it.
+        // The hovered guid, the pair the mouseover publisher writes and the token resolver reads
+        // for `"mouseover"`, so `UnitIsUnit` can match it.
         let mut s = snapshot(store, guid, name, reaction, chr, types);
         enrich_unit(
             &mut s,
@@ -184,8 +184,8 @@ fn drive_mouseover_tooltip(
         Some((guid, s))
     });
     // The hovered GameObject, when nothing else was picked or it is nearer. Not gated on
-    // highlightability: the publisher `0x492890` sends every object to the builder by kind, so a
-    // signpost or an in-use object shows its plate with no interact cursor.
+    // highlightability: the publisher sends every object to the builder by kind, so a signpost or
+    // an in-use object shows its plate with no interact cursor.
     let go = hovered_go.target.zip(hovered_go.guid).filter(|_| {
         (unit.is_none() && hovered.corpse.is_none()) || go_is_nearest(&hovered, &hovered_go)
     });
@@ -203,16 +203,16 @@ fn drive_mouseover_tooltip(
         }
         return;
     }
-    // No unit won the pick: the publisher's teardown zeroes the mouseover pair (`0x4928e8`,
-    // `0x4928f2`) and writes a null, corpse or GameObject guid, none of which resolves as a unit,
-    // so `"mouseover"` names nobody from this frame. A fading plate keeps its lines and its bar,
-    // which follows the unit's guid, not the token; the null publish fires no event (the sole
-    // `UPDATE_MOUSEOVER_UNIT` is the unit arm's, `0x4929b3`).
+    // No unit won the pick: the publisher's teardown zeroes the mouseover pair and writes a null,
+    // corpse or GameObject guid, none of which resolves as a unit, so `"mouseover"` names nobody
+    // from this frame. A fading plate keeps its lines and its bar, which follows the unit's guid,
+    // not the token; the null publish fires no event (the sole `UPDATE_MOUSEOVER_UNIT` is the unit
+    // arm's).
     if std::mem::take(published) {
         script.set_unit("mouseover", None);
     }
-    // The corpse plate, "Corpse of <owner>" (`0x52aef0`): a name and nothing else, corner-seated.
-    // The publisher fires no event for a corpse, so `UnitName("mouseover")` on one stays nil.
+    // The corpse plate, "Corpse of <owner>": a name and nothing else, corner-seated. The publisher
+    // fires no event for a corpse, so `UnitName("mouseover")` on one stays nil.
     if let Some((entity, guid)) = hovered
         .corpse
         .zip(hovered.corpse_guid)
@@ -252,7 +252,7 @@ fn drive_mouseover_tooltip(
         return;
     }
     if let Some((entity, guid)) = go {
-        // The plate follows the cursor iff 12340 `CGGameObject_C::FloatingTooltip` (`0x70f630`)
+        // The plate follows the cursor iff 12340's GameObject floating-tooltip test (`0x70f630`)
         // finds the type's property `0x13` slot set; hoverability is a different slot.
         let cursor_seated = go_inputs
             .templates
@@ -317,7 +317,7 @@ fn drive_mouseover_tooltip(
         let mut lines: Vec<(String, TooltipTint)> = Vec::new();
         // The lock lines' keys all read "Requires %s" in enUS; only the binary tells them apart.
         let go_get = |key: &str| benilla_ui::strings::global(script.lua(), key);
-        // Both lock lines ask `IsLocked` (`0x70f160`), the resolver the click uses.
+        // Both lock lines ask the lock test (`0x70f160`), the resolver the click uses.
         let facts = crate::target::lock::go_facts(go_store.map(|s| (s, state)));
         let mut matched = None;
         let outcome = slots.map(|slots| {
@@ -344,7 +344,7 @@ fn drive_mouseover_tooltip(
             match slot0.key_type {
                 benilla_formats::LOCK_KEY_ITEM => {
                     if let Some(t) = go_inputs.items.template(slot0.index, 0, &commands) {
-                        // `LOCKED_WITH_ITEM`, at `0x52acb8`.
+                        // `LOCKED_WITH_ITEM`.
                         if let Some(text) = keyed(&go_get, "LOCKED_WITH_ITEM", &[Arg::S(&t.name)]) {
                             lines.push((text, TooltipTint::White));
                         }
@@ -380,7 +380,7 @@ fn drive_mouseover_tooltip(
         return;
     }
     if !matches!(*last, LastHover::None) {
-        // Hover lost: arm the fade (`0x492909` → `0x530ae0`).
+        // Hover lost: arm the fade.
         script.world_tooltip_fade();
         *last = LastHover::None;
     }

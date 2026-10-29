@@ -7,15 +7,15 @@ use benilla_assets::ModelAnimations;
 
 /// Per-submesh animated material alpha: the batch's per-sequence colour-alpha and weight loops,
 /// sampled into [`Self::current`]. The visibility authority multiplies that into the render-alpha
-/// `MeshTag` and hides the batch at 0, the reference's `A ≤ 0` cull (`0x707b3a`–`0x707b5c`).
+/// `MeshTag` and hides the batch at 0, the reference's `A ≤ 0` cull.
 #[derive(Component)]
 pub struct MatAnim {
     anim: std::sync::Arc<benilla_formats::AlphaAnim>,
     /// The entity whose `AnimationPlayer` names the sequence to read, re-resolved every frame (the
     /// unit lane: a voidwalker's upper armour is weight 0 in Stand, 1 in Death). `None` pins the
     /// instance to [`Self::seq`] on its spawn clock: a spell effect, or a placed doodad, which
-    /// reads slot 0 where the reference reads the sequence each arm picks (op4 `0x7121a0`, called
-    /// from the load build `0x70ebd0` and again on every re-roll).
+    /// reads slot 0 where the reference reads the sequence each arm picks (called from the load
+    /// build and again on every re-roll).
     host: Option<Entity>,
     /// The file sequence slot to read: fixed when pinned, the last one resolved from
     /// [`Self::host`] otherwise; `None` reads slot 0.
@@ -33,7 +33,7 @@ pub struct MatAnim {
     /// pinned like a doodad but ordered against the wearer's appear-fade. See [`Self::resting`].
     unit_lane: bool,
     /// The gseq attach anchor (secs, shared clock), stamped by the first [`sample_mat_anim`] pass:
-    /// the reference snapshots the scene clock once per instance at attach (`CM2Model+0x68`).
+    /// the reference snapshots the scene clock once per instance at attach (model `+0x68`).
     gseq_attach: Option<f64>,
     /// The last sampled combined factor (colour-alpha × weight), read by the visibility authority.
     pub current: f32,
@@ -75,8 +75,8 @@ impl MatAnim {
     }
 
     /// Read the sequence and clock from `host`'s live `AnimationPlayer` each frame, for an effect
-    /// that advances Stand, Hold, Decay (`0x5ff170` arms Hold, `0x5ff270` the terminal Decay), each
-    /// leg with its own alpha loops. It keeps [`Self::drives_tag`]; `None` leaves it pinned.
+    /// that advances Stand, Hold, Decay, each leg with its own alpha loops. It keeps
+    /// [`Self::drives_tag`]; `None` leaves it pinned.
     pub fn following_host(mut self, host: Option<Entity>) -> Self {
         self.host = host;
         self
@@ -109,9 +109,9 @@ impl MatAnim {
 
 /// The sequence slot and clip time a host plays: its base animation with the greatest weight, as
 /// masked overlays pose bones without reselecting the sequence. In a cross-fade the heavier clip
-/// wins, where the reference blends the two samples by λ (`0x71af20`). With nothing armed it is
-/// the loader-idle sequence at t = 0 ([`ModelAnimations::idle_seq`]): the reference arms that clip
-/// on every M2 at load, and slot 0 can be another sequence (a GameObject's Spawn).
+/// wins, where the reference blends the two samples by λ. With nothing armed it is the loader-idle
+/// sequence at t = 0 ([`ModelAnimations::idle_seq`]): the reference arms that clip on every M2 at
+/// load, and slot 0 can be another sequence (a GameObject's Spawn).
 pub fn playing_seq(player: &AnimationPlayer, anims: &ModelAnimations) -> Option<(usize, f32)> {
     player
         .playing_animations()
@@ -126,8 +126,8 @@ pub fn playing_seq(player: &AnimationPlayer, anims: &ModelAnimations) -> Option<
 
 /// Sample every instance: a hosted one on its host's sequence and clip clock, a pinned one on its
 /// spawn clock; frozen ones keep their t = 0 sample. Hidden instances sample too, as the reference
-/// evaluates the tracks every frame regardless of the cull (`0x707b3a`–`0x707b5c`), or a batch
-/// born at weight 0 would stay hidden. Runs before the visibility authority.
+/// evaluates the tracks every frame regardless of the cull, or a batch born at weight 0 would stay
+/// hidden. Runs before the visibility authority.
 pub fn sample_mat_anim(
     time: Res<Time>,
     hosts: Query<(&AnimationPlayer, &ModelAnimations)>,
@@ -175,7 +175,7 @@ pub enum UvLoop {
     /// for a rotate- or scale-only transform, whose translation row stays at zero.
     ///
     /// Deviation: every instance scrolls in one phase, where the reference phases a band loop per
-    /// arm and a gseq loop from each instance's attach (`CM2Model+0x68`), because one uniform
+    /// arm and a gseq loop from each instance's attach (model `+0x68`), because one uniform
     /// serves the material and a seamless scroll looks the same at any phase.
     Shared(Option<std::sync::Arc<benilla_formats::UvAnim>>),
     /// The slots disagree: this material belongs to one placement, on whichever slot `host` plays.
@@ -197,8 +197,8 @@ pub enum UvLoop {
     },
 }
 
-/// One registered UV material (the texture-transform translation `0x716216` gates): its loop, its
-/// table slot, and the built `sun_scale.zw` seed its delta rows are measured from, never mutated.
+/// One registered UV material: its loop, its table slot, and the built `sun_scale.zw` seed its
+/// delta rows are measured from, never mutated.
 pub struct UvAnimEntry {
     pub anim: UvLoop,
     pub slot: u16,
@@ -1168,9 +1168,8 @@ mod delta_tests {
         // No translation channel: its row stays at zero.
         assert_eq!(e.delta(1.0, 1.0, None), [0.0, 0.0, 0.0, 0.0]);
         // Half-way through the turn the row comes from the raw, unnormalised lerp, as in the
-        // reference (`0x713ea0` lerps each component, `0x7bddb0` uses the result as is):
-        // `q = (0, 0, 0.35355, 0.85355)`, so `c = 1 − 2z² = 0.75` and `s = 2zw = 0.60355`, not the
-        // 0.7071 of a normalised 45°. Normalising fails here.
+        // reference: `q = (0, 0, 0.35355, 0.85355)`, so `c = 1 − 2z² = 0.75` and
+        // `s = 2zw = 0.60355`, not the 0.7071 of a normalised 45°. Normalising fails here.
         let (slot, row) = e.affine(1.0, 1.0, None).expect("the affine row");
         assert_eq!(slot, 5);
         assert!(

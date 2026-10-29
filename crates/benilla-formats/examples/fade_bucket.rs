@@ -33,7 +33,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The size buckets of `0x683f80`, in sync with `model_fade.rs`.
+/// The size buckets, in sync with `model_fade.rs`.
 fn band(r: f32) -> &'static str {
     match r {
         r if r > 7.0 => "never fades",

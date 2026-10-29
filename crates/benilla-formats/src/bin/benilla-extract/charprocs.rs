@@ -147,8 +147,8 @@ pub fn run(chain: &mut Chain) -> Result<()> {
         let anim = kit.and_then(|k| k.anim_id);
         let [r, g, b] = trail.rgb();
         let spells = reach.get(kit_id);
-        // The type-8 arm never reads `CharParamOne` (`0x60d80a`), but it is printed: not every row
-        // carries 20.0 there, and Sinister Strike's kit 399 carries 15.0.
+        // The type-8 arm never reads `CharParamOne`, but it is printed: not every row carries 20.0
+        // there, and Sinister Strike's kit 399 carries 15.0.
         let unread = kit
             .and_then(|k| {
                 k.char_procs()

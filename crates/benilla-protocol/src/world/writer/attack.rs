@@ -18,7 +18,7 @@ impl WorldWriter {
         self.send(opcode::CMSG_ATTACKSTOP, &[])
     }
 
-    /// Stop our ranged auto-repeat; the reference sends it on every local cancel (`0x6ea080`).
+    /// Stop our ranged auto-repeat; the reference sends it on every local cancel.
     pub fn cancel_auto_repeat(&mut self) -> Result<()> {
         self.send(opcode::CMSG_CANCEL_AUTO_REPEAT_SPELL, &[])
     }

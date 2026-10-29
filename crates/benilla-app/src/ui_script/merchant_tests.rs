@@ -502,7 +502,7 @@ fn merchant_switch_plays_close_then_open_and_queues_the_consumable_close() {
 
 /// Hovering a row's icon: the icon button's own 37px glow and a tooltip it owns at `ANCHOR_RIGHT`
 /// (`MerchantItemButton_OnEnter`), "Retrieving item information" while the template is in flight
-/// (`SetItemNoStats` `0x623760`), then the item with no buy-price line.
+/// (`0x623760`), then the item with no buy-price line.
 #[test]
 fn shipped_merchant_hover_scopes_highlight_and_anchors_item_tooltip() {
     benilla_formats::wow_data_or_skip!();

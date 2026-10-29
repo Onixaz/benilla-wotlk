@@ -5,18 +5,17 @@
 //!
 //! The stock surface (`StaticPopup.lua:1321-1335`, `UIParent.lua:125`, `547-548`) is the
 //! `CONFIRM_BINDER` event, whose one argument fills the dialog's `%s`; `ConfirmBinder()`, the
-//! Accept that sends the activate; and `CheckBinderDist()`, polled from `OnUpdate`, which hides
-//! the dialog the frame it goes false. The reference's handler is `0x5dfdc0`, its
-//! `SMSG_BINDER_CONFIRM` arm `0x5e4aa2`.
+//! Accept that sends the activate; and `CheckBinderDist()`, polled from `OnUpdate`, which hides the
+//! dialog the frame it goes false. The reference's handler, its `SMSG_BINDER_CONFIRM` arm.
 //!
-//! `CheckBinderDist()` tests `d² <= [0xc4c28c]` (`5.55555534362793²`), the same constant and
-//! inclusive bound as [`crate::target::SERVICE_RANGE_SQ`], so the question is an [`NpcSession`]
-//! closed by [`crate::ui_session::close_npc_session_out_of_range`]; an unstreamed guid reads as
-//! gone, so a disconnect needs no teardown.
+//! `CheckBinderDist()` tests `d² <=` (`5.55555534362793²`), the same constant and inclusive bound
+//! as [`crate::target::SERVICE_RANGE_SQ`], so the question is an [`NpcSession`] closed by
+//! [`crate::ui_session::close_npc_session_out_of_range`]; an unstreamed guid reads as gone, so a
+//! disconnect needs no teardown.
 //!
-//! Deviation: the reference never clears its latched guid (`0xc4d7c0`), so a second
-//! `ConfirmBinder()` in range re-sends the activate; this drops the guid on `SMSG_PLAYERBOUND`,
-//! because an answered question is not a question and the reference's dialog is gone by then.
+//! Deviation: the reference never clears its latched guid, so a second `ConfirmBinder()` in range
+//! re-sends the activate; this drops the guid on `SMSG_PLAYERBOUND`, because an answered question
+//! is not a question and the reference's dialog is gone by then.
 
 use benilla_ui::script::{ScriptValue, UiScript};
 use bevy::prelude::*;
@@ -68,7 +67,7 @@ impl NpcSession for BinderState {
 }
 
 /// Publishes `CheckBinderDist()` every frame and fires `CONFIRM_BINDER` for each packet that
-/// asked, unconditionally, as the reference's handler always reaches its `SignalEvent2`.
+/// asked, unconditionally, as the reference's handler always reaches its event signal.
 fn feed_binder(
     script: Option<NonSendMut<UiScript>>,
     mut binder: ResMut<BinderState>,
@@ -95,8 +94,8 @@ fn feed_binder(
     script.fire_event("CONFIRM_BINDER", vec![ScriptValue::Str(name)]);
 }
 
-/// The dialog's `%s`, an area and never the NPC's name (`0x5dfe5e`): the player's sub-area, else
-/// its parent zone, else `HOME_INN`. The reference never withholds the question for want of one.
+/// The dialog's `%s`, an area and never the NPC's name: the player's sub-area, else its parent
+/// zone, else `HOME_INN`. The reference never withholds the question for want of one.
 fn area_name(
     world: &benilla_world::world_point::WorldPoint,
     areas: Option<&AreaTableRes>,
@@ -106,7 +105,7 @@ fn area_name(
 }
 
 /// [`area_name`] over a bare leaf id. The tail is the install's `HOME_INN`, the same fallback as
-/// `GetBindLocation` (`0x48dae0`); an install without it gives an empty name and still asks.
+/// `GetBindLocation`; an install without it gives an empty name and still asks.
 fn area_name_of(
     leaf: Option<u32>,
     areas: Option<&AreaTableRes>,
@@ -129,8 +128,8 @@ fn area_name_of(
         .unwrap_or_default()
 }
 
-/// Turns the dialog's Accept into `CMSG_BINDER_ACTIVATE`, only while a question is pending: with
-/// no guid latched, the reference's `ConfirmBinder()` finds no unit and sends nothing (`0x5dfdfe`).
+/// Turns the dialog's Accept into `CMSG_BINDER_ACTIVATE`, only while a question is pending: with no
+/// guid latched, the reference's `ConfirmBinder()` finds no unit and sends nothing.
 fn drain_binder(
     script: Option<NonSendMut<UiScript>>,
     binder: Res<BinderState>,
@@ -153,8 +152,8 @@ fn drain_binder(
     }
 }
 
-/// `SoundEntries.dbc` 1141, played on `SMSG_PLAYERBOUND` before the area is resolved (`0x5e3d6e`),
-/// so an area the catalog cannot name gets the sound and no line.
+/// `SoundEntries.dbc` 1141, played on `SMSG_PLAYERBOUND` before the area is resolved, so an area
+/// the catalog cannot name gets the sound and no line.
 const SOUND_PLAYERBOUND: u32 = 1141;
 
 /// The innkeeper's packet handlers.
@@ -199,10 +198,10 @@ pub(crate) mod net {
         }
     }
 
-    /// `SMSG_PLAYERBOUND`, in the handler's order (`0x5e3d3f`): retract the question, play the
-    /// handler's own sound (the error row has none), then queue `ERR_DEATHBIND_SUCCESS_S`
-    /// (`DisplayError(0x138)`, a system chat line) named by the area. The hearthstone moves on
-    /// `SMSG_BINDPOINTUPDATE`, which this leaves alone, as the reference does.
+    /// `SMSG_PLAYERBOUND`, in the handler's order: retract the question, play the handler's own
+    /// sound (the error row has none), then queue `ERR_DEATHBIND_SUCCESS_S` (error id `0x138`, a
+    /// system chat line) named by the area. The hearthstone moves on `SMSG_BINDPOINTUPDATE`, which
+    /// this leaves alone, as the reference does.
     pub(crate) fn bound(
         area: u32,
         binder: &mut BinderState,

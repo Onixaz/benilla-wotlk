@@ -95,7 +95,7 @@ pub fn spawn_model_entities(
     tint_reg: &mut crate::doodad_anim::TintAnimMaterials,
     anim_table: &mut crate::mat_anim_table::MatAnimTable,
     // A WMO prop hosted on a streamed entity (a transport's cargo): every batch, cards included,
-    // then gets `DoodadDefLit`, as its light is its own `CMapDoodadDef`'s, not its host's. This
+    // then gets `DoodadDefLit`, as its light is its own doodad placement's, not its host's. This
     // is the lane; `card_owner` only says whether the prop has cards to follow.
     entity_hosted: bool,
     // On a streamed entity, the anchor a boneless model's cards follow instead of a baked pivot;
@@ -154,10 +154,10 @@ pub fn spawn_model_entities(
     let mut entity_batches = vec![false; submeshes.len()];
     // The fixed, fading cards that wait in the store rather than spawn (`crate::card_store`).
     let mut stored: Vec<crate::card_store::StoredCard> = Vec::new();
-    // Coplanar siblings ride one lane: two batches naming one skin section draw the same
-    // triangles, which the reference draws from one vertex array under LEQUAL, so the later wins
-    // exactly (`0x70c190`). Split across lanes, the two reach each vertex by different float
-    // arithmetic and the depth test flickers, so neither diverts.
+    // Coplanar siblings ride one lane: two batches naming one skin section draw the same triangles,
+    // which the reference draws from one vertex array under LEQUAL, so the later wins exactly.
+    // Split across lanes, the two reach each vertex by different float arithmetic and the depth
+    // test flickers, so neither diverts.
     let shared_geometry = shared_geometry(
         &submeshes
             .iter()
@@ -175,13 +175,13 @@ pub fn spawn_model_entities(
                 continue;
             }
         }
-        // The authored order biases the transparent sort, so coplanar layers draw in file order;
-        // a WMO batch also takes it into the clip-z nudge, as the reference draws MOBA batches in
-        // strict file order (`0x6b4f10`/`0x6b5190`).
+        // The authored order biases the transparent sort, so coplanar layers draw in file order; a
+        // WMO batch also takes it into the clip-z nudge, as the reference draws MOBA batches in
+        // strict file order.
         let batch_order = u16::try_from(batch_idx + 1).unwrap_or(u16::MAX);
         let interior = sub.interior || interior_slot.is_some();
-        // A billboard card culls by its `0x04` flag like any batch: the bone turns +X to the
-        // viewer and the cull is GL_BACK/CCW (`0x70c2b3`), so a −X card is meant to go unseen.
+        // A billboard card culls by its `0x04` flag like any batch: the bone turns +X to the viewer
+        // and the cull is GL_BACK/CCW, so a −X card is meant to go unseen.
         let two_sided = sub.two_sided;
         // An interior M2 prop's batches carry its SH-probe slot, cards included: the reference
         // shades every batch of an object through one light node.
@@ -546,8 +546,8 @@ pub fn spawn_model_entities(
             None => MeshTag(alpha_bits(1.0)),
         };
         // A billboard batch on a rigged placement is a skinned part whose billboard bone the rig's
-        // world pass faces to the camera, as the reference skins it (`0x714260`); its unrigged
-        // twin draws nothing, so a placement not yet woken shows no unfaced quad.
+        // world pass faces to the camera, as the reference skins it; its unrigged twin draws
+        // nothing, so a placement not yet woken shows no unfaced quad.
         let palette_billboard = rig_root
             .filter(|_| sub.billboard.is_some() && !billboard_cards())
             .and_then(|root| {

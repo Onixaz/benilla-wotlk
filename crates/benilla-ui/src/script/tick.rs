@@ -20,14 +20,14 @@ impl UiScript {
     }
 
     /// Fire an event to every frame registered for it, shown or not, setting both the
-    /// `this`/`event`/`arg1..argN` globals and the `(self, event, ...)` arguments (`0x704d50`,
-    /// `0x704f10`); handler errors go to [`UiScript::errors`]. Frames fire in registration order,
-    /// as `SignalEvent` (`0x703e50`) walks its tail-appended list (`0x7052d0`), and consumers rely
-    /// on it: both ZoneText frames write `PVPInfoTextString` on one event, and the last one wins.
+    /// `this`/`event`/`arg1..argN` globals and the `(self, event, ...)` arguments; handler errors
+    /// go to [`UiScript::errors`]. Frames fire in registration order, as the event signal walks its
+    /// tail-appended list, and consumers rely on it: both ZoneText frames write `PVPInfoTextString`
+    /// on one event, and the last one wins.
     ///
-    /// The walk steps by the next listener saved before each handler runs (`0x703ee8`), so a
-    /// handler that unregisters itself does not skip its successor. Deviation: a handler that
-    /// unregisters the saved next ends the dispatch, because the reference then reads a freed node.
+    /// The walk steps by the next listener saved before each handler runs, so a handler that
+    /// unregisters itself does not skip its successor. Deviation: a handler that unregisters the
+    /// saved next ends the dispatch, because the reference then reads a freed node.
     pub fn fire_event(&mut self, event: &str, args: Vec<ScriptValue>) {
         let before = super::epoch_trace::enabled().then(|| self.visual_epoch());
         fire_event_into(&self.lua, event, args);
@@ -81,10 +81,10 @@ pub(crate) fn fire_event_into(lua: &Lua, event: &str, args: Vec<ScriptValue>) {
 }
 
 impl super::UiScript {
-    /// Advance a frame as the reference's pump does (`CSimpleTop::OnLayerUpdate` `0x495320`): the
-    /// `GetTime()` clock and queued events, the layout drained (`CLayoutFrame::ResizePending`), the
-    /// update walk ([`Self::update_walk`]), the layout drained again, then the hover re-pick; then
-    /// the model panes' paint callbacks.
+    /// Advance a frame as the reference's pump does (the UI root's layer update `0x495320`): the
+    /// `GetTime()` clock and queued events, the layout drained (the pending resizes), the update
+    /// walk ([`Self::update_walk`]), the layout drained again, then the hover re-pick; then the
+    /// model panes' paint callbacks.
     pub fn tick(&mut self, elapsed: f32) {
         // The clock is no extract input and a drained queue is no change: the mutation count
         // stands ([`ModelCell`]); the events fired below bump it through their verbs.
@@ -136,7 +136,7 @@ impl super::UiScript {
         leg(self, "layout drain");
         let quiet = self.visual_epoch();
         // A frame hid or showed under a still cursor: re-run the hover walk at the saved position,
-        // as the pump's tail does (`m_checkFocus`). The hidden frame's OnLeave already fired, so
+        // as the pump's tail does on its focus check. The hidden frame's OnLeave already fired, so
         // only the new winner's `OnEnter` fires.
         let repick = {
             let mut model = self.model_mut();
@@ -174,10 +174,10 @@ impl super::UiScript {
 }
 
 impl UiScript {
-    /// The model panes' paint (`CSimpleModel::RenderModel` `0x95fc30`), in draw order: a pane with
-    /// a model, a resolved rect and a screen-clamped viewport with area fires `OnUpdateModel`
-    /// (`0x95fba0`), then its scene animates, which fires `OnAnimFinished` (`0x95f370`) once per
-    /// arm when the armed sequence completes naturally, a loop's first pass included.
+    /// The model panes' paint (`0x95fc30`), in draw order: a pane with a model, a resolved rect and
+    /// a screen-clamped viewport with area fires `OnUpdateModel` (`0x95fba0`), then its scene
+    /// animates, which fires `OnAnimFinished` (`0x95f370`) once per arm when the armed sequence
+    /// completes naturally, a loop's first pass included.
     fn paint_model_panes(&mut self) {
         // The roster compaction is bookkeeping: the count stands.
         let quiet = self.visual_epoch();

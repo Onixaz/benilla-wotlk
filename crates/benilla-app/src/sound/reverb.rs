@@ -1,14 +1,12 @@
 //! Zone reverb: the area's EAX preset on the mixer's reverb send.
 //!
-//! [`CurrentArea`] → `AreaTable` cols 5/6 (dry and underwater provider, parent-inherited as the
-//! reference's caller `0x67e7f0` walks it) → `SoundProviderPreferences.dbc`, whose EAX listener
-//! properties are used raw (`0x45a790`) → `Mixer::set_reverb`, applied instantly on change
-//! (`0x45a720`). Submerged, the underwater column wins.
+//! [`CurrentArea`] → `AreaTable` cols 5/6 (dry and underwater provider) →
+//! `SoundProviderPreferences.dbc`, whose EAX listener properties are used raw →
+//! `Mixer::set_reverb`, applied instantly on change. Submerged, the underwater column wins.
 //!
-//! Only 3D-open channels (flag bit 27, `0x7a5bf0`) whose kit has a nonzero
-//! `SoundEntries.EAXDef` reach the send (the gate is `Mixer::play_3d`); 2D, UI, music and
-//! ambience stay dry. The chain is gated on the `SoundReverb` CVar, off by default
-//! ([`SoundConfig::reverb`] says why).
+//! Only 3D-open channels (flag bit 27) whose kit has a nonzero `SoundEntries.EAXDef` reach the send
+//! (the gate is `Mixer::play_3d`); 2D, UI, music and ambience stay dry. The chain is gated on the
+//! `SoundReverb` CVar, off by default ([`SoundConfig::reverb`] says why).
 
 use bevy::prelude::*;
 
@@ -59,8 +57,8 @@ fn zone_reverb(
         return;
     };
     let column = usize::from(world.submersion().is_water());
-    // With `SoundReverb` off no preset reaches the backend (the `0x45a75b` gate returns before
-    // the marshal). Flipping the CVar re-applies here, like the callback `0x4574d0`.
+    // With `SoundReverb` off no preset reaches the backend. Flipping the CVar re-applies here, like
+    // the callback.
     let pref = if config.enabled && config.reverb {
         interior
             .0

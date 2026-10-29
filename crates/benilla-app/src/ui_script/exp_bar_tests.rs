@@ -238,8 +238,8 @@ fn the_max_level_rail_replaces_the_xp_bar_at_60() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// A hidden-to-visible show re-stamps a frame to the tail (`0x76ae10`), but within a
-/// `(strata, level)` bucket the layer outranks every stamp, so the `OVERLAY` caps stay on top.
+/// A hidden-to-visible show re-stamps a frame to the tail, but within a `(strata, level)` bucket
+/// the layer outranks every stamp, so the `OVERLAY` caps stay on top.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_gryphons_outrank_the_bars_across_hide_show_cycles() {

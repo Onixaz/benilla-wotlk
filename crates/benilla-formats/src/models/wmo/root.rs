@@ -21,8 +21,7 @@ pub struct WmoDoodad {
     /// Uniform scale.
     pub scale: f32,
     /// The baked colour at `+0x24`, BGRA on disk, stored RGBA: an interior doodad's base light, set
-    /// at create as diffuse (HSV value ≥ 112) and ambient (≤ 96), with no footprint sample
-    /// (`0x694e90`, `0x6a77e0`).
+    /// at create as diffuse (HSV value ≥ 112) and ambient (≤ 96), with no footprint sample.
     pub color: [u8; 4],
 }
 
@@ -39,8 +38,8 @@ pub struct WmoDoodadSet {
 /// down-ray indoor bit, never these boxes, which can float above the group's floor.
 #[derive(Debug, Clone, Copy)]
 pub struct WmoGroupInfo {
-    /// `groupFlags & 0x48 == 0`: neither exterior (`0x8`) nor exterior-lit (`0x40`), the test at
-    /// `0x6b3f90` and in [`crate::models::RenderSubmesh::interior`].
+    /// `groupFlags & 0x48 == 0`: neither exterior (`0x8`) nor exterior-lit (`0x40`), the test and
+    /// in [`crate::models::RenderSubmesh::interior`].
     pub interior: bool,
     /// `groupFlags & 0x40000`: draw [`WmoRoot::skybox`] instead of the `Light.dbc` dome. A corpus
     /// correlation (`benilla-extract skyboxscan`): only roots with a non-empty MOSB set it.
@@ -91,8 +90,8 @@ impl WmoRoot {
     }
 
     /// Per-material `TerrainType.dbc` id (MOMT `+0x20`), the footstep sound, indexed by MOPY face
-    /// material. When the down-ray hits a building, the reference re-rays that group's render
-    /// faces and reads `MOMT[MOPY[face].material_id] + 0x20` (`0x6a26c0`).
+    /// material. When the down-ray hits a building, the reference re-rays that group's render faces
+    /// and reads `MOMT[MOPY[face].material_id] + 0x20`.
     pub fn material_ground_types(&self) -> Vec<u32> {
         match &self.parsed {
             ParsedWmo::Root(r) => r.materials.iter().map(|m| m.ground_type).collect(),
@@ -101,7 +100,7 @@ impl WmoRoot {
     }
 
     /// Per-material MOMT `diffColor` (`+0x1C`), RGB 0..1, by [`LiquidMesh::material_id`]: an
-    /// interior liquid's raw body colour, the reference's interior water being unlit (`0x6b6420`).
+    /// interior liquid's raw body colour, the reference's interior water being unlit.
     pub fn material_diff_colors(&self) -> Vec<[f32; 3]> {
         match &self.parsed {
             ParsedWmo::Root(r) => r
@@ -218,8 +217,8 @@ fn parse_wmo_group_infos(bytes: &[u8]) -> Vec<WmoGroupInfo> {
         .collect()
 }
 
-/// The portal graph in WMO model space, driving per-group visibility (the reference's `0x6b41c0`).
-/// A group's portals: [`Self::refs`] from its header's `portal_ref_start`, `portal_ref_count` long.
+/// The portal graph in WMO model space, driving per-group visibility. A group's portals:
+/// [`Self::refs`] from its header's `portal_ref_start`, `portal_ref_count` long.
 #[derive(Debug, Clone, Default)]
 pub struct WmoPortals {
     /// MOPV: the pooled portal polygon vertices.
@@ -248,9 +247,9 @@ pub struct WmoPortalRef {
     pub side: i16,
 }
 
-/// Parse MOPV/MOPT/MOPR at the strides the reference's root parser `0x6c3a60` reads: MOPV `0xc`
-/// (`C3Vector`), MOPT `0x14` (`u16 start, u16 count, C4Plane`), MOPR `0x8` (`u16 portal,
-/// u16 group, i16 side, u16 filler`). An absent chunk is empty.
+/// Parse MOPV/MOPT/MOPR at the strides the reference's root parser reads: MOPV `0xc` (`C3Vector`),
+/// MOPT `0x14` (`u16 start, u16 count, C4Plane`), MOPR `0x8`
+/// (`u16 portal, u16 group, i16 side, u16 filler`). An absent chunk is empty.
 pub fn parse_wmo_portals(bytes: &[u8]) -> WmoPortals {
     let f = |b: &[u8], i: usize| f32::from_le_bytes([b[i], b[i + 1], b[i + 2], b[i + 3]]);
     let u16 = |b: &[u8], i: usize| u16::from_le_bytes([b[i], b[i + 1]]);
@@ -298,8 +297,8 @@ pub fn parse_wmo_portals(bytes: &[u8]) -> WmoPortals {
     }
 }
 
-/// One MFOG fog record, the v17 on-disk layout at the reference's stride `0x30` (root parser
-/// `0x6c3a60`, `CMapObj+0x158`), read field for field. Position and radii are WMO model space.
+/// One MFOG fog record, the v17 on-disk layout at the reference's stride `0x30` (map object
+/// `+0x158`), read field for field. Position and radii are WMO model space.
 #[derive(Debug, Clone, Copy)]
 pub struct WmoFog {
     pub flags: u32,
@@ -381,7 +380,7 @@ fn parse_wmo_doodads(bytes: &[u8]) -> (Vec<WmoDoodad>, Vec<WmoDoodadSet>) {
                 position: [f(4), f(8), f(12)],
                 orientation: [f(16), f(20), f(24), f(28)],
                 scale: f(32),
-                // `CImVector` at `+0x24` is BGRA; stored RGBA.
+                // The colour at `+0x24` is BGRA; stored RGBA.
                 color: [rec[38], rec[37], rec[36], rec[39]],
             });
         }

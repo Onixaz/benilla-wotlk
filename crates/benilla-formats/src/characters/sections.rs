@@ -10,7 +10,7 @@ use crate::{read_texture_mip_chain, BlpMipChain, Chain};
 
 const CHAR_SECTIONS: &str = "DBFilesClient\\CharSections.dbc";
 
-/// CharSections `sectionType` values (facial hair 2 at `0x478660`, hair 3 at `0x4784c0`).
+/// CharSections `sectionType` values.
 const SECTION_SKIN: u8 = 0;
 const SECTION_FACE: u8 = 1;
 const SECTION_FACIAL_HAIR: u8 = 2;
@@ -20,7 +20,7 @@ const SECTION_UNDERWEAR: u8 = 4;
 /// The face row flag that lights the eyes, geoset 1703 (`0x4ed93b`).
 const FACE_EYE_GLOW: u32 = 0x4;
 
-/// The hair variation the type-6 binder falls back to: a literal 1 at `0x478445` and `0x4786f2`.
+/// The hair variation the type-6 binder falls back to: a literal 1.
 const HAIR_SUBSTITUTE_VARIATION: u8 = 1;
 
 /// An atlas rect `(x, y, w, h)` in pixels.
@@ -29,7 +29,7 @@ type Tile = (u32, u32, u32, u32);
 /// The side of the body atlas the tiles below are laid out on.
 const ATLAS_SIDE: u32 = 256;
 
-/// The head strip of the 256² partition `0x475c50` writes: g8 the upper band, g9 the lower.
+/// The head strip of the 256² partition writes: g8 the upper band, g9 the lower.
 const TILE_G8: Tile = (0, 160, 128, 32);
 const TILE_G9: Tile = (0, 192, 128, 64);
 // The underwear's torso and pelvis tiles are equipment tiles g3 and g5, named for the tests.
@@ -39,14 +39,14 @@ const TILE_G3: Tile = EQUIP_TILES[3];
 const TILE_G5: Tile = EQUIP_TILES[5];
 
 /// The underwear's blits, `(TextureName column, layer, cells tested)`: the tile's fallback, drawn
-/// by `0x4772f0` (TorsoUpper, `cc+0x20c`) only with cells 0–2 empty and by `0x4773a0` (LegUpper,
-/// `cc+0x208`) only with cells 0–1 empty; `0x478790` fills both from the sectionType-4 row.
+/// by (TorsoUpper, `cc+0x20c`) only with cells 0–2 empty and by (LegUpper, `cc+0x208`) only with
+/// cells 0–1 empty; fills both from the sectionType-4 row.
 const UNDERWEAR_TILES: [(usize, usize, i8); 2] = [
     (0, 5, 2), // pelvis into LegUpper: pants and chest tested, not the belt
     (1, 3, 3), // torso into TorsoUpper: shirt, chest and a guild tabard's background tested
 ];
 
-/// The equipment tiles g0–g7 of `0x475c50`: ItemDisplayInfo texture column i is layer i, tile gi.
+/// The equipment tiles g0–g7: ItemDisplayInfo texture column i is layer i, tile gi.
 const EQUIP_TILES: [Tile; 8] = [
     (0, 0, 128, 64),     // g0 ArmUpper
     (0, 64, 128, 64),    // g1 ArmLower
@@ -70,9 +70,9 @@ const EQUIP_TEX_DIRS: [&str; 8] = [
     "FootTexture",
 ];
 
-/// The `[0x803bf8]` table: per bodyslot 2–9 and layer 0–7, the default cell of the slot's art,
-/// `-1` for never; two layer choosers (`[0xb42424 + layer*4]`) overrule it ([`equip_column`]).
-/// A row holds one record per cell, blitted by ascending cell.
+/// The table: per bodyslot 2–9 and layer 0–7, the default cell of the slot's art, `-1` for never;
+/// two layer choosers (`[ + layer*4]`) overrule it ([`equip_column`]). A row holds one record per
+/// cell, blitted by ascending cell.
 const EQUIP_LAYER_COLUMN: [[i8; 8]; 8] = [
     [0, 0, -1, 0, 0, -1, -1, -1],    // shirt
     [1, 1, -1, 1, 1, 1, 1, -1],      // chest (robes reach the legs)
@@ -95,7 +95,7 @@ const SLOT_TABARD: usize = 7;
 /// Where the guild tabard's art lives.
 const GUILD_EMBLEM_DIR: &str = "Textures\\GuildEmblems";
 
-/// The guild tabard's layers and name halves (`0x47a610`): TorsoUpper `_TU_`, TorsoLower `_TL_`.
+/// The guild tabard's layers and name halves: TorsoUpper `_TU_`, TorsoLower `_TL_`.
 const EMBLEM_LAYERS: [(usize, &str); 2] = [(3, "TU"), (4, "TL")];
 
 fn emblem_half(layer: usize) -> Option<&'static str> {
@@ -129,9 +129,8 @@ impl CharSections {
     }
 
     /// The sheet for M2 texture type 6, the hair and on several races the beard: the style's row,
-    /// else variation 1 at the same colour. The client's binder `0x478220` ignores an empty name
-    /// (`0x47827d`) and runs for variation 1 (`0x478445`, `0x4786f2`) and the style (`0x478450`);
-    /// on the shipped data its last non-empty bind is always this.
+    /// else variation 1 at the same colour. The client's binder ignores an empty name and runs for
+    /// variation 1 and the style; on the shipped data its last non-empty bind is always this.
     pub fn hair_mesh_texture(
         &self,
         race: u8,
@@ -210,8 +209,8 @@ impl CharSections {
     ) -> Option<CompositePlan> {
         let base = self.skin_texture(race, sex, skin)?.to_owned();
         let mut layers = Vec::new();
-        // The head overlays `(sectionType, variation, color, column, tile)` of `0x4782e0`, in order
-        // face, facial hair, hair; face and facial hair use columns 0/1, hair 1/2.
+        // The head overlays `(sectionType, variation, color, column, tile)`, in order face, facial
+        // hair, hair; face and facial hair use columns 0/1, hair 1/2.
         let overlays: [(u8, u8, u8, usize, Tile); 6] = [
             (SECTION_FACE, face, skin, 0, TILE_G9),
             (SECTION_FACE, face, skin, 1, TILE_G8),
@@ -294,8 +293,8 @@ pub struct CompositePlan {
 }
 
 impl CompositePlan {
-    /// Read, decode and blit: each overlay at its tile per authored mip level (`0x475c50`,
-    /// `0x4770f0`). An overlay that reads nowhere is skipped; a base skin that does not read fails.
+    /// Read, decode and blit: each overlay at its tile per authored mip level. An overlay that
+    /// reads nowhere is skipped; a base skin that does not read fails.
     ///
     /// Deviation: blends in 8-bit RGBA, not the client's RGB565 with 2-bit coverage, because that
     /// format only saves texture memory and loses precision.
@@ -342,8 +341,8 @@ pub enum BlitSource<'a> {
 }
 
 impl EquipBlit<'_> {
-    /// The chain paths to try, first hit wins: `_U` then the gender letter for a garment
-    /// (`0x476e20`), the one ungendered name for an emblem layer.
+    /// The chain paths to try, first hit wins: `_U` then the gender letter for a garment, the one
+    /// ungendered name for an emblem layer.
     pub fn candidates(&self, sex: u8) -> Vec<String> {
         match self.source {
             BlitSource::Worn { texture, .. } => {
@@ -357,9 +356,8 @@ impl EquipBlit<'_> {
 }
 
 /// A guild's tabard: the five `SMSG_GUILD_QUERY_RESPONSE` indices, each naming a BLP under
-/// `Textures\GuildEmblems\` (the designer's counts `[0x808220]` = {170, 17, 6, 17, 51}); an index
-/// with no file paints nothing. Signed, never clamped: a guild with no tabard sends `-1` in all
-/// five (vmangos `Guild/Guild.cpp:86`, `int32`).
+/// `Textures\GuildEmblems\` (17, 6, 17, 51}); an index with no file paints nothing. Signed, never
+/// clamped: a guild with no tabard sends `-1` in all five (vmangos `Guild/Guild.cpp:86`, `int32`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct GuildEmblem {
     /// The symbol, `Emblem_<style>_<color>_…`.
@@ -375,9 +373,8 @@ pub struct GuildEmblem {
 }
 
 impl GuildEmblem {
-    /// Whether none of the five is `-1`, the client's guard `0x6d6d20` (`0x6d6d73`–`0x6d6d93`).
-    /// Otherwise `0x47a610` is never entered, so its clear of cells 4→2 (`0x47a616 push 4;
-    /// 0x47a61a call 0x47a5c0`) never runs and the tabard keeps its own art.
+    /// Whether none of the five is `-1`, the client's guard. Otherwise is never entered, so its
+    /// clear of cells 4→2 never runs and the tabard keeps its own art.
     pub fn is_designed(&self) -> bool {
         [
             self.emblem_style,
@@ -391,14 +388,14 @@ impl GuildEmblem {
     }
 }
 
-/// The no-tabard sentinel a new guild carries (`Guild/Guild.cpp:86`), tested by `0x6d6d20`.
+/// The no-tabard sentinel a new guild carries (`Guild/Guild.cpp:86`), tested.
 const NO_TABARD: i32 = -1;
 
-/// A guild tabard's three layers, in the blit order of the cells `0x47a610` refills.
+/// A guild tabard's three layers, in the blit order of the cells refills.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EmblemLayer {
     /// Cell 2, the field colour: inside TorsoUpper's tested cells, so a guild tabard hides the bra,
-    /// and its cutout shows the base skin (`0x477070`) at the sides.
+    /// and its cutout shows the base skin at the sides.
     Background,
     /// Cell 3, the trim around the field.
     Border,
@@ -414,7 +411,7 @@ impl EmblemLayer {
         EmblemLayer::Symbol,
     ];
 
-    /// The layer's fixed cell in its row (`0x47a610`).
+    /// The layer's fixed cell in its row.
     pub fn column(self) -> i8 {
         match self {
             EmblemLayer::Background => 2,
@@ -423,8 +420,8 @@ impl EmblemLayer {
         }
     }
 
-    /// This layer's chain path for one tabard half (`"TU"`/`"TL"`): the client's `%02d` format
-    /// (`0x838dd8`) plus the `.blp` its loader appends (`0x449641`); `%02d` pads, never truncates.
+    /// This layer's chain path for one tabard half (`"TU"`/`"TL"`): the client's `%02d` format plus
+    /// the `.blp` its loader appends; `%02d` pads, never truncates.
     pub fn path(self, emblem: &GuildEmblem, half: &str) -> String {
         match self {
             EmblemLayer::Background => format!(
@@ -443,16 +440,16 @@ impl EmblemLayer {
     }
 }
 
-/// The cell a worn slot takes in `layer`'s row: the `[0x803bf8]` default, unless the ArmLower
-/// (`0x479210`) or LegLower (`0x4793f0`) chooser overrules it from a `geosetGroup`.
+/// The cell a worn slot takes in `layer`'s row: the default, unless the ArmLower or LegLower
+/// chooser overrules it from a `geosetGroup`.
 pub fn equip_column(equipment: &[Option<&ItemDisplay>; 8], slot: usize, layer: usize) -> i8 {
     let group = |s: usize, j: usize| equipment[s].is_some_and(|d| d.geoset_groups[j] != 0);
     match (layer, slot) {
-        // ArmLower (`0x479210`, via `0x4774f0(rec, 0)`): geoset gloves to 6, a sleeved chest to 5.
+        // ArmLower (via `(rec, 0)`): geoset gloves to 6, a sleeved chest to 5.
         (1, SLOT_GLOVES) if group(slot, 0) => 6,
         (1, SLOT_CHEST) if group(slot, 0) => 5,
-        // LegLower (`0x4793f0`): a boot geoset lifts boots 2 → 3, the robe bit lifts a chest 1 → 4
-        // over them, and robe-trousers take 3 under a robe chest, else 4.
+        // LegLower: a boot geoset lifts boots 2 → 3, the robe bit lifts a chest 1 → 4 over them,
+        // and robe-trousers take 3 under a robe chest, else 4.
         (6, SLOT_BOOTS) if group(slot, 0) => 3,
         (6, SLOT_CHEST) if group(slot, 2) => 4,
         (6, SLOT_PANTS) if group(slot, 2) => {
@@ -466,20 +463,19 @@ pub fn equip_column(equipment: &[Option<&ItemDisplay>; 8], slot: usize, layer: u
     }
 }
 
-/// The equipment plan: per layer, each worn slot with a table cell and a non-empty name
-/// (`0x478ad0` tests the first byte) in its [`equip_column`] cell, by ascending cell. A cell holds
-/// one record: the later slot wins here, the later-equipped item in the client (`0x478900`). The
-/// only slots that meet in a cell are robe-trousers under a robe chest and geoset boots, at
-/// LegLower's 3.
+/// The equipment plan: per layer, each worn slot with a table cell and a non-empty name in its
+/// [`equip_column`] cell, by ascending cell. A cell holds one record: the later slot wins here, the
+/// later-equipped item in the client. The only slots that meet in a cell are robe-trousers under a
+/// robe chest and geoset boots, at LegLower's 3.
 ///
-/// `emblem` installs over a flagged tabard or in the designer preview: `0x47a610` clears cells 4→2
-/// of layers 3 and 4 (`0x47a616`, `0x47a61a`) and refills them, replacing the tabard's own art.
+/// `emblem` installs over a flagged tabard or in the designer preview: the reference clears cells
+/// 4→2 of layers 3 and 4 and refills them, replacing the tabard's own art.
 pub fn equip_blits<'a>(
     equipment: &[Option<&'a ItemDisplay>; 8],
     emblem: Option<GuildEmblem>,
     tabard_preview: bool,
 ) -> Vec<EquipBlit<'a>> {
-    // In the designer preview `0x47a610` installs with no ItemDisplayInfo test, over an empty slot.
+    // In the designer preview the emblem installs with no ItemDisplayInfo test, over an empty slot.
     let emblem = emblem.filter(|_| {
         tabard_preview
             || equipment[SLOT_TABARD].is_some_and(|d: &ItemDisplay| d.takes_guild_emblem())
@@ -527,15 +523,15 @@ pub fn equip_blits<'a>(
 const LAYER_ARM_LOWER: usize = 1;
 
 /// Whether anything but the shirt dresses the forearm, ArmLower cells 1–6 (`cc+0x26c..cc+0x280`):
-/// branch B3's gate on the shirt's cuff (`0x4775bd`). 533 of 637 shipped chests leave the tile
-/// empty, 566 of 570 bracers fill it; the emblem never reaches this layer.
+/// branch B3's gate on the shirt's cuff. 533 of 637 shipped chests leave the tile empty, 566 of 570
+/// bracers fill it; the emblem never reaches this layer.
 pub fn forearm_dressed(equipment: &[Option<&ItemDisplay>; 8]) -> bool {
     equip_blits(equipment, None, false)
         .iter()
         .any(|b| b.layer == LAYER_ARM_LOWER && (1..=6).contains(&b.column))
 }
 
-/// A layer's atlas rect `(x, y, w, h)` in the 256² body atlas (`0x475c50`).
+/// A layer's atlas rect `(x, y, w, h)` in the 256² body atlas.
 pub fn equip_tile(layer: usize) -> Option<(u32, u32, u32, u32)> {
     EQUIP_TILES.get(layer).copied()
 }
@@ -546,8 +542,8 @@ pub fn equip_tex_dir(layer: usize) -> Option<&'static str> {
 }
 
 /// A region texture's chain paths in the order the composite tries them: `_U`, then the gender
-/// letter. `0x476e20` probes the `_U` path (`0x648a10`) and patches in the gender letter only on a
-/// miss, so `_U` wins on the 43 shipped basenames that have both.
+/// letter. The reference probes the `_U` path and patches in the gender letter only on a miss, so
+/// `_U` wins on the 43 shipped basenames that have both.
 pub fn equip_region_candidates(layer: usize, name: &str, sex: u8) -> [String; 2] {
     let dir = EQUIP_TEX_DIRS[layer];
     let letter = if sex == 1 { 'F' } else { 'M' };
@@ -555,7 +551,7 @@ pub fn equip_region_candidates(layer: usize, name: &str, sex: u8) -> [String; 2]
 }
 
 /// Source-over blit of an overlay's mip pyramid at `tile`, level by level, from the overlay's own
-/// origin (`0x4770f0`: src `(0,0)`, extent the tile); an opaque texel copies, the client's REPLACE.
+/// origin (src `(0,0)`, extent the tile); an opaque texel copies, the client's REPLACE.
 fn blit_over(dst: &mut BlpMipChain, src: &BlpMipChain, tile: Tile, scale: u32) {
     // Both chains must be decoded RGBA: DXT blocks would blend into garbage without failing.
     debug_assert!(
@@ -679,7 +675,7 @@ mod tests {
         [None, None, None, None, None, Some("lu"), Some(tex), None]
     }
 
-    /// The `[0x803bf8]` cell is a default the ArmLower chooser (`0x479210`) overrules.
+    /// The cell is a default the ArmLower chooser overrules.
     #[test]
     fn equip_blits_places_each_slot_in_its_chooser_cell() {
         let plain_chest = worn(
@@ -955,7 +951,7 @@ mod tests {
         );
     }
 
-    /// The `-1` guard (`0x6d6d20`): any one `-1` of the five means no crest.
+    /// The `-1` guard: any one `-1` of the five means no crest.
     #[test]
     fn an_undesigned_guild_has_no_crest_to_paint() {
         let designed = GuildEmblem {
@@ -1066,7 +1062,7 @@ mod tests {
         );
     }
 
-    /// LegLower (`0x4793f0`): a robe takes cell 4 over boots, while a plain chest stays under them.
+    /// LegLower: a robe takes cell 4 over boots, while a plain chest stays under them.
     #[test]
     fn a_robe_outranks_footwear_on_leglower() {
         let robe = worn(leg("robe_ll"), [1, 0, 1]);
@@ -1188,7 +1184,7 @@ mod tests {
         assert_eq!(g6(&eq), cells(&[(1, "chest_ll"), (4, "robetrouser_ll")]));
     }
 
-    /// `0x478ad0`'s gates: a `-1` cell and an empty name contribute nothing.
+    /// The reference's gates: a `-1` cell and an empty name contribute nothing.
     #[test]
     fn equip_blits_drops_ungated_and_empty_contributions() {
         let odd = worn(
@@ -1212,7 +1208,7 @@ mod tests {
         );
     }
 
-    /// `_U` comes before the gender letter (`0x476e20`); `Leather_A_02_Pant_LL` ships both.
+    /// `_U` comes before the gender letter; `Leather_A_02_Pant_LL` ships both.
     #[test]
     fn region_textures_resolve_unisex_before_the_gender_letter() {
         let female = equip_region_candidates(6, "Leather_A_02_Pant_LL", 1);
@@ -1509,8 +1505,8 @@ mod tests {
         }
     }
 
-    /// Only the tested cells suppress the underwear (`0x4772f0`, `0x4773a0`). Real art would paint
-    /// over it either way, so the fixture's display takes a cell but names no shipped file.
+    /// Only the tested cells suppress the underwear. Real art would paint over it either way, so
+    /// the fixture's display takes a cell but names no shipped file.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn only_the_tested_equipment_columns_suppress_the_underwear() {
@@ -1645,7 +1641,7 @@ mod tests {
     }
 
     /// On the shipped files display 20621 (item 5976, Guild Tabard) is flagged, its six emblem
-    /// files are tile-sized (`0x4770f0`), and the emblem repaints only the torso tiles.
+    /// files are tile-sized, and the emblem repaints only the torso tiles.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn composite_body_paints_the_guild_emblem_on_the_real_tabard() {

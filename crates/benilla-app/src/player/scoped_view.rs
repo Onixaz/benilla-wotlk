@@ -1,10 +1,10 @@
 //! The spyglass zoom, `SPELL_AURA_FAR_SIGHT` (aura 76): a client-local camera override, unlike the
 //! server's `SPELL_AURA_BIND_SIGHT` far sight ([`super::view_subject`]), so no packet carries it.
-//! For the local player only (`0x5fa6d0`), the aura watcher `0x604d00` routes to `0x5ff350` (add)
-//! and `0x612320` (remove), which match each effect's `EffectApplyAuraName` (`SpellRec+0x16c`)
-//! against 76 and call `0x50d320(camera, EffectMiscValue[i])`: first person, locked (camera flag
-//! `0x8` makes `SetCameraView` return early), with `[camera+0x40] = n × π/180`; removal restores
-//! `π/2` and unlocks. The Ornate Spyglass (item 5507, spell 12883) passes 15, a 6× zoom.
+//! For the local player only, the aura watcher routes to (add) and (remove), which match each
+//! effect's `EffectApplyAuraName` (`SpellRec+0x16c`) against 76 and call
+//! `(camera, EffectMiscValue[i])`: first person, locked (camera flag `0x8` makes `SetCameraView`
+//! return early), with `[camera+0x40] = n × π/180`; removal restores `π/2` and unlocks. The Ornate
+//! Spyglass (item 5507, spell 12883) passes 15, a 6× zoom.
 //!
 //! The ratio is applied, not the degrees: `[camera+0x40]` defaults to 90°, while our [`CAM_FOVY`]
 //! is the effective vertical field of view, 45° against the reference's measured 44.1°.
@@ -19,8 +19,7 @@ use benilla_world::view::{WorldCamera, CAM_FOVY};
 /// `0x4c`, the aura name the reference's effect walk matches.
 const SPELL_AURA_FAR_SIGHT: u32 = 76;
 
-/// The reference's unzoomed `[camera+0x40]` in degrees (`π/2`, its constructor's value at
-/// `0x50a706`), used only as a denominator.
+/// The reference's unzoomed `[camera+0x40]` in degrees (`π/2`), used only as a denominator.
 const REFERENCE_DEFAULT_DEGREES: f32 = 90.0;
 
 /// The held scope as a fraction of the normal field of view. `None` is no override;

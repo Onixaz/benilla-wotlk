@@ -85,9 +85,9 @@ fn real_spell_catalog_reads_ranged_attributes() {
     );
 }
 
-/// `CanShowAura` (`0x53d580`), the spell's own legs: `Attributes & 0x80` and `AttributesEx &
-/// 0x10000000` hide an aura whoever cast it; a passive shows only with an area-aura effect; the
-/// `AttributesEx5` pair hides a self-cast or another's aura.
+/// The aura display check (`0x53d580`), the spell's own legs: `Attributes & 0x80` and
+/// `AttributesEx & 0x10000000` hide an aura whoever cast it; a passive shows only with an area-aura
+/// effect; the `AttributesEx5` pair hides a self-cast or another's aura.
 #[test]
 fn real_spell_catalog_hides_stances_from_the_aura_bar() {
     let data = crate::wow_data_or_skip!();
@@ -276,21 +276,21 @@ fn real_spell_catalog_reads_open_lock_types() {
     assert_eq!(cat.get(133).unwrap().totems, [0, 0]);
 }
 
-/// The two `Effect[0]` values the client latches at learn time (`0x4b25e0` into `[0xb700e4]` and
-/// `[0xb700e8]`); the cursor's skin leg shows the knife only when one of them is in the book.
+/// The two `Effect[0]` values the client latches at learn time; the cursor's skin leg shows the
+/// knife only when one of them is in the book.
 #[test]
 fn real_spell_catalog_pins_the_skin_latch_effects() {
     let data = crate::wow_data_or_skip!();
     let mut chain = crate::open_chain(&data).expect("open chain");
     let cat = load_spell_catalog(&mut chain).expect("load Spell/SpellIcon");
 
-    // Skinning (8613): `0x4b2623: cmp [esi+0xf4], 0x5f`.
+    // Skinning (8613).
     assert_eq!(
         cat.get(8613).unwrap().effects[0],
         crate::SPELL_EFFECT_SKINNING,
         "Skinning carries SPELL_EFFECT_SKINNING (95 == 0x5f)"
     );
-    // Remove Insignia (22027), the `[0xb700e8]` half: `0x4b2632: cmp [esi+0xf4], 0x74`.
+    // Remove Insignia (22027), the half.
     assert_eq!(
         cat.get(22027).unwrap().effects[0],
         0x74,
@@ -307,9 +307,9 @@ fn real_spell_catalog_pins_the_skin_latch_effects() {
     );
 }
 
-/// The left side of the client's lock test (`0x5f850f`), with the player's skill as the level
-/// term (`0x5ea690`). Its columns (27, 28, 64, 67, 70, 73, 76) are pinned by result, against
-/// values known from the game; the below-cap rows are the ones a caster-level term would miss.
+/// The left side of the client's lock test, with the player's skill as the level term. Its columns
+/// (27, 28, 64, 67, 70, 73, 76) are pinned by result, against values known from the game; the
+/// below-cap rows are the ones a caster-level term would miss.
 #[test]
 fn real_spell_catalog_computes_the_lock_skill_an_opener_provides() {
     let data = crate::wow_data_or_skip!();
@@ -793,9 +793,9 @@ fn real_spell_catalog_classifies_combat_initiation() {
     );
 }
 
-/// TryCast's attack pick (`0x6e4edf`) is built for a spell press alone, so no form, recipe
+/// The cast attempt's attack pick is built for a spell press alone, so no form, recipe
 /// (`SPELL_EFFECT_CREATE_ITEM` 24, `SPELL_EFFECT_ENCHANT_ITEM` 53) or `modalNextSpell` chain may
-/// carry predicate `0x6e5200`. No item's use spell does either (vmangos `item_template`).
+/// carry predicate. No item's use spell does either (vmangos `item_template`).
 #[test]
 fn real_spell_catalog_keeps_the_attack_pick_to_spell_presses() {
     let data = crate::wow_data_or_skip!();
@@ -808,7 +808,7 @@ fn real_spell_catalog_keeps_the_attack_pick_to_spell_presses() {
             checked += 1;
             assert!(
                 !d.initiates_combat(),
-                "{} ({id}) is a form or a recipe of predicate 0x6e5200",
+                "{} ({id}) is a form or a recipe of predicate",
                 d.name
             );
         }
@@ -817,7 +817,7 @@ fn real_spell_catalog_keeps_the_attack_pick_to_spell_presses() {
             let next = cat.get(d.modal_next_spell);
             assert!(
                 !next.is_some_and(|n| n.initiates_combat()),
-                "{} ({id}) chains {} of predicate 0x6e5200",
+                "{} ({id}) chains {} of predicate",
                 d.name,
                 d.modal_next_spell
             );
@@ -927,7 +927,7 @@ fn real_crafting_columns_read_created_item_and_focus() {
 
 #[test]
 fn the_tooltip_gates_read_effect_and_mask() {
-    // `0x52eb15`: the cast and cooldown line is omitted for the passive bit or Effect[0] 47 or 78.
+    // The cast and cooldown line is omitted for the passive bit or Effect[0] 47 or 78.
     let plain = SpellDisplay::default();
     assert!(!plain.tooltip_omits_cast_line());
     let attribute_passive = SpellDisplay {
@@ -951,10 +951,10 @@ fn the_tooltip_gates_read_effect_and_mask() {
 }
 
 /// The weapon auto-pick family (`Attributes & 0x200`): for a player caster the cast binds an
-/// equipped weapon instead of arming the item cursor (`BeginCast 0x80c790`). On 12340 it is the
-/// weapon imbues and the fishing lures, each with `Targets == 0x10` and a temporary enchant (54),
-/// most gated on a weapon or a fishing pole, but for Windfury Weapon 32911, a 54-less creature
-/// row. Rockbiter's four ranks carry their enchant in effect slot 1.
+/// equipped weapon instead of arming the item cursor (`0x80c790`). On 12340 it is the weapon imbues
+/// and the fishing lures, each with `Targets == 0x10` and a temporary enchant (54), most gated on a
+/// weapon or a fishing pole, but for Windfury Weapon 32911, a 54-less creature row. Rockbiter's
+/// four ranks carry their enchant in effect slot 1.
 #[test]
 fn real_main_hand_autopick_family() {
     let data = crate::wow_data_or_skip!();
@@ -1340,8 +1340,8 @@ fn the_language_declaring_spells_cover_twelve_of_seventeen_languages() {
     assert_eq!(spells.declared_language(133), None); // Fireball
 }
 
-/// [`SpellDisplay::is_harmful`], the client's `0x6ea280 == 2`: an enemy implicit target in slot A
-/// (6), or only in slot B as Frost Nova's (A 22, the caster's spot; B 15, a source-area enemy).
+/// [`SpellDisplay::is_harmful`], the client's harmful test: an enemy implicit target in slot A (6),
+/// or only in slot B as Frost Nova's (A 22, the caster's spot; B 15, a source-area enemy).
 #[test]
 fn real_is_harmful_pins() {
     let data = crate::wow_data_or_skip!();
@@ -1495,7 +1495,7 @@ fn real_spell_family_columns_carry_the_modifier_gate() {
 
 /// The pet bar's GCD starts from the pressed spell's `StartRecoveryCategory`/`StartRecoveryTime`
 /// pair, which every learnable pet ability carries as category 133, and its press route branches
-/// on `AttributesEx4 & 0x20` (`SendPetAction 0x5d4210`), column 8.
+/// on `AttributesEx4 & 0x20` (`0x5d4210`), column 8.
 #[test]
 fn real_pet_spells_carry_the_gcd_pair_and_the_client_targeting_bit() {
     let data = crate::wow_data_or_skip!();

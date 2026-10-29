@@ -1,6 +1,6 @@
 //! The inbound handler table, the reference's shape: `NetClient` holds an opcode → handler table
-//! (`+0x74`, 828 slots) and its dispatcher `0x537aa0` calls each packet's handler in packet order,
-//! dropping an unregistered opcode in silence. Here each subsystem registers one-shot systems per
+//! (`+0x74`, 828 slots) and its dispatcher calls each packet's handler in packet order, dropping an
+//! unregistered opcode in silence. Here each subsystem registers one-shot systems per
 //! [`SessionEventKind`] through [`NetHandlerApp::net_handler`], and the exclusive drain runs them
 //! in packet order, each seeing what the one before it did.
 

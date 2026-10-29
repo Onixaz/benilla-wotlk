@@ -26,16 +26,16 @@ pub(super) fn drive(
         // the surface when the rest-line cap bites, and the wire tail streams the same value.
         t.rotation =
             crate::creature_anim::swim_body_rotation(player.model_yaw, move_flags_now, swim_pitch);
-        // The landing predictor (`0x602d00`) plays a hard landing's grunt and dust this frame;
-        // the server's `SMSG_ENVIRONMENTALDAMAGELOG` dust follows a round trip later, as in the
-        // reference. `fall_start_y` still holds this arc's launch height.
+        // The landing predictor plays a hard landing's grunt and dust this frame; the server's
+        // `SMSG_ENVIRONMENTALDAMAGELOG` dust follows a round trip later, as in the reference.
+        // `fall_start_y` still holds this arc's launch height.
         if landed {
             hard_landing.write(crate::creature_anim::HardLanding {
                 entity,
                 descent: player.fall_start_y - player.pos.y,
             });
         }
-        // `0x50f880` picks the swim pivot preset off the camera target's own SWIMMING bit, read
+        // The reference picks the swim pivot preset off the camera target's own SWIMMING bit, read
         // from the pitch's word so the two agree on the frame the water starts.
         cam_pivot_target = pivot_target(
             pivot,
@@ -64,11 +64,11 @@ pub(super) fn drive(
 }
 
 /// The camera pivot's target height: the model-local [`CameraPivot`] times the body's raw
-/// `OBJECT_FIELD_SCALE_X`, not the eased render scale, clamped. `swimming` picks the preset as
-/// `0x50f880` does (`0x50f89e`, `cam+0x124`), lower by [`CameraPivot::swim_drop_local`];
+/// `OBJECT_FIELD_SCALE_X`, not the eased render scale, clamped. `swimming` picks the preset as the
+/// reference does (`cam+0x124`), lower by [`CameraPivot::swim_drop_local`];
 /// [`super::camera::PivotGlide`] glides between presets. `None` until the model attaches: the
-/// reference skips the camera update while the model is unresolved (`0x50e907`), so a display
-/// swap holds, then glides once.
+/// reference skips the camera update while the model is unresolved, so a display swap holds, then
+/// glides once.
 pub(super) fn pivot_target(
     pivot: Option<&CameraPivot>,
     net: Option<&crate::net::NetEntity>,

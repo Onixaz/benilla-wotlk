@@ -1,10 +1,10 @@
-//! The world-doodad distance fade, `CWorldScene::AddDoodadDefModelToModelScene` (`0x791cb0`): a
-//! doodad's fade level is the first of `s_fadeSizeDefault` (`0xadf350`: 1, 4, 15, 100 yd) its
-//! world box's largest side does not exceed (`CMapDoodadDef::UpdateBounds 0x7bdb10`), else 4, and
-//! it fades out over `s_fadeRangeDefault[level]` (`0xadf38c`) up to `s_fadeDist[level]`, measured
-//! from the camera to the box centre in three dimensions. `environmentDetail` scales levels 1 to 3
-//! of `s_fadeDistDefault` (`0xadf364`: 30, 100, 200, 750, 1250 yd) through
-//! `CWorldScene::ScaleFadeDist` (`0x78f570`). An alpha over 0.99 draws opaque and one at 0.01 or
+//! The world-doodad distance fade, as the scene adds a doodad's model (`0x791cb0`): a doodad's fade
+//! level is the first of the default fade sizes (`0xadf350`: 1, 4, 15, 100 yd) its world box's
+//! largest side does not exceed (the placement's bounds update, `0x7bdb10`), else 4, and it fades
+//! out over the level's fade range (`0xadf38c`) up to its fade distance, measured from the camera
+//! to the box centre in three dimensions. `environmentDetail` scales levels 1 to 3 of the default
+//! fade distances (`0xadf364`: 30, 100, 200, 750, 1250 yd) through the scene's fade scale
+//! (`0x78f570`). An alpha over 0.99 draws opaque and one at 0.01 or
 //! below is culled. The alpha reaches the fragment's `diffuse.a`, where the alpha test erodes a
 //! cutout edge-first; a fading doodad draws blended.
 
@@ -21,8 +21,8 @@ pub struct DoodadFade {
     /// The model-local bounding-box centre the fade measures to, not the origin.
     pub(crate) local_center: Vec3,
     /// The placement's world bounding sphere `(centre, radius)`, which the exterior window tests
-    /// once for all its parts (`CWorldScene::FrustumCull` `0x791120`); `None` on a part that
-    /// moves, which takes its own box.
+    /// once for all its parts (the sphere cull, `0x791120`); `None` on a part that moves, which
+    /// takes its own box.
     pub(crate) sphere: Option<(Vec3, f32)>,
     /// The steady material, in the submesh's authored blend mode.
     pub(crate) cutout: Handle<WowModelMaterial>,
@@ -30,13 +30,13 @@ pub struct DoodadFade {
     pub(crate) blend: Handle<WowModelMaterial>,
 }
 
-/// `s_fadeSizeDefault`'s four bounds (`0xadf350`); a larger doodad is level 4.
+/// The default fade sizes' four bounds (`0xadf350`); a larger doodad is level 4.
 const FADE_SIZE: [f32; 4] = [1.0, 4.0, 15.0, 100.0];
 
-/// `s_fadeDistDefault` (`0xadf364`), the far end of each level's fade.
+/// The default fade distances (`0xadf364`), the far end of each level's fade.
 const FADE_DIST: [f32; 5] = [30.0, 100.0, 200.0, 750.0, 1250.0];
 
-/// `s_fadeRangeDefault` (`0xadf38c`), each level's fade width.
+/// The default fade ranges (`0xadf38c`), each level's fade width.
 const FADE_RANGE: [f32; 5] = [5.0, 10.0, 15.0, 20.0, 50.0];
 
 /// `environmentDetail`'s clamp in its change callback (`0x78dc60`).
@@ -49,7 +49,7 @@ static FADE_SCALE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::
 /// Bumped on each [`set_fade_scale`] that moves the scale, so a cached band can tell it is stale.
 static FADE_GENERATION: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// `CWorldScene::ScaleFadeDist`: take an `environmentDetail` write, clamped as the callback does.
+/// The scene's fade scale: take an `environmentDetail` write, clamped as the callback does.
 pub fn set_fade_scale(scale: f32) {
     use std::sync::atomic::Ordering;
     let scale = scale.clamp(
@@ -127,7 +127,7 @@ pub fn doodad_fade_alpha(size: f32, dist: f32) -> f32 {
 }
 
 /// The largest side of a model box `(min, max)` placed by `transform`: the rotated box's world
-/// extents, as `CMapDoodadDef`'s `m_bbox` is the placed model box.
+/// extents, as the doodad placement's box is the placed model box.
 pub fn placed_box_size(min: Vec3, max: Vec3, transform: &Transform) -> f32 {
     let half = (max - min) * 0.5 * transform.scale;
     let rot = Mat3::from_quat(transform.rotation);
@@ -140,14 +140,15 @@ pub fn placed_box_size(min: Vec3, max: Vec3, transform: &Transform) -> f32 {
 }
 
 /// A render-alpha ramp on one part's `MeshTag`, drawn on the blend twin while `α < 1`
-/// ([`apply_render_fade`]). The appear ramp is `FadeTo` (`0x614f80`), cubic over 2 s from first
-/// visibility; the teardown is the `SWModelFadeout` pump (`0x672ef0`) on the model an object left
-/// behind ([`DespawnFade`]). The interior classifier keeps the light law through either.
+/// ([`apply_render_fade`]). The appear ramp is the object's alpha fade, cubic over 2 s from first
+/// visibility; the teardown is the model fadeout pump on the model an object left behind
+/// ([`DespawnFade`]). The interior classifier keeps the light law through either.
 #[derive(Component, Clone)]
 pub struct RenderFade {
     /// `Time::elapsed_secs` the ramp runs from: its arming, or an appear ramp's arrival.
     pub started: f32,
-    /// Seconds; both reference ramps are 2000 ms (`FadeTo`'s `0x7d0`, the pump's `age > 0x7d0`).
+    /// Seconds; both reference ramps are 2000 ms (the alpha fade's `0x7d0`, the pump's
+    /// `age > 0x7d0`).
     pub duration: f32,
     /// Appear `0 → 1`; teardown `live α → 0`, `from` being the pump's `startAlpha`.
     pub from: f32,
@@ -156,8 +157,8 @@ pub struct RenderFade {
     pub curve: FadeCurve,
 }
 
-/// The reference's two render-alpha ramps, two functions and not one curve: the CGObject's appear
-/// ease (`0x614a90`, `t³`) and the fadeout scheduler's teardown (`0x672ef0`, `smoothstep(1 − t)`).
+/// The reference's two render-alpha ramps, two functions and not one curve: the game object's
+/// appear ease (`t³`) and the fadeout scheduler's teardown (`smoothstep(1 − t)`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum FadeCurve {
     #[default]
@@ -175,7 +176,8 @@ impl RenderFade {
     }
 }
 
-/// The appear fade's length, `FadeTo(1.0, 2000 ms)` on the wall clock (`OsGetAsyncTimeMs`).
+/// The appear fade's length, a fade to 1.0 over 2000 ms on the wall clock (the OS millisecond
+/// clock).
 pub const APPEAR_FADE_SECS: f32 = 2.0;
 
 impl RenderFade {
@@ -191,27 +193,26 @@ impl RenderFade {
     }
 }
 
-/// The appear ramp, `lerp(from, to, clamp(t, 0, 1)³)` at fractional age `t` (`0x614a90`).
+/// The appear ramp, `lerp(from, to, clamp(t, 0, 1)³)` at fractional age `t`.
 pub fn fade_alpha(from: f32, to: f32, t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     from + (to - from) * t * t * t
 }
 
-/// The teardown ramp, the `SWModelFadeout` pump (`0x672ef0`): `α = (3 − 2t) · t²` with
-/// `t = clamp((1 − t_frac) · startAlpha, 0, 1)`, `t_frac` being `age_ms · 0.0005` (`[0x80c698]`).
-/// `start_alpha`, the live alpha at the hand-off (`obj+0xf4`), scales the ramp, not the output.
+/// The teardown ramp, the model fadeout pump: `α = (3 − 2t) · t²` with
+/// `t = clamp((1 − t_frac) · startAlpha, 0, 1)`, `t_frac` being `age_ms · 0.0005`. `start_alpha`,
+/// the live alpha at the hand-off (`obj+0xf4`), scales the ramp, not the output.
 pub fn teardown_fade_alpha(start_alpha: f32, t_frac: f32) -> f32 {
     let t = ((1.0 - t_frac) * start_alpha).clamp(0.0, 1.0);
     (3.0 - 2.0 * t) * t * t
 }
 
-/// The scheduler's skip gate (`0x672df0` @ `0x672e21`, against `[0x8029d0]`): a model handed over
-/// below this alpha is unlinked at once (`0x671ac0`), not faded.
+/// The scheduler's skip gate: a model handed over below this alpha is unlinked at once, not faded.
 pub const TEARDOWN_MIN_ALPHA: f32 = 0.01;
 
-/// A model instance's render alpha, the reference's `CM2Model+0x19c` (`argAlpha · +0x180`, where
-/// `+0x180` is `obj+0x100 · obj+0xf4` for a CGObject and the distance fade for a doodad), for the
-/// consumers that cannot read a `MeshTag`: particles and ribbons. Missing reads `1.0`.
+/// A model instance's render alpha, the reference's model `+0x19c` (`argAlpha · +0x180`, where
+/// `+0x180` is `obj+0x100 · obj+0xf4` for a game object and the distance fade for a doodad), for
+/// the consumers that cannot read a `MeshTag`: particles and ribbons. Missing reads `1.0`.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ModelAlpha(pub f32);
 
@@ -220,17 +221,17 @@ pub struct ModelAlpha(pub f32);
 #[derive(Component, Clone, Copy, Debug)]
 pub struct ModelFade(pub f32);
 
-/// The model this one is attached to, the reference's `[model+0x1cc]` (`0x712f70`,
-/// `CM2Model::attachChild`). A spawn site names only its immediate parent.
+/// The model this one is attached to, the reference's `[model+0x1cc]` (set by the child attach). A
+/// spawn site names only its immediate parent.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ParentModel(pub Entity);
 
 /// The bound on a [`ParentModel`] walk, a cycle backstop: real chains are 1 to 3 links.
 pub const MAX_MODEL_CHAIN: usize = 8;
 
-/// A model instance's composed render alpha, the reference's recursion (`0x714000`, `0x714260`):
-/// `child+0x19c = parent+0x19c × child+0x180` up the [`ParentModel`] chain, so an effect passes
-/// its own instance root. A link with no published [`ModelAlpha`] (a booth bake) reads its
+/// A model instance's composed render alpha, the reference's recursion:
+/// `child+0x19c = parent+0x19c × child+0x180` up the [`ParentModel`] chain, so an effect passes its
+/// own instance root. A link with no published [`ModelAlpha`] (a booth bake) reads its
 /// [`ModelFade`]; the published one wins.
 #[derive(bevy::ecs::system::SystemParam)]
 pub struct ModelAlphas<'w, 's> {
@@ -270,7 +271,7 @@ impl ModelAlphas<'_, '_> {
 /// One streamed model's render alpha: the product of the appear ramp (0 while pending, hiding its
 /// effects too), the teardown, the self zoom feather and the declared fade, as the reference
 /// multiplies the transition alpha into `+0x180`; its aura recompute drives the appear fade's own
-/// `StartAlphaFade` (`0x60d180` → `0x614f80` → `obj+0xf4` → `+0x180` → `+0x19c` → `emitter+0x1a8`).
+/// start (`obj+0xf4` → `+0x180` → `+0x19c` → `emitter+0x1a8`).
 pub fn model_render_alpha(
     now: f32,
     appear: Option<UnitAppearFade>,
@@ -389,7 +390,7 @@ mod unit_render_alpha_tests {
                 u.insert(DespawnFade { started: 10.0 });
             }),
             teardown_fade_alpha(1.0, 0.5),
-            "armed: the ramp down — the SWModelFadeout smoothstep, not the appear cubic reversed"
+            "armed: the ramp down — the fadeout pump's smoothstep, not the appear cubic reversed"
         );
     }
 
@@ -497,12 +498,12 @@ pub(crate) fn publish_model_alpha(
     }
 }
 
-/// The camera-to-target span (yd) over which the player's own body fades in (`0x8089b0`).
+/// The camera-to-target span (yd) over which the player's own body fades.
 pub const SELF_FADE_WINDOW: f32 = 1.8315;
 /// The distance above the near clip at or below which the body hides: first person.
 pub const SELF_FADE_HIDE: f32 = 0.00278;
 
-/// The player's own body alpha by camera distance (`0x5b7bb0`): `(1 − cos(π·D/window)) / 2` for
+/// The player's own body alpha by camera distance: `(1 − cos(π·D/window)) / 2` for
 /// `D = dist − nearclip`, 0 at or below [`SELF_FADE_HIDE`]. Pass the live `nearclip`
 /// ([`crate::view::ViewDistance::nearclip`]): the fade is measured from the near plane.
 pub fn self_model_fade_alpha(dist: f32, nearclip: f32, window: f32) -> f32 {
@@ -544,8 +545,8 @@ pub fn apply_render_fade(
         } else {
             1.0
         };
-        // The batch's animated factor multiplies in (`A = instanceAlpha × colourAlpha × weight`,
-        // `0x707b0b`, `0x707b33`), or death-only geometry shows through the ramp.
+        // The batch's animated factor multiplies in (`A = instanceAlpha × colourAlpha × weight`),
+        // or death-only geometry shows through the ramp.
         let alpha = fade.alpha_at(t) * anim.map_or(1.0, |a| a.current);
         // `with_alpha` keeps the ground shade and never writes the untagged, opaque `0`.
         let bits = crate::mesh_tag::with_alpha(tag.0, alpha);
@@ -571,9 +572,8 @@ pub fn apply_render_fade(
 }
 
 /// An appear fade waiting to arm, the entity hidden meanwhile. The reference arms it as the
-/// object's create block is processed (`0x4651a0` → `0x465c50` → the type's appear handler →
-/// `0x613af0`), so the ramp runs from the arrival; here it is held while a loading cover is up,
-/// so it never plays behind one.
+/// object's create block is processed, so the ramp runs from the arrival; here it is held while a
+/// loading cover is up, so it never plays behind one.
 #[derive(Component, Clone)]
 pub struct PendingAppearFade {
     /// `Time::elapsed_secs` when the part began waiting, the backstop timeout's origin.
@@ -641,11 +641,11 @@ pub(crate) fn arm_appear_fade(
     } else {
         *shown_at = None;
     }
-    // The ramp runs from the unit's arrival, whatever its model and composite waited on: the
-    // create block's appear handler stamps it (`0x465c50` → `0x613af0` → `0x614f80`, `obj+0xec`)
-    // and the per-frame ramp is `t³` of the wall time since (`0x614a90`, called at `0x60800c`
-    // whether or not the body draws). Never from behind a cover: an arrival under the loading
-    // screen starts when it lifts, and a backstop arm, which counts from the attach, starts now.
+    // The ramp runs from the unit's arrival, whatever its model and composite waited on: the create
+    // block's appear handler stamps it (`obj+0xec`) and the per-frame ramp is `t³` of the wall time
+    // since (called whether or not the body draws). Never from behind a cover: an arrival under the
+    // loading screen starts when it lifts, and a backstop arm, which counts from the attach, starts
+    // now.
     let origin = |arrived: f32| shown_at.map_or(now, |lifted| arrived.max(lifted));
     let mut armed = 0usize;
     // Counted apart: a world-root billboard card arms only through its own spawn.
@@ -705,9 +705,9 @@ pub struct FadeMaterials {
     pub blend: Handle<WowModelMaterial>,
     /// The interior bake variant's blend twin, keeping a bake-lit part's room light as it feathers.
     pub bake_blend: Option<Handle<WowModelMaterial>>,
-    /// The depth-prime twin, the reference's `M2UseZFill` clone (`0x707f7d`): while the alpha is in
-    /// `(0, 1)` a z-writing, colour-masked child draws first, so the model blends as one layer.
-    /// `None` where the material disables z-write or z-test, the reference's own gate.
+    /// The depth-prime twin, the reference's `M2UseZFill` clone: while the alpha is in `(0, 1)` a
+    /// z-writing, colour-masked child draws first, so the model blends as one layer. `None` where
+    /// the material disables z-write or z-test, the reference's own gate.
     pub zfill: Option<Handle<WowModelMaterial>>,
 }
 
@@ -808,11 +808,10 @@ impl PartFade {
 
 /// A streamed object gone away (out of range, destroyed, or released from its despawn pin), which
 /// [`apply_despawn_fade`] fades out and then despawns; `started < 0` is not yet armed. In the
-/// reference `SMSG_DESTROY_OBJECT` (`0x4674a0`) and `SMSG_UPDATE_OBJECT`'s out-of-range destroy
-/// (`0x465ec0`, run off the leading-block check `0x4651e1`, calling at `0x465f4f`/`0x465fa6`; the
-/// type-4/5 block arm `0x465fd0` only discards its guids) reach the object destroy `0x464920`,
-/// whose vtable slot 1 (base `0x6145e0`) hands the model to the `SWModelFadeout` scheduler
-/// (`0x672df0`): the object is freed at once and its orphaned model fades out.
+/// reference `SMSG_DESTROY_OBJECT` and `SMSG_UPDATE_OBJECT`'s out-of-range destroy (run off the
+/// leading-block check, the type-4/5 block arm only discards its guids) reach the object destroy,
+/// whose vtable slot 1 hands the model to the model fadeout scheduler: the object is freed at
+/// once and its orphaned model fades out.
 #[derive(Component)]
 pub struct DespawnFade {
     pub(crate) started: f32,
@@ -910,8 +909,8 @@ fn arm_despawn_descendants(
     walked: &mut bevy::ecs::entity::EntityHashSet,
 ) {
     walked.insert(entity);
-    // The scheduler's skip gate (`0x672e21`): a part below it gets no ramp, and an object with no
-    // part above it is unlinked at once (`0x671ac0`).
+    // The scheduler's skip gate: a part below it gets no ramp, and an object with no part above it
+    // is unlinked at once.
     if let Ok(tag) = fm.get(entity) {
         let start = start_alpha(tag);
         if start >= TEARDOWN_MIN_ALPHA {
@@ -1191,7 +1190,7 @@ mod tests {
         assert_eq!(*no_twin.material_for(Some(&lit), true), blend);
     }
 
-    /// `s_fadeSizeDefault`'s bounds pick the level, inclusive above.
+    /// The default fade sizes' bounds pick the level, inclusive above.
     #[test]
     fn the_fade_level_is_the_first_bound_the_box_fits() {
         assert_eq!(fade_level(0.5), 0);

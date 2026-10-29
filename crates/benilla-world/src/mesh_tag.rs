@@ -9,9 +9,9 @@
 //!   for none. The vertex stage reads the skin palette with it ([`crate::rig_palette`]) only under
 //!   `WOW_RIG_SKIN`, which comes from the mesh's own joints; the fragment stage reads the body tint
 //!   ([`crate::instance_tint`]) for every part. Every part carries its unit's slot, so a tinted
-//!   unit tints whole (an attached model inherits its parent CM2's colours, `0x714000`); worn gear
-//!   owns a rider slot and takes the tint and the straddle waterline through its `ParentModel`
-//!   chain. Written at spawn ([`rig_bits`]) and carried by every writer but [`with_rig`].
+//!   unit tints whole (an attached model inherits its parent model's colours); worn gear owns a
+//!   rider slot and takes the tint and the straddle waterline through its `ParentModel` chain.
+//!   Written at spawn ([`rig_bits`]) and carried by every writer but [`with_rig`].
 //! - Alpha (bits 0..=5): the fade alpha, multiplying the cutout alpha. A whole payload of `0` is
 //!   the untagged, opaque sentinel.
 //! - Exterior payload (the default): bits 6..=13 are the ground-shade byte (`0` lit, `255` fully
@@ -33,8 +33,8 @@
 //!    law's blend twin (`FadeMaterials::material_for`).
 //! 3. `model_render::visibility::apply_model_visibility` drives the `DoodadFade` distance fade and
 //!    glow-card dimming, never on a lit interior prop, and owns the fog bit of room-bound WMO
-//!    content (`WmoGroupVis`), the reference's per-group `[0xca7f00]` gate; a WMO part holds no
-//!    `InteriorLit`, so it never meets 2.
+//!    content (`WmoGroupVis`), the reference's per-group gate; a WMO part holds no `InteriorLit`,
+//!    so it never meets 2.
 //! 4. `player::apply_self_model_fade`, the first-person feather, runs after 1-3 and owns the self
 //!    body's alpha while it feathers; on the frame it ends it restores the alpha itself (2 carries
 //!    alpha through) and hands the material back to the law.
@@ -49,20 +49,20 @@
 /// Marks an instance whose bits 6..=18 are an interior probe slot ([`probe_bits`]): every batch of
 /// a lit interior MODD prop. The shade writer skips it even under a WMO-display GameObject, whose
 /// props ride the entity for transform only: their light is their own baked MODD colour (the
-/// reference's `CMapDoodadDef` provider `0x6a8050`).
+/// reference's doodad-placement light provider).
 #[derive(bevy::prelude::Component)]
 pub struct InteriorProbePayload;
 
 /// Bit 31: the hover/target model-brighten flag, the reference's per-model highlight emissive
-/// (`SetHighlight` `0x614550` writes the config RGB into the CM2), added to the lighting sum.
+/// (the highlight setter writes the config RGB into the model), added to the lighting sum.
 pub const HIGHLIGHT_BIT: u32 = 0x8000_0000;
 
 /// Bit 30: fog with the interior triple (shared-light rows 18-19, the camera-crossfaded MFOG)
-/// instead of the scene fog. Its owners set it when the model stands in a WMO interior (the
-/// reference's per-unit classification `0x71c110`, collector `+0x184`, lane by `[node+0xc]&2`) and
-/// its room is on the camera's `[0xca7f00]` chain this frame (`[P+0x98] != 0`). With the camera
-/// outside, the interior triple equals the scene's (the crossfade at `t = 0`). The unit's lane
-/// pick (`0x6c31e0`) has no room test of its own, unlike the wall drawer's per-group `0x6b5190`.
+/// instead of the scene fog. Its owners set it when the model stands in a WMO interior (collector
+/// `+0x184`, lane by `[node+0xc]&2`) and its room is on the camera's chain this frame
+/// (`[P+0x98] != 0`). With the camera outside, the interior triple equals the scene's (the
+/// crossfade at `t = 0`). The unit's lane pick has no room test of its own, unlike the wall
+/// drawer's per-group.
 pub(crate) const INTERIOR_FOG_BIT: u32 = 0x4000_0000;
 
 /// Bits 0..=5, both modes: the fade alpha as a 6-bit fraction (`63` = opaque).
@@ -99,7 +99,7 @@ fn carried_alpha(tag: u32) -> u32 {
 
 /// Rewrites a tag as an interior-probe payload, keeping the rig and alpha fields: the classifier's
 /// Bake law. It leaves [`INTERIOR_FOG_BIT`] to [`with_interior_fog`]: standing indoors is not
-/// enough, the room must also be on the camera's `[0xca7f00]` chain.
+/// enough, the room must also be on the camera's chain.
 pub(crate) fn with_interior_probe(tag: u32, slot: u16) -> u32 {
     (tag & RIG_MASK) | (u32::from(slot) << PROBE_SHIFT) | carried_alpha(tag)
 }
@@ -144,7 +144,7 @@ pub fn alpha_bits(alpha: f32) -> u32 {
 }
 
 /// Sets or clears [`INTERIOR_FOG_BIT`] alone: the probe slot says how a prop is lit, the
-/// reference's `[0xca7f00]` only which fog triple its batch gets.
+/// reference's only which fog triple its batch gets.
 pub(crate) fn with_interior_fog(tag: u32, on: bool) -> u32 {
     match on {
         true => tag | INTERIOR_FOG_BIT,

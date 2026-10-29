@@ -1,11 +1,11 @@
-//! The animation-LOD gate: a rig off the frustum, or in a room the portal PVS does not reach,
-//! parks its pose evaluation ([`AnimParked`]) while its clocks run on; every [`RigPose`] is
-//! covered, GameObject rigs included. The reference elects every scene object each frame
-//! (`0x683dd0`): a pass-2 unit is neither drawn, animated nor event-ticked, except a
-//! `MORE_AUDIBLE` creature, re-linked for the tick (`0x607da0`). So a parked rig fires no event
-//! keys unless flagged, and wakes to the pose its absolute clock dictates (`0x714260` samples the
-//! world clock). Unlike the doodad gate ([`benilla_world::doodad_anim`]) this never stops the
-//! [`AnimationPlayer`], whose clock the driver and the event scan still use.
+//! The animation-LOD gate: a rig off the frustum, or in a room the portal PVS does not reach, parks
+//! its pose evaluation ([`AnimParked`]) while its clocks run on; every [`RigPose`] is covered,
+//! GameObject rigs included. The reference elects every scene object each frame: a pass-2 unit is
+//! neither drawn, animated nor event-ticked, except a `MORE_AUDIBLE` creature, re-linked for the
+//! tick. So a parked rig fires no event keys unless flagged, and wakes to the pose its absolute
+//! clock dictates (samples the world clock). Unlike the doodad gate
+//! ([`benilla_world::doodad_anim`]) this never stops the [`AnimationPlayer`], whose clock the
+//! driver and the event scan still use.
 //!
 //! The room leg parks a rig whose WMO room ([`UnitWmoRoom`]) and every room one portal hop away
 //! are outside the PVS: a body pokes out of its room only through a portal. The PVS is built in
@@ -314,7 +314,7 @@ mod tests {
     }
 
     /// An off-frustum rig parks with its bone frozen, its clock running and its keys silent, as
-    /// pass 2 never ticks an unflagged model (`0x683dd0`); woken, it matches a never-parked twin.
+    /// pass 2 never ticks an unflagged model; woken, it matches a never-parked twin.
     #[test]
     fn parked_rig_keeps_its_clock_falls_silent_and_wakes_to_the_absolute_pose() {
         let mut app = app();
@@ -391,7 +391,7 @@ mod tests {
     }
 
     /// A parked creature whose template carries `MORE_AUDIBLE` (`0x20`) keeps firing: the
-    /// reference's pass-2 re-link (`0x607da0`).
+    /// reference's pass-2 re-link.
     #[test]
     fn a_more_audible_parked_rig_keeps_firing() {
         let mut app = app();

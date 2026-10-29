@@ -102,8 +102,7 @@ fn reader_state(script: &UiScript) -> (bool, i64) {
     (shown, chars)
 }
 
-/// Every string the UI draws; the only way to read the page, as `SimpleHTML` has no `GetText`
-/// (method table `0x87ba80`).
+/// Every string the UI draws; the only way to read the page, as `SimpleHTML` has no `GetText`.
 fn drawn_strings(script: &UiScript) -> Vec<String> {
     use benilla_ui::script::QuadContent;
     script

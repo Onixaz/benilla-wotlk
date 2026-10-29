@@ -5,9 +5,9 @@
 //! longer has.
 //!
 //! A table comes in with the feature that reads it, never on its own: a schema nothing reads is
-//! checked for its width alone. Its TSV row names 12340's readers (`reader_vas`, with the Lua
-//! bindings and opcode handlers among them), and those functions are the spec for both the
-//! schema's fields and the feature. A table read only through helpers is followed up to the
+//! checked for its width alone. Its TSV row counts 12340's readers and names the Lua bindings and
+//! opcode handlers among them, and those are the spec for both the schema's fields and the
+//! feature. A table read only through helpers is followed up to the
 //! binding or handler that calls them, and the readers are a floor: a read through a computed
 //! pointer is not listed. A table several features read lands with the first of them. Where
 //! benilla serves a table's rows from a constant, reading the table replaces the constant.

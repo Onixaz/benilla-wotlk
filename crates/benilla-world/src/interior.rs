@@ -1,11 +1,11 @@
 //! Interior lighting for entity M2s (units, players, GameObjects, held items): which stand in a
 //! WMO room, and the light law they take there.
 //!
-//! One law lights every entity M2 (`Node::SetModel` `0x6716f0`, dispatched `0x672a20`): indoors,
-//! the node's attach rays onto the WMO render mesh and bakes the hit's barycentric MOCV
-//! (floor-168 / cap-96) on the fixed interior axis, plus the hit group's MOLR lobes, folded here
-//! into an SH probe. Indoors is the lighting class (`[node+0xc]`: outdoor iff `MOGI & 0x48`), not
-//! the zone-text bit, which calls `0x40`-only streets indoors. One verdict per unit, at its anchor.
+//! One law lights every entity M2 (the light node's model set): indoors, the node's attach rays
+//! onto the WMO render mesh and bakes the hit's barycentric MOCV (floor-168 / cap-96) on the fixed
+//! interior axis, plus the hit group's MOLR lobes, folded here into an SH probe. Indoors is the
+//! lighting class (`[node+0xc]`: outdoor iff `MOGI & 0x48`), not the zone-text bit, which calls
+//! `0x40`-only streets indoors. One verdict per unit, at its anchor.
 
 use std::collections::HashSet;
 
@@ -26,7 +26,7 @@ use crate::wmo_portal::{IndoorVerdict, WmoPortalInstance};
 use benilla_assets::materials::WowModelMaterial;
 
 /// Squared distance (yd²) before a re-test: an epsilon, since the reference re-runs a unit's
-/// classify and footprint chain every tick (`0x69e280`), so the MOCV light must never step.
+/// classify and footprint chain every tick, so the MOCV light must never step.
 const RESAMPLE_DIST_SQ: f32 = 1e-4;
 
 /// The resident WMO placements, as a change signal: a building streaming in under a standing NPC
@@ -68,11 +68,10 @@ pub(crate) enum InteriorKind {
 }
 
 /// One M2 batch's interior-light membership. Every batch of a model takes it, billboard cards
-/// included: the reference shades every batch through the object's one node (`0x7192b0`), and a
-/// billboard bone turns geometry, not light. `anchor` is the model's net entity root, so a model
-/// never splits across laws; `None` is a WMO-display part, with no interior variant. The caller
-/// seeds the part's [`MeshTag`](bevy::mesh::MeshTag) (rig slot, fade alpha); the classifier
-/// composes into it.
+/// included: the reference shades every batch through the object's one node, and a billboard bone
+/// turns geometry, not light. `anchor` is the model's net entity root, so a model never splits
+/// across laws; `None` is a WMO-display part, with no interior variant. The caller seeds the part's
+/// [`MeshTag`](bevy::mesh::MeshTag) (rig slot, fade alpha); the classifier composes into it.
 pub fn part_interior_lit(
     exterior: &Handle<WowModelMaterial>,
     interior: Option<&Handle<WowModelMaterial>>,
@@ -98,8 +97,8 @@ pub fn part_interior_lit(
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum AppliedLaw {
     Exterior,
-    /// Indoors on the day/night pair, unmodified, at gain 1.0: the reference's null-node fallback
-    /// (`0x672a2f`), for a footprint ray that missed or hit a MOPY&1 face, or a bake-less part.
+    /// Indoors on the day/night pair, unmodified, at gain 1.0: the reference's null-node fallback,
+    /// for a footprint ray that missed or hit a MOPY&1 face, or a bake-less part.
     Matte,
     /// Indoors on the footprint bake, evaluated from this probe-table slot.
     Bake(u16),
@@ -107,15 +106,14 @@ enum AppliedLaw {
 
 /// The body model's vertex-box centre (model-local) on the net entity root: the MOLR reference
 /// point for every part under the root, held items included, since an item aliases its wearer's
-/// light collector (`[item+0x3b8]=[wearer+0x3b8]`, `0x718960`). For a [`ContainmentAttach`]
-/// anchor it is also the attach point, the reference's `[node+0x5c]`.
+/// light collector (`[item+0x3b8]=[wearer+0x3b8]`). For a [`ContainmentAttach`] anchor it is also
+/// the attach point, the reference's `[node+0x5c]`.
 #[derive(Component, Clone, Copy)]
 pub struct BodyBakeCenter(pub Vec3);
 
-/// This anchor's node takes the containment attach from its bounding-box centre (`0x6a8c10`), not
-/// the down-ray from its position (`0x6a8a20`): `[node+0x90]` bit 13, set from the TYPEMASK at node
-/// creation (`0x613e10`/`0x670db0`) for GameObjects alone, forked at `0x6a86d0`. A GameObject's
-/// origin often sits at or under its own floor.
+/// This anchor's node takes the containment attach from its bounding-box centre, not the down-ray
+/// from its position: `[node+0x90]` bit 13, set from the TYPEMASK at node creation for GameObjects
+/// alone, which the attach forks on. A GameObject's origin often sits at or under its own floor.
 #[derive(Component)]
 pub struct ContainmentAttach;
 
@@ -130,9 +128,9 @@ pub struct ClassifiedBy(pub Entity);
 pub struct LitParts(Vec<Entity>);
 
 /// A lit particle emitter's anchor, the net entity root whose light node it draws under. The
-/// reference builds the node from the object's type (`0x613e10` → `0x670db0` → `0x7134b0`) and
-/// commits its light to a particle draw as to a submesh (`0x70baf0`, the material synthesized per
-/// draw at `0x70d8b0`), so an object with only unlit mesh batches is classified for its emitters.
+/// reference builds the node from the object's type and commits its light to a particle draw as to
+/// a submesh (the material synthesized per draw), so an object with only unlit mesh batches is
+/// classified for its emitters.
 #[derive(Component)]
 #[relationship(relationship_target = LitEmitters)]
 pub struct EmitterLitBy(pub Entity);
@@ -144,14 +142,13 @@ pub struct LitEmitters(Vec<Entity>);
 
 /// The constant a lit particle of this anchor multiplies by: the anchor's whole committed term
 /// (`ambient + 0.9·diffuse + Σ lamps`) along world up, a particle quad's only normal (one constant
-/// per draw, `0x7b3fd0`, `0x58b0b0`). Present only on the Bake law; absent, the scene's light.
+/// per draw). Present only on the Bake law; absent, the scene's light.
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
 pub struct ParticleLight(pub [f32; 3]);
 
 /// The ambient word alone (`GroundShade::ambient`, ramping toward `cap96(MOCV)`), for a draw whose
-/// vertex format has no normal and so evaluates only `Σ ambient × colour` (`0x592a60`): the weapon
-/// trail, lit by its wearer's node (`0x70d982` → `0x70ca50` → `0x70baf0`). Present only on the Bake
-/// law; outdoors the day/night ambient applies (`0x69e4ad`).
+/// vertex format has no normal and so evaluates only `Σ ambient × colour`: the weapon trail, lit by
+/// its wearer's node. Present only on the Bake law; outdoors the day/night ambient applies.
 #[derive(Component, Clone, Copy, PartialEq, Debug)]
 pub struct NodeAmbient(pub [f32; 3]);
 
@@ -280,8 +277,8 @@ impl Plugin for InteriorPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WmoResidency>()
             .init_resource::<InteriorReauthor>()
-            // After the room flood: the fog half of a part's channel is the flood's `[0xca7f00]`
-            // chain, and before it a camera move would read last frame's rooms.
+            // After the room flood: the fog half of a part's channel is the flood's chain, and
+            // before it a camera move would read last frame's rooms.
             .add_systems(
                 Update,
                 classify_entity_interior
@@ -666,10 +663,10 @@ fn write_anchor_parts(
 /// Writes one part's material and tag for `law`, gated on its record unless `force`d (a transient
 /// writer overwrote the channel); returns whether it wrote. Material and tag must always name the
 /// same law, mid-fade too, or the shader reads a Bake tag's probe slot (bits 6..=18) as a shade
-/// byte. Other laws reset to the exterior payload, whose shade byte `entity_shade` re-asserts
-/// after this; the alpha and rig fields carry through. `fog` needs both the unit's interior class
-/// (`[node+0xc]&2`) and its room on the camera's `[0xca7f00]` chain (`[P+0x98]`); `fade` picks the
-/// law's blend twin by the ramp's own rule ([`crate::model_fade::FadeMaterials::material_for`]).
+/// byte. Other laws reset to the exterior payload, whose shade byte `entity_shade` re-asserts after
+/// this; the alpha and rig fields carry through. `fog` needs both the unit's interior class
+/// (`[node+0xc]&2`) and its room on the camera's chain (`[P+0x98]`); `fade` picks the law's blend
+/// twin by the ramp's own rule ([`crate::model_fade::FadeMaterials::material_for`]).
 fn write_part_law(
     law: AppliedLaw,
     fog: bool,
@@ -714,8 +711,8 @@ fn anchor_room_fogged(
     inst.fogs_group(room.group)
 }
 
-/// The attach and its point, one fork at `0x6a86d0`: containment from the world bounding-box
-/// centre (`[node+0x5c]`) for a GameObject, else the down-ray from the position (`[node+0xa8]`).
+/// The attach and its point, one fork: containment from the world bounding-box centre
+/// (`[node+0x5c]`) for a GameObject, else the down-ray from the position (`[node+0xa8]`).
 fn attach_anchor(
     containment: bool,
     bake_center: Option<&BodyBakeCenter>,
@@ -1024,7 +1021,7 @@ mod tests {
         );
     }
 
-    /// A one-group placement whose interior-fog gate (the `[0xca7f00]` chain) is `gate`.
+    /// A one-group placement whose interior-fog gate is `gate`.
     fn placement_with_gate(world: &mut World, gate: bool) -> Entity {
         world
             .spawn(WmoPortalInstance {

@@ -1,9 +1,9 @@
-//! The camera's tuning rows `CameraRegisterCVars` (`0x5fd910`) composes in three loops, per follow
-//! style: `cameraSmooth<style><state><param>` (`0x5fde21`), `cameraSmoothViewData<style><field>
-//! <param>` (`0x5fdec1`) and `cameraTerrainTilt<style><state><param>` (`0x5fdf61`), all flags 0x10
-//! (per account, category 5). The names and the default strings are the binary's own tables. No
-//! host reader: benilla's follow rig keeps its own model, so these hold what a player's
-//! `config-cache.wtf` sets.
+//! The camera's tuning rows, which its CVar registration (`0x5fd910`) composes in three loops per
+//! follow style: `cameraSmooth<style><state><param>` (`0x5fde21`),
+//! `cameraSmoothViewData<style><field><param>` (`0x5fdec1`) and
+//! `cameraTerrainTilt<style><state><param>` (`0x5fdf61`), all flags 0x10 (per account, category 5).
+//! The names and the default strings are the binary's own tables. No host reader: benilla's follow
+//! rig keeps its own model, so these hold what a player's `config-cache.wtf` sets.
 
 use std::sync::LazyLock;
 

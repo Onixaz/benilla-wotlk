@@ -1,5 +1,5 @@
-//! The unit blob shadow sizes from the Stand sequence's `M2Sequence` box (`0x711a20`), used raw
-//! (clamped to ±5, then scaled), so `ModelAnimation::bounds_min/max` must round-trip the record.
+//! The unit blob shadow sizes from the Stand sequence's `M2Sequence` box, used raw (clamped to ±5,
+//! then scaled), so `ModelAnimation::bounds_min/max` must round-trip the record.
 
 use benilla_formats::{open_chain, parse_m2_animations};
 

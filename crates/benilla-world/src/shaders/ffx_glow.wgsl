@@ -25,7 +25,7 @@ struct FfxCombine {
 
 
 
-// Box4, full → ¼: four bilinear taps over a 4×4 footprint (`0xce89cc`), each clamped to 1.0 like
+// Box4, full → ¼: four bilinear taps over a 4×4 footprint, each clamped to 1.0 like
 // the reference's byte target; an unclamped super-white would square into a hard glow disc.
 @fragment
 fn fs_downsample(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
@@ -38,7 +38,7 @@ fn fs_downsample(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
         * 0.25;
 }
 
-// Gauss4: taps at ±0.5 and ±2.5 source texels (0x6cad10), weights from FFXGauss4.bls.
+// Gauss4: taps at ±0.5 and ±2.5 source texels, weights from FFXGauss4.bls.
 fn gauss4(uv: vec2<f32>, axis: vec2<f32>) -> vec4<f32> {
     let texel = axis / vec2<f32>(textureDimensions(in_tex));
     return textureSample(in_tex, in_samp, uv - 2.5 * texel) * 0.125
@@ -96,12 +96,12 @@ fn combine_body(uv: vec2<f32>, frag_coord: vec2<f32>) -> vec4<f32> {
     let bg = max(textureSample(blur_tex, in_samp, uv).rgb, vec3<f32>(0.0));
     // Scene alpha passes through; only the transparent-clear create booth reads it.
     if ffx.lane.y > 0.0 {
-        // FFXDeath replaces the glow while a ghost, unhazed (one pass slot, `[0xce8bb4]`). The
-        // 0.144 blue weight is as shipped; the tint is packed at `0x6cb930`.
+        // FFXDeath replaces the glow while a ghost, unhazed (one pass slot). The
+        // 0.144 blue weight is as shipped; the tint is packed.
         let glowed = sg + ffx.lane.x * bg * bg;
         let luma = clamp(dot(glowed, vec3<f32>(0.299, 0.587, 0.144)), 0.0, 1.0);
         let p = clamp(4.0 * luma * (1.0 - luma), 0.0, 1.0);
-        let ghost_tint = vec3<f32>(83.0, 147.0, 168.0) / 255.0; // 0x5393A8
+        let ghost_tint = vec3<f32>(83.0, 147.0, 168.0) / 255.0; //
         let outg = min(vec3<f32>(luma) + ghost_tint * p, vec3<f32>(1.0));
         return combine_out(outg, scene.a, frag_coord);
     }
@@ -118,12 +118,12 @@ fn fs_combine(in: FullscreenVertexOutput) -> @location(0) vec4<f32> {
 }
 
 // FFXGlowWave, the warp the reference runs instead of FFXGlow while the eye is in any liquid
-// (`0x6cc630`, `0x6cb310`): the same combine, both texcoords displaced by a 128×128 sine LUT. The
-// reference's per-vertex wave texcoord (`0x7bca80`) is affine in the screen UV, so per fragment
+//The same combine, both texcoords displaced by a 128×128 sine LUT. The
+// reference's per-vertex wave texcoord is affine in the screen UV, so per fragment
 // is exact: uv' = uv · R(10°) · S(W/128, 0.88·H/128) · T(p1, p2), fixed to screen pixels.
 const WAVE_ROT_RAD: f32 = 0.174532925; // 10°, the reference's rotation row
-const WAVE_LUT_EDGE: f32 = 128.0; // the LUT is 128×128 texels ([0xce89a0])
-const WAVE_V_SCALE: f32 = 0.88; // [0xce89c0]: the v axis only; u's scale is 1.0
+const WAVE_LUT_EDGE: f32 = 128.0; // the LUT is 128×128 texels
+const WAVE_V_SCALE: f32 = 0.88; //The v axis only; u's scale is 1.0
 const WAVE_AMPLITUDE_PX: f32 = 3.0; // full-res pixels, both samples
 
 // The warp's screen-UV offset in UV units; `screen` is the full-res scene size in pixels.

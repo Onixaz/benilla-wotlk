@@ -1,7 +1,6 @@
 //! `GameTips.dbc`: the loading-screen tips, each with its own `|cffffd100Tip:|r` prefix and a
 //! trailing `\r\n` in the data; FrameXML never reads them. The reference loads them in file order
-//! into one array (`[0xc0dcd0]`, count `[0xc0dcd4]`, loader `0x545f90`), and
-//! `CGlueMgr::EnterWorld` (`0x46b500`) stores the chosen record index, never an id, in the
+//! into one array, and the glue's world entry stores the chosen record index, never an id, in the
 //! `gameTip` CVar. Record order is not id order: the file opens on id 396.
 
 use crate::dbc_layout::GameTips as GameTipsLayout;

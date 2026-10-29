@@ -1,9 +1,9 @@
 //! The realmlist: the `host[:port]` benilla dials for the logon handshake.
 //!
-//! The reference registers the CVar `realmList` (`ClientServices::InitLoginServerCVars`
-//! `0x6b0d6b`) and runs `Data\<locale>\realmlist.wtf`, then the root's `realmlist.wtf`, as `SET`
-//! lines after `Config.wtf` (`0x6b0bf0`); a value they move is saved into `Config.wtf`, as
-//! [`crate::cvars`] does.
+//! The reference registers the CVar `realmList` (`0x6b0d6b`) and runs
+//! `Data\<locale>\realmlist.wtf`, then the root's `realmlist.wtf`, as `SET` lines after
+//! `Config.wtf` (`0x6b0bf0`); a value they move is saved into `Config.wtf`, as [`crate::cvars`]
+//! does.
 //!
 //! `$WOW_HOST` wins for the session, is never written to the file, and is taken verbatim, not
 //! through [`normalize`].

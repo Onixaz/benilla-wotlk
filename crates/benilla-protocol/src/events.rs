@@ -81,7 +81,7 @@ pub enum LoginStage {
     Authenticating,
     /// Realm picked; the world-socket handshake and char enum (`LOGIN_STATE_HANDSHAKING`).
     Handshaking,
-    /// The world socket connected, before its authentication (`RESPONSE_CONNECTED`, `0x5aaa90`).
+    /// The world socket connected, before its authentication (`RESPONSE_CONNECTED`).
     WorldConnected,
 }
 
@@ -92,7 +92,7 @@ pub enum RosterCause {
     /// glue VM up; the stock screens ask for theirs instead.
     Park,
     /// The reply to a roster request from the screen (`CMSG_CHAR_ENUM` for
-    /// `GetCharacterListUpdate`, `0x5aabb0`).
+    /// `GetCharacterListUpdate`).
     Asked,
     /// A create or delete changed the roster; re-sent before the action's result.
     Changed,
@@ -104,7 +104,7 @@ pub enum RosterCause {
 pub enum SessionEnd {
     /// A logout the server confirmed (`SMSG_LOGOUT_COMPLETE`), or a refused character login: the
     /// world link is kept and the session is back at character select on it, as the reference's
-    /// `0x5aaeb0` and `0x5aad70` close nothing.
+    /// logout and login-failure handlers close nothing.
     LoggedOut,
     /// The stream died: a socket error, an EOF or a post-roster handshake failure. A displacement
     /// kick is this too: vmangos `WorldSession::KickPlayer` only closes the socket, no packet.
@@ -117,8 +117,7 @@ pub enum SessionEnd {
 pub enum LoginRefusal {
     /// realmd's `AuthLogonResult` in its logon-challenge reply (`crate::AuthReject`).
     Logon(u8),
-    /// realmd's `AuthLogonResult` in its logon-proof reply, where the reference swallows `0x0A`
-    /// (`0x5bada2`).
+    /// realmd's `AuthLogonResult` in its logon-proof reply, where the reference swallows `0x0A`.
     LogonProof(u8),
     /// The world server's `SMSG_AUTH_RESPONSE` code (`crate::WorldAuthReject`).
     World(u8),
@@ -149,12 +148,12 @@ pub enum SessionEvent {
         realms: Vec<crate::RealmInfo>,
         failed: bool,
     },
-    /// The world server accepted the authentication (`SMSG_AUTH_RESPONSE` `AUTH_OK`, `0x5ab2b8`
-    /// → `0x5aab80`): the world connect is done and the IO thread is at the character park, with
-    /// no roster fetched unless the native policy's enumeration follows. Emitted by the IO thread,
-    /// never wire-decoded. `epoch` numbers the world session, per process; `generation` is the
-    /// abandon generation of the attempt that dialed it, which a Cancel or a disconnect since has
-    /// moved past (the reference drops the socket there, `0x46befd`, `0x46d360`).
+    /// The world server accepted the authentication (`SMSG_AUTH_RESPONSE` `AUTH_OK`): the world
+    /// connect is done and the IO thread is at the character park, with no roster fetched unless
+    /// the native policy's enumeration follows. Emitted by the IO thread, never wire-decoded.
+    /// `epoch` numbers the world session, per process; `generation` is the abandon generation of
+    /// the attempt that dialed it, which a Cancel or a disconnect since has moved past (the
+    /// reference drops the socket there).
     WorldAuthenticated {
         realm: crate::RealmInfo,
         epoch: u64,
@@ -162,9 +161,9 @@ pub enum SessionEvent {
         /// The account's expansion byte the authentication carried (`GetAccountExpansionLevel`).
         expansion: u8,
     },
-    /// A roster ask on the parked session failed on the stream (`0x5ab300`'s failure leg,
-    /// `SetStatus(0, 0x2c)`, `CHAR_LIST_FAILED`); the session ends after it. Emitted by the IO
-    /// thread, never wire-decoded.
+    /// A roster ask on the parked session failed on the stream (glue status `(0, 0x2c)`,
+    /// `CHAR_LIST_FAILED`); the session ends after it. Emitted by the IO thread, never
+    /// wire-decoded.
     RosterFailed { epoch: u64 },
     /// The link's `SMSG_ADDON_INFO`, read at the character park: the addons it hides from the Lua
     /// index space. Emitted by the IO thread once per link, never wire-decoded.
@@ -237,7 +236,7 @@ pub enum SessionEvent {
         /// From the `LIVING` block, so not in `fields`; `None` for a GameObject.
         speeds: Option<MoveSpeeds>,
         /// Flags and swim pitch the unit streams in with, applied by the reference before its model
-        /// exists: the flags via the relay's `0x75a07dff` merge, the pitch via `0x7c6420`.
+        /// exists: the flags via the relay's `0x75a07dff` merge, and the pitch directly.
         mover: Option<MoverState>,
         /// `UPDATE_FLAG_TRANSPORT`'s path progress in ms, only on a type-11/15 transport create;
         /// progress is this plus elapsed ms; position is `timetable(progress % period)`.
@@ -271,7 +270,7 @@ pub enum SessionEvent {
         orientation: f32,
         flags: u32,
         /// Swim pitch in radians, up positive, `0.0` unless `MOVEFLAG_SWIMMING`; the reference's
-        /// swim velocity basis includes it (`0x7c5880`).
+        /// swim velocity basis includes it.
         pitch: f32,
         /// vmangos's ms clock stamped at receipt (`MovementInfo::Read`), one clock for all movers;
         /// the reference paces a remote's apply by the deltas between consecutive stamps.
@@ -292,8 +291,7 @@ pub enum SessionEvent {
     /// cinematic camera (`Player::UpdateCinematic`), despawning the world around the body.
     CinematicTriggered { cinematic_id: u32 },
     /// `MSG_MOVE_TIME_SKIPPED`: not a pose. The mover's relay stamp advances by `lag_ms`, as the
-    /// reference's `[CMovement+0xac] += lag` (`0x603b40` → `0x601560` → `0x61ab90`), or its next
-    /// packet is scheduled late.
+    /// reference's movement object's `[+0xac] += lag`, or its next packet is scheduled late.
     MoveTimeSkipped { guid: u64, lag_ms: u32 },
     /// A server path: `path` is the travel-order polyline from `start`, walked at constant speed
     /// over `duration_ms`; a stop, a zero duration or fewer than two points leaves it empty.
@@ -355,7 +353,7 @@ pub enum SessionEvent {
     },
     /// The server's wall clock in unix seconds (`SMSG_QUERY_TIME_RESPONSE`), the base of absolute
     /// descriptor stamps: a timed quest's deadline is `time(nullptr) + limitTime`. `reset_in` is the
-    /// seconds to the daily quest reset (`CGQuestLog::SetServerTime` `0x5dff40`).
+    /// seconds to the daily quest reset (the quest log's server-time set, `0x5dff40`).
     ServerUnixTime { unix_time: u32, reset_in: u32 },
     /// The hearthstone bind (`SMSG_BINDPOINTUPDATE`): the AreaTable id the `$z` token names.
     BindPoint { area: u32 },
@@ -484,7 +482,8 @@ pub enum SessionEvent {
     TutorialFlags(Vec<u8>),
     /// The bind took (`SMSG_PLAYERBOUND`); `area` matches the [`Self::BindPoint`] sent beside it.
     PlayerBound { binder: u64, area: u32 },
-    /// One item class's subclass mask (`SMSG_SET_PROFICIENCY`), the reference's `0xc4d4a0[class]`.
+    /// One item class's subclass mask (`SMSG_SET_PROFICIENCY`), the reference's per-class table
+    /// entry.
     Proficiency { item_class: u32, subclass_mask: u32 },
     /// `SMSG_INITIALIZE_FACTIONS` at login: `(flags, standing)` per `Faction.dbc`
     /// `reputationIndex`. The standing excludes the DBC race/class base; add it before ranking.
@@ -551,7 +550,7 @@ pub enum SessionEvent {
     /// The server asks for our movement clock under `counter` (`SMSG_TIME_SYNC_REQ`).
     TimeSyncReq { counter: u32 },
     /// Our own stand state (`SMSG_STANDSTATE_UPDATE`), applied ungated through the setter a
-    /// volunteered change uses (reference: `0x603e50` → `0x6127b0`).
+    /// volunteered change uses.
     StandStateUpdate { state: u8 },
     /// Nothing hooked (`SMSG_FISH_NOT_HOOKED`, empty body): the red `ERR_FISH_NOT_HOOKED` line.
     FishNotHooked,
@@ -620,8 +619,8 @@ pub enum SessionEvent {
     /// A refused tame, Call Pet or Revive Pet (`SMSG_PET_TAME_FAILURE`): the reason's
     /// `PETTAME_*` string fills `ERR_TAME_FAILED`.
     PetTameFailure { reason: u8 },
-    /// A refused pet rename (`SMSG_PET_NAME_INVALID`): `code` is the name code
-    /// `DisplayNameError` shows.
+    /// A refused pet rename (`SMSG_PET_NAME_INVALID`): `code` is the name code the reference's
+    /// name-error display shows.
     PetNameInvalid { code: u32 },
     /// The pet ran away at zero loyalty (`SMSG_PET_BROKEN`, empty body): `ERR_PET_BROKEN`.
     PetBroken,
@@ -674,13 +673,13 @@ pub enum SessionEvent {
     ZoneUnderAttack { area_id: u32 },
     /// A defense broadcast (`SMSG_DEFENSE_MESSAGE`), shown where [`Self::ZoneUnderAttack`] is.
     DefenseMessage { zone_id: u32, text: String },
-    /// A dungeon finder message, applied by the app's `CGLookingForGroup` port.
+    /// A dungeon finder message, applied by the app's port of the reference's dungeon finder.
     Lfg(crate::messages::LfgPacket),
-    /// A calendar message, applied by the VM's `CGCalendar` port.
+    /// A calendar message, applied by the VM's port of the reference's calendar.
     Calendar(crate::messages::CalendarPacket),
     /// `SMSG_INSTANCE_DIFFICULTY`: the entered map's difficulty, 0-based, and the dynamic one.
     InstanceDifficulty { difficulty: u32, dynamic: u32 },
-    /// A trial account's whisper cap (`SMSG_CHAT_RESTRICTED`, empty body): `DisplayError(0x1c3)`.
+    /// A trial account's whisper cap (`SMSG_CHAT_RESTRICTED`, empty body): error id `0x1c3`.
     ChatRestricted,
     /// `/played` (`SMSG_PLAYED_TIME`): total and this-level played time, in seconds.
     PlayedTime { total: u32, level: u32 },
@@ -723,7 +722,7 @@ pub enum SessionEvent {
         cast_flags: u32,
         cast_time_ms: u32,
         target: Option<u64>,
-        /// The `CAST_FLAG_AMMO` tail: nocked ammo for any caster (`0x60ba30` from `0x6e78b6`).
+        /// The `CAST_FLAG_AMMO` tail: nocked ammo for any caster.
         ammo_display_id: Option<u32>,
         /// The `CAST_FLAG_IMMUNITY` tail, `(school, mechanic)`.
         immunities: Option<(u32, u32)>,
@@ -749,7 +748,7 @@ pub enum SessionEvent {
         item_caster: Option<u64>,
     },
     /// A channeled beam's hops (`SMSG_SPELL_UPDATE_CHAIN_TARGETS`), consumed once by the next chain
-    /// `CharProc`; the reference fills that `unit+0xd44` array from spell-go hits too (`0x6e800d`).
+    /// `CharProc`; the reference fills that `unit+0xd44` array from spell-go hits too.
     SpellChainTargets {
         caster: u64,
         spell_id: u32,
@@ -1103,7 +1102,7 @@ pub enum SessionEvent {
     },
     /// Any unit's movement mode (the sixteen `SMSG_SPLINE_MOVE_*`), no ack; on vmangos, a unit the
     /// server drives. `apply` sets the mode's `MOVEMENTFLAGS` bit, and the reference then re-runs
-    /// the unit's gait selector (`0x6014ec`).
+    /// the unit's gait selector.
     SplineMoveMode {
         guid: u64,
         mode: crate::messages::SplineMode,
@@ -1140,9 +1139,9 @@ pub enum SessionEvent {
         difficulties: Option<GroupDifficulties>,
         /// Group-type bit `0x04`, `HasLFGRestrictions`.
         lfg_restricted: bool,
-        /// Group-type bit `0x08`'s status byte, `CGPartyInfo::m_playerLFGFlags`; 0 otherwise.
+        /// Group-type bit `0x08`'s status byte, the party's LFG flags; 0 otherwise.
         lfg_status: u8,
-        /// Group-type bit `0x08`'s dungeon slot, `CGPartyInfo::m_lfgSlot`; 0 otherwise.
+        /// Group-type bit `0x08`'s dungeon slot, the party's LFG slot; 0 otherwise.
         lfg_slot: u32,
         /// Group-type bit `0x01`: a battleground's group.
         battleground: bool,
@@ -1374,9 +1373,10 @@ impl SessionEventKind {
     }
 }
 
-/// The responses whose answers the reference keeps across sessions, its nine `DBCache`s built with
-/// persistence on (`+0x45`, `0x9cb680`..`0x9cb920`) less the Warden modules and the item names,
-/// which have no query here: the reader hands each one's body on as a [`SessionEvent::QueryAnswer`].
+/// The responses whose answers the reference keeps across sessions, its nine record caches built
+/// with persistence on (`+0x45`, `0x9cb680`..`0x9cb920`) less the Warden modules and the item
+/// names, which have no query here: the reader hands each one's body on as a
+/// [`SessionEvent::QueryAnswer`].
 pub const PERSISTED_RESPONSES: [u16; 7] = [
     crate::messages::opcode::SMSG_CREATURE_QUERY_RESPONSE,
     crate::messages::opcode::SMSG_GAMEOBJECT_QUERY_RESPONSE,

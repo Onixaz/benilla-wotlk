@@ -1,13 +1,13 @@
-//! The idle handler, the reference's `WorldFrame::Render 0x482ea0`: from 5 minutes without input
-//! it sits the player (`0x482f91`) and marks them AFK (`0x482fba`); from 30 minutes it prints
-//! `IDLE_MESSAGE` and requests a logout (`0x5ab000`) instead, with no sit and no AFK.
+//! The idle handler, which the reference runs in the world frame's render: from 5 minutes without
+//! input it sits the player and marks them AFK; from 30 minutes it prints `IDLE_MESSAGE` and
+//! requests a logout instead, with no sit and no AFK.
 //!
-//! The logout is a camp, not a kick: `0x5ab000` sends the game menu's `CMSG_LOGOUT_REQUEST`, which
-//! the server refuses in combat, grants at once when resting, or counts down for 20 seconds
+//! The logout is a camp, not a kick: the request is the game menu's `CMSG_LOGOUT_REQUEST`,
+//! which the server refuses in combat, grants at once when resting, or counts down for 20 seconds
 //! (vmangos `MiscHandler.cpp:284-339`). The 30-minute leg, line and request together, is skipped
-//! while the logout-pending byte `[session+0x1b1d]` is set (`0x482eee`, `0x482ef5`), the byte the
-//! request itself sets (`0x5ab05b`) and a cancel or a refusal clears: one line and one request per
-//! logout, and the leg arms again once the byte clears. [`crate::ui_logout`] holds that byte.
+//! while the logout-pending byte `[session+0x1b1d]` is set, the byte the request itself sets and a
+//! cancel or a refusal clears: one line and one request per logout, and the leg arms again once the
+//! byte clears. [`crate::ui_logout`] holds that byte.
 
 use std::time::Duration;
 
@@ -19,9 +19,9 @@ use bevy::time::Real;
 use super::away::{afk_line, push_system, AfkMirror};
 use super::feed::ChatLog;
 
-/// `[0xcf0bc8]`, the last-input stamp: elapsed real time on the clock (`0x42c010`) both its one
-/// writer (`0x42d7bb`) and the handler (`0x482ebe`) read. Process-global, zero at start and never
-/// reset, not even at world entry, so a client untouched from launch is idle at five minutes.
+/// The last-input stamp: elapsed real time on the one clock both its writers and the handler read.
+/// Process-global, zero at start and never reset, not even at world entry, so a client untouched
+/// from launch is idle at five minutes.
 #[derive(Resource, Debug, Clone, Copy, Default)]
 pub(crate) struct LastInput(Duration);
 
@@ -33,19 +33,18 @@ impl LastInput {
     }
 }
 
-/// 5 minutes: `0x482ecd lea ecx,[eax-0x493e0]`, `0x493e0` = 300 000 ms.
+/// 5 minutes, `0x493e0` = 300 000 ms.
 const AUTO_AFK_AFTER: Duration = Duration::from_millis(300_000);
 
-/// 30 minutes from the last input, not 5 + 30: `0x482ede add eax,0xffe488c0` subtracts from the
-/// raw elapsed, since the 5-minute subtraction wrote `ecx`.
+/// 30 minutes from the last input, not 5 + 30: the reference subtracts 30 minutes from the raw
+/// elapsed, since the 5-minute subtraction wrote `ecx`.
 const AUTO_LOGOUT_AFTER: Duration = Duration::from_millis(1_800_000);
 
-/// Stamp the clock on raw input, as the reference's seven writers of `[0xcf0bc8]` do: key down,
-/// first press only (`0x765f34`), key up (`0x765fec`), button down (`0x7662fb`) and up
-/// (`0x766461`), motion (`0x766152`, `0x766291`, mouselook included) and the wheel (`0x76651f`).
-/// Holding a key is idle: auto-repeat is category 0xa (`0x424810`), whose handler `0x766070` has
-/// no store, so running with W held reaches the auto-AFK. A zero move does not stamp (`0x7660d0`).
-/// A horizontal wheel stamps here; the reference never translates `WM_MOUSEHWHEEL`.
+/// Stamp the clock on raw input, as the reference's seven writers of the stamp do: key down,
+/// first press only, key up, button down and up, motion (mouselook included) and the wheel. Holding
+/// a key is idle: auto-repeat is category 0xa, whose handler has no store, so running with W held
+/// reaches the auto-AFK. A zero move does not stamp. A horizontal wheel stamps here; the reference
+/// never translates `WM_MOUSEHWHEEL`.
 ///
 /// The store sits ahead of dispatch, so a keystroke the chat edit box consumes still stamps: this
 /// reads the raw messages, not [`crate::bindings::BindingsState`], outside the in-world gate.
@@ -71,12 +70,12 @@ pub(crate) fn stamp_input(
 /// What the timer decides this frame, one flag per leg.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct IdleAction {
-    /// `0x482f91 call 0x5ed430(1)`.
+    /// The sit: a stand-state request to sitting.
     pub(crate) sit: bool,
-    /// `0x482fba call 0x5eb740(NULL)`.
+    /// The AFK mark with no message.
     pub(crate) afk: bool,
-    /// `0x482f1a` and `0x5ab000`: `IDLE_MESSAGE` and the logout request. The band only: the leg's
-    /// own gate, the logout-pending byte (`0x482ef5`), is the handler's to read.
+    /// `IDLE_MESSAGE` and the logout request. The band only: the leg's own gate, the logout-pending
+    /// byte, is the handler's to read.
     pub(crate) camp: bool,
 }
 
@@ -89,23 +88,22 @@ pub(crate) struct IdleGates {
     pub(crate) in_combat: bool,
     /// `UNIT_FIELD_MOUNTDISPLAYID > 0`, the sit's.
     pub(crate) mounted: bool,
-    /// The sit's fourth gate (`0x482f84 call 0x6103a0`): for a solo player, the movement-action
-    /// mode `[0xc4d888]` at its in-world `0xc`. `/follow` sets 3 (`FollowUnit 0x489e00`), Click to
-    /// Move 5 to 9, and autorun never moves it, so a follower whose target has stopped is not
-    /// seated.
+    /// The sit's fourth gate: for a solo player, the movement-action mode at its in-world `0xc`.
+    /// `/follow` sets 3 (`FollowUnit`), Click to Move 5 to 9, and autorun never moves it, so a
+    /// follower whose target has stopped is not seated.
     pub(crate) auto_moving: bool,
     /// `UNIT_FIELD_FLAGS` bit 20 (`0x100000`), the AFK's, not the sit's.
     pub(crate) on_taxi: bool,
-    /// The optimistic mirror `[0xb6e5cc]`: the AFK's second gate, and its anti-repeat.
+    /// The optimistic mirror: the AFK's second gate, and its anti-repeat.
     pub(crate) afk: bool,
 }
 
-/// Resolve the timer against the gates. The bands are exclusive (`0x482ee5 jl 0x482f39`): the
-/// thirty-minute leg neither sits nor marks AFK. Its one gate, the logout-pending byte, is not a
-/// descriptor field, so [`idle_handler`] applies it to `camp`.
+/// Resolve the timer against the gates. The bands are exclusive: the thirty-minute leg neither sits
+/// nor marks AFK. Its one gate, the logout-pending byte, is not a descriptor field, so
+/// [`idle_handler`] applies it to `camp`.
 pub(crate) fn idle_action(idle: Duration, gates: IdleGates) -> IdleAction {
     if idle < AUTO_AFK_AFTER {
-        // `0x482ed8 jl 0x482fbf`: all three legs sit below this.
+        // All three legs sit below this.
         return IdleAction::default();
     }
     if idle >= AUTO_LOGOUT_AFTER {
@@ -121,7 +119,7 @@ pub(crate) fn idle_action(idle: Duration, gates: IdleGates) -> IdleAction {
     }
 }
 
-/// The handler, in-world only: `0x482ea0` is `WorldFrame::Render`.
+/// The handler, in-world only: the reference runs it in the world frame's render.
 pub(crate) fn idle_handler(
     time: Res<Time<Real>>,
     last: Res<LastInput>,
@@ -155,8 +153,8 @@ pub(crate) fn idle_handler(
     });
     let action = match gates {
         Some(g) => idle_action(idle, g),
-        // No body yet: the reference resolves the local player inside the block (`0x468550`,
-        // `0x468460`), so the sit and the AFK have nothing to read; the camp leg never reads it.
+        // No body yet: the reference resolves the local player inside the block, so the sit and the
+        // AFK have nothing to read; the camp leg never reads it.
         None => IdleAction {
             camp: idle >= AUTO_LOGOUT_AFTER,
             ..IdleAction::default()
@@ -171,8 +169,8 @@ pub(crate) fn idle_handler(
 
     let strings = |key: &str| crate::ui_chat::combat::global_string(&script, key);
     if action.afk {
-        // `SetAFK(NULL)` is `/afk` with an empty message and a clear mirror, so it shares that
-        // path: the `DEFAULT_AFK_MESSAGE` echo and body, and the optimistic mirror.
+        // The AFK mark with no message is `/afk` with an empty message and a clear mirror, so it
+        // shares that path: the `DEFAULT_AFK_MESSAGE` echo and body, and the optimistic mirror.
         let out = afk_line("", *mirror, &strings);
         if let Some(line) = out.line {
             push_system(&mut chat, line);
@@ -187,13 +185,13 @@ pub(crate) fn idle_handler(
             language: None,
         });
     }
-    // `0x482eee call 0x5ab0d0; 0x482ef5 jne`: while a logout is pending the whole leg is skipped,
-    // the line with the request, so it runs once per logout and again after a cancel.
+    // While a logout is pending the whole leg is skipped, the line with the request, so it runs
+    // once per logout and again after a cancel.
     if action.camp && !logout.pending() {
         if let Some(line) = strings("IDLE_MESSAGE") {
             push_system(&mut chat, line);
         }
-        // `0x5ab000` with the game menu's arguments; `crate::ui_logout` owns the rest.
+        // The logout request with the game menu's arguments; `crate::ui_logout` owns the rest.
         script.queue_session_request(benilla_ui::script::SessionRequest::Logout);
     }
 }
@@ -226,7 +224,7 @@ mod tests {
         assert_eq!(
             idle_action(FIVE_MIN - one_ms, open()),
             IdleAction::default(),
-            "4:59.999 does nothing — `0x482ed8 jl 0x482fbf` leaves the whole block"
+            "4:59.999 does nothing — the 5-minute test leaves the whole block"
         );
         assert_eq!(
             idle_action(FIVE_MIN, open()),
@@ -310,7 +308,7 @@ mod tests {
             ),
             (
                 "on a taxi: no AFK — and the sit is NOT gated on the taxi bit here (its own \
-                 `0x5ed430` guard #3 is what covers that downstream)",
+                  sit setter's guard #3 is what covers that downstream)",
                 IdleGates {
                     on_taxi: true,
                     ..open()
@@ -324,7 +322,7 @@ mod tests {
             (
                 "following someone who has stopped walking: no sit — this is the ONLY case the \
                  fourth gate does work nothing else does, since anything else that leaves \
-                 `[0xc4d888]` non-`0xc` implies translating, which `stand_state_refused` refuses \
+                  the mode non-`0xc` implies translating, which `stand_state_refused` refuses \
                  downstream. The AFK mark is untouched: it is not one of the sit's gates",
                 IdleGates {
                     auto_moving: true,
@@ -377,7 +375,7 @@ mod tests {
             }
             if a.afk {
                 marks += 1;
-                gates.afk = true; // `SetAFK` writes the mirror `[0xb6e5cc]` it is gated on
+                gates.afk = true; // the AFK mark writes the mirror it is gated on
             }
         }
         assert_eq!((sits, marks), (1, 1));
@@ -474,7 +472,7 @@ mod tests {
             "and bare mouse movement, with no button held"
         );
 
-        // Auto-repeat is category 0xa, whose handler `0x766070` has no store.
+        // Auto-repeat is category 0xa, whose handler has no store.
         assert_eq!(
             stamped(&|app| {
                 app.world_mut().write_message(KeyboardInput {
@@ -569,7 +567,7 @@ mod tests {
         assert!(rx.try_iter().next().is_none());
     }
 
-    /// `0x5ab000` is the game menu's Logout: a session request and nothing else.
+    /// The logout request is the game menu's Logout: a session request and nothing else.
     #[test]
     fn thirty_minutes_idle_camps_instead_of_marking_afk() {
         let (mut app, rx) = world(1_800_000, &[]);
@@ -581,8 +579,8 @@ mod tests {
                 "You have been inactive for some time and will be logged out of the game. If you \
                  wish to remain logged in, hit the cancel button."
             ],
-            "IDLE_MESSAGE goes out unformatted — `0x482f1a` hands `GetText`'s result straight to \
-             the chat sink, with no snprintf in between. It carries no format slot, and the \
+            "IDLE_MESSAGE goes out unformatted — the reference hands `GetText`'s result straight \
+             to the chat sink, with no snprintf in between. It carries no format slot, and the \
              sentence it does carry (\"hit the cancel button\") is the CAMP dialog's, which is \
              the string's own confirmation that this leg is a logout REQUEST and not a kick."
         );
@@ -605,10 +603,10 @@ mod tests {
             .is_none());
     }
 
-    /// `0x482ef5`: the leg, line and request, is skipped while the logout it asked for is pending,
-    /// and arms again once a cancel clears the byte (`0x5aaf80`). The pending byte is the real
-    /// drain's, run after the handler as the app orders it and before it as well, so the gate
-    /// holds whichever frame the byte is set in.
+    /// The whole leg, line and request, is skipped while the logout it asked for is pending, and
+    /// arms again once a cancel clears the byte. The pending byte is the real drain's, run after
+    /// the handler as the app orders it and before it as well, so the gate holds whichever frame
+    /// the byte is set in.
     #[test]
     fn thirty_minutes_idle_prints_and_asks_once_per_logout() {
         use benilla_ui::script::{SessionRequest, UiScript};

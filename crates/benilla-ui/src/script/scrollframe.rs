@@ -1,9 +1,9 @@
-//! The `ScrollFrame` methods (`CSimpleScrollFrame`): the scroll child, the two offsets, the two
-//! ranges and `UpdateScrollChildRect`, over [`ScrollFrameState`]; the layout's `resolve`,
-//! `extract` and `hit_test` place and clip the child. The axes are one mechanism: `0x786d30`
-//! (horizontal) is a byte-clone of `0x786db0` (vertical) on `[+0x324]`/`[+0x32c]` for
-//! `[+0x328]`/`[+0x334]`, and `0x786e30` measures both ranges in one pass. The methods sit in
-//! their own table, so on every other frame kind `SetScrollChild` is nil, as in the client.
+//! The `ScrollFrame` methods: the scroll child, the two offsets, the two ranges and
+//! `UpdateScrollChildRect`, over [`ScrollFrameState`]; the layout's `resolve`, `extract` and
+//! `hit_test` place and clip the child. The axes are one mechanism: the horizontal setter is a
+//! byte-clone of the vertical one on `[+0x324]`/`[+0x32c]` for `[+0x328]`/`[+0x334]`, and one
+//! routine measures both ranges in one pass. The methods sit in their own table, so on every other
+//! frame kind `SetScrollChild` is nil, as in the client.
 
 use mlua::{Lua, Table, Value};
 
@@ -43,11 +43,11 @@ enum Axis {
 }
 
 /// `Get{Vertical,Horizontal}ScrollRange()`: `max(0, content − frame)` from the resolved rects,
-/// computed on every call, where the reference's getters (`0x972750`) read the cache its pump
-/// last stored ([`fire_range_changes`]). The content is the scroll child's whole subtree, not its own rect
-/// (`0x786e30` calls the recursive `0x786f80`): stock `ItemTextPageScrollChild` is 10×10 around a
-/// 270×304 SimpleHTML (`ItemTextFrame.xml:198`). Each extent is divided by its frame's effective
-/// scale, since the offset is in local units; a range in screen px under-scrolls a scaled frame.
+/// computed on every call, where the reference's getters (`0x972750`) read the cache its pump last
+/// stored ([`fire_range_changes`]). The content is the scroll child's whole subtree, not its own
+/// rect: stock `ItemTextPageScrollChild` is 10×10 around a 270×304 SimpleHTML
+/// (`ItemTextFrame.xml:198`). Each extent is divided by its frame's effective scale, since the
+/// offset is in local units; a range in screen px under-scrolls a scaled frame.
 fn scroll_range(model: &Model, h: FrameHandle, axis: Axis) -> f32 {
     let child = match model.arena.frame(h).map(|f| &f.kind_state) {
         Some(KindState::Scroll(s)) => s.child,
@@ -78,8 +78,8 @@ fn scroll_range(model: &Model, h: FrameHandle, axis: Axis) -> f32 {
 }
 
 /// The span of `f`'s subtree along `axis` in screen px, as `(far, near)`: its own rect unioned with
-/// its shown regions and visible child frames, recursively (`0x786f80`). Hidden parts add no range:
-/// the client guards both lists on visibility.
+/// its shown regions and visible child frames, recursively. Hidden parts add no range: the client
+/// guards both lists on visibility.
 fn subtree_span(model: &Model, f: FrameHandle, axis: Axis) -> Option<(f32, f32)> {
     let edges = |r: &crate::layout::Rect| match axis {
         Axis::Horizontal => (r.right, r.left),
@@ -120,8 +120,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "SetScrollChild",
         lua.create_function(|lua, (this, target): (Table, Value)| {
-            // A name is `_G[name]` with no `$parent`: `0x790fa0` calls `SetParent`'s resolver
-            // `0x76c760`.
+            // A name is `_G[name]` with no `$parent`: the setter calls `SetParent`'s resolver.
             let named = match &target {
                 Value::String(s) => s
                     .to_str()
@@ -176,10 +175,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetVerticalScroll(px) (`0x786db0`): stores the offset unclamped (`[+0x328]`), re-anchors the
-    // child (`0x787100`) and fires `OnVerticalScroll(self, offset)`, all only on a change; the
-    // reference skips a change under 2⁻²² from the old offset, where this compares bits. The range
-    // is never read here: every clamp is FrameXML's, through the scroll bar's min and max.
+    // SetVerticalScroll(px): stores the offset unclamped (`[+0x328]`), re-anchors the child and
+    // fires `OnVerticalScroll(self, offset)`, all only on a change; the reference skips a change
+    // under 2⁻²² from the old offset, where this compares bits. The range is never read here: every
+    // clamp is FrameXML's, through the scroll bar's min and max.
     m.set(
         "SetVerticalScroll",
         lua.create_function(|lua, (this, px): (Table, f32)| {
@@ -212,9 +211,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── The horizontal axis ──
-    // SetHorizontalScroll(px) (`0x7912f0` → `0x786d30`) is the vertical setter's byte-clone on
-    // `[+0x324]`, firing `OnHorizontalScroll`. The sign is the reference's: `0x787100` anchors the
-    // child at `(+hScroll, +vScroll)`, so a positive x moves it right, where a positive y lifts it.
+    // SetHorizontalScroll(px) is the vertical setter's byte-clone on `[+0x324]`, firing
+    // `OnHorizontalScroll`. The sign is the reference's: the re-anchor puts the child at
+    // `(+hScroll, +vScroll)`, so a positive x moves it right, where a positive y lifts it.
     m.set(
         "SetHorizontalScroll",
         lua.create_function(|lua, (this, px): (Table, f32)| {

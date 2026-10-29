@@ -5,9 +5,8 @@ use crate::framexml::Element;
 use super::{abs_value, children_named, color_of, Loader};
 
 impl Loader<'_> {
-    /// `<Backdrop>` (LoadXML `0x77e6c0`): the table Lua `SetBackdrop` takes, then the two colours.
-    /// A present `<Color>` defaults a missing channel to black, alpha 1 (`0x6f23d0`), not the
-    /// white a table `SetBackdrop` leaves.
+    /// `<Backdrop>`: the table Lua `SetBackdrop` takes, then the two colours. A present `<Color>`
+    /// defaults a missing channel to black, alpha 1, not the white a table `SetBackdrop` leaves.
     pub(super) fn apply_backdrop(&mut self, el: &Element, wrapper: &Table, dbg: &str) {
         let Some(bd) = children_named(el, "Backdrop").next() else {
             return;

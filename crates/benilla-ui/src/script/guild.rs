@@ -1,8 +1,8 @@
 //! The guild bindings: roster, ranks, notes, MOTD and the membership verbs. The app pushes a
 //! display-ready [`GuildState`] ([`UiScript::set_guild`]) that joins two caches: the roster (MOTD,
 //! info text, rank rights, members) and the guild query (the name and ten rank names). Each verb
-//! queues a [`GuildRequest`] the app drains ([`UiScript::take_guild_requests`]). 12340's table is
-//! `GuildInfoRegisterScriptFunctions` (`0x5ca380`, registrar `0xad0840`).
+//! queues a [`GuildRequest`] the app drains ([`UiScript::take_guild_requests`]). 12340 registers
+//! the table at `0x5ca380` (registrar `0xad0840`).
 //!
 //! Two index bases: a roster `rankIndex` is 0-based with 0 the guild master, while the
 //! `GuildControl*` family is 1-based, driven by the dropdown IDs (`FriendsFrame.lua:1760-1780`).
@@ -191,8 +191,8 @@ pub struct GuildState {
 }
 
 /// The rank-control popup's staging buffer, kept out of [`GuildState`] so a push mid-edit does not
-/// discard unsaved checkbox clicks: 12340's `s_guildControlRank` (`0xad07a8`) and the `enabled`
-/// halves of the flag table.
+/// discard unsaved checkbox clicks: 12340's rank-control staging global (`0xad07a8`) and the
+/// `enabled` halves of the flag table.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GuildRankEdit {
     /// The 1-based rank `GuildControlSetRank` last loaded, 0 for none.
@@ -317,13 +317,13 @@ fn control_rank_mut(model: &mut Model) -> Option<&mut GuildRankInfo> {
         .and_then(move |i| model.guild.ranks.get_mut(i))
 }
 
-/// A rank name as the save and add verbs send it: `ScrubString(name, buf, 16, 64, 1)`, which
-/// strips pipes, cuts at a line break and keeps fifteen characters (`0x7e1830`).
+/// A rank name as the save and add verbs send it: scrubbed into a 16-byte buffer, which strips
+/// pipes, cuts at a line break and keeps fifteen characters (`0x7e1830`).
 fn scrubbed_rank_name(name: &str) -> String {
     super::calendar::scrub(name, 16, 64, true)
 }
 
-/// `TruncateNewLines` (`0x7e1640`): a CR, an LF, or a `\n` or `|n` escape ends the text.
+/// The newline truncation (`0x7e1640`): a CR, an LF, or a `\n` or `|n` escape ends the text.
 fn truncate_new_lines(text: &str) -> &str {
     let bytes = text.as_bytes();
     let cut = (0..bytes.len()).find(|&i| match bytes[i] {
@@ -419,7 +419,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ── The roster ───────────────────────────────────────────────────────────────────────────
     // GetNumGuildMembers([all]) (`0x5ca130`): the online count unless show-offline or `all`
-    // (`GetBoolOrDefault(1, 0)`) asks for every member.
+    // (argument 1 as a boolean, default 0) asks for every member.
     g.set(
         "GetNumGuildMembers",
         lua.create_function(|lua, args: MultiValue| {
@@ -541,7 +541,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetGuildRosterShowOffline() (`0x5ca1e0`) / SetGuildRosterShowOffline(flag) (`0x5ca1b0`,
-    // `GetBoolOrDefault(1, 1)`): written in place and mirrored, as the selection is.
+    // argument 1 as a boolean, default 1): written in place and mirrored, as the selection is.
     g.set(
         "GetGuildRosterShowOffline",
         lua.create_function(|lua, ()| {
@@ -724,7 +724,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GuildControlGetRankName(index) (`0x5ccc90`): 1-based, the dropdown's ID; `""` past the
-    // guild's ranks, and cut at a line break (`TruncateNewLines`).
+    // guild's ranks, and cut at a line break.
     g.set(
         "GuildControlGetRankName",
         lua.create_function(|lua, index: Value| {
@@ -787,7 +787,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GuildControlSetRankFlag(index, enabled) (`0x5ca2b0`): stage one checkbox, 1 to 17, by
-    // `GetBoolOrDefault(2, 0)`.
+    // argument 2 as a boolean, default 0.
     g.set(
         "GuildControlSetRankFlag",
         lua.create_function(|lua, args: MultiValue| {
@@ -908,7 +908,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // SetGuildBankTabPermissions(tab, index, enabled) (`0x5cb470`): one of the tab's three rights
-    // by `GetBoolOrDefault(3, 0)`.
+    // by argument 3 as a boolean, default 0.
     g.set(
         "SetGuildBankTabPermissions",
         lua.create_function(|lua, args: MultiValue| {
@@ -1108,7 +1108,7 @@ mod tests {
     }
 
     /// `0x5cb170` sends any non-empty name, scrubbed to fifteen characters with its pipes gone
-    /// (`ScrubString`, `0x7e1830`), and refuses no rank loaded or one past the count.
+    /// (`0x7e1830`), and refuses no rank loaded or one past the count.
     #[test]
     fn saving_a_rank_scrubs_the_name_and_refuses_what_the_reference_refuses() {
         let mut s = guild_with_ranks(5);

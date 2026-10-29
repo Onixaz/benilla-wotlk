@@ -12,8 +12,8 @@ use super::buffer::{
 };
 use super::{rand01, Particle};
 
-/// The 128-entry twinkle noise table, uniform in [0, 1) like the reference's `0xcf58f0` (filled at
-/// startup by `0x706790`); a fixed seed, so the distribution matches but not the stream.
+/// The 128-entry twinkle noise table, uniform in [0, 1) like the reference's table; a fixed seed,
+/// so the distribution matches but not the stream.
 static TWINKLE_LUT: std::sync::LazyLock<[f32; 128]> = std::sync::LazyLock::new(|| {
     let mut s = 0xC0FF_EE11u32;
     let mut t = [0.0f32; 128];
@@ -23,8 +23,8 @@ static TWINKLE_LUT: std::sync::LazyLock<[f32; 128]> = std::sync::LazyLock::new(|
     t
 });
 
-/// Index `(floor(clamp(twinkleSpeed · age, 0, 255)) + phase) & 0x7f` (`0x7b2a86`); the reference's
-/// phase is a pointer hash, ours a spawn-time random ([`Particle::phase`]).
+/// Index `(floor(clamp(twinkleSpeed · age, 0, 255)) + phase) & 0x7f`; the reference's phase is a
+/// pointer hash, ours a spawn-time random ([`Particle::phase`]).
 fn twinkle_noise(twinkle_speed: f32, age: f32, phase: u32) -> f32 {
     let idx = ((twinkle_speed * age).clamp(0.0, 255.0) as u32).wrapping_add(phase) as usize & 0x7f;
     TWINKLE_LUT[idx]
@@ -51,29 +51,29 @@ pub(super) struct CamBasis {
 /// How a cloud's stored coordinates reach the world (the two modes on [`super::Particle`]).
 pub(super) struct DrawFrame {
     pub(crate) anchored: bool,
-    /// World mode's ride frame `A`, the reference's `[ebp+8]` at `0x7b3d20`, folded on the
-    /// `0x7b3f4f` leg; the identity off a transport. Model mode never reads it (`0x7b3efb`).
+    /// World mode's ride frame `A`, the reference's `[ebp+8]`, folded on the world-mode leg; the
+    /// identity off a transport. Model mode never reads it.
     pub(crate) ride: crate::ride_frame::StoredFrame,
     /// The owning model's render alpha, folded into every particle's alpha (`emitter+0x1a8`).
     pub(crate) alpha: f32,
     /// One model unit of half-extent in the stored frame: 1.0 in the world, a UI tile's pixels per
-    /// unit (the reference's `768·√(a²+1)` FrameXML units, instance scale excluded, `0x7b2ba6`).
+    /// unit (the reference's `768·√(a²+1)` FrameXML units, instance scale excluded).
     pub(crate) size_scale: f32,
 }
 
 /// One particle's world-space quad centre, shared by [`expand_quads`] and the depth dump.
 pub(super) fn particle_center(frame: &DrawFrame, placement: &Transform, p: &Particle) -> Vec3 {
     if frame.anchored {
-        // World mode (`0x10` clear): no `rt+0x1fc` fold (`0x7b3f48`), only the ride frame,
-        // `A · T · S` (`0x7b3f4f`); off a transport `A` is null, the store world (`0x7b3f95`).
+        // World mode (`0x10` clear): no `rt+0x1fc` fold, only the ride frame, `A · T · S`; off a
+        // transport `A` is null, the store world.
         frame.ride.to_world(p.pos)
     } else {
-        // Model mode (`0x10` set): the live emitter matrix, re-applied every frame (`0x7b3efb`).
+        // Model mode (`0x10` set): the live emitter matrix, re-applied every frame.
         placement.transform_point(wow_to_bevy([p.pos.x, p.pos.y, p.pos.z]))
     }
 }
 
-/// The twinklePercent draw gate; must match [`expand_quads`]'s `0x7b2adc` skip.
+/// The twinklePercent draw gate; must match [`expand_quads`]'s skip.
 pub(super) fn draw_gated(def: &ParticleEmitterDef, p: &Particle) -> bool {
     let noise = twinkle_noise(def.twinkle_speed, p.age, p.phase);
     def.twinkle_percent < 1.0 && noise > def.twinkle_percent
@@ -110,15 +110,15 @@ pub(super) fn expand_quads(
 ) {
     let anchored = frame.anchored;
     let (cam_right, cam_up) = (cam.right, cam.up);
-    // Size takes the instance scale only when flagged (`0x7b2a50`), else the lane's size unit.
+    // Size takes the instance scale only when flagged, else the lane's size unit.
     let scale = if def.scale_size_by_instance() {
         placement.scale.x.max(1e-4)
     } else {
         frame.size_scale
     };
-    // XY quads (file flag 0x1000, `0x7b41a3`) lie flat in the emitter's XY plane under the live
-    // model matrix, its scale included, in both modes. The basis carries the emitter frame's
-    // R(+Z, 90°) (`0x719114`) itself, since births take it at emission: X̂ to Ŷ, Ŷ to −X̂.
+    // XY quads (file flag 0x1000) lie flat in the emitter's XY plane under the live model matrix,
+    // its scale included, in both modes. The basis carries the emitter frame's R(+Z, 90°) itself,
+    // since births take it at emission: X̂ to Ŷ, Ŷ to −X̂.
     let plane_basis = def.xy_quad().then(|| {
         let s = placement.scale.x.max(1e-4);
         (
@@ -126,9 +126,9 @@ pub(super) fn expand_quads(
             placement.rotation * (wow_to_bevy([-1.0, 0.0, 0.0]) * s),
         )
     });
-    // Atlas cell (`0x7b2bd5` head, `0x7b304e` tail): `col = idx & (cols − 1)`, `row = idx >>
-    // log2(cols)`, cols a power of two. The row is never clamped: past the last cell V ≥ 1 and
-    // the repeat sampler wraps to row 0, which 553 emitters reach at a flipbook's tail.
+    // Atlas cell: `col = idx & (cols − 1)`, `row = idx >> log2(cols)`, cols a power of two. The row
+    // is never clamped: past the last cell V ≥ 1 and the repeat sampler wraps to row 0, which 553
+    // emitters reach at a flipbook's tail.
     let (cols, rows) = (def.tile_cols, def.tile_rows);
     let (inv_cols, inv_rows) = (1.0 / cols as f32, 1.0 / rows as f32);
     let cell_uv = |idx: u16| {
@@ -141,14 +141,14 @@ pub(super) fn expand_quads(
     };
     for p in particles {
         let noise = twinkle_noise(def.twinkle_speed, p.age, p.phase);
-        // The twinklePercent gate (`0x7b2adc`): below 1, a sample above it draws no quad.
+        // The twinklePercent gate: below 1, a sample above it draws no quad.
         if def.twinkle_percent < 1.0 && noise > def.twinkle_percent {
             continue;
         }
         let u_age = (p.age / p.life).clamp(0.0, 1.0);
         let ol = def.over_life.sample(u_age);
         let mut rgba = ol.color;
-        // The model's render alpha scales alpha alone, never RGB (`0x7b9b10`, the `0x7b9b42` fmul).
+        // The model's render alpha scales alpha alone, never RGB.
         rgba[3] *= frame.alpha;
         // Raw authored gamma RGB: additive stacks sum in gamma like the reference's bytes, and
         // the FFX chain's scene reads apply their 255 saturation (`ffx_glow.wgsl`), not this.
@@ -162,8 +162,8 @@ pub(super) fn expand_quads(
             ol.size[1] * p.size_mul[1] * k,
         );
         // Deviation: quads keep pool order within a cloud, without the reference's back-to-front
-        // sort (`0x7b3a10`), because only an alpha-blended cloud can show the order; between
-        // clouds, each draw record's anchor sorts it.
+        // sort, because only an alpha-blended cloud can show the order; between clouds, each draw
+        // record's anchor sorts it.
         let mut push_quad = |corners: [Vec3; 4], quv: [[f32; 2]; 4]| {
             for (c, t) in corners.iter().zip(quv) {
                 out.push(EffectVertex {
@@ -220,7 +220,7 @@ pub(super) fn expand_quads(
             let (tr, tu) = (tail.dot(cam_right), tail.dot(cam_up));
             let l2 = tr * tr + tu * tu;
             if l2 < 7.7e-4 {
-                // Degenerate: the reference's plain-billboard fallback (`0x7b33fa`).
+                // Degenerate: the reference's plain-billboard fallback.
                 let (r, u) = (cam_right * half, cam_up * half);
                 push_quad(
                     [
@@ -522,8 +522,8 @@ mod tests {
         );
     }
 
-    /// The reference folds `emitter+0x1a8`, the model's `CM2Model+0x19c`, into the alpha byte alone
-    /// (`0x7b9b10`, the `0x7b9b42` fmul).
+    /// The reference folds `emitter+0x1a8`, the model's `+0x19c`, into the alpha byte
+    /// alone.
     #[test]
     fn the_models_render_alpha_scales_particle_alpha_and_nothing_else() {
         let mut def = crate::particles::tests::plain_def();

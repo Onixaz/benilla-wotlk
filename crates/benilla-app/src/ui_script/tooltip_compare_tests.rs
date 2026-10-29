@@ -1,7 +1,7 @@
 //! The shopping-compare and chat-link tooltips over the stock files. 1.12.1 has no hover compare:
 //! `SHOW_COMPARE_TOOLTIP` (event 377) has no fire site, so `PaperDollFrame.lua:621` is dead code
-//! and the vendor and auction rows are the plates' only consumers (`SetMerchantCompareItem`,
-//! `0x536080`). The stock hover handlers read `this`, so the tests move the mouse.
+//! and the vendor and auction rows are the plates' only consumers (`SetMerchantCompareItem`). The
+//! stock hover handlers read `this`, so the tests move the mouse.
 
 use benilla_ui::script::{
     ContainerSlot, ContainerState, InvSlotView, InventorySlots, ItemTemplateView, UiScript,
@@ -466,7 +466,7 @@ fn shipped_merchant_row_raises_the_compare_plates() {
     assert!(s.errors().is_empty(), "errors: {:?}", s.errors());
 }
 
-/// An armour template; `SetMerchantCompareItem` selects by item class (`0x536262`).
+/// An armour template; `SetMerchantCompareItem` selects by item class.
 fn armor_template(name: &str, inventory_type: u32) -> ItemTemplateView {
     ItemTemplateView {
         name: name.into(),

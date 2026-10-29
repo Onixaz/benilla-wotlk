@@ -38,7 +38,7 @@ pub mod channel_notice {
     pub const PLAYER_INVITED: u8 = 0x1D;
     pub const PLAYER_INVITE_BANNED: u8 = 0x1E;
     pub const THROTTLED: u8 = 0x1F;
-    /// 3.3.5a only, from here: the 12340 client's arms `0x50e916`-`0x50ea05`.
+    /// 3.3.5a only, from here: the 12340 client's arms.
     pub const NOT_IN_AREA: u8 = 0x20;
     pub const NOT_IN_LFG: u8 = 0x21;
     pub const VOICE_ON: u8 = 0x22;

@@ -20,7 +20,7 @@ fn setup() -> UiScript {
     s
 }
 
-/// `BIND_ENCHANT` (event 402) has no args; Yes re-enters the gate (`0x495d60`), sending nothing.
+/// `BIND_ENCHANT` (event 402) has no args; Yes re-enters the gate, sending nothing.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_bind_confirm_shows_and_its_okay_queues_bind_enchant() {
@@ -63,7 +63,7 @@ fn the_replace_confirm_names_the_old_enchant_first() {
     assert_eq!(s.take_enchant_confirms(), vec![EnchantConfirm::Replace]);
 }
 
-/// The gate returned before `BindTarget`, so declining sends nothing and the cursor stays up.
+/// The gate returned before the target bind, so declining sends nothing and the cursor stays up.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn declining_either_confirm_queues_nothing() {

@@ -35,8 +35,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // `CheckBinderDist()`, polled by the dialog's OnUpdate. This answers a boolean; the
-    // reference (`0x48d210`) answers 1 or nil.
+    // `CheckBinderDist()`, polled by the dialog's OnUpdate. This answers a boolean; the reference
+    // answers 1 or nil.
     g.set(
         "CheckBinderDist",
         lua.create_function(|lua, ()| {

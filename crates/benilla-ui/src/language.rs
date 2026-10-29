@@ -1,17 +1,17 @@
-//! The grammar pass a font string runs over text as it is set (`CSimpleFontString::SetText`
-//! `0x483910` with its process flag, into `LanguageProcess` `0x482110`): `|4singular:plural;`
-//! picks a form by the number before it. The enUS strings carry no `|1`..`|3` (Korean particles,
-//! French elision, Russian declension), which pass through unchanged.
+//! The grammar pass a font string runs over text as it is set (its text setter `0x483910` with its
+//! process flag, into the language pass `0x482110`): `|4singular:plural;` picks a form by the
+//! number before it. The enUS strings carry no `|1`..`|3` (Korean particles, French elision,
+//! Russian declension), which pass through unchanged.
 
 use std::borrow::Cow;
 
-/// `FrameScript_GetPluralIndex` `0x817d10` under enUS's rule 0 (`0x40642a`): 1 for any count but
-/// one.
+/// The script layer's plural index (`0x817d10`) under enUS's rule 0 (`0x40642a`): 1 for any count
+/// but one.
 pub fn plural_index(count: i32) -> usize {
     usize::from(count != 1)
 }
 
-/// `LanguageProcess` over `text`, borrowed when it holds no `|4`.
+/// The language pass over `text`, borrowed when it holds no `|4`.
 pub fn process(text: &str) -> Cow<'_, str> {
     if !text.as_bytes().windows(2).any(|w| w == b"|4") {
         return Cow::Borrowed(text);
@@ -27,7 +27,7 @@ pub fn process_owned(text: String) -> String {
     }
 }
 
-/// `LanguageRule4` `0x481fc0`: each `|4` not followed by a digit becomes the form its count picks,
+/// The `|4` rule (`0x481fc0`): each `|4` not followed by a digit becomes the form its count picks,
 /// the count being the last digit run anywhere before it. Leading spaces of the form are skipped;
 /// the text from the form's end to the `;` is dropped. Any other `|` and the byte after it are
 /// copied as they are, so `||4` stays escaped.

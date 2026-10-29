@@ -1,17 +1,16 @@
-//! Press-again-to-cancel. The reference cancels in its dispatchers, above `TryCast 0x6e4b60`,
-//! and the two toggles differ: the active-action one runs in both `UseAction 0x4e5ee0` (cancel
-//! `0x4e60c1`) and the `CastSpell` dispatcher `0x4b3300` (cancel `0x4b3466`), the form-match one
-//! (`0x4b348b`-`0x4b35e5`, cancel `0x4b35da`) in `CastSpell` only. Both cancel through
-//! `CancelAura 0x6e7040`, the buff right-click's `CMSG_CANCEL_AURA`; its own guard
-//! (`AttributesEx & 0x2000` set, `& 0x4` clear) never fires for a shipped toggle and is not built.
+//! Press-again-to-cancel. The reference cancels in its dispatchers, above the cast attempt, and the
+//! two toggles differ: the active-action one runs in both `UseAction` and the `CastSpell`
+//! dispatcher, the form-match one in `CastSpell` only. Both cancel through the aura cancel, the
+//! buff right-click's `CMSG_CANCEL_AURA`; its own guard (`AttributesEx & 0x2000` set, `& 0x4`
+//! clear) never fires for a shipped toggle and is not built.
 
 use benilla_formats::{ShapeshiftForm, SpellDisplay};
 
 use crate::unit_auras::UnitAuras;
 
-/// The active-action predicate (`0x4e55f0`, twin `0x4b36f0`): a nonzero raw `ActiveIconID` and
-/// the spell's own aura live with the cancelable bit, so the press cancels instead of casting.
-/// No form guard: a warrior stance has `ActiveIconID` 0. A unit with no aura table holds none.
+/// The active-action predicate: a nonzero raw `ActiveIconID` and the spell's own aura live with the
+/// cancelable bit, so the press cancels instead of casting. No form guard: a warrior stance has
+/// `ActiveIconID` 0. A unit with no aura table holds none.
 pub(crate) fn active_action_toggle(
     spell_id: u32,
     d: &SpellDisplay,
@@ -25,8 +24,8 @@ pub(crate) fn active_action_toggle(
 }
 
 /// The form-match recast: `None` casts (not the active form), `Some(true)` cancels the form,
-/// `Some(false)` is a silent no-op when `SpellShapeshiftForm.flags1 & 0x2` is set (`0x4b35cf`,
-/// twin of the stance bar's `0x4b4963`).
+/// `Some(false)` is a silent no-op when `SpellShapeshiftForm.flags1 & 0x2` is set (twin of the
+/// stance bar's).
 pub(crate) fn form_recast_disposition(
     d: &SpellDisplay,
     form_byte: u8,

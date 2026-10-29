@@ -1,8 +1,7 @@
-//! The `Button` and `CheckButton` methods (`CSimpleButton` `0x6eeab0`, `CSimpleCheckbox`
-//! `0x6eeb30`). The shown state texture latches at each state edge (`SetState` `0x779790`), not at
-//! paint. `<PushedTextOffset>` is not built: a pushed label does not shift.
-//! Lookup runs CheckButton's table, then Button's, then the frame table, the client's class chain,
-//! so `SetChecked` is nil on a plain Button and `GetText` on a plain Frame.
+//! The `Button` and `CheckButton` methods. The shown state texture latches at each state edge, not
+//! at paint. `<PushedTextOffset>` is not built: a pushed label does not shift. Lookup runs
+//! CheckButton's table, then Button's, then the frame table, the client's class chain, so
+//! `SetChecked` is nil on a plain Button and `GetText` on a plain Frame.
 
 use mlua::{Lua, MultiValue, ObjectLike, Table, Value};
 
@@ -44,8 +43,8 @@ impl Slot {
         }
     }
 
-    /// The three state slots go through [`ButtonState::set_state_slot`] (`0x778fd0`), which also
-    /// shows the texture when it is the current state's; the others are plain fields.
+    /// The three state slots go through [`ButtonState::set_state_slot`], which also shows the
+    /// texture when it is the current state's; the others are plain fields.
     fn set(self, bs: &mut ButtonState, rh: Option<crate::widget::RegionHandle>) {
         match self {
             Slot::Normal => bs.set_state_slot(ButtonVisualState::Normal, rh),
@@ -59,7 +58,7 @@ impl Slot {
     }
 
     /// The region kind and default layer: state textures under the label, the highlight in its own
-    /// layer (the draw-layer table `0x811a84`), the checked marks above the state.
+    /// layer, the checked marks above the state.
     fn shape(self) -> (RegionKind, DrawLayer) {
         match self {
             Slot::Normal | Slot::Pushed | Slot::Disabled => {
@@ -89,7 +88,7 @@ fn normal_font_justify(model: &Model, bs: &ButtonState) -> Justify {
 
 /// `SetFontString`'s tail (`0x96f7b0`), which `SetText` also creates its label through
 /// (`0x96f860`): an unanchored label anchors LEFT, RIGHT or CENTER by the normal font's justify,
-/// never its own, then takes the per-state font (`UpdateTextState 0x96f4a0`).
+/// never its own, then takes the per-state font (the text-state update, `0x96f4a0`).
 fn adopt_label(model: &mut Model, owner: FrameHandle, rh: RegionHandle) {
     let point = {
         let Some(frame) = model.arena.frame(owner) else {
@@ -104,11 +103,12 @@ fn adopt_label(model: &mut Model, owner: FrameHandle, rh: RegionHandle) {
     apply_normal_font(model, owner);
 }
 
-/// Link the label to the normal font object (`UpdateTextState 0x96f4a0` → `SetFontObject
-/// 0x485160`), so its `GetFont` answers what it paints; the stock `DropDownList1` reads it
-/// (`UIDropDownMenu.xml:11`). Deviation: a hovered or disabled label still reports the normal
-/// font, since the state fonts are overlaid at paint and a link made here would outlive the state.
-/// `font::repaint` keeps what the label set itself (its severance mask, `CSimpleFontString+0xd4`).
+/// Link the label to the normal font object (the text-state update, `0x96f4a0` →
+/// `SetFontObject 0x485160`), so its `GetFont` answers what it paints; the stock `DropDownList1`
+/// reads it (`UIDropDownMenu.xml:11`). Deviation: a hovered or disabled label still reports the
+/// normal font, since the state fonts are overlaid at paint and a link made here would outlive the
+/// state. `font::repaint` keeps what the label set itself (its severance mask, the font string's
+/// `+0xd4`).
 fn apply_normal_font(model: &mut Model, owner: FrameHandle) {
     let (rh, name) = {
         let Some(frame) = model.arena.frame(owner) else {
@@ -158,11 +158,11 @@ fn with_button<T>(
     }
 }
 
-/// `Enable()`/`Disable()`. `Disable` (`0x77ffd0`) reaches `SetEnabled` (`0x779160`), which also
-/// turns draw layer 4, HIGHLIGHT, off (`0x7791bb`) in the array `DisableDrawLayer` writes, so every
-/// region in that layer goes dark, not only the HighlightTexture. `Enable()` here turns it back
-/// on; the reference restores it only on a hovered button, by re-running its `<OnEnter>`
-/// (`0x779183`), and never while `LockHighlight` holds (`[frame+0xf8]`).
+/// `Enable()`/`Disable()`. `Disable` reaches the button's enable setter, which also turns draw
+/// layer 4, HIGHLIGHT, off in the array `DisableDrawLayer` writes, so every region in that layer
+/// goes dark, not only the HighlightTexture. `Enable()` here turns it back on; the reference
+/// restores it only on a hovered button, by re-running its `<OnEnter>`, and never while
+/// `LockHighlight` holds (`[frame+0xf8]`).
 fn set_enabled(lua: &Lua, this: &Table, on: bool) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let fire = {
@@ -195,7 +195,7 @@ fn set_enabled(lua: &Lua, this: &Table, on: bool) -> mlua::Result<()> {
 }
 
 /// Run an engine state edge over frame `h` if it is a live Button. The reference has six, all of
-/// `0x779790`'s call sites but Lua's: enable, disable, hide, press, release and drag start; the
+/// the reference's call sites but Lua's: enable, disable, hide, press, release and drag start; the
 /// cursor entering or leaving a button is not one.
 pub(super) fn edge(model: &mut Model, h: FrameHandle, f: impl FnOnce(&mut ButtonState)) {
     if let Some(frame) = model.arena.frame_mut(h) {
@@ -206,11 +206,10 @@ pub(super) fn edge(model: &mut Model, h: FrameHandle, f: impl FnOnce(&mut Button
 }
 
 /// Whether a hover edge on `h` reaches the base notify, the HIGHLIGHT layer and the Lua
-/// `<OnEnter>`/`<OnLeave>`: `OnEnter`/`OnLeave` (`0x779490`/`0x7794e0`) skip it on a DISABLED
-/// Button, leaving only the hover sound (`0x7794b0`). Every hover path goes through that pair
-/// (the hover walk `0x766218`, `SetMouseFocus` `0x764dc0`, the hide tail `0x764cce`), and the
-/// Hyperlink and NamePlate overrides chain back (`0x7cb8a5`). The hover target still moves, so
-/// `GetMouseFocus()` answers a disabled button.
+/// `<OnEnter>`/`<OnLeave>`: `OnEnter`/`OnLeave` skip it on a DISABLED Button, leaving only the
+/// hover sound. Every hover path goes through that pair (the mouse-focus set), and the Hyperlink
+/// and NamePlate overrides chain back. The hover target still moves, so `GetMouseFocus()` answers a
+/// disabled button.
 pub(super) fn hover_notify_runs(model: &Model, h: Option<FrameHandle>) -> bool {
     let Some(h) = h else { return true };
     match model.arena.frame(h).map(|f| &f.kind_state) {
@@ -240,10 +239,9 @@ fn ensure_slot(lua: &Lua, this: &Table, slot: Slot) -> mlua::Result<u32> {
                 .arena
                 .create_region(h, kind, layer, 0)
                 .ok_or_else(|| mlua::Error::runtime("stale frame handle"))?;
-            // A new highlight blends ADD, `SetHighlightTexture`'s default (`0x781d92`). The
-            // reference applies that mode, or a third argument's, on every call and to a handed-in
-            // Texture too (`0x7703f0` from `0x779050` and `0x779110`); here only a new region
-            // takes it.
+            // A new highlight blends ADD, `SetHighlightTexture`'s default. The reference applies
+            // that mode, or a third argument's, on every call and to a handed-in Texture too; here
+            // only a new region takes it.
             model.region_data.insert(
                 rh,
                 RegionData {
@@ -262,8 +260,8 @@ fn ensure_slot(lua: &Lua, this: &Table, slot: Slot) -> mlua::Result<u32> {
                     slot.set(bs, Some(rh));
                 }
             }
-            // Only a new region gets an implicit anchor: a state texture fills the button
-            // (`0x778f9d`/`0x7790db`), a label goes to the adopter (`0x96f860` → `0x96f7b0`).
+            // Only a new region gets an implicit anchor: a state texture fills the button, a label
+            // goes to the adopter (`0x96f860` → `0x96f7b0`).
             match slot {
                 Slot::Text => adopt_label(&mut model, h, rh),
                 _ => super::region::implicit_creation_anchor(&mut model, rh),
@@ -275,7 +273,7 @@ fn ensure_slot(lua: &Lua, this: &Table, slot: Slot) -> mlua::Result<u32> {
 }
 
 /// Point `slot` at `rh` or at nothing, returning the different region it held for the caller to
-/// free, as the slot store `0x778fd0` destroys the outgoing object.
+/// free, as the slot store destroys the outgoing object.
 fn swap_slot(
     model: &mut Model,
     h: FrameHandle,
@@ -303,11 +301,11 @@ fn free_outgoing(lua: &Lua, outgoing: Option<RegionHandle>, incoming: RegionHand
     }
 }
 
-/// `Set<State>Texture(texture | "path" | nil)`, forked on the argument's type (`0x781970`). The
-/// object and nil legs never touch the slot's own region, so they run before [`ensure_slot`]
-/// would create one. There is no colour form: a number takes the path leg through `lua_isstring`
-/// (`0x781b23`) and loads as its own decimal name, so `(1, 1, 1, 0)` is the file `"1"`; anything
-/// else, no argument included, raises `Usage: <name>:<usage>` (`0x87a1b4`).
+/// `Set<State>Texture(texture | "path" | nil)`, forked on the argument's type. The object and nil
+/// legs never touch the slot's own region, so they run before [`ensure_slot`] would create one.
+/// There is no colour form: a number takes the path leg through `lua_isstring` and loads as its own
+/// decimal name, so `(1, 1, 1, 0)` is the file `"1"`; anything else, no argument included, raises
+/// `Usage: <name>:<usage>`.
 fn set_slot_texture(
     lua: &Lua,
     this: &Table,
@@ -316,12 +314,12 @@ fn set_slot_texture(
     args: &MultiValue,
 ) -> mlua::Result<()> {
     match args.front() {
-        // A Texture object is itself installed into the slot (`0x781b0b` → `0x778fd0`).
+        // A Texture object is itself installed into the slot.
         Some(Value::Table(t)) => {
             let rh = super::region::region_handle_of(lua, t)?;
             let h = frame_handle_of(lua, this)?;
             let mut model = crate::script::model_mut_of(lua);
-            // Any other widget raises (`0x781ab1`, message `0x87a1e0`).
+            // Any other widget raises.
             if model.arena.region(rh).map(|r| r.kind) != Some(RegionKind::Texture) {
                 return Err(mlua::Error::runtime("Wrong object type, expected texture"));
             }
@@ -330,9 +328,8 @@ fn set_slot_texture(
             free_outgoing(lua, outgoing, rh);
             return Ok(());
         }
-        // nil clears the slot and destroys the old region (`0x781b5a` → `0x778fd0`): unhooked but
-        // alive, it would draw in every state. No argument is not nil (`0x781b4f`) and clears
-        // nothing.
+        // nil clears the slot and destroys the old region: unhooked but alive, it would draw in
+        // every state. No argument is not nil and clears nothing.
         Some(Value::Nil) => {
             let h = frame_handle_of(lua, this)?;
             let mut model = crate::script::model_mut_of(lua);
@@ -346,7 +343,7 @@ fn set_slot_texture(
         _ => {}
     }
 
-    // `lua_tostring` (`0x781b33`): a number converts as `%.14g`, as the stack's coercion does.
+    // `lua_tostring`: a number converts as `%.14g`, as the stack's coercion does.
     let path = match args.front() {
         Some(v @ (Value::String(_) | Value::Number(_) | Value::Integer(_))) => {
             lua.coerce_string(v.clone())?.map(|s| s.to_string_lossy())
@@ -393,8 +390,8 @@ fn get_slot_texture(lua: &Lua, this: &Table, slot: Slot) -> mlua::Result<Value> 
 /// Register one `Set<X>Texture`/`Get<X>Texture` pair on `m`.
 fn texture_pair(lua: &Lua, m: &Table, name: &str, slot: Slot) -> mlua::Result<()> {
     let method = format!("Set{name}Texture");
-    // The highlight setter's own line names its blend argument (`0x87a240`), unclosed as in the
-    // reference; the others share `0x87a1b4`.
+    // The highlight setter's own line names its blend argument, unclosed as in the reference; the
+    // others share.
     let usage = if slot == Slot::Highlight {
         format!("{method}(texture or \"texture\" or nil [, \"blendmode\")")
     } else {
@@ -436,8 +433,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetText",
         lua.create_function(|lua, (this, text): (Table, Option<Value>)| {
             let text = super::binding_abi::text_arg(lua, text)?;
-            // A nil returns at once (`0x778dcc`): no clear, no label created. The guard is the
-            // button's own; `FontString:SetText(nil)` clears (`0x771d80`).
+            // A nil returns at once: no clear, no label created. The guard is the button's own;
+            // `FontString:SetText(nil)` clears.
             let Some(text) = text else { return Ok(()) };
             set_label(lua, &this, text)
         })?,
@@ -454,7 +451,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             set_label(lua, &this, text)
         })?,
     )?;
-    // GetText (`0x780e10`): nil for no label, and for an empty one (`0x780ec5`).
+    // GetText: nil for no label, and for an empty one.
     m.set(
         "GetText",
         lua.create_function(|lua, this: Table| {
@@ -479,9 +476,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // SetFontString(fontString) (`0x9777c0` → `0x96f7b0`) raises, naming the button, on a
-    // non-table (`0x87a100`), nil included, so Lua cannot clear the label; on a non-widget
-    // (`0x87a160`); on a non-FontString (`0x87a124`). The same label is a no-op; otherwise the old
-    // one is destroyed and the new one moves to the button at ARTWORK (`0x77fd10`) and is adopted.
+    // non-table, nil included, so Lua cannot clear the label; on a non-widget; on a non-FontString.
+    // The same label is a no-op; otherwise the old one is destroyed and the new one moves to the
+    // button at ARTWORK and is adopted.
     m.set(
         "SetFontString",
         lua.create_function(|lua, args: MultiValue| {
@@ -506,8 +503,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     "Usage: {who}:SetFontString(fontstring)"
                 )));
             };
-            // Two checks in the reference's order, a widget at all (`0x780b27`), then a FontString
-            // (`0x780b90`), so a Frame or a Texture gets the second message.
+            // Two checks in the reference's order, a widget at all, then a FontString, so a Frame
+            // or a Texture gets the second message.
             let rh = {
                 let not_an_object = || {
                     mlua::Error::runtime(format!(
@@ -554,7 +551,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             };
             let reshaped = is_node(&model, rh) || old.is_some_and(|dead| is_node(&model, dead));
             if let Some(dead) = old {
-                // Destroyed, not orphaned (`0x778d3c`).
+                // Destroyed, not orphaned.
                 super::region::free_region(&mut model, dead);
             }
             model.arena.set_region_owner(rh, Some(owner));
@@ -643,10 +640,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetFont(file, height [, flags]) (`0x780880`) sets all three embedded fonts and returns
-    // nothing, discarding the shared `0x79f210`'s load result. It never touches the label
-    // (`+0x338`), so creates none: extract applies the stored font to whatever label exists. Its
-    // checks are 5.0's coercing `lua_isstring`/`lua_isnumber`, else a usage error (`0x87c69c`).
+    // SetFont(file, height [, flags]) sets all three embedded fonts and returns nothing, discarding
+    // the shared font load's result. It never touches the label (`+0x338`), so creates none:
+    // extract applies the stored font to whatever label exists. Its checks are 5.0's coercing
+    // `lua_isstring`/`lua_isnumber`, else a usage error.
     m.set(
         "SetFont",
         lua.create_function(
@@ -679,8 +676,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             },
         )?,
     )?;
-    // GetFont() (`0x7809a0` → `0x79f3b0`) → file, height, flags off the normal font, else the
-    // object it inherits (`<NormalFont>`, `SetNormalFontObject`); always three values.
+    // GetFont() → file, height, flags off the normal font, else the object it inherits
+    // (`<NormalFont>`, `SetNormalFontObject`); always three values.
     m.set(
         "GetFont",
         lua.create_function(|lua, this: Table| {
@@ -716,7 +713,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetTextColor",
         lua.create_function(
             |lua, (this, r, g, b, a): (Table, Value, Value, Value, Option<f32>)| {
-                // Shape C on the channels (`Button:SetTextColor 0x780ee0`, `2=C 3=C 4=C 5=B`).
+                // Shape C on the channels (`Button:SetTextColor`, `2=C 3=C 4=C 5=B`).
                 let (r, g, b) = (
                     super::object::as_f32(&r),
                     super::object::as_f32(&g),
@@ -728,8 +725,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             },
         )?,
     )?;
-    // GetTextColor() (`0x781100`) → r, g, b, a, four values, off the normal font: its own colour,
-    // else the inherited object's (`<NormalFont>`, `SetNormalFontObject`), else white.
+    // GetTextColor() → r, g, b, a, four values, off the normal font: its own colour, else the
+    // inherited object's (`<NormalFont>`, `SetNormalFontObject`), else white.
     m.set(
         "GetTextColor",
         lua.create_function(|lua, this: Table| {
@@ -751,7 +748,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetHighlightTextColor",
         lua.create_function(
             |lua, (this, r, g, b, a): (Table, Value, Value, Value, Option<f32>)| {
-                // Shape C on the channels (`Button:SetTextColor 0x780ee0`, `2=C 3=C 4=C 5=B`).
+                // Shape C on the channels (`Button:SetTextColor`, `2=C 3=C 4=C 5=B`).
                 let (r, g, b) = (
                     super::object::as_f32(&r),
                     super::object::as_f32(&g),
@@ -767,7 +764,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "SetDisabledTextColor",
         lua.create_function(
             |lua, (this, r, g, b, a): (Table, Value, Value, Value, Option<f32>)| {
-                // Shape C on the channels (`Button:SetTextColor 0x780ee0`, `2=C 3=C 4=C 5=B`).
+                // Shape C on the channels (`Button:SetTextColor`, `2=C 3=C 4=C 5=B`).
                 let (r, g, b) = (
                     super::object::as_f32(&r),
                     super::object::as_f32(&g),
@@ -780,7 +777,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?,
     )?;
 
-    // LockHighlight (`0x782840`) and UnlockHighlight: the highlight shows regardless of hover.
+    // LockHighlight and UnlockHighlight: the highlight shows regardless of hover.
     m.set(
         "LockHighlight",
         lua.create_function(|lua, this: Table| {
@@ -802,8 +799,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         "Disable",
         lua.create_function(|lua, this: Table| set_enabled(lua, &this, false))?,
     )?;
-    // IsEnabled() (`0x7800b0`) → the number 1 or 0 from the state at `+0x328`, never a boolean:
-    // 0 is truthy in Lua, and the stock UI tests `== 0` (`FriendsFrame.lua:404`) and `== 1`
+    // IsEnabled() → the number 1 or 0 from the state at `+0x328`, never a boolean: 0 is truthy in
+    // Lua, and the stock UI tests `== 0` (`FriendsFrame.lua:404`) and `== 1`
     // (`StaticPopup.lua:713`).
     m.set(
         "IsEnabled",
@@ -829,10 +826,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetButtonState(state [, lock]) (`0x780270`): DISABLED, NORMAL or PUSHED in any case
-    // (`0x780390`), else a usage error; `lock` is `GetBoolOrDefault` with default 0 (`0x78032c`),
-    // so the `1` of `MainMenuBarMicroButtons.lua:22` sets it. While locked, presses and releases
-    // leave the state alone; unlocked, the next release un-pushes a scripted push.
+    // SetButtonState(state [, lock]): DISABLED, NORMAL or PUSHED in any case, else a usage error;
+    // `lock` reads as a boolean with default 0, so the `1` of `MainMenuBarMicroButtons.lua:22` sets
+    // it. While locked, presses and releases leave the state alone; unlocked, the next release
+    // un-pushes a scripted push.
     m.set(
         "SetButtonState",
         lua.create_function(|lua, (this, state, lock): (Table, String, MultiValue)| {
@@ -855,8 +852,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     m.set(
         "GetButtonState",
         lua.create_function(|lua, this: Table| {
-            // The latched state (`0x780180` reads `+0x328`): a held button answers PUSHED because
-            // its press wrote it, which the chat scroll repeat reads (`ChatFrame.lua:1588`).
+            // The latched state (the reference reads `+0x328`): a held button answers PUSHED
+            // because its press wrote it, which the chat scroll repeat reads
+            // (`ChatFrame.lua:1588`).
             let h = frame_handle_of(lua, &this)?;
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
@@ -872,7 +870,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // Click([button]) (`0x7826c0`): the physical click's path, toggle and `OnClick` alike.
+    // Click([button]): the physical click's path, toggle and `OnClick` alike.
     m.set(
         "Click",
         lua.create_function(|lua, (this, button): (Table, Option<String>)| {
@@ -896,12 +894,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     c.set(
         "SetChecked",
         lua.create_function(|lua, (this, v): (Table, Value)| {
-            // `SetChecked` (`0x799bf0`) reads its argument through `0x6f1c10` with default 1
-            // (`0x799c77`), not Lua truthiness: a number truncates toward zero (`0x40a2b0`), so
-            // `SetChecked(0)` unchecks, and the stock UI passes `"true"`/`"false"`
-            // (`SpellBookFrame.lua:296-303`). Here a missing argument unchecks and a string checks
-            // only as `"true"` or a nonzero number, where the reference checks for a missing one
-            // and reads a string by its first byte, so `"yes"` checks there.
+            // `SetChecked` reads its argument through the reference's boolean read with default 1,
+            // not Lua truthiness: a number truncates toward zero, so `SetChecked(0)` unchecks, and
+            // the stock UI passes `"true"`/`"false"` (`SpellBookFrame.lua:296-303`). Here a missing
+            // argument unchecks and a string checks only as `"true"` or a nonzero number, where the
+            // reference checks for a missing one and reads a string by its first byte, so `"yes"`
+            // checks there.
             let checked = match v {
                 Value::Boolean(b) => b,
                 Value::Integer(i) => i != 0,
@@ -939,8 +937,8 @@ pub(super) fn wants_click(model: &Model, h: FrameHandle, button: &str, up: bool)
     }
 }
 
-/// Whether a press on `h` pushes the art: any Button, whatever its click mask, since
-/// `OnLayerMouseDown` (`0x96fb34`) sets PUSHED after the mask test, not under it.
+/// Whether a press on `h` pushes the art: any Button, whatever its click mask, since The layer
+/// mouse-down (`0x96fb34`) sets PUSHED after the mask test, not under it.
 pub(super) fn wants_press_visual(model: &Model, h: FrameHandle) -> bool {
     matches!(
         model.arena.frame(h).map(|f| &f.kind_state),
@@ -949,8 +947,8 @@ pub(super) fn wants_press_visual(model: &Model, h: FrameHandle) -> bool {
 }
 
 /// The click shared by the input path and `Click()`: a disabled Button fires nothing, a CheckButton
-/// toggles before `OnClick` runs (`0x785550`), then `OnClick` gets the button name alone as `arg1`
-/// (`0x779540` fires it with the format `"%s"`); `down`, true only for a click a `…ButtonDown`
+/// toggles before `OnClick` runs, then `OnClick` gets the button name alone as `arg1` (the
+/// reference fires it with the format `"%s"`); `down`, true only for a click a `…ButtonDown`
 /// registration fired, reaches the nameplate's select alone.
 pub(super) fn click_button(lua: &Lua, id: u32, button: &str, down: bool) {
     let fire = {
@@ -999,9 +997,9 @@ pub(super) fn click_button(lua: &Lua, id: u32, button: &str, down: bool) {
         }
     }
     crate::script::model_mut_of(lua).click_button = outer;
-    // A nameplate click selects its unit, from the pointer or `Click()` alike (the plate's
-    // override `0x7cb910` chains the base), after the handler so an erroring hook cannot eat it. A
-    // press selects nothing: the plate registers Up clicks only (`0x7cb637`).
+    // A nameplate click selects its unit, from the pointer or `Click()` alike (the plate's override
+    // chains the base), after the handler so an erroring hook cannot eat it. A press selects
+    // nothing: the plate registers Up clicks only.
     if !down {
         super::nameplate::note_click(lua, id, button);
     }

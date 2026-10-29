@@ -1,10 +1,8 @@
-//! The `ColorSelect` methods: the `CSimpleColorSelect` widget (factory `0x6eef90`, XML load
-//! `0x78b3f0`), one colour held as HSV floats. `SetColorRGB` fires `OnColorSelect` (script map
-//! `0x78b4f0`, slot `+0x338`) on every call: `0x78ed01` calls `0x78bae0`, whose only test
-//! (`0x78bafd`) is for a bound handler, while `CSimpleSlider::SetValue` (`0x789930`) skips an equal
-//! value. The RGB round trip loses a step on 9.75 % of colours, as in the reference: in and out use
-//! different quantizers (round-half-up, then floor), so reading back and setting ratchets a channel
-//! down; see [`ColorSelectState`].
+//! The `ColorSelect` methods: the colour-select widget, one colour held as HSV floats.
+//! `SetColorRGB` fires `OnColorSelect` (slot `+0x338`) on every call, whose only test is for a
+//! bound handler, while a slider's `SetValue` skips an equal value. The RGB round trip loses a step
+//! on 9.75 % of colours, as in the reference: in and out use different quantizers (round-half-up,
+//! then floor), so reading back and setting ratchets a channel down; see [`ColorSelectState`].
 
 use mlua::{Lua, Table, Value};
 
@@ -38,8 +36,8 @@ fn with_colorselect<T>(
     }
 }
 
-/// One of the widget's four texture sub-objects: the press handler (`0x78bf10`) hit-tests the
-/// wheel (`+0x318`) and the strip (`+0x320`); the thumbs are output only, placed at extract.
+/// One of the widget's four texture sub-objects: the press handler hit-tests the wheel (`+0x318`)
+/// and the strip (`+0x320`); the thumbs are output only, placed at extract.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Slot {
     Wheel,
@@ -68,8 +66,8 @@ impl Slot {
         *slot = Some(rh);
     }
 
-    /// The layer a slot's region is born on: ARTWORK for the art (the wheel's layer 2, through
-    /// `0x77fd10`), OVERLAY for the two markers above it.
+    /// The layer a slot's region is born on: ARTWORK for the art (the wheel's layer 2), OVERLAY for
+    /// the two markers above it.
     fn layer(self) -> DrawLayer {
         match self {
             Slot::Wheel | Slot::ValueStrip => DrawLayer::Artwork,
@@ -120,7 +118,7 @@ fn ensure_slot(lua: &Lua, this: &Table, slot: Slot, layer: Option<DrawLayer>) ->
 
 /// `Set<Slot>Texture([path [, drawLayer]] | r, g, b [, a])`, plus an empty form that only creates
 /// the region: what `<ColorWheelTexture/>` means. A file-less slot is where the app renderer paints
-/// the disc and strip the reference computes (`0x78b580`, `0x78b8a0`).
+/// the disc and strip the reference computes.
 fn install_slot_texture(
     lua: &Lua,
     m: &Table,
@@ -199,7 +197,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     m.set(
         "SetColorRGB",
-        // Shape C on r, g, b (`ColorSelect:SetColorRGB 0x78eae0`, `2=C 3=C 4=C 5=B`).
+        // Shape C on r, g, b (`ColorSelect:SetColorRGB`, `2=C 3=C 4=C 5=B`).
         lua.create_function(|lua, (this, r, g, b): (Table, Value, Value, Value)| {
             let (r, g, b) = (
                 crate::script::object::as_f64(&r),
@@ -220,8 +218,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         lua.create_function(|lua, this: Table| with_colorselect(lua, &this, |s| s.rgb_f64()))?,
     )?;
 
-    // The four texture accessors (`0x78de90`, `0x78e160`, `0x78e450`, `0x78e720`; getters
-    // `0x78dd80`, `0x78e070`), through which the XML loader installs a ColorSelect's elements.
+    // The four texture accessors, through which the XML loader installs a ColorSelect's elements.
     install_slot_texture(
         lua,
         &m,
@@ -274,7 +271,7 @@ fn fire_color_select(lua: &Lua, this: &Table, r: f64, g: f64, b: f64) -> mlua::R
 }
 
 /// The wheel's normalised coordinates for `(x, y)`: the offset from its centre over its
-/// half-extents, so a non-square wheel normalises to a disc (`0x78bdd0`); y is up, as the client's.
+/// half-extents, so a non-square wheel normalises to a disc; y is up, as in the client.
 fn wheel_norm(r: Rect, x: f32, y: f32) -> (f32, f32) {
     let hw = (r.right - r.left) * 0.5;
     let hh = (r.top - r.bottom) * 0.5;
@@ -295,8 +292,8 @@ fn wheel_hs(r: Rect, x: f32, y: f32) -> (f32, f32) {
     (hue, radius.min(1.0))
 }
 
-/// The brightness a press or drag at `y` writes: the clamped fraction of the way up the strip
-/// (`0x78beed`); x is ignored, so a drag may wander sideways off it.
+/// The brightness a press or drag at `y` writes: the clamped fraction of the way up the strip; x is
+/// ignored, so a drag may wander sideways off it.
 fn strip_value(r: Rect, y: f32) -> f32 {
     let span = r.top - r.bottom;
     if span == 0.0 {
@@ -306,10 +303,10 @@ fn strip_value(r: Rect, y: f32) -> f32 {
 }
 
 /// The wheel marker's rect, seated where the current `(H, S)` came from, the inverse of
-/// [`wheel_hs`]: `0x78bc20` sets its `CENTER` at `(−m·cos θ, −m·sin θ)` from the wheel's, with
-/// `m = GetWidth(wheel)·0.5·S`, the negations being the pick's `+π`. The width serves both axes,
-/// as in the reference, though the pick divides y by half the height. `S == 0` centres it, so the
-/// `-1` grey hue sentinel is harmless.
+/// [`wheel_hs`]: the reference sets its `CENTER` at `(−m·cos θ, −m·sin θ)` from the wheel's, with
+/// `m = GetWidth(wheel)·0.5·S`, the negations being the pick's `+π`. The width serves both axes, as
+/// in the reference, though the pick divides y by half the height. `S == 0` centres it, so the `-1`
+/// grey hue sentinel is harmless.
 pub(super) fn wheel_thumb_rect(wheel: Rect, thumb_size: Option<(f32, f32)>, hsv: [f32; 3]) -> Rect {
     let (tw, th) = thumb_size.unwrap_or((0.0, 0.0));
     let cx = (wheel.left + wheel.right) * 0.5;
@@ -320,10 +317,9 @@ pub(super) fn wheel_thumb_rect(wheel: Rect, thumb_size: Option<(f32, f32)>, hsv:
     Rect::new(y - th * 0.5, x - tw * 0.5, y + th * 0.5, x + tw * 0.5)
 }
 
-/// The value marker's rect: centred on the strip and `V` of the way up from its bottom
-/// (`0x78bcf0`), scaled by the wheel's height, not the strip's, as the reference reads
-/// `[this+0x318]`. Deviation: with no wheel it scales by the strip's, because the reference reads
-/// the missing wheel unguarded.
+/// The value marker's rect: centred on the strip and `V` of the way up from its bottom, scaled by
+/// the wheel's height, not the strip's, as the reference reads `[this+0x318]`. Deviation: with no
+/// wheel it scales by the strip's, because the reference reads the missing wheel unguarded.
 pub(super) fn value_thumb_rect(
     strip: Rect,
     wheel: Option<Rect>,
@@ -356,8 +352,8 @@ fn hit_rects(model: &Model, h: FrameHandle) -> (Option<Rect>, Option<Rect>) {
     (rect(wheel), rect(strip))
 }
 
-/// On a LeftButton press inside a wheel or strip, capture the drag and apply it at once, as
-/// `0x78bf10` does, so a click jumps the colour; returns the id and colour the caller fires.
+/// On a LeftButton press inside a wheel or strip, capture the drag and apply it at once, as the
+/// reference does, so a click jumps the colour; returns the id and colour the caller fires.
 pub(super) fn begin_drag(
     model: &mut Model,
     hit: Option<FrameHandle>,
@@ -380,7 +376,7 @@ pub(super) fn begin_drag(
 }
 
 /// On a pointer move during a drag, write the captured H/S and V into the widget's HSV and return
-/// the frame id and colour to fire with, on every move: there is no change gate (`0x78bafd`).
+/// the frame id and colour to fire with, on every move: there is no change gate.
 pub(super) fn drag_move(model: &mut Model, x: f32, y: f32) -> Option<(u32, f64, f64, f64)> {
     let ColorDrag {
         frame,
@@ -419,7 +415,7 @@ pub(super) fn drag_move(model: &mut Model, x: f32, y: f32) -> Option<(u32, f64, 
     Some((model.frame_id(frame), rgb.0, rgb.1, rgb.2))
 }
 
-/// Release a colour drag (LeftButton up or the pointer leaving): `0x78bf90` clears both flags.
+/// Release a colour drag (LeftButton up or the pointer leaving): the reference clears both flags.
 pub(super) fn end_drag(model: &mut Model) {
     model.color_drag = None;
 }
@@ -630,8 +626,8 @@ mod tests {
         assert!(file.contains("UI-ColorPicker-Buttons"), "got {file}");
     }
 
-    /// The disc (`0x78b580`) and the pick (`0x78bdd0`) are inverses: left is red, right cyan, top
-    /// violet, bottom chartreuse, and a sign error flips two of the four.
+    /// The disc and the pick are inverses: left is red, right cyan, top violet, bottom chartreuse,
+    /// and a sign error flips two of the four.
     #[test]
     fn a_click_on_the_wheel_picks_the_hue_under_the_cursor() {
         let mut s = picker();
@@ -669,8 +665,8 @@ mod tests {
         );
     }
 
-    /// The press is the first move, and the capture is a flag, not a hit test per move (`0x78bd80`
-    /// is gated on `+0x314`); dragging from red to cyan without lifting proves both.
+    /// The press is the first move, and the capture is a flag, not a hit test per move (the
+    /// reference is gated on `+0x314`); dragging from red to cyan without lifting proves both.
     #[test]
     fn a_wheel_drag_keeps_the_capture_when_the_cursor_wanders_off() {
         let mut s = picker();
@@ -729,7 +725,7 @@ mod tests {
         let _ = (w, l);
     }
 
-    /// Even a step onto the colour already held fires (`0x78bafd`).
+    /// Even a step onto the colour already held fires.
     #[test]
     fn the_drag_fires_on_every_move_with_no_change_gate() {
         let mut s = picker();

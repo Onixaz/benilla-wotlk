@@ -79,9 +79,9 @@ impl Vertical {
         }
     }
 
-    /// The flags end without a packet of their own: StopSwim (`0x98bff0`) and StartFalling
-    /// (`0x988370`) mask them off with SWIMMING, and the root apply keeps neither (`0x9884b8`,
-    /// `and 0xff203f00`). The input latch stays, so only a held-bit change re-arms the ascent.
+    /// The flags end without a packet of their own: the swim stop (`0x98bff0`) and the fall start
+    /// (`0x988370`) mask them off with SWIMMING, and the root apply keeps neither (`0x9884b8`, `and
+    /// 0xff203f00`). The input latch stays, so only a held-bit change re-arms the ascent.
     pub(super) fn end(&mut self) {
         self.ascending = false;
         self.descending = false;

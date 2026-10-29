@@ -410,9 +410,9 @@ fn every_archive_path_a_shipped_lua_chunk_names_survives_its_own_escaping() {
 }
 
 /// Every shipped `text=` answers against the real `GlobalStrings.lua`: `text=` is a lookup
-/// (`FrameScript_GetText`, `0x703bf0`) that shows the raw attribute only on a miss (`0x778c07`).
-/// A key-shaped value must resolve, or it shows its own key; a literal must not collide with a
-/// global, or the lookup swaps in that string.
+/// (the global-string lookup) that shows the raw attribute only on a miss. A key-shaped value must
+/// resolve, or it shows its own key; a literal must not collide with a global, or the lookup swaps
+/// in that string.
 #[test]
 fn every_shipped_text_attribute_answers_against_the_real_global_strings() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -1021,9 +1021,8 @@ fn the_layer_does_not_grow() {
 /// The layer speaks the dialect of the FrameXML it loads over: a 3.3.5a handler body is compiled
 /// under its parameter list (`self`, `delta`, `value`, ...), and the client sets `this` and `event`
 /// around a handler but no `argN` global (no such name in the 12340 binary), so a body reads its
-/// arguments, never `arg1`. The strata table (`0x8119f8`) has no `BLIZZARD`; `SetDrawLayer`
-/// (`0x79a780`) takes a layer name alone; and a button's state textures take a texture, never a
-/// colour (`0x781970`).
+/// arguments, never `arg1`. The strata table has no `BLIZZARD`; `SetDrawLayer` takes a layer name
+/// alone; and a button's state textures take a texture, never a colour.
 #[test]
 fn the_layer_speaks_the_3_3_5a_dialect() {
     fn handlers(el: &benilla_ui::framexml::Element, out: &mut Vec<(String, String)>) {

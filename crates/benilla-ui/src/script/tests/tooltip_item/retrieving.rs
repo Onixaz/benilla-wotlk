@@ -1,6 +1,6 @@
 //! The retrieving tooltip: a template in flight shows `RETRIEVING_ITEM_INFO` in red and shown
-//! (`SetItemNoStats 0x623760`), and the record's arrival repaints the tooltip with no new `Set*`
-//! call (`TooltipItemCallback 0x626650`).
+//! (`0x623760`), and the record's arrival repaints the tooltip with no new `Set*` call
+//! (`0x626650`).
 
 use super::{axe, lines_of, script};
 use crate::script::*;

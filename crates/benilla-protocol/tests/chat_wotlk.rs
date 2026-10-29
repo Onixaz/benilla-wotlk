@@ -78,8 +78,7 @@ fn a_monster_say_reads_the_inline_names() {
     assert_eq!(m.text, "Grr");
 }
 
-/// The achievement lane: the earner in the receiver guid, the id after the chat tag
-/// (`0x50c1cd`).
+/// The achievement lane: the earner in the receiver guid, the id after the chat tag.
 #[test]
 fn an_achievement_line_keeps_its_id() {
     let mut body = vec![0x30];

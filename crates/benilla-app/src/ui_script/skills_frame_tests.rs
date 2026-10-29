@@ -1,7 +1,7 @@
 //! The stock Skills page (`SkillFrame.xml`), driven engine-only. `SkillFrame.lua`'s
 //! `skillMaxRank == 1` gate paints a gray bar with no rank text: for armor proficiencies (1/1 from
 //! the server) and for single-rank lines (`mono`), whose max the reference forces to 1 off
-//! `SkillRaceClassInfo.flags & 0x400` whatever the server sends (`0x4d3610`, branch `0x4d38b1`).
+//! `SkillRaceClassInfo.flags & 0x400` whatever the server sends.
 
 use benilla_ui::script::{QuadContent, SkillEntry, SkillsState, UiScript, UnitState};
 
@@ -323,8 +323,8 @@ fn the_pages_close_button_sits_where_the_reference_seats_it_and_closes_the_windo
         "CENTER of the page's TOPLEFT at (305,-422), 80x22 (ref l.339-348)"
     );
 
-    // `text=` looks up GlobalStrings (`0x703bf0`), else keeps the raw attribute (`0x778c31`,
-    // `0x771032`); `CLOSE` is "Close" (`GlobalStrings.lua:760`).
+    // `text=` looks up GlobalStrings, else keeps the raw attribute; `CLOSE` is "Close"
+    // (`GlobalStrings.lua:760`).
     let label = page_quads(&s)
         .iter()
         .find_map(|q| match &q.content {
@@ -447,8 +447,8 @@ fn the_expand_tab_fits_its_label_at_load() {
 }
 
 /// `SkillListScrollFrame` is 220 tall (`SkillFrame.xml:468`), so its overflow `n * 15 - 220` is
-/// 40px short of the bar's `(n - 12) * 15`; the reference stores the scroll value unclamped
-/// (`0x786db0`), so the bar's end shows the last line.
+/// 40px short of the bar's `(n - 12) * 15`; the reference stores the scroll value unclamped, so the
+/// bar's end shows the last line.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_list_reaches_its_last_row_at_the_bars_end() {

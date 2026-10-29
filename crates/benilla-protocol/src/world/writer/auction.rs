@@ -1,5 +1,5 @@
-//! The auction house sends of `CGAuctionHouse`; each carries the auctioneer guid. Sell, bid and
-//! cancel answer `SMSG_AUCTION_COMMAND_RESULT`.
+//! The auction house sends of the reference's auction house; each carries the auctioneer guid.
+//! Sell, bid and cancel answer `SMSG_AUCTION_COMMAND_RESULT`.
 
 use anyhow::Result;
 

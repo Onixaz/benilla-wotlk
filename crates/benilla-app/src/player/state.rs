@@ -11,84 +11,83 @@ pub(super) const RUN_BACK_RATIO: f32 = 4.5 / 7.0;
 /// Walk over run, the stock 2.5 / 7.0, for the same synthetic speed set as [`RUN_BACK_RATIO`].
 pub(super) const WALK_RATIO: f32 = 2.5 / 7.0;
 
-/// Turn rate (rad/s) until the mover's own arrives: the live rate is its sixth speed,
-/// `CMovement+0x9c` (set by `0x7c6ff0`, read by `GetYawRate` `0x7c5c50`), which the ctor `0x7c4850`
-/// zeroes, so π is the server's value and the client keeps no default.
+/// Turn rate (rad/s) until the mover's own arrives: the live rate is its sixth speed, the movement
+/// block's `+0x9c` (read by the yaw-rate getter), which the constructor zeroes, so π is the
+/// server's value and the client keeps no default.
 pub(super) const TURN_RATE: f32 = std::f32::consts::PI;
 
-/// The mouse-look pitch clamp, ±89° (`0x8089d8`, on the camera-to-`SetPitch` path); the ±π/2 clamp
-/// belongs to the pitch-key integrator `0x7c4f80`, whose keys are unbound by default.
+/// The mouse-look pitch clamp, ±89° (on the camera-to-pitch-setter path); the ±π/2 clamp belongs to
+/// the pitch-key integrator, whose keys are unbound by default.
 pub(super) const MOUSELOOK_PITCH_CLAMP: f32 = 1.553_343;
 
-/// Water walking sees the water only while the mover pitch is strictly above −37° (`[0x80dfe8]`,
-/// the third gate of the trace-mask arm `0x6315f0`); aiming lower sinks a water-walker in.
+/// Water walking sees the water only while the mover pitch is strictly above −37°; aiming lower
+/// sinks a water-walker in.
 pub(super) const WATER_WALK_PITCH_FLOOR: f32 = -0.645_771_8;
 /// Turn-rate scale while translating or falling (`flags & 0x200f`).
 pub(super) const TURN_RATE_MOVING: f32 = 0.75;
 
 /// Once steering stops, the rendered body closes on the aim at `turnRate × 8` rad/s, clamped to the
-/// gap (`0x607ed0`); while steering, only the 90° ceiling moves it (`0x60818a`-`0x6081bf`).
+/// gap; while steering, only the 90° ceiling moves it.
 pub(super) const STATIONARY_CHASE_RATE: f32 = 8.0;
 
 // ── Character controller ─────────────────────────────────────────────────────────
 
-/// Capsule radius (yd), the `CMovement` ctor's placeholder 1/3. The reference overwrites it per
-/// model from `CreatureModelData` (`0x6174b0`: human male 0.30555, female 0.20835); not built here.
+/// Capsule radius (yd), the movement constructor's placeholder 1/3. The reference overwrites it per
+/// model from `CreatureModelData` (female 0.20835); not built here.
 pub(crate) const CAPSULE_RADIUS: f32 = 1.0 / 3.0;
 /// Capsule total height (yd), one for every body: the swept shape and the head and feet offsets.
 /// Numerically [`DEFAULT_COLLISION_HEIGHT`], but a unit's depth lines use its per-model
 /// [`crate::entities::CollisionHeight`] instead.
 pub(crate) const CAPSULE_HEIGHT: f32 = 2.027_777_7;
 
-/// The `CMovement` ctor's collision height (`0x616fd8`), before `0x6174b0` sets the model's: the
-/// depth lines' fallback for a unit whose display id has no `CreatureModelData` row.
+/// The movement constructor's collision height, before the reference sets the model's: the depth
+/// lines' fallback for a unit whose display id has no `CreatureModelData` row.
 pub(crate) const DEFAULT_COLLISION_HEIGHT: f32 = 2.027_777_7;
 /// Gravity (yd/s²), the reference's and vmangos's `Movement::gravity`; also avian's `Gravity`, and
 /// [`crate::net`] replays relayed jump arcs under it so an observer's arc matches the mover's.
 pub(crate) const GRAVITY: f32 = 19.291_105;
 /// Jump take-off speed (yd/s), the reference's.
 pub(super) const JUMP_SPEED: f32 = 7.955_547;
-/// Terminal fall speed (yd/s), `[0x87d894]` and vmangos's `terminalVelocity`; [`crate::net`]'s arc
-/// replay caps at it too.
+/// Terminal fall speed (yd/s), and vmangos's `terminalVelocity`; [`crate::net`]'s arc replay caps
+/// at it too.
 pub(crate) const TERMINAL_VELOCITY: f32 = 60.148_003;
-/// Terminal fall speed under feather fall (yd/s), the whole of Slow Fall: `0x7c5d20` and
-/// `0x7c5f50` pick `[0x87d898]` over `[0x87d894]` while `MOVEFLAG_SAFE_FALL` is set (vmangos's
+/// Terminal fall speed under feather fall (yd/s), the whole of Slow Fall: the reference's two fall
+/// integrators pick it over [`TERMINAL_VELOCITY`] while `MOVEFLAG_SAFE_FALL` is set (vmangos's
 /// `terminalSavefallVelocity`).
 pub(crate) const FEATHER_TERMINAL_VELOCITY: f32 = 7.0;
-/// Hover's clearance (yd), the whole of Hover: the walk resolver probes `[0x7ff9d8]` further down
-/// (`0x636dd2`) and writes the body's z a yard clear of the floor (`0x636e81`-`0x636ea9`).
+/// Hover's clearance (yd), the whole of Hover: the walk resolver probes further down and writes the
+/// body's z a yard clear of the floor.
 pub(crate) const HOVER_HEIGHT: f32 = 1.0;
-/// Hover's rise rate (yd/s): the snap only lowers the body (`0x636e52`), so the rise is a separate
-/// rate-limited pass (`0x636fa1`-`0x6370f1`) at `0x7c61b0`'s `[0x87d898]`, the feather-fall 7.0.
+/// Hover's rise rate (yd/s): the snap only lowers the body, so the rise is a separate rate-limited
+/// pass's, the feather-fall 7.0.
 pub(crate) const HOVER_CLIMB_RATE: f32 = 7.0;
 /// Walkable iff the surface normal is within 50° of up, the reference's limit; steeper slides back.
 pub(super) const GROUND_COS: f32 = 0.642_788;
 /// Downward probe distance (yd) to decide whether we're standing on ground.
 pub(super) const GROUND_PROBE: f32 = 0.2;
-/// The snap's slope ratio, `[0x80c740]` (atan ≈ 61.6°): the reference's step-vs-fall election
-/// `0x6367b0` probes `travel · ratio + slack` below the moved body, plus the rise budget `H` only
-/// on a steep support (`0x4000000`, `0x636dfc`). The foot cone's waist (`0x631c0b`) shares it.
+/// The snap's slope ratio (atan ≈ 61.6°): the reference's step-vs-fall election probes `travel ·
+/// ratio + slack` below the moved body, plus the rise budget `H` only on a steep support
+/// (`0x4000000`). The foot cone's waist shares it.
 pub(super) const STEP_SLOPE_RATIO: f32 = 1.849_399;
-/// The snap reach's fixed slack (yd), `[0x7ff9d0]` = 1/36.
+/// The snap reach's fixed slack (yd), 1/36.
 pub(super) const STEP_SNAP_SLACK: f32 = 0.027_777_8;
-/// The step-up rise ceiling (yd), the reference's `H`: `0x617430` returns `CMovement+0xb8`, the
-/// ratio `max(SCALE_X / CreatureModelScale, 1)`, which is 1.0 for the local player.
+/// The step-up rise ceiling (yd), the reference's `H`: its step-up height returns the movement
+/// block's `+0xb8`, the ratio `max(SCALE_X / CreatureModelScale, 1)`, which is 1.0 for the local
+/// player.
 pub(crate) const STEP_UP_HEIGHT: f32 = 1.0;
-/// The rise ceiling of a body the reference does not treat as player-controlled, `[0x801628]` on
-/// `0x5fa550`'s false leg of `0x617430`: a creature, a pet, or a charmed, possessed, feared,
-/// confused or rooted player.
+/// The rise ceiling of a body the reference does not treat as player-controlled, the reference's
+/// false leg: a creature, a pet, or a charmed, possessed, feared, confused or rooted player.
 pub(crate) const CREATURE_STEP_UP_HEIGHT: f32 = 2.0;
 /// The step-up certify advance (yd), a floor under the frame's travel: the reference steps
 /// `max(H·tan50°, radius + 1/720)` into the face, 1.1918 yd at `H` = 1.0. The raised forward sweep
 /// is clipped by anything in the way, so the advance reaches only clear air.
 pub(super) const STEP_UP_ADVANCE: f32 = 1.191_753_6;
-/// The certify reach per yard of rise budget, `tan 50°` (`0x636147`-`0x636190`); a creature's 2.0
-/// reaches 2.38 yd.
+/// The certify reach per yard of rise budget, `tan 50°`; a creature's 2.0 reaches 2.38 yd.
 pub(super) const STEP_UP_ADVANCE_PER_YARD: f32 = STEP_UP_ADVANCE / STEP_UP_HEIGHT;
-/// The foot cone's height (yd). The reference's solid (`0x631440`) is a box over a cone whose
-/// bevels rise `radius · [0x80c740]` from a point at the foot, so an edge below this is ridden up
-/// the 61.6° skirt (`0x635c00`) and one above meets the box and takes the step-up. With the
-/// placeholder [`CAPSULE_RADIUS`] ours is 0.616 yd; a live human male's is 0.565, female's 0.385.
+/// The foot cone's height (yd). The reference's solid is a box over a cone whose bevels rise
+/// `radius ·` from a point at the foot, so an edge below this is ridden up the 61.6° skirt and one
+/// above meets the box and takes the step-up. With the placeholder [`CAPSULE_RADIUS`] ours is 0.616
+/// yd; a live human male's is 0.565, female's 0.385.
 pub(super) const FOOT_CONE_HEIGHT: f32 = CAPSULE_RADIUS * STEP_SLOPE_RATIO;
 /// The landing probe (yd): airborne, walk mode resumes only this close to the floor, so the arc
 /// ends where the slide contacts rather than [`GROUND_PROBE`] early.
@@ -102,14 +101,13 @@ pub(super) const WEDGE_STALL_RATIO: f32 = 0.15;
 /// Fall speed (yd/s) before stalled frames count: a jump apex never qualifies, a wedge soon does.
 pub(super) const WEDGE_MIN_FALL: f32 = 1.0;
 /// The one-shot air nudge (yd/s) a standstill jump may steer by. The reference's is the live
-/// `min(walk, run)` (`0x7c4c90(1)`, `0x7c4d19`); this is the default walk speed, not the live one.
+/// `min(walk, run)`; this is the default walk speed, not the live one.
 pub(super) const AIR_NUDGE_SPEED: f32 = 2.5;
-/// The FALLINGFAR distance leg (yd): a jump arc (launch vz ≠ 0) latches it once this far below
-/// its launch height (`0x633240`, `[0x80dff8]`), and the anim swaps to Fall(40); a flat jump never
-/// does.
+/// The FALLINGFAR distance leg (yd): a jump arc (launch vz ≠ 0) latches it once this far below its
+/// launch height, and the anim swaps to Fall(40); a flat jump never does.
 pub(super) const FALL_FAR_DROP: f32 = 0.111_11;
 /// The FALLINGFAR timer leg (s): a step-off fall (launch vz = 0) latches it after 500 ms airborne
-/// (`0x633240`, `0x1f4`), about 2.41 yd of free fall from rest.
+/// (`0x1f4`), about 2.41 yd of free fall from rest.
 pub(super) const FALL_FAR_TIME: f32 = 0.5;
 /// Skin width (yd) kept between the capsule and geometry on casts.
 pub(super) const SKIN_WIDTH: f32 = 0.02;
@@ -120,7 +118,7 @@ pub(crate) const SETTLE_TIMEOUT: f32 = 6.0;
 
 /// The player body's collision capsule, swept by avian's `MoveAndSlide`: origin at its centre, the
 /// player's `pos` at its feet. Every player body sweeps it, remote ones too, as the reference runs
-/// every mover through one controller (`0x616620`); the reference sizes each from its model.
+/// every mover through one controller; the reference sizes each from its model.
 #[derive(Resource)]
 pub(crate) struct PlayerCapsule(pub(crate) Collider);
 
@@ -139,24 +137,24 @@ pub(super) struct MoveSpeed {
 #[derive(Default, Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) struct MoveModes {
     /// Rooted (`SMSG_FORCE_MOVE_ROOT`): translation and jumps die but turning stays live, since the
-    /// input tick's allow-list (`0x615c71`, table `0x618054`) permits turn, pitch and facing. A
-    /// stun, which takes the pivot too, is [`crate::player::UNIT_FLAG_STUNNED`].
+    /// input tick's allow-list permits turn, pitch and facing. A stun, which takes the pivot too,
+    /// is [`crate::player::UNIT_FLAG_STUNNED`].
     pub(crate) rooted: bool,
     /// Water walking (`SMSG_MOVE_WATER_WALK`): the liquid surface is ground. It does not stop the
-    /// swim latch (`0x6030c0` tests only LEVITATING); swimming turns it off instead (`0x631617`).
+    /// swim latch; swimming turns it off instead.
     pub(crate) water_walking: bool,
     /// Feather fall (`SMSG_MOVE_FEATHER_FALL`): the terminal velocity drops to
     /// [`FEATHER_TERMINAL_VELOCITY`], and nothing else changes.
     pub(crate) feather_fall: bool,
     /// Hover (`SMSG_MOVE_SET_HOVER`): ground contact sits [`HOVER_HEIGHT`] up and the jump is
-    /// refused (the first test in `CMovement::Jump` `0x7c6230`); the grant itself jumps the body
+    /// refused (the first test in the mover's jump); the grant itself jumps the body
     /// ([`Player::hover_launch`]). With water walking it seems to leave a swimmer no way up, since
     /// swimming turns water walking off and hover refuses the breach: each gate is traced, the sum
     /// is not.
     pub(crate) hover: bool,
     /// 3.3.5a's `DISABLE_GRAVITY` (`0x400`, 1.12.1's levitating), from `SMSG_MOVE_GRAVITY_DISABLE`
     /// or merged unacked from a server-authored move: the body neither falls nor jumps while it is
-    /// set (`0x9883f0`, `0x6eba60`), and the swim decision does not run (`0x6030d2`).
+    /// set (`0x9883f0`, `0x6eba60`), and the swim decision does not run.
     pub(crate) levitating: bool,
     /// 3.3.5a's `CAN_FLY` (`SMSG_MOVE_SET_CAN_FLY`, a flying mount or `.gm fly on`): the jump key
     /// takes flight and a fall off a ledge becomes one ([`super::flight`]).
@@ -218,67 +216,66 @@ impl MoveModes {
     }
 }
 
-/// The precondition both movement-input predicates test first, the reference's `0x5144e0`. Of its
-/// five terms, health ([`MoverInput::dead`]) and the far-sight latch
-/// ([`MoverInput::view_is_out`]) are here; the mover resolving is structural (the controller
-/// returns early on `control_lost` and `reseat`), and the aux gate `[[mover+0x118]+0xa4]`
-/// (`0x514516`) and the Knockdown animation lockout `0x60f5b0` are not built.
+/// The precondition both movement-input predicates test first, the reference's shared one. Of its
+/// five terms, health ([`MoverInput::dead`]) and the far-sight latch ([`MoverInput::view_is_out`])
+/// are here; the mover resolving is structural (the controller returns early on `control_lost` and
+/// `reseat`), and the aux gate `[[mover+0x118]+0xa4]` and the Knockdown animation lockout are not
+/// built.
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct MoverInput {
-    /// The health term: the driven mover's health is not above 0 (`0x5144fd`, off `[mover+0x110]`).
-    /// A released ghost has health 1 from the server, so it passes and keeps every input.
+    /// The health term: the driven mover's health is not above 0 (off `[mover+0x110]`). A released
+    /// ghost has health 1 from the server, so it passes and keeps every input.
     pub(crate) dead: bool,
     /// The far-sight term, held true while our view is out on a far-sight object and we drive our
-    /// own body: `[mover+0x1c70] & 1`, read only when the mover is the active player (`0x514537`).
-    /// The latch sets only once the subject resolves (`0x5ee3f6`), so this follows the resolved
+    /// own body: `[mover+0x1c70] & 1`, read only when the mover is the active player. The latch
+    /// sets only once the subject resolves, so this follows the resolved
     /// [`super::view_subject::ViewSubject`], not the raw `PLAYER_FARSIGHT` field.
     pub(crate) view_is_out: bool,
 }
 
 /// The far-sight term: the view is out and the body is our own. Mind Control sets the same field,
-/// so without `driving_own_body` (the active-player test `0x5fa6d0`) it would freeze the victim.
+/// so without `driving_own_body` it would freeze the victim.
 pub(crate) fn view_is_out(driving_own_body: bool, far_sight_engaged: bool) -> bool {
     driving_own_body && far_sight_engaged
 }
 
 impl MoverInput {
-    /// `0x5144e0`, over the terms modelled here.
+    /// Over the terms modelled here.
     fn ready(self) -> bool {
         !self.dead && !self.view_is_out
     }
 
-    /// `0x514560`, the gate on the forward/back and strafe emitters (`0x5146c1`): the precondition
-    /// and no root (`MOVEMENTFLAGS & 0x1200`); its stand-state-7 term is one vmangos never sets.
+    /// The gate on the forward/back and strafe emitters: the precondition and no root
+    /// (`MOVEMENTFLAGS & 0x1200`); its stand-state-7 term is one vmangos never sets.
     pub(crate) fn may_translate(self, rooted: bool) -> bool {
         self.ready() && !rooted
     }
 
-    /// `0x5145b0`, the gate on the turn and pitch emitters (`0x514755`): the precondition and no
-    /// stun (`UNIT_FIELD_FLAGS & 0x40000`). The mouse's gate `0x5145e0` calls it first, so a corpse
-    /// turns by neither keys nor mouse.
+    /// The gate on the turn and pitch emitters: the precondition and no stun
+    /// (`UNIT_FIELD_FLAGS & 0x40000`). The mouse's gate calls it first, so a corpse turns by
+    /// neither keys nor mouse.
     pub(crate) fn may_turn(self, stunned: bool) -> bool {
         self.ready() && !stunned
     }
 
-    /// `0x5145e0`, the gate on the mouse's camera-to-body hand-off (`0x514474`, `0x51495a`): the
-    /// stun predicate and a standing body (`0x51460c`). A right-drag while seated turns only the
-    /// camera and does not stand you up; `stand_state` is the predicted one `0x5ed570` returns.
+    /// The gate on the mouse's camera-to-body hand-off: the stun predicate and a standing body. A
+    /// right-drag while seated turns only the camera and does not stand you up; `stand_state` is
+    /// the predicted one returns.
     pub(crate) fn mouse_may_turn_body(self, stunned: bool, stand_state: u8) -> bool {
         self.may_turn(stunned) && stand_state == 0
     }
 
-    /// The input tick's teardown leg (`0x5146d6`, ending click-to-move and `/follow`), taken only
-    /// with both predicates down: death, far sight, or a root and a stun together.
+    /// The input tick's teardown leg (ending click-to-move and `/follow`), taken only with both
+    /// predicates down: death, far sight, or a root and a stun together.
     pub(crate) fn torn_down(self, rooted: bool, stunned: bool) -> bool {
         !self.may_translate(rooted) && !self.may_turn(stunned)
     }
 }
 
 /// Strip from a freshly built flag word what a gated mover cannot hold: the direction bits while
-/// translation is gated (the allow-list `0x618054` drops the move commands and `SetRoot` `0x7c7340`
-/// masks `0xffe07f00`, so the anim resolver's `0x5fd10c` sees no motion) and the turn bits while
-/// turning is gated (`0x514755`). The reference's emitters refuse at the source; ours rebuilds the
-/// word each frame. Modes and SWIMMING ride on.
+/// translation is gated (the allow-list drops the move commands and the root masks `0xffe07f00`, so
+/// the anim resolver sees no motion) and the turn bits while turning is gated. The reference's
+/// emitters refuse at the source; ours rebuilds the word each frame. Modes and SWIMMING ride on.
 pub(crate) fn incapacitated_flags(flags: u32, translate_gated: bool, turn_gated: bool) -> u32 {
     use crate::creature_anim::move_flags as f;
     let mut out = flags;
@@ -298,16 +295,16 @@ pub(crate) struct Player {
     pub(crate) active: bool,
     /// The modes the server has granted our mover.
     pub(super) modes: MoveModes,
-    /// Autorun: the reference's input bit `0x1000` at `[MOVE+4]`, flipped by `ToggleAutoRun`
-    /// `0x513de0`. The emitter `0x514da0` adds it to the forward axis, but a W or S key-down clears
-    /// it first ([`autorun_cancelled`]), so it is not a held W: autorun then S walks backward.
+    /// Autorun: the reference's input bit `0x1000` at `[MOVE+4]`, flipped by `ToggleAutoRun`. The
+    /// emitter adds it to the forward axis, but a W or S key-down clears it first
+    /// ([`autorun_cancelled`]), so it is not a held W: autorun then S walks backward.
     pub(super) autorun: bool,
-    /// Walk mode, `MOVEFLAG_WALK_MODE` (`0x100`), toggled by `ToggleRun` `0x513d50` from the word's
-    /// current bit (`0x60e080`). Observers read our gait off it, and it is in the server-authored
-    /// merge mask, so a server move can flip it ([`super::wire_in`]); it owes no ack.
+    /// Walk mode, `MOVEFLAG_WALK_MODE` (`0x100`), toggled by `ToggleRun` from the word's current
+    /// bit. Observers read our gait off it, and it is in the server-authored merge mask, so a
+    /// server move can flip it ([`super::wire_in`]); it owes no ack.
     pub(super) walking: bool,
     /// The auto-move (`/follow` or Click to Move) holding forward this frame: the reference pushes
-    /// W's own bit (`0x60e790`), so this is a [`forward_axis`] term. Rewritten each frame by
+    /// W's own bit, so this is a [`forward_axis`] term. Rewritten each frame by
     /// [`super::follow::steer_follow`] and [`super::approach::steer_approach`] just before the
     /// controller reads it.
     pub(super) auto_forward: bool,
@@ -318,8 +315,8 @@ pub(crate) struct Player {
     /// standing. The reference zeroes its mover; vmangos neither roots a charmed player nor refuses
     /// its movement, so nothing else holds the body. Unlike a root, it stops turning too.
     pub(crate) control_lost: bool,
-    /// World entries that handed control back, each a silent `InitClientControlState` (`0x513880`)
-    /// for the UI's control flag.
+    /// World entries that handed control back, each a silent control-state init (`0x513880`) for
+    /// the UI's control flag.
     pub(crate) control_inits: u32,
     /// The unit we drive in place of our body (a mind-controlled creature, Eye of Kilrogg), `None`
     /// for our own. Our body must then send nothing: outbound `MSG_MOVE_*` carry no guid, so the
@@ -340,7 +337,7 @@ pub(crate) struct Player {
     /// `MSG_MOVE_*` per axis transition.
     pub(super) move_flags: u32,
     /// Last frame's facing: any change off the turn axis streams `MSG_MOVE_SET_FACING`, moving or
-    /// not (the reference's detector `0x617170`, exact equality).
+    /// not (exact equality).
     pub(super) last_facing: f32,
     /// The exact position floats we last sent (WoW coords). vmangos interrupts a cast on any change
     /// to its stored position (`Player.cpp:6092`), so the resolver's tiny settle after a reported
@@ -348,8 +345,7 @@ pub(crate) struct Player {
     /// facing change can carry it as a move.
     pub(super) last_pos: [f32; 3],
     /// A stand state committed locally, sent or from `SMSG_STANDSTATE_UPDATE`, whose echo into
-    /// `UNIT_FIELD_BYTES_1` has not landed: the reference's predicted cache `[player+0x1d68]`
-    /// (`0x6127b0`).
+    /// `UNIT_FIELD_BYTES_1` has not landed: the reference's predicted cache `[player+0x1d68]`.
     pub(super) stand_pending: Option<u8>,
     /// Holding the body still, gravity off, after a teleport, summon or login until the
     /// destination's colliders stream in. Released by the terrain streamer on residency or at
@@ -375,8 +371,8 @@ pub(crate) struct Player {
     /// without mirroring its stale pose and sends no `CMSG_MOVE_SPLINE_DONE`.
     pub(super) ride_abort: bool,
     /// A `MSG_MOVE_WORLDPORT_ACK` owed at the settle release: the reference sends it only after its
-    /// blocking load returns (`0x401cae`, after `0x66fbe0`), and vmangos has no load timeout. A
-    /// riding crossing never settles and acks at once.
+    /// blocking load returns, and vmangos has no load timeout. A riding crossing never settles and
+    /// acks at once.
     pub(crate) owes_worldport_ack: bool,
     /// `Time::elapsed_secs` when we last sent a heartbeat.
     pub(super) last_heartbeat: f32,
@@ -402,26 +398,26 @@ pub(crate) struct Player {
     /// The feet height the climb in progress began at, the reference's `stepUpStartZ`
     /// ([`super::mover::Support::step_start`]); `None` when not climbing.
     pub(super) step_start: Option<f32>,
-    /// A hover grant owes a jump: the reference's handler `0x61a620` calls `CMovement::Jump(0)`
-    /// (`0x61a630`) before setting the flag, and its disable arm calls `StartFalling` (`0x61a637`).
-    /// Latched for the take-off site, since our mover re-derives ground contact every frame and
-    /// would cancel a jump committed here.
+    /// A hover grant owes a jump: the reference's handler calls the mover's jump at `force = 0`
+    /// before setting the flag, and its disable arm calls the fall start. Latched for the take-off
+    /// site, since our mover re-derives ground contact every frame and would cancel a jump
+    /// committed here.
     pub(super) hover_launch: bool,
     /// The knockback waiting to be flown, armed by `SMSG_MOVE_KNOCK_BACK` and taken at the take-off
     /// site with the jump and the hover launch.
     pub(super) knockback: Option<PendingKnockback>,
-    /// The arc's take-off vertical speed (yd/s, WoW +Z up), the client's `StartFalling` argument
+    /// The arc's take-off vertical speed (yd/s, WoW +Z up), the client's fall-start argument
     /// (`+0xa0`) and the jump tail's `zspeed`: [`JUMP_SPEED`] for a jump, exactly 0 for a step-off.
     pub(super) jump_zspeed: f32,
     /// The launch vertical speed, recorded before this frame's gravity: [`Self::jump_zspeed`] is
     /// seeded from this, since `vel_y` is already a step down the arc when [`super::arc`] runs.
     pub(super) launch_vz: f32,
-    /// Whether the arc's direction nibble (`[CMovement+0x40] & 0xf`) is set: air control opens only
-    /// while it is clear (`0x7c6afc`), so a knockback, which plants FORWARD (`0x617a18`), never
-    /// steers. Seeded at take-off, set by the nudge, cleared when the arc ends.
+    /// Whether the arc's direction nibble (`[movement+0x40] & 0xf`) is set: air control opens only
+    /// while it is clear, so a knockback, which plants FORWARD, never steers. Seeded at take-off,
+    /// set by the nudge, cleared when the arc ends.
     pub(super) arc_dirs_set: bool,
-    /// This arc is a knockback's, so its planted FORWARD rides the wire the whole arc (`0x617a18`;
-    /// the send mask `0x75a07dff` keeps bit 0).
+    /// This arc is a knockback's, so its planted FORWARD rides the wire the whole arc (the send
+    /// mask `0x75a07dff` keeps bit 0).
     pub(super) knock_arc: bool,
     /// Airborne at the end of the last mover step: the mover's own record, since
     /// [`Self::airborne_since`] is written by [`super::flags`], which runs after the mover.
@@ -429,11 +425,11 @@ pub(crate) struct Player {
     /// The direction bits the current arc launched with: mid-air they are the actual motion, so the
     /// live flags read them instead of the keys; re-seeded by the air nudge, stale while grounded.
     pub(super) airborne_dirs: u32,
-    /// Launch height (Bevy Y), the client's `StartFalling` z snapshot (`+0x7c`): the FALLINGFAR
+    /// Launch height (Bevy Y), the client's fall-start z snapshot (`+0x7c`): the FALLINGFAR
     /// distance leg measures descent below it.
     pub(super) fall_start_y: f32,
     /// `MOVEFLAG_FALLINGFAR` latched for this arc ([`FALL_FAR_DROP`], [`FALL_FAR_TIME`]); only
-    /// landing clears it, as the client's `StopFalling` does.
+    /// landing clears it, as the client's fall stop does.
     pub(super) fall_far: bool,
     /// The facing (Bevy yaw, radians): the aim sent as orientation and the basis WASD move in.
     /// Right-drag and movement sync it to the camera, left-drag does not; the body is `model_yaw`.
@@ -446,8 +442,8 @@ pub(crate) struct Player {
     /// Flying (3.3.5a `MOVEFLAG_FLYING`): taken off under [`MoveModes::can_fly`], ended by the
     /// landing check, a revoke or the water ([`super::flight`]).
     pub(crate) flying: bool,
-    /// When flight last started (`Time::elapsed_secs`), the reference's `s_flightStatusTime`: the
-    /// landing check waits 2 s past it (`0x73aa59`).
+    /// When flight last started (`Time::elapsed_secs`), the reference's flight-status timestamp:
+    /// the landing check waits 2 s past it (`0x73aa59`).
     pub(super) flight_since: f32,
     /// A flight edge owes `CMSG_MOVE_SET_FLY`, which the move stream sends ahead of this frame's
     /// vertical command (`0x6ef860` events 45, 46).
@@ -458,19 +454,19 @@ pub(crate) struct Player {
     pub(crate) collision_height: crate::entities::CollisionHeight,
     /// The liquid surface over our feet as the last movement tick stored it (Bevy Y). The camera's
     /// water corridor reads this a frame late, as the reference's camera reads the tick's cache
-    /// through the field accessor `0x670630`; the lag keeps its depth off a band edge.
+    /// through the field accessor; the lag keeps its depth off a band edge.
     pub(crate) liquid_surface: Option<f32>,
-    /// The mover pitch (radians, +up), `CMovement+0x20`, live in every mode: mouse-look sets it
-    /// straight to the camera pitch within ±89° (`SetPitch` `0x7c6f70`, which stores before any
-    /// swim test), and it holds when unsteered; only stop-swim and teleport zero it (`0x7c6e80`).
-    /// Swimming reads it for travel, pose and the wire; on land, water walking does (`0x63161e`).
+    /// The mover pitch (radians, +up), the movement block's `+0x20`, live in every mode: mouse-look
+    /// sets it straight to the camera pitch within ±89° (the pitch setter, which stores before any
+    /// swim test), and it holds when unsteered; only stop-swim and teleport zero it. Swimming reads
+    /// it for travel, pose and the wire; on land, water walking does.
     pub(super) mover_pitch: f32,
-    /// The camera pitch the last pitch push carried: the reference pushes only on mouse motion
-    /// (`0x514400`), so a push here needs the aim to differ, and a still mouse leaves the drunk
-    /// wobble and the stop-swim levelling (`0x7c6e80`) in place.
+    /// The camera pitch the last pitch push carried: the reference pushes only on mouse motion, so
+    /// a push here needs the aim to differ, and a still mouse leaves the drunk wobble and the
+    /// stop-swim levelling in place.
     pub(super) aim_pitch_seen: f32,
     /// This frame's flag-derived swim speed (yd/s), 0 without swim input: the stroke's playback
-    /// numerator, as `0x5fe2f0` divides `GetCurrentSpeed` by the clip's speed. Stale on land.
+    /// numerator, as the reference divides the current speed by the clip's speed. Stale on land.
     pub(super) swim_stroke_speed: f32,
     /// The rendered body heading (Bevy yaw): eased to the strafe offset while strafing
     /// ([`crate::creature_anim::strafe_body_offset`]), snapped to `face_yaw` while otherwise
@@ -536,8 +532,7 @@ impl Player {
     }
 
     /// Take the jump a hover grant owes, clearing the latch: `Jump(0)` refuses only ROOT and
-    /// FALLING (`0x7c625c`), skipping the hover test (`0x7c6236`), and a refused jump is dropped,
-    /// not retried.
+    /// FALLING, skipping the hover test, and a refused jump is dropped, not retried.
     pub(super) fn take_wire_jump(&mut self) -> bool {
         let fire = self.hover_launch && !self.modes.rooted && self.airborne_since.is_none();
         self.hover_launch = false;
@@ -556,8 +551,8 @@ impl Player {
         self.face_yaw += radians;
     }
 
-    /// Set the mover pitch, the scripted dive (`capture::probe_pitch`), under `SetPitch`'s ±89°
-    /// clamp (`0x7c6f70`) but without its 2^-20 deadband (`[0x8026bc]`); returns the value stored.
+    /// Set the mover pitch, the scripted dive (`capture::probe_pitch`), under the pitch setter's
+    /// ±89° clamp but without its 2^-20 deadband; returns the value stored.
     pub(crate) fn aim_pitch(&mut self, radians: f32) -> f32 {
         self.mover_pitch = radians.clamp(-MOUSELOOK_PITCH_CLAMP, MOUSELOOK_PITCH_CLAMP);
         // Mouse-look pushes on a camera-pitch edge; parking the edge here keeps a still camera
@@ -567,7 +562,7 @@ impl Player {
     }
 
     /// The facing (Bevy yaw) sent as orientation, not the rendered `model_yaw`; the 3D-audio
-    /// listener faces it, not the camera (`0x483430`).
+    /// listener faces it, not the camera.
     pub(crate) fn facing(&self) -> f32 {
         self.face_yaw
     }
@@ -588,7 +583,7 @@ impl Player {
     }
 
     /// The movement flags as last streamed; the water foam tests `& 0xf` (translating) and `& 0x30`
-    /// (turning) on them, as the reference's ripple driver `0x5fa760` does.
+    /// (turning) on them, as the reference's ripple driver does.
     pub(crate) fn move_flags(&self) -> u32 {
         self.move_flags
     }
@@ -616,9 +611,9 @@ impl Player {
         }
     }
 
-    /// The commanded planar speed (yd/s), the reference's `[[player+0x118]+0x84]` from `0x7c4c90`:
-    /// exactly 0 with no direction bit set, and live, not averaged like the weather wind's
-    /// (`0x67c150`). The precipitation slab's tilt reads it (`0x67bf8b`).
+    /// The commanded planar speed (yd/s), the reference's `[[player+0x118]+0x84]`: exactly 0 with
+    /// no direction bit set, and live, not averaged like the weather wind's. The precipitation
+    /// slab's tilt reads it.
     pub(crate) fn planar_speed(&self) -> f32 {
         if self.move_flags & 0xf == 0 {
             return 0.0;
@@ -638,14 +633,14 @@ impl Player {
     }
 
     /// Whether a server spline drives the avatar ([`super::server_ride`]), for instruments. Not
-    /// `UnitOnTaxi`, which reads [`crate::player::UNIT_FLAG_TAXI_FLIGHT`] (`0x517a86`).
+    /// `UnitOnTaxi`, which reads [`crate::player::UNIT_FLAG_TAXI_FLIGHT`].
     pub(crate) fn server_riding(&self) -> bool {
         self.server_riding
     }
 }
 
-/// The forward/back axis, summed as the reference's emitter `0x514da0` sums it: autorun, forward
-/// and both-button run +1 each, backward −1; its sign picks the START, and zero is a STOP.
+/// The forward/back axis, summed as the reference's emitter sums it: autorun, forward and
+/// both-button run +1 each, backward −1; its sign picks the START, and zero is a STOP.
 pub(super) fn forward_axis(
     forward: bool,
     backward: bool,
@@ -656,10 +651,10 @@ pub(super) fn forward_axis(
 }
 
 /// Whether this frame's input clears autorun: the four of the reference's six writers of `0x1000`
-/// with an analog here. `fwd_down` and `back_down` are key-down edges (`0x514a5a`; a release
-/// restores nothing), `both_engaged` the edge into both-button run (`0x514a73`), and `lost_mover` a
-/// level, the translate gate down (`0x514748`). A jump, a chat box taking focus and a zone change
-/// leave autorun on; mounting's effect in the reference is untraced, and here it leaves it on.
+/// with an analog here. `fwd_down` and `back_down` are key-down edges (a release restores nothing),
+/// `both_engaged` the edge into both-button run, and `lost_mover` a level, the translate gate down.
+/// A jump, a chat box taking focus and a zone change leave autorun on; mounting's effect in the
+/// reference is untraced, and here it leaves it on.
 pub(super) fn autorun_cancelled(
     fwd_down: bool,
     back_down: bool,
@@ -669,23 +664,23 @@ pub(super) fn autorun_cancelled(
     fwd_down || back_down || both_engaged || lost_mover
 }
 
-/// Whether the reference's `SetStandState` (`0x5ed430`) refuses this change, returning before the
-/// packet is built. A body that reads dead is refused either way; otherwise standing up never is,
-/// and any other state is refused while translating or swimming (`0x20000f`, `0x5ed4f8`), SLEEP
-/// also while turning (`0x5ed4e6`, which falls through into that test). FALLING is in neither
-/// mask. It is the one setter, so the X key, the posture emotes and the AFK sit all go through it.
+/// Whether the reference's stand-state setter refuses this change, returning before the packet is
+/// built. A body that reads dead is refused either way; otherwise standing up never is, and any
+/// other state is refused while translating or swimming (`0x20000f`), SLEEP also while turning
+/// (which falls through into that test). FALLING is in neither mask. It is the one setter, so the X
+/// key, the posture emotes and the AFK sit all go through it.
 pub(super) fn stand_state_refused(reads_dead: bool, move_flags: u32, new_state: u8) -> bool {
     use crate::creature_anim::move_flags as f;
-    // Health <= 0 (`0x5ed4ac`) or `UNIT_DYNAMIC_FLAGS & 0x20`, a feigner (`0x5ed4b2`), refuses in
-    // both directions, so it comes before the stand-up exit.
+    // Health <= 0 or `UNIT_DYNAMIC_FLAGS & 0x20`, a feigner, refuses in both directions, so it
+    // comes before the stand-up exit.
     if reads_dead {
         return true;
     }
-    // Standing up skips the movement word (`0x5ed4f0`).
+    // Standing up skips the movement word.
     if new_state == 0 {
         return false;
     }
-    // SLEEP's turn test falls through into the shared one (`0x5ed4ec`).
+    // SLEEP's turn test falls through into the shared one.
     if new_state == 3 && move_flags & (f::TURN_LEFT | f::TURN_RIGHT) != 0 {
         return true;
     }
@@ -764,7 +759,7 @@ mod stand_state_tests {
         }
     }
 
-    /// SLEEP (3) adds the `0x30` turn test and falls through into `0x20000f` (`0x5ed4ec`).
+    /// SLEEP (3) adds the `0x30` turn test and falls through into `0x20000f`.
     #[test]
     fn sleep_takes_both_tests_so_it_is_the_strictest_posture() {
         // The turn test is SLEEP's alone.
@@ -790,7 +785,7 @@ mod stand_state_tests {
         assert_eq!(
             f::TURN_LEFT | f::TURN_RIGHT | f::ANY_MOVE | f::SWIMMING,
             f::ROUTE_COMMITTED_MOVE,
-            "`0x20003f`, byte-verified at 0x5fe6dc as well as 0x5ed4e6+0x5ed4f8"
+            "`0x20003f`, byte-verified in the one-shot route and the stand-state setter alike"
         );
         // Standing up from SLEEP is still ungated.
         assert!(!stand_state_refused(false, f::ROUTE_COMMITTED_MOVE, 0));
@@ -806,14 +801,14 @@ mod stand_state_tests {
 mod autorun_tests {
     use super::{autorun_cancelled, forward_axis};
 
-    /// The reference's axis table (`0x514da0`).
+    /// The reference's axis table.
     #[test]
     fn the_axis_reproduces_the_verified_state_table() {
         // Autorun alone: +1.
         assert_eq!(forward_axis(false, false, false, true), 1);
         // Autorun, then W: the key-down cleared the bit, so the axis sees W alone; nothing is sent.
         assert_eq!(forward_axis(true, false, false, false), 1);
-        // W, then autorun: 2 (`0x514da5`); only the sign is consumed.
+        // W, then autorun: 2; only the sign is consumed.
         assert_eq!(forward_axis(true, false, false, true), 2);
         // Autorun, then S: the key-down cleared the bit, so -1.
         assert_eq!(forward_axis(false, true, false, false), -1);
@@ -942,7 +937,7 @@ mod move_mode_tests {
         assert!(modes.rooted, "still ours alone");
     }
 
-    /// Feather fall swaps the terminal velocity and leaves gravity alone (`0x7c5d20`).
+    /// Feather fall swaps the terminal velocity and leaves gravity alone.
     #[test]
     fn feather_fall_caps_the_descent_without_softening_gravity() {
         let dt = 1.0 / 60.0;
@@ -983,9 +978,9 @@ mod move_mode_tests {
 
     #[test]
     fn the_mode_constants_are_the_verified_ones() {
-        assert_eq!(FEATHER_TERMINAL_VELOCITY, 7.0); // [0x87d898]
-        assert_eq!(HOVER_HEIGHT, 1.0); // [0x7ff9d8]
-        assert_eq!(TERMINAL_VELOCITY, 60.148_003); // [0x87d894]
+        assert_eq!(FEATHER_TERMINAL_VELOCITY, 7.0); //
+        assert_eq!(HOVER_HEIGHT, 1.0); //
+        assert_eq!(TERMINAL_VELOCITY, 60.148_003); //
     }
 
     /// Feather fall is the slower cap.
@@ -1017,7 +1012,7 @@ mod move_mode_tests {
 
     #[test]
     fn hover_climbs_to_its_clearance_rather_than_popping() {
-        assert_eq!(HOVER_CLIMB_RATE, 7.0); // [0x87d898], via 0x7c61b0
+        assert_eq!(HOVER_CLIMB_RATE, 7.0); //,
         let dt = 1.0 / 60.0;
         let mut clearance = 0.0_f32;
         let mut frames = 0;
@@ -1035,8 +1030,7 @@ mod move_mode_tests {
         );
     }
 
-    /// `Jump(0)` at `0x61a630` is refused by ROOT and FALLING (`0x7c625c`), never by hover
-    /// (`0x7c6236`).
+    /// `Jump(0)` is refused by ROOT and FALLING, never by hover.
     #[test]
     fn a_hover_grant_owes_one_jump_and_only_root_or_falling_eats_it() {
         let granted = || Player {
@@ -1057,10 +1051,10 @@ mod move_mode_tests {
 
         let mut rooted = granted();
         rooted.modes.rooted = true;
-        assert!(!rooted.take_wire_jump(), "ROOT — `0x7c625c test ah,0x30`");
+        assert!(!rooted.take_wire_jump(), "ROOT");
         assert!(
             !rooted.hover_launch,
-            "a refused Jump returns failure and nothing retries it (`0x7c6288 xor eax,eax`)"
+            "a refused Jump returns failure and nothing retries it"
         );
 
         let mut falling = granted();
@@ -1084,7 +1078,7 @@ mod move_mode_tests {
         for seated in [1u8, 2, 3, 4, 5, 6] {
             assert!(
                 !m.mouse_may_turn_body(false, seated),
-                "stand state {seated}: the mouse hand-off is refused at `0x51460c`"
+                "stand state {seated}: the mouse hand-off is refused"
             );
             assert!(
                 m.may_turn(false),
@@ -1097,7 +1091,7 @@ mod move_mode_tests {
         );
         assert!(
             !m.mouse_may_turn_body(true, 0),
-            "stunned: refused through `0x5145b0` before the stand state is even read"
+            "stunned: refused through the stun test before the stand state is even read"
         );
         assert!(
             !MoverInput {
@@ -1105,7 +1099,7 @@ mod move_mode_tests {
                 view_is_out: false
             }
             .mouse_may_turn_body(false, 0),
-            "dead: refused through the shared precondition `0x5144e0`"
+            "dead: refused through the shared precondition"
         );
     }
 
@@ -1128,18 +1122,18 @@ mod move_mode_tests {
         assert_eq!(
             gate(false, true, false),
             (false, true),
-            "a PURE root (Frost Nova) takes translation and leaves the pivot — `0x514560` alone"
+            "a PURE root (Frost Nova) takes translation and leaves the pivot — alone"
         );
         assert_eq!(
             gate(false, false, true),
             (true, false),
-            "a stun takes the pivot and, by itself, nothing else — `0x5145b0` alone"
+            "a stun takes the pivot and, by itself, nothing else — alone"
         );
         assert_eq!(
             gate(true, false, false),
             (false, false),
             "DEAD, with neither a root nor a stun granted anywhere: both predicates fail their \
-             shared precondition `0x5144e0` on health at `0x5144f8`. The turn half is the bug — a \
+             shared precondition on health. The turn half is the bug — a \
              corpse is stunned as far as the input tick is concerned, so it cannot be spun with \
              the turn keys or a right-drag, and it does not need the server's root to say so."
         );
@@ -1150,7 +1144,7 @@ mod move_mode_tests {
         );
     }
 
-    /// The teardown leg (`0x5146d6`).
+    /// The teardown leg.
     #[test]
     fn only_both_predicates_down_tears_the_follow_down() {
         assert!(
@@ -1159,7 +1153,7 @@ mod move_mode_tests {
         );
         assert!(
             !MoverInput::default().torn_down(false, true),
-            "and neither does a pure stun — the emitter never consults `0x5145b0`"
+            "and neither does a pure stun — the emitter never consults"
         );
         assert!(
             MoverInput {
@@ -1175,7 +1169,7 @@ mod move_mode_tests {
         );
     }
 
-    /// `0x5144e0`'s far-sight term, read only when the mover is the active player (`0x514537`).
+    /// The reference's far-sight term, read only when the mover is the active player.
     #[test]
     fn far_sight_freezes_your_own_body_but_never_a_possessed_one() {
         let driving = |driving_own_body, far_sight_engaged| {
@@ -1194,15 +1188,15 @@ mod move_mode_tests {
         assert_eq!(
             driving(true, true),
             (false, false),
-            "MIND VISION — my view is out and the body is mine, so `0x5144e0` fails and takes the \
-             walk and the turn together, exactly as death does"
+            "MIND VISION — my view is out and the body is mine, so the shared precondition fails \
+             and takes the walk and the turn together, exactly as death does"
         );
         assert_eq!(
             driving(false, true),
             (true, true),
             "MIND CONTROL — the latch is engaged (possession sets the same field), but the mover \
-             is not the active player, so `0x51453e` returns the conjunct satisfied and the victim \
-             stays drivable. Dropping the `IsActivePlayer` half freezes it."
+             is not the active player, so the far-sight term returns the conjunct satisfied and \
+             the victim stays drivable. Dropping the active-player half freezes it."
         );
         assert!(
             MoverInput {
@@ -1210,7 +1204,7 @@ mod move_mode_tests {
                 view_is_out: true,
             }
             .torn_down(false, false),
-            "and it ends a follow, with neither a root nor a stun anywhere — `0x5146d6` needs both \
+            "and it ends a follow, with neither a root nor a stun anywhere — needs both \
              predicates down, and a term in the precondition they SHARE is both by construction. \
              Engaging Mind Vision mid-follow stops you following, for the same reason dying does."
         );

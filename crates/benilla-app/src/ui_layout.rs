@@ -3,7 +3,7 @@
 //! local: never uploaded, never downloaded. The engine half (snapshot, restore) is
 //! `benilla_ui::script`'s `layout_cache`; this is the file and when it is read and written.
 //!
-//! The grammar, LF, integers (`SavePlacedFrames` `0x5234a0`, `PlacedFrameCallback` `0x517e00`):
+//! The grammar, LF, integers (writer `0x5234a0`, per-frame callback `0x517e00`):
 //!
 //! ```text
 //! Version: 1
@@ -16,10 +16,10 @@
 //! H: 1
 //! ```
 //!
-//! The reader (`LoadPlacedFrames` `0x5183a0`) matches each line's prefix in any case, starts a
-//! block at `Frame:` with level -1, anchor `TOPLEFT` and zero offsets and size, and ignores the
-//! version and any other line. The file is read after the UI loads and written at its shutdown,
-//! on logout, quit, disconnect and `/reload`, and at no other time.
+//! The reader (`0x5183a0`) matches each line's prefix in any case, starts a block at `Frame:` with
+//! level -1, anchor `TOPLEFT` and zero offsets and size, and ignores the version and any other
+//! line. The file is read after the UI loads and written at its shutdown, on logout, quit,
+//! disconnect and `/reload`, and at no other time.
 
 use bevy::prelude::*;
 
@@ -46,7 +46,7 @@ pub(crate) fn render(frames: &[PlacedFrame]) -> String {
     out
 }
 
-/// `SStrToInt`: the leading integer, 0 when there is none.
+/// The client's string-to-integer parse: the leading integer, 0 when there is none.
 fn int(s: &str) -> i32 {
     let s = s.trim_start();
     let end = s
@@ -123,7 +123,8 @@ pub(crate) fn load_layout(
     }
 }
 
-/// `SaveAccountData(6, SavePlacedFrames)` at the UI shutdown: the whole file, from the live tree.
+/// The account-data save of slot 6 with the placed-frames writer at the UI shutdown: the whole
+/// file, from the live tree.
 pub(crate) fn save_to_account_data(world: &mut World) {
     let Some(mut file) = world.remove_resource::<LayoutFile>() else {
         return;

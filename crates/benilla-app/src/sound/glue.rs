@@ -1,9 +1,8 @@
 //! Glue-screen music: `GlueParent.lua`'s `CurrentGlueMusic`, a SoundEntries kit by name
 //! (`GS_LichKing`), which the stock screens' music verbs stream and keep across the glue screens
-//! (`SI2::StartGlueMusic 0x9861c0`), starting a new variation each time one ends
-//! (`SI2::GlueMusicUpdate 0x986080`). Entering the world does not end it: it plays through the map
-//! load and fades over 3.0 s once the load drains, still behind the loading screen; the ambience is
-//! cut there.
+//! (`0x9861c0`), starting a new variation each time one ends (`0x986080`). Entering the world does
+//! not end it: it plays through the map load and fades over 3.0 s once the load drains, still
+//! behind the loading screen; the ambience is cut there.
 
 use bevy::prelude::*;
 
@@ -26,9 +25,9 @@ pub(crate) enum GlueMusicRequest {
     /// `StopGlueMusic()` (`0x4dc1a0` → `0x9860e0(−1)`): forgets the name, so nothing restarts it,
     /// and cuts the stream.
     Stop,
-    /// `PlayGlueAmbience(name [, fade])` (`0x4dc0c0` → `SI2::StartGlueAmbience 0x985fb0`): the
-    /// same kit still playing plays on; else the old one stops over 3.0 s and the kit starts
-    /// looping on the ambience slider, faded in over `fade` seconds.
+    /// `PlayGlueAmbience(name [, fade])` (`0x4dc0c0` → `0x985fb0`): the same kit still playing
+    /// plays on; else the old one stops over 3.0 s and the kit starts looping on the ambience
+    /// slider, faded in over `fade` seconds.
     Ambience { name: String, fade: Option<f32> },
     /// `StopGlueAmbience()` (`0x4dc130`): a 1.0 s fade (`0x985f70(1.0)`).
     StopAmbience,
@@ -44,8 +43,7 @@ const STOP_GLUE_AMBIENCE_FADE_MS: u64 = 1000;
 /// so the watch still sees the stream during the world-entry load burst.
 struct GlueMusic {
     handle: Option<mixer::StreamingSoundHandle<kira::sound::FromFileError>>,
-    /// The kit name `PlayGlueMusic` last started (`s_glueMusicName`, `0xdce968`); empty once
-    /// stopped.
+    /// The kit name `PlayGlueMusic` last started (`0xdce968`); empty once stopped.
     track: String,
     /// The streaming kit's id, which a repeated `PlayGlueMusic` compares against.
     kit: Option<u32>,
@@ -54,7 +52,7 @@ struct GlueMusic {
     watch: mixer::StreamWatch,
     /// The stop-fade is running; the per-frame slider feed stands off so it cannot undo the ramp.
     fading: bool,
-    /// The glue ambience (`s_glueAmbience`, `0xdcea90`): its looping stream, kit and volume.
+    /// The glue ambience (`0xdcea90`): its looping stream, kit and volume.
     ambience: Option<mixer::StreamingSoundHandle<kira::sound::FromFileError>>,
     ambience_kit: Option<u32>,
     ambience_volume: f32,
@@ -172,9 +170,9 @@ fn open_glue_ambience(
     }
 }
 
-/// A stop passed −1, which keeps the sound's own fade-out (`SESound::Stop 0x879840`): the glue
-/// kits play with the default 0 (`0x4c6a40`), so the channel stops at once, here behind the
-/// de-click ramp every force-stop takes.
+/// A stop passed −1, which keeps the sound's own fade-out (`0x879840`): the glue kits play with the
+/// default 0 (`0x4c6a40`), so the channel stops at once, here behind the de-click ramp every
+/// force-stop takes.
 fn glue_cut() -> kira::Tween {
     mixer::declick()
 }
@@ -275,11 +273,12 @@ fn drive_glue_music_requests(
 
 /// Arm the theme's 3.0 s fade and cut the ambience when the world's load drains.
 ///
-/// The reference's trigger: `CGlueMgr::Idle` (`0x4dab40`) in its enter-world state waits for the
-/// loading screen, and on the pass after the glue suspends it calls `StopGlueMusic(3.0f)` and
-/// `StopGlueAmbience(−1.0f)` (`0x4db91f`, `0x4db92d`), then sends `CMSG_PLAYER_LOGIN`. benilla's
-/// analogue is `world_hold`'s falling edge ([`crate::loading_screen`]), acted on only in the world
-/// so the logout blackout's drop does not fade the theme the glue just restarted.
+/// The reference's trigger: the glue manager's idle pass (`0x4dab40`) in its enter-world state
+/// waits for the loading screen, and on the pass after the glue suspends it calls
+/// `StopGlueMusic(3.0f)` and `StopGlueAmbience(−1.0f)` (`0x4db91f`, `0x4db92d`), then sends
+/// `CMSG_PLAYER_LOGIN`. benilla's analogue is `world_hold`'s falling edge
+/// ([`crate::loading_screen`]), acted on only in the world so the logout blackout's drop does not
+/// fade the theme the glue just restarted.
 fn hand_off_glue_music(
     config: Res<SoundConfig>,
     state: Res<State<ClientState>>,
@@ -333,7 +332,7 @@ fn watch_glue_music(
         );
     }
     // The Music slider rescales the playing theme in place (the `MusicVolume` re-apply walker
-    // `0x7a6660(ecx=2)` matches the glue stream), except while the stop-fade runs.
+    // matches the glue stream), except while the stop-fade runs.
     if !music.fading {
         if let Some(h) = music.handle.as_mut() {
             h.set_volume(
@@ -356,8 +355,8 @@ fn watch_glue_music(
     music.watch.feed(h, f64::from(time.delta_secs()));
 }
 
-/// A sound-system restart stops the theme and the ambience (`SE2::StopAllSounds 0x87ded0`); on the
-/// glue screens [`watch_glue_music`] starts the remembered theme again.
+/// A sound-system restart stops the theme and the ambience (`0x87ded0`); on the glue screens
+/// [`watch_glue_music`] starts the remembered theme again.
 fn stop_on_restart(
     mut restarts: MessageReader<super::engine::SoundRestart>,
     mut music: NonSendMut<GlueMusic>,

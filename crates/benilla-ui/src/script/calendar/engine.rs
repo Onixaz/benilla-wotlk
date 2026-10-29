@@ -1,7 +1,7 @@
-//! 12340's `CGCalendar` (`0x5b7820`-`0x5c43b0`): eight event tables keyed by date, three months
-//! of day lists built from them, the holidays and raid resets computed for the shown window, the
-//! pending invites, the clipboard, and the event held open. Each server message is applied as its
-//! `PH_CALENDAR_GROUP` arm (`0x5c3fe0`) applies it; what it signals is queued for the caller to
+//! 12340's calendar (`0x5b7820`-`0x5c43b0`): eight event tables keyed by date, three months of day
+//! lists built from them, the holidays and raid resets computed for the shown window, the pending
+//! invites, the clipboard, and the event held open. Each server message is applied as its arm of
+//! the calendar packet group (`0x5c3fe0`) applies it; what it signals is queued for the caller to
 //! fire once the model is released.
 
 use std::collections::{HashMap, HashSet};
@@ -15,7 +15,7 @@ use super::{
 use crate::script::lfg::Catalog;
 use crate::script::ScriptValue;
 
-/// `CalendarDayEvent::m_type`, the calendar flags the server sends and the client adds to.
+/// A day event's type, the calendar flags the server sends and the client adds to.
 pub(crate) mod kind {
     pub const PLAYER: u32 = 0x1;
     pub const SYSTEM: u32 = 0x4;
@@ -32,7 +32,7 @@ pub(crate) mod kind {
     pub const FETCHED: u32 = 0x543;
 }
 
-/// `CalendarDayEvent::m_flags`, the client's own marks.
+/// A day event's flags, the client's own marks.
 pub(crate) mod mark {
     pub const PENDING: u32 = 0x1;
     pub const MODERATOR: u32 = 0x2;
@@ -41,15 +41,15 @@ pub(crate) mod mark {
     pub const SIGN_UP: u32 = 0x8;
 }
 
-/// The event tables (`CalendarEventTables`, `0xc20dd8`): player, guild, lockouts, resets, plain
-/// holidays, then the weekly, Darkmoon and battleground holidays.
+/// The event tables (`0xc20dd8`): player, guild, lockouts, resets, plain holidays, then the weekly,
+/// Darkmoon and battleground holidays.
 pub(crate) const TABLES: usize = 8;
 const TABLE_GUILD: usize = 1;
 const TABLE_LOCKOUTS: usize = 2;
 const TABLE_RESETS: usize = 3;
 const TABLE_HOLIDAYS: usize = 4;
 
-/// Each table's filter CVar (`s_eventFilters` `0xacff94`); `None` is shown always.
+/// Each table's filter CVar (`0xacff94`); `None` is shown always.
 pub(crate) const FILTERS: [Option<&str>; TABLES] = [
     None,
     None,
@@ -70,7 +70,7 @@ const MIN_YEAR: i32 = 4;
 const MIN_MONTH: i32 = 10;
 const MAX_YEAR: i32 = 30;
 
-/// `CalendarDayEvent` (`0x5b7820`): one day's copy of an event, holiday, lockout or reset.
+/// The reference's day event (`0x5b7820`): one day's copy of an event, holiday, lockout or reset.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DayEvent {
     /// A player event's id, a holiday's `Holidays.dbc` row, a lockout's instance id.
@@ -91,7 +91,7 @@ pub(crate) struct DayEvent {
     pub invite_status: u8,
     pub invite_id: u64,
     pub creator: u64,
-    /// The 15-minute alarm is armed (`m_alarmCallback`).
+    /// The 15-minute alarm is armed.
     pub alarm_armed: bool,
     pub sequence_index: u32,
     pub sequence_length: u32,
@@ -121,7 +121,7 @@ impl Default for DayEvent {
 }
 
 impl DayEvent {
-    /// `GetSequenceType` (`0x5b7890`): 4 a one-day event, 1 its first day, 3 its last, 2 between.
+    /// The sequence type (`0x5b7890`): 4 a one-day event, 1 its first day, 3 its last, 2 between.
     fn sequence_type(&self) -> i32 {
         if self.sequence_length <= 1 {
             return 4;
@@ -132,7 +132,7 @@ impl DayEvent {
         i32::from(self.sequence_index != self.sequence_length - 1) + 2
     }
 
-    /// `ScheduleAlarm` (`0x5b79b0`): 15 minutes before the start.
+    /// The alarm schedule (`0x5b79b0`): 15 minutes before the start.
     fn schedule_alarm(&mut self) {
         let mut alarm = WowTime::decode(self.start);
         alarm.add_minutes(-15);
@@ -141,8 +141,8 @@ impl DayEvent {
     }
 }
 
-/// `CalendarEventSelection` (`0xc20f78`, `0xc20f90`): an event named by its fields, found again
-/// in whatever day list holds it.
+/// The reference's event selection (`0xc20f78`, `0xc20f90`): an event named by its fields, found
+/// again in whatever day list holds it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Selection {
     pub event_id: u64,
@@ -186,7 +186,7 @@ struct ResetNode {
     interval: i32,
 }
 
-/// `CalendarPendingInvite`.
+/// A pending invite, as the reference keeps it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct PendingInvite {
     event_id: u64,
@@ -215,7 +215,7 @@ struct DynamicHoliday {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Signal {
     Event(&'static str, Vec<ScriptValue>),
-    /// `CalendarError` (`0x5b9960`): the key's text, filled with the argument, is
+    /// The calendar error (`0x5b9960`): the key's text, filled with the argument, is
     /// `CALENDAR_UPDATE_ERROR`'s.
     Error(&'static str, Option<ErrorArg>),
 }
@@ -231,7 +231,7 @@ pub(crate) struct Ctx<'a> {
     pub lfg: &'a Catalog,
     /// Each table's filter: shown, by its CVar.
     pub filters: [bool; TABLES],
-    /// `CGGuildInfo::CanEditGuildEvent` (`0x5cbca0`): the rank's right `0x100000`.
+    /// The guild's event-edit right (`0x5cbca0`): the rank's right `0x100000`.
     pub can_edit_guild_event: bool,
     /// `GetTime`, the throttles' clock.
     pub now_secs: f64,
@@ -240,60 +240,60 @@ pub(crate) struct Ctx<'a> {
 /// The calendar's whole state.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CalendarModel {
-    /// `m_initialize` (`0xc207f0`): the next world entry is the first since login.
+    /// The initialize flag (`0xc207f0`): the next world entry is the first since login.
     initialize: bool,
-    /// `m_openedCalendar` (`0xc207f1`).
+    /// The calendar has been opened (`0xc207f1`).
     opened: bool,
-    /// `m_calendarReceived` (`0xc207f2`).
+    /// The calendar has been received (`0xc207f2`).
     received: bool,
-    /// `m_numInitialPending` (`0xc207f4`), the server's count before the calendar lands.
+    /// The initial pending count (`0xc207f4`), the server's count before the calendar lands.
     num_initial_pending: i32,
-    /// `m_actionPending` (`0xc207f3`).
+    /// An action is pending (`0xc207f3`).
     pub(crate) action_pending: bool,
-    /// `m_lastEventTime` and `m_lastInviteTime` (`0xc207fc`, `0xc207f8`): `GetTime` seconds.
+    /// The last event and last invite times (`0xc207fc`, `0xc207f8`): `GetTime` seconds.
     last_event: Option<f64>,
     last_invite: Option<f64>,
-    /// `m_absMonth`, `m_absYear`, `m_absMonthDays` (`0xacff8c`, `0xacff90`, `0xc20800`): the shown
+    /// The absolute month, year and month days (`0xacff8c`, `0xacff90`, `0xc20800`): the shown
     /// month; no days is "not yet chosen".
     abs_month: i32,
     abs_year: i32,
     abs_month_days: i32,
     selected: Selection,
     context: Selection,
-    /// `m_contextEventInfo` (`0xc207e8`): the day event the context menu was opened on.
+    /// The context event (`0xc207e8`): the day event the context menu was opened on.
     context_event: Option<usize>,
-    /// `s_eventClipboard` (`0xad0350`); an event id of 0 is empty.
+    /// The event clipboard (`0xad0350`); an event id of 0 is empty.
     clipboard: DayEvent,
     /// The day events, slotted; the tables and day lists hold indices.
     slab: Vec<Option<DayEvent>>,
     free: Vec<usize>,
     tables: [HashMap<u32, Vec<usize>>; TABLES],
-    /// `s_days` (`0xc20808`).
+    /// The day lists (`0xc20808`).
     days: [[Vec<usize>; DAYS]; MONTHS],
     holidays: Vec<HolidayNode>,
     resets: Vec<ResetNode>,
     pending: Vec<PendingInvite>,
     dynamic: HashMap<u32, DynamicHoliday>,
-    /// `s_eventTextures` (`0xc20f60`): the dungeon, then the raid `LfgDungeons.dbc` rows.
+    /// The event textures (`0xc20f60`): the dungeon, then the raid `LfgDungeons.dbc` rows.
     textures: [Vec<i32>; 2],
-    /// `m_curEvent` (`0xc207ec`).
+    /// The current event (`0xc207ec`).
     pub(crate) current: Option<CurrentEvent>,
-    /// `g_clientGameTime`.
+    /// The client's game time.
     pub(crate) now: WowTime,
     catalog: CalendarCatalogView,
     holiday_index: HashMap<u32, usize>,
-    /// The client's Region (`s_region`).
+    /// The client's region.
     region: i32,
     pub(crate) player: Option<CalendarPlayerView>,
     pub(crate) names: HashMap<u64, CalendarName>,
-    /// Names a day event or the event view asked for (`NameCacheCallback` `0x5b78d0`).
+    /// Names a day event or the event view asked for (the name-cache callback `0x5b78d0`).
     pub(crate) wanted_names: HashSet<u64>,
     /// Creators the calendar's arrival asks for with no callback (`0x5c30af`).
     prefetch_names: HashSet<u64>,
     ignored: HashSet<u64>,
     friends: HashSet<u64>,
     pub(crate) raid_members: HashSet<u64>,
-    /// `CGChat::m_complaintsSystemStatus`, off until `SMSG_FEATURE_SYSTEM_STATUS`, which is not
+    /// The chat's complaint-system status, off until `SMSG_FEATURE_SYSTEM_STATUS`, which is not
     /// modelled.
     complaints_enabled: bool,
     pub(crate) requests: Vec<CalendarRequest>,
@@ -301,7 +301,7 @@ pub struct CalendarModel {
 }
 
 impl Default for CalendarModel {
-    /// `CGCalendar::InitializeGame` (`0x5c4240`) on the statics' load-time values.
+    /// The calendar's game start (`0x5c4240`) on the statics' load-time values.
     fn default() -> Self {
         Self {
             initialize: true,
@@ -349,8 +349,8 @@ impl Default for CalendarModel {
     }
 }
 
-/// `GetDaysInMonth` (`0x5b7a10`): `(days, weekday of the 1st)`. Its December guard tests the month
-/// itself against 12, so December reaches month 12, which `mktime` takes as next January.
+/// The month's day count (`0x5b7a10`): `(days, weekday of the 1st)`. Its December guard tests the
+/// month itself against 12, so December reaches month 12, which `mktime` takes as next January.
 pub(crate) fn days_in_month(month: i32, year: i32) -> (i32, i32) {
     let mut date = WowTime::date(month, 0, year);
     date.add_days(0, false);
@@ -364,7 +364,7 @@ pub(crate) fn days_in_month(month: i32, year: i32) -> (i32, i32) {
     (date.month_day + 1, weekday)
 }
 
-/// `GetCalendarTypeString` (`0x5b7fd0`).
+/// The calendar type string (`0x5b7fd0`).
 pub(crate) fn calendar_type(kind_bits: u32) -> &'static str {
     if kind_bits & kind::PLAYER != 0 {
         "PLAYER"
@@ -387,13 +387,13 @@ pub(crate) fn calendar_type(kind_bits: u32) -> &'static str {
     }
 }
 
-/// `GetDateKey` (`0x5b9140`): a packed time's date alone.
+/// The date key (`0x5b9140`): a packed time's date alone.
 fn date_key(time: u32) -> u32 {
     let t = WowTime::decode(time);
     WowTime::date(t.month, t.month_day, t.year).encode()
 }
 
-/// `ValidateDate` (`0x5b7b30`): from the 24th of November 2004 to the last day of 2030.
+/// The date check (`0x5b7b30`): from the 24th of November 2004 to the last day of 2030.
 pub(crate) fn validate_date(date: &WowTime) -> bool {
     let mut check = *date;
     let mut limit = WowTime::date(MIN_MONTH, 23, MIN_YEAR);
@@ -412,7 +412,7 @@ pub(crate) fn validate_date(date: &WowTime) -> bool {
     !check.gt(&limit)
 }
 
-/// `GameCalendarGetMaxCreateDate` (`0x5b7a80`): this month's last day a year on, 23:59.
+/// The latest create date (`0x5b7a80`): this month's last day a year on, 23:59.
 pub(crate) fn max_create_date(now: &WowTime) -> WowTime {
     let mut date = WowTime::date((now.month + 13) % 12, 0, now.year + (now.month + 13) / 12);
     date.add_days(-1, false);
@@ -450,7 +450,7 @@ impl CalendarModel {
         moved
     }
 
-    /// `Holidays.dbc`'s row by id (`g_holidaysDB.GetRecord`).
+    /// `Holidays.dbc`'s row by id.
     pub(crate) fn holiday(&self, id: u32) -> Option<&CalendarHolidayView> {
         self.holiday_index
             .get(&id)
@@ -512,7 +512,7 @@ impl CalendarModel {
         }
     }
 
-    /// Empty one table, its events freed (`TSHashTable::InternalClear`).
+    /// Empty one table, its events freed.
     fn clear_table(&mut self, table: usize) {
         let ids: Vec<usize> = self.tables[table].drain().flat_map(|(_, v)| v).collect();
         for id in ids {
@@ -526,14 +526,14 @@ impl CalendarModel {
         self.signals.push(Signal::Event(event, args));
     }
 
-    /// `CalendarError` (`0x5b9960`): the error line, then the action is no longer pending.
+    /// The calendar error (`0x5b9960`): the error line, then the action is no longer pending.
     pub(crate) fn error(&mut self, key: &'static str, arg: Option<ErrorArg>) {
         self.signals.push(Signal::Error(key, arg));
         self.action_pending = false;
         self.signal("CALENDAR_ACTION_PENDING", vec![ScriptValue::Bool(false)]);
     }
 
-    /// `SetActionPending` (`0x5b7e20`).
+    /// The action-pending set (`0x5b7e20`).
     pub(crate) fn set_action_pending(&mut self, pending: bool) {
         self.action_pending = pending;
         self.signal("CALENDAR_ACTION_PENDING", vec![ScriptValue::Bool(pending)]);
@@ -545,9 +545,9 @@ impl CalendarModel {
 
     // ── World entry and the clock ───────────────────────────────────────────────────────────
 
-    /// `CGCalendar::EnterWorld` (`0x5be2a0`): nothing pending; on the first entry since login
-    /// the clipboard empties, the pending count is asked for and the texture lists are built
-    /// from `LfgDungeons.dbc`, raids and dungeons of the player's side, by expansion then name.
+    /// The calendar's world entry (`0x5be2a0`): nothing pending; on the first entry since login the
+    /// clipboard empties, the pending count is asked for and the texture lists are built from
+    /// `LfgDungeons.dbc`, raids and dungeons of the player's side, by expansion then name.
     pub(crate) fn enter_world(&mut self, ctx: &Ctx) {
         self.set_action_pending(false);
         if !self.initialize {
@@ -572,7 +572,7 @@ impl CalendarModel {
                 _ => {}
             }
         }
-        // `QSortTextures` (`0x5b8e50`): the newest expansion first, then by name.
+        // The texture sort (`0x5b8e50`): the newest expansion first, then by name.
         for list in &mut lists {
             list.sort_by(|&a, &b| {
                 let (Some(ra), Some(rb)) = (ctx.lfg.dungeon(a), ctx.lfg.dungeon(b)) else {
@@ -588,7 +588,7 @@ impl CalendarModel {
     }
 
     /// The game clock moved to `now`; an alarm whose minute this is fires for an accepted or
-    /// confirmed invite (`FireEventAlarm` `0x5b7910`).
+    /// confirmed invite (the event alarm `0x5b7910`).
     pub(crate) fn tick_clock(&mut self, now: WowTime) {
         let moved = self.now.hour_and_minutes() != now.hour_and_minutes();
         self.now = now;
@@ -623,8 +623,8 @@ impl CalendarModel {
         }
     }
 
-    /// `CountPendingInvites` (`0x5bec70`): the pending invites from a known, unignored inviter, or
-    /// the server's count if that is more.
+    /// The pending-invite count (`0x5bec70`): the pending invites from a known, unignored inviter,
+    /// or the server's count if that is more.
     pub(crate) fn count_pending(&self) -> u32 {
         let count = self
             .pending
@@ -648,7 +648,7 @@ impl CalendarModel {
         }
     }
 
-    /// `AddPendingInvite` (`0x5be590`).
+    /// The pending-invite add (`0x5be590`).
     fn add_pending_invite(&mut self, id: usize) {
         let e = self.event_mut(id);
         e.flags |= mark::PENDING;
@@ -664,7 +664,7 @@ impl CalendarModel {
 
     // ── The shown month ─────────────────────────────────────────────────────────────────────
 
-    /// `GetMonth` (`0x5b8ec0`): the shown month moved by `offset`, held to November 2004 and
+    /// The month lookup (`0x5b8ec0`): the shown month moved by `offset`, held to November 2004 and
     /// 2030; `(month, year, days, weekday of the 1st)`.
     pub(crate) fn month(&self, offset: i32) -> (i32, i32, i32, i32) {
         let (mut month, mut year) = if self.abs_month_days != 0 {
@@ -704,8 +704,8 @@ impl CalendarModel {
         self.abs_year
     }
 
-    /// `ClampAbsMonthDay` (`0x5b8f70`): the year within five of this one and 2004 to 2030, the
-    /// month as `abs(month % 12)`.
+    /// The absolute month clamp (`0x5b8f70`): the year within five of this one and 2004 to 2030,
+    /// the month as `abs(month % 12)`.
     pub(crate) fn clamp_abs_month(&self, month: i32, year: i32) -> (i32, i32, i32, i32) {
         let min = self.now.year - 5;
         let year = year.clamp(min, min + 10).clamp(MIN_YEAR, MAX_YEAR);
@@ -722,7 +722,8 @@ impl CalendarModel {
         self.calculate_events(ctx, true);
     }
 
-    /// `GetDayEvent(offset, day)` (`0x5b91a0`): the offset is -1, 0 or 1 and the day valid.
+    /// The day-event lookup by `(offset, day)` (`0x5b91a0`): the offset is -1, 0 or 1 and the day
+    /// valid.
     fn day_valid(&self, offset: i32, day: u32) -> bool {
         if !(-1..=1).contains(&offset) || day >= DAYS as u32 {
             return false;
@@ -738,12 +739,12 @@ impl CalendarModel {
             .then(|| &self.days[(offset + 1) as usize][day as usize])
     }
 
-    /// `GetNumDayEvents` (`0x5b9220`).
+    /// The day's event count (`0x5b9220`).
     pub(crate) fn num_day_events(&self, offset: i32, day: u32) -> usize {
         self.day_list(offset, day).map_or(0, Vec::len)
     }
 
-    /// `GetFirstPendingInviteIndex` (`0x5b92b0`): 0-based, -1 none.
+    /// The first pending invite's index (`0x5b92b0`): 0-based, -1 none.
     pub(crate) fn first_pending(&self, offset: i32, day: u32) -> i32 {
         self.day_list(offset, day)
             .and_then(|l| {
@@ -781,7 +782,7 @@ impl CalendarModel {
         self.event(id)
     }
 
-    /// `ComputeEventIndex` (`0x5b9000`): `(month offset, day, index)`, 0-based day and index.
+    /// The event index (`0x5b9000`): `(month offset, day, index)`, 0-based day and index.
     pub(crate) fn event_index(&self, context: bool) -> Option<(i32, u32, u32)> {
         let s = if context {
             &self.context
@@ -820,7 +821,7 @@ impl CalendarModel {
         self.selected = Selection::default();
     }
 
-    /// `SelectContextEvent` (`0x5b97d0`).
+    /// The context-event select (`0x5b97d0`).
     pub(crate) fn select_context(&mut self, offset: i32, day: u32, index: u32) {
         if let Some(id) = self.day_event_id(offset, day, index) {
             self.context = Selection::of(self.event(id));
@@ -839,7 +840,7 @@ impl CalendarModel {
 
     // ── The event tables ────────────────────────────────────────────────────────────────────
 
-    /// `InsertEvent` (`0x5c2030`): one copy per day the event spans, each told its place in the
+    /// The event insert (`0x5c2030`): one copy per day the event spans, each told its place in the
     /// run; a run's last copy starts at the event's end. The first copy alone keeps the alarm.
     fn insert_event(&mut self, event: DayEvent, table: usize) -> usize {
         let original_end = event.end;
@@ -906,7 +907,7 @@ impl CalendarModel {
         last
     }
 
-    /// `CalendarEventTables::GetEvent` (`0x5bea50`).
+    /// The table lookup (`0x5bea50`).
     fn table_event(&self, table: usize, date: u32, event_id: u64) -> Option<usize> {
         self.tables[table]
             .get(&date)?
@@ -915,7 +916,7 @@ impl CalendarModel {
             .find(|&id| self.event(id).event_id == event_id)
     }
 
-    /// `CalendarEventTables::Delete` (`0x5be950`).
+    /// The table delete (`0x5be950`).
     fn table_delete(&mut self, table: usize, date: u32, event_id: u64) -> bool {
         let Some(list) = self.tables[table].get_mut(&date) else {
             return false;
@@ -953,7 +954,7 @@ impl CalendarModel {
             .find(|&id| self.event(id).event_id == event_id)
     }
 
-    /// `QSortEvents` (`0x5bfd20`): pending invites, then fetched events, then holidays by
+    /// The event sort (`0x5bfd20`): pending invites, then fetched events, then holidays by
     /// priority; then by run position, start and name.
     fn compare_events(&self, a: &DayEvent, b: &DayEvent) -> std::cmp::Ordering {
         use std::cmp::Ordering;
@@ -1025,7 +1026,7 @@ impl CalendarModel {
         crate::script::who_sort::cmp_utf8i(&name(a, rec_a), &name(b, rec_b))
     }
 
-    /// `UpdateDisplayList` (`0x5bff30`): rebuild the three months' day lists from the tables
+    /// The display-list rebuild (`0x5bff30`): rebuild the three months' day lists from the tables
     /// their filters show, dropping an ignored creator's events. Before a month is chosen it
     /// shows this one and computes its events instead.
     pub(crate) fn update_display_list(&mut self, ctx: &Ctx, signal: bool) {
@@ -1056,7 +1057,7 @@ impl CalendarModel {
         }
     }
 
-    /// `SetFilter` (`0x5c0240`): a filter CVar's change rebuilds the lists, signalling nothing.
+    /// The filter set (`0x5c0240`): a filter CVar's change rebuilds the lists, signalling nothing.
     pub(crate) fn set_filter(&mut self, filters: &[bool; TABLES]) {
         if self.abs_month_days != 0 {
             self.rebuild_days(filters);
@@ -1101,7 +1102,7 @@ impl CalendarModel {
 
     // ── Holidays, resets and lockouts ───────────────────────────────────────────────────────
 
-    /// `InitHolidays` (`0x5c04f0`): a node per date slot the player's side sees, for each
+    /// The holiday setup (`0x5c04f0`): a node per date slot the player's side sees, for each
     /// holiday of the client's Region; a looping holiday's node carries its cycle.
     fn init_holidays(&mut self) {
         let side = self.player.as_ref().map_or(-1, |p| p.pvp_faction);
@@ -1163,8 +1164,8 @@ impl CalendarModel {
         }
     }
 
-    /// `ComputeEventOccurrence` (`0x5bfab0`): a holiday slot's start and end that overlap the
-    /// window, and whether its date is a weekday alone.
+    /// The occurrence compute (`0x5bfab0`): a holiday slot's start and end that overlap the window,
+    /// and whether its date is a weekday alone.
     fn occurrence(
         &mut self,
         range_start: &WowTime,
@@ -1269,8 +1270,8 @@ impl CalendarModel {
         None
     }
 
-    /// `CalculateEvents` (`0x5c23c0`): recompute the holidays and resets for the window from six
-    /// days before the shown month to 42 days into it, then rebuild the day lists.
+    /// The event calculation (`0x5c23c0`): recompute the holidays and resets for the window from
+    /// six days before the shown month to 42 days into it, then rebuild the day lists.
     pub(crate) fn calculate_events(&mut self, ctx: &Ctx, signal: bool) {
         for table in [4, 5, 6, 7, TABLE_RESETS] {
             self.clear_table(table);
@@ -1369,8 +1370,8 @@ impl CalendarModel {
         self.update_display_list(ctx, signal);
     }
 
-    /// `InsertLockoutEvent` (`0x5c2350`): the map, difficulty and instance ride in the holiday,
-    /// end and event-id fields.
+    /// The lockout insert (`0x5c2350`): the map, difficulty and instance ride in the holiday, end
+    /// and event-id fields.
     fn insert_lockout(&mut self, map: i32, difficulty: i32, instance_id: u64, time: u32) {
         let e = DayEvent {
             holiday_id: map as u32,
@@ -1716,8 +1717,8 @@ impl CalendarModel {
         self.received = true;
     }
 
-    /// `ProcessGetEvent` (`0x5bed20`): the event opens; a first look at an invite still unanswered
-    /// marks it pending.
+    /// The event fetch's handler (`0x5bed20`): the event opens; a first look at an invite still
+    /// unanswered marks it pending.
     fn get_event(&mut self, _ctx: &Ctx, e: super::CalendarEventView) {
         if self.player.is_none() {
             return;
@@ -1766,7 +1767,7 @@ impl CalendarModel {
         }
     }
 
-    /// `ProcessInvite` (`0x5bf030`).
+    /// The invite handler (`0x5bf030`).
     fn invite(&mut self, i: super::CalendarInviteAddedView) {
         if i.invite_type == 1 {
             let target = match self.current.as_ref().filter(|c| c.event_id == i.event_id) {
@@ -1806,7 +1807,7 @@ impl CalendarModel {
         }
     }
 
-    /// `ProcessInviteRemoved` (`0x5bf250`).
+    /// The invite-removed handler (`0x5bf250`).
     fn invite_removed(&mut self, guid: u64, event_id: u64, flags: u32) {
         if flags & kind::GUILD_EVENT != 0 {
             let target = match self.current.as_ref().filter(|c| c.event_id == event_id) {
@@ -1829,7 +1830,7 @@ impl CalendarModel {
         }
     }
 
-    /// `ProcessInviteStatus` (`0x5bf420`).
+    /// The invite-status handler (`0x5bf420`).
     fn invite_status(&mut self, s: super::CalendarStatusView) {
         let me = self.player_guid();
         if me == 0 {
@@ -1858,7 +1859,7 @@ impl CalendarModel {
         }
     }
 
-    /// `ProcessInviteStatusAlert` (`0x5bf590`).
+    /// The invite-status alert's handler (`0x5bf590`).
     fn invite_status_alert(&mut self, event_id: u64, date: u32, flags: u32, status: u8) {
         let me = self.player_guid();
         if me == 0 {
@@ -1889,7 +1890,7 @@ impl CalendarModel {
         self.signal("CALENDAR_UPDATE_EVENT_LIST", vec![]);
     }
 
-    /// `SetInviteFlag` (`0x5bf6f0`).
+    /// The invite-flag set (`0x5bf6f0`).
     fn set_invite_flag(&mut self, event_id: u64, flag: u32, set: bool) {
         let id = match self.current.as_ref().filter(|c| c.event_id == event_id) {
             Some(_) => self.current_day_event(),
@@ -1905,7 +1906,7 @@ impl CalendarModel {
         }
     }
 
-    /// `ProcessLockoutUpdated` (`0x5c3880`): an extension moves the lockout to its new date.
+    /// The lockout-updated handler (`0x5c3880`): an extension moves the lockout to its new date.
     fn lockout_updated(
         &mut self,
         ctx: &Ctx,
@@ -1947,7 +1948,7 @@ impl CalendarModel {
         self.update_display_list(ctx, true);
     }
 
-    /// `ProcessInviteAlert` (`0x5c3ab0`): an invite lands on the calendar; an unanswered one
+    /// The invite alert's handler (`0x5c3ab0`): an invite lands on the calendar; an unanswered one
     /// that is not an announcement is pending.
     fn invite_alert(&mut self, ctx: &Ctx, a: super::CalendarInviteAlertView) {
         let me = self.player_guid();
@@ -2017,7 +2018,7 @@ impl CalendarModel {
         }
     }
 
-    /// `ProcessInviteRemovedAlert` (`0x5c0ae0`): a guild sign-up reverts to "not signed up";
+    /// The invite-removed alert's handler (`0x5c0ae0`): a guild sign-up reverts to "not signed up";
     /// anything else leaves the calendar. A removal with a status mails a notice.
     fn invite_removed_alert(
         &mut self,
@@ -2059,7 +2060,7 @@ impl CalendarModel {
         }
     }
 
-    /// `ProcessEventRemovedAlert` (`0x5c0cf0`).
+    /// The event-removed alert's handler (`0x5c0cf0`).
     fn event_removed_alert(&mut self, ctx: &Ctx, event_id: u64, date: u32) {
         self.clear_selections_of(event_id);
         if self.clipboard.event_id == event_id {
@@ -2077,7 +2078,7 @@ impl CalendarModel {
         self.update_display_list(ctx, true);
     }
 
-    /// `ProcessEventUpdatedAlert` (`0x5c3d30`): the event's day copy moves and takes the new
+    /// The event-updated alert's handler (`0x5c3d30`): the event's day copy moves and takes the new
     /// fields; the open event re-reads the whole tail.
     fn event_updated_alert(&mut self, ctx: &Ctx, u: super::CalendarEventUpdateView) {
         let table = Self::table_of(u.flags);
@@ -2180,8 +2181,8 @@ impl CalendarModel {
         self.error(key, arg);
     }
 
-    /// `CGCalendar::GuildChanged` (`0x5c0f40`): joining refetches; leaving drops the guild
-    /// table and a guild event on the clipboard.
+    /// The guild change (`0x5c0f40`): joining refetches; leaving drops the guild table and a guild
+    /// event on the clipboard.
     pub(crate) fn guild_changed(&mut self, ctx: &Ctx, in_guild: bool) {
         if self.player.is_none() {
             return;
@@ -2200,7 +2201,7 @@ impl CalendarModel {
         self.update_display_list(ctx, true);
     }
 
-    /// `CGCalendar::InvalidatePlayer` (`0x5bde60`): a renamed or deleted creator refetches.
+    /// The player invalidate (`0x5bde60`): a renamed or deleted creator refetches.
     pub(crate) fn invalidate_player(&mut self, guid: u64) {
         if self.player.is_none() {
             return;
@@ -2214,7 +2215,7 @@ impl CalendarModel {
         }
     }
 
-    /// The ignore list moved (`FriendList::IgnoreAdded` `0x6b7200`, `IgnoreRemoved` `0x6b6490`).
+    /// The ignore list moved (the friend list's ignore add `0x6b7200` and remove `0x6b6490`).
     pub(crate) fn ignores_changed(&mut self, ctx: &Ctx) {
         self.update_display_list(ctx, true);
         self.signal("CALENDAR_UPDATE_PENDING_INVITES", vec![]);
@@ -2222,7 +2223,7 @@ impl CalendarModel {
 
     // ── Verbs' halves ───────────────────────────────────────────────────────────────────────
 
-    /// `CGCalendar::GetCalendar` (`0x5bbb40`).
+    /// The calendar fetch (`0x5bbb40`).
     pub(crate) fn get_calendar(&mut self) {
         self.send(CalendarRequest::GetCalendar);
         self.opened = true;
@@ -2232,8 +2233,7 @@ impl CalendarModel {
         self.opened
     }
 
-    /// `CGCalendar::GetEvent` (`0x5b9310`): a fetched kind asks the server; any other opens
-    /// at once.
+    /// The event fetch (`0x5b9310`): a fetched kind asks the server; any other opens at once.
     pub(crate) fn open_event(&mut self, offset: i32, day: u32, index: u32) {
         if self.action_pending
             || !(-1..=1).contains(&offset)
@@ -2260,8 +2260,8 @@ impl CalendarModel {
         );
     }
 
-    /// The editing right on the open event (`CanEditCurrentEvent` `0x5b7d20`): an announcement
-    /// needs the guild right, anything else a moderator.
+    /// The editing right on the open event (`0x5b7d20`): an announcement needs the guild right,
+    /// anything else a moderator.
     pub(crate) fn can_edit_current(&self, ctx: &Ctx) -> bool {
         let me = self.player_guid();
         self.current.as_ref().is_some_and(|c| {
@@ -2283,8 +2283,8 @@ impl CalendarModel {
         }
     }
 
-    /// A new event of the player's (`CreatePlayerEvent` `0x5bbe50`), announcement (`0x5bbf20`)
-    /// or guild event (`0x5bc030`).
+    /// A new event of the player's (`0x5bbe50`), announcement (`0x5bbf20`) or guild event
+    /// (`0x5bc030`).
     pub(crate) fn new_event(&mut self, calendar_type: u32) {
         let Some(player) = self.player.clone() else {
             return;
@@ -2323,7 +2323,7 @@ impl CalendarModel {
         !self.action_pending && !Self::throttled(self.last_invite, ctx.now_secs, 2.0)
     }
 
-    /// `CGCalendar::AddEvent` (`0x5bbd60`).
+    /// The event add (`0x5bbd60`).
     pub(crate) fn add_event(&mut self, ctx: &Ctx) {
         if self.action_pending {
             return;
@@ -2351,7 +2351,7 @@ impl CalendarModel {
         }
     }
 
-    /// `CGCalendar::UpdateEvent` (`0x5bc310`).
+    /// The event update (`0x5bc310`).
     pub(crate) fn update_event(&mut self, ctx: &Ctx) {
         if self.action_pending || self.current.as_ref().is_none_or(|c| c.new) {
             return;
@@ -2372,8 +2372,7 @@ impl CalendarModel {
         }
     }
 
-    /// `CGCalendar::RemoveEvent` (`0x5b96a0`): an editor removes the event, anyone else their
-    /// own invite.
+    /// The event remove (`0x5b96a0`): an editor removes the event, anyone else their own invite.
     pub(crate) fn remove_event(&mut self, ctx: &Ctx) {
         if self.action_pending || self.current.as_ref().is_none_or(|c| c.new) {
             return;
@@ -2398,7 +2397,7 @@ impl CalendarModel {
         }
     }
 
-    /// `CGCalendar::RemoveInvite` (`0x5b9780`).
+    /// The invite remove (`0x5b9780`).
     pub(crate) fn remove_invite(&mut self, index: u32) {
         if self.action_pending {
             return;
@@ -2424,7 +2423,7 @@ impl CalendarModel {
         }
     }
 
-    /// `CGCalendar::Invite` (`0x5bc360`).
+    /// The invite (`0x5bc360`).
     pub(crate) fn invite_name(&mut self, ctx: &Ctx, name: &str) {
         let me = self.player_guid();
         if self.action_pending || self.current.as_ref().is_none_or(|c| !c.is_moderator(me)) {
@@ -2450,8 +2449,8 @@ impl CalendarModel {
         }
     }
 
-    /// `CGCalendar::InviteRSVP` (`0x5bc3e0`): a member's tentative on their own guild's event is a
-    /// tentative sign-up.
+    /// The invite RSVP (`0x5bc3e0`): a member's tentative on their own guild's event is a tentative
+    /// sign-up.
     pub(crate) fn invite_rsvp(&mut self, status: u32) {
         let Some(player) = self.player.clone() else {
             return;
@@ -2497,7 +2496,7 @@ impl CalendarModel {
         }
     }
 
-    /// `CGCalendar::EventSignUp` (`0x5bc460`).
+    /// The event sign-up (`0x5bc460`).
     pub(crate) fn event_sign_up(&mut self) {
         if self.action_pending {
             return;
@@ -2519,7 +2518,7 @@ impl CalendarModel {
         }
     }
 
-    /// `CGCalendar::GuildFilter` (`0x5bc160`): a mass invite only for a new player event.
+    /// The guild filter (`0x5bc160`): a mass invite only for a new player event.
     pub(crate) fn guild_filter(&mut self, min_level: u32, max_level: u32, min_rank: u32) {
         if self.action_pending {
             return;
@@ -2546,7 +2545,7 @@ impl CalendarModel {
         self.set_action_pending(true);
     }
 
-    /// `CGCalendar::ArenaTeam` (`0x5bc240`).
+    /// The arena-team invite (`0x5bc240`).
     pub(crate) fn arena_team(&mut self, index: u32) {
         if self.action_pending || index >= 3 {
             return;
@@ -2570,8 +2569,8 @@ impl CalendarModel {
         self.set_action_pending(true);
     }
 
-    /// `CGCalendar::SetEventTextureID` (`0x5b9630`): an index into the open event's type's list,
-    /// a dungeon's or a raid's.
+    /// The event texture set (`0x5b9630`): an index into the open event's type's list, a dungeon's
+    /// or a raid's.
     pub(crate) fn set_texture_index(&mut self, ctx: &Ctx, index: u32) {
         if !self.can_edit_current(ctx) {
             return;
@@ -2589,7 +2588,7 @@ impl CalendarModel {
         }
     }
 
-    /// `GetTextureIndex` (`0x5b9700`): 0-based, -1 none.
+    /// The texture index (`0x5b9700`): 0-based, -1 none.
     pub(crate) fn texture_index(&self, event_type: u32, texture: i32) -> i32 {
         let list = match event_type {
             1 => &self.textures[0],
@@ -2617,7 +2616,7 @@ impl CalendarModel {
         self.has_pending_invite(event_id)
     }
 
-    /// `ContextMenuInviteRSVP` (`0x5b9860`): never a guild sign-up.
+    /// The context menu's RSVP (`0x5b9860`): never a guild sign-up.
     pub(crate) fn context_rsvp(&mut self, id: usize, status: u32) {
         let e = self.event(id).clone();
         if self.action_pending
@@ -2657,7 +2656,8 @@ impl CalendarModel {
         self.dynamic.get(&id).map(|d| d.texture.as_str())
     }
 
-    /// `ContextMenuInviteRemove` (`0x5bc4d0`): the player's own invite, the moderator invite 0.
+    /// The context menu's invite removal (`0x5bc4d0`): the player's own invite, the moderator
+    /// invite 0.
     pub(crate) fn context_remove_invite(&mut self, id: usize) {
         let me = self.player_guid();
         if self.action_pending || me == 0 {
@@ -2675,7 +2675,7 @@ impl CalendarModel {
         self.signal("CALENDAR_ACTION_PENDING", vec![ScriptValue::Bool(true)]);
     }
 
-    /// `ContextMenuEventSignUp` (`0x5bc5e0`): a guild event only while not signed up.
+    /// The context menu's sign-up (`0x5bc5e0`): a guild event only while not signed up.
     pub(crate) fn context_sign_up(&mut self, id: usize, tentative: bool) {
         let e = self.event(id);
         if self.action_pending
@@ -2693,7 +2693,7 @@ impl CalendarModel {
         self.signal("CALENDAR_ACTION_PENDING", vec![ScriptValue::Bool(true)]);
     }
 
-    /// `ContextMenuEventRemove` (`0x5bc6d0`).
+    /// The context menu's event remove (`0x5bc6d0`).
     pub(crate) fn context_remove_event(&mut self, id: usize) {
         if self.action_pending || self.player.is_none() {
             return;
@@ -2709,7 +2709,7 @@ impl CalendarModel {
         self.signal("CALENDAR_ACTION_PENDING", vec![ScriptValue::Bool(true)]);
     }
 
-    /// `ContextMenuEventCopy` (`0x5bc7c0`).
+    /// The context menu's event copy (`0x5bc7c0`).
     pub(crate) fn context_copy(&mut self, ctx: &Ctx, id: usize) {
         let e = self.event(id).clone();
         if !self.can_edit_day_event(ctx, &e) {
@@ -2723,8 +2723,8 @@ impl CalendarModel {
         self.clipboard = e;
     }
 
-    /// `ContextMenuEventPaste` (`0x5bc870`): the clipboard's event copied to a day of a shown
-    /// month, at its own time of day.
+    /// The context menu's event paste (`0x5bc870`): the clipboard's event copied to a day of a
+    /// shown month, at its own time of day.
     pub(crate) fn context_paste(&mut self, ctx: &Ctx, offset: i32, day: u32) {
         if self.action_pending || self.clipboard.event_id == 0 {
             return;
@@ -2755,7 +2755,7 @@ impl CalendarModel {
         self.set_action_pending(true);
     }
 
-    /// `CanComplainAboutEvent` (`0x5bc9d0`).
+    /// The complaint check (`0x5bc9d0`).
     pub(crate) fn can_complain(&self, e: &DayEvent) -> bool {
         let me = self.player_guid();
         me != 0
@@ -2765,7 +2765,7 @@ impl CalendarModel {
             && !self.friends.contains(&e.creator)
     }
 
-    /// `CGCalendar::Complain` (`0x5bca50`). With the complaint system off, never sent.
+    /// The complaint (`0x5bca50`). With the complaint system off, never sent.
     pub(crate) fn complain(&mut self, id: usize) {
         let e = self.event(id).clone();
         if self.action_pending || !self.can_complain(&e) {
@@ -2780,8 +2780,8 @@ impl CalendarModel {
         self.signal("CALENDAR_ACTION_PENDING", vec![ScriptValue::Bool(true)]);
     }
 
-    /// `CGCalendar::SetInviteStatus` and `SetModeratorStatus` (`0x5b7d60`, `0x5b7dc0`): on a new
-    /// event, or with nothing pending.
+    /// The invite-status and moderator-status sets (`0x5b7d60`, `0x5b7dc0`): on a new event, or
+    /// with nothing pending.
     pub(crate) fn set_invite_field(&mut self, ctx: &Ctx, index: u32, status: u32, moderator: bool) {
         let me = self.player_guid();
         let allowed = self.current.as_ref().is_some_and(|c| {
@@ -2831,7 +2831,7 @@ impl CalendarModel {
     }
 
     /// Names landed: an awaited creator repaints the list once (`0x5b78d0`), and the open event's
-    /// last awaited invitee sorts and fires its deferred signal (`InviteNameCacheCallback`
+    /// last awaited invitee sorts and fires its deferred signal (the invite name-cache callback
     /// `0x5f1b10`).
     pub(crate) fn names_landed(&mut self, names: HashMap<u64, CalendarName>) {
         let arrived_wanted = self
@@ -2862,7 +2862,7 @@ impl CalendarModel {
     }
 }
 
-/// `ValidateCreateDate` (`0x5b7c00`): a valid date from today to the maximum create date.
+/// The create-date check (`0x5b7c00`): a valid date from today to the maximum create date.
 pub(crate) fn validate_create_date(date: &WowTime, now: &WowTime) -> bool {
     if !validate_date(date) {
         return false;

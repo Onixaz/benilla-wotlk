@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 r"""Generate `crates/benilla-ui/src/messages/catalog.rs` from `reference/3.3.5a-message-catalog.tsv`.
 
-The table is the reference's `CGGameUI` message registry at `0xac8af0`, indexed by message id;
-this re-shapes it into a Rust static that ships with benilla.
+The table is the reference's UI message registry, indexed by message id; this re-shapes it into a Rust static that ships with benilla.
 
     python3 scripts/gen-message-catalog.py            # the vendored table -> the .rs, in place
     python3 scripts/gen-message-catalog.py <tsv>      # another table
@@ -26,8 +25,8 @@ HEADER = """\
 
 use super::{MessageRecord, MsgKind};
 
-/// Every row of `0xac8af0`, indexed by message id: the ids are dense `0..{count}`, so
-/// `CATALOG[id]` is the reference's `0xac8af0 + 20*id`.
+/// Every row of the reference's message table, indexed by message id: the ids are dense
+/// `0..{count}`, so `CATALOG[id]` is the reference's row `id`.
 ///
 /// `rustfmt` is off: the generator emits one row per line, and a rewrap would drift from it.
 #[rustfmt::skip]
@@ -43,16 +42,16 @@ def main(path: str) -> int:
         if line.startswith("#") or line.startswith("id_hex"):
             continue
         f = line.rstrip("\n").split("\t")
-        if len(f) != 8:
-            raise SystemExit(f"malformed row (expected 8 fields, got {len(f)}): {line!r}")
+        if len(f) != 7:
+            raise SystemExit(f"malformed row (expected 7 fields, got {len(f)}): {line!r}")
         rows.append(
             {
                 "id": int(f[1]),
-                "key": f[3],
-                "kind": int(f[4]),
-                "sound": f[5],
-                "type_tag": int(f[6], 16),
-                "chat_type": int(f[7]),
+                "key": f[2],
+                "kind": int(f[3]),
+                "sound": f[4],
+                "type_tag": int(f[5], 16),
+                "chat_type": int(f[6]),
             }
         )
 

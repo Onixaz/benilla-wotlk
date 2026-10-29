@@ -1,5 +1,5 @@
-//! 12340's `CGCalendarEvent` (`0x5f1000`-`0x5f32b0`): the event the editor or viewer holds open,
-//! its invite list and its sort, and the sends its verbs build.
+//! 12340's calendar event (`0x5f1000`-`0x5f32b0`): the event the editor or viewer holds open, its
+//! invite list and its sort, and the sends its verbs build.
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
@@ -14,11 +14,11 @@ use crate::script::ScriptValue;
 /// The most invites an event takes (`0x5f1c22`).
 pub(crate) const MAX_INVITES: u32 = 100;
 
-/// `s_inviteStatusOrder` (`0xad16cc`): confirmed, signed up, accepted, standby, tentative,
-/// declined, out, not signed up, invited.
+/// The reference's invite-status order (`0xad16cc`): confirmed, signed up, accepted, standby,
+/// tentative, declined, out, not signed up, invited.
 const STATUS_ORDER: [i32; 9] = [9, 3, 6, 1, 7, 4, 2, 8, 5];
 
-/// `EventInviteInfo`.
+/// One invitee, as the reference's event keeps it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Invite {
     pub invite_id: u64,
@@ -42,7 +42,7 @@ pub(crate) enum InviteEdit {
     Error(&'static str),
 }
 
-/// `CGCalendarEvent`.
+/// The reference's calendar event.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CurrentEvent {
     pub event_id: u64,
@@ -57,7 +57,7 @@ pub(crate) struct CurrentEvent {
     pub date: WowTime,
     pub lockout_date: WowTime,
     pub flags: u32,
-    /// Not yet on the server (`m_new`).
+    /// Not yet on the server.
     pub new: bool,
     pub changed: bool,
     pub creator: u64,
@@ -65,16 +65,15 @@ pub(crate) struct CurrentEvent {
     /// Each criterion's reversed flag; a criterion's slot is its own number.
     pub reverse: [bool; 6],
     pub sort_type: u32,
-    /// Invitees whose names were not cached when they arrived (`m_pendingNames`).
+    /// Invitees whose names were not cached when they arrived.
     pending_names: Vec<u64>,
-    /// What the last awaited name signals (`m_signalType`, `0x5f1b10`).
+    /// What the last awaited name signals (`0x5f1b10`).
     pub signal_type: u32,
     pub guild_id: u32,
 }
 
 impl Default for CurrentEvent {
-    /// `CGCalendarEvent::Clear` (`0x5f1060`) on a fresh object: the date unset, the lockout date
-    /// zeroed.
+    /// The event clear (`0x5f1060`) on a fresh object: the date unset, the lockout date zeroed.
     fn default() -> Self {
         Self {
             event_id: 0,
@@ -111,7 +110,7 @@ impl Default for CurrentEvent {
     }
 }
 
-/// `ScrubString` (`0x7e1830`): pipes stripped, cut to the buffer, at a line break when asked,
+/// The string scrub (`0x7e1830`): pipes stripped, cut to the buffer, at a line break when asked,
 /// and to one character short of `max_chars`.
 pub(crate) fn scrub(source: &str, max_chars: usize, size: usize, cut_lines: bool) -> String {
     let mut out = String::new();
@@ -122,7 +121,7 @@ pub(crate) fn scrub(source: &str, max_chars: usize, size: usize, cut_lines: bool
         out.push(c);
     }
     if cut_lines {
-        // `TruncateNewLines` (`0x7e1640`): a CR, an LF, or a `\n` escape ends the text.
+        // The newline cut (`0x7e1640`): a CR, an LF, or a `\n` escape ends the text.
         let bytes = out.as_bytes();
         let cut = (0..bytes.len()).find(|&i| match bytes[i] {
             b'\r' | b'\n' => true,
@@ -139,8 +138,7 @@ pub(crate) fn scrub(source: &str, max_chars: usize, size: usize, cut_lines: bool
     }
 }
 
-/// `FixCharacterNameCase` (`0x7e2040`): the first letter up, the rest down, over Latin-1 and
-/// Cyrillic.
+/// The name-case fix (`0x7e2040`): the first letter up, the rest down, over Latin-1 and Cyrillic.
 pub(crate) fn fix_name_case(name: &str) -> String {
     name.chars()
         .enumerate()
@@ -199,8 +197,8 @@ impl CurrentEvent {
         e
     }
 
-    /// `ProcessGetEvent` (`0x5f2c00`): the event and its invitees, and the player's own status,
-    /// -1 when uninvited, 7 for an unjoined guild event.
+    /// The event fetch's handler (`0x5f2c00`): the event and its invitees, and the player's own
+    /// status, -1 when uninvited, 7 for an unjoined guild event.
     pub(crate) fn from_wire(
         w: CalendarEventView,
         me: u64,
@@ -258,7 +256,7 @@ impl CurrentEvent {
         !self.pending_names.is_empty()
     }
 
-    /// `IsModerator` (`0x5f1b30`): a moderator invite, or the creator.
+    /// The moderator test (`0x5f1b30`): a moderator invite, or the creator.
     pub(crate) fn is_moderator(&self, me: u64) -> bool {
         self.moderator_invite != 0 || (me != 0 && me == self.creator)
     }
@@ -271,7 +269,7 @@ impl CurrentEvent {
         self.invites.iter().position(|i| i.guid == guid)
     }
 
-    /// `GetSelectedInviteIndex` (`0x5b8e00`): 0-based, -1 none.
+    /// The selected invite's index (`0x5b8e00`): 0-based, -1 none.
     pub(crate) fn selected_index(&self) -> i32 {
         self.invites
             .iter()
@@ -279,7 +277,7 @@ impl CurrentEvent {
             .map_or(-1, |i| i as i32)
     }
 
-    /// `SelectInvite` (`0x5f1a00`).
+    /// The invite select (`0x5f1a00`).
     pub(crate) fn select_invite(&mut self, index: u32) {
         if let Some(i) = self.invites.get(index as usize) {
             self.selected_invite = i.invite_id;
@@ -288,7 +286,7 @@ impl CurrentEvent {
 
     // ── The setters ─────────────────────────────────────────────────────────────────────────
 
-    /// `SetTitle` (`0x5f1130`): at most 31 characters, one line.
+    /// The title set (`0x5f1130`): at most 31 characters, one line.
     pub(crate) fn set_title(&mut self, title: Option<&str>) {
         if let Some(t) = title.filter(|t| *t != self.title) {
             self.title = scrub(t, 32, 128, true);
@@ -296,7 +294,7 @@ impl CurrentEvent {
         }
     }
 
-    /// `SetDescription` (`0x5f1180`): at most 255 characters.
+    /// The description set (`0x5f1180`): at most 255 characters.
     pub(crate) fn set_description(&mut self, description: Option<&str>) {
         if let Some(d) = description.filter(|d| *d != self.description) {
             self.description = scrub(d, 256, 1024, false);
@@ -304,7 +302,7 @@ impl CurrentEvent {
         }
     }
 
-    /// `SetType` (`0x5f11d0`).
+    /// The type set (`0x5f11d0`).
     pub(crate) fn set_type(&mut self, event_type: u32) {
         if event_type < 5 && event_type != self.event_type {
             self.event_type = event_type;
@@ -312,7 +310,7 @@ impl CurrentEvent {
         }
     }
 
-    /// `SetRepeatOption` (`0x5f1200`).
+    /// The repeat set (`0x5f1200`).
     pub(crate) fn set_repeat(&mut self, repeat: u32) {
         if repeat < 4 && repeat != self.repeat {
             self.repeat = repeat;
@@ -320,7 +318,7 @@ impl CurrentEvent {
         }
     }
 
-    /// `SetSize` (`0x5f1230`): not on a guild kind.
+    /// The size set (`0x5f1230`): not on a guild kind.
     pub(crate) fn set_size(&mut self, size: u32) {
         if self.flags & kind::GUILD == 0 && size > 1 && size != self.max_size {
             self.max_size = size;
@@ -328,7 +326,7 @@ impl CurrentEvent {
         }
     }
 
-    /// `SetDate` (`0x5f1260`): any differing field marks the event changed, accepted or not.
+    /// The date set (`0x5f1260`): any differing field marks the event changed, accepted or not.
     pub(crate) fn set_date(&mut self, month: u32, month_day: u32, year: u32) -> bool {
         if month as i32 != self.date.month
             || month_day as i32 != self.date.month_day
@@ -339,7 +337,7 @@ impl CurrentEvent {
         self.date.set_date(month, month_day, year)
     }
 
-    /// `SetTime` (`0x5f12a0`).
+    /// The time set (`0x5f12a0`).
     pub(crate) fn set_time(&mut self, hour: u32, minute: u32) -> bool {
         if hour as i32 != self.date.hour || minute as i32 != self.date.minute {
             self.changed = true;
@@ -347,7 +345,7 @@ impl CurrentEvent {
         self.date.set_hour_and_minutes(hour, minute)
     }
 
-    /// `SetLockoutDate` (`0x5f12e0`): not on a guild kind.
+    /// The lockout-date set (`0x5f12e0`): not on a guild kind.
     pub(crate) fn set_lockout_date(&mut self, month: u32, month_day: u32, year: u32) -> bool {
         if self.flags & kind::GUILD != 0 {
             return false;
@@ -359,7 +357,7 @@ impl CurrentEvent {
         self.lockout_date.set_date(month, month_day, year)
     }
 
-    /// `SetLockoutTime` (`0x5f1340`).
+    /// The lockout-time set (`0x5f1340`).
     pub(crate) fn set_lockout_time(&mut self, hour: u32, minute: u32) -> bool {
         if self.flags & kind::GUILD != 0 {
             return false;
@@ -370,7 +368,7 @@ impl CurrentEvent {
         self.lockout_date.set_hour_and_minutes(hour, minute)
     }
 
-    /// `SetTextureID` (`0x5f1390`).
+    /// The texture set (`0x5f1390`).
     pub(crate) fn set_texture(&mut self, texture: i32) {
         if texture != self.texture {
             self.texture = texture;
@@ -378,7 +376,7 @@ impl CurrentEvent {
         }
     }
 
-    /// `SetFlag` and `ClearFlag` (`0x5f13b0`, `0x5f13e0`).
+    /// The flag set and clear (`0x5f13b0`, `0x5f13e0`).
     pub(crate) fn set_flag(&mut self, flag: u32, set: bool) {
         if (self.flags & flag != 0) != set {
             self.flags ^= flag;
@@ -388,7 +386,7 @@ impl CurrentEvent {
 
     // ── The server's changes ────────────────────────────────────────────────────────────────
 
-    /// `ProcessUpdateEvent` (`0x5f14b0`).
+    /// The event update's handler (`0x5f14b0`).
     pub(crate) fn update_from_alert(&mut self, u: &CalendarEventUpdateView) {
         self.flags = u.flags;
         self.event_type = u32::from(u.event_type);
@@ -401,14 +399,14 @@ impl CurrentEvent {
         self.lockout_date = WowTime::decode(u.lockout_date);
     }
 
-    /// `InviteRemoved` (`0x5f1580`).
+    /// The invite removal (`0x5f1580`).
     pub(crate) fn remove_invite_guid(&mut self, guid: u64) {
         if let Some(i) = self.index_of(guid) {
             self.invites.remove(i);
         }
     }
 
-    /// `UpdateInviteStatus` (`0x5f1600`): a response time of 0 keeps the old one.
+    /// The invite-status update (`0x5f1600`): a response time of 0 keeps the old one.
     pub(crate) fn update_status(&mut self, guid: u64, status: u8, response_time: u32) -> bool {
         let Some(i) = self.invites.iter_mut().find(|i| i.guid == guid) else {
             return false;
@@ -420,7 +418,7 @@ impl CurrentEvent {
         true
     }
 
-    /// `UpdateInviteNotes` (`0x5f1670`).
+    /// The invite-notes update (`0x5f1670`).
     pub(crate) fn update_notes(&mut self, guid: u64, notes: String) -> bool {
         let Some(i) = self.invites.iter_mut().find(|i| i.guid == guid) else {
             return false;
@@ -429,7 +427,7 @@ impl CurrentEvent {
         true
     }
 
-    /// `UpdateInviteModeratorStatus` (`0x5f2640`): the player's own row moves its moderator
+    /// The invite moderator-status update (`0x5f2640`): the player's own row moves its moderator
     /// invite.
     pub(crate) fn update_moderator(&mut self, guid: u64, status: u8, me: u64) -> bool {
         let Some(i) = self.invites.iter_mut().find(|i| i.guid == guid) else {
@@ -442,7 +440,7 @@ impl CurrentEvent {
         true
     }
 
-    /// `AddInvite` (`0x5f32b0`): with every name cached, the list sorts and repaints at once.
+    /// The invite add (`0x5f32b0`): with every name cached, the list sorts and repaints at once.
     pub(crate) fn add_invite(
         &mut self,
         invite: Invite,
@@ -460,8 +458,8 @@ impl CurrentEvent {
         Some(Signal::Event("CALENDAR_UPDATE_INVITE_LIST", vec![]))
     }
 
-    /// `ProcessInitialInviteList` (`0x5f2f90`): a mass invite's candidates replace the list, the
-    /// player confirmed as creator; the event stays new.
+    /// The initial invite list's handler (`0x5f2f90`): a mass invite's candidates replace the list,
+    /// the player confirmed as creator; the event stays new.
     pub(crate) fn initial_invites(
         &mut self,
         list: Vec<(u64, u8)>,
@@ -509,7 +507,7 @@ impl CurrentEvent {
     }
 
     /// Names landed: the last awaited one sorts the list and fires the deferred signal
-    /// (`InviteNameCacheCallback` `0x5f1b10`).
+    /// (the invite name-cache callback `0x5f1b10`).
     pub(crate) fn names_landed(
         &mut self,
         names: &HashMap<u64, CalendarName>,
@@ -537,7 +535,7 @@ impl CurrentEvent {
 
     // ── The sort ────────────────────────────────────────────────────────────────────────────
 
-    /// `SortInvites` (`0x5f1980`): the criterion becomes the sort, toggling its direction when
+    /// The invite sort (`0x5f1980`): the criterion becomes the sort, toggling its direction when
     /// asked; every other criterion's direction resets.
     pub(crate) fn sort(
         &mut self,
@@ -568,8 +566,7 @@ impl CurrentEvent {
 
     // ── The sends ───────────────────────────────────────────────────────────────────────────
 
-    /// `CGCalendarEvent::AddEvent` (`0x5f1b90`): a new event's checks and its send; `Err(None)`
-    /// refuses silently.
+    /// The event add (`0x5f1b90`): a new event's checks and its send; `Err(None)` refuses silently.
     pub(crate) fn add_request(
         &self,
         now: &WowTime,
@@ -629,7 +626,7 @@ impl CurrentEvent {
         })
     }
 
-    /// `CGCalendarEvent::Update` (`0x5f1ef0`): only a changed event, and never one already begun.
+    /// The event update (`0x5f1ef0`): only a changed event, and never one already begun.
     pub(crate) fn update_request(
         &mut self,
         now: &WowTime,
@@ -656,7 +653,7 @@ impl CurrentEvent {
         }))
     }
 
-    /// `CGCalendarEvent::RemoveEvent` (`0x5f1e30`).
+    /// The event remove (`0x5f1e30`).
     pub(crate) fn remove_request(&self, me: u64) -> Result<Option<CalendarRequest>, &'static str> {
         if !self.is_moderator(me) {
             return Err("CALENDAR_ERROR_PERMISSIONS");
@@ -668,7 +665,7 @@ impl CurrentEvent {
         }))
     }
 
-    /// `RemoveInviteByGUID` (`0x5f23b0`): `None` when the player holds no invite.
+    /// The invite removal by guid (`0x5f23b0`): `None` when the player holds no invite.
     pub(crate) fn remove_invite_of(
         &mut self,
         me: u64,
@@ -680,8 +677,8 @@ impl CurrentEvent {
         self.remove_invite_at(index as u32, me)
     }
 
-    /// `CGCalendarEvent::RemoveInvite` (`0x5f2220`): never the creator; another's invite only as
-    /// a moderator; a new event's drops at once.
+    /// The invite remove (`0x5f2220`): never the creator; another's invite only as a moderator; a
+    /// new event's drops at once.
     pub(crate) fn remove_invite_at(
         &mut self,
         index: u32,
@@ -706,8 +703,8 @@ impl CurrentEvent {
         })))
     }
 
-    /// `CGCalendarEvent::Invite` (`0x5f2070`): not on an announcement, at most 100, never a name
-    /// already on the list.
+    /// The invite (`0x5f2070`): not on an announcement, at most 100, never a name already on the
+    /// list.
     pub(crate) fn invite_request(
         &self,
         name: &str,
@@ -747,8 +744,8 @@ impl CurrentEvent {
         })
     }
 
-    /// `CGCalendarEvent::InviteRSVP` (`0x5f23f0`): accept, decline or tentative on the player's
-    /// own invite, never a guild sign-up's.
+    /// The invite RSVP (`0x5f23f0`): accept, decline or tentative on the player's own invite, never
+    /// a guild sign-up's.
     pub(crate) fn rsvp_request(&self, status: u32, me: u64) -> Option<CalendarRequest> {
         if self.new || !matches!(status, 1 | 2 | 8) {
             return None;
@@ -764,7 +761,7 @@ impl CurrentEvent {
         })
     }
 
-    /// `CGCalendarEvent::SignUp` (`0x5f2530`): only while the player is on no row.
+    /// The sign-up (`0x5f2530`): only while the player is on no row.
     pub(crate) fn sign_up_request(&self, tentative: bool, me: u64) -> Option<CalendarRequest> {
         if self.new || (me != 0 && self.invite_of(me).is_some()) {
             return None;
@@ -775,7 +772,7 @@ impl CurrentEvent {
         })
     }
 
-    /// `CanSetInviteStatus` (`0x5f26f0`): a moderator, a real status other than signed up or not
+    /// The invite-status check (`0x5f26f0`): a moderator, a real status other than signed up or not
     /// signed up, accept and decline not on a guild event, and a change.
     pub(crate) fn can_set_status(&self, index: u32, status: u32, me: u64) -> bool {
         if !self.is_moderator(me) || matches!(status, 0 | 6 | 7) || status >= 9 {
@@ -790,7 +787,7 @@ impl CurrentEvent {
         status != u32::from(invite.status)
     }
 
-    /// `CGCalendarEvent::SetInviteStatus` (`0x5f2750`).
+    /// The invite-status set (`0x5f2750`).
     pub(crate) fn set_status(&mut self, index: u32, status: u32, me: u64) -> InviteEdit {
         if !self.can_set_status(index, status, me) {
             return InviteEdit::Nothing;
@@ -809,7 +806,7 @@ impl CurrentEvent {
         })
     }
 
-    /// `CanModerate` (`0x5f16e0`): a guild event's member sign-up cannot moderate.
+    /// The moderate check (`0x5f16e0`): a guild event's member sign-up cannot moderate.
     pub(crate) fn can_moderate(&self, index: u32) -> Result<bool, &'static str> {
         let Some(invite) = self.invites.get(index as usize) else {
             return Ok(false);
@@ -820,7 +817,7 @@ impl CurrentEvent {
         Ok(true)
     }
 
-    /// `CGCalendarEvent::SetModeratorStatus` (`0x5f2860`).
+    /// The moderator-status set (`0x5f2860`).
     pub(crate) fn set_moderator(&mut self, index: u32, status: u32, me: u64) -> InviteEdit {
         if !self.is_moderator(me) {
             return InviteEdit::Error("CALENDAR_ERROR_PERMISSIONS");
@@ -860,8 +857,8 @@ fn truncate(s: &str, max_bytes: usize) -> String {
     s[..end].to_string()
 }
 
-/// `QSortInvites` (`0x5f1720`): by name, level, class, status, raid membership or notes; a tie
-/// on any but the name falls to the name.
+/// The invite sort's compare (`0x5f1720`): by name, level, class, status, raid membership or notes;
+/// a tie on any but the name falls to the name.
 fn compare_invites(
     a: &Invite,
     b: &Invite,

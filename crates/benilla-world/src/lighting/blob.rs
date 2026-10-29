@@ -144,8 +144,8 @@ mod tests {
         assert_eq!(b.rows[1][..3], [0.8; 3], "diffuse");
     }
 
-    /// A point light lands as two interleaved rows with its colour raw, over-gamut kept
-    /// (`0x71ca80` → `0x593040`) and only negatives floored, and the header counts it.
+    /// A point light lands as two interleaved rows with its colour raw, over-gamut kept and only
+    /// negatives floored, and the header counts it.
     #[test]
     fn a_point_light_commits_raw_and_counts_itself() {
         let b = LightBlob::model([0.0; 3], [0.0; 3], Vec3::NEG_Y).point(

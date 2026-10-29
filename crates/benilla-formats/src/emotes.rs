@@ -11,9 +11,9 @@ use benilla_dbc::{FieldType, Schema, SchemaField};
 
 use crate::dbc::{parse, str_at, u32_at};
 
-/// The `EmoteFlags` bit `0x2000`: a state emote that yields to an interaction. The state
-/// resolver (`0x5fd7fa`) passes over it for the current interact NPC, and the facing chain
-/// (`0x600d98`) lets the unit turn toward the interactor while it is set.
+/// The `EmoteFlags` bit `0x2000`: a state emote that yields to an interaction. The state resolver
+/// passes over it for the current interact NPC, and the facing chain lets the unit turn toward the
+/// interactor while it is set.
 pub const EMOTE_FLAG_INTERACTION: u32 = 0x2000;
 
 /// The joined emote tables.
@@ -29,7 +29,7 @@ pub struct EmoteSoundCatalog {
     anim: HashMap<u32, u32>,
     emote_flags: HashMap<u32, u32>,
     /// `Emotes.dbc` id to its `EmoteSpecProc`; `2` is a looping state emote whose `EventSoundID`
-    /// the `$ESD` anim event rings (`0x6239f0` tests `row[+0x10] == 2`).
+    /// the `$ESD` anim event rings (the reference tests `row[+0x10] == 2`).
     spec_proc: HashMap<u32, u32>,
     /// `Emotes.dbc` id to its `EmoteSpecProcParam`, the stand state when `EmoteSpecProc` is 1.
     spec_proc_param: HashMap<u32, u32>,
@@ -37,8 +37,8 @@ pub struct EmoteSoundCatalog {
     gesture: [Option<u32>; GESTURE_FLAG_BITS.len()],
 }
 
-/// The `EmoteFlags` bits the client scans `Emotes.dbc` for to build its gesture table
-/// (`0x603a60`), in slot order: talk, question, exclamation, shout, laugh. It names no row id.
+/// The `EmoteFlags` bits the client scans `Emotes.dbc` for to build its gesture table, in slot
+/// order: talk, question, exclamation, shout, laugh. It names no row id.
 pub const GESTURE_FLAG_BITS: [u32; 5] = [0x08, 0x10, 0x20, 0x40, 0x100];
 
 impl EmoteSoundCatalog {
@@ -77,22 +77,21 @@ impl EmoteSoundCatalog {
         self
     }
 
-    /// The raw `AnimID` of an `Emotes.dbc` row, `0` (Stand) included: the state resolver
-    /// (`0x5fd770`) claims the base with whatever the row holds (`0x5fd816`, `row+8`), and a
-    /// missing row claims nothing.
+    /// The raw `AnimID` of an `Emotes.dbc` row, `0` (Stand) included: the state resolver claims the
+    /// base with whatever the row holds (`row+8`), and a missing row claims nothing.
     pub fn state_anim(&self, emote_id: u32) -> Option<u32> {
         self.anim.get(&emote_id).copied()
     }
 
-    /// The `Emotes.dbc` id in gesture `slot`, the `code` the client's gesture dispatcher
-    /// `0x60bb30` takes; a slot no shipped row fills plays no gesture, as in the client.
+    /// The `Emotes.dbc` id in gesture `slot`, the `code` the client's gesture dispatcher takes; a
+    /// slot no shipped row fills plays no gesture, as in the client.
     pub fn gesture(&self, slot: usize) -> Option<u32> {
         self.gesture.get(slot).copied().flatten()
     }
 
     /// An `Emotes.dbc` id's raw `EmoteFlags`, `0` included. Bit `0x0001` with a non-zero stand
     /// state aborts the whole emote before `CMSG_TEXT_EMOTE` is sent, so a seated `/bow` does
-    /// nothing (`0x47db40`, called from `DoEmote` `0x5ef560`).
+    /// nothing (called from `DoEmote`).
     pub fn emote_flags(&self, emote_id: u32) -> Option<u32> {
         self.emote_flags.get(&emote_id).copied()
     }
@@ -103,8 +102,8 @@ impl EmoteSoundCatalog {
     }
 
     /// The stand state a posture emote sets, `EmoteSpecProcParam` when `EmoteSpecProc` is 1, as
-    /// `DoEmote` (`0x5ef560`) feeds the sit key's setter `0x5ed430`. `/sit` rests on this alone:
-    /// the server does nothing for a state text emote (`ChatHandler.cpp` `HandleTextEmoteOpcode`).
+    /// `DoEmote` feeds the sit key's setter. `/sit` rests on this alone: the server does nothing
+    /// for a state text emote (`ChatHandler.cpp` `HandleTextEmoteOpcode`).
     pub fn posture_state(&self, emote_id: u32) -> Option<u32> {
         (self.spec_proc.get(&emote_id).copied() == Some(1))
             .then(|| self.spec_proc_param.get(&emote_id).copied())
@@ -229,7 +228,7 @@ pub fn load_emote_sound_catalog(chain: &mut Chain) -> Result<EmoteSoundCatalog> 
 mod tests {
     use super::*;
 
-    /// The expected ids and anims are the table `0x603a60` builds from the shipped data.
+    /// The expected ids and anims are the table builds from the shipped data.
     #[test]
     #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
     fn the_five_gesture_slots_scan_to_the_shipped_rows() {
@@ -265,7 +264,7 @@ mod tests {
         let cat = load_emote_sound_catalog(&mut chain).expect("load emote catalog");
         assert_eq!(cat.text_id("wave"), Some(101), "case-insensitive by name");
         assert_eq!(cat.text_emote(101), Some(3), "WAVE plays anim emote 3");
-        // A chat-only text emote has `EmoteID` 0, which `DoEmote` (`0x5ef591`) reads as row 0.
+        // A chat-only text emote has `EmoteID` 0, which `DoEmote` reads as row 0.
         assert_eq!(
             cat.text_emote(cat.text_id("smile").unwrap()),
             None,
@@ -274,7 +273,7 @@ mod tests {
         assert_eq!(cat.emote_flags(0), Some(0), "row 0 exists with no flags");
         assert_eq!(cat.spec_proc(0), Some(0), "row 0 is no posture emote");
         assert_eq!(cat.anim(2), Some(66), "ONESHOT_BOW (id 2) plays AnimID 66");
-        // The posture-gate rows (`0x47db40`), ids from vmangos `SharedDefines.h`'s `Emote` enum.
+        // The posture-gate rows, ids from vmangos `SharedDefines.h`'s `Emote` enum.
         assert_eq!(cat.emote_flags(2), Some(0x4801), "ONESHOT_BOW EmoteFlags");
         assert_eq!(cat.emote_flags(4), Some(0x0800), "ONESHOT_CHEER EmoteFlags");
         assert_eq!(

@@ -139,10 +139,10 @@ pub(in crate::ui_chat) fn parse_line(table: &SlashCommands, line: &str) -> Parse
 }
 
 /// `s` as an escaped Lua short string literal. A long bracket cannot quote it: a `/console`
-/// argument may hold `]]`, and the 1.12 lexer has no bracket levels (the `[` arm at `0x6ff771`
-/// compares once, `read_long_string` `0x700010` reads `=` as content), so `[=[` fails in
-/// `prefixexp` (`0x6fde40`). `\` and `"` escape themselves, `\n` `\r` `\t` take their names, and
-/// any other control byte a three-digit `\ddd`, so a following digit is not swallowed.
+/// argument may hold `]]`, and the 1.12 lexer has no bracket levels (the `[` arm compares once,
+/// `read_long_string` reads `=` as content), so `[=[` fails in `prefixexp`. `\` and `"` escape
+/// themselves, `\n` `\r` `\t` take their names, and any other control byte a three-digit `\ddd`, so
+/// a following digit is not swallowed.
 pub(in crate::ui_chat) fn lua_quoted_string(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('"');

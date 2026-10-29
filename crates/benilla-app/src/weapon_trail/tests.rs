@@ -1,4 +1,4 @@
-//! The swing arithmetic, pinned against `0x6c6560`'s own numbers.
+//! The swing arithmetic, pinned against the reference step's own numbers.
 
 use super::*;
 
@@ -16,8 +16,8 @@ fn armed(trail: TrailProc) -> WeaponTrail {
     t
 }
 
-/// `0x6c6560` with the shipped `CharParamThree = 100` and a 16.7 ms frame: `fadeStep = 5`, so
-/// `nSegments = 20`, about 0.33 s of trail history.
+/// The reference's step with the shipped `CharParamThree = 100` and a 16.7 ms frame: `fadeStep =
+/// 5`, so `nSegments = 20`, about 0.33 s of trail history.
 #[test]
 fn shipped_frame_gives_five_and_twenty() {
     for dt in [16, 17] {
@@ -76,8 +76,7 @@ fn push_bounds_the_ring_at_capacity() {
     assert_eq!(s.head - s.tail, RING_SLOTS);
 }
 
-/// Re-arming a live swing resets its ring in place (`0x6c675f`) rather than stacking a second
-/// trail.
+/// Re-arming a live swing resets its ring in place rather than stacking a second trail.
 #[test]
 fn rearm_resets_rather_than_stacks() {
     let mut t = armed(kit_324());
@@ -294,11 +293,11 @@ fn an_arm_alone_fires_nothing() {
     app.update();
     assert!(
         hands.iter().all(|&h| trailing(&app, h)),
-        "the next animation fires it — on BOTH hands (0x60e550's two slots)"
+        "the next animation fires it — on BOTH hands"
     );
 }
 
-/// `0x5fe4b1 mov [ebx+0xd20],edi` clears the duration as it is read, so one arm is one trail.
+/// The animation play clears the duration as it is read, so one arm is one trail.
 #[test]
 fn the_latch_is_consumed_exactly_once() {
     let (mut app, unit, hands) = latch_app();
@@ -344,7 +343,7 @@ fn a_second_arm_replaces_the_pending_one() {
 }
 
 /// A hand with nothing, or a weapon model with neither marker, has nothing to arm and leaves the
-/// other hand alone (`0x60e550`'s `test ecx,ecx ; je` per slot).
+/// other hand alone (the reference's `test ecx,ecx ; je` per slot).
 #[test]
 fn an_empty_hand_is_skipped() {
     let (mut app, unit, hands) = latch_app();
@@ -358,7 +357,7 @@ fn an_empty_hand_is_skipped() {
     assert!(trailing(&app, hands[0]), "the armed hand still fires");
 }
 
-/// The pending arm dies with the unit, in the CGUnit teardown (`0x5fbcdc`).
+/// The pending arm dies with the unit, in the unit object's teardown.
 #[test]
 fn the_latch_is_swept_when_the_unit_goes() {
     let (mut app, unit, _) = latch_app();
@@ -487,9 +486,9 @@ fn a_hidden_weapon_draws_nothing() {
     assert!(app.world().resource::<EffectQuads>().draws.is_empty());
 }
 
-/// The trail takes its wearer's light, not the scene's: it draws inside the wearer's model draw,
-/// so it inherits the lights committed for that unit (`0x70d982 → 0x70ca50 → 0x70baf0`, held
-/// weapon `[+0x3b8]`). Indoors that is the node's ambient, outdoors the day/night one.
+/// The trail takes its wearer's light, not the scene's: it draws inside the wearer's model draw, so
+/// it inherits the lights committed for that unit (held weapon `[+0x3b8]`). Indoors that is the
+/// node's ambient, outdoors the day/night one.
 #[test]
 fn an_indoor_wearers_committed_ambient_wins_over_the_scenes() {
     fn strip_rgb(app: &App) -> [f32; 3] {

@@ -1,8 +1,8 @@
 //! The three duel globals (registrar table `0xad0ac4`). What the UI reads arrives as event
 //! arguments, so each call only queues a [`DuelRequest`] for the app to send. `AcceptDuel`
 //! (`0x5cfdb0`) and `CancelDuel` (`0x5cfdc0`) send the held arbiter; `StartDuel` (`0x5cf950`) sends
-//! no duel opcode but casts the duel spell at the player `CGGameUI::ClosestObjectMatch`
-//! (`0x520190`) resolves.
+//! no duel opcode but casts the duel spell at the player the closest-object match (`0x520190`)
+//! resolves.
 
 use mlua::{Lua, Value};
 
@@ -39,8 +39,8 @@ impl super::UiScript {
     }
 }
 
-/// `StartDuel`'s resolution: `ClosestObjectMatch` with typemask `0x10` and filter mode 0 tries the
-/// token first (`0x60abf0`, which reads no token as the target), else the name.
+/// `StartDuel`'s resolution: the closest-object match with typemask `0x10` and filter mode 0 tries
+/// the token first (`0x60abf0`, which reads no token as the target), else the name.
 fn start_duel(lua: &Lua, name: &str, exact: bool) {
     let mut model = crate::script::model_mut_of(lua);
     let guids = &model.unit_guids;

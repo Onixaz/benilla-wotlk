@@ -251,8 +251,7 @@ fn invalidate_text_measures_reopens_the_round_trip() {
 }
 
 /// `GetStringWidth` is the natural width, unwrapped and untruncated at the drawn size: the
-/// reference re-measures the raw text with no wrap (`0x79e510`, `0x772890`). `GetWidth` stays the
-/// laid-out box.
+/// reference re-measures the raw text with no wrap. `GetWidth` stays the laid-out box.
 #[test]
 fn get_string_width_is_the_natural_width_not_the_box() {
     let mut s = UiScript::new().unwrap();

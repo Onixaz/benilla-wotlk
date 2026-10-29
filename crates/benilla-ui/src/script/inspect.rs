@@ -16,18 +16,17 @@ use mlua::{Lua, Value};
 
 use super::char_stats::InventorySlots;
 
-/// `CheckInteractDistance`'s squared thresholds for types 1..=4, `{10², 11.1111², 10², 30²}`
-/// (`0x48ba00`, from the `.rdata` at `0x804498`, `0x804490`, `0x80448c`, `0x8044a4`).
+/// `CheckInteractDistance`'s squared thresholds for types 1..=4, `{10², 11.1111², 10², 30²}` (from
+/// the `.rdata`).
 pub const INTERACT_DIST_SQ: [f64; 4] = [100.0, 123.45678, 100.0, 900.0];
 
-/// `CanInspect`'s threshold squared (`0xb4d918`, the `.rdata` 10.0 at `0x804498` squared by
-/// `0x48a1b0`); vmangos checks the same 10 yards (`INSPECT_DISTANCE`, `ObjectDefines.h:26`).
+/// `CanInspect`'s threshold squared (the `.rdata` 10.0 squared); vmangos checks the same 10 yards
+/// (`INSPECT_DISTANCE`, `ObjectDefines.h:26`).
 pub const CAN_INSPECT_DIST_SQ: f64 = 100.0;
 
 /// One unit this frame, as the two range verbs read it. An entry exists only for a live unit
-/// object: the reference maps the token to a GUID (`0x515940`) and answers nil when the object
-/// manager has no such unit, as for a party member out of the area, whose GUID comes from the
-/// roster (`0x4e81a0`).
+/// object: the reference maps the token to a GUID and answers nil when the object manager has no
+/// such unit, as for a party member out of the area, whose GUID comes from the roster.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UnitReach {
     /// Squared distance from the player.
@@ -52,12 +51,12 @@ pub struct InspectView {
 }
 
 impl super::UiScript {
-    /// Push the squared distance of every live unit a token can name this frame, creature
-    /// included; both range verbs read the same d². A verb resolves its token to a guid through
-    /// [`super::UnitGuids`], so `"party1target"` and `"PLAYER"` read the unit they name, and a
-    /// guid absent from the map answers nil from both, the reference's null-object arms
-    /// (`0x48babe` for `CheckInteractDistance`, `0x48a1fa` for `CanInspect`). It changes every frame, so it stays off [`super::UnitState`], whose diffs
-    /// fire `UNIT_*` events.
+    /// Push the squared distance of every live unit a token can name this frame, creature included;
+    /// both range verbs read the same d². A verb resolves its token to a guid through
+    /// [`super::UnitGuids`], so `"party1target"` and `"PLAYER"` read the unit they name, and a guid
+    /// absent from the map answers nil from both, the reference's null-object arms (for
+    /// `CheckInteractDistance`, for `CanInspect`). It changes every frame, so it stays off
+    /// [`super::UnitState`], whose diffs fire `UNIT_*` events.
     pub fn set_unit_reach(&mut self, reach: HashMap<u64, UnitReach>) {
         set_field!(self, unit_reach, reach);
     }
@@ -87,9 +86,8 @@ impl super::UiScript {
     }
 }
 
-/// The reach of the unit `token` names, through the resolver (`0x515970`, which both verbs call via
-/// `0x515940`): the guid it answers, then that guid's entry. A token the resolver does not
-/// recognise answers nobody here.
+/// The reach of the unit `token` names, through the resolver: the guid it answers, then that guid's
+/// entry. A token the resolver does not recognise answers nobody here.
 fn reach(lua: &Lua, token: &Option<String>) -> Option<UnitReach> {
     let token = token.as_deref()?;
     let model = lua
@@ -102,10 +100,10 @@ fn reach(lua: &Lua, token: &Option<String>) -> Option<UnitReach> {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // CanInspect(unit) → 1/nil (`0x48a1b0`), the gate of `InspectFrame_Show`
-    // (`Blizzard_InspectUI.lua:8`): in range unless `100.0 < d²`, and `test ah,0x41; jne` counts an
-    // unordered compare as in range, so a NaN distance passes. The player and attackability legs
-    // ride in [`UnitReach::inspectable`].
+    // CanInspect(unit) → 1/nil, the gate of `InspectFrame_Show` (`Blizzard_InspectUI.lua:8`): in
+    // range unless `100.0 < d²`, and `test ah,0x41; jne` counts an unordered compare as in range,
+    // so a NaN distance passes. The player and attackability legs ride in
+    // [`UnitReach::inspectable`].
     g.set(
         "CanInspect",
         lua.create_function(|lua, unit: Option<String>| {
@@ -117,19 +115,18 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                             Some(Ordering::Less | Ordering::Equal) | None
                         )
                 }
-                // No live unit: nil, through `0x4944a0`'s null-`this` guard.
+                // No live unit: nil, through the inspect check's null-`this` guard.
                 None => false,
             };
             Ok(if ok { Value::Integer(1) } else { Value::Nil })
         })?,
     )?;
 
-    // CheckInteractDistance(unit, type) → 1/nil (`0x48ba00`): in range only when
-    // `d² < table[type-1]`, strictly, unlike `CanInspect` (`test ah,0x5; jp`). A token with no unit
-    // answers nil (`0x48babe`), as does a `type` outside 1..=4 once truncated toward zero, the
-    // compare being unsigned (`0x48bac5`); a missing or non-number `type` raises (`0x48bb48`).
-    // The reference also raises for a missing unit (`0x48ba18`) or an unknown token (`0x515c14`),
-    // where this answers nil.
+    // CheckInteractDistance(unit, type) → 1/nil: in range only when `d² < table[type-1]`, strictly,
+    // unlike `CanInspect` (`test ah,0x5; jp`). A token with no unit answers nil, as does a `type`
+    // outside 1..=4 once truncated toward zero, the compare being unsigned; a missing or non-number
+    // `type` raises. The reference also raises for a missing unit or an unknown token, where this
+    // answers nil.
     g.set(
         "CheckInteractDistance",
         lua.create_function(|lua, (unit, kind): (Option<String>, Option<f64>)| {

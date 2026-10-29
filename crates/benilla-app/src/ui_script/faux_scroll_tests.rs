@@ -272,8 +272,8 @@ fn dragging_the_bar_steps_the_offset_by_rows_and_repaints() {
         "the drag repainted the owner's list"
     );
 
-    // `SetValue` snaps to `min + n * step` before its change test (`0x789930`), so 51px stays at
-    // the 48 the bar holds and fires nothing.
+    // `SetValue` snaps to `min + n * step` before its change test, so 51px stays at the 48 the bar
+    // holds and fires nothing.
     let settled = s.eval::<i64>("return TestRepaints").unwrap();
     s.run("TestScrollScrollBar:SetValue(51)").unwrap();
     assert_eq!(

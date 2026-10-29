@@ -99,7 +99,7 @@ pub(super) fn furnish_tile_cells(
                     MeshMaterial3d(material.clone()),
                     Transform::IDENTITY, // cell meshes are in absolute world coords
                     // Exterior scene: from inside a WMO a cell draws only through a portal window
-                    // (`0x683bf0`, fed only by the per-window walk `0x682fa0`).
+                    // (fed only by the per-window walk).
                     crate::exterior_cull::ExteriorScene,
                 ));
                 if let Some(aabb) = aabb {

@@ -1,23 +1,22 @@
 //! Overhead unit names, the 1.12 world-text name system.
 //!
 //! - Geometry: a camera-facing glyph mesh in the world pass, depth-tested like the reference's name
-//!   batch (`0x6c7470` calls `0x5c1d60(1,1)`), so walls occlude names. Deviation:
-//!   `AlphaMode::Blend` writes no depth where the reference does, because overlapping names
-//!   resolving by sort order look the same.
-//! - Colour: the render `0x6c6e90` calls the ground ring's selector (`0x605960`).
+//!   batch, so walls occlude names. Deviation: `AlphaMode::Blend` writes no depth where the
+//!   reference does, because overlapping names resolving by sort order look the same.
+//! - Colour: the render calls the ground ring's selector.
 //! - Anchor: the posed PlayerName attachment, re-read every frame with no smoothing, as the
 //!   reference does.
 //! - Seat: the top line's baseline is at `anchor.z + lineCount*scale` and the block hangs down one
-//!   pitch per line (`0x5cdc20`'s rotated branch).
+//!   pitch per line.
 //! - Show gate (`0x729c70`): [`name_shown`] over the thirteen
 //!   `UnitName*` bits of [`NameConfig`].
-//! - Lines (`0x608f50`): an NPC's name and `<Subname>`; a player's `<AFK>`/`<DND>`/`<GM>`
-//!   prefixes, the a4 title slot (`UnitNamePlayerPVPTitle`, bit `0x20`) and name, and `<Guild>`.
-//!   The guild (a5) and subname (a6) slots share the format `"\n<%s>"` (`0x860f9c`) and are never
-//!   both reached; a5 alone is CVar-gated (`0x609085`).
-//! - The a4 slot is 12340's `GetUnitChosenTitle` (`0x72a290`): a player's `PLAYER_CHOSEN_TITLE`
-//!   row from `CharTitles.dbc` with the name in its `%s`, gendered, and the `PVP_MEDAL<n>` line
-//!   under it for a set `PLAYER_BYTES_3` byte 2; never a creature's.
+//! - Lines: an NPC's name and `<Subname>`; a player's `<AFK>`/`<DND>`/`<GM>` prefixes, the a4 title
+//!   slot (`UnitNamePlayerPVPTitle`, bit `0x20`) and name, and `<Guild>`. The guild (a5) and
+//!   subname (a6) slots share the format `"\n<%s>"` and are never both reached; a5 alone is
+//!   CVar-gated.
+//! - The a4 slot is 12340's chosen-title lookup (`0x72a290`): a player's `PLAYER_CHOSEN_TITLE` row
+//!   from `CharTitles.dbc` with the name in its `%s`, gendered, and the `PVP_MEDAL<n>` line under
+//!   it for a set `PLAYER_BYTES_3` byte 2; never a creature's.
 //!
 //! Not built: a7 and a8 have no cross-realm wire here.
 
@@ -35,11 +34,11 @@ use crate::target::{highlight_variant, CombatFlash, Factions, RingVariant, Selec
 use crate::ui_text::{layout_text_quads, FontSpec, Justify, TextSeat, UiFontAtlas};
 use benilla_world::view::WorldCamera;
 
-/// The height-scale law (`0x6c6e90`): `d > KNEE ? d/KNEE · RATE · FLOOR : FLOOR`, `d` the anchor's
-/// height above the feet in world units.
-const SCALE_FLOOR: f32 = 0.2; // [0x80679c]
-const SCALE_KNEE: f32 = 4.0; // [0x8112a8]
-const SCALE_RATE: f32 = 1.5; // [0x8112ac]
+/// The height-scale law: `d > KNEE ? d/KNEE · RATE · FLOOR : FLOOR`, `d` the anchor's height above
+/// the feet in world units.
+const SCALE_FLOOR: f32 = 0.2; //
+const SCALE_KNEE: f32 = 4.0; //
+const SCALE_RATE: f32 = 1.5; //
 
 /// The `UnitName*` CVars' bits in the name mask (`[0xd380a0]`): the registrar (`0x7e6150`) hands
 /// each row its bit and the rows' change callback (`0x7e60e0`) sets or clears it.
@@ -172,11 +171,11 @@ pub(crate) fn name_shown(cfg: NameConfig, s: &NameSubject) -> bool {
     cfg.has(NPC)
 }
 
-/// The a1-a3 prefix slots of the line stack (`0x608f50`), CGPlayer vtable `+0x7c/+0x80/+0x84`
-/// (`0x5ec9e0`, `0x5eca40`, `0x5eca80`): each set `PLAYER_FLAGS` bit (vmangos `Player.h:316-318`)
-/// stacks in slot order with no space before the name; the base CGUnit slots are stubs, so NPCs
-/// never decorate. The tags are `CHAT_FLAG_AFK/DND/GM` (`GlobalStrings.lua:534-536`).
-/// The own player's AFK slot also reads the client-side mirror `[0xb6e5cc]` ([`drive_nameplates`]).
+/// The a1-a3 prefix slots of the line stack, the player object's vtable `+0x7c/+0x80/+0x84`: each
+/// set `PLAYER_FLAGS` bit (vmangos `Player.h:316-318`) stacks in slot order with no space before
+/// the name; the base unit object's slots are stubs, so NPCs never decorate. The tags are
+/// `CHAT_FLAG_AFK/DND/GM` (`GlobalStrings.lua:534-536`). The own player's AFK slot also reads the
+/// client-side mirror ([`drive_nameplates`]).
 const FLAG_PREFIXES: [(u32, &str); 3] = [(0x2, "<AFK>"), (0x4, "<DND>"), (0x8, "<GM>")];
 
 /// The name-line prefix for a player's `PLAYER_FLAGS`; empty when unflagged.
@@ -278,8 +277,8 @@ fn title_key(
     })
 }
 
-/// `0x608f50`'s main name line: the a1-a3 flag tags glued on with no separator, then the a4 slot,
-/// the chosen-title name where `key` is on and resolves, else the plain name.
+/// The reference's main name line: the a1-a3 flag tags glued on with no separator, then the a4
+/// slot, the chosen-title name where `key` is on and resolves, else the plain name.
 fn name_line(flags: u32, key: Option<TitleKey>, strings: &PvpNameStrings, name: &str) -> String {
     let decorated = key
         .filter(|key| key.on)
@@ -295,7 +294,7 @@ struct LiveName {
     plate: Entity,
     lines: Vec<String>,
     paint: NamePaint,
-    /// `0x608f50`'s line inputs at build time.
+    /// The reference's line inputs at build time.
     flags: u32,
     name: String,
     bracketed: Option<String>,
@@ -303,7 +302,7 @@ struct LiveName {
 }
 
 /// The name's world scale for a unit whose overhead anchor sits `d` world units above its feet.
-/// Shared with the raid-target marker ([`crate::raid_marks`]), which it raises (`0x6c70d8`).
+/// Shared with the raid-target marker ([`crate::raid_marks`]), which it raises.
 pub(crate) fn height_scale(d: f32) -> f32 {
     if d > SCALE_KNEE {
         (d / SCALE_KNEE) * SCALE_RATE * SCALE_FLOOR
@@ -349,13 +348,13 @@ pub(crate) struct Nameplates {
 
 impl Nameplates {
     /// Whether `unit` shows an overhead name (the reference's `unit+0xc7c` name object is live);
-    /// the questgiver marker's raised (anim 190) bob keys on it (`0x6076c0` checks `0x6c7950`).
+    /// the questgiver marker's raised (anim 190) bob keys on it.
     pub(crate) fn shows(&self, unit: Entity) -> bool {
         self.live.contains_key(&unit)
     }
 
-    /// The line count of `unit`'s live name, for the raid marker's seat (`0x6c70d8`: one pitch
-    /// above the block, or at the bare anchor when no name shows).
+    /// The line count of `unit`'s live name, for the raid marker's seat (one pitch above the
+    /// block, or at the bare anchor when no name shows).
     pub(crate) fn line_count(&self, unit: Entity) -> Option<usize> {
         self.live.get(&unit).map(|live| live.lines.len())
     }
@@ -374,9 +373,9 @@ const ROCK_MEAN_RATE: f32 = 1.5;
 /// A residual this large (yd) is a stance change (mount swap, teleport): snap the mean to it.
 const ROCK_SNAP: f32 = 1.0;
 
-/// The raster size (logical px) of the mesh bake, which only sets crispness. Deviation: larger
-/// than the reference's 32 px `UNIT_NAME_FONT` raster, which it magnifies (`0x6c749b`), because a
-/// larger source is crisper up close.
+/// The raster size (logical px) of the mesh bake, which only sets crispness. Deviation: larger than
+/// the reference's 32 px `UNIT_NAME_FONT` raster, which it magnifies, because a larger source is
+/// crisper up close.
 const BAKE_PX: f32 = 36.0;
 
 /// Build one name-block mesh in pitch units: x centered, y up, line `i`'s baseline at
@@ -470,7 +469,7 @@ pub(crate) fn drive_nameplates(
         Option<&InheritedVisibility>,
     )>,
     self_store: Query<(&Guid, &ObjectStore), With<SelfPlayer>>,
-    // The optimistic AFK mirror (`[0xb6e5cc]`), the own player's `<AFK>` override.
+    // The optimistic AFK mirror, the own player's `<AFK>` override.
     mirror: Res<crate::ui_chat::AfkMirror>,
     // The show-gate inputs, one tuple param for Bevy's 16-param ceiling.
     gates: (
@@ -559,7 +558,7 @@ pub(crate) fn drive_nameplates(
     let facing = cam_tf.rotation;
     let mut seen = bevy::ecs::entity::EntityHashSet::default();
     for (entity, net, guid, tf, store, (is_self, moved), drawn) in &units {
-        // A name needs a drawn body; this precedes the ShouldShowName ladder.
+        // A name needs a drawn body; this precedes the name-show ladder.
         if !drawn.is_none_or(|v| v.get()) {
             continue;
         }
@@ -645,9 +644,8 @@ pub(crate) fn drive_nameplates(
         } else {
             0
         };
-        // The AFK slot `0x5ec9e0` alone emits `<AFK>` for the active player while the mirror
-        // `[0xb6e5cc]` is set, whatever the bit (`0x5ec9fd`). Folded into `flags`, so the cache
-        // compare and [`name_line`] read the same bit.
+        // The AFK slot alone emits `<AFK>` for the active player while the mirror is set, whatever
+        // the bit. Folded into `flags`, so the cache compare and [`name_line`] read the same bit.
         let flags = if is_self && mirror.is_afk() {
             flags | 0x2
         } else {
@@ -939,7 +937,7 @@ mod tests {
         assert!(height_scale(4.1) > 0.2, "past the knee: the jump is real");
     }
 
-    /// Bare concatenation in slot order AFK, DND, GM (`0x608f50`); other bits ignored.
+    /// Bare concatenation in slot order AFK, DND, GM; other bits ignored.
     #[test]
     fn flag_prefix_matches_the_slot_law() {
         assert_eq!(flag_prefix(0), "");
@@ -1019,7 +1017,7 @@ mod tests {
         );
     }
 
-    /// The composed main line, from the descriptor up: `0x608f50` glues the a1-a3 tags onto the
+    /// The composed main line, from the descriptor up: the reference glues the a1-a3 tags onto the
     /// a4 title slot with no separator; the CVar off, no title or a creature keep the plain name.
     #[test]
     fn the_name_line_glues_the_flag_tags_onto_the_titled_name() {

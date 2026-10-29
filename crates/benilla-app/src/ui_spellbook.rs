@@ -3,14 +3,13 @@
 //! [`SpellDisplay::in_spellbook`](benilla_formats::SpellDisplay::in_spellbook) passes (`0x542030`);
 //! a companion, a mount or an `AttributesEx4 & 0x8000` spell is named but listed in no tab.
 //!
-//! A spell's tab (`0x4b24f0`) is its skill line, or General (key 0) when the
-//! `SkillRaceClassInfo.dbc` lookup (`0x6ddf90`) finds no row for the player's race and class, or
-//! one with `SKILL_FLAG_DISPLAY_SORTED` (`0x80`). General comes first, then tabs by
-//! `SkillLine.dbc` name (`0x4b3040`, byte order standing in for the enUS collator `0x64a480`);
-//! within a tab, name then parsed rank (`0x4b30c0`).
+//! A spell's tab is its skill line, or General (key 0) when the `SkillRaceClassInfo.dbc` lookup
+//! finds no row for the player's race and class, or one with `SKILL_FLAG_DISPLAY_SORTED` (`0x80`).
+//! General comes first, then tabs by `SkillLine.dbc` name (byte order standing in for the enUS
+//! collator); within a tab, name then parsed rank.
 //!
-//! Not modelled: which of several admitting `SkillRaceClassInfo` rows `0x6ddf90` picks (the first
-//! wins here), and the `SpellLevel` fallback for a digit-less rank (the rank string breaks ties).
+//! Not modelled: which of several admitting `SkillRaceClassInfo` rows picks (the first wins here),
+//! and the `SpellLevel` fallback for a digit-less rank (the rank string breaks ties).
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -34,17 +33,17 @@ pub(crate) struct SkillLines {
     pub(crate) catalog: std::sync::Arc<SkillLineCatalog>,
 }
 
-/// The General tab, key 0: pinned first, named from the `GENERAL` GlobalString (`0x846910`) with a
-/// fixed icon (`GetSpellTabInfo` `0x4b3ce0`); vmangos's `SKILL_NONE` is 0, so no line collides.
+/// The General tab, key 0: pinned first, named from the `GENERAL` GlobalString with a fixed icon
+/// (`GetSpellTabInfo`); vmangos's `SKILL_NONE` is 0, so no line collides.
 const NO_LINE: u32 = 0;
 
-/// Hardcoded in the reference (`0x8468f0`), extensionless for the loader; key 0 has no DBC row.
+/// Hardcoded in the reference, extensionless for the loader; key 0 has no DBC row.
 const GENERAL_TAB_ICON: &str = "Interface\\Icons\\Ability_Kick";
 
 /// Spells learned mid-session, queued for `LEARNED_SPELL_IN_TAB` (event 510). Filled by the learn
 /// and rank-up arms (`crate::spell::net`), never the `SMSG_INITIAL_SPELLS` load, which the
-/// reference passes with `0x4b25b0`'s live-mutation flag clear. A queue because the event follows
-/// the tab re-sort and `SPELLS_CHANGED` (`0x4b2b5a` before `0x4b2b92`).
+/// reference passes with its tab builder's live-mutation flag clear. A queue because the event
+/// follows the tab re-sort and `SPELLS_CHANGED`.
 #[derive(Resource, Default)]
 pub(crate) struct LearnedInTab(pub(crate) Vec<u32>);
 
@@ -234,9 +233,9 @@ fn feed_spellbook(
         attack_icon,
         ranged_icon,
     );
-    // The book's `IsSelectedSpell` is `0x4b3600`, not the action bar's `0x4e53a0`, with two arms: a
-    // form spell is current while the form byte is its form, and the open trade-skill window, not
-    // built. It has no casting-now arm, so a book slot never lights during a cast.
+    // The book's `IsSelectedSpell`, not the action bar's, with two arms: a form spell is current
+    // while the form byte is its form, and the open trade-skill window, not built. It has no
+    // casting-now arm, so a book slot never lights during a cast.
     let form_byte = store.map(|s| s.0.unit_shapeshift_form()).unwrap_or(0);
     if form_byte != 0 {
         for slot in &mut fresh.slots {
@@ -246,7 +245,7 @@ fn feed_spellbook(
                 .is_some_and(|d| d.shapeshift_form == Some(u32::from(form_byte)));
         }
     }
-    // Each slot's cooldown (`GetCooldownInfo` `0x6e13e0`: id, category and GCD alike) on the
+    // Each slot's cooldown (the reference's cooldown lookup: id, category and GCD alike) on the
     // `GetTime` clock, frame-stable per arm, so a running cooldown never churns the diff.
     let (anchor, ui_now) = (clock.anchor, clock.ui_now);
     let rune_check = runes
@@ -317,8 +316,8 @@ fn feed_spellbook(
             script.fire_event("CURRENT_SPELL_CAST_CHANGED", vec![]);
         }
     }
-    // The tab flash after `SPELLS_CHANGED` (`0x4b2b5a` before `0x4b2b92`), outside the diff: the
-    // reference fires on the packet, so a re-learn that changes nothing still flashes.
+    // The tab flash after `SPELLS_CHANGED`, outside the diff: the reference fires on the packet, so
+    // a re-learn that changes nothing still flashes.
     fire_tab_flashes(
         &mut script,
         &learned,
@@ -454,7 +453,7 @@ fn build_book(
                     .clone()
                     .or_else(|| d.and_then(|d| d.icon.clone()))
             } else if d.is_some_and(|d| d.ranged_icon_substitution()) {
-                // Without a ranged weapon, or with a thrown one, the spell's own (`0x4e6990`).
+                // Without a ranged weapon, or with a thrown one, the spell's own.
                 ranged_icon
                     .clone()
                     .or_else(|| d.and_then(|d| d.icon.clone()))
@@ -493,8 +492,8 @@ fn build_book(
     )
 }
 
-/// `0x4b30c0`'s tail: name, then the parsed rank number, then the rank string. The rank is the
-/// first digit run of `NameSubtext` (`0x4b3c30`), so any localized prefix parses.
+/// The reference's book sort's tail: name, then the parsed rank number, then the rank string. The
+/// rank is the first digit run of `NameSubtext`, so any localized prefix parses.
 fn spell_sort_key(catalog: &SpellCatalog, spell_id: u32) -> (String, u32, String) {
     let d = catalog.get(spell_id);
     spell_sort_key_of(
@@ -503,14 +502,14 @@ fn spell_sort_key(catalog: &SpellCatalog, spell_id: u32) -> (String, u32, String
     )
 }
 
-/// [`spell_sort_key`] over a resolved `(name, rank)`, shared with the pet book: `0x4b2fd0` sorts
-/// both books with `0x4b30c0`.
+/// [`spell_sort_key`] over a resolved `(name, rank)`, shared with the pet book: the reference sorts
+/// both books with the same comparison.
 pub(crate) fn spell_sort_key_of(name: &str, rank: Option<&str>) -> (String, u32, String) {
     let rank_str = rank.unwrap_or_default().to_string();
     (name.to_string(), leading_number(&rank_str), rank_str)
 }
 
-/// The first ASCII digit run as a number, else 0: the reference's rank parse (`0x4b3c30`).
+/// The first ASCII digit run as a number, else 0: the reference's rank parse.
 fn leading_number(s: &str) -> u32 {
     s.chars()
         .skip_while(|c| !c.is_ascii_digit())
@@ -535,9 +534,8 @@ pub(crate) fn cast_spell(
         ladder,
         tokens,
     } = cast;
-    // `CastSpell`'s two cancel forks (`0x4b3300`), in order: the active-action toggle
-    // (`0x4b36f0`), then the form match (`0x4b348b`), which `UseAction` lacks, with its silent
-    // no-op (`0x4b35cf`).
+    // `CastSpell`'s two cancel forks, in order: the active-action toggle, then the form match,
+    // which `UseAction` lacks, with its silent no-op.
     let forks = via_book.then(|| (ladder.spells.as_ref(), targeting.self_store.iter().next()));
     if let Some((Some(sp), Some(store))) = forks {
         if let Some(d) = sp.catalog.get(spell_id) {
@@ -835,8 +833,8 @@ mod tests {
         );
     }
 
-    /// Both bits (`Attributes & 0x2`, `AttributesEx2 & 0x20`) substitute; Throw's `0x2` alone
-    /// does not, and without a weapon the spell keeps its own icon, never Spell-Reset (`0x4e6990`).
+    /// Both bits (`Attributes & 0x2`, `AttributesEx2 & 0x20`) substitute; Throw's `0x2` alone does
+    /// not, and without a weapon the spell keeps its own icon, never Spell-Reset.
     #[test]
     fn build_book_ranged_shots_borrow_the_ranged_weapon_icon() {
         const AUTO_SHOT: u32 = 75;

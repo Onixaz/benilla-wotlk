@@ -9,8 +9,8 @@ use crate::ui_script::{UiFeed, UiInput};
 
 #[cfg(test)]
 mod ace_gate_tests;
-/// `/afk` and `/dnd`: the optimistic AFK mirror `[0xb6e5cc]` and the implicit clear that every
-/// other chat send and every movement press carries.
+/// `/afk` and `/dnd`: the optimistic AFK mirror and the implicit clear that every other chat send
+/// and every movement press carries.
 pub(crate) mod away;
 /// The world broadcasts: `SMSG_ZONE_UNDER_ATTACK`/`_DEFENSE_MESSAGE`/`_SERVER_MESSAGE`.
 mod broadcast;
@@ -110,11 +110,10 @@ impl Plugin for UiChatPlugin {
                     .in_set(crate::ui_script::UiFeed)
                     .before(feed::feed_chat),
             )
-            // Only against the in-game VM: the drain takes the whole queue and fires every line,
-            // so a VM with no ChatFrame destroys them. After the unit and guild feeds, as in the
-            // reference: login-burst chat is queued (`0x49cae0`) behind the `[0x8435fc]` latch and
-            // drains at `0x490974`, after `PLAYER_LOGIN` (`0x490959`) and `PLAYER_ENTERING_WORLD`
-            // (`0x49096a`), while `GUILD_MOTD` fires on arrival (`0x5e7288`), so the guild line
+            // Only against the in-game VM: the drain takes the whole queue and fires every line, so
+            // a VM with no ChatFrame destroys them. After the unit and guild feeds, as in the
+            // reference: login-burst chat is queued behind a latch and drains after `PLAYER_LOGIN`
+            // and `PLAYER_ENTERING_WORLD`, while `GUILD_MOTD` fires on arrival, so the guild line
             // precedes the welcome.
             .add_systems(
                 Update,
@@ -124,8 +123,8 @@ impl Plugin for UiChatPlugin {
                     .after(crate::ui_guild::GuildFeed)
                     .run_if(crate::ui_script::ingame_ui_up),
             )
-            // The last-input stamp `[0xcf0bc8]`, ungated and ahead of the UI pass: the reference
-            // stamps raw input before dispatch, so a key the chat box swallows still counts.
+            // The last-input stamp, ungated and ahead of the UI pass: the reference stamps raw
+            // input before dispatch, so a key the chat box swallows still counts.
             .add_systems(Update, idle::stamp_input.before(UiInput))
             // A fresh VM's joined-channel mirror, before the feed so its first line is numbered.
             .add_systems(
@@ -163,7 +162,8 @@ impl Plugin for UiChatPlugin {
             // The zone-channel auto-join, which vmangos leaves to the client. The disconnect clear
             // runs first, so a same-frame drop cannot leave the walk diffing stale membership.
             // After `AreaAuthoritySet`, since a stale area joins and leaves the wrong channels. The
-            // guild-recruitment cascade follows the walk: it is the tail of `ZoneChannelRefresh`.
+            // guild-recruitment cascade follows the walk: it is the tail of the zone-channel
+            // refresh.
             .add_systems(
                 Update,
                 (

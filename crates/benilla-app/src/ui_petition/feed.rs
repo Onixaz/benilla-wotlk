@@ -1,9 +1,9 @@
 //! The charter VM feed and drain: the snapshot the charter windows read, their events, the
 //! composed lines, and the sends for the Lua [`PetitionRequest`]s.
 //!
-//! `PETITION_SHOW` waits for the record and every signer name (`0x4f419b`-`0x4f41ad`), then fires
-//! once (`0x4f4320` fires as the pending count reaches zero); the owner's name is not counted
-//! (`0x4f4186`/`0x4f42e8`). The getters answer at any time, nil where nothing has landed.
+//! `PETITION_SHOW` waits for the record and every signer name, then fires once (the reference fires
+//! as the pending count reaches zero); the owner's name is not counted. The getters answer at any
+//! time, nil where nothing has landed.
 
 use benilla_protocol::messages::{ArenaBanner, ITEM_FLAG_CHARTER};
 use benilla_ui::script::{
@@ -21,8 +21,8 @@ use crate::ui_session::{npc_switched, NpcSession};
 
 use super::{lines, GuildRegistrarState, PetitionState, PetitionVendorState};
 
-/// The carried arena charter `TurnInArenaCharter` (`0x6dd680`) finds: a charter-flagged item
-/// whose cached record is an arena one, of `team_size` when given.
+/// The carried arena charter the reference's turn-in lookup (`0x6dd680`) finds: a charter-flagged
+/// item whose cached record is an arena one, of `team_size` when given.
 fn arena_charter(
     store: &ObjectStore,
     objects: &Objects,
@@ -228,7 +228,8 @@ pub(super) fn feed_petition(
     });
     let now_vendor = vendor.npc();
     if std::mem::take(&mut vendor.update) {
-        // `ShowPetitionList` (`0x5a22a0`): the update, then the show, with no close between two.
+        // The petition list show (`0x5a22a0`): the update, then the show, with no close between
+        // two.
         script.fire_event("PETITION_VENDOR_UPDATE", vec![]);
         script.fire_event("PETITION_VENDOR_SHOW", vec![]);
     } else if fed.vendor.is_some() && now_vendor.is_none() {
@@ -249,7 +250,7 @@ pub(super) fn feed_petition(
 }
 
 /// Turn the Lua charter intents into sends. `ClosePetition` can send `MSG_PETITION_DECLINE`
-/// (`0x4f3f60`, `decline_on_close`); `CloseGuildRegistrar` sends nothing.
+/// (`decline_on_close`); `CloseGuildRegistrar` sends nothing.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn drain_petition(
     script: Option<NonSendMut<UiScript>>,
@@ -278,7 +279,7 @@ pub(super) fn drain_petition(
     for request in requests {
         match request {
             PetitionRequest::Buy(name) => {
-                // The registrar's own latch, not the target or `CGGameUI`'s NPC.
+                // The registrar's own latch, not the target or the UI's interact NPC.
                 let Some(npc) = registrar.npc() else {
                     debug!("ui_petition: BuyGuildCharter with no registrar open — dropped");
                     continue;
@@ -352,7 +353,7 @@ pub(super) fn drain_petition(
                 vendor.closed_by_vm = true;
             }
             PetitionRequest::TurnIn => {
-                // A fresh bag scan per call (`0x5ef2b0`); the charter's `max_count` is 1.
+                // A fresh bag scan per call; the charter's `max_count` is 1.
                 let charter = self_q.iter().next().and_then(|store| {
                     find_item(
                         &store.0,
@@ -365,7 +366,7 @@ pub(super) fn drain_petition(
                     Some((_, _, item)) => {
                         let _ = commands.0.send(ClientCommand::TurnInPetition { item });
                     }
-                    // No charter, no packet: a red line (`0x5ef49a`).
+                    // No charter, no packet: a red line.
                     None => petition.lines.push(lines::no_charter_line()),
                 }
             }
@@ -439,8 +440,8 @@ pub(super) fn drain_petition(
     }
 }
 
-/// `CGPetitionVendorInfo::BuyPetition`'s refusals (`0x5a2350`): a guild charter for a guild
-/// member, an arena one for a size the player already holds a team of.
+/// The petition vendor's buy refusals (`0x5a2350`): a guild charter for a guild member, an arena
+/// one for a size the player already holds a team of.
 fn vendor_buy_refusal(
     row: &benilla_protocol::messages::PetitionShowListEntry,
     player: &benilla_protocol::ObjectFields,
@@ -473,10 +474,9 @@ fn arena_level_line(
     ))
 }
 
-/// `0x5e00e0`, the designer's opener, for `GetTabardInfo` with the registrar's guid `npc`
-/// (`0x4f5338`): nothing while the designer is open on that guid (`0x5e00e6`-`0x5e00fc`, so two
-/// zero guids send nothing), the refusal while the player's `UNIT_FIELD_DISPLAYID` is not its
-/// `UNIT_FIELD_NATIVEDISPLAYID` (`0x5e0102`-`0x5e0116`, error `0x130`), else the packet.
+/// The designer's opener, for `GetTabardInfo` with the registrar's guid `npc`: nothing while the
+/// designer is open on that guid (so two zero guids send nothing), the refusal while the player's
+/// `UNIT_FIELD_DISPLAYID` is not its `UNIT_FIELD_NATIVEDISPLAYID` (error `0x130`), else the packet.
 fn tabard_vendor_activate(
     npc: u64,
     designer: u64,

@@ -1,7 +1,7 @@
 //! The currency feed: `CurrencyTypes.dbc` and `CurrencyCategory.dbc`, and the player's known
 //! currencies, token slots, point balances and currency item names into the VM. 12340 rebuilds the
 //! list and fires `CURRENCY_DISPLAY_UPDATE` at world entry, on a token slot change and when a
-//! currency item's record lands (`CGCurrencyTypes::EnterWorld` `0x5b0660`), and
+//! currency item's record lands (the currency table's world entry, `0x5b0660`), and
 //! `KNOWN_CURRENCY_TYPES_UPDATE` on the known-currencies watch (`0x5b0640`).
 
 use std::collections::HashMap;

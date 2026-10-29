@@ -1,10 +1,10 @@
-//! The player-UI gamma lane's one decode. [`ui_quad.wgsl`](shaders/ui_quad.wgsl) composites the
-//! UI in gamma bytes, as the reference's fixed-function device does into its 8-bit backbuffer:
-//! blends are gamma arithmetic clamped at each write, and `alphaMode="ADD"` is `dst + texel·α`
-//! (EGxBlend 3, `glBlendFunc(GL_SRC_ALPHA, GL_ONE)`; factor tables `0x85c1f8`/`0x85c224`). This
-//! node decodes the finished image to linear once, straight into the swapchain (output mode
-//! `Skip`, no blit), whose sRGB write re-encodes the client's byte. Without it the UI presents
-//! about 2.2 times too bright. [`UiGammaLane`] gates it off every other `Camera2d` on `Core2d`.
+//! The player-UI gamma lane's one decode. [`ui_quad.wgsl`](shaders/ui_quad.wgsl) composites the UI
+//! in gamma bytes, as the reference's fixed-function device does into its 8-bit backbuffer: blends
+//! are gamma arithmetic clamped at each write, and `alphaMode="ADD"` is `dst + texel·α` (EGxBlend
+//! 3, `glBlendFunc(GL_SRC_ALPHA, GL_ONE)`). This node decodes the finished image to linear once,
+//! straight into the swapchain (output mode `Skip`, no blit), whose sRGB write re-encodes the
+//! client's byte. Without it the UI presents about 2.2 times too bright. [`UiGammaLane`] gates it
+//! off every other `Camera2d` on `Core2d`.
 //!
 //! Bevy UI (the glue and loading screens) converts in its own shaders ([`use_gamma_ui_shaders`])
 //! and lands on this camera, which [`crate::ui_pass`] makes `IsDefaultUiCamera`.
@@ -50,8 +50,8 @@ impl Default for UiGammaLane {
 
 /// The ramp exponent the display shows, from [`GammaRows`] and the window's mode. The reference's
 /// `Gamma` callback (`0x401a30`) hands the device `pow(i / 255, gamma)` only while `DesktopGamma`
-/// reads 0, and the device uploads it only when fullscreen (`CGxDeviceD3d::DeviceSetGamma`, its
-/// `IDevIsWindowed` test); `DesktopGamma` 1 puts the desktop's own ramp back (`0x401a80`). There
+/// reads 0, and the device uploads it only when fullscreen (the D3D device's gamma set, its
+/// windowed test); `DesktopGamma` 1 puts the desktop's own ramp back (`0x401a80`). There
 /// is no other whole-frame grade and no `Brightness` or `Contrast` CVar.
 ///
 /// The curve applies in the compositor rather than through the OS ramp: [`UiGammaNode`] raises the

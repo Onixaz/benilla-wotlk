@@ -1,16 +1,15 @@
-//! The message catalog's sound half: the sound branch of `CGGameUI::DisplayError` (`0x496720`).
+//! The message catalog's sound half: the sound branch of the reference's error display.
 //!
-//! Each displayed message is a row of the registry at `0xb4b498` ([`benilla_ui::messages`]), and
-//! one comparison on its type tag `+0x0c` picks the sound (`0x49673d cmp [row+0xc],0x44`):
+//! Each displayed message is a row of the registry ([`benilla_ui::messages`]), and one comparison
+//! on its type tag `+0x0c` picks the sound (`cmp [row+0xc],0x44`):
 //!
-//! - `== 0x44`: play `+0x08` as a `SoundEntries` name through `PlaySoundByName` (`0x458030`),
-//!   unless it is `"NONE"`.
+//! - `== 0x44`: play `+0x08` as a `SoundEntries` name through the by-name kit play, unless it is
+//!   `"NONE"`.
 //! - `!= 0x44`: speak the tag as an error-speech line in the player's race and gender voice
 //!   ([`super::vocal`]).
 //!
 //! The two arms gate differently: a cue is silenced by `MasterSoundEffects` at the mixer, while
-//! speech tests `MasterSoundEffects` and `EnableErrorSpeech` in its own body
-//! (`0x458264`/`0x45827f`).
+//! speech tests `MasterSoundEffects` and `EnableErrorSpeech` in its own body.
 
 use bevy::prelude::*;
 
@@ -28,20 +27,19 @@ use super::{AudioListener, SoundConfig, SoundOutput};
 #[derive(Resource, Default)]
 pub(crate) struct MessageSounds {
     records: Vec<&'static MessageRecord>,
-    /// `PlaySoundByName` cues with no catalog row, such as the tutorial popup's
-    /// `"TutorialPopup"` (`0x4b5390`), played on the same 2D SFX path.
+    /// By-name kit cues with no catalog row, such as the tutorial popup's `"TutorialPopup"`, played
+    /// on the same 2D SFX path.
     cues: Vec<&'static str>,
-    /// `SI2::PlayUISound` kits by `SoundEntries` id (`0x4c8fc0`), on the same path.
+    /// UI kits by `SoundEntries` id (`0x4c8fc0`), on the same path.
     kits: Vec<u32>,
 }
 
 impl MessageSounds {
     /// Queue one displayed message's sound.
     ///
-    /// The reference sounds a message before deciding to draw it (`0x49673d`, ahead of the key
-    /// guard at `0x4967bd`/`0x4967c5` and the empty-text guard at `0x4945b4`), while benilla drops
-    /// an empty line before it gets here. No sounding row in the shipped `GlobalStrings.lua` has
-    /// empty text, so the two agree on 1.12.1's data.
+    /// The reference sounds a message before deciding to draw it (ahead of the key guard and the
+    /// empty-text guard), while benilla drops an empty line before it gets here. No sounding row in
+    /// the shipped `GlobalStrings.lua` has empty text, so the two agree on 1.12.1's data.
     pub(crate) fn push(&mut self, record: &'static MessageRecord) {
         self.records.push(record);
     }
@@ -90,11 +88,10 @@ fn play_message_sounds(
     let (Some(mut kits), Some(assets)) = (kits, assets) else {
         return;
     };
-    // The reference reads the player's sex per play (`0x49676f` → `0x5ed5b0`); none yet means
-    // no voice.
+    // The reference reads the player's sex per play; none yet means no voice.
     let me = self_q.iter().next();
     let sex = me.and_then(|s| s.0.unit_gender());
-    // A Death Knight's error speech takes its voice chain (`SI2::PlayVocalErrorSound 0x986d00`).
+    // A Death Knight's error speech takes its voice chain (the vocal error play, `0x986d00`).
     let filter = kit::voice_filter(&out, me);
     for id in kit_ids {
         if let Err(e) = kit::play_kit(
@@ -136,7 +133,7 @@ fn play_message_sounds(
                 &config,
                 listener.pos,
                 KitRef::Name(name),
-                None, // 2D: `0x458030` plays non-positional UI kits
+                None, // 2D: the reference plays UI kits non-positional
                 SoundCategory::Sfx,
             ) {
                 warn!("sound(message): cue {name:?} for {}: {e:#}", record.key);

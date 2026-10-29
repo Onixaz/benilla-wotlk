@@ -1,15 +1,14 @@
 //! Mounts: `UNIT_FIELD_MOUNTDISPLAYID` drawn as a second creature visual, a child entity with its
 //! own `NetEntity` built by the ordinary attach path. The rider's rig roots under the mount's
-//! attachment-0 seat (`0x60ce70`) and holds Mount (91), while the mount child walks on the host's
-//! movement ([`crate::creature_anim`]).
+//! attachment-0 seat and holds Mount (91), while the mount child walks on the host's movement
+//! ([`crate::creature_anim`]).
 //!
-//! The change handler `0x5ffa50` tears the old seat down, then builds the new, and neither half
-//! touches the rider's model. Mounting (`0x607a00`) sets the mount model (`0x613d80`, into
-//! `CGUnit+0xdc`) and re-parents the body onto its attachment 0 (`0x712f70`), recomposed each frame
-//! from that live bone (`0x718657`..`0x71876f`); dismounting (`0x607ce0`) detaches the body
-//! (`0x713020`), destroys the mount model and stands the body, instantly. Here the rig's consumer
-//! anchors move between the unit's frame and the seat, re-pointing [`RigPose::joints_root`], so
-//! nothing that rides the rider is rebuilt.
+//! The change handler tears the old seat down, then builds the new, and neither half touches the
+//! rider's model. Mounting sets the mount model (into unit `+0xdc`) and re-parents the body onto
+//! its attachment 0, recomposed each frame from that live bone; dismounting detaches the body,
+//! destroys the mount model and stands the body, instantly. Here the rig's consumer anchors move
+//! between the unit's frame and the seat, re-pointing [`RigPose::joints_root`], so nothing that
+//! rides the rider is rebuilt.
 
 use benilla_protocol::EntityKind;
 use bevy::prelude::*;
@@ -77,11 +76,10 @@ pub(crate) struct MountChild(pub(crate) Entity);
 #[derive(Component)]
 pub(super) struct AppliedMount(pub(super) u32);
 
-/// Spawn a unit's mount child (the client's `0x607a00` model creation), built as an ordinary
-/// creature. `scale` is the `CreatureDisplayInfo.creatureModelScale` column alone (`0x607a75`), as
-/// the unit's `SCALE_X` composes through the hierarchy. `fade_skip` drops the streaming fade, so a
-/// cast mount is there at once: our choice, as whether the reference fades a new mount in is
-/// untraced.
+/// Spawn a unit's mount child, built as an ordinary creature. `scale` is the
+/// `CreatureDisplayInfo.creatureModelScale` column alone, as the unit's `SCALE_X` composes through
+/// the hierarchy. `fade_skip` drops the streaming fade, so a cast mount is there at once: our
+/// choice, as whether the reference fades a new mount in is untraced.
 pub(super) fn spawn_mount_child(
     commands: &mut Commands,
     host: Entity,
@@ -115,8 +113,8 @@ pub(super) fn spawn_mount_child(
 }
 
 /// The seat anchor, the rider's model frame while mounted: under the mount's attachment-0 joint,
-/// counter-scaled so the rider keeps its size (`0x607b49`, `0x710620`), and a
-/// [`benilla_world::rig_anim::RigFrame`] so a re-seat cascades into the rider's palette.
+/// counter-scaled so the rider keeps its size, and a [`benilla_world::rig_anim::RigFrame`] so a
+/// re-seat cascades into the rider's palette.
 fn spawn_seat_anchor(
     commands: &mut Commands,
     joint: Entity,
@@ -138,7 +136,7 @@ fn spawn_seat_anchor(
 
 /// Where the seat leg leaves the rider: [`Seat::Wait`] while the mount model builds,
 /// [`Seat::Frame`] to root there, or [`Seat::UnitMatrix`] when the mount authors no attachment 0
-/// and the reference leaves the body at the unit matrix (`0x60ce70`'s miss).
+/// and the reference leaves the body at the unit matrix.
 pub(super) enum Seat {
     Wait,
     Frame(Entity),
@@ -171,7 +169,7 @@ pub(super) fn seat_or_spawn_mount(
     fade_skip: bool,
     arrival: Option<super::Arrival>,
 ) -> Seat {
-    // `0x607a75`: `SCALE_X` × `creatureModelScale` alone, without `CreatureModelData.modelScale`.
+    // `SCALE_X` × `creatureModelScale` alone, without `CreatureModelData.modelScale`.
     let mount_scale = creatures
         .and_then(|c| c.catalog.display_scale(mount_display))
         .unwrap_or(1.0);
@@ -249,9 +247,9 @@ fn ground_frame(
     node
 }
 
-/// Move a rig's consumer anchors onto `frame` and make it the model frame, as `0x712f70` attaches
-/// and `0x713020` detaches; the anchors carry every held item, effect and overhead rider.
-/// `pose_dirty` re-seats them and the palette in the same frame's compose.
+/// Move a rig's consumer anchors onto `frame` and make it the model frame, as the reference's model
+/// attach and detach do; the anchors carry every held item, effect and overhead rider. `pose_dirty`
+/// re-seats them and the palette in the same frame's compose.
 fn reseat_rig(commands: &mut Commands, rig: &mut RigPose, frame: Entity, conform: bool) {
     if rig.joints_root == frame {
         return;
@@ -270,9 +268,9 @@ fn reseat_rig(commands: &mut Commands, rig: &mut RigPose, frame: Entity, conform
     }
 }
 
-/// Re-seat a unit's rig when its mount field changes, the client's `0x5ffa50`: tear the old seat
-/// down, then build the new, with the rider's own visual untouched. The legs run in separate
-/// frames, so a remount stands the rider on its feet while the new mount model loads.
+/// Re-seat a unit's rig when its mount field changes, as the client's change handler does: tear the
+/// old seat down, then build the new, with the rider's own visual untouched. The legs run in
+/// separate frames, so a remount stands the rider on its feet while the new mount model loads.
 #[allow(clippy::type_complexity)]
 pub(super) fn reseat_mounts(
     mut commands: Commands,
@@ -285,7 +283,7 @@ pub(super) fn reseat_mounts(
             Option<&MountChild>,
             Option<&super::Arrival>,
         ),
-        // A torn-down unit is freed, not re-seated (`0x464920`).
+        // A torn-down unit is freed, not re-seated.
         (
             With<super::VisualAttached>,
             Without<benilla_world::model_fade::DespawnFade>,
@@ -322,9 +320,9 @@ pub(super) fn reseat_mounts(
             continue;
         };
         let child = child.map(|&MountChild(c)| c);
-        // ── Leg 1 · `0x607ce0`: detach the body onto its own frame, destroy the mount model.
-        // Taken when seated on a mount the field left or when the field says none; a unit waiting
-        // on its first mount model must not take it, or it would tear down its own order.
+        // ── Leg 1 · dismount: detach the body onto its own frame, destroy the mount model. Taken
+        // when seated on a mount the field left or when the field says none; a unit waiting on its
+        // first mount model must not take it, or it would tear down its own order.
         if applied != 0 || live == 0 {
             // Only a body on a seat detaches: a rig on its own entity or its conform node stays,
             // or a second conform node would be orphaned beside the first.
@@ -345,7 +343,7 @@ pub(super) fn reseat_mounts(
                 .insert(AppliedMount(0));
             continue;
         }
-        // ── Leg 2 · `0x607a00`: build the mount model and attach the body to its seat.
+        // ── Leg 2 · mount: build the mount model and attach the body to its seat.
         match seat_or_spawn_mount(
             &mut commands,
             &children,

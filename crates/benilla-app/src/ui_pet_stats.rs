@@ -1,11 +1,11 @@
 //! The hunter pet's paper-doll stat block (`GetPetHappiness`, `GetPetLoyalty`,
 //! `GetPetTrainingPoints`, `GetPetExperience`, `HasPetUI`) and the pet's family word and diet.
 //!
-//! The four stat bindings share one gate, `0x6116e0(pet)`: the pet resolves, has a
-//! `UNIT_FIELD_PETNUMBER`, is ours, and our class byte is Hunter, so a warlock's imp answers
-//! nothing. `UnitCreatureFamily("pet")` (`0x51a310`) has no class test, so the imp still shows
-//! "Imp", while `GetPetFoodTypes()` (`0x4bea10`) shares the `0x6116e0` gate, so a non-hunter's pet
-//! has no diet even when its family row has a food mask.
+//! The four stat bindings share one gate, `(pet)`: the pet resolves, has a `UNIT_FIELD_PETNUMBER`,
+//! is ours, and our class byte is Hunter, so a warlock's imp answers nothing.
+//! `UnitCreatureFamily("pet")` has no class test, so the imp still shows "Imp", while
+//! `GetPetFoodTypes()` shares the gate, so a non-hunter's pet has no diet even when its family row
+//! has a food mask.
 
 use bevy::prelude::*;
 
@@ -16,8 +16,8 @@ use crate::net::{NetCommands, ObjectStore};
 use crate::ui_pet::{PetBar, PetUnit};
 use crate::ui_unit::UnitFeed;
 
-/// `UNIT_FIELD_BYTES_0` byte 1, Hunter: the class the stat gate tests (`0x611752`). The enum is
-/// pinned by `GetComboPoints` (`0x51a190`), which tests 4 and 0xB, Rogue and Druid, on that byte.
+/// `UNIT_FIELD_BYTES_0` byte 1, Hunter: the class the stat gate tests. The enum is pinned by
+/// `GetComboPoints`, which tests 4 and 0xB, Rogue and Druid, on that byte.
 const CLASS_HUNTER: u8 = 3;
 
 /// Power index 4, the happiness `GetPetHappiness` buckets: read by index, as a pet's displayed
@@ -118,8 +118,8 @@ fn stats_for(
     let Some(fields) = pet.map(|s| &s.0) else {
         return (false, PetStats::default());
     };
-    // `HasPetUI`'s first return (`0x4be697`): a pet that resolves and has a pet number. A
-    // possessed creature has a bar and no pet number, so no paper doll.
+    // `HasPetUI`'s first return: a pet that resolves and has a pet number. A possessed creature has
+    // a bar and no pet number, so no paper doll.
     let has_ui = fields.unit_is_pet_or_charm();
     // Its second return is our class; the owner leg always holds, as the server gives us a bar
     // only for a pet we control.
@@ -184,7 +184,8 @@ fn feed_pet_stats(
     let family = family_for(store, &names, &commands, family_tables.as_deref());
     let tree = tree_for(store, &names, family_tables.as_deref(), talents.as_deref());
     let mut fresh = stats_for(store, self_store.iter().next(), tables.as_deref(), family);
-    // `GetPetTalentTree`'s gate is `CanGainXP`, the hunter pet's: our pet is created by us.
+    // `GetPetTalentTree`'s gate is the pet's can-gain-XP test, the hunter pet's: our pet is created
+    // by us.
     if fresh.1.hunter_pet {
         fresh.1.talent_tree = tree;
     }
@@ -225,9 +226,9 @@ fn feed_pet_stats(
         // `arg1` is the unit token, as on every 1.12 `UNIT_*` event; its handlers gate on it.
         script.fire_event("UNIT_HAPPINESS", vec![ScriptValue::Str("pet".into())]);
     }
-    // Fields 141/142 and 149 fire through the same token fan-out (`0x515e50`,
-    // `SignalEvent2(id, "%s", token)`); `UNIT_PET_TRAINING_POINTS` reaches the page only through
-    // its `arg1 == "pet"` arm (`PetPaperDollFrame.lua:45`).
+    // Fields 141/142 and 149 fire through the same token fan-out (one `%s` argument, the token);
+    // `UNIT_PET_TRAINING_POINTS` reaches the page only through its `arg1 == "pet"` arm
+    // (`PetPaperDollFrame.lua:45`).
     if xp_moved {
         script.fire_event("UNIT_PET_EXPERIENCE", vec![ScriptValue::Str("pet".into())]);
     }
@@ -542,7 +543,7 @@ mod tests {
         assert_eq!(s.family.as_deref(), Some("Boar"), "the word is ungated");
         assert!(
             s.food_types.is_empty(),
-            "…but the diet shares 0x6116e0 with the stats"
+            "…but the diet shares with the stats"
         );
         assert_eq!(s.loyalty, None, "…as does the hunter machinery");
         assert_eq!(s.happiness, None);

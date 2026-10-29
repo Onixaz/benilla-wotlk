@@ -30,15 +30,15 @@ const CLASS_DRUID: u8 = 11;
 /// A bar page is twelve buttons (`0x542db2`).
 const PAGE_SLOTS: u8 = 12;
 
-/// The player the registrar reads (`0x4d4db0(ClntObjMgrGetActivePlayer(), 0x10)`): its level,
-/// class and current form.
+/// The player the registrar reads (`0x4d4db0` on the active player, `0x10`): its level, class and
+/// current form.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Learner {
     /// `UNIT_FIELD_LEVEL`.
     pub(crate) level: u32,
     /// `UNIT_FIELD_BYTES_0` byte 1.
     pub(crate) class: u8,
-    /// `CGUnit_C::GetShapeshiftForm`, 0 unshifted.
+    /// The unit's shapeshift form, 0 unshifted.
     pub(crate) form: u8,
 }
 
@@ -84,8 +84,8 @@ pub(crate) fn auto_place_page(
     u8::try_from((row.bonus_bar + 5) * u32::from(PAGE_SLOTS)).unwrap_or(0)
 }
 
-/// The first button of the page with no action (`CGActionBar::HasAction` over `page..page+12`,
-/// `0x542dc1`), or `None` when the page is full.
+/// The first button of the page with no action (the action bar's has-action test over
+/// `page..page+12`, `0x542dc1`), or `None` when the page is full.
 pub(crate) fn first_empty_slot(actions: &PlayerActions, page: u8) -> Option<u8> {
     (page..page.saturating_add(PAGE_SLOTS)).find(|slot| !actions.buttons.contains_key(slot))
 }

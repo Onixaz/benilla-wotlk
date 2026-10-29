@@ -1,10 +1,10 @@
 //! The item and enchant glow chain. An ItemVisuals id comes from the item's display
 //! (`ItemDisplayInfo` column 22) or its enchant (`SpellItemEnchantment` column 31); its row holds
 //! five `ItemVisualEffects` ids, each naming a glow model, and slot `i` hangs on the item model's
-//! attachment `i` (`0x479700` calls `0x712f70(glow, item, i)`). The loaders check each table's
-//! field count and record size (`0x548760`, `0x548530`, `0x54f6e0`).
+//! attachment `i` (the reference attaches each as `(glow, item, i)`). The loaders check each
+//! table's field count and record size.
 //!
-//! `0x479700` skips a visual or effect id that is negative, past the table's max id or a null
+//! The reference skips a visual or effect id that is negative, past the table's max id or a null
 //! row, and an empty model path; ItemVisuals row 28 ships two garbage effect ids. The catalog
 //! applies the same skips at load.
 
@@ -30,8 +30,8 @@ pub struct ItemVisualCatalog {
 }
 
 impl ItemVisualCatalog {
-    /// The five slots for an ItemVisuals id, read signed as `0x479700` does, so `-1` and `0` name
-    /// nothing.
+    /// The five slots for an ItemVisuals id, read signed as the reference does, so `-1` and `0`
+    /// name nothing.
     pub fn effects(&self, visual_id: i32) -> Option<&[Option<String>; ITEM_VISUAL_SLOTS]> {
         (visual_id > 0).then(|| self.visuals.get(&(visual_id as u32)))?
     }
@@ -62,12 +62,11 @@ pub struct EnchantCatalog {
 }
 
 /// `Flags & 0x1`: applying the enchant binds the item. It is the only gate on the bind confirm,
-/// event 402 (`0x495d60`), and `0x5da2c0` reads it to ask whether an item already has one.
+/// event 402, and the reference reads it to ask whether an item already has one.
 const FLAG_BINDS_THE_ITEM: u32 = 0x1;
 
-/// `Flags & 0x2`: both tooltip enchant-line printers return before reading the name
-/// (`0x6290e4`, `0x62923e`), though the replace confirm still reads it (`0x4960d0`). Set on the
-/// totem imbues, Firestone and Orb of Fire.
+/// `Flags & 0x2`: both tooltip enchant-line printers return before reading the name, though the
+/// replace confirm still reads it. Set on the totem imbues, Firestone and Orb of Fire.
 const FLAG_TOOLTIP_HIDES_NAME: u32 = 0x2;
 
 impl EnchantCatalog {

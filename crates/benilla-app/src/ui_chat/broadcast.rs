@@ -1,19 +1,16 @@
 //! The world broadcasts that print in chat, resolved from their wire ids once the catalogs, the
 //! joined channels and the player's zone are at hand, a pass before the chat drain.
 //!
-//! The two defense broadcasts (handlers `0x49dcc0`, `0x49de30`) print as senderless
-//! `CHAT_MSG_CHANNEL` lines in language 0, once per joined channel whose `ChatChannels.dbc` row
-//! has `DEFENSE` (`0x10000`, `0x49dd94`); a `ZONE_DEP` (`0x2`) row also needs the broadcast's zone
-//! to be the player's (`0x49dda4`). Both compare the area's parent zone (`0x49dd2b`, `0x49de80`),
-//! while ZONE_UNDER_ATTACK's text names the area itself (`0x49dd05`). With no `AreaTable.dbc` row
-//! ZONE_UNDER_ATTACK prints nothing (`0x49dcdc`) and DEFENSE_MESSAGE compares the raw id
-//! (`0x49de8a`). vmangos sends DEFENSE_MESSAGE to the whole map (`Map.cpp:1868`), but only rows
-//! 1, 2 and 22 carry `INITIAL`, so the auto-join never joins WorldDefense and in practice only
-//! LocalDefense, in the broadcast's zone, hears them.
+//! The two defense broadcasts print as senderless `CHAT_MSG_CHANNEL` lines in language 0, once per
+//! joined channel whose `ChatChannels.dbc` row has `DEFENSE` (`0x10000`); a `ZONE_DEP` (`0x2`) row
+//! also needs the broadcast's zone to be the player's. Both compare the area's parent zone, while
+//! ZONE_UNDER_ATTACK's text names the area itself. With no `AreaTable.dbc` row ZONE_UNDER_ATTACK
+//! prints nothing and DEFENSE_MESSAGE compares the raw id. vmangos sends DEFENSE_MESSAGE to the
+//! whole map (`Map.cpp:1868`), but only rows 1, 2 and 22 carry `INITIAL`, so the auto-join never
+//! joins WorldDefense and in practice only LocalDefense, in the broadcast's zone, hears them.
 //!
-//! `SMSG_SERVER_MESSAGE` is one `CHAT_MSG_SYSTEM` line (`0x49e047`). `SMSG_CHAT_RESTRICTED`
-//! carries nothing and is `DisplayError` 451 (`0x5e4a09`, `0x496720`), `ERR_CHAT_RESTRICTED`, a
-//! chat row, not a red toast (`0x496822`, `0x484cac`); vmangos never sends it.
+//! `SMSG_SERVER_MESSAGE` is one `CHAT_MSG_SYSTEM` line. `SMSG_CHAT_RESTRICTED` carries nothing and
+//! is error 451, `ERR_CHAT_RESTRICTED`, a chat row, not a red toast; vmangos never sends it.
 
 use bevy::prelude::*;
 
@@ -62,9 +59,9 @@ pub(super) fn load_server_messages(mut commands: Commands, assets: Option<Res<Wo
 }
 
 /// The joined channels a defense broadcast about `subject_zone` reaches, in slot order. With
-/// `player_zone` unknown only non-`ZONE_DEP` rows pass, as with the reference's unset
-/// `[0xb6e5d0]`. Every slot counts whatever its state; the reference takes only state 0
-/// (`[e+0x9c]`, `0x49dd5a`), skipping pending, renamed and suspended slots.
+/// `player_zone` unknown only non-`ZONE_DEP` rows pass, as with the reference's unset zone. Every
+/// slot counts whatever its state; the reference takes only state 0 (`[e+0x9c]`), skipping pending,
+/// renamed and suspended slots.
 pub(crate) fn defense_targets(
     channels: &ChannelState,
     subject_zone: u32,
@@ -85,13 +82,13 @@ pub(crate) fn defense_targets(
         .collect()
 }
 
-/// The VM's `ZONE_UNDER_ATTACK` string (`0x49dd14`) with the area's name in its first `%s`: the
-/// reference's `snprintf` (`0x49dd26`) passes one argument.
+/// The VM's `ZONE_UNDER_ATTACK` string with the area's name in its first `%s`: the reference's
+/// `snprintf` passes one argument.
 fn zone_under_attack_line(template: &str, area_name: &str) -> String {
     template.replacen("%s", area_name, 1)
 }
 
-/// The area's parent zone, or the area itself when it has none (`0x49dd2b`, `0x49de80`).
+/// The area's parent zone, or the area itself when it has none.
 fn parent_zone(areas: &AreaTableRes, id: u32) -> Option<u32> {
     let row = areas.0.get(id)?;
     Some(if row.zone_id == 0 { id } else { row.zone_id })
@@ -112,8 +109,8 @@ pub(super) fn feed_broadcasts(
     }
     // The format string lives in the VM, so the queue waits for one; it clears at session end.
     let Some(script) = script else { return };
-    // The player's zone, the reference's `[0xb6e5d0]`; `top_zone` is the single-hop parent on
-    // 5875 data.
+    // The player's zone, as the reference keeps it; `top_zone` is the single-hop parent on 5875
+    // data.
     let player_zone = areas
         .as_ref()
         .and_then(|a| world.area().and_then(|leaf| a.0.top_zone(leaf)));
@@ -146,7 +143,7 @@ pub(super) fn feed_broadcasts(
             Broadcast::ChatRestricted => {
                 // Its row is a chat row (tested below), so it is written as a system line here.
                 // Deviation: a missing global prints nothing, where the reference prints an empty
-                // line (`0x703c02`), because benilla's other `DisplayError` routes do the same.
+                // line, because benilla's other error-display routes do the same.
                 if let Some(text) = super::combat::global_string(&script, "ERR_CHAT_RESTRICTED") {
                     log.push_event(ChatEvent::text_only(ChatEventKind::System, text));
                 }
@@ -166,8 +163,7 @@ pub(super) fn feed_broadcasts(
 }
 
 /// One `CHAT_MSG_CHANNEL` line per defense channel reached, with no sender or language: the
-/// handlers push NULL for both (`0x49ddf5`/`0x49ddf7`), hence the bare colon of
-/// `[LocalDefense] : text`.
+/// handlers push NULL for both, hence the bare colon of `[LocalDefense] : text`.
 fn push_channel_lines(
     log: &mut ChatLog,
     channels: &ChannelState,

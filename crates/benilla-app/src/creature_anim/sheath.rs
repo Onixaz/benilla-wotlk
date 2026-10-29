@@ -26,7 +26,7 @@ impl VisualSheath {
     }
 }
 
-/// A ceremony leg in flight: a masked one-shot on one arm over whatever the body does (`0x60b770`).
+/// A ceremony leg in flight: a masked one-shot on one arm over whatever the body does.
 pub(super) struct SheathArm {
     node: bevy::animation::graph::AnimationNodeIndex,
     /// The authored `$SHL`/`$SHR` time, when this arm's weapon moves.
@@ -72,9 +72,9 @@ impl SheathSwap {
 /// arming gives it the arm outright.
 const SHEATH_OVERLAY_WEIGHT: f32 = 8.0;
 
-/// A sheath state change, the client's one setter `SetSheatheState(newState, bInstant,
-/// bFireEvent)` (`0x611cf0`), which `drive_animations` executes. Of its 24 call sites only the
-/// manual `ToggleSheath` passes `bInstant = 0`: every other change snaps.
+/// A sheath state change, the client's one sheath-state setter (`newState, bInstant, bFireEvent`),
+/// which `drive_animations` executes. Of its 24 call sites only the manual `ToggleSheath` passes
+/// `bInstant = 0`: every other change snaps.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct SheathRequest {
     pub(crate) entity: Entity,
@@ -85,10 +85,9 @@ pub(crate) struct SheathRequest {
 }
 
 /// The state a Z press asks for next, or `None` where the reference makes no call (`ToggleSheath`,
-/// `0x5eb642`–`0x5eb6a8`, over the committed state `[unit+0xd40]`): melee, then ranged, then
-/// stowed, each gated on what is worn (`GetWeapon(0/1/2)` at `0x5eb5f0`–`0x5eb610`).
-/// Deviation: the class lookup that can also clear the ranged candidate (`0x5eb616`–`0x5eb640`,
-/// `0xc0def4`, meaning inferred) is skipped, because a class failing it cannot equip one.
+/// over the committed state `[unit+0xd40]`): melee, then ranged, then stowed, each gated on what is
+/// worn in each slot. Deviation: the class lookup that can also clear the ranged candidate (meaning
+/// inferred) is skipped, because a class failing it cannot equip one.
 pub(crate) fn toggle_sheath_next(cur: u8, (melee, ranged): (bool, bool)) -> Option<u8> {
     match cur {
         0 if melee => Some(1),
@@ -100,8 +99,8 @@ pub(crate) fn toggle_sheath_next(cur: u8, (melee, ranged): (bool, bool)) -> Opti
     }
 }
 
-/// One arm's planned leg: the clip, and whether the arm ends with its weapon in hand (the
-/// client's `+0xd58` phase bit, set by the drawers and cleared by the stows in `0x611b60`).
+/// One arm's planned leg: the clip, and whether the arm ends with its weapon in hand (the client's
+/// `+0xd58` phase bit, set by the drawers and cleared by the stows).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct ArmLeg {
     pub(super) clip: u16,
@@ -113,7 +112,7 @@ pub(super) const ARM_RIGHT: usize = 0;
 pub(super) const ARM_LEFT: usize = 1;
 
 /// The arm a worn ranged weapon occupies: `InventoryType` 0x1a (gun, crossbow, wand) or 0x19
-/// (thrown) the right, a bow (0x0f) the left (`0x611c74`, `0x6118db`, `0x611998`, `0x611a9a`).
+/// (thrown) the right, a bow (0x0f) the left.
 fn ranged_arm(w: &Wielded) -> Option<usize> {
     w.ranged.map(|_| {
         if matches!(w.ranged_inv, 0x1a | 0x19) {
@@ -124,11 +123,11 @@ fn ranged_arm(w: &Wielded) -> Option<usize> {
     })
 }
 
-/// The draw leg one arm plays for a committed state, as the drawers `0x6118a0` (right),
-/// `0x611960` (left) and `0x611a20` (both) pick it; `None` releases the arm to its idle.
+/// The draw leg one arm plays for a committed state, as the drawers (right), (left) and (both) pick
+/// it; `None` releases the arm to its idle.
 fn draw_leg(arm: usize, cur: u8, w: &Wielded) -> Option<ArmLeg> {
     let (item, sheath) = match (cur, arm) {
-        // The drawers read `GetWeapon(slot, 0)`: a disarmed hand has nothing to draw (`0x5eb480`).
+        // The drawers take the weapon getter's held read: a disarmed hand has nothing to draw.
         (1, ARM_RIGHT) => (w.armed_main(), w.main_sheath),
         (1, ARM_LEFT) => (w.armed_off(), w.off_sheath),
         // The ranged weapon draws on exactly one arm; the other has no leg at all.
@@ -142,17 +141,16 @@ fn draw_leg(arm: usize, cur: u8, w: &Wielded) -> Option<ArmLeg> {
 }
 
 /// Phase 2, the deferred draw: when a stow clip (89/90) finishes on sub-sequence 2 or 3 with the
-/// arm's phase bit clear, the finish handler calls that arm's drawer (`0x5fc920` @
-/// `0x5fca62`–`0x5fcab6`: `0x611960` @ `0x5fcaaf` left, `0x6118a0` @ `0x5fca9a` right). The
-/// drawers refuse out of `prev == 0` (`0x6118a5`, `0x611965`), a draw phase 1 already played.
+/// arm's phase bit clear, the finish handler calls that arm's drawer. The drawers refuse out of
+/// `prev == 0`, a draw phase 1 already played.
 pub(super) fn sheath_phase2(arm: usize, prev: u8, cur: u8, w: &Wielded) -> Option<ArmLeg> {
     (prev != 0).then(|| draw_leg(arm, cur, w)).flatten()
 }
 
-/// Phase 1, what the setter plays by PREV (`0x611b60`–`0x611ce6`, the `bInstant == 0` fork): out
-/// of stowed both arms draw at once (`0x611a20`); otherwise an arm holding something stows it and
-/// defers its draw to [`sheath_phase2`], and a free arm draws now. A ranged weapon always stows
-/// with a literal Sheath 89, never its own pick (`0x611c8c`, `0x611cd3`).
+/// Phase 1, what the setter plays by PREV (the `bInstant == 0` fork): out of stowed both arms draw
+/// at once; otherwise an arm holding something stows it and defers its draw to [`sheath_phase2`],
+/// and a free arm draws now. A ranged weapon always stows with a literal Sheath 89, never its own
+/// pick.
 pub(super) fn sheath_phase1(prev: u8, cur: u8, w: &Wielded) -> [Option<ArmLeg>; 2] {
     const RANGED_STOW: ArmLeg = ArmLeg {
         clip: 89,
@@ -165,7 +163,7 @@ pub(super) fn sheath_phase1(prev: u8, cur: u8, w: &Wielded) -> [Option<ArmLeg>; 
         })
     };
     match prev {
-        // Nothing in hand to put away: both arms draw at once (`0x611ce6` to `0x611a20`).
+        // Nothing in hand to put away: both arms draw at once.
         0 => [draw_leg(ARM_RIGHT, cur, w), draw_leg(ARM_LEFT, cur, w)],
         1 => [
             match w.armed_main() {
@@ -327,8 +325,8 @@ pub(super) fn advance_sheath_ceremony(
         }
         let (node, drawing) = (leg.node, leg.drawing);
         player.stop(node);
-        // Phase 2 (`0x5fc920` @ `0x5fca8c`/`0x5fcaa1`): a finished stow hands the arm to its
-        // drawer; a finished draw releases it to its idle (`0x7121a0(subSeq, -1, …)`).
+        // Phase 2: a finished stow hands the arm to its drawer; a finished draw releases it to its
+        // idle (op4 on the sub-sequence, with no id).
         swap.arms[arm] = (!drawing)
             .then(|| sheath_phase2(arm, prev, cur, &w))
             .flatten()
@@ -361,15 +359,15 @@ mod tests {
         assert_eq!(toggle_sheath_next(1, MELEE_AND_BOW), Some(2));
         assert_eq!(toggle_sheath_next(2, MELEE_AND_BOW), Some(0));
 
-        // No ranged weapon: CUR 1 falls through to the stow (`0x5eb67f`).
+        // No ranged weapon: CUR 1 falls through to the stow.
         assert_eq!(toggle_sheath_next(0, MELEE_ONLY), Some(1));
         assert_eq!(toggle_sheath_next(1, MELEE_ONLY), Some(0));
 
-        // Nothing in either hand: the draw goes straight to ranged (`0x5eb699`).
+        // Nothing in either hand: the draw goes straight to ranged.
         assert_eq!(toggle_sheath_next(0, BOW_ONLY), Some(2));
         assert_eq!(toggle_sheath_next(2, BOW_ONLY), Some(0));
 
-        // Nothing worn: no call at all (`0x5eb697: je 0x5eb6ad`).
+        // Nothing worn: no call at all.
         assert_eq!(toggle_sheath_next(0, EMPTY), None);
         assert_eq!(toggle_sheath_next(1, EMPTY), Some(0));
         assert_eq!(toggle_sheath_next(2, EMPTY), Some(0));
@@ -417,8 +415,8 @@ mod tests {
         assert_eq!(sheath_phase2(ARM_RIGHT, 1, 2, &w), None);
         assert_eq!(sheath_phase2(ARM_LEFT, 1, 2, &w), Some(DRAW_BACK));
 
-        // Back: the bow stows with a literal 89 (`0x611c8c`), the free right hand draws at once,
-        // and the shield waits for phase 2.
+        // Back: the bow stows with a literal 89, the free right hand draws at once, and the shield
+        // waits for phase 2.
         assert_eq!(sheath_phase1(2, 1, &w), [Some(DRAW_HIP), Some(STOW_BACK)]);
         assert_eq!(sheath_phase2(ARM_LEFT, 2, 1, &w), Some(DRAW_BACK));
     }
@@ -430,7 +428,7 @@ mod tests {
         // 0 → 1 draws both hands at once; 0 → 2 puts the bow in the left and leaves the right out.
         assert_eq!(sheath_phase1(0, 1, &w), [Some(DRAW_HIP), Some(DRAW_BACK)]);
         assert_eq!(sheath_phase1(0, 2, &w), [None, Some(DRAW_BACK)]);
-        // The drawers' `if (PREV == 0) return 0` (`0x6118a5`/`0x611965`): nothing deferred.
+        // The drawers' `if (PREV == 0) return 0`: nothing deferred.
         for arm in [ARM_RIGHT, ARM_LEFT] {
             assert_eq!(sheath_phase2(arm, 0, 1, &w), None);
             assert_eq!(sheath_phase2(arm, 0, 2, &w), None);
@@ -445,7 +443,7 @@ mod tests {
         }
     }
 
-    /// No offhand: the left arm draws during the right's stow (`0x611b60` into `0x611960`).
+    /// No offhand: the left arm draws during the right's stow.
     #[test]
     fn a_free_hand_draws_without_waiting() {
         let w = Wielded {

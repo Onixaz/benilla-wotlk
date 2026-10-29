@@ -2,10 +2,10 @@
 //! the anchor resolver and the draw order. It embeds mlua's Lua 5.1, the client's own stock Lua,
 //! with the client's `bit` library and base-library helpers ([`lua51`]).
 //!
-//! A frame's Lua value is a table whose `T[0]` lightuserdata (`0x701bd0`) holds a `u32` id where
-//! the reference holds the `CScriptObject*`, with an `__index` metatable (`0x7020b0`). A handler
-//! is `pcall`ed with `(self, [event,] ...)` as arguments, `this` and `event` set as globals and
-//! restored after ([`event::script_parameters`]).
+//! A frame's Lua value is a table whose `T[0]` lightuserdata holds a `u32` id where the reference
+//! holds the script object's pointer, with an `__index` metatable. A handler is `pcall`ed with
+//! `(self, [event,] ...)` as arguments, `this` and `event` set as globals and restored after
+//! ([`event::script_parameters`]).
 //!
 //! The `LUAI_MAXCSTACK` discipline: Rust holds no persistent Lua handle, since each owned `Table`
 //! or `Function` takes a slot on mlua's reference thread, capped at the vendored 8000. Lua-side
@@ -92,7 +92,7 @@ mod tutorial;
 mod unit_menu;
 pub use unit_menu::{DifficultyState, ReferAFriendState};
 mod worldmap_arrow;
-// `camera_view`: the five camera views and `FlipCameraYaw`, the reference's `UIUtil\Camera.cpp`.
+// `camera_view`: the five camera views and `FlipCameraYaw`, as the reference's UI camera has them.
 mod button;
 mod calendar;
 mod calls;
@@ -494,13 +494,12 @@ const REG_TEXTURE_METHODS: &str = "__benilla_texture_methods";
 const REG_TEXTURE_META: &str = "__benilla_texture_meta";
 const REG_FONTSTRING_METHODS: &str = "__benilla_fontstring_methods";
 const REG_FONTSTRING_META: &str = "__benilla_fontstring_meta";
-/// The error handler `seterrorhandler` holds, the reference's registry reference `[0x8722cc]`;
-/// unset until one is given, as the reference's starts at -1.
+/// The error handler `seterrorhandler` holds, the reference's registry reference; unset until one
+/// is given, as the reference's starts at -1.
 const REG_ERRORHANDLER: &str = "__benilla_errorhandler";
 
-/// Names on both region leaves, each leaf registering its own copy (Texture's `SetAlpha`
-/// `0x79b580`, FontString's `0x79cb70`), so they are not on the Region map and must not be hoisted
-/// into it. `GetDrawLayer` is on both (Texture `0x79a6c0`, FontString `0x79c660`).
+/// Names on both region leaves, each leaf registering its own copy (Texture's `SetAlpha`), so they
+/// are not on the Region map and must not be hoisted into it. `GetDrawLayer` is on both.
 pub(crate) const REGION_LEAF_SHARED: [&str; 9] = [
     "SetDrawLayer",
     "GetDrawLayer",
@@ -513,9 +512,9 @@ pub(crate) const REGION_LEAF_SHARED: [&str; 9] = [
     "IsShown",
 ];
 
-/// Texture-only, each in the client's Texture map (`0x87c128`): `GetVertexColor` though
-/// `SetVertexColor` is shared, and `SetGradientAlpha`, not FontString's `SetAlphaGradient`. No
-/// Texture `SetSize`; 3.3.5a's `SetRotation` is `0x48c860`.
+/// Texture-only, each in the client's Texture map: `GetVertexColor` though `SetVertexColor` is
+/// shared, and `SetGradientAlpha`, not FontString's `SetAlphaGradient`. No Texture `SetSize`;
+/// 3.3.5a's `SetRotation` is `0x48c860`.
 pub(crate) const TEXTURE_ONLY_METHODS: [&str; 13] = [
     "SetGradient",
     "SetGradientAlpha",
@@ -592,19 +591,19 @@ pub(crate) const REGION_MAP_METHODS: [&str; 24] = [
 const REG_WRAPPERS: &str = "__benilla_wrappers";
 const REG_SCRIPTS: &str = "__benilla_scripts";
 
-/// The layout handle of the screen root (the client's `CSimpleTop`, not the `UIParent` frame),
+/// The layout handle of the screen root (the client's UI root, not the `UIParent` frame),
 /// which a top-level `SetPoint` without `relativeTo` anchors to; frame ids, from 1, are the rest.
 pub const SCREEN: crate::layout::Handle = 0;
 
 /// The FrameScript handler kinds `SetScript` accepts, each only with the code that fires it
 /// ([`crate::script::object::events_regions::set_script`]). The list is flat, where the reference
-/// resolves names per widget type (base map `0x76a0d0` plus the type's own; a `<Frame>` has no
-/// `OnClick`), so any widget accepts any kind here.
+/// resolves names per widget type (base map plus the type's own; a `<Frame>` has no `OnClick`), so
+/// any widget accepts any kind here.
 ///
 /// `OnValueChanged` is the StatusBar's (`+0x32c`) and the Slider's (`+0x330`) own slot; the
-/// ScrollFrame's three scroll kinds are `+0x32c`/`+0x334`/`+0x33c` (script-name map `0x786c40`).
-/// The EditBox's vtable (`0x81c910`) replaces the key and char slots: an EditBox never fires
-/// `OnKeyDown`, and fires `OnChar` only from `Insert`, with the inserted text (`0x77c13c`).
+/// ScrollFrame's three scroll kinds are `+0x32c`/`+0x334`/`+0x33c`. The EditBox's vtable replaces
+/// the key and char slots: an EditBox never fires `OnKeyDown`, and fires `OnChar` only from
+/// `Insert`, with the inserted text.
 const SCRIPT_KINDS: [&str; 47] = [
     "OnLoad",
     "OnEvent",
@@ -630,9 +629,9 @@ const SCRIPT_KINDS: [&str; 47] = [
     "OnTabPressed",
     "OnTextChanged",
     "OnTextSet",
-    // The caret leg's own (`0x77da80`), fired by the box's flush on dirty bit 2, which a caret
-    // move, an edit, a focus change and a re-seat raise: the edge `ScrollingEdit_OnCursorChanged`
-    // scrolls a multiline box by.
+    // The caret leg's own, fired by the box's flush on dirty bit 2, which a caret move, an edit, a
+    // focus change and a re-seat raise: the edge `ScrollingEdit_OnCursorChanged` scrolls a
+    // multiline box by.
     "OnCursorChanged",
     "OnEditFocusGained",
     "OnEditFocusLost",
@@ -650,16 +649,16 @@ const SCRIPT_KINDS: [&str; 47] = [
     "OnTooltipAddMoney",
     "OnTooltipCleared",
     "OnTooltipSetDefaultAnchor",
-    // The ColorSelect's own slot (script map `0x78b4f0`, `+0x338`), fired by its `SetColorRGB`.
+    // The ColorSelect's own slot (`+0x338`), fired by its `SetColorRGB`.
     "OnColorSelect",
-    // The Button/CheckButton double click (script map `0x778c50`, `+0x4d4`), fired by
-    // [`pointer`]'s release edge in place of the second `OnClick` within 300 ms (`0x77937b`).
+    // The Button/CheckButton double click (`+0x4d4`), fired by [`pointer`]'s release edge in place
+    // of the second `OnClick` within 300 ms.
     "OnDoubleClick",
-    // The layout event (base map `0x76a0d0`, `+0x120`), fired by the resolve pass on a size change.
+    // The layout event (`+0x120`), fired by the resolve pass on a size change.
     "OnSizeChanged",
-    // The key channels, fired by [`keyboard`]'s walk (`0x765f10`). `OnKeyUp` never fires, as the
-    // host feeds no key-up, but a frame carrying only `OnKeyUp` still consumes every key-down and
-    // runs nothing, the reference's own asymmetry.
+    // The key channels, fired by [`keyboard`]'s walk. `OnKeyUp` never fires, as the host feeds no
+    // key-up, but a frame carrying only `OnKeyUp` still consumes every key-down and runs nothing,
+    // the reference's own asymmetry.
     "OnChar",
     "OnKeyDown",
     "OnKeyUp",
@@ -918,7 +917,7 @@ pub fn addon_chunk_name(folder: &str, file: &str) -> String {
 }
 
 /// What both FrameScript states hold: FrameScript's Lua init (the base libraries, `bit` and the
-/// client's base-library helpers) and the registrars the glue manager's `Resume` (`0x4da5f0`)
+/// client's base-library helpers) and the registrars the glue manager's resume (`0x4da5f0`)
 /// shares with the in-game UI's init: the system table `0xad2184` (the clock and `ConsoleExec`),
 /// the frame-script table `0xaf5848` with the widget method tables, and the sound table
 /// `0xb2d928`.
@@ -1090,18 +1089,17 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
 
 impl UiScript {
     /// The in-game VM: FrameScript's base set and the registrars both states share
-    /// ([`install_framescript`]), then the in-game surface `UI_Init` (`0x48fbf0`) registers.
+    /// ([`install_framescript`]), then the in-game surface the UI init registers.
     pub fn new() -> mlua::Result<UiScript> {
         let lua = install_framescript(VmKind::InGame)?;
         install_in_game(&lua)?;
         Ok(Self::host(lua))
     }
 
-    /// The glue screens' VM, as the glue builder (`0x46a7b0`) leaves its state before GlueXML
-    /// loads: the base set and the shared registrars, with the glue event table and the glue frame
-    /// types ([`glue`]), and none of the in-game surface. Of the glue registrar's own four tables
-    /// (`0x46ddf0`, `0x4736c0`, `0x471a20`, `0x46f480`) the screen verbs and the realm list are
-    /// built ([`glue::install`]).
+    /// The glue screens' VM, as the glue builder leaves its state before GlueXML loads: the base
+    /// set and the shared registrars, with the glue event table and the glue frame types
+    /// ([`glue`]), and none of the in-game surface. Of the glue registrar's own four tables the
+    /// screen verbs and the realm list are built ([`glue::install`]).
     pub fn new_glue() -> mlua::Result<UiScript> {
         let lua = install_framescript(VmKind::Glue)?;
         glue::install(&lua)?;
@@ -1129,10 +1127,9 @@ impl UiScript {
     /// Which VM this is: a fresh number per [`UiScript::new`], never reused, so anything the host
     /// seeded into a VM is valid only while this still matches.
     ///
-    /// The reference keeps one Lua state (`0xceef74`), replaced only by the reset `0x703b80`: from
-    /// `UI_Init` (`0x48fbf0`, at `0x48fe97`) as it loads FrameXML, `ShutdownGame` (`0x491231`) and
-    /// the glue builder (`0x46a87b`), never the UI teardown `0x490bd0`. GlueXML and FrameXML never
-    /// share a state, so world entry mints its VM at the top of its load.
+    /// The reference keeps one Lua state, replaced only by the reset: from the UI init as it loads
+    /// FrameXML, the game shutdown and the glue builder, never the UI teardown. GlueXML and
+    /// FrameXML never share a state, so world entry mints its VM at the top of its load.
     pub fn session(&self) -> u64 {
         self.session
     }
@@ -1204,9 +1201,9 @@ impl UiScript {
         model.modifiers = (shift, ctrl, alt);
     }
 
-    /// Push the player's WMO-containment state (the client's `0xceaa60`) onto every Minimap: it
-    /// picks which persisted zoom index `GetZoom`/`SetZoom` act on. Call it before the script
-    /// tick, on each inside/outside edge and whenever [`Self::minimap_widgets_created`] moves.
+    /// Push the player's WMO-containment state onto every Minimap: it picks which persisted zoom
+    /// index `GetZoom`/`SetZoom` act on. Call it before the script tick, on each inside/outside
+    /// edge and whenever [`Self::minimap_widgets_created`] moves.
     pub fn set_minimap_inside(&mut self, inside: bool) {
         self.for_each_minimap(|m| m.inside = inside);
     }
@@ -1223,8 +1220,8 @@ impl UiScript {
     }
 
     /// Push the player's facing (radians) onto every Minimap's player-arrow `Model`, every frame,
-    /// raw: `CMinimap::SetPlayerFacing` (`0x4eb8e0`, fed at `0x4eb0a4`–`0x4eb0b1`) copies it into
-    /// the field `Model:SetFacing` (`0x76dce0`) writes, so the arrow's `GetFacing()` reads it.
+    /// raw: the minimap's player-facing set copies it into the field `Model:SetFacing` writes, so
+    /// the arrow's `GetFacing()` reads it.
     pub fn set_minimap_player_facing(&mut self, facing: f32) {
         let mut model = self.model_mut();
         let quiet = model.epoch();
@@ -1253,7 +1250,7 @@ impl UiScript {
         }
     }
 
-    /// Turn `MinimapCompassTexture` to `radians` as `CGMinimapFrame::SetCompassRotation`
+    /// Turn `MinimapCompassTexture` to `radians` as the minimap frame's compass rotation
     /// (`0x57d5b0`) does each frame: its corners only, written when the angle moves.
     pub fn set_minimap_compass_rotation(&mut self, radians: f32) {
         let Ok(mlua::Value::Table(t)) = self
@@ -1302,9 +1299,8 @@ impl UiScript {
     }
 
     /// Seed every Minimap's two zoom indices from the persisted CVars, as the client's reset path
-    /// does (`[0x86f698] ← [[0xb4b410]+0x28]`, `[0x86f69c] ← [[0xb4d90c]+0x28]`). Call it once,
-    /// when the UI and the widget exist: from then on `Minimap:SetZoom` keeps the CVar following
-    /// the widget, and a repeated seed would fight the +/- buttons.
+    /// does. Call it once, when the UI and the widget exist: from then on `Minimap:SetZoom` keeps
+    /// the CVar following the widget, and a repeated seed would fight the +/- buttons.
     pub fn set_minimap_zoom(&mut self, zoom: u8, inside_zoom: u8) {
         let top = crate::widget::MINIMAP_ZOOM_LEVELS - 1;
         let (zoom, inside_zoom) = (zoom.min(top), inside_zoom.min(top));
@@ -1319,9 +1315,9 @@ impl UiScript {
         self.run_chunk(chunk.as_bytes())
     }
 
-    /// [`UiScript::run`] over a file's bytes: the reference hands the file (`0x704bc0`) to
-    /// `luaL_loadbuffer` (`0x6f5690`) unconverted, so a cp1252 file's literals keep their bytes.
-    /// Its compiler's UTF-8 BOM strip and `#`-line skip apply here ([`crate::source::chunk`]).
+    /// [`UiScript::run`] over a file's bytes: the reference hands the file to `luaL_loadbuffer`
+    /// unconverted, so a cp1252 file's literals keep their bytes. Its compiler's UTF-8 BOM strip
+    /// and `#`-line skip apply here ([`crate::source::chunk`]).
     pub fn run_chunk(&self, chunk: &[u8]) -> mlua::Result<()> {
         self.run_chunk_named(chunk, "(chunk)")
     }
@@ -1445,8 +1441,8 @@ impl UiScript {
         let solves = self.model_ref().layout_solves;
         self.resolve_and_measure();
         event::fire_size_changes(&self.lua);
-        // The EditBox's own `OnSizeChanged` (`0x77a8d0`) runs after the script fire and re-seats a
-        // resized box's text, which the reference's drain resolves in the same pass.
+        // The EditBox's own `OnSizeChanged` runs after the script fire and re-seats a resized box's
+        // text, which the reference's drain resolves in the same pass.
         let reseated = editbox::reseat_resized(&mut self.model_mut());
         if reseated {
             self.resolve_and_measure();
@@ -1586,7 +1582,7 @@ impl UiScript {
         let mut model = self.model_mut();
         let held: Vec<crate::widget::FrameHandle> = model.mouse_down_on.values().copied().collect();
         model.mouse_down_on.clear();
-        // Every held button gets the release edge never fed (`0x7793de`), else it stays pushed.
+        // Every held button gets the release edge never fed, else it stays pushed.
         for h in held {
             button::edge(&mut model, h, crate::widget::ButtonState::on_mouse_up);
         }
@@ -1627,7 +1623,7 @@ impl UiScript {
 
     /// An editing key (BACKSPACE, DELETE, the arrows, HOME, END) offered to the keyboard frames
     /// before the focused box gets it as an [`EditAction`]. On `true` the caller dispatches neither
-    /// the action nor the key's binding (consumption suppresses it, `0x76b7d0`).
+    /// the action nor the key's binding (consumption suppresses it).
     pub fn frame_key_input(&mut self, key: &str) -> bool {
         keyboard::frame_key_input(&self.lua, key)
     }
@@ -1639,8 +1635,8 @@ impl UiScript {
 
     /// Whether the focused EditBox is in alt-arrow mode (XML `ignoreArrows`, Lua
     /// `SetAltArrowKeyMode`, `[editbox+0x318] & 0x10`): without ALT the reference declines the four
-    /// arrows (`0x77b1c4`), so they reach the world's bindings and turn the player while chat has
-    /// focus. The gate is on the key, not the [`EditAction`]: HOME and END also move the caret.
+    /// arrows, so they reach the world's bindings and turn the player while chat has focus. The
+    /// gate is on the key, not the [`EditAction`]: HOME and END also move the caret.
     pub fn editbox_alt_arrow_mode(&self) -> bool {
         let model = self.model_ref();
         model.focused_editbox.is_some_and(|h| {
@@ -1653,7 +1649,7 @@ impl UiScript {
     }
 
     /// Whether a visible EditBox holds keyboard focus, which gates the world's keys as the client's
-    /// `0xcf4dc8 != 0` test does.
+    /// test does.
     pub fn has_keyboard_focus(&self) -> bool {
         let model = self.model_ref();
         model
@@ -1746,7 +1742,7 @@ impl UiScript {
         model.arena.region(h).map(|r| match r.kind {
             crate::widget::RegionKind::Texture => "Texture",
             crate::widget::RegionKind::FontString => "FontString",
-            // A title region is a plain Region (`0x76c440`); `CreateTitleRegion` takes no name.
+            // A title region is a plain Region; `CreateTitleRegion` takes no name.
             crate::widget::RegionKind::Title => "Region",
         })
     }
@@ -1790,16 +1786,16 @@ impl UiScript {
     }
 
     /// Hand each queued script error to the Lua error handler, as the reference's catch closure
-    /// (`0x703b40`) calls the one `seterrorhandler` (`0x702900`) holds, read from its slot and not
-    /// through the `geterrorhandler` global; FrameXML installs `_ERRORMESSAGE`, the ScriptErrors
-    /// dialog (`BasicControls.xml:16`). With none installed the error stays on the host channel,
+    /// calls the one `seterrorhandler` holds, read from its slot and not through the
+    /// `geterrorhandler` global; FrameXML installs `_ERRORMESSAGE`, the ScriptErrors dialog
+    /// (`BasicControls.xml:16`). With none installed the error stays on the host channel,
     /// [`UiScript::errors`], alone. A handler that raises is handed its own error, as the
     /// reference's trampoline (`0x819730`) still sits in the pcall's error slot when it raises and
     /// Lua 5.1 calls that slot again (`0x850830`); a chain that never settles ends at
     /// [`ERROR_HANDLER_NESTING`] and is dropped unreported, as the reference's pcall pops its
     /// `LUA_ERRERR`. Each caught error starts its own chain, so the next one still reaches the
     /// handler. The call is [`stdlib::protected_call`]'s, so a raising handler costs no `_G`
-    /// search. `debuglocals` answers only inside it, as `s_inErrorHandler` (`0x819730`) gates it.
+    /// search. `debuglocals` answers only inside it, as the in-handler flag (`0x819730`) gates it.
     pub fn dispatch_script_errors_to_handler(&mut self) {
         if self.model_ref().pending_error_dispatch.is_empty() {
             return;

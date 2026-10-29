@@ -1,6 +1,6 @@
-//! A WMO's last chunk clamps to EOF: the reference's walk (`0x6c3a60`) reads chunks while the
-//! 8-byte header is in bounds and never requires exact tiling. The one shipped file that needs it
-//! is `Undercity_144.wmo`, whose MOGP declares one byte past the end.
+//! A WMO's last chunk clamps to EOF: the reference's walk reads chunks while the 8-byte header is
+//! in bounds and never requires exact tiling. The one shipped file that needs it is
+//! `Undercity_144.wmo`, whose MOGP declares one byte past the end.
 
 use benilla_formats::{parse_wmo_root, wmo_group_header, Chain};
 

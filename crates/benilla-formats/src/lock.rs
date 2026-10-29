@@ -1,10 +1,10 @@
 //! `Lock.dbc`: the requirements of a lockable GameObject or item, up to 8 slots per lock. Opening
 //! casts a known spell whose `SPELL_EFFECT_OPEN_LOCK` `EffectMiscValue` matches a skill slot's
 //! `LockType` index, or uses an item slot's key. A `lockId` of 0, or a row of empty slots, is no
-//! lock: the object opens by `CMSG_GAMEOBJ_USE` instead (the use handler `0x5f33e0`).
+//! lock: the object opens by `CMSG_GAMEOBJ_USE` instead.
 //!
 //! 33 fields: `ID`, `Type[8]`, `Index[8]`, `Skill[8]`, `Action[8]` (vmangos `LockEntry`; the
-//! reference reads `Index[0]` at `[lockRec+0x24]`, `0x5f84af`).
+//! reference reads `Index[0]` at `[lockRec+0x24]`).
 
 use std::collections::HashMap;
 
@@ -36,7 +36,7 @@ pub struct LockSlot {
     /// Key item entry (item) or `LockType` index (skill); 0 when empty.
     pub index: u32,
     /// The skill value a skill slot needs. 0 is not free: the reference substitutes
-    /// `GAMEOBJECT_LEVEL * 5` (`0x5f84be`).
+    /// `GAMEOBJECT_LEVEL * 5`.
     pub skill: u32,
     /// The slot's operation, which gates when it applies ([`LockSlot::available`]).
     pub action: u32,
@@ -49,24 +49,23 @@ pub const GO_STATE_READY: u32 = 1;
 pub const GO_STATE_ACTIVE_ALTERNATIVE: u32 = 2;
 
 impl LockSlot {
-    /// Whether this slot applies to a GameObject now: the reference's per-slot gate `0x5f81d0`.
-    /// Both legs of the lock resolver `0x5f83d0` skip a slot it refuses (`0x5f8450` for a skill
-    /// slot, `0x5f8547` for a key), so that slot can neither satisfy the lock nor open it.
-    /// `go_state` is the client's stored state (`go+0x27c`); `flag_locked` is `GO_FLAG_LOCKED`
+    /// Whether this slot applies to a GameObject now: the reference's per-slot gate. Both legs of
+    /// the lock resolver skip a slot it refuses, so that slot can neither satisfy the lock nor open
+    /// it. `go_state` is the client's stored state (`go+0x27c`); `flag_locked` is `GO_FLAG_LOCKED`
     /// (`0x2`) in `GAMEOBJECT_FLAGS`.
     ///
     /// | Action | operation | applies when |
     /// |--------|-----------|--------------|
-    /// | 0 | open | READY and `GO_FLAG_LOCKED` clear (`0x5f8212`-`0x5f8220`) |
-    /// | 1 | unlock | READY and `GO_FLAG_LOCKED` set (`0x5f822d`-`0x5f823a`) |
-    /// | 2 | close | ACTIVE (`0x5f8247`) |
+    /// | 0 | open | READY and `GO_FLAG_LOCKED` clear |
+    /// | 1 | unlock | READY and `GO_FLAG_LOCKED` set |
+    /// | 2 | close | ACTIVE |
     /// | 3 | | READY |
-    /// | 4 | | ALTERNATIVE (`0x5f81ff`) |
+    /// | 4 | | ALTERNATIVE |
     /// | other | | any state but ALTERNATIVE |
     ///
-    /// ALTERNATIVE blocks every action but 4 (`0x5f81e1`). Without this gate a locked door opens
-    /// on right-click: keyed doors carry a spare Quick Open skill slot (`LockType` 10, skill 0,
-    /// Action 0) that spell 6247, Opening, which every character knows, satisfies.
+    /// ALTERNATIVE blocks every action but 4. Without this gate a locked door opens on right-click:
+    /// keyed doors carry a spare Quick Open skill slot (`LockType` 10, skill 0, Action 0) that
+    /// spell 6247, Opening, which every character knows, satisfies.
     pub fn available(&self, go_state: u32, flag_locked: bool) -> bool {
         if self.action == 4 {
             return go_state == GO_STATE_ACTIVE_ALTERNATIVE;
@@ -295,7 +294,7 @@ mod tests {
         );
     }
 
-    /// [`LockSlot::available`] against `0x5f81d0`'s branch table, one row per arm.
+    /// [`LockSlot::available`] against the reference's branch table, one row per arm.
     #[test]
     fn action_gate_matches_the_reference_branch_table() {
         let slot = |action| LockSlot {

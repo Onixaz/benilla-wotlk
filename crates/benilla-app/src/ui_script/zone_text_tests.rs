@@ -154,8 +154,8 @@ fn abbey_grounds_subzone_hop_shows_no_territory_line() {
     );
 }
 
-/// Indoors, the zone-name override skips when the whole-WMO name equals the subzone (`0x67e670`),
-/// so the zone stays and the group's name becomes the subzone: no big splash, no territory line.
+/// Indoors, the zone-name override skips when the whole-WMO name equals the subzone, so the zone
+/// stays and the group's name becomes the subzone: no big splash, no territory line.
 #[test]
 fn abbey_interior_shows_the_room_in_the_small_line_alone() {
     let _data = benilla_formats::wow_data_or_skip!();
@@ -184,7 +184,7 @@ fn abbey_interior_shows_the_room_in_the_small_line_alone() {
 }
 
 /// An inn's WMO name differs from the street's, so the override makes it the zone. Handlers run in
-/// registration order (`0x702140` appends), so `SubZoneTextFrame`'s `SetZoneText(1)` writes last.
+/// registration order, so `SubZoneTextFrame`'s `SetZoneText(1)` writes last.
 #[test]
 fn inn_entry_splashes_the_inn_name_with_territory_line() {
     let _data = benilla_formats::wow_data_or_skip!();

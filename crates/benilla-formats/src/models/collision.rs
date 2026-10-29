@@ -68,10 +68,10 @@ pub fn parse_m2_collision_hull(model: &M2Model) -> CollisionMesh {
 }
 
 /// MOPY `DETAIL`, the face bit the walking gather skips. The reference builds a reject mask from a
-/// per-query class word: walking, `0x10_0111` (`0x6315f0`), gives `0x84`, tested at the box-query
-/// leaf `0x6bca50`; camera and line of sight, `0x10_0171` (`0x50e570`), give `0x82`, tested at
-/// the segment-query leaf `0x6bc700`. The same code builds both masks, and `0x80` is the query's
-/// transient visited bit, so walking skips `DETAIL` and the camera `NOCAMCOLLIDE`.
+/// per-query class word: walking, `0x10_0111`, gives `0x84`, tested at the box-query leaf; camera
+/// and line of sight, `0x10_0171`, give `0x82`, tested at the segment-query leaf. The same code
+/// builds both masks, and `0x80` is the query's transient visited bit, so walking skips `DETAIL`
+/// and the camera `NOCAMCOLLIDE`.
 const MOPY_DETAIL: u8 = 0x04;
 /// MOPY `NOCAMCOLLIDE`, the face bit the camera and line-of-sight gather skips.
 const MOPY_NOCAMCOLLIDE: u8 = 0x02;

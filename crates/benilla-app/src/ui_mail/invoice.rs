@@ -1,5 +1,5 @@
 //! The auction house's mail: a notice's subject and body are colon-separated text the client
-//! parses back, the subject in `ParseInboxSubject` (`0x56f520`) and the body in
+//! parses back, the subject in its subject parser (`0x56f520`) and the body in
 //! `GetInboxInvoiceInfo` (`0x56e9b0`).
 //!
 //! The subject `<itemEntry>:<randomProperty>:<resultCode>[:<value>…]` names the outcome and is
@@ -45,8 +45,8 @@ impl AuctionSubject {
     }
 }
 
-/// `SStrToInt`: leading whitespace, an optional sign, then digits up to the first non-digit; 0
-/// when there are none.
+/// The client's string-to-integer parse: leading whitespace, an optional sign, then digits up to
+/// the first non-digit; 0 when there are none.
 fn str_to_int(s: &str) -> i32 {
     let s = s.trim_start();
     let (neg, digits) = match s.as_bytes().first() {
@@ -65,7 +65,7 @@ fn str_to_int(s: &str) -> i32 {
     }
 }
 
-/// `ParseInboxSubject` (`0x56f520`): the item from the leading number, then each later field after
+/// The subject parser (`0x56f520`): the item from the leading number, then each later field after
 /// the next colon, a missing one reading 0.
 pub(crate) fn parse_subject(subject: &str) -> AuctionSubject {
     let mut fields = subject.split(':');
@@ -159,7 +159,7 @@ pub(crate) fn body_fields(result: i32) -> usize {
     }
 }
 
-/// `WowDecodeTime`'s hour and minute of a packed time: minutes in the low 6 bits, the hour in the
+/// The packed-time decode's hour and minute: minutes in the low 6 bits, the hour in the
 /// next 5, an all-ones field reading -1.
 pub(crate) fn decode_hour_minute(packed: u32) -> (i32, i32) {
     let minute = packed & 0x3f;

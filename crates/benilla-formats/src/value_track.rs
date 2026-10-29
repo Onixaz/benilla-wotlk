@@ -64,9 +64,9 @@ impl<V: TrackValue> ValueTrack<V> {
         v
     }
 
-    /// Sample as the reference's per-frame sampler does (`0x71af20` → `0x713d50`, lerp at
-    /// `0x71af76`): step at interp 0, else lerp, held past the last key and extrapolated backward
-    /// below the first. Raw values may go negative; the consumer floors at 0 (`SetEmissionRate`).
+    /// Sample as the reference's per-frame sampler does: step at interp 0, else lerp, held past the
+    /// last key and extrapolated backward below the first. Raw values may go negative; the consumer
+    /// floors at 0 (`SetEmissionRate`).
     pub fn sampled_ms(&self, ms: f32) -> V {
         if self.interp == 0 {
             return self.step_ms(ms);

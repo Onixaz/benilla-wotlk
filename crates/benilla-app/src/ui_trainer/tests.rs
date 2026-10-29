@@ -911,7 +911,7 @@ mod re_derive {
 
     #[test]
     fn a_higher_known_rank_counts_as_known() {
-        // Rank 2 in the book, rank 1 offered: `Spell_KnownHigherRank` (`0x726160`) says known.
+        // Rank 2 in the book, rank 1 offered: the higher-rank test (`0x726160`) says known.
         assert_eq!(
             state(&service(RANK1), &knowing(&[RANK2])),
             trainer_spell_state::GRAY

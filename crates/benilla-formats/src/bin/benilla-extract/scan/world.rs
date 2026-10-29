@@ -8,8 +8,8 @@ use benilla_formats::{Chain, M2AnimSummary};
 use crate::{model_key, yn};
 
 /// Dump a WMO root's MODD props with their MODS sets and owning groups, read from the group files'
-/// MODR lists. The reference creates a prop only from a visible group's refs (`0x695aa0`), so it
-/// never draws a prop no group names (`ORPHAN`); benilla spawns one with no room gate.
+/// MODR lists. The reference creates a prop only from a visible group's refs, so it never draws a
+/// prop no group names (`ORPHAN`); benilla spawns one with no room gate.
 pub fn wmodoodads(chain: &mut Chain, raw_path: &str, filter: Option<&str>) -> Result<()> {
     let root_path = raw_path.replace('/', "\\").to_ascii_lowercase();
     let bytes = chain
@@ -151,8 +151,8 @@ fn mods_set_names(bytes: &[u8]) -> Vec<String> {
 /// Cross-tab every WMO root's MOSB skybox model against its groups flagged `0x40000`
 /// ([`benilla_formats::WmoGroupInfo::show_skybox`]): across the 815 roots the flag never appears
 /// without a MOSB. Which group counts is not in the assets: the reference tests the bit on each
-/// group its portal flood visits (`0x6b42e0` in `0x6b41c0`). Only Stratholme's shell (61 of 83
-/// groups) and the four unused Caverns of Time shells set it.
+/// group its portal flood visits. Only Stratholme's shell (61 of 83 groups) and the four unused
+/// Caverns of Time shells set it.
 pub fn skyboxscan(chain: &mut Chain) -> Result<()> {
     let names = super::wmo_roots(chain, None)?;
 
@@ -211,7 +211,7 @@ pub fn skyboxscan(chain: &mut Chain) -> Result<()> {
         println!(
             "   It does NOT say WHICH group the renderer tests, and reading it as if it did is a \
              mistake. The actual law: 0x40000 is tested \
-             inside the portal flood (0x6b42e0 in 0x6b41c0) on the group being VISITED, never on the \
+             inside the portal flood on the group being VISITED, never on the \
              group the camera stands in — so the predicate is 'any FLOOD-REACHED group carries the \
              bit, and the root names a MOSB'. Stratholme's King's Square is the counter-example that \
              settles it: the camera's own group (39) is EXTERIOR and unflagged, and the reference \
@@ -443,7 +443,7 @@ pub fn doodadscan(
         );
     }
 
-    // Moving seq-0 models with a variation chain, where the random pick (`0x695100`) shows.
+    // Moving seq-0 models with a variation chain, where the random pick shows.
     println!();
     println!("=== moving-seq0 multi-variation models ===");
     let mut varied: Vec<(&String, &u32)> = m2_instances

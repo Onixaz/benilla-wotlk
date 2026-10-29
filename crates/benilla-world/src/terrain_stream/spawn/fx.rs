@@ -71,8 +71,8 @@ pub(super) fn spawn_lights_for(
 }
 
 /// Spawns a light for each omni MOLT light (`type == 0`) under the M2 falloff, which the disk
-/// `attenStart`/`attenEnd` do not shape (`0x695c00`). A light belongs to the rooms whose MOLR
-/// names it; one that no group names is ungated.
+/// `attenStart`/`attenEnd` do not shape. A light belongs to the rooms whose MOLR names it; one that
+/// no group names is ungated.
 pub(super) fn spawn_wmo_lights_for(
     commands: &mut Commands,
     lights: &[WmoLight],
@@ -154,8 +154,8 @@ pub(super) fn spawn_emitters_for(
                 ..default()
             },
             // A placed doodad re-rolls its variation every play window, so its emitters read the
-            // slot and clip time off the host's live player, as the reference's animate kernel
-            // (`0x714260`) does for every model.
+            // slot and clip time off the host's live player, as the reference's animate kernel does
+            // for every model.
             match arm {
                 Some(root) => particles::EmitClock::Host(root),
                 None => particles::EmitClock::Pinned,

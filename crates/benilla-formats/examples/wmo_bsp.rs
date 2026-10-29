@@ -2,19 +2,19 @@
 //! `cargo run -p benilla-formats --example wmo_bsp -- <wmo-path-or-substring>`
 //!
 //! The reference tests only the faces a group's MOBN leaves list in MOBR, skipping one iff
-//! `MOPY.flags & rejectMask != 0`: walking's box query at leaf `0x6bca50` with mask `0x84`, the
-//! camera and LOS segment query at leaf `0x6bc700` with `0x82`. `accumulate_wmo_group_faces`
-//! walks every face the mask keeps, so the two agree only where MOBR reaches them all, as it does
-//! on CavernsOfTime. `inward` counts faces turned toward the centroid: with MOMT `0x04` clear the
-//! reference culls back faces, so a hull built to be seen from inside is see-through from outside.
-//! Output is Blizzard data: never commit it.
+//! `MOPY.flags & rejectMask != 0`: walking's box query at leaf with mask `0x84`, the camera and LOS
+//! segment query at leaf with `0x82`. `accumulate_wmo_group_faces` walks every face the mask keeps,
+//! so the two agree only where MOBR reaches them all, as it does on CavernsOfTime. `inward` counts
+//! faces turned toward the centroid: with MOMT `0x04` clear the reference culls back faces, so a
+//! hull built to be seen from inside is see-through from outside. Output is Blizzard data: never
+//! commit it.
 
 use std::collections::HashSet;
 
 use benilla_wmo::{parse_wmo, ParsedWmo};
 
-/// Walking's persistent MOPY reject bit (DETAIL): mask `0x84` (`0x6315f0`) minus the transient
-/// `0x80` visited bit.
+/// Walking's persistent MOPY reject bit (DETAIL): mask `0x84` minus the transient `0x80` visited
+/// bit.
 const MOPY_DETAIL: u8 = 0x04;
 
 fn main() -> anyhow::Result<()> {
@@ -198,9 +198,9 @@ fn face_centroid(group: &benilla_wmo::WmoGroup, f: usize) -> Option<[f32; 3]> {
 }
 
 /// The MOBR face indices a descent from MOBN node 0 can reach, and the count of out-of-range
-/// children or spans, which a misread layout drives up at once. A node is `u16 flags, i16 negChild,
-/// i16 posChild, u16 nFaces, u32 faceStart, f32 planeDist`, stride `0x10` (`0x692f20`), and
-/// `flags & 0x4` marks a leaf.
+/// children or spans, which a misread layout drives up at once. A node is
+/// `u16 flags, i16 negChild, i16 posChild, u16 nFaces, u32 faceStart, f32 planeDist`, stride
+/// `0x10`, and `flags & 0x4` marks a leaf.
 fn descend(nodes: &[u8], mobr: &[u16]) -> (HashSet<u16>, usize) {
     let n = nodes.len() / 0x10;
     let (mut seen, mut reach, mut bad) = (vec![false; n], HashSet::new(), 0usize);

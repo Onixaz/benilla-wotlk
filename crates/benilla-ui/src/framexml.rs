@@ -1,13 +1,12 @@
 //! The FrameXML document layer: a `.xml` file's text as an owned, order-preserving tree, with
-//! `inherits` template expansion and `$parent` name substitution; no widgets and no Lua. It
-//! follows the reference's loader (`0x6edc00`–`0x6f3000`, the file loader `0x6ede10`), whose XML
-//! tokenizer is an embedded expat and ours `roxmltree`.
+//! `inherits` template expansion and `$parent` name substitution; no widgets and no Lua. It follows
+//! the reference's loader, whose XML tokenizer is an embedded expat and ours `roxmltree`.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 /// An owned XML element, attributes in document order. Lookups fold case, as the reference's
-/// `GetAttribute 0x6f2cf0` and element-name compares (`0x64a4c0`) do.
+/// `GetAttribute` and element-name compares do.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Element {
     pub tag: String,
@@ -27,14 +26,15 @@ impl Element {
             .map(|(_, v)| v.as_str())
     }
 
-    /// True only for a case-insensitive `"true"` (`0x6f1b30`); there is no `"false"` branch.
+    /// True only for a case-insensitive `"true"`; there is no `"false"` branch.
     pub fn attr_bool(&self, name: &str) -> bool {
         self.attr(name)
             .is_some_and(|v| v.eq_ignore_ascii_case("true"))
     }
 
-    /// A flag read by `StringToBOOL` (`0x815400`), `None` when absent or empty, as the reference
-    /// skips the setter then (`<EditBox autoFocus="false">`, `password="1"`).
+    /// A flag read by the reference's string-to-boolean parse (`0x815400`), `None` when absent or
+    /// empty, as the reference skips the setter then (`<EditBox autoFocus="false">`,
+    /// `password="1"`).
     pub fn attr_bool_opt(&self, name: &str) -> Option<bool> {
         self.attr(name)
             .filter(|v| !v.is_empty())
@@ -50,8 +50,9 @@ impl Element {
     }
 }
 
-/// `StringToBOOL` (`0x815400`): the first character decides (`0`, `F`, `N` false; a digit, `T`, `Y`
-/// true), else `off`/`disabled` and `on`/`enabled`, case-folded; anything else is false.
+/// The reference's string-to-boolean parse (`0x815400`): the first character decides (`0`, `F`,
+/// `N` false; a digit, `T`, `Y` true), else `off`/`disabled` and `on`/`enabled`, case-folded;
+/// anything else is false.
 pub fn string_to_bool(v: &str) -> bool {
     match v.as_bytes().first() {
         Some(b'0' | b'F' | b'N' | b'f' | b'n') => false,
@@ -61,7 +62,7 @@ pub fn string_to_bool(v: &str) -> bool {
 }
 
 /// A `<Script file=…>` or an inline `<Script>` body; both run in document order with the rest of
-/// the top level (`0x704bc0`/`0x704cd0`, from `0x6ede10`'s walk).
+/// the top level.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScriptRef {
     File(String),
@@ -74,16 +75,15 @@ pub enum ScriptRef {
 }
 
 /// One top-level item, kept in document order: the reference runs `<Include>` and `<Script>`
-/// interleaved with frame definitions (`0x6ede10`).
+/// interleaved with frame definitions.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TopLevel {
-    /// `<Include file=…>`: load another file at this point (`0x8710c0`).
+    /// `<Include file=…>`: load another file at this point.
     Include(String),
     Script(ScriptRef),
-    /// `<Font …>`, a named font definition (`0x87106c`).
+    /// `<Font …>`, a named font definition.
     Font(Element),
-    /// An element with `virtual="true"`: a template keyed by `name`, not instantiated
-    /// (`0x6ee500`).
+    /// An element with `virtual="true"`: a template keyed by `name`, not instantiated.
     Template(Element),
     /// An element without `virtual="true"`: instantiated in place.
     Instance(Element),
@@ -99,8 +99,8 @@ pub struct ParsedDocument {
 }
 
 impl ParsedDocument {
-    /// The named templates, for [`expand`]; an unnamed one (the reference's "Unnamed virtual
-    /// node" error, `0x6ee500`) is absent.
+    /// The named templates, for [`expand`]; an unnamed one (the reference's "Unnamed virtual node"
+    /// error) is absent.
     pub fn templates(&self) -> HashMap<&str, &Element> {
         self.items
             .iter()
@@ -134,16 +134,15 @@ impl std::error::Error for Error {
     }
 }
 
-/// Parse FrameXML text. As in `0x6ede10`, the root's children are walked in order: `<Include>`
-/// and `<Script>` keep their place, `<Font>` is a font, and any other element, known tag or not,
-/// is a template when `virtual="true"` and an instance otherwise; widget types are checked at
-/// instantiation. A root that is not `<Ui>` only warns: the reference's walk is not known to check
-/// the root's tag.
+/// Parse FrameXML text. As, the root's children are walked in order: `<Include>` and `<Script>`
+/// keep their place, `<Font>` is a font, and any other element, known tag or not, is a template
+/// when `virtual="true"` and an instance otherwise; widget types are checked at instantiation. A
+/// root that is not `<Ui>` only warns: the reference's walk is not known to check the root's tag.
 pub fn parse(text: &str) -> Result<ParsedDocument, Error> {
-    // The reference's expat is created by `XML_ParserCreate 0x7e6690`, not the NS variant, so a
-    // prefix is opaque and an undeclared one (`xsi:` with no `xmlns:xsi`) is no error, where
-    // `roxmltree` rejects the whole document. Bind the prefix the error names and re-read; the
-    // bytes are otherwise untouched, and `element_from_node` drops prefixed attributes.
+    // The reference's expat is created by `XML_ParserCreate`, not the NS variant, so a prefix is
+    // opaque and an undeclared one (`xsi:` with no `xmlns:xsi`) is no error, where `roxmltree`
+    // rejects the whole document. Bind the prefix the error names and re-read; the bytes are
+    // otherwise untouched, and `element_from_node` drops prefixed attributes.
     let repaired;
     let doc = match roxmltree::Document::parse(text) {
         Ok(doc) => doc,
@@ -307,9 +306,9 @@ fn element_from_node(node: roxmltree::Node) -> Element {
         tag: node.tag_name().name().to_string(),
         attrs: node
             .attributes()
-            // `GetAttribute 0x6f2cf0` matches the whole stored name and no FrameXML key has a
-            // colon, so a prefixed attribute is unreachable; dropping it also stops `roxmltree`'s
-            // local names from letting `xsi:name` answer for `name`.
+            // `GetAttribute` matches the whole stored name and no FrameXML key has a colon, so a
+            // prefixed attribute is unreachable; dropping it also stops `roxmltree`'s local names
+            // from letting `xsi:name` answer for `name`.
             .filter(|a| a.namespace().is_none())
             .map(|a| (a.name().to_string(), a.value().to_string()))
             .collect(),
@@ -325,9 +324,9 @@ fn element_from_node(node: roxmltree::Node) -> Element {
 /// Resolve `inherits` into a materialized [`Element`]: the named template, itself expanded first,
 /// then the element on top. Children are the template's then the element's; the element's
 /// attributes override or extend the template's (case-insensitively), all but `name`, `id` and
-/// `virtual`, which are the instance's own: `FrameXML_CreateFrame` (`0x812fa0`) runs `PreLoadXML`
-/// (`0x490360`, `0x4814f0` for a region), which reads `name` and `id`, on the instance node alone,
-/// then `LoadXML` walks the templates. A cycle is skipped with a warning.
+/// `virtual`, which are the instance's own: the XML frame create (`0x812fa0`) runs the pre-load
+/// pass (`0x490360`, `0x4814f0` for a region), which reads `name` and `id`, on the instance node
+/// alone, then the XML load walks the templates. A cycle is skipped with a warning.
 pub fn expand(
     element: &Element,
     templates: &HashMap<&str, &Element>,
@@ -454,15 +453,15 @@ pub fn inherits_node(tag: &str, inherits: &str) -> Element {
     }
 }
 
-/// What `$parent` expands to with no named ancestor: the literal `"Top"` (`0x8788ac`).
+/// What `$parent` expands to with no named ancestor: the literal `"Top"`.
 pub const DEFAULT_PARENT_NAME: &str = "Top";
 
-/// `$parent` substitution (`0x76c5b0`): a leading `$parent`, case-insensitive and the only such
-/// token, becomes `parent_name`, the rest appended verbatim. `parent_name` is the already-resolved
-/// name of the nearest named ancestor (the `+0x9c` walk), else [`DEFAULT_PARENT_NAME`], so nested
-/// `$parent` names compose. The reference calls it from two sites only, in `SetName` (`0x76c691`)
-/// and in the layout resolver `0x76c700` (`0x76c71c`): a name and an anchor's `relativeTo` (XML,
-/// `SetPoint` or `SetAllPoints`) expand, and `parent=` never does.
+/// `$parent` substitution: a leading `$parent`, case-insensitive and the only such token, becomes
+/// `parent_name`, the rest appended verbatim. `parent_name` is the already-resolved name of the
+/// nearest named ancestor (the `+0x9c` walk), else [`DEFAULT_PARENT_NAME`], so nested `$parent`
+/// names compose. The reference calls it from two sites only, in the name setter and in the layout
+/// resolver: a name and an anchor's `relativeTo` (XML, `SetPoint` or `SetAllPoints`) expand, and
+/// `parent=` never does.
 pub fn resolve_name(raw: &str, parent_name: &str) -> String {
     const TOKEN: &str = "$parent";
     match raw.get(..TOKEN.len()) {
@@ -689,8 +688,8 @@ print(x)</Script>
         );
     }
 
-    /// `PreLoadXML` (`0x490360`) reads `name` and `id` off the instance node alone, so an unnamed
-    /// child built from a named template stays unnamed and its `$parent` children take the
+    /// The pre-load pass (`0x490360`) reads `name` and `id` off the instance node alone, so an
+    /// unnamed child built from a named template stays unnamed and its `$parent` children take the
     /// nearest named ancestor, not the template's name.
     #[test]
     fn an_instance_takes_neither_name_id_nor_virtual_from_its_template() {

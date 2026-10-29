@@ -1,12 +1,12 @@
 //! The crafting book feed: the client-built TradeSkill window around `benilla_ui::script`'s
 //! `tradeskill` module. There is no wire: a profession opener (`SPELL_EFFECT_TRADE_SKILL` in
-//! `Effect[0]`) never reaches the send, as `Spell_C_CastSpell` (`0x80d0ab`) opens the window
-//! client-side, every profession through `SetTradeSkill` (`0x5de120`), and [`TradeSkillOpens`] is
-//! that intercept here.
+//! `Effect[0]`) never reaches the send, as the spell-cast entry (`0x80d0ab`) opens the window
+//! client-side, every profession through the trade skill's open (`0x5de120`), and
+//! [`TradeSkillOpens`] is that intercept here.
 //!
 //! The book lists each known spell with `SPELL_ATTR_IS_TRADESKILL` (`0x20`, which also hides it
 //! from the spellbook) whose `SkillLineAbility` row joins the open line; the engine groups, sorts
-//! and filters it (`RefreshList 0x5dd5a0`).
+//! and filters it (`0x5dd5a0`).
 
 use std::collections::HashMap;
 
@@ -221,8 +221,8 @@ fn skill_rank(store: &ObjectStore, skill_id: u32) -> (u32, u32, i32) {
     (0, 0, 0)
 }
 
-/// `GetSkillValue`/`GetSkillMaxRank` (`0x51a250`, `0x594710`): a nonzero rank plus the
-/// permanent bonus.
+/// The skill's value and max rank (`0x51a250`, `0x594710`): a nonzero rank plus the permanent
+/// bonus.
 fn with_bonus(rank: u32, bonus: i32) -> u32 {
     if rank == 0 {
         0
@@ -323,9 +323,9 @@ fn signed_line(template: &str, value: i32, rest: &[Arg<'_>]) -> String {
     benilla_ui::strings::fill(template, &args)
 }
 
-/// The product's own texts the name filter searches, in `Profession_FilterSpell`'s order
-/// (`0x5dc110`): its stats, resistances, spell lines and description. Sockets and a gem's
-/// enchantment name are not read: the template keeps neither.
+/// The product's own texts the name filter searches, in the reference's filter order (`0x5dc110`):
+/// its stats, resistances, spell lines and description. Sockets and a gem's enchantment name are
+/// not read: the template keeps neither.
 fn product_texts(
     t: &ItemInfo,
     global: &dyn Fn(&str) -> Option<String>,
@@ -528,7 +528,7 @@ fn feed_trade_skill(
             let text = d.description.as_deref().filter(|t| !t.is_empty())?;
             Some(benilla_formats::substitute(text, d, &ctx)).filter(|t| !t.is_empty())
         };
-        // `FindTotemCategory` walks mask 7 (`0x7541f0`): worn gear, bags and backpack.
+        // The totem category search walks mask 7 (`0x7541f0`): worn gear, bags and backpack.
         let carried_tools = tool_categories(
             &store.0,
             &objects,
@@ -540,7 +540,7 @@ fn feed_trade_skill(
         let texts = texts.get(&script);
 
         let mut recipes = Vec::new();
-        // A recipe files under its line for our race and class (`AddKnownSpell` `0x6e7b00`).
+        // A recipe files under its line for our race and class (`0x6e7b00`).
         let (race, class) = crate::spell::race_class(Some(store));
         for &spell_id in &actions.spells {
             let Some(d) = spells.catalog.get(spell_id) else {

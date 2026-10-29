@@ -1,10 +1,10 @@
-//! The `EditBox` runtime (`CSimpleEditBox`, factory `0x6eec70`): keyboard focus, the text buffer,
-//! cursor and selection, editing, and key and char dispatch.
+//! The `EditBox` runtime: keyboard focus, the text buffer, cursor and selection, editing, and key
+//! and char dispatch.
 //!
-//! - Focus: one owner ([`Model::focused_editbox`], the client's `DAT_00cf4dc8`). A left click
-//!   focuses and collapses the selection to the clicked byte (`0x77b86f call 0x77ccf0`, before
-//!   `SetFocus` at `0x77b881`), so it never selects all. An `autoFocus` box takes the focus on show
-//!   when none is held and on the first key, and a hidden box drops it ([`visibility_focus`]).
+//! - Focus: one owner ([`Model::focused_editbox`], the client's focus global). A left click
+//!   focuses and collapses the selection to the clicked byte (before `SetFocus`), so it never
+//!   selects all. An `autoFocus` box takes the focus on show when none is held and on the first
+//!   key, and a hidden box drops it ([`visibility_focus`]).
 //! - Routing: a focused box consumes every key and char and fires only its specialized scripts
 //!   (Enter, Escape, Space, Tab, TextChanged, TextSet, focus), never a generic `OnKeyDown`; an
 //!   unfocused box that is not `autoFocus` ignores input.
@@ -15,9 +15,9 @@
 //!   ([`update`]) and before a key or click acts on it, fires `OnCursorChanged` and then
 //!   `OnTextChanged`.
 //!
-//! Mouse, selection and caret (click to index `0x77d0d0`, drag `0x77a860`) live in [`interact`]
-//! and [`seam`]; the OS clipboard is host-side, [`paste`] in and `UiScript::editbox_copy` or
-//! `editbox_cut` out. The host's per-OS keymap sends editing keys as [`EditAction`]s ([`action`]).
+//! Mouse, selection and caret live in [`interact`] and [`seam`]; the OS clipboard is host-side,
+//! [`paste`] in and `UiScript::editbox_copy` or `editbox_cut` out. The host's per-OS keymap sends
+//! editing keys as [`EditAction`]s ([`action`]).
 //!
 //! Deviation: word and edge deletes (`Delete{Word,Edge}`), which 1.12 does not have, exist because
 //! the host's OS-native chords (Option/Cmd+Backspace, Ctrl+Backspace/Delete) expect them.
@@ -43,14 +43,14 @@ pub(super) fn char_input(lua: &Lua, text: &str) -> bool {
     let Some(h) = route(lua) else {
         return false;
     };
-    // The char's own key-down came first, and `OnKeyDown` flushes (`0x77b1e2`).
+    // The char's own key-down came first, and `OnKeyDown` flushes.
     flush::flush(lua, h);
     if text == "\u{1}" {
         // Ctrl+A selects all (the client's keydown case 0x41/0x61).
         highlight_text(lua, h, 0, -1);
     } else if text.chars().any(|c| (c as u32) >= 0x20) {
-        // A typed `|` goes in as `||` (`0x77c200` pushes the literal `"||"` at `0x879cac`), so
-        // markup cannot be typed; the pair draws as one `|` and counts as one letter.
+        // A typed `|` goes in as `||` (the reference pushes the literal `"||"`), so markup cannot
+        // be typed; the pair draws as one `|` and counts as one letter.
         insert(lua, h, &text.replace('|', "||"), true);
     }
     true
@@ -62,7 +62,7 @@ pub(super) fn paste(lua: &Lua, text: &str) -> bool {
     let Some(h) = route(lua) else {
         return false;
     };
-    flush::flush(lua, h); // Ctrl+V is a key-down (`0x77b1e2`)
+    flush::flush(lua, h); // Ctrl+V is a key-down
     if with_eb(lua, h, |eb| eb.paste(text)).is_some_and(|o| o.text_changed) {
         sync_text_region(lua, h);
     }
@@ -74,8 +74,8 @@ pub(super) fn key_input(lua: &Lua, key: &str) -> bool {
     let Some(h) = route(lua) else {
         return false;
     };
-    // `OnKeyDown` flushes the box before it handles the key (`0x77b1e2`), so the events of the
-    // edits ahead of the key fire first, and per key.
+    // `OnKeyDown` flushes the box before it handles the key, so the events of the edits ahead of
+    // the key fire first, and per key.
     flush::flush(lua, h);
     let id = frame_id_of(lua, h);
     match key.to_ascii_uppercase().as_str() {
@@ -100,22 +100,21 @@ pub(super) fn action(lua: &Lua, a: EditAction) -> bool {
     let Some(h) = route(lua) else {
         return false;
     };
-    flush::flush(lua, h); // a key-down (`0x77b1e2`)
+    flush::flush(lua, h); // a key-down
     match a {
         EditAction::Move { unit, back, extend } => match unit {
             // The alt-arrow gate lives in the host (`editbox_alt_arrow_mode`), which declines the
             // arrow codes before a chord is built.
             EditUnit::Char => move_horizontal(lua, h, !back, extend),
-            // Ctrl (Option on macOS) moves by word (the client's Ctrl check, `0x41f8f0(1)`).
+            // Ctrl (Option on macOS) moves by word (the client's Ctrl check).
             EditUnit::Word => interact::move_word(lua, h, !back, extend),
             EditUnit::Line => {
                 with_eb(lua, h, |eb| eb.move_to_line_edge(!back, extend));
             }
             EditUnit::Edge => move_to_edge(lua, h, !back, extend),
-            // UP/DOWN fork on `multiLine` (`0x77b64e`, `0x77b675`): a row in a multi-line box,
-            // else history recall (`0x77d030`, `0x77cfd0`; benilla's is shell-style, see
-            // `EditBoxState::history_step`). On an alt-arrow box, as the stock chat box is, that is
-            // Alt+Up/Down.
+            // UP/DOWN fork on `multiLine`: a row in a multi-line box, else history recall
+            // (benilla's is shell-style, see `EditBoxState::history_step`). On an alt-arrow box, as
+            // the stock chat box is, that is Alt+Up/Down.
             EditUnit::Row => {
                 if with_eb(lua, h, |eb| eb.multi_line).unwrap_or(false) {
                     // The rows the move reads, measured now when an engine is installed.
@@ -190,9 +189,9 @@ fn topmost_autofocus(lua: &Lua) -> Option<FrameHandle> {
     None
 }
 
-/// `SetFocus` (`0x77e3d0`): needs effective visibility, a no-op when already focused; fires
-/// `OnEditFocusLost` on the old box, then `OnEditFocusGained`. Its store at `0x77e3f6` is the
-/// client's only focus grant and writes no selection, so no focus gain changes the selection.
+/// `SetFocus`: needs effective visibility, a no-op when already focused; fires `OnEditFocusLost` on
+/// the old box, then `OnEditFocusGained`. Its store is the client's only focus grant and writes no
+/// selection, so no focus gain changes the selection.
 fn set_focus_handle(lua: &Lua, h: FrameHandle) {
     let (old_id, new_id) = {
         let mut model = crate::script::model_mut_of(lua);
@@ -221,18 +220,17 @@ fn set_focus_handle(lua: &Lua, h: FrameHandle) {
     fire_script(lua, new_id, "OnEditFocusGained");
 }
 
-/// The focus transition's caret write (`0x77afa8`, `or 4`), on the box that gains the keyboard
-/// and on the one that loses it, whose next flush places or hides the caret.
+/// The focus transition's caret write (`or 4`), on the box that gains the keyboard and on the one
+/// that loses it, whose next flush places or hides the caret.
 fn raise_cursor(model: &mut Model, h: FrameHandle) {
     if let Some(KindState::EditBox(eb)) = model.arena.frame_mut(h).map(|f| &mut f.kind_state) {
         eb.dirty |= EditBoxState::DIRTY_CURSOR;
     }
 }
 
-/// The EditBox's OnShow/OnHide vtable overrides (`0x81c910` slots +0x30/+0x34), run after the
-/// frame's Lua handler, since both call the base notify first. Show (`0x77a750`) focuses an
-/// `autoFocus` box when nothing holds the focus, first come first served; hide (`0x77a780`)
-/// tail-jumps `ClearFocus`.
+/// The EditBox's OnShow/OnHide vtable overrides (slots +0x30/+0x34), run after the frame's Lua
+/// handler, since both call the base notify first. Show focuses an `autoFocus` box when nothing
+/// holds the focus, first come first served; hide tail-jumps `ClearFocus`.
 pub(super) fn visibility_focus(lua: &Lua, h: FrameHandle, visible: bool) {
     if !visible {
         // Unconditional, like the reference's tail-jump: the guard is in `clear_focus_handle`.
@@ -255,8 +253,7 @@ pub(super) fn visibility_focus(lua: &Lua, h: FrameHandle, visible: bool) {
     }
 }
 
-/// `ClearFocus` (`0x77e410`): only when this box holds the focus (`[0xcf4dc8]`), then fires
-/// `OnEditFocusLost`.
+/// `ClearFocus`: only when this box holds the focus, then fires `OnEditFocusLost`.
 fn clear_focus_handle(lua: &Lua, h: FrameHandle) {
     let id = {
         let mut model = crate::script::model_mut_of(lua);
@@ -274,9 +271,8 @@ fn clear_focus_handle(lua: &Lua, h: FrameHandle) {
 // Editing primitives: mutate under one borrow, then sync and fire
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
-/// `Insert` (`0x77bee0`): delete the selection, abort on a non-digit when `numeric`, splice,
-/// enforce caps, raise the dirty bits for the flush, and with `fire_space` fire one
-/// `OnSpacePressed` per space.
+/// `Insert`: delete the selection, abort on a non-digit when `numeric`, splice, enforce caps, raise
+/// the dirty bits for the flush, and with `fire_space` fire one `OnSpacePressed` per space.
 fn insert(lua: &Lua, h: FrameHandle, ins: &str, fire_space: bool) {
     let Some(out) = with_eb(lua, h, |eb| eb.insert(ins)) else {
         return; // not an EditBox
@@ -286,12 +282,12 @@ fn insert(lua: &Lua, h: FrameHandle, ins: &str, fire_space: bool) {
     }
     if !out.inserted {
         // Refused: a numeric abort leaves at most the selection's deletion, whose text bit fires
-        // `OnTextChanged` at the flush, and returns before `OnChar` (`0x77bf6d` → `0x77c1b8`).
+        // `OnTextChanged` at the flush, and returns before `OnChar`.
         return;
     }
     let id = frame_id_of(lua, h);
-    // Insert fires the generic `OnChar` with the spliced string as `arg1` (`0x77c13c`, through the
-    // varargs firer `0x7026f0`), ahead of the flush's `OnTextChanged`; `SetText` does not.
+    // Insert fires the generic `OnChar` with the spliced string as `arg1`, ahead of the flush's
+    // `OnTextChanged`; `SetText` does not.
     let on_char = lua
         .create_string(ins)
         .and_then(|s| event::fire_widget_handler(lua, id, "OnChar", vec![mlua::Value::String(s)]));
@@ -305,8 +301,8 @@ fn insert(lua: &Lua, h: FrameHandle, ins: &str, fire_space: bool) {
     }
 }
 
-/// `SetText` (`0x77be00`): nothing when unchanged; else clear the selection, replace, cursor to
-/// the end, enforce caps, raise the dirty bits for the flush and fire `OnTextSet`.
+/// `SetText`: nothing when unchanged; else clear the selection, replace, cursor to the end, enforce
+/// caps, raise the dirty bits for the flush and fire `OnTextSet`.
 fn set_text(lua: &Lua, h: FrameHandle, s: &str) {
     let changed = with_eb(lua, h, |eb| eb.set_text(s));
     if changed == Some(true) {
@@ -355,9 +351,9 @@ fn move_to_edge(lua: &Lua, h: FrameHandle, end: bool, shift: bool) {
     with_eb(lua, h, |eb| eb.move_to_edge(end, shift));
 }
 
-/// `HighlightText` (`0x77cca0`): `start = clamp(start, 0..=len)`; `end = (end < 0 || end > len) ?
-/// len : end`; then `if end < start { end = len }`, so `(0, -1)` selects all. Offsets are bytes,
-/// snapped to char boundaries.
+/// `HighlightText`: `start = clamp(start, 0..=len)`; `end = (end < 0 || end > len) ? len : end`;
+/// then `if end < start { end = len }`, so `(0, -1)` selects all. Offsets are bytes, snapped to
+/// char boundaries.
 fn highlight_text(lua: &Lua, h: FrameHandle, start: i64, end: i64) {
     with_eb(lua, h, |eb| eb.highlight_text(start, end));
 }
@@ -382,8 +378,7 @@ fn sync_text_region(lua: &Lua, h: FrameHandle) {
     }
 }
 
-/// `SetTextInsets(l, r, t, b)` (`0x77a6e0`): store the insets and re-seat the text region by
-/// them (`0x77a707` → `0x77b8c0`).
+/// `SetTextInsets(l, r, t, b)`: store the insets and re-seat the text region by them.
 fn set_text_insets(lua: &Lua, h: FrameHandle, l: f32, r: f32, t: f32, b: f32) {
     if with_eb(lua, h, |eb| eb.text_insets = [l, r, t, b]).is_none() {
         return;
@@ -391,7 +386,8 @@ fn set_text_insets(lua: &Lua, h: FrameHandle, l: f32, r: f32, t: f32, b: f32) {
     reseat_text_region(lua, h);
 }
 
-/// Run `0x77b8c0` on the box's text region, creating the region's data if nothing has yet.
+/// Run the text-region re-seat on the box's text region, creating the region's data if nothing has
+/// yet.
 fn reseat_text_region(lua: &Lua, h: FrameHandle) {
     if ensure_text_region(lua, h).is_none() {
         return;
@@ -400,9 +396,9 @@ fn reseat_text_region(lua: &Lua, h: FrameHandle) {
     relayout::seat_text_region(&mut model, h);
 }
 
-/// The wrapper for an EditBox's embedded text FontString, built by its ctor (`0x779bee`). The
-/// loader uses it for `<FontString>`: the reference's EditBox LoadXML (`0x779fb0`) declares the
-/// ctor's font string rather than adding a region (its `bytes` sets the box's `maxBytes`).
+/// The wrapper for an EditBox's embedded text FontString, built by its ctor. The loader uses it for
+/// `<FontString>`: the reference's EditBox XML load declares the ctor's font string rather than
+/// adding a region (its `bytes` sets the box's `maxBytes`).
 pub(crate) fn editbox_text_region_wrapper(lua: &Lua, frame: &Table) -> Option<Table> {
     let h = frame_handle_of(lua, frame).ok()?;
     let rh = ensure_text_region(lua, h)?;
@@ -413,7 +409,7 @@ pub(crate) fn editbox_text_region_wrapper(lua: &Lua, frame: &Table) -> Option<Ta
     super::region::region_wrapper(lua, id).ok()
 }
 
-/// Adopt `region` as `frame`'s text region, anchored by the current insets: LoadXML assigns an
+/// Adopt `region` as `frame`'s text region, anchored by the current insets: the XML load assigns an
 /// EditBox's font string, never searching the region list.
 pub(crate) fn adopt_text_region(lua: &Lua, frame: &Table, region: &Table) -> mlua::Result<()> {
     let h = frame_handle_of(lua, frame)?;
@@ -445,8 +441,8 @@ fn ensure_text_region_in(model: &mut Model, h: FrameHandle) -> Option<RegionHand
         Some(KindState::EditBox(eb)) => (eb.text_region, eb.multi_line),
         _ => return None,
     };
-    // The ctor built the region (`0x779bee`, the first of a CSimpleEditBox's five regions); its
-    // `RegionData` is seeded here, on the first call.
+    // The ctor built the region (the first of an EditBox's five regions); its `RegionData` is
+    // seeded here, on the first call.
     let rh = match existing {
         Some(rh) => rh,
         // A box whose ctor pass did not run still gets a region.
@@ -470,9 +466,8 @@ fn ensure_text_region_in(model: &mut Model, h: FrameHandle) -> Option<RegionHand
     Some(rh)
 }
 
-/// Re-apply the text region's justify and rect for the current `multiLine` flag, as
-/// `SetMultiLine` re-seats it (`0x77a63f` → `0x77b8c0`): LoadXML adopts the `<FontString>` before
-/// it applies the box's flags.
+/// Re-apply the text region's justify and rect for the current `multiLine` flag, as `SetMultiLine`
+/// re-seats it: the XML load adopts the `<FontString>` before it applies the box's flags.
 pub(super) fn refresh_text_region(lua: &Lua, this: &Table) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let mut model = crate::script::model_mut_of(lua);
@@ -487,8 +482,8 @@ pub(super) fn refresh_text_region(lua: &Lua, this: &Table) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Left-justified whatever the font string declares (the draw `0x77da80` anchors left at the
-/// insets), from the top in a multiLine box and vertically centered otherwise.
+/// Left-justified whatever the font string declares (the draw anchors left at the insets), from the
+/// top in a multiLine box and vertically centered otherwise.
 fn apply_text_region_justify(data: &mut RegionData, multi_line: bool) {
     data.justify.set_h(crate::script::JustifyH::Left);
     data.justify.set_v(if multi_line {
@@ -531,8 +526,7 @@ fn fire_script(lua: &Lua, id: u32, name: &str) {
     }
 }
 
-/// The caret width `OnCursorChanged` reports: 4.0 UI units on every raster (`0x77b8c0` sets it,
-/// `0x77ba67`).
+/// The caret width `OnCursorChanged` reports: 4.0 UI units on every raster.
 const CARET_WIDTH: f32 = 4.0;
 
 // The EditBox Lua methods, consulted before the shared frame table for EditBox frames.

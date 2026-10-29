@@ -1,6 +1,6 @@
-//! The chat bubble anchors at `unit.z + (Stand.max.z - Stand.min.z) * modelScale + 0.7`
-//! (`0x4b0c30`): the Stand sequence box read from the file image (`0x4b0e38 call 0x711a20`),
-//! latched once per chat line at `bubble+0x354`, not the posed PlayerName attachment (`0x608640`).
+//! The chat bubble anchors at `unit.z + (Stand.max.z - Stand.min.z) * modelScale + 0.7`: the Stand
+//! sequence box read from the file image, latched once per chat line at `bubble+0x354`, not the
+//! posed PlayerName attachment.
 
 use benilla_formats::{load_m2_bounds, open_chain};
 

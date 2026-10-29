@@ -49,7 +49,7 @@ pub(crate) struct DuelState {
     countdown: Option<Countdown>,
 }
 
-/// The `ProcessCountdown` timer (`0x5cf870`).
+/// The duel countdown timer (`0x5cf870`).
 struct Countdown {
     remaining: u32,
     tick: Timer,
@@ -316,7 +316,7 @@ struct FedDuel {
     out_of_bounds: bool,
 }
 
-/// `ProcessCountdown` (`0x5cf870`, armed by `0x5cfa50`): a `DUEL_COUNTDOWN` system chat line on
+/// The duel countdown (`0x5cf870`, armed by `0x5cfa50`): a `DUEL_COUNTDOWN` system chat line on
 /// arrival, since the reference runs the tick body before arming its timer, then one a second.
 fn tick_countdown(time: Res<Time>, mut duel: ResMut<DuelState>, mut started: Local<bool>) {
     let Some(countdown) = duel.countdown.as_mut() else {
@@ -455,7 +455,7 @@ mod tests {
         assert_eq!(duel.challenger, Some(9));
     }
 
-    /// Only an unstarted duel earns "Duel cancelled." (`0x4d4b20`).
+    /// Only an unstarted duel earns "Duel cancelled.".
     #[test]
     fn completion_is_gated_on_holding_an_arbiter() {
         let mut duel = DuelState::default();

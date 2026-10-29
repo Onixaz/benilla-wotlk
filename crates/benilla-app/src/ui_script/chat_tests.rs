@@ -78,8 +78,8 @@ fn newest_line_sits_at_the_bottom() {
     assert!(y("newer") < y("older"), "newest renders at the bottom");
 }
 
-/// A scroll re-arms a fading line to full and holds it there until the view is back at the
-/// bottom: every scroll entry reaches the re-arm at `0x788b80` or the relayout's `0x788af0`.
+/// A scroll re-arms a fading line to full and holds it there until the view is back at the bottom:
+/// every scroll entry reaches the re-arm or the relayout's.
 #[test]
 fn wheel_scroll_re_arms_the_fade_then_freezes_it() {
     benilla_formats::wow_data_or_skip!();
@@ -951,7 +951,7 @@ fn the_chat_menu_builds_its_rows_on_the_references_kit() {
 }
 
 /// The plate rests at the window's own alpha, the reference's default `0x28` of 255
-/// (`ChatWindowInfo::Init`, `0x501800`), and `FCF_OnUpdate` fades it to `DEFAULT_CHATFRAME_ALPHA`
+/// (`0x501800`), and `FCF_OnUpdate` fades it to `DEFAULT_CHATFRAME_ALPHA`
 /// and back on every hover (`FloatingChatFrame.lua:994-1051`), the quad the renderer gets included.
 #[test]
 fn a_windows_plate_fades_in_on_every_hover() {

@@ -3,11 +3,10 @@
 //!
 //! The chain is `ItemDisplayInfo` column 22, then `ItemVisuals`, then five `ItemVisualEffects`
 //! models ([`benilla_formats::ItemVisualCatalog`]). The held-item attach passes the display's own
-//! id (`0x47a200` into `0x4798c0`, attaching at `0x479700` when it is above 0); the helm, shoulder
-//! and quiver sites pass a literal 0, so on a body only hand items glow, and the ammo lane
-//! (`0x479f40`) passes its own. `0x479700` hangs effect i on the item model's attachment id i
-//! (`0x712f70`). An item model rests at bind pose, so each glow is a plain child of the item root:
-//! it goes with a gear change and moves with a sheath swap.
+//! id; the helm, shoulder and quiver sites pass a literal 0, so on a body only hand items glow, and
+//! the ammo lane passes its own. The reference hangs effect i on the item model's attachment id i.
+//! An item model rests at bind pose, so each glow is a plain child of the item root: it goes with a
+//! gear change and moves with a sheath swap.
 
 use std::collections::HashMap;
 
@@ -43,9 +42,9 @@ impl ItemGlows {
     }
 }
 
-/// The ItemVisuals id an item glows with, the fork of `0x62ec70` (per weapon slot, `0x5eed50`):
-/// the base display's id when it names a row, which suppresses the enchant's, else the first
-/// enchant slot with a nonzero visual, else 0.
+/// The ItemVisuals id an item glows with, the reference's per-weapon-slot fork: the base display's
+/// id when it names a row, which suppresses the enchant's, else the first enchant slot with a
+/// nonzero visual, else 0.
 pub(in crate::entities) fn effective_visual(
     glows: &ItemGlows,
     enchants: Option<&EnchantCatalog>,
@@ -104,8 +103,8 @@ pub(in crate::entities) struct ItemGlow {
     /// the attach path that knew it is gone by the time the glow models load.
     pub(in crate::entities) bone: u16,
     pub(in crate::entities) offset: bevy::prelude::Vec3,
-    /// The item's M2 attachment id on the body: a glow chains under its item (`0x712f70`), so a
-    /// widget's attach reset takes both together.
+    /// The item's M2 attachment id on the body: a glow chains under its item, so a widget's attach
+    /// reset takes both together.
     pub(in crate::entities) attach: u16,
 }
 
@@ -160,9 +159,9 @@ pub(super) fn attach_item_glows(
             let Some(dm) = glows.models.get(path) else {
                 continue;
             };
-            // A model without this slot's attachment hangs nothing there, as in the reference:
-            // `0x712f70` stores `0x710310`'s miss as `0xffff`, whose child `0x7140aa`, `0x718668`
-            // and `0x719266` skip. Common: Ironfoe's hammer authors only ids 2 to 4.
+            // A model without this slot's attachment hangs nothing there, as in the reference: it
+            // stores the attachment lookup's miss as `0xffff`, whose child every pass skips.
+            // Common: Ironfoe's hammer authors only ids 2 to 4.
             let Some(at) =
                 crate::portrait::attachment_point(&item.skeleton, &item.attachments, slot as u16)
             else {
@@ -227,10 +226,10 @@ pub(super) fn attach_item_glows(
                 dm,
                 now,
                 false, // a weapon glow is never ground-anchored
-                // Chained to the item root (`0x712f70`) and through it to the wearer, so it fades
-                // in with the body and dies with the weapon.
+                // Chained to the item root and through it to the wearer, so it fades in with the
+                // body and dies with the weapon.
                 EffectHost { parent: Some(root) },
-                // Not armed by `PlaySpellVisualKit`: no kit stage, the plain single-clip arm.
+                // Not armed by the kit player: no kit stage, the plain single-clip arm.
                 None,
                 &mut FxMaterials {
                     store: &mut wow_materials,

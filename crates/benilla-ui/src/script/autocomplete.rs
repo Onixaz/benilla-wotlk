@@ -3,16 +3,16 @@
 //! with (`ChatEdit_ExtractTellTarget`, `ChatFrame.lua:4125`), and its registrar sibling
 //! `GetAutoCompletePresenceID`, which the whisper header asks of every target (`BNet.lua:38`).
 //!
-//! The first four arguments are checked (a string, then three numbers) and a miss raises the
-//! usage (`0xa11740`). The prefix is `text` cut at `cursorPosition` when that is a number within
-//! it. A name answers when it starts with the prefix, ignoring case, and is longer than it unless
-//! `allowFullMatch`; when its source's flags meet `include` and miss `exclude`, as
-//! `AutoComplete.lua`'s `AUTOCOMPLETE_FLAG_*` name them: in group 0x1, in guild 0x2, friend 0x4,
-//! online 0x20. At most `numReturns` names come back, each once.
+//! The first four arguments are checked (a string, then three numbers) and a miss raises the usage.
+//! The prefix is `text` cut at `cursorPosition` when that is a number within it. A name answers
+//! when it starts with the prefix, ignoring case, and is longer than it unless `allowFullMatch`;
+//! when its source's flags meet `include` and miss `exclude`, as `AutoComplete.lua`'s
+//! `AUTOCOMPLETE_FLAG_*` name them: in group 0x1, in guild 0x2, friend 0x4, online 0x20. At most
+//! `numReturns` names come back, each once.
 //!
-//! The reference walks registries the client keeps itself (`0x57b250`). Deviation: these are the
-//! group, guild and friend lists the API already answers, in that order; the recently-interacted
-//! list (0x10) is not kept, and no Battle.net name (0x8) exists without a session.
+//! The reference walks registries the client keeps itself. Deviation: these are the group, guild
+//! and friend lists the API already answers, in that order; the recently-interacted list (0x10) is
+//! not kept, and no Battle.net name (0x8) exists without a session.
 
 use mlua::Lua;
 

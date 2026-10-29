@@ -36,9 +36,9 @@ use benilla_world::world_map::CurrentMap;
 const PLAYER_FLAGS_GM: u32 = 0x0000_0008;
 
 /// The `UNIT_FIELD_FLAGS` bits (vmangos `UnitDefines.h`) that block or drive the mover, each
-/// through its own gate: STUNNED alone reaches the input tick (`0x5145b0` → `0x514755`, no turn or
-/// pitch), CONFUSED and FLEEING act through `0x5fa550` (mask `0xc00004`), POSSESSED redirects to
-/// the charmer (`0x5fa582`), and the taxi bit shares no gate.
+/// through its own gate: STUNNED alone reaches the input tick (no turn or pitch), CONFUSED and
+/// FLEEING act through (mask `0xc00004`), POSSESSED redirects to the charmer, and the taxi bit
+/// shares no gate.
 const MOVE_BLOCKERS: &[(u32, &str)] = &[
     (0x0004_0000, "STUNNED (no turning, no pitch)"),
     (
@@ -64,8 +64,8 @@ const ABILITY_BLOCKERS: &[(u32, &str)] = &[
 /// Named on entry: an unattended run must not be left fighting (`docs/METHOD.md`).
 use crate::player::UNIT_FLAG_IN_COMBAT;
 
-/// `UNIT_FLAG_SILENCED`: the 1.12 client refuses locally (`0x6094f0`, from `0x6e4b60`), but only
-/// spells whose `Spell.dbc` `PreventionType` (column 165) is 1.
+/// `UNIT_FLAG_SILENCED`: the 1.12 client refuses locally, but only spells whose `Spell.dbc`
+/// `PreventionType` (column 165) is 1.
 const UNIT_FLAG_SILENCED: u32 = 0x0000_2000;
 
 /// The faction template vmangos swaps in with GM mode (`SetFactionTemplateId(35)`).

@@ -79,7 +79,7 @@ fn feed_pet_doll(
     *last = fresh;
 }
 
-/// `CGUnit_C::GetHealthModifier`/`GetPowerModifier` (`0x71b8d0`, `0x71b960`) for our pet: 1.0
+/// The unit's health and power modifiers (`0x71b8d0`, `0x71b960`) for our pet: 1.0
 /// under a hunter (`0x71b99e`, class 3), else its creature record's multipliers, 0.0 uncached.
 fn pet_modifiers(
     pet: &crate::net::ObjectStore,

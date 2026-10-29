@@ -36,8 +36,8 @@ const CHUNK_YARDS: f32 = TILE_YARDS / CHUNKS_PER_TILE as f32;
 
 /// World `(x, y)` → chunk `(chunk_x, chunk_y)` on the 1024×1024 grid, clamped to `0..=1023`, with
 /// [`world_to_tile`]'s axis swap and `chunk >> 4` its tile. It is the reference's streaming
-/// coordinate: `0x672730` computes `fistp((17066.666 - pos) * 0.03 - 0.5)` per axis and sizes its
-/// residency windows in chunks.
+/// coordinate: the reference computes `fistp((17066.666 - pos) * 0.03 - 0.5)` per axis and sizes
+/// its residency windows in chunks.
 pub fn world_to_chunk(world_x: f32, world_y: f32) -> (u32, u32) {
     let offset = 32.0 * TILE_YARDS;
     let max = MAP_SIZE as u32 * CHUNKS_PER_TILE - 1;
@@ -162,7 +162,7 @@ impl<R: Read + Seek> WdtReader<R> {
             // Chunk magics are stored reversed on disk: MAIN is "NIAM".
             let size = u32::from_le_bytes([hdr[4], hdr[5], hdr[6], hdr[7]]) as u64;
             match &hdr[0..4] {
-                // MPHD dword 0: bit 0 the no-terrain flag (`0x694810`), bit 2 big alpha.
+                // MPHD dword 0: bit 0 the no-terrain flag, bit 2 big alpha.
                 b"DHPM" if size >= 4 => {
                     let buf = self.read_payload(size, stream_end)?;
                     flags = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
@@ -215,7 +215,7 @@ impl<R: Read + Seek> WdtReader<R> {
                 position: [f32_at(&e, 8), f32_at(&e, 12), f32_at(&e, 16)],
                 rotation: [f32_at(&e, 20), f32_at(&e, 24), f32_at(&e, 28)],
                 // 0x20..0x38 is the bounding box. `uniqueId` at +4 is unread: the reference
-                // overwrites it from its own counter (`0xc9a320`).
+                // overwrites it from its own counter.
                 doodad_set: u16_at(&e, 58),
                 name_set: u16_at(&e, 60),
             }),

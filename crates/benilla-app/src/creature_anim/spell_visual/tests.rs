@@ -337,8 +337,8 @@ fn same_frame_start_and_fail_leave_no_hold() {
     assert_eq!(hold(&app, unit), None, "the failed cast's hold is released");
 }
 
-/// The ranged weapon-visual merge (`0x60d450`): a spell with `Attributes & 0x2` fills every zero
-/// slot of its own row from the caster's weapon visual; a non-ranged spell never looks.
+/// The ranged weapon-visual merge: a spell with `Attributes & 0x2` fills every zero slot of its own
+/// row from the caster's weapon visual; a non-ranged spell never looks.
 #[test]
 fn ranged_spells_merge_the_weapon_visual_into_their_empty_slots() {
     const THROW: u32 = 2764; // Attributes 0x410012, SpellVisual1 0: the shipped Throw row
@@ -393,7 +393,7 @@ fn ranged_spells_merge_the_weapon_visual_into_their_empty_slots() {
                 FIREBALL,
                 SpellDisplay {
                     visual: VISUAL,
-                    attributes: 0x2, // ranged, with its own visual: its own slot wins (`0x60d4b4`)
+                    attributes: 0x2, // ranged, with its own visual: its own slot wins
                     ..Default::default()
                 },
             ),
@@ -584,7 +584,8 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
     }
 }
 
-/// `GetSpellVisual` (`0x7fa290`): below violence 2 the second visual, when the spell has one.
+/// The spell's visual pick (`0x7fa290`): below violence 2 the second visual, when the spell has
+/// one.
 #[test]
 fn low_violence_takes_the_second_visual_when_there_is_one() {
     let both = SpellDisplay {
@@ -711,9 +712,9 @@ fn an_ending_aura_plays_its_state_done_kit_once() {
     );
 }
 
-/// An instant harmful GO lays one severity-0 wound on each hit (`0x6e8bf0` at `0x6e8c89`), a
-/// helpful one none; a state kit's wound anim adds nothing (stage 2 never reaches the `[8,10]`
-/// test, `0x60f383`); a missile arrival always wounds (`0x61dc50` at `0x61dc74`).
+/// An instant harmful GO lays one severity-0 wound on each hit, a helpful one none; a state kit's
+/// wound anim adds nothing (stage 2 never reaches the `[8,10]` test); a missile arrival always
+/// wounds.
 #[test]
 fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
     const HARMFUL: u32 = 7386; // Sunder Armor's shape: instant, enemy-targeted
@@ -823,8 +824,8 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
     assert_eq!(wounds(&mut app), vec![target], "missile arrival");
 }
 
-/// The GO's release gate (`0x6e7a70`): a Speed>0 spell whose cast kit plays a body animation
-/// defers its [`MissileSpawn`] to the animation's release keyframe; any other launches at GO.
+/// The GO's release gate: a Speed>0 spell whose cast kit plays a body animation defers its
+/// [`MissileSpawn`] to the animation's release keyframe; any other launches at GO.
 #[test]
 fn missile_spawn_defers_iff_the_cast_kit_animates() {
     const ANIMATED: u32 = 133; // Fireball's shape: cast kit with anim 53
@@ -983,8 +984,8 @@ fn ground_app(
     app
 }
 
-/// A Speed>0 GO with no hits but a ground point spawns one projectile at it (`0x6e8a50`'s empty-hit
-/// arm), whose arrival rings `SpellVisual` column 24's kit sound at the landing point.
+/// A Speed>0 GO with no hits but a ground point spawns one projectile at it, whose arrival rings
+/// `SpellVisual` column 24's kit sound at the landing point.
 #[test]
 fn a_targetless_dest_go_spawns_a_ground_missile_whose_arrival_sounds_at_the_point() {
     const GROUND: u32 = 1543; // Flare's shape: speed>0, dest-targeted, empty hit list
@@ -1165,8 +1166,8 @@ fn a_despawned_subject_never_panics_the_router() {
     }
 }
 
-/// The `0x400` weapon-visual hold (`0x60d020`): a ranged spell's visual play inserts [`RangedHold`]
-/// on any caster, and a non-ranged play clears it (the stale-visual cleanup `0x6ec39e`).
+/// The `0x400` weapon-visual hold: a ranged spell's visual play inserts [`RangedHold`] on any
+/// caster, and a non-ranged play clears it.
 #[test]
 fn ranged_visual_play_arms_the_any_caster_hold_and_a_non_ranged_play_clears_it() {
     let mut app = app();
@@ -1198,9 +1199,9 @@ fn ranged_visual_play_arms_the_any_caster_hold_and_a_non_ranged_play_clears_it()
     );
 }
 
-/// The mount poof, as `0x5ffa50` gives it: only the build leg allocates it, behind
-/// `0x5ffa87 je 0x5ffade` on the new value, so a dismount is silent; any changed value puffs; and
-/// a unit streaming in already mounted does not.
+/// The mount poof, as the reference gives it: only the build leg allocates it, behind a test on the
+/// new value, so a dismount is silent; any changed value puffs; and a unit streaming in already
+/// mounted does not.
 #[test]
 fn the_mount_poof_puffs_on_the_build_leg_only() {
     use benilla_protocol::ObjectFields;
@@ -1210,7 +1211,7 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
     /// The shipped path of `SpellVisualEffectName` row 1185, the druid-morph cloud.
     const POOF: &str = "Spells\\DruidMorph_Impact_Base.mdx";
     const POOF_FX: u32 = 1185;
-    /// The M2 attach the hardcoded-effect spawn stamps (`0x80c968[6]`).
+    /// The M2 attach the hardcoded-effect spawn stamps.
     const BASE_ATTACH: u16 = 0x13;
 
     let mut app = App::new();
@@ -1290,9 +1291,9 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
     );
 }
 
-/// A kit with a chain `CharProc` emits a `ChainProcPlay` from both dispatcher sites:
-/// `PlaySpellVisualKit`'s tail (the cast release) and the channel poll (`0x612b18`), the only way
-/// a channelled beam is reached.
+/// A kit with a chain `CharProc` emits a `ChainProcPlay` from both dispatcher sites: the kit
+/// player's tail (the cast release) and the channel poll, the only way a channelled beam is
+/// reached.
 #[test]
 fn a_kit_with_a_chain_char_proc_asks_for_a_beam_from_both_dispatcher_sites() {
     use benilla_formats::{char_proc_type, CharProc};
@@ -1372,7 +1373,7 @@ fn a_kit_with_a_chain_char_proc_asks_for_a_beam_from_both_dispatcher_sites() {
             .collect()
     };
 
-    // Site 1, the cast release (`0x60f35c`).
+    // Site 1, the cast release.
     let unit = app.world_mut().spawn_empty().id();
     app.world_mut()
         .write_message(cast_event(unit, BEAM_SPELL, CastEventKind::Go));
@@ -1388,8 +1389,8 @@ fn a_kit_with_a_chain_char_proc_asks_for_a_beam_from_both_dispatcher_sites() {
     app.update();
     assert!(plays(&mut app).is_empty(), "a beam-less kit stays silent");
 
-    // Site 2, the channel poll (`0x612b18`), on the rising edge of `UNIT_CHANNEL_SPELL`: the only
-    // play of a channel kit.
+    // Site 2, the channel poll, on the rising edge of `UNIT_CHANNEL_SPELL`: the only play of a
+    // channel kit.
     let channeller = app
         .world_mut()
         .spawn(crate::net::ObjectStore(
@@ -1679,11 +1680,11 @@ fn a_shooter_with_no_ranged_weapon_resolves_no_clip_at_all() {
     );
 }
 
-/// A state kit's anim id is a compare, never a play: `0x60edf0`'s one play site
-/// (`0x60f3c5 call 0x5fe2f0`) is skipped for stage 2 (`0x60f387 jne`), the stage both field-4 users
-/// play (the aura watcher and the impact hand-off `0x61dced`), so the id only feeds `0x60f390`'s
-/// compare and a base recompute. Charge (22911) plays Knockdown (121) from impact kit 348; state
-/// kit 349's Stun (14) is a recompute, which Knockdown's base-animation lock refuses.
+/// A state kit's anim id is a compare, never a play: the kit player's one play site is skipped for
+/// stage 2, the stage both field-4 users play (the aura watcher and the impact hand-off), so the id
+/// only feeds the reference's armed-id compare and a base recompute. Charge (22911) plays Knockdown
+/// (121) from impact kit 348; state kit 349's Stun (14) is a recompute, which Knockdown's
+/// base-animation lock refuses.
 #[test]
 fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
     const CHARGE: u32 = 22911;

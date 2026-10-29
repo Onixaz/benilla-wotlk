@@ -15,7 +15,7 @@ pub struct BattlefieldPositionView {
 }
 
 /// A flag carrier: the position and the flag's token, `"AllianceFlag"` or `"HordeFlag"`
-/// (`GetFlagToken`, `0x54d010`).
+/// (`0x54d010`).
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct BattlefieldFlagView {
     pub uv: (f32, f32),

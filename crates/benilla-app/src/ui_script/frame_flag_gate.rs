@@ -3,9 +3,9 @@
 //!
 //! Our side is read off the loaded engine (`IsToplevel`, `IsMouseEnabled`, `GetID`, `GetParent`),
 //! never our XML: a renamed template hides from a name-keyed diff, and a mouse handler in
-//! `<Scripts>` reaches the same enable as `enableMouse=` (`0x76af00(2,-1)`). The reference side is
-//! its XML off the player's chain, so a `SetID` or `EnableMouse` it makes from Lua reads as absent,
-//! which can only under-report.
+//! `<Scripts>` reaches the same enable as `enableMouse=`. The reference side is its XML off the
+//! player's chain, so a `SetID` or `EnableMouse` it makes from Lua reads as absent, which can only
+//! under-report.
 //!
 //! A parent comes from `parent=`, on the element or a template it inherits, or from nesting in
 //! another frame's `<Frames>`. It decides whether a frame can show over a fullscreen panel:
@@ -42,8 +42,8 @@ const FRAME_TAGS: &[&str] = &[
     "WorldFrame",
 ];
 
-/// The `<Scripts>` handlers that auto-enable the mouse (the kind-2 OR-chain,
-/// `0x769fb7`..`0x76a022`); `OnDragStop` and `OnReceiveDrag` enable nothing.
+/// The `<Scripts>` handlers that auto-enable the mouse (the kind-2 OR-chain); `OnDragStop` and
+/// `OnReceiveDrag` enable nothing.
 const MOUSE_HANDLERS: &[&str] = &[
     "OnEnter",
     "OnLeave",
@@ -244,7 +244,7 @@ fn declares_handler(
     own || inherits(el).any(|t| declares_handler(t, frames, handlers, depth + 1))
 }
 
-/// Whether the reference frame takes the mouse once loaded: `0x76af00(2, -1)` is reached from its
+/// Whether the reference frame takes the mouse once loaded: the mouse enable is reached from its
 /// constructor, `enableMouse`, or an auto-enabling handler.
 fn reference_takes_mouse(name: &str, frames: &HashMap<String, Element>) -> bool {
     let Some(el) = frames.get(name) else {

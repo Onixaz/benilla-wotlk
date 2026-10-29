@@ -3,7 +3,7 @@
 //! ([`build_dressup_preview`]), whose try-ons nobody in the world wears. Each reduces its look to
 //! a [`PreviewSpec`], and [`assemble`] builds it the world's way: the display cache, the geoset
 //! filter, the composited body, the cloak, and the helm, shoulders and held weapons as riders
-//! (the select build `0x4e3cd0` holds weapons in the hands, `AddHandItem` `0x4eacd0`).
+//! (the select build `0x4e3cd0` holds weapons in the hands, through its hand attach `0x4eacd0`).
 
 use benilla_formats::CharSkinSlot;
 use benilla_protocol::{
@@ -35,15 +35,15 @@ const ENUM_CLOAK: usize = 14;
 /// Main hand, off hand, ranged: [`placement`]'s held slots 0, 1, 2.
 const ENUM_HELD: [usize; 3] = [15, 16, 17];
 
-/// The class `CCharacterCreation::Dress` branches on (`0x4e1267`).
+/// The class the create dresser branches on (`0x4e1267`).
 const CLASS_HUNTER: u8 = 3;
 /// The `InventoryType`s the create dresser skips or reroutes.
 const INVTYPE_HEAD: u8 = 1;
 const INVTYPE_BAG: u8 = 18;
 
-/// An item's `InventoryType` as its `EQUIPMENT_SLOT_*` index, so a CharStartOutfit item lands
-/// where a select record carries it (the compositor's render slots, `0x478cb0`); `None` for a
-/// type that never renders.
+/// An item's `InventoryType` as its `EQUIPMENT_SLOT_*` index, so a CharStartOutfit item lands where
+/// a select record carries it (the compositor's render slots); `None` for a type that never
+/// renders.
 pub(crate) fn equip_slot(inv_type: u8) -> Option<usize> {
     Some(match inv_type {
         1 => 0,             // HEAD
@@ -65,8 +65,8 @@ pub(crate) fn equip_slot(inv_type: u8) -> Option<usize> {
     })
 }
 
-/// A create look's equipment and quiver bags, dressed as `CCharacterCreation::Dress`
-/// (`0x4e0fd0`) walks its CharStartOutfit row.
+/// A create look's equipment and quiver bags, dressed as the create dresser (`0x4e0fd0`) walks its
+/// CharStartOutfit row.
 fn create_outfit(
     outfit: &[benilla_formats::StartOutfitItem],
     class: u8,
@@ -119,11 +119,10 @@ fn select_hold(equipment: &mut [CharEnumItem; 19], class: u8) -> RangedHold {
 pub(in crate::entities) enum RangedHold {
     /// Not at all: a non-Hunter's select and create builds.
     Skip,
-    /// Ranged-drawn, [`placement`]'s ranged arm: a bow left, the rest right. The dressing room
-    /// (`0x504d90`, remap `0x504b7c` to `0x504b44`, literal sheath 0 `0x504adc`) and a Hunter's
-    /// create look (`0x4e128e`, a gun's main-hand flag) both land here.
+    /// Ranged-drawn, [`placement`]'s ranged arm: a bow left, the rest right. The dressing room and
+    /// a Hunter's create look (`0x4e128e`, a gun's main-hand flag) both land here.
     Drawn,
-    /// In the left hand whatever the weapon: the select build passes `AddHandItem` a false
+    /// In the left hand whatever the weapon: the select build passes its hand attach a false
     /// main-hand flag (`0x4e41f7`), which puts the ranged slot on `HandLeft`.
     LeftHand,
 }
@@ -147,10 +146,9 @@ pub(in crate::entities) struct PreviewSpec {
     pub(in crate::entities) emblem: Option<benilla_formats::GuildEmblem>,
     /// `CHARACTER_FLAG_*` bits; only hide-helm and hide-cloak are read.
     pub(in crate::entities) flags: u32,
-    /// The ranged slot's hold ([`RangedHold`]); `ranged_in_hand` documents the dressing room's:
-    /// its remap (`0x504b7c` to
-    /// `0x504b44`) and literal sheath 0 (`0x504adc`) put a tried-on ranged weapon in a hand
-    /// whatever its SheatheType, as [`placement`]'s ranged arm does: a bow left, the rest right.
+    /// The ranged slot's hold ([`RangedHold`]); `ranged_in_hand` documents the dressing room's: its
+    /// remap and literal sheath 0 put a tried-on ranged weapon in a hand whatever its SheatheType,
+    /// as [`placement`]'s ranged arm does: a bow left, the rest right.
     pub(in crate::entities) ranged_in_hand: RangedHold,
     /// The bags, in slot order; the last whose display has a model rides the quiver point
     /// (create `0x4e132f`, select `0x4e418b`). 0 for an empty slot.
@@ -196,8 +194,8 @@ pub(in crate::entities) fn build_glue_preview(
     mut skin_composites: ResMut<SkinComposites>,
     asset_server: Res<AssetServer>,
     mut mats: benilla_world::model_render::M2BatchMaterials,
-    // The ghost kit (`0x47280f`): its `SpellVisualKit` row, and the world's spell-effect model
-    // cache its models load through.
+    // The ghost kit: its `SpellVisualKit` row, and the world's spell-effect model cache its models
+    // load through.
     visuals: Option<Res<crate::creature_anim::SpellVisuals>>,
     mut fx: Option<ResMut<super::super::spell_fx::SpellFx>>,
     mut state: Local<PreviewState>,
@@ -251,7 +249,7 @@ pub(in crate::entities) fn build_glue_preview(
     };
 
     // A select look carries its roster record; a create look wears its (race, class, sex)
-    // CharStartOutfit as `CCharacterCreation::Dress` (`0x4e0fd0`) does, with no hide flags.
+    // CharStartOutfit as the create dresser (`0x4e0fd0`) does, with no hide flags.
     let (equipment, flags, ranged_in_hand, bags) = match look {
         GlueLook::Create(l) => {
             let outfit = char_create.0.start_outfit(l.race, l.class, l.sex);
@@ -415,8 +413,7 @@ pub(in crate::entities) fn build_dressup_preview(
         equipment: look.equipment,
         emblem: look.emblem,
         // No hide flags: `crate::ui_dressup` already left out a hidden worn helm or cloak, as
-        // `SetUnit` (`0x505d70`) clones the live display pointers (`0x476cb0`), and a mask here
-        // would hide a tried-on one.
+        // `SetUnit` clones the live display pointers, and a mask here would hide a tried-on one.
         flags: 0,
         // The ranged slot here only holds a try-on: `SetUnit` clones the live model, which shows
         // a ranged weapon only while ranged-drawn, so `crate::ui_dressup` leaves a worn one out.
@@ -464,9 +461,9 @@ pub(in crate::entities) fn build_dressup_preview(
     state.built = true;
 }
 
-/// The character-select ghost's `SpellVisualKit` row, hard-coded as in the reference: `0x47280f`
-/// loads `idmap[989]` behind the bound check at `0x4727f6`. It is `SpellVisual` 886's state kit,
-/// spell 8326 Ghost's, which a released ghost in the world rides too (`0x5ff350`).
+/// The character-select ghost's `SpellVisualKit` row, hard-coded as in the reference, which loads
+/// `idmap[989]` behind a bound check. It is `SpellVisual` 886's state kit, spell 8326 Ghost's,
+/// which a released ghost in the world rides too.
 const GLUE_GHOST_KIT: u32 = 989;
 
 /// The ghost kit's share of a select bake: the body's tint and alpha, and its effect models as
@@ -479,10 +476,8 @@ struct GhostArm {
 }
 
 /// Resolve [`GLUE_GHOST_KIT`] against the kit catalog and the body's attachments; `pending` is set
-/// while an effect model loads. The tint and alpha decode through
-/// [`crate::aura_visual::node_for`], the reference's `0x60dbfc` table, as the world aura does, but
-/// land instantly (`0x4727f0` writes them through `0x710cb0`/`0x710cf0`), with no 1000 ms
-/// `StartAlphaFade`.
+/// while an effect model loads. The tint and alpha decode through [`crate::aura_visual::node_for`],
+/// the reference's table, as the world aura does, but land instantly, with no 1000 ms alpha fade.
 fn glue_ghost_arm(
     body: &super::super::DisplayModel,
     visuals: &benilla_formats::SpellVisualCatalog,
@@ -512,8 +507,8 @@ fn glue_ghost_arm(
     // `Spells\Ghost_state.mdx` at Base (`0x13`), emitters only, but the row is data.
     let (mut riders, mut billboards, mut effects) = (Vec::new(), Vec::new(), Vec::new());
     for (tag, effect_id) in kit_row.effects() {
-        // The select build hangs models on the character alone (`0x472780` to `0x712f70`), so a
-        // world-planted effect has nowhere to go.
+        // The select build hangs models on the character alone, so a world-planted effect has
+        // nowhere to go.
         if tag == benilla_formats::WORLD_EFFECT_TAG {
             continue;
         }
@@ -521,8 +516,7 @@ fn glue_ghost_arm(
             continue;
         };
         let path = path.to_string();
-        // `0x472780` rejects a `-1` attach id (`jl 0x4727dd`); a body without the point hangs
-        // nothing.
+        // The reference rejects a `-1` attach id; a body without the point hangs nothing.
         let Some(point) = body.attachments.iter().find(|a| a.id == tag) else {
             continue;
         };
@@ -629,8 +623,8 @@ fn assemble(spec: &PreviewSpec, ctx: &mut PreviewCtx<'_, '_>) -> Option<Assemble
             visual: 0, // the quiver install passes a literal 0
         });
     }
-    // Grip `[right, left]`: a hand whose attach point holds something closes (`0x5059a0`); a
-    // shield sits on the forearm point, so its hand stays open.
+    // Grip `[right, left]`: a hand whose attach point holds something closes; a shield sits on the
+    // forearm point, so its hand stays open.
     let grip = [
         held.iter().any(|w| w.attach == attach_id::HAND_RIGHT),
         held.iter().any(|w| w.attach == attach_id::HAND_LEFT),
@@ -673,7 +667,7 @@ fn assemble(spec: &PreviewSpec, ctx: &mut PreviewCtx<'_, '_>) -> Option<Assemble
         }
     }
 
-    // The world path's geoset selection, the helm's hide-mask rows included (`0x4799a0`).
+    // The world path's geoset selection, the helm's hide-mask rows included.
     let eg = equip_geosets(ctx.displays.as_deref(), &bodyslots, cloak, helm, false);
     let eye_glow = char_look.eye_glow(ctx.sections);
     let visible = ctx.characters.map(|c| {
@@ -748,8 +742,8 @@ fn assemble(spec: &PreviewSpec, ctx: &mut PreviewCtx<'_, '_>) -> Option<Assemble
 
     // Each want seats at the body's attach point: its meshes, billboard batches and emitters, and
     // for a held weapon the same off each glow model its `ItemVisuals` id names, reached as in the
-    // world (`0x472c91` to `0x47a0c0` hands `ItemDisplayInfo+0x58` to `0x4798c0`). The enum has
-    // no enchant ids (vmangos `Player.cpp:1724`), so no enchant glow shows here.
+    // world (through `ItemDisplayInfo+0x58`). The enum has no enchant ids (vmangos
+    // `Player.cpp:1724`), so no enchant glow shows here.
     let attach_point = |id: u16| dm.attachments.iter().find(|a| a.id == id);
     let mut riders = Vec::new();
     let mut preview_effects = Vec::new();
@@ -878,8 +872,8 @@ struct HeldWant {
 
 /// A preview's helm, shoulder pair and held weapons. The glue builds pass SheatheType 0
 /// (`0x4e4202`), so weapons go to the hands (main hand right, off hand left, a shield to its
-/// point): [`placement`]'s melee-drawn arm. A held off-hand frill takes the same hand law;
-/// `0x47a0c0` is traced for weapons and shields only. `ranged` places the ranged slot.
+/// point): [`placement`]'s melee-drawn arm. A held off-hand frill takes the same hand law; the
+/// reference's hand attach is traced for weapons and shields only. `ranged` places the ranged slot.
 fn held_wants(
     equipment: &[CharEnumItem; 19],
     helm: u32,
@@ -1069,8 +1063,8 @@ fn assemble_pet(
                 skinned_mesh: p.skinned_mesh.clone(),
                 material: p.material.clone(),
                 alpha_anim: p.alpha_anim.clone(),
-                // The pet hangs on the scene, never the character (`0x47306e`), so it is never
-                // ghosted with its owner; the twins are the batch's all the same.
+                // The pet hangs on the scene, never the character, so it is never ghosted with its
+                // owner; the twins are the batch's all the same.
                 twins: BoothTwins {
                     blend: p.fade_blend.clone(),
                     zfill: p.zfill.clone(),
@@ -1097,7 +1091,7 @@ fn assemble_pet(
             .collect(),
         // `parts` and `emitters` land together, so the `parts` gate covers both.
         emitters: model.emitters.clone(),
-        // The family's level ramp overwrites the display's scale product (`0x472e87`).
+        // The family's level ramp overwrites the display's scale product.
         scale: families
             .and_then(|f| f.families.pet_scale(want.family, want.level))
             .or_else(|| creatures.model_scale(display_id))
@@ -1133,7 +1127,7 @@ mod tests {
 
     /// Against the shipped `SpellVisualKit.dbc`: row 989's `+0x3c` reads
     /// `01 00 00 00  0e 00 00 00  ff ff ff ff  ff ff ff ff  fd b9 0c 4b  00 00 00 3f`, and it fills
-    /// one effect slot, at Base (`0x13`); `0x472780` rejects the other eight `-1`s.
+    /// one effect slot, at Base (`0x13`); the reference rejects the other eight `-1`s.
     #[test]
     fn the_shipped_ghost_kit_decodes_to_the_verified_row() {
         let data = benilla_formats::wow_data_or_skip!();

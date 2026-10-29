@@ -19,7 +19,7 @@ pub const GROUP_MEMBER_MAIN_TANK: u8 = 0x08;
 pub const GROUP_MEMBER_MAIN_ASSIST: u8 = 0x10;
 
 /// The member status bits: an `SMSG_GROUP_LIST` row's byte and the low byte of a member record's
-/// `u16` (`[rec+8]`, written by `0x6cfa96` and `FillPartyMemberState 0x6e12e0`).
+/// `u16` (`[rec+8]`, written by `0x6cfa96` and the member-state fill `0x6e12e0`).
 pub mod member_status {
     pub const OFFLINE: u8 = 0x00;
     pub const ONLINE: u8 = 0x01;
@@ -92,9 +92,9 @@ pub struct GroupMemberEntry {
 
 impl GroupMemberEntry {
     /// Whether the row's status byte marks the member online for the record write: a non-zero byte,
-    /// the client's own test for a party slot (`0x5e6c3b`) and a raid row (`0x4ba951`), where bit 0
-    /// alone is not asked. vmangos sends 0 for an absent member and a byte with bit 0 set for a
-    /// present one (`Group/Group.cpp:45-63`), so the two tests agree on its lists.
+    /// the client's own test for a party slot and a raid row, where bit 0 alone is not asked.
+    /// vmangos sends 0 for an absent member and a byte with bit 0 set for a present one
+    /// (`Group/Group.cpp:45-63`), so the two tests agree on its lists.
     pub fn listed_online(&self) -> bool {
         self.status != 0
     }
@@ -151,7 +151,7 @@ pub(super) struct GroupList {
 const GROUP_TYPE_BATTLEGROUND: u8 = 0x01;
 /// 3.3.5a's group-type raid bit (`0x6d8870` tests `& 2`); `& 1` is a battleground group.
 const GROUP_TYPE_RAID: u8 = 0x02;
-/// 3.3.5a's group-type LFG-restricted bit, `SetLfgRestricted`'s argument (`0x6d8da2`).
+/// 3.3.5a's group-type LFG-restricted bit, the argument of the LFG-restricted set (`0x6d8da2`).
 const GROUP_TYPE_LFG_RESTRICTED: u8 = 0x04;
 /// 3.3.5a's group-type LFG bit: an LFG list carries a status byte and the dungeon slot.
 const GROUP_TYPE_LFG: u8 = 0x08;
@@ -356,7 +356,7 @@ pub fn patch_auras(record: &mut Option<Vec<RecordAura>>, patch: &[RecordAura]) {
 
 impl PartyMemberStatsInfo {
     /// The record of a member new to the roster: 1/1 health and power, so an unseen member shows
-    /// full bars until stats arrive (`0x4e833d`), and the roster's online bit.
+    /// full bars until stats arrive, and the roster's online bit.
     pub fn placeholder(online: bool) -> Self {
         Self {
             status: Some(u16::from(online)),
@@ -368,9 +368,8 @@ impl PartyMemberStatsInfo {
         }
     }
 
-    /// The record's online bit (`[rec+8] & 1`), the bit the readers test (`0x4e8227`, `0x4e816b`,
-    /// `0x4e8884`, `0x519741`, `UnitIsConnected`'s `0x517dd3`). A record with no status yet reads
-    /// as the zeroed word of a fresh one, offline.
+    /// The record's online bit (`[rec+8] & 1`), the bit the readers test (`UnitIsConnected`'s). A
+    /// record with no status yet reads as the zeroed word of a fresh one, offline.
     pub fn is_online(&self) -> bool {
         self.has_status(member_status::ONLINE)
     }
@@ -387,17 +386,16 @@ impl PartyMemberStatsInfo {
         self.status.unwrap_or(0) & 0x200 != 0
     }
 
-    /// Set or clear the record's online bit (`[rec+8] & 1`), the other bits of its status as
-    /// they were: the write `SMSG_GROUP_LIST` makes to a member it lists, from that row's status
-    /// (`0x4e8361`-`0x4e837b`, raid `0x4ba947`-`0x4ba960`). A record with no status yet reads as
-    /// the zeroed word of a fresh one.
+    /// Set or clear the record's online bit (`[rec+8] & 1`), the other bits of its status as they
+    /// were: the write `SMSG_GROUP_LIST` makes to a member it lists, from that row's status. A
+    /// record with no status yet reads as the zeroed word of a fresh one.
     pub fn set_online(&mut self, online: bool) {
         let status = self.status.unwrap_or(0);
         let bit = u16::from(member_status::ONLINE);
         self.status = Some(if online { status | bit } else { status & !bit });
     }
 
-    /// Fill the record from a member's live descriptor as `FillPartyMemberState 0x6e12e0` does,
+    /// Fill the record from a member's live descriptor as the member-state fill `0x6e12e0` does,
     /// when the member's object leaves view and just before the stats request, so the frame never
     /// reads 0/0. Values are raw; [`Self::shown_power`] divides at the read. `auras` are the
     /// member's live `(spell id, flags)` in slot order: each with an effect bit (`flags & 0x7`) is
@@ -465,20 +463,20 @@ impl PartyMemberStatsInfo {
         self.power_type.unwrap_or(0)
     }
 
-    /// `UnitMana` from the record (`0x517744`): the stored power divided by
-    /// [`power_display_scale`], as for a live unit.
+    /// `UnitMana` from the record: the stored power divided by [`power_display_scale`], as for a
+    /// live unit.
     pub fn shown_power(&self) -> u32 {
         u32::from(self.cur_power.unwrap_or(0))
             / power_display_scale(u32::from(self.shown_power_type()))
     }
 
-    /// `UnitManaMax` from the record (`0x5178af`), the same divide.
+    /// `UnitManaMax` from the record, the same divide.
     pub fn shown_max_power(&self) -> u32 {
         u32::from(self.max_power.unwrap_or(0))
             / power_display_scale(u32::from(self.shown_power_type()))
     }
 
-    /// `UnitPowerType` from the pet block (`+0xd8`, `0x5179d2`'s pet leg), 0 when it has none.
+    /// `UnitPowerType` from the pet block (`+0xd8`), 0 when it has none.
     pub fn shown_pet_power_type(&self) -> u8 {
         self.pet_power_type.unwrap_or(0)
     }

@@ -129,13 +129,12 @@ fn reset(table: &mut [ChatTypeColor]) {
     }
 }
 
-/// ASCII case-insensitive and nothing wider: the reference's compare folds only `A` to `Z`
-/// (`0x64a4c0`, `0x414310`).
+/// ASCII case-insensitive and nothing wider: the reference's compare folds only `A` to `Z`.
 fn position(table: &[ChatTypeColor], name: &str) -> Option<usize> {
     table.iter().position(|e| e.name.eq_ignore_ascii_case(name))
 }
 
-/// Truncates, never rounds: the reference's `fmul 255.0; __ftol` (`0x4a085f`-`0x4a08a3`).
+/// Truncates, never rounds: the reference's `fmul 255.0; __ftol`.
 fn to_byte(x: f64) -> u8 {
     if !x.is_finite() {
         return 0;
@@ -143,8 +142,8 @@ fn to_byte(x: f64) -> u8 {
     ((x * 255.0).trunc() as i64) as u8
 }
 
-/// `UPDATE_CHAT_COLOR`'s value: the stored byte times the f32 reciprocal of 255 (`0x8026c8`), so
-/// an addon that passed `0.5` hears `127/255`.
+/// `UPDATE_CHAT_COLOR`'s value: the stored byte times the f32 reciprocal of 255, so an addon that
+/// passed `0.5` hears `127/255`.
 fn from_byte(b: u8) -> f64 {
     f64::from(b as f32 * (1.0f32 / 255.0f32))
 }

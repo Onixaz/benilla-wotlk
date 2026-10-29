@@ -63,7 +63,7 @@ pub fn activate_taxi(flightmaster_guid: u64, node1: u32, node2: u32) -> Vec<u8> 
 }
 
 /// Body of `CMSG_ACTIVATETAXIEXPRESS`: the whole multi-hop chain, sent when no direct `TaxiPath`
-/// edge joins the two nodes (client `0x4dbad0`), however many stops the drawn route has.
+/// edge joins the two nodes, however many stops the drawn route has.
 pub fn activate_taxi_express(flightmaster_guid: u64, total_cost: u32, nodes: &[u32]) -> Vec<u8> {
     let mut body = Vec::with_capacity(16 + nodes.len() * 4);
     body.extend_from_slice(&flightmaster_guid.to_le_bytes());
@@ -75,9 +75,8 @@ pub fn activate_taxi_express(flightmaster_guid: u64, total_cost: u32, nodes: &[u
     body
 }
 
-/// Read `SMSG_SHOWTAXINODES` (vmangos `TaxiHandler.cpp:82-96`): a `u32` gate, then, only when it
-/// is nonzero (client `0x5ece60`), the flight master, the nearest node and the [`TaxiMask`].
-/// vmangos always sends 1.
+/// Read `SMSG_SHOWTAXINODES` (vmangos `TaxiHandler.cpp:82-96`): a `u32` gate, then, only when it is
+/// nonzero, the flight master, the nearest node and the [`TaxiMask`]. vmangos always sends 1.
 pub(super) fn read_show_taxi_nodes(r: &mut &[u8]) -> io::Result<(u32, u64, u32, TaxiMask)> {
     let window = read_u32_le(r)?;
     if window == 0 {

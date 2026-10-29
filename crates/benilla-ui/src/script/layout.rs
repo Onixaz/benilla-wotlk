@@ -138,10 +138,10 @@ fn region_node_hash(data: &RegionData) -> u64 {
     node.finish()
 }
 
-/// A texture's content-derived span in FrameXML units. `CSimpleTexture::GetWidth` (`0x770720`,
-/// height `0x770790`) returns the authored value unless it is exactly 0.0, else the texel extent
-/// through the `<AbsDimension>` converter, so one texel is one unit; a `<Color>` texture spans 8.
-/// `None` when there is nothing to measure: the axis stays 0, as in the reference with no texture.
+/// A texture's content-derived span in FrameXML units. The texture's width read returns the
+/// authored value unless it is exactly 0.0, else the texel extent through the `<AbsDimension>`
+/// converter, so one texel is one unit; a `<Color>` texture spans 8. `None` when there is nothing
+/// to measure: the axis stays 0, as in the reference with no texture.
 pub(super) fn content_span(
     data: &RegionData,
     probe: Option<&crate::script::TextureSizeProbe>,
@@ -152,7 +152,7 @@ pub(super) fn content_span(
     texel_span(probe, data.texture.as_deref()?)
 }
 
-/// [`content_span`] for a path: SimpleHTML reserves an image's height the same way (`0x770790`).
+/// [`content_span`] for a path: SimpleHTML reserves an image's height the same way.
 pub(super) fn texel_span(
     probe: Option<&crate::script::TextureSizeProbe>,
     path: &str,
@@ -161,11 +161,11 @@ pub(super) fn texel_span(
     Some((w as f32, h as f32))
 }
 
-/// The edge of the 8×8 surface the colour `SetTexture` makes (`0x770360`, sized by `0x44a900`).
+/// The edge of the 8×8 surface the colour `SetTexture` makes.
 const SOLID_TEXTURE_TEXELS: f32 = 8.0;
 
-/// The floor under a FontString's derived span: `CSimpleFontString::GetWidth` (`0x772930`, height
-/// `0x772a60`) returns at least one FrameXML unit, not one line, so empty text reads back 1, not 0.
+/// The floor under a FontString's derived span: the font string's width read returns at least one
+/// FrameXML unit, not one line, so empty text reads back 1, not 0.
 pub(super) const FONTSTRING_MIN_SPAN: f32 = 1.0;
 
 /// Marks a [`LayoutScope::node_of`] index as one into `regions` rather than `plan`.
@@ -607,9 +607,9 @@ impl PreambleProf {
 }
 
 /// `OnSizeChanged`'s "after": queue `(id, width, height)` for each watched frame whose size moved
-/// by the `ApplyRect 0x76b580` test ([`crate::layout::size_changed`], `ε = _DAT_008029d4`), so a
-/// pure move never fires. A frame with no rect at entry compares against the zero rect
-/// `CSimpleFrame`'s ctor leaves; one that loses its rect had no `ApplyRect` and fires nothing.
+/// by the rect application's test ([`crate::layout::size_changed`], with the reference's `ε`), so a
+/// pure move never fires. A frame with no rect at entry compares against the zero rect the frame
+/// constructor leaves; one that loses its rect had no rect application and fires nothing.
 fn queue_size_changes(
     watched: &[(FrameHandle, Option<Rect>)],
     resolved: &crate::widget::HandleMap<FrameHandle, Rect>,
@@ -697,10 +697,10 @@ impl UiScript {
         let epoch_at_entry = model.layout_epoch;
         // Every call past tier 1 counts, verify's re-walks included: the walk is the cost.
         model.layout_gate_walks = model.layout_gate_walks.wrapping_add(1);
-        // ── `OnSizeChanged`'s "before" ───────────────────────────────────────────────────────
-        // The reference fires it per rect application (`ApplyRect 0x76b580`); our batch fixpoint
-        // fires on the entry-vs-convergence diff, never on a half-solved round. Only frames with
-        // a handler are snapshotted, from `SetScript`'s list.
+        // ── `OnSizeChanged`'s "before" ─────────────────────────────────────────────────────── The
+        // reference fires it per rect application; our batch fixpoint fires on the
+        // entry-vs-convergence diff, never on a half-solved round. Only frames with a handler are
+        // snapshotted, from `SetScript`'s list.
         let watched: Vec<(FrameHandle, Option<Rect>)> = model
             .on_size_changed_frames
             .iter()
@@ -981,9 +981,9 @@ impl UiScript {
                         width = m.w;
                     }
                 }
-                // Then the floor: `CSimpleFontString::GetWidth 0x772930` (height `0x772a60`)
-                // returns at least one unit on both legs, past the `jp 0x772957` that skips the
-                // measure, so a FontString's span is never 0 and a single anchor resolves it.
+                // Then the floor: the font string's width read returns at least one unit on both
+                // legs, past the `jp` that skips the measure, so a FontString's span is never 0 and
+                // a single anchor resolves it.
                 if is_fontstring {
                     width = width.max(FONTSTRING_MIN_SPAN);
                     height = height.max(FONTSTRING_MIN_SPAN);
@@ -1011,12 +1011,12 @@ impl UiScript {
                     // no rect here, though the solver holds one.
                     (id != SCREEN).then(|| solver.rect(id)).flatten()
                 });
-                // An axis resolves, or the region does not. The reference resolver core
-                // `[0x7671a0, 0x76761f)` reads no parent or owner pointer, only the region's own
-                // anchors and `combineEdge`/`combineCenter` over its own size; `assemble 0x767a20`
-                // fails on any unset edge, and `0x768d20` latches the region unresolvable. An
-                // anchor-less region is anchored at creation (`region::implicit_creation_anchor`),
-                // and a texture with no art has a zero span and resolves to nothing (`0x767440`).
+                // An axis resolves, or the region does not. The reference resolver core reads no
+                // parent or owner pointer, only the region's own anchors and
+                // `combineEdge`/`combineCenter` over its own size; `assemble` fails on any unset
+                // edge, and the reference latches the region unresolvable. An anchor-less region is
+                // anchored at creation (`region::implicit_creation_anchor`), and a texture with no
+                // art has a zero span and resolves to nothing.
                 let axis = |lo: Option<f32>, hi: Option<f32>| -> Option<(f32, f32)> {
                     match (lo, hi) {
                         (Some(l), Some(h)) => Some((l, h)),
@@ -1156,8 +1156,8 @@ impl UiScript {
 
         // A live ScrollFrame's live child is anchored, for this solve only, TOPLEFT to its TOPLEFT
         // at the raw, unnegated `(horizontal, vertical)` offsets, as the reference's re-anchor
-        // `0x787100` passes them to `SetPoint`: y up, so a positive vertical lifts the child. Its
-        // authored anchors and size are untouched, so `SetScrollChild(nil)` needs no restore.
+        // passes them to `SetPoint`: y up, so a positive vertical lifts the child. Its authored
+        // anchors and size are untouched, so `SetScrollChild(nil)` needs no restore.
         let mut scroll_child_anchor: HashMap<FrameHandle, Anchor> = HashMap::new();
         for &(h, id) in &ids {
             let Some(frame) = arena.frame(h) else {

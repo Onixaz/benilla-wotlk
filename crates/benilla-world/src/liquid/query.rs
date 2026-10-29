@@ -23,8 +23,8 @@ fn flood_of(room: WmoRoom, placements: &RoomPlacements) -> Option<LiquidKind> {
         .and_then(|i| i.flooded.get(room.group as usize).copied().flatten())
 }
 
-/// The camera eye's claim: the environment probe `0x6809c0` samples the containing map-object's
-/// MLIQ when `[0xc7b748]` names one, else the ADT liquid.
+/// The camera eye's claim: the environment probe samples the containing map-object's MLIQ when the
+/// claim names one, else the ADT liquid.
 pub fn camera_claim(claim: &CameraInteriorClaim, placements: &RoomPlacements) -> LiquidClaim {
     match claim.0 {
         Some(c) => LiquidClaim::Inside {
@@ -61,15 +61,14 @@ pub fn unit_claim(room: Option<&UnitWmoRoom>, placements: &RoomPlacements) -> Li
 
 /// Which liquid the camera eye is in, set by [`detect_submersion`]. Lighting selects the whole
 /// submerged atmosphere from it, with no overlay quad: water and ocean take the zone's underwater
-/// `LightParams` slot, magma and slime fixed global rows (`0x6d2371`).
+/// `LightParams` slot, magma and slime fixed global rows.
 #[derive(Resource, Default)]
 pub struct Underwater(pub(crate) benilla_formats::Submersion);
 
 /// Where a surface came from and, for WMO liquid, whose room it is: the scope key for
-/// [`liquid_at`]. The reference's terrain query `0x69b6d0` tries the map-object leg `0x69b520`
-/// first, which moves the point into each map-object's own space before sampling MLIQ, then the
-/// ADT; the camera probe `0x6809c0` samples the current group's MLIQ (`0x6b9f10`) when
-/// `[0xc7b748]` names a containing map-object, else the ADT query (`0x6723d0` → `0x69b6d0`).
+/// [`liquid_at`]. The reference's terrain query tries the map-object leg first, which moves the
+/// point into each map-object's own space before sampling MLIQ, then the ADT; the camera probe
+/// samples the current group's MLIQ when a containing map-object is claimed, else the ADT query.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum LiquidSource {
     /// An ADT map-chunk surface (MCLQ).
@@ -85,11 +84,11 @@ pub struct WmoPool {
     /// (no portals, no `WMOAreaTable` identity), which no interior claim can then reach.
     pub(crate) owner: Option<WmoRoom>,
     /// World WoW Z of the owning group's bounding-box floor: the pool claims no subject below it.
-    /// The reference's per-group box test (`0x6a4e00`) never picks an interior group: it skips
-    /// every group whose flags match its mask, and its one caller passes `0x2000`, the interior
-    /// flag (`0x69b570` → `0x69b575`). This floor bounds interior and exterior pools alike, in Z
-    /// only, since wet cells reach up to 25 yd outside their group's box in XY (Ahn'Qiraj,
-    /// Stratholme). `NEG_INFINITY` for unknown bounds, so a missing box fails open.
+    /// The reference's per-group box test never picks an interior group: it skips every group whose
+    /// flags match its mask, and its one caller passes `0x2000`, the interior flag. This floor
+    /// bounds interior and exterior pools alike, in Z only, since wet cells reach up to 25 yd
+    /// outside their group's box in XY (Ahn'Qiraj, Stratholme). `NEG_INFINITY` for unknown bounds,
+    /// so a missing box fails open.
     pub(crate) floor: f32,
     /// The world liquid query searches the group for an outdoor subject too
     /// ([`benilla_formats::WmoGroupInfo::liquid_queried`]); `false` for unknown bounds.
@@ -129,7 +128,7 @@ impl WmoPool {
 }
 
 /// Whose liquid answers for a subject: the player's room ([`PlayerWmoRoom`]), the camera eye's
-/// ([`CameraInteriorClaim`], the reference's `[0xc7b748]`) or a remote unit's own.
+/// ([`CameraInteriorClaim`]) or a remote unit's own.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LiquidClaim {
     /// In the open world: the ADT's liquid and the pools of groups the world query searches.
@@ -138,10 +137,10 @@ pub enum LiquidClaim {
     Inside {
         room: WmoRoom,
         /// The room's whole-group submersion override: its MOGP `groupLiquid` when not the `0xf`
-        /// sentinel. The group probe `0x6b9f10` reads it first and, when set, hits unconditionally:
-        /// the raw value as the kind, `FLT_MAX` as the height, no Z compare and no MLIQ test. None
-        /// of the 13 groups that set it has an MLIQ; it floods the Deeprun Tram's submerged
-        /// sections, the Prison Oubliette and two MD caves.
+        /// sentinel. The group probe reads it first and, when set, hits unconditionally: the raw
+        /// value as the kind, `FLT_MAX` as the height, no Z compare and no MLIQ test. None of the
+        /// 13 groups that set it has an MLIQ; it floods the Deeprun Tram's submerged sections, the
+        /// Prison Oubliette and two MD caves.
         flooded: Option<LiquidKind>,
     },
     /// No claim yet (a subject's first frame, before its tracker runs): both sources answer.
@@ -222,7 +221,7 @@ impl LiquidGrid {
         self.wet.get(j * cells_x + i)?.then_some((i, j, fx, fy))
     }
 
-    /// The surface height (WoW Z) in a cell: the bilinear over its four corners, as `0x6b7500`
+    /// The surface height (WoW Z) in a cell: the bilinear over its four corners, as the reference
     /// lerps along one axis and then the other.
     fn height_in_cell(&self, i: usize, j: usize, fx: f32, fy: f32) -> f32 {
         let z = |i: usize, j: usize| self.positions[j * self.cols + i][2];
@@ -466,7 +465,7 @@ pub fn liquid_at<'a>(
     wow: [f32; 3],
     claim: LiquidClaim,
 ) -> Option<LiquidHit> {
-    // The whole-group override answers first and alone, as `0x6b9f10` reads it before any grid;
+    // The whole-group override answers first and alone, as the reference reads it before any grid;
     // as one more candidate, `min_by` would hand the room to any lower sibling pool.
     if let LiquidClaim::Inside {
         flooded: Some(kind),
@@ -584,8 +583,8 @@ pub fn water_surface_at<'a>(
 
 // No wade constant: wading is the complement of swimming (`player::swim_enter_depth`).
 
-/// The eye's accept margin on the water kinds, `z < surface + 0.01` strict (`0x69b6d0`, compared
-/// at `0x69ba23` against the f32 `0x3c23d70a` at `0x8029d0`); the WMO magma/slime compare has none.
+/// The eye's accept margin on the water kinds, `z < surface + 0.01` strict (compared against the
+/// f32 `0x3c23d70a`); the WMO magma/slime compare has none.
 const SUBMERSION_EPS: f32 = 0.01;
 
 /// The submerged atmosphere a liquid kind selects.
@@ -611,9 +610,9 @@ pub(super) fn submersion_at<'a>(
 }
 
 /// The liquid a WoW position is submerged in and that surface's height, one pass for both, as the
-/// reference's probe writes the pair (`0x680a87`/`0x680ab0`). Every admitted kind counts; the
-/// position must be under a wet cell's bilinear surface, as `0x69b6d0` samples its 9×9 grid, and
-/// where surfaces stack the lowest one over the position wins.
+/// reference's probe writes the pair. Every admitted kind counts; the position must be under a wet
+/// cell's bilinear surface, as the reference samples its 9×9 grid, and where surfaces stack the
+/// lowest one over the position wins.
 pub(super) fn submersion_claim_at<'a>(
     liquids: impl Iterator<Item = &'a WaterChunkInfo>,
     wow: [f32; 3],
@@ -663,16 +662,15 @@ impl EyeLiquid<'_> {
 #[derive(bevy::prelude::Resource, Default, Clone, Copy)]
 pub struct SubmergedEye {
     /// `liquidSurfaceHeight − probeZ` in yards, positive when submerged and `0.0` when dry, as the
-    /// reference writes it at `0x680a87`/`0x680ab0`; drives the glare's 10 yd fade.
+    /// reference writes it; drives the glare's 10 yd fade.
     pub depth: f32,
     /// The eye's absolute world Z. The ocean ramp clamps it raw, `clamp(eye.z, −30, 0)`, since
-    /// ocean surfaces are pinned to z = 0 by a branch (`0x69ba85`), not by data.
+    /// ocean surfaces are pinned to z = 0 by a branch, not by data.
     pub eye_z: f32,
 }
 
 /// How far the near rectangle's lowest corner sits below the eye, `≤ 0` yd: `eye_z + drop` is the
-/// reference's probe height `min(eye.z, corner[0..3].z)`, its corners built from NDC z = −1
-/// (`0x5c43b0`).
+/// reference's probe height `min(eye.z, corner[0..3].z)`, its corners built from NDC z = −1.
 pub(super) fn lowest_near_corner_drop(rotation: Quat, fov: f32, aspect: f32, near: f32) -> f32 {
     let half_h = (fov * 0.5).tan() * near;
     let half_w = half_h * aspect;
@@ -685,10 +683,9 @@ pub(super) fn lowest_near_corner_drop(rotation: Quat, fov: f32, aspect: f32, nea
     drop
 }
 
-// The reference's camera probe spans `[0x6809c0, 0x680b90)`: it reads the render eye
-// `[0xc7cf20/24/28]`, samples one source, the current group's MLIQ (`0x6b9f10`) when `[0xc7b748]`
-// names a containing map-object, else the ADT liquid (`0x6723d0` → `0x69b6d0`), and writes
-// `[0xc7f288]`. `CameraInteriorClaim` comes off the down-ray that writes `[0xc7b748]`.
+// The reference's camera probe: it reads the render eye, samples one source, the current group's
+// MLIQ when a containing map-object is claimed, else the ADT liquid, and writes the eye's liquid
+// type. `CameraInteriorClaim` comes off the down-ray that writes the claim.
 pub(super) fn detect_submersion(
     mut underwater: ResMut<Underwater>,
     camera: Query<(&Transform, &Projection), With<WorldCamera>>,
@@ -704,9 +701,9 @@ pub(super) fn detect_submersion(
     };
     let claim = camera_claim(&eye_claim, &placements);
     let eye = bevy_to_wow(cam.translation);
-    // `0x6809c0` tests the eye's XY at the near rectangle's lowest point, `min(eye.z,
-    // corner[0..3].z)`, so the frame turns submerged as the view's leading corner reaches the
-    // surface and no under-surface view renders dry, with no camera constraint needed.
+    // The reference tests the eye's XY at the near rectangle's lowest point,
+    // `min(eye.z, corner[0..3].z)`, so the frame turns submerged as the view's leading corner
+    // reaches the surface and no under-surface view renders dry, with no camera constraint needed.
     let probe_z = match proj {
         Projection::Perspective(p) => {
             eye[2] + lowest_near_corner_drop(cam.rotation, p.fov, p.aspect_ratio, p.near)
@@ -882,7 +879,8 @@ mod tests {
         }
     }
 
-    /// A flooded room has no MLIQ at all, and `0x6b9f10`'s override leg runs before any Z compare.
+    /// A flooded room has no MLIQ at all, and the reference's override leg runs before any Z
+    /// compare.
     #[test]
     fn a_flooded_room_is_submerged_at_every_z_with_no_surface_in_the_world() {
         let claim = inside_flooded(1, LiquidKind::Still);
@@ -902,8 +900,8 @@ mod tests {
         }
     }
 
-    /// `0x6b9f10` reads `groupLiquid` before the grid, so a sibling pool never gets a vote, where
-    /// as a `min_by` candidate `FLT_MAX` would lose to it.
+    /// The reference reads `groupLiquid` before the grid, so a sibling pool never gets a vote,
+    /// where as a `min_by` candidate `FLT_MAX` would lose to it.
     #[test]
     fn the_override_outranks_a_sibling_pool_rather_than_losing_the_min() {
         let sibling = wet_footprint(

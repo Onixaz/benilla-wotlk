@@ -61,20 +61,20 @@ pub(crate) use mixer::Mixer;
 pub(crate) use ui::{AutoEquipSound, LootPickupSound};
 pub(crate) use zone::ExplorationSounds;
 
-/// The sound CVars. Defaults are the reference's registrations (`0x456fe0`, `0x460a60`):
-/// `MusicVolume` 0.4 and `AmbienceVolume` 0.6, every other volume 1.0.
+/// The sound CVars. Defaults are the reference's registrations: `MusicVolume` 0.4 and
+/// `AmbienceVolume` 0.6, every other volume 1.0.
 #[derive(Resource)]
 pub(crate) struct SoundConfig {
-    /// `Sound_EnableAllSound` (default "1", `0x4d1710`). The reference pauses the engine
-    /// (`0x457500` → `0x7a6570`); benilla zeroes every category in [`Self::category_amp`] and
-    /// channels run on silently, which sounds the same.
+    /// `Sound_EnableAllSound` (default "1", `0x4d1710`). The reference pauses the engine; benilla
+    /// zeroes every category in [`Self::category_amp`] and channels run on silently, which sounds
+    /// the same.
     pub enabled: bool,
     /// The dev chord + `M` mute: zeroes the main track only, so selection and channels run on and
     /// unmute is instant. Starts `false`; unattended runs open no device instead ([`SoundPlugin`]).
     pub muted: bool,
     /// Master volume, linear `[0,1]`, applied on the main track.
     pub master: f32,
-    /// The category sliders `[0,1]`, the pump's category factor (`0x7a5dc0`).
+    /// The category sliders `[0,1]`, the pump's category factor.
     pub sfx: f32,
     pub music: f32,
     pub ambience: f32,
@@ -86,16 +86,16 @@ pub(crate) struct SoundConfig {
     pub music_enabled: bool,
     pub ambience_enabled: bool,
     /// `Sound_EnableErrorSpeech` (default "1", `0x4d16c7`): gates only your own character's refusal
-    /// lines ([`vocal`]), read in `0x458250` before any escalation state moves.
+    /// lines ([`vocal`]), read before any escalation state moves.
     pub error_speech: bool,
     /// `Sound_EnableSoundWhenGameIsInBG` (default "0", `0x4d18c1`), sound while the window is
-    /// inactive. `false` is the reference: on `WM_ACTIVATE` alone
-    /// (`0x42d080` → `0x7a4860`) it calls `FSOUND_SetMute(-3, !active)`, muting every channel,
-    /// music included. It is a mute, not a pause: playback cursors keep moving.
+    /// inactive. `false` is the reference: on `WM_ACTIVATE` alone it calls
+    /// `FSOUND_SetMute(-3, !active)`, muting every channel, music included. It is a mute, not a
+    /// pause: playback cursors keep moving.
     ///
-    /// Deviation: the reference also refuses to open a new non-music stream while inactive
-    /// (`0x7a52bf`); benilla starts everything and gates the output, because a refusal at kit
-    /// start would make an unattended capture record silence.
+    /// Deviation: the reference also refuses to open a new non-music stream while inactive; benilla
+    /// starts everything and gates the output, because a refusal at kit start would make an
+    /// unattended capture record silence.
     pub background_sound: bool,
     /// `Sound_EnableReverb` (default "0", `0x4d125b`): gates both the zone preset and the
     /// per-channel wet send. Read by [`reverb::zone_reverb`].
@@ -104,41 +104,40 @@ pub(crate) struct SoundConfig {
     /// and the zone beds stay down, since the reference blocks on its world load; sounds already
     /// playing, such as the glue theme's fade tail, play out as the reference's do.
     pub world_hold: bool,
-    /// Not a CVar: set while a cinematic plays ([`feed_music_suppression`]), the reference's
-    /// `[0xb06cc8]`. The cinematic start (`0x48ed83`) reaches the same setter as `EnableMusic 0`
-    /// (`0x4603b0`), which stop-and-destroys the track (`0x7a5700`), a cut, never a fade, and the
-    /// music pump idles while it is set (`0x460040`).
-    /// Ambience is untouched: the cinematic never writes its flag (`[0x836424]`).
+    /// Not a CVar: set while a cinematic plays ([`feed_music_suppression`]), the reference's music
+    /// suppression flag. The cinematic start reaches the same setter as `EnableMusic 0`, which
+    /// stop-and-destroys the track, a cut, never a fade, and the music pump idles while it is set.
+    /// Ambience is untouched: the cinematic never writes its flag.
     ///
-    /// Kept apart from [`Self::music_enabled`]: the CVar persists to `Config.wtf`, so asserting
-    /// it would save music off for a player who quits mid-cinematic. So the reference's restore
-    /// latch (`[0xb4e278]`), needed there because its flag is the CVar itself, is not carried.
+    /// Kept apart from [`Self::music_enabled`]: the CVar persists to `Config.wtf`, so asserting it
+    /// would save music off for a player who quits mid-cinematic. So the reference's restore latch,
+    /// needed there because its flag is the CVar itself, is not carried.
     pub music_suppressed: bool,
     /// Deviation: `SoundOutputLimiter`, not a 1.12 CVar, default on, so overlapping full-scale
     /// kits are limited rather than clipped. The reference has no headroom mechanism and clips at
     /// full scale, as kira's hard clamp would (see [`limiter`]).
     pub limiter: bool,
-    /// `Sound_ListenerAtCharacter` (default "1", `0x4d17c5`), read once per frame at `0x483125`.
-    /// `1` puts the listener on the mover with the character's facing, `0` at the camera eye with
-    /// its basis; position and orientation always move together, with no velocity. A cinematic
-    /// overrides it (`0x483112`, checked first).
+    /// `Sound_ListenerAtCharacter` (default "1", `0x4d17c5`), read once per frame. `1` puts the
+    /// listener on the mover with the character's facing, `0` at the camera eye with its basis;
+    /// position and orientation always move together, with no velocity. A cinematic overrides it
+    /// (checked first).
     pub listener_at_character: bool,
-    /// `Sound_EnableEmoteSounds` (default "1", `0x4d17e5`): gates only the received text-emote voice line
-    /// ([`emote::emote_sounds`]); a zero fetches no kit at all. The reference's check sits in
-    /// `0x623c80` or on the shared `0x623c10` leg, which `$CSD` also enters; which one is
-    /// untraced, and benilla gates the received path alone.
+    /// `Sound_EnableEmoteSounds` (default "1", `0x4d17e5`): gates only the received text-emote
+    /// voice line ([`emote::emote_sounds`]); a zero fetches no kit at all. The reference's check
+    /// sits on the received text-emote leg or on the shared leg, which `$CSD` also enters; which
+    /// one is untraced, and benilla gates the received path alone.
     pub emote_sounds: bool,
     /// `Sound_EnablePetSounds` (default "1"): off, a unit with a pet number makes no aggro, order or
     /// attack bark and no emote voice (`0x7474b0`, `0x746d60`).
     pub pet_sounds: bool,
     /// `Sound_ZoneMusicNoDelay` (default "0", `0x4d1808`), the panel's "Loop Music": drops the
     /// `ZoneMusic.dbc` silence interval between plays of one zone's track
-    /// ([`zone::next_track_time`], `0x4601f0`). A zone change is immediate either way.
+    /// ([`zone::next_track_time`]). A zone change is immediate either way.
     pub zone_music_no_delay: bool,
 }
 
 impl SoundConfig {
-    /// The category slider a channel multiplies in (`0x7a5dc0`'s category pick).
+    /// The category slider a channel multiplies in (the reference's category pick).
     pub(crate) fn category_amp(&self, cat: kit::SoundCategory) -> f32 {
         if !self.enabled {
             return 0.0;
@@ -309,16 +308,15 @@ fn load_materials(mut commands: Commands, assets: Option<Res<benilla_assets::Wor
 }
 
 /// Your worn chest item's `Material` id, read as the reference reads it, element 4 of
-/// `[player+0x1d38]`, for the armor foley (`0x62fa30`) and a player victim's impact
-/// (`0x62fb70`). Self-only in the reference (`0x5dd454`) and here, since the inventory fields
-/// reach only their owner; `store` must be the player's own.
+/// `[player+0x1d38]`, for the armor foley and a player victim's impact. Self-only in the reference
+/// and here, since the inventory fields reach only their owner; `store` must be the player's own.
 pub(super) fn worn_chest_material(
     store: Option<&crate::net::ObjectStore>,
     objects: &crate::net::Objects,
     items: &crate::items::Items,
     net: &crate::net::NetCommands,
 ) -> Option<u32> {
-    /// The fifth 8-byte guid of the inv-slot array (`0x62fa50`/`0x62fb86`).
+    /// The fifth 8-byte guid of the inv-slot array.
     const EQUIPMENT_SLOT_CHEST: u8 = 4;
     let guid = store?.0.player_inv_slot(EQUIPMENT_SLOT_CHEST)?;
     let entry = objects.object(guid)?.object_entry()?;
@@ -353,8 +351,8 @@ fn world_audio_live(
 
 pub(crate) struct SoundPlugin;
 
-/// The sound CVars' change callback: volumes clamp to `[0, 1]`, enables are `!= 0` as the
-/// reference parses them (`0x4574d0`: `setne al`).
+/// The sound CVars' change callback: volumes clamp to `[0, 1]`, enables are `!= 0` as the reference
+/// parses them (`setne al`).
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut sound: ResMut<SoundConfig>) {
     let v = ev.num();
     match ev.key().as_str() {
@@ -513,8 +511,8 @@ fn update_audio_listener(
     self_av: Query<(&Transform, Option<&CameraPivot>), With<Embodied>>,
     cam: Query<&Transform, (With<WorldCamera>, Without<Embodied>)>,
 ) {
-    // A cinematic puts the listener on the camera ahead of the CVar (`0x483112`: `camera+0x50`,
-    // armed by the cinematic start `0x48ee55`, cleared at the stop by `0x50ca50`).
+    // A cinematic puts the listener on the camera ahead of the CVar (`camera+0x50`, armed by the
+    // cinematic start).
     let flying = cinematic
         .as_deref()
         .is_some_and(crate::cinematic::Cinematic::is_playing);

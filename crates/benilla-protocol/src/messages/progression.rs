@@ -82,7 +82,7 @@ pub(super) fn read_talent_wipe_confirm(r: &mut impl Read) -> io::Result<TalentWi
 }
 
 /// Body of the outbound `MSG_TALENT_WIPE_CONFIRM`, the `CONFIRM_TALENT_WIPE` Accept: the trainer
-/// guid alone (vmangos `Skill.cpp:14-17`), as the reference latches it at `0xc4d7a0`.
+/// guid alone (vmangos `Skill.cpp:14-17`), as the reference latches it.
 pub fn talent_wipe_confirm(trainer_guid: u64) -> Vec<u8> {
     trainer_guid.to_le_bytes().to_vec()
 }
@@ -102,9 +102,9 @@ pub struct LevelUpInfo {
     pub stats: [i32; 5],
 }
 
-/// Read `SMSG_LEVELUP_INFO`: `u32` level, `i32` health, 5 powers, 5 stats (`Misc.cpp:524-532`).
-/// The reference fires the gains as `%d` (`0x5e413e`), so a loss the server wraps into its `u32`
-/// (vmangos `Player.cpp:3203-3215`) reads negative.
+/// Read `SMSG_LEVELUP_INFO`: `u32` level, `i32` health, 5 powers, 5 stats (`Misc.cpp:524-532`). The
+/// reference fires the gains as `%d`, so a loss the server wraps into its `u32` (vmangos
+/// `Player.cpp:3203-3215`) reads negative.
 pub(super) fn read_level_up_info(r: &mut impl Read) -> io::Result<LevelUpInfo> {
     let level = read_u32_le(r)?;
     let health = read_i32_le(r)?;

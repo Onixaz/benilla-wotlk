@@ -130,7 +130,7 @@ fn gold(model: &Model, pick: impl Fn(&TradeState) -> &TradeSideState) -> u32 {
 /// echoes a placement only to the partner (`TradeData.cpp:81`); an empty cursor on a filled slot
 /// queues a clear. Any other payload stays on the cursor.
 fn click_trade_button(model: &mut Model, id: u32) {
-    // Coins on the cursor go into the offer, the index unread (`0x4bfe34`).
+    // Coins on the cursor go into the offer, the index unread.
     if matches!(model.cursor, Some(CursorPayload::Money(_))) {
         cursor::money::add_trade_money(model);
         return;
@@ -311,9 +311,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // BeginTrade() and CancelTrade() (`0x48aa60`, `0x48aa70`): no arguments, no returns, no gate,
-    // and an empty `0x117` or `0x11C`. They are the `TRADE` popup's Yes and No
-    // (`StaticPopup.lua:517-522`), which never shows in 1.12 as nothing signals `TRADE_REQUEST`.
+    // BeginTrade() and CancelTrade(): no arguments, no returns, no gate, and an empty `0x117` or
+    // `0x11C`. They are the `TRADE` popup's Yes and No (`StaticPopup.lua:517-522`), which never
+    // shows in 1.12 as nothing signals `TRADE_REQUEST`.
     g.set(
         "BeginTrade",
         lua.create_function(|lua, ()| {
@@ -333,8 +333,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "SetTradeMoney",
         lua.create_function(|lua, copper: Value| {
-            // `0x4c0820`: a non-number raises; the low dword is the whole offer, sent only when the
-            // purse covers it, and a refusal is silent.
+            // A non-number raises; the low dword is the whole offer, sent only when the purse
+            // covers it, and a refusal is silent.
             let n = crate::script::binding_abi::number_arg(
                 lua,
                 copper,
@@ -362,7 +362,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     g.set(
         "ClickTargetTradeButton",
         lua.create_function(|lua, _id: u32| {
-            // Coins on the cursor still go into our offer, the index unread (`0x4c00a3`).
+            // Coins on the cursor still go into our offer, the index unread.
             let mut model = crate::script::model_mut_of(lua);
             cursor::money::add_trade_money(&mut model);
             Ok(())

@@ -58,7 +58,7 @@ impl ObjectFields {
             .unwrap_or(0)
     }
     /// `ITEM_FIELD_RANDOM_PROPERTIES_ID` (field 44): the `ItemRandomProperties.dbc` suffix, 0 if
-    /// none; only the name uses it (`0x5d8b00`), the roll's enchants fill enchant slots 2-6.
+    /// none; only the name uses it, the roll's enchants fill enchant slots 2-6.
     pub fn item_random_properties_id(&self) -> u32 {
         self.get_u32(44).unwrap_or(0)
     }
@@ -102,7 +102,7 @@ impl ObjectFields {
             .flatten()
     }
     /// `PLAYER_VISIBLE_ITEM_<slot>_PROPERTIES`: slot `i`'s broadcast suffix roll, the low half
-    /// (`0x53339f`, `movzx WORD`) of the dword after the 7 enchants. Only the name uses it.
+    /// (`movzx WORD`) of the dword after the 7 enchants. Only the name uses it.
     pub fn player_visible_item_properties(&self, i: u8) -> u32 {
         (i < 19)
             .then(|| self.get_u32(FIELD_PLAYER_VISIBLE_ITEM_1_CREATOR + 10 + 12 * u16::from(i)))
@@ -142,7 +142,7 @@ impl ObjectFields {
     pub fn player_buyback_price(&self, i: u8) -> Option<u32> {
         (i < 12).then(|| self.get_u32(FIELD_PLAYER_BUYBACK_PRICE_1 + u16::from(i)))?
     }
-    /// `PLAYER_FIELD_BUYBACK_TIMESTAMP_1 + i`: expiry, used only to sort oldest first (`0x4fafd0`).
+    /// `PLAYER_FIELD_BUYBACK_TIMESTAMP_1 + i`: expiry, used only to sort oldest first.
     pub fn player_buyback_timestamp(&self, i: u8) -> Option<u32> {
         (i < 12).then(|| self.get_u32(FIELD_PLAYER_BUYBACK_TIMESTAMP_1 + u16::from(i)))?
     }
@@ -187,7 +187,7 @@ impl ObjectFields {
         self.get_u32(FIELD_PLAYER_TRACK_RESOURCES).unwrap_or(0)
     }
     /// `PLAYER_FIELD_BYTES` byte 0 bit `0x2` (private): set by aura type 151, track stealthed;
-    /// every creep-flagged unit then gets a minimap dot (`0x5ed210`, the `+0x1028` read).
+    /// every creep-flagged unit then gets a minimap dot (the `+0x1028` read).
     pub fn player_track_stealthed(&self) -> bool {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES).unwrap_or(0) & 0x2 != 0
     }
@@ -345,7 +345,7 @@ impl ObjectFields {
             .unwrap_or(0)
     }
     /// 3.3.5a `PLAYER_CHOSEN_TITLE` (public): the shown title's `CharTitles.dbc` mask id, 0 for
-    /// none; read signed, as `GetUnitChosenTitle` (`0x72a290`) shows none at or below 0.
+    /// none; read signed, as the reference's title lookup (`0x72a290`) shows none at or below 0.
     pub fn player_chosen_title(&self) -> i32 {
         self.get_i32(FIELD_PLAYER_CHOSEN_TITLE).unwrap_or(0)
     }
@@ -477,7 +477,7 @@ impl ObjectFields {
         self.get_u32(FIELD_PLAYER_BYTES_3).map(|v| v as u8)
     }
     /// `PLAYER_BYTES_3` byte 1: drunkenness, the high byte of `drunk & 0xFFFE` in the low half
-    /// (`SetDrunkValue`); the reference clamps it to 100 and scales by 0.01 (`0x5e2a90`).
+    /// (`SetDrunkValue`); the reference clamps it to 100 and scales by 0.01.
     pub fn player_drunk_byte(&self) -> Option<u8> {
         self.get_u32(FIELD_PLAYER_BYTES_3).map(|v| (v >> 8) as u8)
     }
@@ -486,7 +486,7 @@ impl ObjectFields {
         self.get_u32(FIELD_PLAYER_FLAGS).unwrap_or(0)
     }
     /// `PLAYER_FLAGS` bit `0x1`: leads their group, for a stranger's party too; the first leg of
-    /// `UnitIsPartyLeader` (`0x51624a`) and the bit's only test.
+    /// `UnitIsPartyLeader` and the bit's only test.
     pub fn player_is_group_leader(&self) -> bool {
         self.player_flags() & 0x1 != 0
     }
@@ -494,8 +494,9 @@ impl ObjectFields {
     pub fn player_is_ghost(&self) -> bool {
         self.player_flags() & 0x10 != 0
     }
-    /// Dead or a ghost, the reference's `0x605f30`: health 0, or for a player the ghost flag. Not
-    /// feign death, which is `unit_reads_dead`; a creature has no `PLAYER_FLAGS`, so reads clear.
+    /// Dead or a ghost, as the reference's dead-or-ghost test reads it: health 0, or for a player
+    /// the ghost flag. Not feign death, which is `unit_reads_dead`; a creature has no
+    /// `PLAYER_FLAGS`, so reads clear.
     pub fn is_dead_or_ghost(&self) -> bool {
         self.unit_is_dead() || self.player_is_ghost()
     }
@@ -522,12 +523,12 @@ impl ObjectFields {
         self.get_u32(FIELD_PLAYER_DUEL_TEAM).unwrap_or(0)
     }
     /// `PLAYER_GUILDID` (field 191, public): the guild, 0 for none; names come from
-    /// `SMSG_GUILD_QUERY_RESPONSE`, and `GetGuildInfo` (`0x4c9330`) answers nil on 0 or a miss.
+    /// `SMSG_GUILD_QUERY_RESPONSE`, and `GetGuildInfo` answers nil on 0 or a miss.
     pub fn player_guild_id(&self) -> u32 {
         self.get_u32(FIELD_PLAYER_GUILDID).unwrap_or(0)
     }
     /// `PLAYER_GUILDRANK` (field 192): the guild rank, 0 the guild master; the reference indexes
-    /// its rank names with it unbounded (`0x4c93e4`), so bound it to the ten ranks.
+    /// its rank names with it unbounded, so bound it to the ten ranks.
     pub fn player_guild_rank(&self) -> u32 {
         self.get_u32(FIELD_PLAYER_GUILDRANK).unwrap_or(0)
     }
@@ -537,8 +538,8 @@ impl ObjectFields {
     pub fn player_release_timer_running(&self) -> bool {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES).unwrap_or(0) & 0x08 != 0
     }
-    /// `PLAYER_FIELD_BYTES` byte 2 (private, field 1222): the four extra action bars' toggles,
-    /// bits `0x01..0x08` (`Player.h:360-363`), read by `GetActionBarToggles` (`0x4e7660`) at
+    /// `PLAYER_FIELD_BYTES` byte 2 (private, field 1222): the four extra action bars' toggles, bits
+    /// `0x01..0x08` (`Player.h:360-363`), read by `GetActionBarToggles` at
     /// `[[player+0xe68]+0x102a]`. The client never writes it and no event fires when it moves.
     /// vmangos's `// 0x4C0` beside the field is stale; `UNIT_END + 0x40A` is right.
     pub fn player_action_bar_toggles(&self) -> Option<u8> {
@@ -546,8 +547,8 @@ impl ObjectFields {
             .map(|b| ((b >> 16) & 0xff) as u8)
     }
     /// `PLAYER_FIELD_BYTES` byte 3 (private): the highest honor rank held, 0 never ranked, which
-    /// `RequiredHonorRank` checks (`0x5ea930`); only ever raised (`HonorMgr.cpp:894-895`), so it
-    /// outlives a demotion, unlike [`Self::player_pvp_rank`].
+    /// `RequiredHonorRank` checks; only ever raised (`HonorMgr.cpp:894-895`), so it outlives a
+    /// demotion, unlike [`Self::player_pvp_rank`].
     pub fn player_honor_rank(&self) -> Option<u8> {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES)
             .map(|b| ((b >> 24) & 0xff) as u8)
@@ -560,7 +561,7 @@ impl ObjectFields {
             .map(|b| ((b >> 24) & 0xff) as u8)
     }
     /// `PLAYER_BYTES_3` byte 2 (public): the city-protector title, a race id (`Player.h:354`);
-    /// `UnitPVPName` (`0x609370`) appends `PVP_MEDAL<n>` when nonzero. vmangos never writes it.
+    /// `UnitPVPName` appends `PVP_MEDAL<n>` when nonzero. vmangos never writes it.
     pub fn player_pvp_medal(&self) -> Option<u8> {
         self.get_u32(FIELD_PLAYER_BYTES_3)
             .map(|b| ((b >> 16) & 0xff) as u8)
@@ -665,7 +666,7 @@ impl ObjectFields {
         self.player_bytes_2().map(|b| ((b >> 16) & 0xff) as u8)
     }
     /// `OBJECT_FIELD_CREATED_BY` (fields 6-7): who summoned a spell-spawned object; the faction
-    /// resolver `0x5f7fd0` prefers its reaction, but a bobber's use gate is our channel object.
+    /// resolver prefers its reaction, but a bobber's use gate is our channel object.
     pub fn gameobject_created_by(&self) -> Option<u64> {
         self.get_guid(FIELD_GAMEOBJECT_CREATED_BY)
             .filter(|&g| g != 0)
@@ -727,19 +728,19 @@ impl ObjectFields {
     pub fn gameobject_dynamic_flags(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_DYN_FLAGS).unwrap_or(0)
     }
-    /// `GAMEOBJECT_LEVEL` (field 22): a lock with `Skill[0]` 0 asks for `level * 5` (`0x5f3490`).
+    /// `GAMEOBJECT_LEVEL` (field 22): a lock with `Skill[0]` 0 asks for `level * 5`.
     pub fn gameobject_level(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_LEVEL).unwrap_or(0)
     }
 
     /// `OBJECT_FIELD_TYPE & TYPEMASK_CONTAINER`: a bag, whose mask carries the item bit too; the
-    /// reference's test at `0x4c879d` (`GetInventoryItemCount`) and `0x4c7dbb` (`PutItemInBag`).
+    /// reference's test in `GetInventoryItemCount` and in `PutItemInBag`.
     pub fn is_container(&self) -> bool {
         self.get_u32(FIELD_OBJECT_TYPE).unwrap_or(0) & 0x4 != 0
     }
 
     /// The object's class from `OBJECT_FIELD_TYPE`, for updates with no `TypeId`; the player bit
-    /// `0x10` is the reference's own is-player test (`CanAttack`, `CanInteract`).
+    /// `0x10` is the reference's own is-player test (in its attack and interact checks).
     pub fn object_type(&self) -> Option<ObjectType> {
         self.get_u32(FIELD_OBJECT_TYPE).map(|bits| {
             if bits & 0x10 != 0 {

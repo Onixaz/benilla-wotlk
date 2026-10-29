@@ -1,4 +1,4 @@
-//! The companion bindings, over the two lists the app pushes (`CGSpellBook::m_companions`,
+//! The companion bindings, over the two lists the app pushes (the spellbook's companion lists,
 //! `0xbe8df4`): critters and mounts, each resolved to creature, name, icon, active flag and
 //! cooldown. `CallCompanion` and `SummonRandomCritter` queue the spell's cast; `DismissCompanion`
 //! queues an intent the app drains ([`CompanionIntent`]).
@@ -9,7 +9,7 @@ use super::binding_abi::flag;
 use super::cursor::{queue_cursor_update, CursorPayload, CursorSpell};
 use super::{CastAt, ScriptCall};
 
-/// Which list, in the order of the type tokens `GetLuaCompanionType` (`0x53b600`) matches.
+/// Which list, in the order of the type tokens the type parse (`0x53b600`) matches.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CompanionType {
     Critter,
@@ -36,7 +36,7 @@ pub struct CompanionView {
     pub spell_id: u32,
     /// The active icon while active, else the spell's own (`0x53e3d0`).
     pub icon: Option<String>,
-    /// `Spell_C_IsActiveSpell` (`0x802cb0`): the critter out, or the mount aura up.
+    /// The active-spell test (`0x802cb0`): the critter out, or the mount aura up.
     pub active: bool,
     /// `(start_ms on the GetTime clock, duration_ms, enabled)`, as a book slot carries it.
     pub cooldown: Option<(i64, u32, bool)>,
@@ -48,8 +48,8 @@ pub struct CompanionView {
 pub struct CompanionState {
     pub critters: Vec<CompanionView>,
     pub mounts: Vec<CompanionView>,
-    /// The known spells of skill line 778, the pool `SummonRandomCritter` draws from
-    /// (`CGPlayer_C::m_companionSpells`, filled at `0x6e7bc4`).
+    /// The known spells of skill line 778, the pool `SummonRandomCritter` draws from (the player's
+    /// companion spells, filled at `0x6e7bc4`).
     pub random_pool: Vec<u32>,
 }
 
@@ -61,7 +61,7 @@ impl CompanionState {
         }
     }
 
-    /// The list and 0-based slot holding `spell_id` (`FindCompanionSlotByID` `0x53d990`).
+    /// The list and 0-based slot holding `spell_id` (`0x53d990`).
     pub fn find(&self, spell_id: u32) -> Option<(CompanionType, usize)> {
         [CompanionType::Critter, CompanionType::Mount]
             .into_iter()
@@ -75,7 +75,7 @@ impl CompanionState {
 /// What a companion verb asks of the app beyond a cast.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum CompanionIntent {
-    /// `DismissCompanion`: cancel this active companion (`Spell_C_CancelAura` `0x802f80`).
+    /// `DismissCompanion`: cancel this active companion's aura (`0x802f80`).
     Dismiss(u32),
 }
 
@@ -93,7 +93,7 @@ impl super::UiScript {
     }
 }
 
-/// `GetLuaCompanionType` (`0x53b600`): argument 1 through `lua_tolstring`, matched to a token
+/// The type parse (`0x53b600`): argument 1 through `lua_tolstring`, matched to a token
 /// case-insensitively; anything else is `None`, which every verb answers with its `Usage:`.
 fn companion_type(lua: &Lua, v: &Value) -> Option<CompanionType> {
     let token = match v {

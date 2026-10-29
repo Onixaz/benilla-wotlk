@@ -36,8 +36,8 @@ impl super::UiScript {
 /// Register the five zone getters.
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
-    // The four text getters (`0x48a0a0`, `0x48a0c0`, `0x48a0e0`, `0x48a100`) each push one string,
-    // their cache slot or the shared empty string `0x882748` when the slot is unset, never nil.
+    // The four text getters each push one string, their cache slot or the shared empty string when
+    // the slot is unset, never nil.
     let text = |pick: fn(&ZoneTexts) -> &str| {
         move |lua: &Lua, ()| {
             let model = lua

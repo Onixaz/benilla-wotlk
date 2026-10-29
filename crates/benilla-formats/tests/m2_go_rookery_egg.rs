@@ -1,9 +1,8 @@
 //! The Rookery Egg (`gameobject_template` 175124) is a one-charge trap: entering its 3-yd radius
 //! makes vmangos send `SMSG_GAMEOBJECT_DESPAWN_ANIM`, since its spawn rows carry
-//! `animprogress = 100`, then `SMSG_DESTROY_OBJECT` (`GameObject.cpp:654-656`). The reference
-//! arms substate 12 off it (`0x80b0e0[6]` = 12, `0x8607e4[12]` = 157 Despawn) and pins the object
-//! (`0x4683e0`) so the destroy waits for the 2.667 s hatch, which the `SetGoState` machine
-//! (`0x5f8bd0`) never reaches: it holds 147 Closed.
+//! `animprogress = 100`, then `SMSG_DESTROY_OBJECT` (`GameObject.cpp:654-656`). The reference arms
+//! substate 12 off it (12,157 Despawn) and pins the object so the destroy waits for the 2.667 s
+//! hatch, which the `SetGoState` machine never reaches: it holds 147 Closed.
 
 use benilla_formats::{open_chain, parse_m2_animation_lookup, parse_m2_animations};
 
@@ -28,7 +27,7 @@ fn the_rookery_egg_keys_its_hatch_in_despawn_not_in_the_state_family() {
             .unwrap_or_else(|| panic!("the egg authors animation id {id}"))
     };
 
-    // The one-shot channel plays only an id the model owns, with no remap (`0x5f423d`, `0x711960`).
+    // The one-shot channel plays only an id the model owns, with no remap.
     let lookup = parse_m2_animation_lookup(&bytes);
     assert!(
         lookup.get(DESPAWN as usize).is_some_and(|&s| s != 0xffff),
@@ -60,7 +59,7 @@ fn the_rookery_egg_keys_its_hatch_in_despawn_not_in_the_state_family() {
         keys(CLOSED),
     );
 
-    // `R = max(1, min + roll)`, and an empty replay range rolls 1 (`0x7126be`).
+    // `R = max(1, min + roll)`, and an empty replay range rolls 1.
     assert_eq!(
         (hatch.min_replay, hatch.max_replay),
         (0, 0),

@@ -62,9 +62,8 @@ pub(crate) struct StableOpen {
     pub(crate) num_stable_slots: u8,
     /// The wire rows, each with its client slot index.
     pub(crate) pets: Vec<StabledPet>,
-    /// A list landed and `PET_STABLE_SHOW` is owed: the reference fires it after every list
-    /// (`0x4cac9b`), and `PET_STABLE_UPDATE`/`_PAPERDOLL` only from its creature-cache callbacks
-    /// (`0x4cb3bf`, `0x4cba5f`).
+    /// A list landed and `PET_STABLE_SHOW` is owed: the reference fires it after every list, and
+    /// `PET_STABLE_UPDATE`/`_PAPERDOLL` only from its creature-cache callbacks.
     pub(crate) fresh_list: bool,
 }
 
@@ -205,7 +204,7 @@ fn feed_stable(
         .and_then(|p| p.0.next_slot_price(open.num_stable_slots))
         .unwrap_or(0);
 
-    // The reference's live-pet test, `[0xb714a0]|[0xb714a4]`; a dismissed pet fails it.
+    // The reference's live-pet test; a dismissed pet fails it.
     let has_live_pet = bar.spells.pet_guid != 0;
     let fresh = snapshot(
         &open,
@@ -229,7 +228,7 @@ fn feed_stable(
         script.fire_event("PET_STABLE_SHOW", vec![]);
         let _ = script.take_stable_close();
     } else if fresh_list && fresh.is_some() {
-        // Every list fires `PET_STABLE_SHOW` (`0x4cac9b`); on the visible window it only repaints.
+        // Every list fires `PET_STABLE_SHOW`; on the visible window it only repaints.
         script.fire_event("PET_STABLE_SHOW", vec![]);
     } else {
         match (&*last, &fresh) {
@@ -278,9 +277,9 @@ pub(crate) fn drain_stable(
 }
 
 /// Point the model pane at the pet `GetSelectedStablePet()` names, as the reference's
-/// `SetPetStablePaperdoll` (`0x4cb870`) does: the summoned pet (`[0xb72250] == -1`) shows its
-/// live body (`[unit+0xb30]`), and anything else, or a failed live resolve (`0x4cb9bc`), shows the
-/// row's creature display, whose late cache answer re-points the pane.
+/// `SetPetStablePaperdoll` does: the summoned pet shows its live body (`[unit+0xb30]`), and
+/// anything else, or a failed live resolve, shows the row's creature display, whose late cache
+/// answer re-points the pane.
 fn feed_stable_booth(
     script: Option<NonSendMut<UiScript>>,
     open: Res<StableOpen>,
@@ -310,9 +309,9 @@ fn feed_stable_booth(
     booth.display_id = display_id;
 }
 
-/// The selection's `(live unit, display id)`. The live arm reads the pet guid at `[0xb714a0]` and
-/// no row; the display is resolved too, as the reference falls through to it when the live
-/// resolve fails. Display 0 reads as no answer.
+/// The selection's `(live unit, display id)`. The live arm reads the pet guid and no row; the
+/// display is resolved too, as the reference falls through to it when the live resolve fails.
+/// Display 0 reads as no answer.
 fn stable_subject(
     slot: i32,
     live_pet: Option<Entity>,
@@ -328,8 +327,8 @@ fn stable_subject(
     (unit, display)
 }
 
-/// Stable refusals as message keys: only `ERR_NOT_ENOUGH_MONEY`, `DisplayError(0x25)` in the
-/// `SMSG_STABLE_RESULT` handler `0x4cacb0`, whose row also speaks (line `0x28`).
+/// Stable refusals as message keys: only `ERR_NOT_ENOUGH_MONEY`, the error display's message
+/// `0x25` in the `SMSG_STABLE_RESULT` handler, whose row also speaks (line `0x28`).
 #[derive(Resource, Default)]
 pub(crate) struct StableErrors(pub(crate) Vec<&'static str>);
 

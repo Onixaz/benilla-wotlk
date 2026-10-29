@@ -1,19 +1,19 @@
 //! Spell chain beams: Chain Lightning's arcs, the Drain Life and Mind Flay beams, Chain Heal. A kit
 //! whose `CharProc` decodes to a chain ([`benilla_formats::ChainProc`]) draws a polyline of hops,
-//! `caster → t1 → t2 → …`, one ribbon per hop, subdivided, jittered every frame and scrolled: the
-//! reference's `LightningObject` (`0x6ec460`) and `CLightning` (`0x7af9b0`/`0x7afcb0`).
+//! `caster → t1 → t2 → …`, one ribbon per hop, subdivided, jittered every frame and scrolled, as
+//! the reference's lightning effect draws it.
 //!
 //! Hop `i` burns in `[t0 + delay + i × stagger, + life)` (`0x7fa4d0`), and the beam expires with
 //! its last hop. Chain Lightning's row staggers by 0, so its hops light together 300 ms after the
 //! play. `ChainProc::flag`, `CharParamTwo != 0`, is the whole cast/channel split: set, the expiry
 //! is bypassed and the beam lives until swept by the channel teardown.
 //!
-//! Endpoints are identities re-resolved from the live units every frame (`0x6ec460`), so a beam
-//! tracks moving units, and a hop whose unit does not resolve is hidden, not re-pathed.
+//! Endpoints are identities re-resolved from the live units every frame, so a beam tracks moving
+//! units, and a hop whose unit does not resolve is hidden, not re-pathed.
 //!
-//! Render state (`0x7afcb0`, through the `EGxRs` applicator `0x59d350`): additive `SRC_ALPHA/ONE`,
-//! emissive white and never tinted, two-sided, depth-write off, fog off, drawn on the shared
-//! effect-quad stream ([`benilla_world::particles::buffer::EffectQuads`]).
+//! Render state (through the `EGxRs` applicator): additive `SRC_ALPHA/ONE`, emissive white and
+//! never tinted, two-sided, depth-write off, fog off, drawn on the shared effect-quad stream
+//! ([`benilla_world::particles::buffer::EffectQuads`]).
 //!
 //! One strand per play: the 12340 chain case reads no strand count (`0x726ab1`-`0x726af2`), and the
 //! row's joint, wave and arc columns, which shape its beam, are not built.
@@ -29,38 +29,37 @@ use benilla_world::view::WorldCamera;
 use super::OverheadFallback;
 
 /// The caster end's height factor with no `$CSL` marker, `base + modelHeight × modelScale × 0.75`
-/// (`0x6ec73e`–`0x6ec771`, the `0.75f` at `0x8012cc`). The height is the authored bbox z-extent
-/// that [`OverheadFallback`] carries, standing in for the reference's `obj+0x90`.
+/// The height is the authored bbox z-extent that [`OverheadFallback`] carries, standing in for the
+/// reference's `obj+0x90`.
 const CASTER_HEIGHT_FACTOR: f32 = 0.75;
 
 /// The attachment a non-caster end falls back to when the spell's `SpellVisual` column 10 names
 /// none, the 1.12.1 reference's literal `0x22`; below it, the unit's position.
 const CHAIN_ATTACH_FALLBACK: u16 = 34;
 
-/// The subdivision floor, the `2.0f` at `0x801628` added at `0x7af716`: even a one-yard hop bends.
+/// The subdivision floor, the `2.0f` added to the segment count: even a one-yard hop bends.
 const SUBDIVISION_FLOOR: f32 = 2.0;
 
-/// The cross-section normalisation guard (`fcom [0x801360]` at `0x7b01bd`, strictly `>`): a
-/// shorter perpendicular stays un-normalized and collapses that segment's width. It measures the
-/// screen-plane projection, so it pinches only a hop aimed at the camera, within about 0.023° on a
-/// 2.5 yd sub-segment: a guard against NaN, not a visible thinning.
+/// The cross-section normalisation guard (`fcom`, strictly `>`): a shorter perpendicular stays
+/// un-normalized and collapses that segment's width. It measures the screen-plane projection, so it
+/// pinches only a hop aimed at the camera, within about 0.023° on a 2.5 yd sub-segment: a guard
+/// against NaN, not a visible thinning.
 const PERP_EPSILON: f32 = 0.001;
 
-/// The per-frame advection weight on interior points, `main = 0.75·main + 0.25·fresh`
-/// (`0x7afc10`/`0x7afc38`), which makes the per-frame re-roll crawl rather than strobe.
+/// The per-frame advection weight on interior points, `main = 0.75·main + 0.25·fresh`, which makes
+/// the per-frame re-roll crawl rather than strobe.
 const ADVECT_KEEP: f32 = 0.75;
 
 /// Deviation: a cap on one hop's sub-segment count, which the reference lacks, so a vertex run is
 /// never sized off table data alone; shipped rows peak at 12 (30 yd at `avgSegLen` 2.78).
 const MAX_SUBDIVISIONS: usize = 256;
 
-/// The caster's chain-target hop array, the reference's growable `unit+0xd44`: guids in wire
-/// order, the caster's own dropped as it fills (`0x6057bf`/`0x6057c9`). `crate::spell::net` fills
-/// it from the `SMSG_SPELL_GO` hit list (`0x6e800d`) and `SMSG_SPELL_UPDATE_CHAIN_TARGETS`
-/// (`0x605767`), clearing before each fill, and [`spawn_chain_beams`] consumes it once, as
-/// `0x60db72` zeroes the count on every exit. The reference gates the `SMSG_SPELL_GO` fill on
-/// `0x6e4870`, a predicate still untraced; here it always fills. Unstreamed targets are left out,
-/// as the reference hides a hop it cannot place.
+/// The caster's chain-target hop array, the reference's growable `unit+0xd44`: guids in wire order,
+/// the caster's own dropped as it fills. `crate::spell::net` fills it from the `SMSG_SPELL_GO` hit
+/// list and `SMSG_SPELL_UPDATE_CHAIN_TARGETS`, clearing before each fill, and [`spawn_chain_beams`]
+/// consumes it once, as the reference zeroes the count on every exit. The reference gates the
+/// `SMSG_SPELL_GO` fill on a predicate still untraced; here it always fills. Unstreamed targets are
+/// left out, as the reference hides a hop it cannot place.
 #[derive(Component)]
 pub(crate) struct ChainHops(pub(crate) Vec<Entity>);
 
@@ -76,7 +75,7 @@ struct Bolt {
     strands: Vec<Vec<Vec3>>,
 }
 
-/// A live chain beam, the reference's 0x50-byte `LightningObject`.
+/// A live chain beam, the reference's 0x50-byte lightning object.
 #[derive(Component)]
 pub(crate) struct ChainBeam {
     /// The reap key (`node+0x44`).
@@ -122,9 +121,10 @@ fn jitter(rng: &mut u32) -> f32 {
     (*rng >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
 }
 
-/// The caster's end (`0x6ec6f0`): the `$CSL` marker at the live pose, else
+/// The caster's end: the `$CSL` marker at the live pose, else
 /// `base + 0.75 × modelHeight × modelScale`. Other ends anchor at the spell's field-9 attachment
-/// through the missile's resolver, as `0x6ec780` and `0x61ceb0` read the same table the same way.
+/// through the missile's resolver, as the reference's beam and missile read the same table the
+/// same way.
 fn caster_world_pos(
     caster: Entity,
     units: &super::missile::AttachPosQuery,
@@ -143,9 +143,8 @@ fn caster_world_pos(
     }))
 }
 
-/// The beam's participants (`0x60dad4`–`0x60db19`): the channel object when the kit's spell is the
-/// live channel, it names an object and the hop array holds at most one entry; else the hop array;
-/// else nothing.
+/// The beam's participants: the channel object when the kit's spell is the live channel, it names
+/// an object and the hop array holds at most one entry; else the hop array; else nothing.
 fn select_targets(
     spell_id: u32,
     hops: Option<&ChainHops>,
@@ -167,9 +166,9 @@ fn select_targets(
 /// The CharProc dispatcher's beam case: spawns, replaces and reaps beams. Reaps run before plays,
 /// so a GO's spell-keyed reap, which precedes its cast-kit play in the router, never eats the beam
 /// that play draws. Only a persistent beam is reapable: the reference publishes only a flagged node
-/// to the owner slots the channel teardown sweeps (`0x6ecdaa`), so a one-shot runs its own clock.
-/// The reference re-enters the dispatcher every channel tick (`0x612b18`); one held beam shows the
-/// same steady beam, ending with the channel.
+/// to the owner slots the channel teardown sweeps, so a one-shot runs its own clock. The reference
+/// re-enters the dispatcher every channel tick; one held beam shows the same steady beam, ending
+/// with the channel.
 pub(super) fn spawn_chain_beams(
     mut commands: Commands,
     time: Res<Time>,
@@ -208,11 +207,11 @@ pub(super) fn spawn_chain_beams(
         let Ok((store, hops)) = stores.get(play.entity) else {
             continue;
         };
-        // Consume once, on every path: `0x60db72` zeroes the count even when nothing is drawn.
+        // Consume once, on every path: the reference zeroes the count even when nothing is drawn.
         let hops = hops.filter(|_| !consumed.contains(&play.entity));
         consumed.insert(play.entity);
         commands.entity(play.entity).try_remove::<ChainHops>();
-        // `0x6ecbd0`'s guards: no spell, no strands or no targets is a silent return.
+        // As in the reference, no spell, no strands or no targets is a silent return.
         let targets = select_targets(play.spell_id, hops, store, &index);
         if play.spell_id == 0 || targets.is_empty() {
             continue;
@@ -221,7 +220,7 @@ pub(super) fn spawn_chain_beams(
             continue;
         };
         let Some(effect) = visuals.0.chain_effect(play.proc.effect_id).cloned() else {
-            continue; // an id naming no row is the client's own no-op (`0x6ecc2e`)
+            continue; // an id naming no row is the client's own no-op
         };
         // The spell's own visual row's dest attachment, with no ranged fallback.
         let dest_tag = spells
@@ -278,9 +277,9 @@ pub(super) fn spawn_chain_beams(
     }
 }
 
-/// The texture scroll (`0x7af9c7` Update, `0x7b0544` Render): `phase = fmod(phase + dt, period)`
-/// and `u = −(phase / period)`; a zero period disables it. `fmod` keeps the dividend's sign, so a
-/// negative period only flips `u`'s direction: the drains' `−0.5` flows back toward the caster.
+/// The texture scroll: `phase = fmod(phase + dt, period)` and `u = −(phase / period)`; a zero
+/// period disables it. `fmod` keeps the dividend's sign, so a negative period only flips `u`'s
+/// direction: the drains' `−0.5` flows back toward the caster.
 fn advance_scroll(phase: f32, dt: f32, period: f32) -> (f32, f32) {
     if period == 0.0 {
         return (0.0, 0.0);
@@ -289,9 +288,9 @@ fn advance_scroll(phase: f32, dt: f32, period: f32) -> (f32, f32) {
     (phase, -(phase / period))
 }
 
-/// One hop's fresh subdivision (`0x7af6d0`, rebuilt every frame): `n = trunc(len / avgSegLen + 2)`
-/// segments, exact endpoints, and each interior point offset by an independent `[−1, 1]³` vector
-/// scaled by `len × noiseScale`.
+/// One hop's fresh subdivision (rebuilt every frame): `n = trunc(len / avgSegLen + 2)` segments,
+/// exact endpoints, and each interior point offset by an independent `[−1, 1]³` vector scaled by
+/// `len × noiseScale`.
 fn subdivide(a: Vec3, b: Vec3, effect: &ChainEffect, rng: &mut u32, out: &mut Vec<Vec3>) {
     let len = a.distance(b);
     let n = if effect.avg_seg_len > 0.0 {
@@ -313,18 +312,16 @@ fn subdivide(a: Vec3, b: Vec3, effect: &ChainEffect, rng: &mut u32, out: &mut Ve
     }
 }
 
-/// One strand's polyline into the shared stream, strip triangles `(t₀,b₀,t₁),(b₀,b₁,t₁)` written
-/// as the quad `[b₀,b₁,t₁,t₀]`. Cross-section, ends and texcoords are the reference's
-/// (`0x7b0196`–`0x7b0541`): an interior vertex at `p ± 0.5·(perp₍ᵢ₋₁₎ + perpᵢ)·halfWidth`, both
-/// ends collapsed to a point at `v = 0.5` (a spindle), `u` 0→1 caster→target plus the scroll, and
-/// the constant colour `0xFFFFFFFF`.
+/// One strand's polyline into the shared stream, strip triangles `(t₀,b₀,t₁),(b₀,b₁,t₁)` written as
+/// the quad `[b₀,b₁,t₁,t₀]`. Cross-section, ends and texcoords are the reference's: an interior
+/// vertex at `p ± 0.5·(perp₍ᵢ₋₁₎ + perpᵢ)·halfWidth`, both ends collapsed to a point at `v = 0.5`
+/// (a spindle), `u` 0→1 caster→target plus the scroll, and the constant colour `0xFFFFFFFF`.
 ///
-/// The perpendicular is `(−d.y, d.x, 0)` in eye space: the reference runs the points through
-/// `0x7bca80` against `0xcf5800 = T(−cameraPos)·VIEW` (built at `0x7affb1`–`0x7b00c4`; `VIEW` is
-/// the pure rotation `0x50ab70` builds), an isometry with no projection, and submits with identity
-/// WORLD and VIEW. Eye axes are X right, Y up, +Z into the screen, so the ribbon lies in the view
-/// plane and spans `2 × halfWidth` world yards at any distance; in world axes the perpendicular is
-/// `d × cam_forward`, one axis for the whole strand.
+/// The perpendicular is `(−d.y, d.x, 0)` in eye space: the reference transforms the points by
+/// `T(−cameraPos)·VIEW` (`VIEW` is the camera's pure rotation), an isometry with no projection,
+/// and submits with identity WORLD and VIEW. Eye axes are X right, Y up, +Z into the screen, so
+/// the ribbon lies in the view plane and spans `2 × halfWidth` world yards at any distance; in
+/// world axes the perpendicular is `d × cam_forward`, one axis for the whole strand.
 fn push_strand(
     verts: &mut Vec<EffectVertex>,
     pts: &[Vec3],
@@ -382,8 +379,7 @@ fn push_strand(
 }
 
 /// Per frame: age each beam, re-resolve its endpoints, re-jitter and advect its polylines and write
-/// the ribbons, the reference's `LightningObject::Update` (`0x6ec460`) and `CLightning::Render`
-/// (`0x7afcb0`) in one pass.
+/// the ribbons, the reference's lightning update and render in one pass.
 pub(crate) fn simulate_chain_beams(
     time: Res<Time>,
     mut commands: Commands,
@@ -399,13 +395,13 @@ pub(crate) fn simulate_chain_beams(
     let Ok((cam, cam_xf)) = world_cam.single() else {
         return;
     };
-    // The reference rebuilds its world→eye map every render (`0x7aff82`–`0x7b00c4`).
+    // The reference rebuilds its world→eye map every render.
     let cam_forward = *cam_xf.forward();
     let dt = time.delta_secs().min(0.1);
     let now = time.elapsed_secs();
     for (entity, mut beam) in &mut beams {
-        // Dead when `flag == 0 && now >= expiry` (`0x6ec6b9`), or when the caster is gone, the one
-        // end a persistent beam would otherwise never get.
+        // Dead when `flag == 0 && now >= expiry`, or when the caster is gone, the one end a
+        // persistent beam would otherwise never get.
         if (!beam.persistent && now >= beam.expiry) || !units.contains(beam.caster) {
             commands.entity(entity).despawn();
             continue;
@@ -432,12 +428,12 @@ pub(crate) fn simulate_chain_beams(
         let mut batch = draw.batch(cam, texture);
         let (mut anchor_sum, mut anchor_n) = (Vec3::ZERO, 0.0f32);
         for (i, bolt) in bolts.iter_mut().enumerate() {
-            // The per-hop window, bypassed while the flag is set (`0x6ec520`).
+            // The per-hop window, bypassed while the flag is set.
             if !persistent && !(bolt.start <= now && now < bolt.end) {
                 bolt.strands.iter_mut().for_each(Vec::clear);
                 continue;
             }
-            // A missing endpoint hides only this hop (`SetVisible(handle, 0)`).
+            // A missing endpoint hides only this hop.
             let dest = [dest_tag, CHAIN_ATTACH_FALLBACK];
             let from = if i == 0 {
                 caster_world_pos(nodes[0], &units, &joints, &heights)
@@ -456,7 +452,7 @@ pub(crate) fn simulate_chain_beams(
             for pts in bolt.strands.iter_mut() {
                 subdivide(from, to, effect, rng, &mut scratch);
                 if pts.len() == scratch.len() {
-                    // Advect toward the fresh roll, interior only (`0x7afbe7`–`0x7afc81`).
+                    // Advect toward the fresh roll, interior only.
                     let last = pts.len() - 1;
                     pts[0] = scratch[0];
                     pts[last] = scratch[last];
@@ -600,7 +596,7 @@ mod tests {
             .collect()
     }
 
-    /// `n = trunc(len / avgSegLen + 2.0)` (`0x7af713`): 30 yd gives 12 segments, 13 points.
+    /// `n = trunc(len / avgSegLen + 2.0)`: 30 yd gives 12 segments, 13 points.
     #[test]
     fn subdivision_carries_the_plus_two_floor() {
         let (e, mut rng, mut out) = (lightning(), 1u32, Vec::new());
@@ -617,7 +613,7 @@ mod tests {
         assert_eq!(out.len(), 3);
     }
 
-    /// Exact endpoints, and interior offsets bounded by `len × noiseScale` per axis (`0x7af748`).
+    /// Exact endpoints, and interior offsets bounded by `len × noiseScale` per axis.
     #[test]
     fn jitter_is_interior_only_and_scales_with_hop_length() {
         let (e, mut rng, mut out) = (lightning(), 0x1234_5678u32, Vec::new());
@@ -734,7 +730,7 @@ mod tests {
         );
     }
 
-    /// `u` runs 0 → 1 caster→target (`0x7afb20`), translated by the scroll (`0x7b057e`).
+    /// `u` runs 0 → 1 caster→target, translated by the scroll.
     #[test]
     fn u_runs_caster_to_target_and_the_scroll_translates_it() {
         let pts = [Vec3::ZERO, Vec3::X * 5.0, Vec3::X * 10.0];
@@ -751,7 +747,7 @@ mod tests {
         assert_eq!(verts[5].uv[0], 0.75);
     }
 
-    /// `0x7af9d7`/`0x7b055f`: the accumulator wraps on `|period|`; a negative one reverses `u`.
+    /// The accumulator wraps on `|period|`; a negative one reverses `u`.
     #[test]
     fn the_scroll_period_sign_reverses_the_direction() {
         // One second of a 1 s period sweeps u from 0 to −1 and wraps.
@@ -783,7 +779,7 @@ mod tests {
         }
     }
 
-    /// The single-target path (`0x60dae5`) takes the channel object only with at most one hop.
+    /// The single-target path takes the channel object only with at most one hop.
     #[test]
     fn target_selection_prefers_the_channel_object_only_on_its_own_narrow_path() {
         use benilla_protocol::ObjectFields;

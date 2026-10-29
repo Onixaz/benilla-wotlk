@@ -7,10 +7,10 @@ use super::script;
 use crate::script::*;
 
 /// The compare as 1.12.1 drives it, from the vendor row's `SetMerchantCompareItem`
-/// (`MerchantFrame.xml:63-80`): the worn item's ordinary tooltip under a gray
-/// `CURRENTLY_EQUIPPED` header (p5). Both callers pass p4 zero, so the name keeps its quality
-/// colour and nothing is cut at `0x52e14c`. A bag hover seats no plate, shift or not:
-/// `SHOW_COMPARE_TOOLTIP` has no fire site in the reference.
+/// (`MerchantFrame.xml:63-80`): the worn item's ordinary tooltip under a gray `CURRENTLY_EQUIPPED`
+/// header (p5). Both callers pass p4 zero, so the name keeps its quality colour and nothing is cut.
+/// A bag hover seats no plate, shift or not: `SHOW_COMPARE_TOOLTIP` has no fire site in the
+/// reference.
 #[test]
 fn merchant_compare_renders_the_compare_shape_and_no_hover_seats_a_plate() {
     let mut s = script();
@@ -203,10 +203,10 @@ fn merchant_compare_renders_the_compare_shape_and_no_hover_seats_a_plate() {
 }
 
 /// `SetInventoryItem`'s third argument, `nameOnly`, is the builder's p4 and the one way to the
-/// compact render: of `0x52b650`'s 31 call sites, 27 pass zero, one forwards and three are this
+/// compact render: of the builder's 31 call sites, 27 pass zero, one forwards and three are this
 /// binding's, and no stock caller passes it. The render is trimmed, not bare: the bind and lock
-/// lines, the stat body and everything past the cooldown line go; the white name, the slot and
-/// type cell, durability, the requirements and the spell triggers stay.
+/// lines, the stat body and everything past the cooldown line go; the white name, the slot and type
+/// cell, durability, the requirements and the spell triggers stay.
 #[test]
 fn set_inventory_item_name_only_is_the_trimmed_build() {
     let mut s = script();
@@ -272,17 +272,17 @@ fn set_inventory_item_name_only_is_the_trimmed_build() {
         assert(tt:SetInventoryItem("player", 16, 1) == 1, "nameOnly still answers 1")
         assert(TTTextLeft1:GetText() == "Sealed Blade")
         local r2, g2, b2 = TTTextLeft1:GetTextColor()
-        assert(r2 == 1 and g2 == 1 and b2 == 1, "nameOnly: the NAME goes white (0x52b8b3)")
+        assert(r2 == 1 and g2 == 1 and b2 == 1, "nameOnly: the NAME goes white")
         assert(not has("[ITEM_CONJURED]") and not has("[ITEM_BIND_ON_PICKUP]")
                and not has("[ITEM_UNIQUE]") and not has("[LOCKED]"),
-               "nameOnly: the bind/lock region is cut (0x52bac3)")
-        assert(not has("[ARMOR 100]"), "nameOnly: the stat body is cut (0x52c225)")
-        assert(not has("\"Sealed.\""), "nameOnly: the early return (0x52e14e) drops the tail")
+               "nameOnly: the bind/lock region is cut")
+        assert(not has("[ARMOR 100]"), "nameOnly: the stat body is cut")
+        assert(not has("\"Sealed.\""), "nameOnly: the early return drops the tail")
         assert(has("[INVTYPE_WEAPON]"), "nameOnly KEEPS the slot/type cell — between the two cuts")
         assert(has("[DURABILITY 50/90]") and has("[MIN_LEVEL 40]") and has("Zap"),
                "nameOnly KEEPS durability, the requirements and the triggers")
 
-        -- ── the gate's polarity: is-number AND strictly > 0 (0x53304a) ────────────────────
+        -- ── the gate's polarity: is-number AND strictly > 0 ────────────────────
         -- Absent, nil, 0, a negative and a non-numeric string all leave the flag at its zero
         -- seed, and none of them RAISES — this argument is not `number_arg`'s shape.
         local full = { nil, 0, -1, "nope", {}, false }

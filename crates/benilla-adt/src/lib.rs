@@ -199,7 +199,7 @@ impl Mh2oInstance {
 }
 
 /// MCNK header flag bit 1: a chunk a mover may not enter, the bands along mountain rims such as
-/// Searing Gorge's. The reference's header walk copies it to its chunk flag `0x40` (`0x6af5f0`).
+/// Searing Gorge's. The reference's header walk copies it to its chunk flag `0x40`.
 pub const MCNK_IMPASSABLE: u32 = 0x2;
 
 /// The MCNK header fields the renderer reads. The names mislead: `pred_tex` and `no_effect_doodad`

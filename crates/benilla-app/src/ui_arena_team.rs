@@ -1,7 +1,7 @@
-//! The app half of `CGArenaTeamInfo` (`0x5a40e0` and its handlers): the player's three arena-team
-//! slots off `PLAYER_FIELD_ARENA_TEAM_INFO_1_1`, the team cache (`DBCache<ArenaTeamCache>`), the
-//! last stats and roster of each team, the result, event and invitation lines, and the inspected
-//! player's teams. The VM sorts the roster and owns its selection.
+//! The app half of the reference's arena-team info (`0x5a40e0` and its handlers): the player's
+//! three arena-team slots off `PLAYER_FIELD_ARENA_TEAM_INFO_1_1`, the team cache, the last stats
+//! and roster of each team, the result, event and invitation lines, and the inspected player's
+//! teams. The VM sorts the roster and owns its selection.
 
 use std::time::{Duration, Instant};
 
@@ -19,17 +19,17 @@ use crate::net::{ArenaTeamCommand, ClientCommand, NetCommands, ObjectStore, Self
 use crate::query_cache::QueryCache;
 use crate::ui_script::{UiFeed, UiInput};
 
-/// `QueryRoster`'s throttle per team (`0x5a3600`).
+/// The roster query's throttle per team (`0x5a3600`).
 const ROSTER_THROTTLE: Duration = Duration::from_secs(10);
 
-/// One team slot's app state (`ArenaTeam`, `0x38` bytes).
+/// One team slot's app state (the reference's `0x38`-byte team record).
 #[derive(Clone, Debug, Default, PartialEq)]
 struct TeamSlot {
     team_id: u32,
     /// Rating, week games and wins, season games and wins, rank.
     stats: [u32; 6],
     members: Vec<ArenaTeamMember>,
-    /// `m_nextAllowedQuery` (`0xc0f7f0`).
+    /// The next allowed roster query (`0xc0f7f0`).
     next_query: Option<Instant>,
 }
 
@@ -80,7 +80,7 @@ impl ArenaTeams {
             .find(|s| s.team_id == team_id && team_id != 0)
     }
 
-    /// `UpdateTeams` (`0x5a3700`) over freshly read field words: a team that left its slot drops
+    /// The team update (`0x5a3700`) over freshly read field words: a team that left its slot drops
     /// out of the cache, every held team asks its roster, and a change fires `ARENA_TEAM_UPDATE`.
     fn update_teams(&mut self, info: [[u32; 7]; 3], now: Instant, commands: &NetCommands) {
         let signal = self.info.is_some();
@@ -105,7 +105,7 @@ impl ArenaTeams {
         }
     }
 
-    /// `QueryRoster` (`0x5a3600`): at most one ask per team per 10 s.
+    /// The roster query (`0x5a3600`): at most one ask per team per 10 s.
     fn query_roster(&mut self, slot: usize, now: Instant, commands: &NetCommands) {
         let s = &mut self.slots[slot];
         if s.team_id == 0 || s.next_query.is_some_and(|t| now < t) {
@@ -122,7 +122,7 @@ impl ArenaTeams {
     fn apply_record(&mut self, record: ArenaTeamRecord) {
         let id = record.team_id;
         self.records.insert(id, Some(record));
-        // `ArenaTeamCacheCallback` (`0x5a28c0`).
+        // The team cache's answer callback (`0x5a28c0`).
         self.events.push(("ARENA_TEAM_UPDATE", Vec::new()));
     }
 
@@ -151,8 +151,8 @@ impl ArenaTeams {
         self.events.push(("ARENA_TEAM_ROSTER_UPDATE", Vec::new()));
     }
 
-    /// `UpdateRoster(i, 1)` for every slot (`0x5a28e0`), after a membership event: the throttle
-    /// resets and the roster event fires with its argument 1.
+    /// The roster update with force 1 for every slot (`0x5a28e0`), after a membership event: the
+    /// throttle resets and the roster event fires with its argument 1.
     fn roster_changed(&mut self) {
         for s in &mut self.slots {
             s.next_query = None;
@@ -360,7 +360,8 @@ fn feed_arena_teams(
         script.set_arena_teams(views);
     }
 
-    // The inspected player's teams clear with the inspect target, as `ClearInspect` does.
+    // The inspected player's teams clear with the inspect target, as the reference's inspect clear
+    // does.
     let inspected = inspect_target
         .token
         .as_deref()
@@ -429,7 +430,7 @@ fn drain_arena_teams(
     }
 }
 
-/// The world enter re-reads the slots without an event (`EnterWorld`, `0x5a3dc0`).
+/// The world enter re-reads the slots without an event (`0x5a3dc0`).
 fn reset_on_world_enter(
     mut cascades: MessageReader<crate::net::WorldEnterCascadeMessage>,
     mut teams: ResMut<ArenaTeams>,
@@ -459,7 +460,7 @@ mod net {
             .net_handler(K::Disconnected, on_session_end);
     }
 
-    /// `ShutdownGame` frees every team (`0x5a3dd0`); the cache is the session's.
+    /// The game shutdown frees every team (`0x5a3dd0`); the cache is the session's.
     fn on_session_end(In(_): In<SessionEvent>, mut teams: ResMut<ArenaTeams>) {
         *teams = ArenaTeams::default();
     }

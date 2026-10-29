@@ -1,8 +1,7 @@
-//! The GameObject lock chain: the reference's resolver `0x5f83d0`, its per-slot Action gate
-//! (`0x5f81d0`) and the refusal-toast routing (`0x5f3427`). The reference asks the one resolver
-//! from `usable 0x5f3130` (the cursor's grey twin, and whether a right-click sends) and from the
-//! USE sender `0x5f33e0` (`CMSG_GAMEOBJ_USE`, an `OPEN_LOCK` cast or a toast), so the icon and the
-//! click agree by construction.
+//! The GameObject lock chain: the reference's resolver, its per-slot Action gate and the
+//! refusal-toast routing. The reference asks the one resolver from `usable` (the cursor's grey
+//! twin, and whether a right-click sends) and from the USE sender (`CMSG_GAMEOBJ_USE`, an
+//! `OPEN_LOCK` cast or a toast), so the icon and the click agree by construction.
 //!
 //! The Action gate judges each `Lock.dbc` slot on the object's state and its `GO_FLAG_LOCKED` bit
 //! ([`benilla_formats::LockSlot::available`]). It alone keeps a keyed door such as Scholomance's
@@ -10,10 +9,10 @@
 //! applies only while the door is not flagged locked.
 //!
 //! A slot is satisfied when the matched spell's `OPEN_LOCK` value
-//! ([`benilla_formats::SpellDisplay::open_lock_skill`]) reaches the requirement (`0x5f850f`),
-//! `Skill[i]` or `GAMEOBJECT_LEVEL × 5` when that is zero (`0x5f84be`). The value's level term is
-//! the player's skill in the spell's own line (`0x6e384d → 0x6e3130 → [vtbl+0xa8] = 0x5ea690`,
-//! [`crate::spell::spell_skill_value`]), not the character level.
+//! ([`benilla_formats::SpellDisplay::open_lock_skill`]) reaches the requirement, `Skill[i]` or
+//! `GAMEOBJECT_LEVEL × 5` when that is zero. The value's level term is the player's skill in the
+//! spell's own line (`[vtbl+0xa8] =`, [`crate::spell::spell_skill_value`]), not the character
+//! level.
 
 use std::collections::BTreeSet;
 
@@ -55,21 +54,21 @@ pub(crate) struct GoFacts {
 /// The resolver's verdict: the reference's return and its spell-id out-param in one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum LockOutcome {
-    /// No `Lock.dbc` row (`0x5f8180` null) or every slot empty: opens by `CMSG_GAMEOBJ_USE`.
+    /// No `Lock.dbc` row or every slot empty: opens by `CMSG_GAMEOBJ_USE`.
     Unlocked,
     /// A skill slot satisfied by this known `OPEN_LOCK` spell, cast at the object.
     OpenBySpell(u32),
     /// A key slot whose item we carry, by the key's entry; the reference casts the item's ON_USE
-    /// spell (`0x5d8c80`).
+    /// spell.
     OpenByKey(u32),
     /// A lock no slot satisfies: the client-local refusal, no packet.
     Unmet,
 }
 
 impl LockOutcome {
-    /// `usable 0x5f3130`'s lock arm: not usable only for [`Self::Unmet`] with `GO_FLAG_LOCKED` set
-    /// (`0x5f32a6`). With the flag clear the arm is skipped, so a herb node you cannot gather keeps
-    /// the lit `GatherHerbs` cursor and toasts on the click.
+    /// `usable`'s lock arm: not usable only for [`Self::Unmet`] with `GO_FLAG_LOCKED` set. With the
+    /// flag clear the arm is skipped, so a herb node you cannot gather keeps the lit `GatherHerbs`
+    /// cursor and toasts on the click.
     pub(super) fn blocks_usable(self, flag_locked: bool) -> bool {
         flag_locked && self == LockOutcome::Unmet
     }
@@ -93,26 +92,25 @@ pub(crate) fn go_facts(go: Option<(&ObjectStore, u32)>) -> GoFacts {
 }
 
 /// `GO_FLAG_LOCKED` (vmangos `GameObjectDefines.h:75`): selects the Action 1 slots and arms
-/// `usable`'s lock check (`0x5f32a6`).
+/// `usable`'s lock check.
 pub(crate) const GO_FLAG_LOCKED: u32 = 0x2;
 
-/// The reference's lock resolver `0x5f83d0`. Walks the eight `Lock.dbc` slots in order:
+/// The reference's lock resolver. Walks the eight `Lock.dbc` slots in order:
 /// - SKILL (2): past the Action gate, scan the known spells for an `OPEN_LOCK` effect whose
-///   `EffectMiscValue` is the slot's `Index`; a match sets `matched_spell` before the value test
-///   (`0x5f84f8`), then its effect value is compared to the requirement (`0x5f850f`).
+///   `EffectMiscValue` is the slot's `Index`; a match sets `matched_spell` before the value test,
+///   then its effect value is compared to the requirement.
 /// - KEY (1): past the Action gate, look for the key item in our bags and keyring.
 /// - NONE (0): skipped.
 ///
-/// A SKILL or KEY slot makes the lock real even when the Action gate rejects it (`[ebp-1] = 1`
-/// before `0x5f81d0`), so a door whose only opener is gated out refuses instead of falling through
-/// to `CMSG_GAMEOBJ_USE`. Whether `matched_spell` is set routes the toast (`0xdf` or `0xe0`).
+/// A SKILL or KEY slot makes the lock real even when the Action gate rejects it (`[ebp-1] = 1`), so
+/// a door whose only opener is gated out refuses instead of falling through to `CMSG_GAMEOBJ_USE`.
+/// Whether `matched_spell` is set routes the toast (`0xdf` or `0xe0`).
 ///
-/// The first sufficient match is cast, so the scan order picks between two sufficient openers,
-/// such as 6478 "Opening" and 22810 "Opening - No Text" on LockType 13, which every character
-/// knows. `known` is a [`BTreeSet`], so ours scans in ascending spell id; the reference scans its
-/// opener list (`0xb700b0`) in the order `SMSG_INITIAL_SPELLS` listed them, later learns at the
-/// tail, and vmangos sends that packet in `std::unordered_map` order (`Player.cpp:3458`,
-/// `Player.h:113`).
+/// The first sufficient match is cast, so the scan order picks between two sufficient openers, such
+/// as 6478 "Opening" and 22810 "Opening - No Text" on LockType 13, which every character knows.
+/// `known` is a [`BTreeSet`], so ours scans in ascending spell id; the reference scans its opener
+/// list in the order `SMSG_INITIAL_SPELLS` listed them, later learns at the tail, and vmangos sends
+/// that packet in `std::unordered_map` order (`Player.cpp:3458`, `Player.h:113`).
 pub(crate) fn resolve_lock(
     slots: &[LockSlot],
     known: &BTreeSet<u32>,
@@ -138,8 +136,8 @@ pub(crate) fn resolve_lock(
     outcome
 }
 
-/// The out-params `CGGameObject_C::IsLocked` (`0x70f160`) writes on each `OPEN_LOCK` match, before
-/// its sufficiency test: the spell, its value (`Spell_C_GetMinMaxPoints`) and the requirement.
+/// The out-params the GameObject's lock test (`0x70f160`) writes on each `OPEN_LOCK` match, before
+/// its sufficiency test: the spell, its value (the effect's points) and the requirement.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct LockMatch {
     pub(crate) spell: u32,
@@ -207,11 +205,11 @@ pub(crate) fn resolve_lock_detail(
     }
 }
 
-/// `0x5f8260`, the targeting cursor's question for the pending spell (`[0xceac58]`) over a
-/// GameObject, from the object dispatcher `0x4828d0` through `0x6e6460`. Unlike [`resolve_lock`]
-/// it matches the spell's own `OPEN_LOCK` effects against each slot's `Index` and compares no skill
-/// values, so the cursor lights on a chest the skill cannot open and the server refuses the click;
-/// no `Lock.dbc` row (`0x5f8180` null) is false, so the cursor greys over a mailbox.
+/// The targeting cursor's question for the pending spell over a GameObject, from the object
+/// dispatcher. Unlike [`resolve_lock`] it matches the spell's own `OPEN_LOCK` effects against each
+/// slot's `Index` and compares no skill values, so the cursor lights on a chest the skill cannot
+/// open and the server refuses the click; no `Lock.dbc` row is false, so the cursor greys over a
+/// mailbox.
 ///
 /// Not built: the `SPELL_EFFECT_OPEN_LOCK_ITEM` (59) arm, which matches the cast item's entry
 /// against a KEY slot; the catalog lacks its per-effect id.
@@ -230,8 +228,8 @@ pub(crate) fn spell_opens_lock(
     })
 }
 
-/// The slot's requirement: `Skill[i]`, or `GAMEOBJECT_LEVEL × 5` when that is zero
-/// (`0x5f84be`..`0x5f84ca`; `0x5f3490`..`0x5f349f` recomputes it for the `0xe0` toast's `%d`).
+/// The slot's requirement: `Skill[i]`, or `GAMEOBJECT_LEVEL × 5` when that is zero (recomputes it
+/// for the `0xe0` toast's `%d`).
 pub(crate) fn required_skill(slot: &LockSlot, go_level: u32) -> i32 {
     if slot.skill != 0 {
         slot.skill as i32
@@ -241,7 +239,7 @@ pub(crate) fn required_skill(slot: &LockSlot, go_level: u32) -> i32 {
 }
 
 /// Whether we carry item `entry`, by the reference's own walker, [`crate::ui_items::find_item`]
-/// (`0x622270 → 0x622420`, mode 0: equipment, bags, backpack and keyring).
+/// (mode 0: equipment, bags, backpack and keyring).
 fn holds_item(
     store: &benilla_protocol::messages::ObjectFields,
     objects: &crate::net::Objects,
@@ -270,7 +268,7 @@ mod tests {
         }
     }
 
-    /// `0x5f8260` against `0x5f83d0`: the cursor's question differs from the resolver's.
+    /// The cursor's lock question against the resolver: the two differ.
     #[test]
     fn the_cursor_lock_predicate_ignores_skill_and_refuses_the_lockless() {
         use benilla_formats::SpellDisplay;
@@ -299,7 +297,7 @@ mod tests {
         let brutal = [skill_slot(1, 9999, 1), LockSlot::default()];
         assert!(
             spell_opens_lock(&brutal, &pick_lock, unlocked),
-            "0x5f8260 compares no skill values — an out-of-reach lock still lights"
+            "the cursor's question compares no skill values — an out-of-reach lock still lights"
         );
 
         // Wrong LockType (3, Mining): a lockpick greys over an ore vein.
@@ -355,7 +353,7 @@ mod tests {
     }
 
     /// A level-60 with 1 Mining is refused a 250-skill vein; missing data reads skill 0, and the
-    /// `0x5ea520` sum counts both bonus halves.
+    /// sum counts both bonus halves.
     #[test]
     fn the_lock_value_tracks_the_players_skill_not_their_level() {
         use benilla_formats::{OpenLock, SkillLineCatalog, SpellCatalog, SpellDisplay};
@@ -421,8 +419,7 @@ mod tests {
         let unskilled = store_with_mining(1, 0);
         assert_eq!(resolve(Some(&unskilled), Some(&lines)), LockOutcome::Unmet);
 
-        // The `0x5ea520` sum counts both bonus halves: 235 + 10 temp + 5 perm = 250, exactly
-        // enough.
+        // The sum counts both bonus halves: 235 + 10 temp + 5 perm = 250, exactly enough.
         let buffed = store_with_mining(235, 10 | (5 << 16));
         assert_eq!(
             resolve(Some(&buffed), Some(&lines)),
@@ -434,7 +431,7 @@ mod tests {
         assert_eq!(resolve(None, Some(&lines)), LockOutcome::Unmet);
     }
 
-    /// The lock is marked real (`[ebp-1] = 1`) before `0x5f81d0` is asked.
+    /// The lock is marked real (`[ebp-1] = 1`) before the slot's opener test is asked.
     #[test]
     fn a_gated_out_slot_still_makes_the_lock_real() {
         let slots = [
@@ -563,8 +560,8 @@ mod tests {
             LockOutcome::OpenBySpell(6247),
         );
 
-        // The flag selects Pick Lock's Action 1 slot, but with no store the skill reads 0, its
-        // flat 5 < 280 refuses, and the out-param is still written (`0x5f84f8`).
+        // The flag selects Pick Lock's Action 1 slot, but with no store the skill reads 0, its flat
+        // 5 < 280 refuses, and the out-param is still written.
         let mut matched = None;
         assert_eq!(
             resolve_lock(

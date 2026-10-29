@@ -59,10 +59,9 @@ impl TaxiState {
 }
 
 /// A flight master's `SMSG_TAXINODE_STATUS`: `known = false` shows the green `TalkToMeGreen`
-/// overhead icon (`0x5ecdd0` to `0x607480`, resource table `0xc4d9d8` index 4). The query and the
-/// teardown belong to [`crate::quest_markers::query`]: the reference's only sender, `0x5eb170`, is
-/// called only from `0x607380` (at `0x6073e8`), the per-unit function that also sends the
-/// questgiver query, and both icons share one marker slot (`unit+0xb2c`).
+/// overhead icon. The query and the teardown belong to [`crate::quest_markers::query`]: the
+/// reference's only sender, is called only, the per-unit function that also sends the questgiver
+/// query, and both icons share one marker slot (`unit+0xb2c`).
 #[derive(Component, Clone, Copy)]
 pub(crate) struct FlightMasterStatus {
     pub(crate) known: bool,
@@ -127,8 +126,8 @@ fn feed_taxi(
     }
 
     // The first-visit learn: the reference shows message `0xf2`, `ERR_NEWTAXIPATH`, whose row
-    // routes it to the yellow `UI_INFO_MESSAGE` (`0x4945b0`) and plays its `TaxiNodeDiscovered`
-    // sound kit (`0x458030`); the catalog row carries both.
+    // routes it to the yellow `UI_INFO_MESSAGE` and plays its `TaxiNodeDiscovered` sound kit; the
+    // catalog row carries both.
     if std::mem::take(&mut state.discovered) {
         let text = script
             .lua()
@@ -150,7 +149,7 @@ fn feed_taxi(
     };
 
     // The continent is the current node's own, as the packet left it (`build_nodes`). The fares
-    // take the flight master's price discount for the player (`0x4dc45d`, `0x4dc4a2`).
+    // take the flight master's price discount for the player.
     let fresh = state.open.as_ref().and_then(|open| {
         let flightmaster = index
             .0
@@ -189,8 +188,7 @@ fn feed_taxi(
     if fresh != *last || (fresh.is_some() && name_changed) {
         script.set_taxi(fresh.clone());
         match (&*last, &fresh) {
-            // No arguments: the event's one fire site, `0x4dba96`, is a plain
-            // `FrameScript_SignalEvent` (`0x703e50`).
+            // No arguments: the event's one fire site is a plain event signal.
             (None, Some(_)) | (Some(_), Some(_)) => {
                 script.fire_event("TAXIMAP_OPENED", Vec::new());
             }
@@ -202,11 +200,10 @@ fn feed_taxi(
     }
 }
 
-/// Push `UnitOnTaxi("player")`: the reference's verb (`0x517a40`) answers bit 20 of
-/// `UNIT_FIELD_FLAGS` (`0x517a86`), which vmangos sets only for a flight
-/// (`FlightPathMovementGenerator`). Any other server spline, such as a fear, is not a taxi: stock
-/// `UIParent.lua:474-478` closes the windows on `PLAYER_CONTROL_LOST` unless on a taxi. No self
-/// store reads as not on a taxi.
+/// Push `UnitOnTaxi("player")`: the reference's verb answers bit 20 of `UNIT_FIELD_FLAGS`, which
+/// vmangos sets only for a flight (`FlightPathMovementGenerator`). Any other server spline, such as
+/// a fear, is not a taxi: stock `UIParent.lua:474-478` closes the windows on `PLAYER_CONTROL_LOST`
+/// unless on a taxi. No self store reads as not on a taxi.
 fn feed_on_taxi(
     script: Option<NonSendMut<UiScript>>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
@@ -226,10 +223,10 @@ fn feed_on_taxi(
     }
 }
 
-/// Drain the Lua intents. `TakeTaxiNode(i)` sends `CMSG_ACTIVATETAXI` when a direct `TaxiPath`
-/// edge joins the current node and the target, even if the drawn route detours, and otherwise
-/// `CMSG_ACTIVATETAXIEXPRESS` with the chain and its fare, as the reference's `0x4dbad0` test
-/// decides; the `Current` node sends nothing. `CloseTaxiMap()` clears locally, with no packet.
+/// Drain the Lua intents. `TakeTaxiNode(i)` sends `CMSG_ACTIVATETAXI` when a direct `TaxiPath` edge
+/// joins the current node and the target, even if the drawn route detours, and otherwise
+/// `CMSG_ACTIVATETAXIEXPRESS` with the chain and its fare, as the reference's test decides; the
+/// `Current` node sends nothing. `CloseTaxiMap()` clears locally, with no packet.
 fn drain_taxi(
     script: Option<NonSendMut<UiScript>>,
     mut state: ResMut<TaxiState>,
@@ -353,10 +350,10 @@ mod tests {
     }
 
     /// The map's fares take the flight master's discount and the express leg sends the raw route
-    /// sum (`0x4dc3d0` against `0x4dc96f`). Honored, a PvP-flagged flight master and honor rank
-    /// byte 6 make 0.15: Sentinel Hill's direct 110 shows 94, and Thelsamar's route through
-    /// Ironforge, 50 + 110, shows 136 and sends 160. With the flight master unresolved the fares
-    /// show 0 (`0x4dc423`).
+    /// sum. Honored, a PvP-flagged flight master and honor rank byte 6 make 0.15: Sentinel Hill's
+    /// direct 110 shows 94, and Thelsamar's route through Ironforge, 50 + 110, shows 136 and sends
+    /// 160.
+    /// With the flight master unresolved the fares show 0.
     #[test]
     fn the_map_shows_discounted_fares_and_the_express_sends_the_raw_sum() {
         use benilla_protocol::field::FIELD_UNIT_FACTIONTEMPLATE;

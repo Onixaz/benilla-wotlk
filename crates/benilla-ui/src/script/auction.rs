@@ -1,7 +1,7 @@
-//! The auction-house bindings, after the 12340 `CGAuctionHouse`: the app pushes the three lists
+//! The auction-house bindings, after 12340's auction-house engine: the app pushes the three lists
 //! (rows resolved, in wire order) and this module keeps each list's sort criteria, sorts the rows,
-//! and queues the intents the app drains. Getters are keyed by `"list"` (Browse), `"bidder"`
-//! (Bids) or `"owner"` (Auctions), with `index` 1-based in the current batch.
+//! and queues the intents the app drains. Getters are keyed by `"list"` (Browse), `"bidder"` (Bids)
+//! or `"owner"` (Auctions), with `index` 1-based in the current batch.
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -9,12 +9,12 @@ use super::binding_abi::flag;
 use super::cursor::{self, CursorItem, CursorPayload};
 use super::Model;
 
-/// The three list types, in the order the app pushes them (`TableNameToType` `0x59a9d0`).
+/// The three list types, in the order the app pushes them (`0x59a9d0`).
 pub const LIST: usize = 0;
 pub const BIDDER: usize = 1;
 pub const OWNER: usize = 2;
 
-/// The sort column names by column number, `SortTypeToName` (`0x59a7c0`).
+/// The sort column names by column number (`0x59a7c0`).
 pub const SORT_COLUMNS: [&str; 11] = [
     "level",
     "quality",
@@ -55,7 +55,7 @@ pub(super) fn list_index_of(kind: &str) -> Option<usize> {
     list_index(kind)
 }
 
-/// `TableNameToType` (`0x59a9d0`): case-insensitive.
+/// A list type by name (`0x59a9d0`): case-insensitive.
 fn list_index(kind: &str) -> Option<usize> {
     if kind.eq_ignore_ascii_case("list") {
         Some(LIST)
@@ -68,7 +68,7 @@ fn list_index(kind: &str) -> Option<usize> {
     }
 }
 
-/// `AuctionSortToColumnIndex` (`0x59a850`): a column name to its number, case-insensitive.
+/// The sort's column lookup (`0x59a850`): a column name to its number, case-insensitive.
 fn sort_column(name: &str) -> Option<u8> {
     SORT_COLUMNS
         .iter()
@@ -202,10 +202,11 @@ pub struct AuctionStartRequest {
     pub stack_size: u32,
     pub num_stacks: u32,
     /// The stacks to sell from, `(bag, slot, count)`: for a direct sale the sell item with
-    /// `stack_size`, otherwise every sellable stack `FindItemForAuction` gathered, in scan order.
+    /// `stack_size`, otherwise every sellable stack the auction stack gather collected, in scan
+    /// order.
     pub items: Vec<(i64, u32, u32)>,
     /// The sell item alone covers one stack: one send, as is (`0x59fbe9`). Otherwise the app runs
-    /// `SellNextItem` over [`Self::items`] `num_stacks` times.
+    /// The next-item sell over [`Self::items`] `num_stacks` times.
     pub direct: bool,
 }
 
@@ -216,7 +217,7 @@ pub struct AuctionBid {
     pub amount: u32,
 }
 
-/// The default criteria of `CGAuctionHouse::InitializeGame` (`0x5a0ba0`), front first.
+/// The default criteria the auction house's game initialization sets (`0x5a0ba0`), front first.
 fn default_criteria() -> [Vec<(u8, bool)>; 3] {
     let build = |sets: &[(u8, bool)]| {
         let mut c = Vec::new();
@@ -262,7 +263,7 @@ pub(super) fn initial_sort_criteria() -> [Vec<(u8, bool)>; 3] {
     default_criteria()
 }
 
-/// `SetBrowseSortCriteria` (`0x59a5e0`): the column moves to the front with `reversed`; a new
+/// The sort-criteria setter (`0x59a5e0`): the column moves to the front with `reversed`; a new
 /// column on a full list is dropped.
 fn set_criterion(criteria: &mut Vec<(u8, bool)>, column: u8, reversed: bool) {
     if let Some(pos) = criteria.iter().position(|&(c, _)| c == column) {
@@ -282,8 +283,8 @@ fn shown_bid(r: &AuctionItemRow) -> u32 {
     }
 }
 
-/// `CheckSortCriteria` (`0x59b460`), one column's order of two rows; a row whose template is in
-/// flight ties on the template columns.
+/// The sort compare (`0x59b460`), one column's order of two rows; a row whose template is in flight
+/// ties on the template columns.
 fn compare_column(column: u8, a: &AuctionItemRow, b: &AuctionItemRow) -> std::cmp::Ordering {
     use std::cmp::Ordering;
     let cached = a.name.is_some() && b.name.is_some();
@@ -356,7 +357,7 @@ fn queue_list_event(model: &mut Model, list: usize) {
     model.pending_events.push((event.to_string(), Vec::new()));
 }
 
-/// Re-sort one list in place and queue its update event: `ApplyBrowseSort` and kin.
+/// Re-sort one list in place and queue its update event, as the reference's list sorts do.
 fn apply_sort(model: &mut Model, list: usize) {
     let criteria = model.auction_sort[list].clone();
     if let Some(state) = model.auction.as_mut() {
@@ -393,8 +394,8 @@ impl super::UiScript {
         model.auction = state;
     }
 
-    /// Push `CanSendQuery` per list (`0x59a2f0`) and whether a get-all query may go out, the
-    /// app's throttle.
+    /// Push the query-allowed answer per list (`0x59a2f0`) and whether a get-all query may go out,
+    /// the app's throttle.
     pub fn set_auction_can_query(&mut self, can: [bool; 3], get_all: bool) {
         set_field!(self, auction_can_query, can);
         set_field!(self, auction_can_get_all, get_all);
@@ -475,8 +476,8 @@ impl super::UiScript {
             .map(|it| (it.bag, it.slot))
     }
 
-    /// Empty the sell slot (`ClearSellItem` `0x59a560`): a listing went out, a multi-sell ended,
-    /// or the session closed.
+    /// Empty the sell slot (`0x59a560`): a listing went out, a multi-sell ended, or the session
+    /// closed.
     pub fn clear_auction_sell_item(&mut self) {
         if self.model_ref().auction_sell_item.is_none() {
             return;
@@ -520,7 +521,8 @@ fn trunc_i64(n: f64) -> i64 {
     n.trunc() as i64
 }
 
-/// `IsSellItemValid` (`0x59d0b0`): the refusal for putting the item at `(bag, slot)` up for sale.
+/// The sell-item validity test (`0x59d0b0`): the refusal for putting the item at `(bag, slot)` up
+/// for sale.
 fn sell_refusal(model: &Model, bag: i64, slot: u32, item_id: u32) -> Option<&'static str> {
     let Some(t) = model.item_templates.get(&item_id) else {
         return Some("ERR_ITEM_NOT_FOUND");
@@ -565,7 +567,7 @@ fn sell_refusal(model: &Model, bag: i64, slot: u32, item_id: u32) -> Option<&'st
     None
 }
 
-/// `FindSellableItems` (`0x59f6e0`): the stack total of the sellable items of `item_id` in the
+/// The sellable-item count (`0x59f6e0`): the stack total of the sellable items of `item_id` in the
 /// backpack and the four bags.
 fn sellable_total(model: &Model, item_id: u32) -> u32 {
     sellable_stacks(model, item_id).iter().map(|s| s.2).sum()
@@ -590,8 +592,8 @@ fn sellable_stacks(model: &Model, item_id: u32) -> Vec<(i64, u32, u32)> {
     out
 }
 
-/// `FindItemForAuction` (`0x59f640`): the sellable stacks until they hold `wanted`, or none when
-/// the bags fall short.
+/// The auction stack gather (`0x59f640`): the sellable stacks until they hold `wanted`, or none
+/// when the bags fall short.
 fn gather_for_sale(model: &Model, item_id: u32, wanted: u32) -> Vec<(i64, u32, u32)> {
     let mut total = 0u32;
     let mut out = Vec::new();

@@ -58,7 +58,7 @@ fn the_dispatch_names_only_the_verified_procs() {
         Some(AuraNode::Alpha(0.0)),
         "kit 5129's 0.0 is a real value, not an absent one"
     );
-    // 9222653 is 0x8CB9FD, the ghost's blue-white; the client ORs on the opaque byte (`0x60d8cc`).
+    // 9222653 is 0x8CB9FD, the ghost's blue-white; the client ORs on the opaque byte.
     assert_eq!(
         node_for(proc(char_proc_type::TINT, 9_222_653.0)),
         Some(AuraNode::Tint([0x8C, 0xB9, 0xFD])),
@@ -68,7 +68,7 @@ fn the_dispatch_names_only_the_verified_procs() {
         node_for(proc(char_proc_type::TINT, 65_280.0)),
         Some(AuraNode::Tint([0x00, 0xFF, 0x00])),
     );
-    // Proc 11's rate passes on unexamined (`0x60db7e` → `SetBoneAnimSpeed` `0x712910`).
+    // Proc 11's rate passes on unexamined to the bone speed setter.
     assert_eq!(
         node_for(proc(char_proc_type::ANIM_RATE, 0.0)),
         Some(AuraNode::AnimRate(0.0)),
@@ -86,7 +86,7 @@ fn the_dispatch_names_only_the_verified_procs() {
 
 // ── The target and the ramp ──────────────────────────────────────────────────────────────────────
 
-/// `0x60d180`: the target is `baseAlpha` times the head (newest) node's factor alone.
+/// The target is `baseAlpha` times the head (newest) node's factor alone.
 #[test]
 fn the_target_is_base_times_the_newest_node() {
     let mut n = AuraNodes::new(1.0);
@@ -115,7 +115,7 @@ fn the_target_is_base_times_the_newest_node() {
     assert!((half.target() - 128.0 / 255.0).abs() < 1e-6);
 }
 
-/// A display swap's base change ([`refresh_base_alpha`]) rides the same ramp (`0x614f80`).
+/// A display swap's base change ([`refresh_base_alpha`]) rides the same ramp.
 #[test]
 fn a_base_change_rides_the_same_ramp() {
     let wolf = 102.0 / 255.0;
@@ -146,7 +146,7 @@ fn re_arming_the_same_spell_replaces_its_node() {
     assert!((n.target() - 0.3).abs() < 1e-6);
 }
 
-/// `StartAlphaFade(target, 1000 ms)` eased `clamp01(t)³` both ways, retargeted from the live value.
+/// A 1000 ms alpha fade eased `clamp01(t)³` both ways, retargeted from the live value.
 #[test]
 fn the_ramp_eases_over_one_second_both_ways() {
     let mut n = AuraNodes::new(1.0);
@@ -446,8 +446,8 @@ fn an_unmodelled_proc_only_kit_arms_nothing() {
 
 // ── The render authoring ─────────────────────────────────────────────────────────────────────────
 
-/// The author writes the alpha down the whole tree (the reference's alpha is per CGUnit) and moves
-/// each part to its blend twin, as a cutout batch ignores alpha; at opaque it releases.
+/// The author writes the alpha down the whole tree (the reference's alpha is per unit object) and
+/// moves each part to its blend twin, as a cutout batch ignores alpha; at opaque it releases.
 #[test]
 fn the_author_owns_the_tree_then_releases_at_opaque() {
     use benilla_world::model_fade::FadeMaterials;
@@ -584,7 +584,7 @@ fn the_ghost_tint_reaches_the_instance_table_and_clears_with_the_aura() {
         "the ghost's pale blue-white, alpha byte and all"
     );
 
-    // Dropped with no ease (`0x5ff320`); identity is the shader's no-op word, not a colour.
+    // Dropped with no ease; identity is the shader's no-op word, not a colour.
     crate::unit_auras::set_auras_for_test(app.world_mut(), unit, &[]);
     app.update();
     let tints = app
@@ -594,7 +594,7 @@ fn the_ghost_tint_reaches_the_instance_table_and_clears_with_the_aura() {
 }
 
 /// A rigged attached model has its own instance slot, which the vertex stage indexes the palette
-/// by, so its tint comes up the `ParentModel` chain, as the reference composes it (`0x714000`).
+/// by, so its tint comes up the `ParentModel` chain, as the reference composes it.
 #[test]
 fn a_rigged_attachment_inherits_its_wearers_tint_through_the_model_chain() {
     let mut app = app_with_tint_channel();
@@ -830,7 +830,8 @@ fn a_clip_armed_under_the_freeze_comes_back_at_its_own_speed() {
     );
 }
 
-/// `0x6201d0` writes the mount `[unit+0xdc]` before the body `[unit+0xd8]`: the mount freezes too.
+/// The reference's freeze writes the mount `[unit+0xdc]` before the body `[unit+0xd8]`: the mount
+/// freezes too.
 #[test]
 fn the_freeze_reaches_the_mount_body() {
     let mut app = app_with_freeze();

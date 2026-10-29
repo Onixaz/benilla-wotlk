@@ -53,13 +53,13 @@ pub struct StartOutfitItem {
     pub inv_type: u8,
 }
 
-/// One (race, sex)'s CharSections grid as `BuildComponentArray` (`0x4f3dd0`) lays it out: per base
-/// section, skin, face, facial hair, hair, underwear, `[variation][color]`, each slot the `Flags` of
-/// the last row at it or `None`; a variation's width is its widest colour plus one.
+/// One (race, sex)'s CharSections grid as the component-array build (`0x4f3dd0`) lays it out: per
+/// base section, skin, face, facial hair, hair, underwear, `[variation][color]`, each slot the
+/// `Flags` of the last row at it or `None`; a variation's width is its widest colour plus one.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CharSectionGrid {
     pub sections: [Vec<Vec<Option<u32>>>; SECTION_GRID_TYPES],
-    /// `CharacterFacialHairStyles.dbc`'s rows for the race and sex (`CountFacialFeatures`).
+    /// `CharacterFacialHairStyles.dbc`'s rows for the race and sex, as the reference counts them.
     pub facial_hair_styles: u32,
 }
 
@@ -116,8 +116,8 @@ pub struct CharCreateCatalog {
 
 impl CharCreateCatalog {
     /// The body displayId for a (race, sex), resolved through CreatureDisplayInfo like any unit.
-    /// The reference reads the race row's male id for gender 0 and the female for 1 and nothing
-    /// for any other gender byte (`0x5ec4c0`), and a zero id finds no model (`0x5ec485`).
+    /// The reference reads the race row's male id for gender 0 and the female for 1 and nothing for
+    /// any other gender byte, and a zero id finds no model.
     pub fn body_display(&self, race: u8, sex: u8) -> Option<u32> {
         let &(male, female) = self.displays.get(&race)?;
         let id = match sex {
@@ -158,7 +158,7 @@ impl CharCreateCatalog {
     }
 
     /// The classes a race may be created as, ascending by id: the client lists them in CharBaseInfo
-    /// row order (`0x4706b0`), which is ascending class id in the shipped file.
+    /// row order, which is ascending class id in the shipped file.
     pub fn classes_for_race(&self, race: u8) -> Vec<u8> {
         let mut cs: Vec<u8> = self
             .combos
@@ -471,7 +471,7 @@ fn load_start_outfits(chain: &mut Chain) -> Result<HashMap<(u8, u8, u8), Vec<Sta
     Ok(map)
 }
 
-/// CharSections → per (race, sex) the grid `BuildComponentArray` (`0x4f3dd0`) builds: rows of
+/// CharSections → per (race, sex) the grid the component-array build (`0x4f3dd0`) makes: rows of
 /// base section 5 and up are skipped, and a later row at a slot replaces an earlier one.
 fn load_section_grids(chain: &mut Chain) -> Result<HashMap<(u8, u8), CharSectionGrid>> {
     let bytes = chain

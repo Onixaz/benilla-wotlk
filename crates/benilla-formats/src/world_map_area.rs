@@ -39,7 +39,7 @@ pub struct WorldMapArea {
 
 /// `WorldMapArea.dbc` rows keyed by `ID`, the id `WorldMapOverlay.worldMapAreaId` joins. File order
 /// is kept: the reference's continent index is the file order of the `AreaID` 0 rows (Kalimdor
-/// first in 5875), as its builder `0x4a5d00` walks them.
+/// first in 5875), as its builder walks them.
 pub struct WorldMapAreaCatalog {
     by_id: HashMap<u32, WorldMapArea>,
     /// Row ids in on-disk record order.

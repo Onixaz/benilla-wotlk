@@ -36,8 +36,8 @@ pub(crate) use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 pub(crate) use kira::sound::streaming::StreamingSoundHandle;
 pub(crate) use kira::track::SpatialTrackHandle;
 
-/// A zero-duration tween, for a change that is a step (a reverb preset switch is instant,
-/// `0x45a720`); the per-frame volume feed uses [`glide`], since a step there clicks.
+/// A zero-duration tween, for a change that is a step (a reverb preset switch is instant); the
+/// per-frame volume feed uses [`glide`], since a step there clicks.
 pub(crate) fn snap() -> Tween {
     Tween {
         duration: std::time::Duration::ZERO,
@@ -62,7 +62,7 @@ pub(crate) fn declick() -> Tween {
     glide()
 }
 
-/// A linear fade over `ms`, like the reference's constant per-tick volume decrement (`0x7a5a50`).
+/// A linear fade over `ms`, like the reference's constant per-tick volume decrement.
 pub(crate) fn fade(ms: u64) -> Tween {
     Tween {
         duration: std::time::Duration::from_millis(ms),
@@ -70,8 +70,8 @@ pub(crate) fn fade(ms: u64) -> Tween {
     }
 }
 
-/// Linear amplitude (the reference's category mix, `0x7a5dc0`) to dB; amp ≤ 10⁻³, under one
-/// 1/255 FMOD step, is kira's silence floor.
+/// Linear amplitude (the reference's category mix) to dB; amp ≤ 10⁻³, under one 1/255 FMOD step, is
+/// kira's silence floor.
 pub(crate) fn amp_to_db(amp: f32) -> Decibels {
     if amp <= 1e-3 {
         Decibels::SILENCE
@@ -191,9 +191,8 @@ impl Mixer {
     }
 
     /// Apply a zone reverb preset: the reference turns the `SoundProviderPreferences` row into EAX
-    /// listener properties (`0x45a790`, `0x7a5fa0`) and switches with no ramp (`0x45a720`);
-    /// `None` is its silenced GENERIC default (`0x45a830`). The EAX-to-Freeverb projection is
-    /// this backend's own lossy mapping:
+    /// listener properties and switches with no ramp; `None` is its silenced GENERIC default. The
+    /// EAX-to-Freeverb projection is this backend's own lossy mapping:
     /// - `feedback = 10^(−0.108 / DecayTime)`, Freeverb's RT60 at its ~36 ms mean comb delay,
     ///   clamped to 0.98;
     /// - `damping` is `1 − DecayHFRatio/2` at weight 0.7 plus `−RoomHF/10000` at weight 0.3;
@@ -306,12 +305,12 @@ impl Mixer {
         Ok((track, handle))
     }
 
-    /// Play a decoded sound on a fresh spatial track; the backend only pans, gain over distance
-    /// is the kit pump's. `reverb_send` is whether `SoundEntries.EAXDef` resolves a slot
-    /// (`0x458f1c` via `0x45cdc0`): `SoundSamplePreferences.dbc` has only ids 1 and 2, so
-    /// `EAXDef 0` stays dry (`0x7a5bf0`). A slot sends at unity; its per-channel EAX properties
-    /// are not applied. `hrtf` puts the software-HRTF lowpass on the voice ([`super::hrtf`]) and
-    /// returns its cutoff cell; `chain` runs a DSP chain after it ([`super::dsp`]).
+    /// Play a decoded sound on a fresh spatial track; the backend only pans, gain over distance is
+    /// the kit pump's. `reverb_send` is whether `SoundEntries.EAXDef` resolves a slot:
+    /// `SoundSamplePreferences.dbc` has only ids 1 and 2, so `EAXDef 0` stays dry. A slot sends at
+    /// unity; its per-channel EAX properties are not applied. `hrtf` puts the software-HRTF lowpass
+    /// on the voice ([`super::hrtf`]) and returns its cutoff cell; `chain` runs a DSP chain after
+    /// it ([`super::dsp`]).
     pub(crate) fn play_3d(
         &mut self,
         data: StaticSoundData,
@@ -373,7 +372,7 @@ impl Mixer {
 }
 
 /// The ceiling on simultaneous 3D voices, well past a pack pull: which sounds play is the
-/// reference's per-bus caps (`0x87ce60`), not an arena size.
+/// reference's per-bus caps, not an arena size.
 const SPATIAL_VOICE_CAPACITY: usize = 512;
 
 /// The main track's chain: master, meter (what the game asked for), limiter, mix tap (what is
@@ -508,8 +507,8 @@ impl Mixer {
     }
 }
 
-/// Move a live spatial track's emitter each frame so a tracked loop rides its unit (the
-/// reference's tracked play, `0x61fec0`).
+/// Move a live spatial track's emitter each frame so a tracked loop rides its unit (the reference's
+/// tracked play).
 pub(crate) fn set_track_position(track: &mut SpatialTrackHandle, pos: Vec3) {
     track.set_position(
         mint::Vector3 {

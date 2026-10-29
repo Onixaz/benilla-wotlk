@@ -92,8 +92,8 @@ fn attempt(host: &str, port: u16, user: &str, pass: &str, arm: Arm) -> Result<Op
     Err(anyhow!("eight dials, every `B` ambiguous — try again"))
 }
 
-/// The five files the 1.12 client hashes, in this order (`ChecksumExecutables` at `0x5b1170`, the
-/// table at `0x85def0`); no other of the 120 orders gives the published digest.
+/// The five files the 1.12 client hashes, in this order (`ChecksumExecutables`); no other of the
+/// 120 orders gives the published digest.
 const SCANNED: [&str; 5] = [
     "WoW.exe",
     "fmod.dll",
@@ -102,8 +102,8 @@ const SCANNED: [&str; 5] = [
     "unicows.dll",
 ];
 
-/// HMAC-SHA1 keyed by the 16-byte `crc_salt`, framed as the client does (`0x5b117e`–`0x5b11b6`);
-/// the key is always 16 bytes, so there is no long-key step, as in the client.
+/// HMAC-SHA1 keyed by the 16-byte `crc_salt`, framed as the client does; the key is always 16
+/// bytes, so there is no long-key step, as in the client.
 fn hmac_sha1(key: &[u8; 16], msg: &[u8]) -> [u8; 20] {
     let mut ipad = [0x36u8; 64];
     let mut opad = [0x5cu8; 64];
@@ -121,7 +121,7 @@ fn hmac_sha1(key: &[u8; 16], msg: &[u8]) -> [u8; 20] {
 }
 
 /// Derive `H` from an install the way the 1.12 client does. An unreadable file contributes no
-/// bytes, as in the client (`0x5b11eb`, `0x5b1212`, `0x5b121f`, `0x5b1246`).
+/// bytes, as in the client.
 fn report_install(install_dir: &Path, crc_salt: &[u8; 16]) {
     println!("\n  install {}", install_dir.display());
     let mut msg = Vec::new();

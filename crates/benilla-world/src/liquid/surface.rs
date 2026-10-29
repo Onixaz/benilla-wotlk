@@ -28,23 +28,22 @@ pub(crate) struct LiquidAssets {
     materials: HashMap<LiquidKey, LiquidEntry>,
 }
 
-/// Which of the reference's three liquid renderers draws a surface: `0x6b62e0` sends the type
+/// Which of the reference's three liquid renderers draws a surface: its dispatch sends the type
 /// nibble to a category, and category 0 (nibbles 0/4/8) splits on the group's `MOGP.flags & 0x48`.
-/// Magma and slime share `0x6b68f0` (WMO) / `0x68dca0` (ADT) whatever the flags, so for them the
+/// Magma and slime share one renderer per source, WMO or ADT, whatever the flags, so for them the
 /// path only picks the fog block. Fog is per pass: the WMO liquid pass re-submits the smoothed
-/// interior fog block (`0x6b6323`–`0x6b6342`) under the same `[0xca7f00]` gate as the WMO geometry,
-/// so a pool fogs like its walls, while ADT liquid submits none and draws under the scene block.
+/// interior fog block under the same gate as the WMO geometry, so a pool fogs like its walls, while
+/// ADT liquid submits none and draws under the scene block.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub(crate) enum LiquidPath {
-    /// An ADT chunk's MCLQ (`0x6851b0` river, `0x685010` ocean): two stages, the depth swatch at
-    /// `tc0 = (0.5, LUT[depthByte])` and the sheet at `tc1 = (col·¼, row·¼)`; no vertex colour.
+    /// An ADT chunk's MCLQ: two stages, the depth swatch at `tc0 = (0.5, LUT[depthByte])` and the
+    /// sheet at `tc1 = (col·¼, row·¼)`; no vertex colour.
     Adt,
-    /// A WMO group's MLIQ, exterior or exterior-lit (`MOGP.flags & 0x48 != 0`), `0x6b6630`: one
-    /// stage, a 9-float vertex with an up normal and a colour dword, `MapObjExtWater0.bls` bound at
-    /// `0x6b6654`.
+    /// A WMO group's MLIQ, exterior or exterior-lit (`MOGP.flags & 0x48 != 0`): one stage, a
+    /// 9-float vertex with an up normal and a colour dword, `MapObjExtWater0.bls` bound.
     WmoExterior,
-    /// A WMO group's MLIQ, a true interior (`MOGP.flags & 0x48 == 0`), `0x6b6420`: one stage, a
-    /// 6-float vertex with no normal, lighting off, no pixel program.
+    /// A WMO group's MLIQ, a true interior (`MOGP.flags & 0x48 == 0`): one stage, a 6-float vertex
+    /// with no normal, lighting off, no pixel program.
     WmoInterior,
 }
 
@@ -89,13 +88,12 @@ struct LiquidKey {
 }
 
 /// Does a WMO MLIQ surface of this type nibble take the reference's animated stage-0 texture
-/// matrix, the lava/slime scroll? Only 6 and 7: the WMO magma/slime kernel `0x6b68f0` gates on
-/// `and esi,0xc; cmp esi,4` over the `0x6ba970` nibble and builds an identity but for element 13,
-/// the v-translate. Nibbles 2 and 3 reach the same kernel and stay still (the Great Forge is 2,
-/// Blackrock 6). ADT liquid never scrolls, though open-world lava is nibble 6: its kernel
-/// `0x68dca0` zeroes element 13 at `0x68dda1`, so the caller gates the path. The phase runs off
-/// the reference's uptime clock; only its rate and period are reproducible. Keyed by
-/// `LiquidType` id, the nibble + 1.
+/// matrix, the lava/slime scroll? Only 6 and 7: the WMO magma/slime kernel gates on
+/// `and esi,0xc; cmp esi,4` over the nibble and builds an identity but for element 13, the
+/// v-translate. Nibbles 2 and 3 reach the same kernel and stay still (the Great Forge is 2,
+/// Blackrock 6). ADT liquid never scrolls, though open-world lava is nibble 6: its kernel zeroes
+/// element 13, so the caller gates the path. The phase runs off the reference's uptime clock; only
+/// its rate and period are reproducible. Keyed by `LiquidType` id, the nibble + 1.
 fn scrolls(liquid_type: u32) -> bool {
     matches!(liquid_type, 7 | 8)
 }
@@ -152,8 +150,8 @@ pub(crate) fn spawn_liquids<'a>(
         return;
     };
     for lq in liquids {
-        // The scene fog (the ADT passes submit none and draw under the scene submit `0x66ff20`),
-        // and never a scroll, though ADT magma is nibble 6: its kernel zeroes the v-translate.
+        // The scene fog (the ADT passes submit none and draw under the scene submit), and never a
+        // scroll, though ADT magma is nibble 6: its kernel zeroes the v-translate.
         let Some(material) = liquid.material(lq.kind, LiquidPath::Adt, false) else {
             continue; // this kind's frames failed to load (warned at setup)
         };
@@ -166,10 +164,9 @@ pub(crate) fn spawn_liquids<'a>(
                     MeshMaterial3d(material),
                     Transform::IDENTITY,
                     LiquidSurface,
-                    // Exterior scene: the ADT liquid producer `0x683ab0` is called only from the
-                    // per-window populate `0x682fa0`, like ADT terrain (`0x683bf0`) and doodads
-                    // (`0x683700`), one entity per MCNK layer. The exterior cull is its only
-                    // `Visibility` writer.
+                    // Exterior scene: the ADT liquid producer is called only from the per-window
+                    // populate, like ADT terrain and doodads, one entity per MCNK layer. The
+                    // exterior cull is its only `Visibility` writer.
                     crate::exterior_cull::ExteriorScene,
                     info,
                     LiquidSoundSource {
@@ -325,8 +322,8 @@ const FRAME_SETS: &[(LiquidKind, &str, &str, u32)] = &[
     (LiquidKind::Still, "river", "lake_a", 30),
     (LiquidKind::Rapids, "river", "fast_a", 16),
     (LiquidKind::Ocean, "ocean", "ocean_h", 30),
-    // Fullbright: the sheet is the opaque, unlit, fogged body (`0x6b68f0`). Magma comes from both
-    // the WMO pools and the ADT magma queue; the reference has no ADT queue for slime.
+    // Fullbright: the sheet is the opaque, unlit, fogged body. Magma comes from both the WMO pools
+    // and the ADT magma queue; the reference has no ADT queue for slime.
     (LiquidKind::Magma, "lava", "lava", 30),
     (LiquidKind::Slime, "slime", "slime", 30),
 ];
@@ -350,12 +347,12 @@ pub(super) fn setup_liquid(
             warn!("liquid: no frames for {stem} — {kind:?} water will not render");
             continue;
         };
-        // Blend per kind, over the device defaults (`0x593bf0`) every reference setter pushes and
-        // pops against. Water and ocean: EGxBlend 2 (`SRC_ALPHA / INV_SRC_ALPHA`), depth write off
-        // (both under the fancy-water CVar `[0xc9a324]`, which is not modelled). Magma and slime:
-        // blend stays 0 (disabled) with depth test and write on (ids `0x10`/`0x12`), as the ADT
-        // lava pass sets (`0x6855e2`) and the WMO arm leaves it, so they are opaque. All four
-        // liquid passes turn culling off at entry (`0x59d7d8`); `glFrontFace` is never imported.
+        // Blend per kind, over the device defaults every reference setter pushes and pops against.
+        // Water and ocean: blend mode 2 (`SRC_ALPHA / INV_SRC_ALPHA`), depth write off (which is
+        // not modelled). Magma and slime: blend stays 0 (disabled) with depth test and write on
+        // (ids `0x10`/`0x12`), as the ADT lava pass sets and the WMO arm leaves it, so they are
+        // opaque. All four liquid passes turn culling off at entry; `glFrontFace` is never
+        // imported.
         let alpha_mode = if kind.is_fullbright() {
             AlphaMode::Opaque
         } else {
@@ -383,7 +380,7 @@ pub(super) fn setup_liquid(
                     alpha_mode,
                     cull_mode: None,
                     double_sided: true,
-                    // Water takes the water-pass slot of the reference's `0x483460` interleave
+                    // Water takes the water-pass slot of the reference's interleave
                     // (`sky_order::WATER_BIAS`); the opaque kinds take no rung.
                     depth_bias: if kind.is_fullbright() {
                         0.0

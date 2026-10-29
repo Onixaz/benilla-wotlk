@@ -204,10 +204,10 @@ impl Archive {
         self.open_file(name)?.read_all()
     }
 
-    /// Open a file for reading in place: its own OS handle, its sectors decompressed one at a
-    /// time as they are read, so a long sound streams without the whole file read first, as the
+    /// Open a file for reading in place: its own OS handle, its sectors decompressed one at a time
+    /// as they are read, so a long sound streams without the whole file read first, as the
     /// reference's FMOD streams read the archive through the file callbacks it registers
-    /// (`FSOUND_File_SetCallbacks` at `0x7a45e4`).
+    /// (`FSOUND_File_SetCallbacks`).
     pub fn open_file(&self, name: &str) -> Result<ArchiveFile> {
         let idx = &self.index;
         let block = idx.find(name).ok_or_else(|| Error::NotFound(name.into()))?;

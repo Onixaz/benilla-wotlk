@@ -118,7 +118,7 @@ fn the_trigger_creature_still_carries_the_attachments_its_visible_self_rides() {
         "the hand attachment sits on the body, not at the origin: {:?}",
         hand.position
     );
-    let name = at(18).expect("PlayerName (18) — `0x608640`'s overhead anchor");
+    let name = at(18).expect("PlayerName (18) — the reference's overhead anchor");
     assert!(
         name.position[2] > 2.0,
         "the name anchor is overhead, not at the feet: {:?}",
@@ -362,9 +362,9 @@ fn terrain_chunks_carry_unit_upward_mcnr_normals() {
 }
 
 /// Terrain winds CCW seen from above, so it draws backface-culled as the reference does: its chunk
-/// pass never sets `EGxRs 0x14` and inherits `CULL_FACE = 1`. Exact on the XY lattice (`0x6b0e50`
-/// takes X and Y from the grid, only Z from MCVT); against the authored MCNR normals it holds bar
-/// outliers, 4 of 196368 pairs on this tile, hence the 0.01% ceiling.
+/// pass never sets render state `0x14` and inherits `CULL_FACE = 1`. Exact on the XY lattice (the
+/// reference takes X and Y from the grid, only Z from MCVT); against the authored MCNR normals it
+/// holds bar outliers, 4 of 196368 pairs on this tile, hence the 0.01% ceiling.
 #[test]
 fn terrain_fans_wind_ccw_seen_from_above() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -682,7 +682,7 @@ fn filters_wmo_collidable_triangles_by_mopy() {
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
 
     // The reference's walking query skips a face iff `MOPY.flags & 0x04` (DETAIL): reject mask
-    // `0x84`, tested at its box-query leaf `0x6bca50` (from `0x6b91c0`, `0x6bc1c0`).
+    // `0x84`, tested at its box-query leaf.
     let inn = benilla_formats::load_wmo_collision_tris(
         &mut chain,
         "World\\wmo\\Azeroth\\Buildings\\GoldshireInn\\GoldshireInn.wmo",
@@ -719,9 +719,9 @@ fn derives_the_wmo_window_glass_law_from_momt() {
     let data = benilla_formats::wow_data_or_skip!();
     let mut chain = open_chain(&data).expect("open vanilla patch chain");
 
-    // The MOMT glass mechanisms: the exterior UNLIT drawer `0x6b4f10`, the interior WINDOW drawer
-    // `0x6b5190` and the SIDN night ramp `0x6b4090`. The inn's mat 5 is flags 0x11 (UNLIT, SIDN)
-    // in exterior groups; mat 21 is 0x28 (WINDOW) in interior groups, lit, never fullbright.
+    // The MOMT glass mechanisms: the exterior UNLIT drawer, the interior WINDOW drawer and the SIDN
+    // night ramp. The inn's mat 5 is flags 0x11 (UNLIT, SIDN) in exterior groups; mat 21 is 0x28
+    // (WINDOW) in interior groups, lit, never fullbright.
     let inn = benilla_formats::load_wmo(
         &mut chain,
         "World\\wmo\\Azeroth\\Buildings\\GoldshireInn\\GoldshireInn.wmo",
@@ -790,8 +790,8 @@ fn reads_authentic_atmosphere_from_light_dbc() {
         "got the fallback atmosphere — Light bands didn't resolve"
     );
 
-    // Decoded off the raw DBC bytes. Fog end is stored ×36 and scaled once at DBC load by
-    // `0x6d6090`; the start fraction is never scaled.
+    // Decoded off the raw DBC bytes. Fog end is stored ×36 and scaled once at DBC load; the start
+    // fraction is never scaled.
     let to255 = |c: [f32; 3]| {
         [
             (c[0] * 255.0).round() as i32,
@@ -838,7 +838,7 @@ fn reads_authentic_atmosphere_from_light_dbc() {
 }
 
 /// Elwynn's storm param, LightParams 10, at noon. Its fog start fraction is -0.5 and the reference
-/// never clamps it (`0x6cee6d`): the negative start is the constant ~33% near veil under rain.
+/// never clamps it: the negative start is the constant ~33% near veil under rain.
 #[test]
 fn reads_elwynn_storm_fog_endpoints() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -943,8 +943,8 @@ fn decodes_azeroth_wdl_against_apitrace_ground_truth() {
     assert!((ymax - (-1066.7)).abs() < 0.5, "tile origin Y, got {ymax}");
 }
 
-/// Magma and slime submersion read the fixed global `LightParams` rows 7 and 6 (`0x6d2371`), which
-/// no `Light.dbc` row references; they decode to the dense orange and green views.
+/// Magma and slime submersion read the fixed global `LightParams` rows 7 and 6, which no
+/// `Light.dbc` row references; they decode to the dense orange and green views.
 #[test]
 fn magma_and_slime_submersion_read_the_fixed_global_light_params() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -1278,10 +1278,10 @@ fn wmo_ground_type_is_a_terrain_type_id() {
     assert_eq!(multi, 121, "roots authoring more than one surface");
 }
 
-/// The ghost sky: `LightParams.lightSkyboxID` -> `LightSkybox.dbc` -> a readable model. 5875
-/// reads it only through the ghost override (`0x6d26cb`, gated on `[0xce9bb0] != -1`). In 12340
-/// the death slot of 713 of the 715 `Light` rows names params 2 to 5, each `DeathSkybox.mdx`, so
-/// it resolves the same at both capitals and at Deeprun Tram's fallback row.
+/// The ghost sky: `LightParams.lightSkyboxID` -> `LightSkybox.dbc` -> a readable model. 5875 reads
+/// it only through the ghost override. In 12340 the death slot of 713 of the 715 `Light` rows names
+/// params 2 to 5, each `DeathSkybox.mdx`, so it resolves the same at both capitals and at Deeprun
+/// Tram's fallback row.
 #[test]
 fn resolves_the_ghost_skybox_everywhere() {
     let data = benilla_formats::wow_data_or_skip!();

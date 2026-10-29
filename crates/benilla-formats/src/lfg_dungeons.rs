@@ -1,7 +1,7 @@
 //! The dungeon finder's three tables as 12340 lays them out: `LfgDungeons.dbc` (49 columns in
 //! 0xc4-byte records), `LfgDungeonGroup.dbc` (21 in 0x54) and `LfgDungeonExpansion.dbc` (8 in
 //! 0x20). Each localized string is 17 columns, the enUS slot first; the readers are the client's
-//! `CGLookingForGroup` (`0x552850`-`0x55d440`) and its Lua bindings.
+//! dungeon-finder code (`0x552850`-`0x55d440`) and its Lua bindings.
 
 use anyhow::{Context, Result};
 use benilla_dbc::{FieldType, Schema, SchemaField};

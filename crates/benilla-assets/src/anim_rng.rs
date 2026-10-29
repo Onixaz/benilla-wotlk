@@ -1,18 +1,17 @@
-//! The client's `rand()` stream, the MSVC CRT LCG (`vc_rand`, `0x88b867`), in this leaf crate
-//! because the engine's placed doodads and the game's creature, GameObject and portrait-booth arms
-//! all draw from it. The reference keeps one cell per thread (`[ptd+0x14]`) and draws every arm's
-//! roll on the main thread; its threaded M2 half (`CM2Model::AnimateMT`, `0x82f0f0`) never draws.
-//! The shared interleaving de-syncs a stand of identical props, so the doodads, GameObjects and
-//! booth keep one stream.
+//! The client's `rand()` stream, the MSVC CRT LCG (`0x88b867`), in this leaf crate because the
+//! engine's placed doodads and the game's creature, GameObject and portrait-booth arms all draw
+//! from it. The reference keeps one cell per thread (`[ptd+0x14]`) and draws every arm's roll on
+//! the main thread; its threaded M2 animate half (`0x82f0f0`) never draws. The shared interleaving
+//! de-syncs a stand of identical props, so the doodads, GameObjects and booth keep one stream.
 //!
 //! Deviation: each unit's animation driver draws its own stream ([`AnimRng::stream`]), seeded from
 //! the session seed and a per-unit key, so the units animate in parallel with the same rolls in
 //! any order. Distinct seeds still de-sync identical units, and the shared stream's exact
 //! sequence was never observable.
 //!
-//! The reference seeds it with `srand(GetTickCount())` in CRT static init (`0x5d1c70`, the call
-//! at `0x5d1c8b`), so each run rolls differently. Its exact sequence is out of reach: every other
-//! draw moves the stream, FrameXML's `random()` and each particle emitter among them.
+//! The reference seeds it with `srand(GetTickCount())` in CRT static init, so each run rolls
+//! differently. Its exact sequence is out of reach: every other draw moves the stream, FrameXML's
+//! `random()` and each particle emitter among them.
 
 use bevy::prelude::Resource;
 
@@ -26,7 +25,7 @@ pub struct AnimRng {
 
 impl Default for AnimRng {
     fn default() -> Self {
-        // `_initptd 0x40aca8`: the CRT's per-thread default, before `srand` runs
+        // `_initptd`: the CRT's per-thread default, before `srand` runs
         Self { state: 1, seed: 1 }
     }
 }
@@ -48,9 +47,9 @@ impl AnimRng {
         Self { state, seed: state }
     }
 
-    /// The play window's replay count `R`, as in the reference's `windowHi = now + span·R`
-    /// (`0x712692`-`0x7126cd`). It draws even when the range cannot change `R`, as the reference
-    /// does; skipping the draw de-phases every later roll.
+    /// The play window's replay count `R`, as in the reference's `windowHi = now + span·R`. It
+    /// draws even when the range cannot change `R`, as the reference does; skipping the draw
+    /// de-phases every later roll.
     pub fn replay_count(&mut self, replay: (u32, u32)) -> u32 {
         let (lo, hi) = replay;
         let r = lo + ((u64::from(self.draw()) * u64::from(hi.saturating_sub(lo))) >> 15) as u32;

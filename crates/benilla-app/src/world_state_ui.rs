@@ -1,7 +1,7 @@
 //! The always-up world-state readout behind stock `WorldStateFrame.xml`: joins the rows
 //! `WorldStateUI.dbc` displays with the states the server sent ([`crate::world_state`]).
 //!
-//! The list builder (`ResetWorldStateUI`, `0x5487d0`) walks the whole DBC and admits a row when:
+//! The list builder (`0x5487d0`) walks the whole DBC and admits a row when:
 //! 1. `MapID` is -1 or the scope's map;
 //! 2. `AreaID` is 0, the scope's zone or the scope's area;
 //! 3. `PhaseShift` is 0 or shares a bit with the player's phase mask;
@@ -41,12 +41,12 @@ fn load_world_state_ui(mut commands: Commands, assets: Option<Res<WorldAssets>>)
     }
 }
 
-/// Expands a `WorldStateUI` label (`0x508560`), a different expander from [`crate::npc_text`]'s,
-/// sharing only the world-state getter. The grammar is `%<digits>W|w` alone, printed `%d`; any
-/// other `%` emits a literal `%`, consumes its digits and leaves the next character as text.
-/// Output is truncated at the reference's 256-byte limit.
+/// Expands a `WorldStateUI` label, a different expander from [`crate::npc_text`]'s, sharing only
+/// the world-state getter. The grammar is `%<digits>W|w` alone, printed `%d`; any other `%` emits a
+/// literal `%`, consumes its digits and leaves the next character as text. Output is truncated at
+/// the reference's 256-byte limit.
 fn expand(text: &str, states: &WorldStates) -> String {
-    /// The `strncat` bound: `0x508560`'s caller passes `0x100`.
+    /// The `strncat` bound: the reference expander's caller passes `0x100`.
     const LIMIT: usize = 0x100 - 1;
 
     fn push(s: &str, out: &mut String) {

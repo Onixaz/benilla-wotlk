@@ -1,8 +1,8 @@
 //! The engine's focus clears. `FocusUnit` and `ClearFocus` live in the VM, which owns the guid;
-//! here the engine clears it as 12340 does: `CGGameUI::BreakTarget` (`0x524350`) when a unit
-//! leaves the object manager (`0x734fd0`), turns unselectable (`0x73c330`) or `SMSG_BREAK_TARGET`
-//! names it (`0x526586`); `PetChangeHandler` (`0x6d1970`) for a departed pet; and `LeaveWorld`
-//! (`0x528c30`). `BreakTarget` drops a matching target too.
+//! here the engine clears it as 12340 does: the target break (`0x524350`) when a unit leaves the
+//! object manager (`0x734fd0`), turns unselectable (`0x73c330`) or `SMSG_BREAK_TARGET` names it
+//! (`0x526586`); the pet-change handler (`0x6d1970`) for a departed pet; and the world exit
+//! (`0x528c30`). The target break drops a matching target too.
 
 use std::collections::HashMap;
 
@@ -46,7 +46,7 @@ impl GroupGate<'_, '_> {
         self.stores.get(*self.index.0.get(&guid)?).ok()
     }
 
-    /// `CGGameUI::IsRaidMemberOrPet` (`0x512a30`): a party slot or raid row, or its pet.
+    /// The group-member-or-pet test (`0x512a30`): a party slot or raid row, or its pet.
     fn member_or_pet(&self, guid: u64) -> bool {
         let group = &*self.group;
         let live = |m: u64| self.store(m).map(|s| &s.0);
@@ -62,7 +62,7 @@ impl GroupGate<'_, '_> {
                 .any(|m| m == guid || group.raid_pet_guid(m, live(m)) == Some(guid))
     }
 
-    /// `CGUnit_C::IsDuelingWith` (`0x71f5c0`), its player arm: one arbiter, opposite teams.
+    /// The duel test (`0x71f5c0`), its player arm: one arbiter, opposite teams.
     fn dueling_us(&self, guid: u64) -> bool {
         let (Some(me), Some(other)) = (
             self.self_guid.0.and_then(|g| self.store(g)),
@@ -76,20 +76,20 @@ impl GroupGate<'_, '_> {
             && me.player_duel_team() != other.player_duel_team()
     }
 
-    /// The exemption `BreakTarget`'s gated callers apply (`0x735127`, `0x5265be`): a group member
-    /// or pet keeps its target and focus unless it is dueling us.
+    /// The exemption the target break's gated callers apply (`0x735127`, `0x5265be`): a group
+    /// member or pet keeps its target and focus unless it is dueling us.
     fn breaks(&self, guid: u64) -> bool {
         !self.member_or_pet(guid) || self.dueling_us(guid)
     }
 }
 
-/// `CGGameUI::BreakTarget` (`0x524350`): the focus at the next feed, the target now.
+/// The target break (`0x524350`): the focus at the next feed, the target now.
 fn break_target(guid: u64, breaks: &mut FocusBreaks, deselect: &mut MessageWriter<DeselectGuid>) {
     breaks.0.push(guid);
     deselect.write(DeselectGuid(guid));
 }
 
-/// `CGUnit_C::Disable` (`0x734fd0`), the unit leaving the object manager: the gated break. Its
+/// The unit teardown (`0x734fd0`), the unit leaving the object manager: the gated break. Its
 /// target leg is the teardown's own deselect.
 fn on_unit_left(In(ev): In<SessionEvent>, gate: GroupGate, mut breaks: ResMut<FocusBreaks>) {
     let guids = match ev {

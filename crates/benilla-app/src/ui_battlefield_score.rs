@@ -30,7 +30,8 @@ const INSTANCE_TYPE_ARENA: u32 = 4;
 #[derive(Resource, Default)]
 pub(crate) struct BattlefieldScoreboard {
     log: Option<PvpLogData>,
-    /// `m_nextLogUpdate` (`0xbea584`): the next request's earliest moment, `None` until the first.
+    /// The next log update (`0xbea584`): the next request's earliest moment, `None` until the
+    /// first.
     next_request: Option<Instant>,
 }
 
@@ -160,7 +161,7 @@ pub(crate) fn feed_battlefield_score(
     }
 }
 
-/// `RequestScoreData` (`0x54ce30`): once asked, a finished match's or an arena's board is not
+/// The score request (`0x54ce30`): once asked, a finished match's or an arena's board is not
 /// asked again; otherwise once per 5000 ms.
 fn drain_battlefield_score(
     script: Option<NonSendMut<UiScript>>,
@@ -213,8 +214,7 @@ mod net {
             .net_handler(SessionEventKind::Disconnected, on_session_end);
     }
 
-    /// Zeroes the board and the stamp, as the reference's module init (`0x4a9c40`) does at every
-    /// login.
+    /// Zeroes the board and the stamp, as the reference's module init does at every login.
     fn on_session_end(In(_): In<SessionEvent>, mut board: ResMut<BattlefieldScoreboard>) {
         *board = BattlefieldScoreboard::default();
     }

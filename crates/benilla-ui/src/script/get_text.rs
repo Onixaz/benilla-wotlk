@@ -1,13 +1,13 @@
-//! `GetText(token [, gender] [, ordinal])` (`0x81b720`): a global string by token, with the
-//! plural and gender variants tried first (`FrameScript_GetText`, `0x819d40`).
+//! `GetText(token [, gender] [, ordinal])` (`0x81b720`): a global string by token, with the plural
+//! and gender variants tried first (the engine's string lookup, `0x819d40`).
 
 use mlua::{Lua, Value};
 
 /// `GENDER_FEMALE`, the one gender with a suffix of its own.
 const FEMALE: i64 = 3;
 
-/// `FrameScript_GetPluralIndex` (`0x817d10`) under rule 0, the one enUS sets: 1 for any count
-/// but one, the -1 an absent ordinal passes included.
+/// The plural index (`0x817d10`) under rule 0, the one enUS sets: 1 for any count but one, the -1
+/// an absent ordinal passes included.
 fn plural_index(count: i64) -> i64 {
     i64::from(count != 1)
 }
@@ -22,7 +22,7 @@ fn string_global(lua: &Lua, name: &str) -> Option<mlua::String> {
     }
 }
 
-/// `FrameScript_GetText`: token, plural and gender suffixes, then token and plural, token and
+/// The engine's string lookup: token, plural and gender suffixes, then token and plural, token and
 /// gender, the bare token, and "" when none is a string.
 pub(super) fn get_text(
     lua: &Lua,
@@ -46,7 +46,7 @@ pub(super) fn get_text(
     .map_or_else(|| lua.create_string(""), Ok)
 }
 
-/// `FrameScript_GetText(token, -1, 0)` for a binding holding `&Lua`.
+/// The string lookup with no ordinal and no gender (`-1`, `0`) for a binding holding `&Lua`.
 pub(super) fn global_text(lua: &Lua, token: &str) -> String {
     get_text(lua, token, -1, 0)
         .map(|s| s.to_string_lossy())
@@ -54,8 +54,8 @@ pub(super) fn global_text(lua: &Lua, token: &str) -> String {
 }
 
 impl super::UiScript {
-    /// `FrameScript_GetText(token, -1, 0)`, the lookup the engine makes for a line it prints
-    /// itself: `token_P1` first, then the bare token, else "".
+    /// The string lookup with no ordinal and no gender (`-1`, `0`), the lookup the engine makes for
+    /// a line it prints itself: `token_P1` first, then the bare token, else "".
     pub fn engine_text(&self, token: &str) -> String {
         get_text(&self.lua, token, -1, 0)
             .map(|s| s.to_string_lossy())

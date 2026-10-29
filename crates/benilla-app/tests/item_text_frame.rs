@@ -63,8 +63,8 @@ fn load_ui(script: &UiScript) {
     }
 }
 
-/// The page body as drawn, one string per block, read off the render list: `ItemTextPageText` is
-/// a `SimpleHTML`, which has no text getter in 1.12 (`0x87ba80`). A plain body is one block.
+/// The page body as drawn, one string per block, read off the render list: `ItemTextPageText` is a
+/// `SimpleHTML`, which has no text getter in 1.12. A plain body is one block.
 fn page_blocks(s: &UiScript) -> Vec<String> {
     use benilla_ui::script::QuadContent;
     s.extract()
@@ -127,9 +127,9 @@ fn a_letter_reads_with_the_creator_tail() {
 }
 
 /// The black `$parentMiddle` track sits right of the page: the stock XML declares ARTWORK before
-/// BACKGROUND because `Middle` anchors to `Top` by name, resolved at SetPoint time. Also, no
-/// anchor in the chain is unresolved: an XML one is reported and skipped (`0x767800`,
-/// `"Couldn't find relative frame: %s"` at `0x878440`) and a Lua one raises (`0x87ccd4`).
+/// BACKGROUND because `Middle` anchors to `Top` by name, resolved at SetPoint time. Also, no anchor
+/// in the chain is unresolved: an XML one is reported and skipped
+/// (`"Couldn't find relative frame: %s"`) and a Lua one raises.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_scrollbar_track_sits_right_of_the_page() {
@@ -277,9 +277,9 @@ fn the_reported_html_page_draws_as_blocks_not_as_its_own_markup() {
     );
 }
 
-/// An unsized `<IMG>` draws at its texture's texel extent, one texel to one FrameXML unit
-/// (`CSimpleTexture`, `0x770720`): the crest on `page_text` 2654, quoted below, is a 128×128 BLP
-/// inside a 270-wide page.
+/// An unsized `<IMG>` draws at its texture's texel extent, one texel to one FrameXML unit, as the
+/// reference's texture region sizes it: the crest on `page_text` 2654, quoted below, is a 128×128
+/// BLP inside a 270-wide page.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_reported_book_crest_draws_at_the_blps_own_size() {

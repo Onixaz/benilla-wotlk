@@ -2,17 +2,14 @@
 //! entry, fed by the server's times and bytes, its requests and uploads sent through the world
 //! writer in the world and through the character park outside it.
 //!
-//! As 12340: the account scope opens at the world server's authentication
-//! (`AccountDataInitialize(true)`, `0x6b1fcd`), the character scope at the world entry
-//! (`ClientInitializeGame` `0x4055cf`), and the character scope closes after the logout's flush
-//! (`AccountDataDestroy(false)` `0x406665`). The character screen asks for the account's times
-//! (`ReadyForAccountDataTimes`, `CMSG_READY_FOR_ACCOUNT_DATA_TIMES`); the server sends the
-//! character's after the world entry.
+//! As 12340: the account scope opens at the world server's authentication (`0x6b1fcd`), the
+//! character scope at the world entry (`0x4055cf`), and the character scope closes after the
+//! logout's flush (`0x406665`). The character screen asks for the account's times
+//! (`CMSG_READY_FOR_ACCOUNT_DATA_TIMES`); the server sends the character's after the world entry.
 //!
-//! The CVar slots 0 and 1 load before the in-game UI (`LoadAccountVariables` `0x518c80`, called in
-//! `CGGameUI::InitializeFrameXML`) and save at its shutdown (`SaveGameCVarsCallback` `0x512890`),
-//! after which `Config.wtf` is saved, the character's rows dropped and the pending uploads sent
-//! (`CGGameUI::Shutdown` `0x5290a0`-`0x5290bb`).
+//! The CVar slots 0 and 1 load before the in-game UI (`0x518c80`, called while the FrameXML loads)
+//! and save at its shutdown (`0x512890`), after which `Config.wtf` is saved, the character's rows
+//! dropped and the pending uploads sent (`0x5290a0`-`0x5290bb`).
 
 pub(crate) mod store;
 
@@ -63,7 +60,7 @@ pub(crate) fn gate(cvars: &Cvars) -> impl Fn(&SlotDef) -> bool + '_ {
 }
 
 /// The world server took the account: its scope opens, waiting for the times, and the account's
-/// rows go back to their defaults (`CVar::DeleteAccountCVars` `0x7673a0`).
+/// rows go back to their defaults (`0x7673a0`).
 fn open_account_scope(
     In(ev): In<SessionEvent>,
     intent: Res<crate::login::LoginIntent>,
@@ -141,15 +138,15 @@ fn tick_and_send(
 }
 
 /// Whether the UI may load: both scopes have heard from the server, as the reference's loads wait
-/// (`LoadAccountData` `0x6b9050` defers while a slot downloads).
+/// (the load at `0x6b9050` defers while a slot downloads).
 pub(crate) fn ready_for_ui(world: &World) -> bool {
     world
         .get_resource::<AccountData>()
         .is_none_or(|d| d.scope_ready(true) && d.scope_ready(false))
 }
 
-/// `LoadAccountVariables` (`0x518c80`): the account's rows from slot 0, the character's from slot
-/// 1, then the camera from its two rows (`0x5ff3e0`). A slot not ready loads nothing.
+/// The CVar load (`0x518c80`): the account's rows from slot 0, the character's from slot 1, then
+/// the camera from its two rows (`0x5ff3e0`). A slot not ready loads nothing.
 pub(crate) fn load_config_slots(world: &mut World) {
     let texts: Vec<(Scope, String)> = {
         let Some(data) = world.get_resource::<AccountData>() else {
@@ -179,7 +176,7 @@ pub(crate) fn load_config_slots(world: &mut World) {
     crate::player::restore_camera_from_cvars(world);
 }
 
-/// `SaveAccountData` (`0x6b9be0`) for each `(slot, bytes)`: written now, uploaded per the gate.
+/// The slot save (`0x6b9be0`) for each `(slot, bytes)`: written now, uploaded per the gate.
 pub(crate) fn save_slots(world: &mut World, slots: &[(usize, Vec<u8>)]) {
     let Some(cvars) = world.get_resource::<Cvars>() else {
         return;
@@ -196,8 +193,8 @@ pub(crate) fn save_slots(world: &mut World, slots: &[(usize, Vec<u8>)]) {
     }
 }
 
-/// `CGGameUI::Shutdown`'s writes (`0x528f00`), in its order: the chat cache, the macros, the
-/// bindings, the placed frames, then the CVar slots, `Config.wtf` and the flush ([`shutdown`]).
+/// The UI shutdown's writes (`0x528f00`), in its order: the chat cache, the macros, the bindings,
+/// the placed frames, then the CVar slots, `Config.wtf` and the flush ([`shutdown`]).
 pub(crate) fn save_ui(world: &mut World) {
     crate::ui_chat::settings::save_to_account_data(world);
     crate::ui_macro::save_to_account_data(world);
@@ -206,9 +203,9 @@ pub(crate) fn save_ui(world: &mut World) {
     shutdown(world);
 }
 
-/// The CVar half of `CGGameUI::Shutdown` (`0x5290a0`-`0x5290bb`): the camera into its rows, the
+/// The CVar half of the UI shutdown (`0x5290a0`-`0x5290bb`): the camera into its rows, the
 /// account's and the character's `config-cache.wtf`, `Config.wtf`, the character's rows dropped,
-/// and every pending upload sent now (`AccountDataFlush` `0x6b9b90`).
+/// and every pending upload sent now (the flush, `0x6b9b90`).
 pub(crate) fn shutdown(world: &mut World) {
     crate::player::save_camera_to_cvars(world);
     let bodies = world.get_resource::<Cvars>().map(|c| {

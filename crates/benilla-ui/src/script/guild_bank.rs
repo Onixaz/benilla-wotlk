@@ -1,8 +1,8 @@
-//! The guild bank bindings, 12340's `GuildBankFrame_Scripts` (registrar `0xacf8d0`). The app owns
-//! the wire and pushes a display-ready [`GuildBankView`] ([`UiScript::set_guild_bank`]); the
-//! engine keeps what the reference keeps beside it: the current tab, each slot's lock, and the
-//! cursor modes 11 (a bank item) and 12 (bank money). Each send is a [`GuildBankRequest`] the app
-//! drains, gates and answers ([`UiScript::take_guild_bank_requests`]).
+//! The guild bank bindings, 12340's guild bank script table (registrar `0xacf8d0`). The app owns
+//! the wire and pushes a display-ready [`GuildBankView`] ([`UiScript::set_guild_bank`]); the engine
+//! keeps what the reference keeps beside it: the current tab, each slot's lock, and the cursor
+//! modes 11 (a bank item) and 12 (bank money). Each send is a [`GuildBankRequest`] the app drains,
+//! gates and answers ([`UiScript::take_guild_bank_requests`]).
 
 use mlua::{Lua, MultiValue, Value};
 
@@ -10,7 +10,7 @@ use super::binding_abi::{flag, number_arg};
 use super::cursor::{self, CursorGuildBankItem, CursorMoney, CursorPayload};
 use super::Model;
 
-/// The bank's tabs (`CGGuildBankInfo::m_guildBankTabInfo[6]`, `0xc11458`).
+/// The bank's tabs (six tab records, `0xc11458`).
 pub const GUILD_BANK_TABS: usize = 6;
 /// Slots per tab; a virtual slot is `tab * 98 + slot` (`0x5a42e0`).
 pub const GUILD_BANK_TAB_SLOTS: usize = 98;
@@ -83,7 +83,7 @@ pub struct GuildBankLogView {
 /// The guild bank as the app pushes it whole.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct GuildBankView {
-    /// A guild banker is open (`m_banker`, `0xc1dc10`).
+    /// A guild banker is open (`0xc1dc10`).
     pub open: bool,
     pub num_tabs: u8,
     /// [`GUILD_BANK_TABS`] rows.
@@ -107,8 +107,8 @@ impl GuildBankView {
 pub enum GuildBankRequest {
     /// `QueryGuildBankTab(tab)`, 0-based.
     QueryTab(u8),
-    /// A held bag item dropped on bank slot `(tab, slot)`: `SwapItems` (`0x5a50c0`), whose item
-    /// gates and stack arithmetic the app runs.
+    /// A held bag item dropped on bank slot `(tab, slot)`: the bag-to-bank swap (`0x5a50c0`), whose
+    /// item gates and stack arithmetic the app runs.
     DepositItem {
         tab: u8,
         slot: u8,
@@ -116,7 +116,7 @@ pub enum GuildBankRequest {
         bag_slot: u32,
         split: Option<u32>,
     },
-    /// A held bank item dropped on another bank slot: `SwapBankItems` (`0x5a5410`).
+    /// A held bank item dropped on another bank slot: the bank-to-bank swap (`0x5a5410`).
     MoveItem {
         tab: u8,
         slot: u8,
@@ -170,14 +170,14 @@ impl super::UiScript {
         set_field!(self, guild_bank, view);
     }
 
-    /// The current tab, 0-based (`m_currentTab`, `0xc1dc0d`): the tab a guild event re-queries
+    /// The current tab, 0-based (`0xc1dc0d`): the tab a guild event re-queries
     /// and a right-clicked bag item goes to.
     pub fn guild_bank_tab(&self) -> u8 {
         self.model_ref().guild_bank_tab
     }
 
     /// A list rewrote `slots` of `tab`: each one's lock clears (`0x5a7250`), and a held bank item
-    /// from one of them drops (`0x5a74be`, `ClearCursor` then `UnlockVirtualItem`).
+    /// from one of them drops (`0x5a74be`, `ClearCursor` then the slot's unlock).
     pub fn guild_bank_slots_listed(&mut self, tab: u8, slots: &[u8]) {
         let touches = |t: u8, s: u8| t == tab && slots.contains(&s);
         let (held, locked) = {
@@ -208,7 +208,7 @@ impl super::UiScript {
     }
 
     /// A held bank item dropped back where nothing is sent: the cursor clears and the slot
-    /// unlocks (`SwapBankItems` `0x5a5410`, `UnlockVirtualItem` `0x513800`).
+    /// unlocks (`0x5a5410`, `0x513800`).
     pub fn guild_bank_drop_held(&mut self) {
         cursor::clear_cursor(&mut self.model_mut());
     }
@@ -255,12 +255,12 @@ fn queue(model: &mut Model, event: &str) {
     model.pending_events.push((event.to_string(), Vec::new()));
 }
 
-/// `IsLocked` (`0x5a4c40`): the slot is locked for this item.
+/// The lock test (`0x5a4c40`): the slot is locked for this item.
 fn is_locked(model: &Model, tab: u8, slot: u8, item_id: u32) -> bool {
     model.guild_bank_locks.contains(&(tab, slot, item_id))
 }
 
-/// `LockVirtualItem` (`0x5137d0`): lock, then `GUILDBANK_ITEM_LOCK_CHANGED`.
+/// The slot lock (`0x5137d0`): lock, then `GUILDBANK_ITEM_LOCK_CHANGED`.
 fn lock(model: &mut Model, tab: u8, slot: u8, item_id: u32) {
     if !is_locked(model, tab, slot, item_id) {
         model.guild_bank_locks.push((tab, slot, item_id));
@@ -276,7 +276,8 @@ pub(super) fn unlock_held(model: &mut Model, held: &CursorGuildBankItem) {
     queue(model, "GUILDBANK_ITEM_LOCK_CHANGED");
 }
 
-/// Put a bank item on the cursor as `SetCursorVirtualItem(…, 11, split)` (`0x520d30`) does.
+/// Put a bank item on the cursor as the reference's virtual-item cursor set (`0x520d30`, kind 11,
+/// with the split) does.
 fn hold(model: &mut Model, tab: u8, slot: u8, split: Option<u32>) -> bool {
     let Some(s) = model
         .guild_bank
@@ -321,7 +322,7 @@ pub(super) fn drop_on_bag_slot(model: &mut Model, held: CursorGuildBankItem, bag
     cursor::clear_cursor(model);
 }
 
-/// `UseContainerItem`'s guild bank arm (`0x5d8650` calls `AutoStoreItem` `0x5a56b0`): with a
+/// `UseContainerItem`'s guild bank arm (`0x5d8650` calls the bank's auto-store `0x5a56b0`): with a
 /// banker open, the item goes to the current tab, slot `0xFF` for wherever it fits.
 pub(super) fn use_container_item(model: &mut Model, bag: i64, slot: u32) -> bool {
     if !model.guild_bank.open {
@@ -351,7 +352,8 @@ fn index_arg(lua: &Lua, v: Value, usage: &'static str) -> mlua::Result<u8> {
     Ok(number_arg(lua, v, usage)?.wrapping_sub(1) as u8)
 }
 
-/// `Interface\Icons\<icon>` (`ClientDBStringLookup(3)`), the question mark for an empty icon.
+/// `Interface\Icons\<icon>` (the client's string lookup, table 3), the question mark for an empty
+/// icon.
 fn icon_path(icon: &str) -> String {
     let icon = if icon.is_empty() {
         "INV_Misc_QuestionMark"
@@ -964,8 +966,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // SetGuildBankTabInfo(tab, name, iconIndex) (`0x5a6a00`): the icon from the item-icon list,
-    // the name through `ValidateGuildBankTabName`, whose refusal shows as a name error
-    // (`0x5a5a00`).
+    // the name through the tab-name check, whose refusal shows as a name error (`0x5a5a00`).
     g.set(
         "SetGuildBankTabInfo",
         lua.create_function(|lua, (tab, name, icon): (Value, Value, Value)| {
@@ -1029,7 +1030,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     Ok(())
 }
 
-/// Run the item-icon builder once (`CGUIMacros::LoadIcons`, `0x565840`).
+/// Run the item-icon builder once (`0x565840`).
 fn build_item_icons(model: &mut Model) {
     if let Some(source) = model.macro_item_icon_source.take() {
         model.macro_item_icons = source();

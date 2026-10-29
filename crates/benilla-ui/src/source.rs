@@ -1,25 +1,23 @@
-//! UI source files are bytes, not text. The reference reads a Lua file whole and binary
-//! (`0x704bc0` via `0x648620`, no trailing NUL; binary on every leg of `0x647db0`), and
-//! `0x704ae0` hands it untranscoded to `luaL_loadbuffer 0x6f5690`, so a cp1252 file's literals
-//! keep their raw bytes. [`chunk`] prepares a Lua chunk byte for byte; [`decode`] gives our own
-//! `.xml` and `.toc` parsers the `&str` they need. Transcoding Lua instead would change
-//! `string.len`, `string.sub` and `string.byte` on every non-ASCII literal.
+//! UI source files are bytes, not text. The reference reads a Lua file whole and binary (no
+//! trailing NUL), and hands it untranscoded to `luaL_loadbuffer`, so a cp1252 file's literals keep
+//! their raw bytes. [`chunk`] prepares a Lua chunk byte for byte; [`decode`] gives our own `.xml`
+//! and `.toc` parsers the `&str` they need. Transcoding Lua instead would change `string.len`,
+//! `string.sub` and `string.byte` on every non-ASCII literal.
 
 use std::borrow::Cow;
 
 const BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 
-/// `bytes` without a leading UTF-8 BOM, a strip the reference added to its
-/// `luaL_loadbuffer 0x6f5690` (`0x6f5699`–`0x6f56b4`), so every chunk gets it, `loadstring`
-/// included; the `.toc` reader has its own at `0x6edc71`. At most one mark, only at offset 0; a
-/// UTF-16 mark is left alone, as the reference leaves it.
+/// `bytes` without a leading UTF-8 BOM, a strip the reference added to its `luaL_loadbuffer`, so
+/// every chunk gets it, `loadstring` included; the `.toc` reader has its own. At most one mark,
+/// only at offset 0; a UTF-16 mark is left alone, as the reference leaves it.
 pub fn strip_bom(bytes: &[u8]) -> &[u8] {
     bytes.strip_prefix(BOM).unwrap_or(bytes)
 }
 
-/// `bytes` without a leading `#` line: Lua 5.0 skips it for every chunk in `luaX_setinput`
-/// (`0x6ff5cd`–`0x6ff600`), while 5.1 moved the skip to `luaL_loadfile`, which mlua's
-/// `Lua::load` never calls. Runs after the BOM strip, the reference's order.
+/// `bytes` without a leading `#` line: Lua 5.0 skips it for every chunk in `luaX_setinput`, while
+/// 5.1 moved the skip to `luaL_loadfile`, which mlua's `Lua::load` never calls. Runs after the BOM
+/// strip, the reference's order.
 pub fn strip_hashbang(bytes: &[u8]) -> &[u8] {
     match bytes.first() {
         Some(b'#') => match bytes.iter().position(|&b| b == b'\n') {

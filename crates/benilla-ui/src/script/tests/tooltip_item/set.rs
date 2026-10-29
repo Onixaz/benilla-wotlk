@@ -1,12 +1,12 @@
-//! The item-set block (`ITEM_SET_NAME` `0x854b1c`): a blank, the gold header, the skill line, the
-//! member ladder, a blank, then the bonuses by ascending threshold; and the quest reward hovers.
+//! The item-set block (`ITEM_SET_NAME`): a blank, the gold header, the skill line, the member
+//! ladder, a blank, then the bonuses by ascending threshold; and the quest reward hovers.
 
 use super::{lines_of, script};
 use crate::script::*;
 
-/// Members are cream when equipped and gray otherwise; a bonus is green only with the skill met
-/// and enough owned. The bonus arms are two keys (`0x52e056..0x52e0d6`): an active bonus formats
-/// `ITEM_SET_BONUS` ("Set: %s", no count), an inactive one `ITEM_SET_BONUS_GRAY` ("(%d) Set: %s").
+/// Members are cream when equipped and gray otherwise; a bonus is green only with the skill met and
+/// enough owned. The bonus arms are two keys: an active bonus formats `ITEM_SET_BONUS` ("Set: %s",
+/// no count), an inactive one `ITEM_SET_BONUS_GRAY` ("(%d) Set: %s").
 #[test]
 fn item_set_block_counts_and_colors() {
     let mut s = script();
@@ -56,9 +56,9 @@ fn item_set_block_counts_and_colors() {
         local tt = CreateFrame("GameTooltip", "TT")
         tt:SetOwner(a, "ANCHOR_RIGHT")
         SetItemByIdForTest(tt, 6303)
-        -- The spacer is the reference's own literal `0x854b2c` — a space and a newline, which is
+        -- The spacer is the reference's own literal — a space and a newline, which is
         -- ONE row carrying one space, not the empty string (an empty AddLine adds no line at all
-        -- in the reference: `0x530270` bails before its `inc [esi+0x31c]`).
+        -- in the reference: its line add bails before its `inc [esi+0x31c]`).
         assert(TTTextLeft3:GetText() == " \n", "blank before the header, got "
                .. string.format("%q", tostring(TTTextLeft3:GetText())))
         assert(TTTextLeft4:GetText() == "[SET_NAME Defias Leather 2/5]", "got " .. tostring(TTTextLeft4:GetText()))
@@ -112,7 +112,7 @@ fn item_set_block_counts_and_colors() {
         gray,
         "inactive bonus is gray"
     );
-    // The skill gate (`0x5eaae0`): an unmet skill reds its line and grays every bonus.
+    // The skill gate: an unmet skill reds its line and grays every bonus.
     let mut gated = set_view;
     gated.required_skill = 165;
     gated.required_skill_rank = 250;

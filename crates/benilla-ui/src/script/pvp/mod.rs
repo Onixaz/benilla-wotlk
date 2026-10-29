@@ -90,7 +90,7 @@ impl super::UiScript {
         drain_field!(self, pvp_toggles)
     }
 
-    /// Push `GetPVPToggleTimer` (`0x6de7a0`): 300000 without the PvP timer flag, else the ms left
+    /// Push the PvP toggle timer (`0x6de7a0`): 300000 without the PvP timer flag, else the ms left
     /// on the flag watch's five-minute stamp, or -1 once it passed.
     pub fn set_pvp_toggle_timer(&mut self, ms: i32) {
         set_field!(self, pvp_toggle_timer, ms);
@@ -120,8 +120,8 @@ impl super::UiScript {
 
     /// Push or clear the last `MSG_INSPECT_HONOR_STATS` reply, paired with the pane's
     /// `INSPECT_HONOR_UPDATE`. Its presence is `HasInspectHonorData`, so the app clears it on
-    /// `ClearInspectPlayer` and the pane's `OnShow` asks again for the next player. Either way
-    /// the in-flight latch clears, as the engine's reply (`0x4c6f4c`) and re-key (`0x4c6f9d`) do.
+    /// `ClearInspectPlayer` and the pane's `OnShow` asks again for the next player. Either way the
+    /// in-flight latch clears, as the engine's reply and re-key do.
     pub fn set_inspect_honor(&mut self, data: Option<InspectHonorData>) {
         let mut model = self.model_mut();
         model.inspect_honor = data;
@@ -136,13 +136,12 @@ impl super::UiScript {
     }
 
     /// A rank's localized title for the app's `SMSG_PVP_CREDIT` chat line, `None` if missing or
-    /// empty. Gendered, unlike the pane's: the credit formatter resolves through `0x612bf0`. No
-    /// range check, so rank 19 names "Leader"; `rank` is the internal rank the credit carries
-    /// (`HonorMgr::SendPVPCredit` sends `GetRank().rank`).
+    /// empty. Gendered, unlike the pane's: the credit formatter resolves through the gendered
+    /// lookup. No range check, so rank 19 names "Leader"; `rank` is the internal rank the credit
+    /// carries (`HonorMgr::SendPVPCredit` sends `GetRank().rank`).
     ///
-    /// The caller owns two facts: the gender is the local player's while the team is the
-    /// victim's (`0x625374`), and a victim whose team is -1 gets no line at all (`0x625321`),
-    /// hence `team: u8`.
+    /// The caller owns two facts: the gender is the local player's while the team is the victim's,
+    /// and a victim whose team is -1 gets no line at all, hence `team: u8`.
     pub fn pvp_rank_title(&self, rank: u8, team: u8, female: bool) -> Option<String> {
         rank_title_gendered(
             self.lua(),
@@ -156,10 +155,9 @@ impl super::UiScript {
     }
 }
 
-/// Internal rank to visual rank (`0x51aa31`): 5..=18 subtract 4, and 1..=4 subtract 5 to give
-/// -4..=-1 (`0x51aa38`). The server's `visualRank` negates instead (`HonorMgr.cpp:991`), so the
-/// two disagree on ranks 1..=4; this is the client's. Only 1..=18 reach it, as `GetPVPRankInfo`
-/// gates first.
+/// Internal rank to visual rank: 5..=18 subtract 4, and 1..=4 subtract 5 to give -4..=-1. The
+/// server's `visualRank` negates instead (`HonorMgr.cpp:991`), so the two disagree on ranks 1..=4;
+/// this is the client's. Only 1..=18 reach it, as `GetPVPRankInfo` gates first.
 fn visual_rank(rank: i64) -> i64 {
     if rank >= 5 {
         rank - 4
@@ -186,7 +184,7 @@ fn inspect_honor(lua: &Lua) -> Option<InspectHonorData> {
 }
 
 /// A GlobalString off the VM's globals, `None` when absent or empty, as `GetPVPRankInfo` tests
-/// both (`0x51aa1c` NULL, `0x51aa20` empty).
+/// both.
 fn global_string(lua: &Lua, key: &str) -> Option<String> {
     lua.globals()
         .get::<Option<String>>(key)
@@ -195,19 +193,19 @@ fn global_string(lua: &Lua, key: &str) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-/// A unit's PvP team digit, `0x5efe00`'s tri-state from its race (`ChrRaces` to `FactionTemplate`,
-/// group mask `& 4` then `& 2`): 0 Horde, 1 Alliance, -1 no side; resolved by the app as
-/// [`UnitState::pvp_team`](super::UnitState). Not `faction_group`, the live faction template: a
-/// vmangos GM's template 35 has no side while his race keeps one. -1 misses every key.
+/// A unit's PvP team digit, the reference's tri-state from its race (`ChrRaces` to
+/// `FactionTemplate`, group mask `& 4` then `& 2`): 0 Horde, 1 Alliance, -1 no side; resolved by
+/// the app as [`UnitState::pvp_team`](super::UnitState). Not `faction_group`, the live faction
+/// template: a vmangos GM's template 35 has no side while his race keeps one. -1 misses every key.
 fn team_of(u: &super::UnitState) -> i64 {
     i64::from(u.pvp_team)
 }
 
-/// `GetPVPRankInfo`'s second argument as a team digit, the engine's three-way dispatch
-/// (`0x51a98c`/`0x51a9af`/`0x51a9c8`): a number is the digit itself, truncated; a string is that
-/// unit's [`team_of`], or 0 if it names nothing or a non-player; anything else is the local
-/// player's, or 0 with no player. That 0 is the team register's initial value, so a miss names
-/// off the Horde list, as in the reference. An unknown token raises, as `0x515970` does.
+/// `GetPVPRankInfo`'s second argument as a team digit, the engine's three-way dispatch: a number is
+/// the digit itself, truncated; a string is that unit's [`team_of`], or 0 if it names nothing or a
+/// non-player; anything else is the local player's, or 0 with no player. That 0 is the team
+/// register's initial value, so a miss names off the Horde list, as in the reference. An unknown
+/// token raises, as the reference does.
 fn team_arg(lua: &Lua, v: Value) -> mlua::Result<i64> {
     // `lua_isnumber` before `lua_isstring`, which is what puts a numeric string on the number arm.
     if let Some(n) = lua.coerce_number(v.clone())? {
@@ -227,15 +225,16 @@ fn team_arg(lua: &Lua, v: Value) -> mlua::Result<i64> {
     Ok(token
         .as_ref()
         .and_then(|t| model.unit(t))
-        // `0x51a9af`'s player gate (`shr edx,4; test dl,1`), applied here unlike in `UnitPVPRank`:
-        // on this arm nothing else tells a creature, which has a race too, from a player.
+        // The reference's player gate (`shr edx,4; test dl,1`), applied here unlike in
+        // `UnitPVPRank`: on this arm nothing else tells a creature, which has a race too, from a
+        // player.
         .filter(|u| u.is_player)
         .map_or(0, team_of))
 }
 
-/// `PVP_RANK_<internal>_<team>`, ungendered: `GetPVPRankInfo`'s lookup, `0x703bf0(key, -1, 0)`
-/// (`0x51aa0f` pushes gender 0), so the panes show a female character the default title. Do not
-/// gender it: that would diverge from the reference.
+/// `PVP_RANK_<internal>_<team>`, ungendered: `GetPVPRankInfo`'s global-string lookup of
+/// `(key, -1, 0)`, so the panes show a female character the default title. Do not gender it: that
+/// would diverge from the reference.
 fn rank_title_ungendered(lua: &Lua, rank: i64, team: i64) -> Option<String> {
     global_string(lua, &format!("PVP_RANK_{rank}_{team}"))
 }
@@ -249,13 +248,13 @@ pub struct RankTitle {
     pub rank: u8,
     /// The team digit from the race: 0 Horde, 1 Alliance, -1 no side.
     pub team: i8,
-    /// Female takes the `_FEMALE` twin (`0x612bf0`) and falls back to the base key.
+    /// Female takes the `_FEMALE` twin and falls back to the base key.
     pub female: bool,
 }
 
-/// The same title gendered, `0x612bf0`: it passes 2 (male) or 3 (female) to `0x703bf0`, which
+/// The same title gendered: it passes 2 (male) or 3 (female) to the global-string lookup, which
 /// asks FrameXML's `GetText` to append `_FEMALE` for 3 (the engine never builds that key), and
-/// retries ungendered on a miss (`0x612c2d`). The credit line's lookup.
+/// retries ungendered on a miss. The credit line's lookup.
 fn rank_title_gendered(lua: &Lua, title: RankTitle) -> Option<String> {
     rank_title(&|key| global_string(lua, key), title)
 }
@@ -272,8 +271,7 @@ fn rank_title(lookup: &impl Fn(&str) -> Option<String>, title: RankTitle) -> Opt
 
 /// Fill a two-`%s` C format string, the install's template (enUS `UNIT_PVP_NAME` is `"%s %s"`);
 /// `%%` is a literal `%` and any other specifier passes through. Deviation: a third `%s` gets an
-/// empty string, because the reference pushes two varargs (`0x6093f2 add esp,0x14`) and would
-/// read uninitialised stack.
+/// empty string, because the reference pushes two varargs and would read uninitialised stack.
 pub(super) fn format_two_strings(fmt: &str, a: &str, b: &str) -> String {
     let mut out = String::with_capacity(fmt.len() + a.len() + b.len());
     let mut args = [a, b].into_iter();
@@ -303,8 +301,8 @@ pub fn pvp_name_global_keys() -> Vec<String> {
     (1..=u8::MAX).map(|n| format!("PVP_MEDAL{n}")).collect()
 }
 
-/// `GetUnitChosenTitle` (`0x72a290`) with titles on, the name `UnitPVPName` and the unit tooltip's
-/// first line (`0x6219a0`) show: a player's chosen title filled with `name`, else `name`.
+/// The unit's chosen title (`0x72a290`) with titles on, the name `UnitPVPName` and the unit
+/// tooltip's first line (`0x6219a0`) show: a player's chosen title filled with `name`, else `name`.
 pub(super) fn pvp_name(lua: &Lua, u: &super::UnitState, name: &str) -> String {
     if !u.is_player {
         return name.to_owned();
@@ -426,10 +424,10 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // GetPVPRankInfo(rank [, unit]) → rankName, rankNumber: the title and the visual rank for an
-    // internal rank, always two values; every failure answers `nil, 0`, which both panes turn
-    // into `NONE`. `0x51a930` accepts [1, 18], signed (`0x51a9f0`/`0x51a9f5`), so rank 19,
-    // "Leader", is refused although its GlobalStrings exist and the server sends it. The second
-    // argument is `team_arg`'s three-way dispatch.
+    // internal rank, always two values; every failure answers `nil, 0`, which both panes turn into
+    // `NONE`. The reference accepts [1, 18], signed, so rank 19, "Leader", is refused although its
+    // GlobalStrings exist and the server sends it. The second argument is `team_arg`'s three-way
+    // dispatch.
     g.set(
         "GetPVPRankInfo",
         lua.create_function(|lua, (rank, unit): (Value, Value)| {
@@ -455,14 +453,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitPVPRank(unit) → the unit's current rank, internal, 0 for none. `0x51a8a0` reads the
+    // UnitPVPRank(unit) → the unit's current rank, internal, 0 for none. The reference reads the
     // named object's own byte (`[+0xe68]+0x1f`, in public `PLAYER_BYTES_3`), which is how the
-    // inspect pane reads a foreign rank. Anything unresolved reads 0, never nil (`0x51a916`); a
-    // non-string argument raises (`0x51a8ac`).
+    // inspect pane reads a foreign rank. Anything unresolved reads 0, never nil; a non-string
+    // argument raises.
     //
-    // The engine's player gate (`0x51a8e1`) is not re-applied: it tests the type mask, while our
-    // `is_player` comes from the app's later guid-keyed enrichment, so a snapshot pushed before
-    // it would zero a real player's rank. A creature has no player block, so its byte is 0.
+    // The engine's player gate is not re-applied: it tests the type mask, while our `is_player`
+    // comes from the app's later guid-keyed enrichment, so a snapshot pushed before it would zero a
+    // real player's rank. A creature has no player block, so its byte is 0.
     g.set(
         "UnitPVPRank",
         lua.create_function(|lua, token: Value| {
@@ -477,9 +475,9 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // UnitPVPName(unit) (`0x60e9a0`): `GetUnitChosenTitle` with titles on (`0x72a290`), a
-    // player's chosen title around the name and a medal line, else the plain name. No snapshot or
-    // an unresolved name answers nil.
+    // UnitPVPName(unit) (`0x60e9a0`): the chosen title with titles on (`0x72a290`), a player's
+    // chosen title around the name and a medal line, else the plain name. No snapshot or an
+    // unresolved name answers nil.
     g.set(
         "UnitPVPName",
         lua.create_function(|lua, token: Value| {
@@ -503,15 +501,14 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
 
     // ── The inspect half ─────────────────────────────────────────────────────────────────────
 
-    // RequestInspectHonorData(): `InspectHonorFrame_OnShow` calls it while
-    // `HasInspectHonorData()` is false; the app sends `MSG_INSPECT_HONOR_STATS` for its inspect
-    // target. Zero return values (`0x4c9610`).
+    // RequestInspectHonorData(): `InspectHonorFrame_OnShow` calls it while `HasInspectHonorData()`
+    // is false; the app sends `MSG_INSPECT_HONOR_STATS` for its inspect target. Zero return values.
     //
-    // `0x4c80a0` bails silently if data is held (`0x4c80a6`), if a query is in flight (`pending`,
-    // `0x4c80b6`, `[0xb71fcc]`) or if the target guid is 0 (`0x4c80c2`). The first two are here;
-    // the guid is the app's, which drops a request with no target. Our `pending` latches on
-    // queue, not send, so a dropped request holds it until the next `set_inspect_honor`, which
-    // `ClearInspectPlayer` calls as `0x4c6f70` clears the engine's.
+    // The reference bails silently if data is held, if a query is in flight (`pending`) or if the
+    // target guid is 0. The first two are here; the guid is the app's, which drops a request with
+    // no target. Our `pending` latches on queue, not send, so a dropped request holds it until the
+    // next `set_inspect_honor`, which `ClearInspectPlayer` calls as the reference clears the
+    // engine's.
     g.set(
         "RequestInspectHonorData",
         lua.create_function(|lua, ()| {

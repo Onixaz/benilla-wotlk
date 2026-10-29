@@ -8,9 +8,9 @@ use benilla_formats::Chain;
 
 use crate::model_key;
 
-/// The GameObject arm's LUT (`.data 0x8607e4`): internal substate → the `AnimationData.dbc` id.
+/// The GameObject arm's LUT (`.data`): internal substate → the `AnimationData.dbc` id.
 const SUBSTATE_ANIM: [u16; 13] = [
-    145, // 0  Spawn      (one-shot on create, `0x5f382f` → `0x5f8c50`)
+    145, // 0  Spawn      (one-shot on create)
     147, // 1  Closed     (rest)
     148, // 2  Open       (motion)
     149, // 3  Opened     (rest)
@@ -18,16 +18,16 @@ const SUBSTATE_ANIM: [u16; 13] = [
     150, // 5  Destroy    (motion)
     151, // 6  Destroyed  (rest)
     152, // 7  Rebuild    (motion)
-    153, 154, 155, 156, // 8..11 Custom0-3 (one-shots through `0x5f8c50`)
+    153, 154, 155, 156, // 8..11 Custom0-3
     157, // 12 Despawn
 ];
 
-/// The transition substates, which slot 14 (`0x5f4120`) advances at the arm's window end
-/// (2 Open → 3 Opened, 4 Close → 1 Closed, 5 Destroy → 6 Destroyed), whatever the clip's loop bit.
+/// The transition substates, which slot 14 advances at the arm's window end (2 Open → 3 Opened, 4
+/// Close → 1 Closed, 5 Destroy → 6 Destroyed), whatever the clip's loop bit.
 const MOTION_SUBSTATES: [usize; 3] = [2, 4, 5];
 
-/// The six substates a `GAMEOBJECT_STATE` × `GAMEOBJECT_ANIMPROGRESS` pair produces (`0x5f3c30`);
-/// Spawn (0), Custom0-3 (8..11) and Despawn (12) come from the one-shot channel `0x5f8c50`.
+/// The six substates a `GAMEOBJECT_STATE` × `GAMEOBJECT_ANIMPROGRESS` pair produces; Spawn (0),
+/// Custom0-3 (8..11) and Despawn (12) come from the one-shot channel.
 const REACHABLE: [(usize, &str); 6] = [
     (1, "READY  settled"),
     (4, "READY  mid    "),
@@ -37,8 +37,8 @@ const REACHABLE: [(usize, &str); 6] = [
     (5, "ALT    mid    "),
 ];
 
-/// The four-way remap (`0x5f3972`) for a model that lacks the substate's LUT id, as `(id, rate0)`:
-/// `rate0` marks the two legs that freeze a motion clip at frame 0 in place of a missing rest pose.
+/// The four-way remap for a model that lacks the substate's LUT id, as `(id, rate0)`: `rate0` marks
+/// the two legs that freeze a motion clip at frame 0 in place of a missing rest pose.
 fn go_remap(m: &benilla_m2::M2Model, id: u16) -> (u16, bool) {
     if m.owns_animation(id) {
         return (id, false);
@@ -76,8 +76,8 @@ fn go_resolve_slot(m: &benilla_m2::M2Model, id: u16) -> Option<(u16, u16)> {
     (slot != 0xffff).then_some((id, slot))
 }
 
-/// The loader seed (`0x71019b`): id 0 when the model owns what id 0 resolves to, else the
-/// file-order-first sequence's own id (`animations[0]`).
+/// The loader seed: id 0 when the model owns what id 0 resolves to, else the file-order-first
+/// sequence's own id (`animations[0]`).
 fn go_loader_seed(
     m: &benilla_m2::M2Model,
     seqs: &[benilla_formats::ModelAnimation],
@@ -108,11 +108,11 @@ pub fn goanimscan(chain: &mut Chain) -> Result<()> {
     let (mut parsed, mut no_seq, mut blind, mut sensitive, mut needs_remap, mut rate0) =
         (0u32, 0u32, 0u32, 0u32, 0u32, 0u32);
     // A motion substate on a looping sequence (flags bit 0 clear) wraps until the completion
-    // advance (`0x5f4120`) ends it; the replay range sets how many bands that window spans.
+    // advance ends it; the replay range sets how many bands that window spans.
     let (mut looping_motion, mut looping_motion_sensitive, mut multi_replay) = (0u32, 0u32, 0u32);
-    // The arm rolls a weighted variation (`0x5f3aee` pushes -1) where the loader seed takes
-    // variation 0 (`0x71019b`), so a chain on a substate's id reaches sequences the seed cannot
-    // (`ONYZIASLAIRLAVATRAP`: two Stands, only the 10%-weighted second spurts lava).
+    // The arm rolls a weighted variation where the loader seed takes variation 0, so a chain on a
+    // substate's id reaches sequences the seed cannot (`ONYZIASLAIRLAVATRAP`: two Stands, only the
+    // 10%-weighted second spurts lava).
     let mut chained = 0u32;
     let mut chained_paths: Vec<String> = Vec::new();
     for (path, displays) in &models {
@@ -342,9 +342,9 @@ pub fn fxlifescan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
 }
 
 /// List the models whose loader-idle sequence is not file slot 0 and is a rest pose the content
-/// gate leaves unarmed, with the emitters (`FX`) and batches (`ALPHA`) that differ at t = 0
-/// between the two slots. The reference arms the idle on every instance at load (`0x70ebd0`'s
-/// tail), so a per-sequence bake follows it, never slot 0 (`DuelingFlag.m2`'s slot 0 is Spawn).
+/// gate leaves unarmed, with the emitters (`FX`) and batches (`ALPHA`) that differ at t = 0 between
+/// the two slots. The reference arms the idle on every instance at load, so a per-sequence bake
+/// follows it, never slot 0 (`DuelingFlag.m2`'s slot 0 is Spawn).
 pub fn idleslotscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     let names = super::m2_names(chain, prefix)?;
     let (mut scanned, mut unarmed, mut window) = (0u32, 0u32, 0u32);
@@ -509,7 +509,7 @@ pub fn seqclockscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
 /// the `SoundEntries` kit each names, and whether the carrying sequence is a rest pose (`REST`),
 /// which gets no rig ([`benilla_formats::ModelAnimation::is_rest_pose`]), so only a rig-free clock
 /// reaches its marker (a lamp's Stand keys no bone yet carries its `$DSL` hum). `$DSE` has an arm
-/// in the placed-doodad handler `0x6951e0` and none in the GameObject dispatcher `0x5f3e20`.
+/// in the placed-doodad handler and none in the GameObject dispatcher.
 pub fn soundeventscan(chain: &mut Chain, prefix: Option<&str>) -> Result<()> {
     const SOUND_TAGS: [&[u8; 4]; 4] = [b"$DSL", b"$DSE", b"$DSO", b"$SND"];
     let kits = benilla_formats::load_sound_kit_catalog(chain).ok();
@@ -636,8 +636,7 @@ const GO_SLOT_NAMES: [&str; 10] = [
     "Custom3",
 ];
 
-/// The event tag that plays each display slot through `0x5f3e20`: `$GO0..5` → slots 0..5,
-/// `$GC0..3` → slots 6..9.
+/// The event tag that plays each display slot: `$GO0..5` → slots 0..5, `$GC0..3` → slots 6..9.
 fn go_slot_tag(slot: usize) -> [u8; 4] {
     if slot < 6 {
         [b'$', b'G', b'O', b'0' + slot as u8]
@@ -646,11 +645,10 @@ fn go_slot_tag(slot: usize) -> [u8; 4] {
     }
 }
 
-/// The file slots the GameObject arm can put on screen: the loader seed (`0x71019b`), the six
-/// state substates through the four-way remap (`0x5f3972`), and the Custom0-3 (opcode `0xb3`) and
-/// Despawn (`0x215`) one-shots, resolved through `playableAnimationLookup`. Spawn, which the
-/// create path arms (`0x5f382f`), is left out, so a marker only its sequence carries reads as
-/// unarmable.
+/// The file slots the GameObject arm can put on screen: the loader seed, the six state substates
+/// through the four-way remap, and the Custom0-3 (opcode `0xb3`) and Despawn (`0x215`) one-shots,
+/// resolved through `playableAnimationLookup`. Spawn, which the create path arms, is left out, so a
+/// marker only its sequence carries reads as unarmable.
 fn go_armable_slots(
     m: &benilla_m2::M2Model,
     seqs: &[benilla_formats::ModelAnimation],
@@ -665,8 +663,8 @@ fn go_armable_slots(
     out
 }
 
-/// Census the GameObject display sound slots against the `$GOn`/`$GCn` model events, the only
-/// path that plays them (`0x5f4010`, called from `0x5f3e20` alone).
+/// Census the GameObject display sound slots against the `$GOn`/`$GCn` model events, the only path
+/// that plays them.
 pub fn goslotscan(chain: &mut Chain) -> Result<()> {
     let catalog =
         benilla_formats::load_gameobject_catalog(chain).context("GameObjectDisplayInfo.dbc")?;
@@ -684,15 +682,15 @@ pub fn goslotscan(chain: &mut Chain) -> Result<()> {
         ids.sort_unstable();
     }
     // Per slot: displays with a kit, of those with the tag authored, of those on an armable
-    // sequence, and the live ones whose kit loops (flag 0x200), which `0x5f4010` plays through
-    // the emitter pool (`0x461d80`) rather than as a one-shot.
+    // sequence, and the live ones whose kit loops (flag 0x200), which the reference plays through
+    // the emitter pool rather than as a one-shot.
     let mut filled = [0u32; 10];
     let mut tagged = [0u32; 10];
     let mut reachable = [0u32; 10];
     let mut looping = [0u32; 10];
     // Filled columns whose model authors no reaching tag: dead data the reference never plays.
     let mut dead = [0u32; 10];
-    // Tags authored where the column is 0: the tag fires and `0x458830` fails on the null id.
+    // Tags authored where the column is 0: the tag fires and the reference fails on the null id.
     let mut silent_tag = [0u32; 10];
     let mut unarmable_tag = [0u32; 10];
     let (mut models_seen, mut wmo_or_missing) = (0u32, 0u32);
@@ -817,9 +815,7 @@ pub fn goslotscan(chain: &mut Chain) -> Result<()> {
         .zip(&dead)
         .all(|((f, t), d)| *f == *t + *d));
     if !loop_rows.is_empty() {
-        println!(
-            "\n=== live slots whose kit is LOOPING (0x200) — the `0x461d80` emitter-pool lane ==="
-        );
+        println!("\n=== live slots whose kit is LOOPING (0x200) — the emitter-pool lane ===");
         for r in &loop_rows {
             println!("{r}");
         }

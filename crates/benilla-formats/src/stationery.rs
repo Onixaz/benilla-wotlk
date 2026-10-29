@@ -1,7 +1,7 @@
 //! `Stationery.dbc`: a mail's `stationery` id (`SMSG_MAIL_LIST_RESULT`) → the texture basename
 //! `OpenMail_Update` paints as `Interface\Stationery\<basename>1` and `2`, the left and right
-//! halves. The send side lists a row when its item's template is cached and either `Flags & 1`
-//! (`0x4aca2a`) or the player carries its `ItemID` (`0x4aca1c`); the list sorts by buy price.
+//! halves. The send side lists a row when its item's template is cached and either `Flags & 1` or
+//! the player carries its `ItemID`; the list sorts by buy price.
 
 use std::collections::HashMap;
 

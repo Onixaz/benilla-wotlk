@@ -26,8 +26,8 @@ pub struct TaxiPathNode {
     pub map_id: u32,
     /// World position `(x, y, z)` on `map_id`.
     pub pos: [f32; 3],
-    /// Raw `actionFlag`: `& 2` marks a station stop (the reference tests the bit at `0x5f4e37`,
-    /// vmangos `== 2`, the same on the shipped data) and `& 1` a teleport (`TransportMgr.cpp:134`).
+    /// Raw `actionFlag`: `& 2` marks a station stop (vmangos `== 2`, the same on the shipped data)
+    /// and `& 1` a teleport (`TransportMgr.cpp:134`).
     pub flags: u32,
     /// Stop delay in whole seconds, set on stops only.
     pub delay: u32,

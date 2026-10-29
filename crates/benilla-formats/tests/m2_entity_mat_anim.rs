@@ -108,9 +108,9 @@ fn a_gameobjects_slots_bake_different_loops() {
 }
 
 /// Slot 1 plays as often as the variation walk lands on it. A GameObject owning none of the
-/// door-family ids re-arms Stand every window with a fresh roll (`0x5f3a52`, `0x5f4167`), so the
-/// two frequencies are the duty cycle: `roll < 16384` is still, `16384..=32766` bubbles, and the
-/// leftover 32767 exhausts the chain back to the head.
+/// door-family ids re-arms Stand every window with a fresh roll, so the two frequencies are the
+/// duty cycle: `roll < 16384` is still, `16384..=32766` bubbles, and the leftover 32767 exhausts
+/// the chain back to the head.
 #[test]
 fn the_bubbling_take_is_half_the_pools_duty_cycle() {
     let data = benilla_formats::wow_data_or_skip!();

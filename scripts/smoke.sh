@@ -105,7 +105,7 @@ grep -q "logout-smoke: empty roster" <<<"$plain" &&
 grep -q "logout-smoke: done" <<<"$plain" ||
     fail "the round trip never completed (no 'logout-smoke: done')"
 # The logout returns to character select on the link the world was entered by and re-lists there
-# (`0x5aaeb0` → `0x46b880`): a roster on that world session, and one realmd logon for the walk.
+#A roster on that world session, and one realmd logon for the walk.
 grep -q "logout-smoke: FAILED" <<<"$plain" &&
     fail "$(printf '%s\n' "$plain" | sed -n 's/.*logout-smoke: FAILED — //p' | tail -1)"
 grep -q "logout-smoke: roster after the logout on the same link" <<<"$plain" ||
@@ -138,7 +138,7 @@ panics="$(printf '%s\n' "$plain" | grep -cE 'panicked at')"
 [ "$errors" -ne 0 ] && fail "$errors ERROR line(s)"
 
 # A marker counts once per edge it fires on. Each world entry builds a world VM beside the
-# character screen's glue VM (the reference's `0x490bd0`/`0x48fbf0` pair), so the VM marker counts
+# character screen's glue VM, so the VM marker counts
 # twice per login; half that means an entry adopted the glue VM and its spent `VmMemo`s.
 sessions=2            # world entries in this walk
 vms=$((sessions * 2)) # …and the Lua states they cost: a glue VM and a world VM each

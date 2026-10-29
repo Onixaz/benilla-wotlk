@@ -49,7 +49,7 @@ impl RaidMap {
 }
 
 impl GroupState {
-    /// `CGPartyInfo::InParty` (`0x4fb0b0`): party slot 1 holds a member.
+    /// The party test (`0x4fb0b0`): party slot 1 holds a member.
     pub(crate) fn in_party(&self) -> bool {
         !self.slots_emptied && self.party_slots().next().is_some()
     }
@@ -59,7 +59,7 @@ impl GroupState {
         self.group_type == GROUPTYPE_RAID
     }
 
-    /// `GetCurrentDungeonDifficulty` (`0x5138d0`): the group's in a party, else the player's.
+    /// The current dungeon difficulty (`0x5138d0`): the group's in a party, else the player's.
     pub(crate) fn current_dungeon_difficulty(&self) -> u32 {
         if self.in_party() && !self.in_raid() {
             u32::from(self.difficulties.dungeon)
@@ -68,7 +68,7 @@ impl GroupState {
         }
     }
 
-    /// `GetCurrentRaidDifficulty` (`0x513900`): the group's in a raid, else the player's.
+    /// The current raid difficulty (`0x513900`): the group's in a raid, else the player's.
     pub(crate) fn current_raid_difficulty(&self) -> u32 {
         if self.in_raid() {
             u32::from(self.difficulties.raid)
@@ -77,9 +77,9 @@ impl GroupState {
         }
     }
 
-    /// The list's tail: `CGPartyInfo::RemoveAll` clears the LFG bit silently (`0x52d85e`), then
-    /// `SetLfgRestricted` signals `PARTY_LFG_RESTRICTED` when it sets it again (`0x52c0f8`); a list
-    /// with members writes the group's difficulties (`0x6d8fc3`), without a line.
+    /// The list's tail: the party clear-all clears the LFG bit silently (`0x52d85e`), then the
+    /// LFG-restricted setter signals `PARTY_LFG_RESTRICTED` when it sets it again (`0x52c0f8`); a
+    /// list with members writes the group's difficulties (`0x6d8fc3`), without a line.
     pub(crate) fn apply_list_tail(
         &mut self,
         difficulties: Option<GroupDifficulties>,
@@ -130,8 +130,8 @@ impl GroupState {
         self.difficulty_lines(dungeon, raid, map)
     }
 
-    /// `CheckInstanceDifficultyMessages` (`0x5248e0`): the lines for whichever current difficulty
-    /// moved from `dungeon`/`raid`, raid first.
+    /// The instance-difficulty check (`0x5248e0`): the lines for whichever current difficulty moved
+    /// from `dungeon`/`raid`, raid first.
     pub(crate) fn difficulty_lines(&self, dungeon: u32, raid: u32, map: RaidMap) -> Vec<UiError> {
         let mut lines = Vec::new();
         if self.current_raid_difficulty() != raid {
@@ -144,7 +144,7 @@ impl GroupState {
         lines
     }
 
-    /// `SendRaidDifficultyMessage` (`0x524780`). Not built: in a raid map the line names the
+    /// The raid-difficulty line (`0x524780`). Not built: in a raid map the line names the
     /// `MapDifficulty.dbc` row of the map's own difficulty, neither of which is held; nothing prints.
     fn raid_changed_lines(&self, map: RaidMap) -> Vec<UiError> {
         let raid = format!("RAID_DIFFICULTY{}", self.current_raid_difficulty() + 1);
@@ -168,7 +168,7 @@ impl GroupState {
     }
 }
 
-/// `ShowDungeonDifficultyChanged` (`0x524720`): the new difficulty's `DUNGEON_DIFFICULTYn` text.
+/// The dungeon-difficulty line (`0x524720`): the new difficulty's `DUNGEON_DIFFICULTYn` text.
 fn dungeon_changed_line(current: u32) -> UiError {
     UiError::args(
         "ERR_DUNGEON_DIFFICULTY_CHANGED_S",

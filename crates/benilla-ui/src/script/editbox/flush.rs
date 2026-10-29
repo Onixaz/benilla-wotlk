@@ -1,33 +1,29 @@
-//! The box's own per-frame update (`0x77a790`, vtable `0x81c910` slot `+0x38`), which the tick's
-//! walk runs in the box's place, and its flush (`0x77d3e0`), which drains the dirty word.
+//! The box's own per-frame update (vtable slot `+0x38`), which the tick's walk runs in the box's
+//! place, and its flush, which drains the dirty word.
 
 use mlua::{Lua, Value};
 
 use super::{event, fire_script, frame_id_of, read_eb, relayout, with_eb, CARET_WIDTH};
 use crate::widget::{EditBoxState, FrameHandle};
 
-/// The box's update after its Lua `OnUpdate` (`0x77a79a`): the flush (`0x77a7a1`), then the caret
-/// blink (`0x77a7a6`). The walk runs it for every shown box, with an `OnUpdate` or without.
+/// The box's update after its Lua `OnUpdate`: the flush, then the caret blink. The walk runs it for
+/// every shown box, with an `OnUpdate` or without.
 pub(in crate::script) fn update(lua: &Lua, h: FrameHandle, dt: f32) {
     flush(lua, h);
     blink(lua, h, dt);
 }
 
-/// The flush `0x77d3e0`. It samples bit 0 at entry (`0x77d3f2`); on bit 0 the relayout runs
-/// (`0x77d447`) and the bit clears (`0x77d44c`); on bit 2 the caret leg runs (`0x77d475`), with
-/// the blink and `OnCursorChanged`, and only then does the bit clear (`0x77d47a`); last,
-/// `OnTextChanged` fires if bit 0 was set at entry (`0x77d481`–`0x77d498`). So a handler's edit
-/// raises bits for the next flush, a frame later, and never loops inside one: an `OnTextChanged`
-/// that sets its own text fires once more, next frame, and a caret moved by `OnCursorChanged` is
-/// cleared with the bit.
-/// Besides the walk, the box's `OnKeyDown` (`0x77b1e2`) and `OnMouseDown` (`0x77b819`) run it
-/// before the key or click acts.
+/// The flush. It samples bit 0 at entry; on bit 0 the relayout runs and the bit clears; on bit 2
+/// the caret leg runs, with the blink and `OnCursorChanged`, and only then does the bit clear;
+/// last, `OnTextChanged` fires if bit 0 was set at entry. So a handler's edit raises bits for the
+/// next flush, a frame later, and never loops inside one: an `OnTextChanged` that sets its own text
+/// fires once more, next frame, and a caret moved by `OnCursorChanged` is cleared with the bit.
+/// Besides the walk, the box's `OnKeyDown` and `OnMouseDown` run it before the key or click acts.
 ///
-/// Deviation: the flush's promotion of bit 2 to bit 0 when the caret has left the display window
-/// (`0x77d3f5`–`0x77d436`), with its IME legs (`0x77d417`–`0x77d431`), and the IME writer's
-/// `or 6` (`0x77acde`, in `0x77ac60`) are not modelled: the promotion only relayouts, which
-/// re-windows a single-line box whose window benilla keeps host-side, and fires nothing, since
-/// bit 0 is sampled before it; benilla has no IME composition.
+/// Deviation: the flush's promotion of bit 2 to bit 0 when the caret has left the display window,
+/// with its IME legs, and the IME writer's `or 6` are not modelled: the promotion only relayouts,
+/// which re-windows a single-line box whose window benilla keeps host-side, and fires nothing,
+/// since bit 0 is sampled before it; benilla has no IME composition.
 pub(super) fn flush(lua: &Lua, h: FrameHandle) {
     let Some((entry, owed)) = read_eb(lua, h, |eb| (eb.dirty, eb.relayout_owed)) else {
         return;
@@ -48,10 +44,10 @@ pub(super) fn flush(lua: &Lua, h: FrameHandle) {
     }
 }
 
-/// The caret leg `0x77da80`: it restarts the blink (`0x77dd68`), fires `OnCursorChanged`, then
-/// shows the caret in the focused box (`0x77de35`) and hides it elsewhere (`0x77de51`). So a box
-/// that takes the keyboard, whose focus change raises bit 2 (`0x77afa8`), starts its caret solid.
-/// `false` while the advance table is pending, for the next flush to retry.
+/// The caret leg: it restarts the blink, fires `OnCursorChanged`, then shows the caret in the
+/// focused box and hides it elsewhere. So a box that takes the keyboard, whose focus change raises
+/// bit 2, starts its caret solid. `false` while the advance table is pending, for the next flush to
+/// retry.
 fn caret(lua: &Lua, h: FrameHandle) -> bool {
     with_eb(lua, h, |eb| eb.blink_accum = 0.0);
     let placed = cursor_changed(lua, h);
@@ -64,16 +60,15 @@ fn caret(lua: &Lua, h: FrameHandle) -> bool {
     placed
 }
 
-/// `OnCursorChanged(x, y, w, h)` (`0x77de1b`, in UI units via `0x77dd5f`), `x` the caret's advance
-/// along its line, `y` minus the row index times the row pitch, `w` the constant 4.0 and `h` the
-/// line height. The arguments are computed only for a box with the script (`0x77dd8c`), from the
-/// box's advance table, which the installed font engine measures here when the text or font
-/// moved. `false` while that table is pending, with no engine installed: the host answers the
-/// focused box's a tick later.
+/// `OnCursorChanged(x, y, w, h)`, `x` the caret's advance along its line, `y` minus the row index
+/// times the row pitch, `w` the constant 4.0 and `h` the line height. The arguments are computed
+/// only for a box with the script, from the box's advance table, which the installed font engine
+/// measures here when the text or font moved. `false` while that table is pending, with no engine
+/// installed: the host answers the focused box's a tick later.
 ///
 /// Deviation: `h` is the row pitch the advance answer carries, where the reference passes the line
-/// height (`0x7727b0`): 0 for a single-line box, whose answer has no pitch, and for a multi-line
-/// box taller than the line height only for a font with extra spacing (none in the stock UI).
+/// height: 0 for a single-line box, whose answer has no pitch, and for a multi-line box taller than
+/// the line height only for a font with extra spacing (none in the stock UI).
 fn cursor_changed(lua: &Lua, h: FrameHandle) -> bool {
     let id = frame_id_of(lua, h);
     if !event::has_widget_handler(lua, id, "OnCursorChanged") {
@@ -94,8 +89,8 @@ fn cursor_changed(lua: &Lua, h: FrameHandle) -> bool {
             (0, eb.advances[cursor_d])
         };
         let pitch = eb.cell_h;
-        // `y` starts at 0 and loses one pitch per row above the caret (`0x77dae1`, `0x77db31`),
-        // so row 0 reports +0, never the -0 that Lua prints as "-0".
+        // `y` starts at 0 and loses one pitch per row above the caret, so row 0 reports +0, never
+        // the -0 that Lua prints as "-0".
         let y = 0.0 - row as f32 * pitch;
         Some((x, y, pitch))
     })
@@ -119,12 +114,11 @@ fn cursor_changed(lua: &Lua, h: FrameHandle) -> bool {
     true
 }
 
-/// The caret blink (`0x77a7a6`–`0x77a84c`): past the period (0.5 s by default) the focused box's
-/// caret toggles and the accumulator resets; only a period of exactly 0.0 keeps the caret solid
-/// (`0x77a7b4`).
+/// The caret blink: past the period (0.5 s by default) the focused box's caret toggles and the
+/// accumulator resets; only a period of exactly 0.0 keeps the caret solid.
 ///
-/// Deviation: not gated on the cursor lying inside the scroll window (`0x77a7bd`–`0x77a7d7`),
-/// which benilla's host keeps around the caret.
+/// Deviation: not gated on the cursor lying inside the scroll window, which benilla's host keeps
+/// around the caret.
 fn blink(lua: &Lua, h: FrameHandle, dt: f32) {
     let focused = lua
         .app_data_ref::<crate::script::ModelCell>()

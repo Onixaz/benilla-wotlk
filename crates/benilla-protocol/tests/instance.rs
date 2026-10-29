@@ -1,5 +1,4 @@
-//! The instance lockout messages in the reference's read order (handlers registered at
-//! `0x498680`-`0x4986cf` and `0x4e7e60`; vmangos `Server/Packets/Misc.cpp`).
+//! The instance lockout messages in the reference's read order (vmangos `Server/Packets/Misc.cpp`).
 
 use benilla_protocol::events::{decode, SessionEvent};
 use benilla_protocol::messages::{
@@ -14,14 +13,14 @@ fn hx(s: &str) -> Vec<u8> {
         .collect()
 }
 
-/// `CMSG_RESET_INSTANCES` is empty in the reference (`0x48a6b0`) and in vmangos's handler.
+/// `CMSG_RESET_INSTANCES` is empty in the reference and in vmangos's handler.
 #[test]
 fn reset_instances_body_is_empty() {
     assert_eq!(messages::reset_instances(), Vec::<u8>::new());
 }
 
 /// `SMSG_RAID_INSTANCE_MESSAGE`: `u32` type, map id and seconds until reset, in that order; the
-/// reference reads them at `0x49e1cd`/`0x49e1d8`/`0x49e1e3` and looks up `Map.dbc` by the second.
+/// reference reads them and looks up `Map.dbc` by the second.
 #[test]
 fn raid_instance_message_wire() {
     // type 4 (WELCOME), map 409 (Molten Core), 3 d 2 h 0 m = 266400 s.
@@ -55,8 +54,8 @@ fn raid_instance_message_wire() {
     );
 }
 
-/// The four warning types; the reference's jump table (`0x49e246`) prints nothing for 0 or 5 and
-/// up, including 5, which later clients call `RAID_INSTANCE_EXPIRED`.
+/// The four warning types; the reference's jump table prints nothing for 0 or 5 and up, including
+/// 5, which later clients call `RAID_INSTANCE_EXPIRED`.
 #[test]
 fn raid_instance_warning_types() {
     use RaidInstanceWarning as W;
@@ -78,7 +77,7 @@ fn raid_instance_warning_types() {
     assert_eq!(W::Welcome.token(), "RAID_INSTANCE_WELCOME");
 }
 
-/// `SMSG_INSTANCE_RESET`: one `u32` map id (`0x49e481`).
+/// `SMSG_INSTANCE_RESET`: one `u32` map id.
 #[test]
 fn instance_reset_wire() {
     let p = messages::parse_server(opcode::SMSG_INSTANCE_RESET, &hx("24000000")).unwrap();
@@ -93,7 +92,7 @@ fn instance_reset_wire() {
     assert!(messages::parse_server(opcode::SMSG_INSTANCE_RESET, &hx("2400")).is_err());
 }
 
-/// `SMSG_INSTANCE_RESET_FAILED`: `u32` reason first, then `u32` map id (`0x49e54d`/`0x49e558`).
+/// `SMSG_INSTANCE_RESET_FAILED`: `u32` reason first, then `u32` map id.
 #[test]
 fn instance_reset_failed_wire() {
     let body = hx(concat!("01000000", "24000000")); // OFFLINE, Deadmines
@@ -132,8 +131,8 @@ fn instance_reset_failure_reasons() {
     assert_eq!(F::Zoning.token(), "INSTANCE_RESET_FAILED_ZONING");
 }
 
-/// Three bare `u32` bodies: the save-created flag (`0x4e7e6c`), the last-instance map
-/// (`0x49e676`) and the ownership flag (`0x49e6c6`), a bool: the reference tests it against zero.
+/// Three bare `u32` bodies: the save-created flag, the last-instance map and the ownership flag, a
+/// bool: the reference tests it against zero.
 #[test]
 fn save_created_last_instance_and_ownership_wire() {
     let p = messages::parse_server(opcode::SMSG_INSTANCE_SAVE_CREATED, &hx("00000000")).unwrap();

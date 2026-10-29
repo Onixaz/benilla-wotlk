@@ -17,9 +17,9 @@ impl WorldWriter {
         )
     }
 
-    /// Send a chat line of any `ChatMsg` type, as the reference's generic builder writes it
-    /// (`0x49f6c3`-`0x49f72a`). `language` is the `Languages.dbc` id `SendChatMessage` resolved;
-    /// `None` is the character's own tongue, [`WorldWriter::chat_language`].
+    /// Send a chat line of any `ChatMsg` type, as the reference's generic builder writes it.
+    /// `language` is the `Languages.dbc` id `SendChatMessage` resolved; `None` is the character's
+    /// own tongue, [`WorldWriter::chat_language`].
     pub fn send_message_chat(
         &mut self,
         chat_type: u32,
@@ -33,8 +33,8 @@ impl WorldWriter {
 
     /// Send an addon message (`SendAddonMessage`): `text` is the caller's composed `prefix` TAB
     /// `message`, on the party, raid, guild or battleground lane. Its language,
-    /// [`messages::LANGUAGE_ADDON`], is the only mark of addon data (`0x49f920`); vmangos gates it
-    /// on `AddonChannel` and skips the language gate, flood control and sanitizing.
+    /// [`messages::LANGUAGE_ADDON`], is the only mark of addon data; vmangos gates it on
+    /// `AddonChannel` and skips the language gate, flood control and sanitizing.
     pub fn send_addon_message(&mut self, chat_type: u32, text: &str) -> Result<()> {
         self.send(
             opcode::CMSG_MESSAGECHAT,

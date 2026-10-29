@@ -6,7 +6,7 @@ use std::io::{self, Read};
 use crate::wire::{read_u32_le, read_u8};
 
 /// `SMSG_CONVERT_RUNE`: rune `rune` (0-based) now counts as `kind` (0 blood, 1 unholy, 2 frost,
-/// 3 death) (`CGRuneInfo::ConvertRune` `0x5ee020`).
+/// 3 death) (`0x5ee020`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ConvertRune {
     pub rune: u8,

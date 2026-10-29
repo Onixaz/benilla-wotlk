@@ -1,13 +1,13 @@
-//! Saved variables: the Lua settings that survive a restart, in 12340's files and grammar. FrameXML's
-//! `RegisterForSave` globals go to the account's `SavedVariables.lua`, its
-//! `RegisterForSavePerCharacter` ones to the character's (`CGGameUI::RegisterSavedVariable`
-//! `0x52aed0`), and an addon's `## SavedVariables` / `## SavedVariablesPerCharacter` to its own two
-//! files; each runs as a chunk at load. The app owns the files (`ui_saved`).
+//! Saved variables: the Lua settings that survive a restart, in 12340's files and grammar.
+//! FrameXML's `RegisterForSave` globals go to the account's `SavedVariables.lua`, its
+//! `RegisterForSavePerCharacter` ones to the character's (`0x52aed0`), and an addon's
+//! `## SavedVariables` / `## SavedVariablesPerCharacter` to its own two files; each runs as a chunk
+//! at load. The app owns the files (`ui_saved`).
 //!
-//! The grammar is `FrameScript_PrintVariable`'s (`0x818b50`, `PrintVariable` `0x8183a0`): CRLF, each
-//! variable written as `\r\n` + `NAME = ` + value and one `\r\n` after the last, so a file opens on a
-//! blank line and holds just `\r\n` when nothing is registered; numbers as `%.16g`; strings with
-//! `\000`, `\n`, `\r`, `\"` and `\\` escaped and every other byte raw; tables as `{`, the array part
+//! The grammar is the reference's variable printer's (`0x818b50`, `0x8183a0`): CRLF, each variable
+//! written as `\r\n` + `NAME = ` + value and one `\r\n` after the last, so a file opens on a blank
+//! line and holds just `\r\n` when nothing is registered; numbers as `%.16g`; strings with `\000`,
+//! `\n`, `\r`, `\"` and `\\` escaped and every other byte raw; tables as `{`, the array part
 //! `1..#t` as `value, -- [i]` (a hole `nil`), then every other key bracketed, `[key] = value,`, in
 //! the table's own walk order, tab-indented, and `}`; a value with no literal written as a
 //! `nil --[[ skipped … ]]` comment.
@@ -99,7 +99,7 @@ impl super::UiScript {
     }
 }
 
-/// `PrintVariable`: one value at table depth `depth` (1 at top level).
+/// The value printer: one value at table depth `depth` (1 at top level).
 fn print_value(out: &mut Vec<u8>, v: &Value, depth: usize, seen: &mut HashSet<*const c_void>) {
     match v {
         Value::Nil => out.extend_from_slice(b"nil"),

@@ -2,16 +2,15 @@
 //!
 //! [`spawn_net`]'s read thread parks pre-logon for a [`LoginRequest`], logs on to realmd, then
 //! holds the realmd link at the logon park, serving realm list queries, until the app names a realm
-//! or closes the logon; a world attempt that fails returns there. Past the world handshake it
-//! parks at character select until the app picks a guid; a new login supersedes either park. The
-//! pick closes the realmd link (`0x46b70c`), sends `CMSG_PLAYER_LOGIN` and announces the connection
-//! without waiting for the verdict, as the reference's world is already loading when it sends the
-//! login (`0x46c272`), so the destination's tiles stream a round trip early. A logout or a later
-//! `SMSG_CHARACTER_LOGIN_FAILED` ends the world session, announced as a
-//! [`SessionEvent::Disconnected`] with [`SessionEnd::LoggedOut`], and parks at character select
-//! again on the same link. A stream failure emits it with [`SessionEnd::Lost`] and re-parks for
-//! credentials. All policy lives in [`crate::login`] and [`crate::char_select`]; this thread only
-//! sequences and never sleeps.
+//! or closes the logon; a world attempt that fails returns there. Past the world handshake it parks
+//! at character select until the app picks a guid; a new login supersedes either park. The pick
+//! closes the realmd link, sends `CMSG_PLAYER_LOGIN` and announces the connection without waiting
+//! for the verdict, as the reference's world is already loading when it sends the login, so the
+//! destination's tiles stream a round trip early. A logout or a later `SMSG_CHARACTER_LOGIN_FAILED`
+//! ends the world session, announced as a [`SessionEvent::Disconnected`] with
+//! [`SessionEnd::LoggedOut`], and parks at character select again on the same link. A stream
+//! failure emits it with [`SessionEnd::Lost`] and re-parks for credentials. All policy lives in
+//! [`crate::login`] and [`crate::char_select`]; this thread only sequences and never sleeps.
 //!
 //! One long-lived write thread drains [`ClientCommand`](super::ClientCommand)s; each world entry
 //! hands it the [`WorldWriter`] over a swap channel, and a logout takes it back, so there is only
@@ -122,22 +121,22 @@ static WORLD_EPOCH: AtomicU64 = AtomicU64::new(0);
 /// How long a realm-list query waits for realmd; the park serving it is deaf that long.
 const REALM_REFRESH_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// The reference's 30 s ping timer (`0x537ff0`). vmangos kicks a socket whose pings come faster
-/// than 27 s apart more than twice (`WorldSocket::_HandlePing`), so this must not shrink.
+/// The reference's 30 s ping timer. vmangos kicks a socket whose pings come faster than 27 s apart
+/// more than twice (`WorldSocket::_HandlePing`), so this must not shrink.
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 
 /// Round trips [`PingClock`] keeps: 15. The reference's ring (`conn+0x1a6c`) has 16 slots, but
-/// `read == write` means empty (`0x537fa8`) and `HandlePong` advances the read index (`0x537de8`),
-/// so at most 15 are ever averaged.
+/// `read == write` means empty and the pong handler advances the read index, so at most 15 are
+/// ever averaged.
 const RTT_RING: usize = 15;
 
 /// The connection's ping stats, the reference's per-connection block (`conn+0x1a6c` ring,
 /// `+0x1aac/+0x1ab0` head and tail, `+0x1a64` send stamp, `+0x1a68` expected sequence) under one
-/// lock, as `conn+0x1ac0` guards it for `HandlePong` (`0x537d60`) and `GetNetStats` (`0x537f20`).
+/// lock, as `conn+0x1ac0` guards it for the pong handler and `GetNetStats`.
 ///
 /// The write thread stamps each `CMSG_PING`; the read thread times the `SMSG_PONG` the instant it
-/// lands, as the reference's `OnData` (`0x537b10`) hands it to `HandlePong` inline, since timing
-/// it in the frame drain would add a client frame to every reading; the app reads
+/// lands, as the reference's receive path hands it to the pong handler inline, since timing it in
+/// the frame drain would add a client frame to every reading; the app reads
 /// [`Self::avg_latency_ms`].
 #[derive(Default)]
 pub(crate) struct PingClock {
@@ -152,7 +151,7 @@ pub(crate) struct PingClock {
 }
 
 impl PingClock {
-    /// `HandlePong`: times and files one `SMSG_PONG`; a mismatched sequence is dropped, as in
+    /// The pong handler: times and files one `SMSG_PONG`; a mismatched sequence is dropped, as in
     /// the reference.
     pub(crate) fn record_pong(&mut self, sequence: u32) -> Option<u32> {
         let sent = self.sent_at.filter(|_| self.sequence == sequence)?;
@@ -170,9 +169,8 @@ impl PingClock {
         self.rtt_ring.push_back(rtt);
     }
 
-    /// `GetNetStats`' latency: the unsigned truncating mean of the samples present (`0x537f20`,
-    /// `div` at `0x537fce`); `None` when empty, which the UI shows as the reference's 0
-    /// (`0x537fd2`).
+    /// `GetNetStats`' latency: the unsigned truncating mean of the samples present (`div`); `None`
+    /// when empty, which the UI shows as the reference's 0.
     pub(crate) fn avg_latency_ms(&self) -> Option<u32> {
         if self.rtt_ring.is_empty() {
             return None;
@@ -349,11 +347,10 @@ enum LogonAnswer {
     /// `ChangeRealm` (`0x4defb0`): dial this realm with the logon's session key, under the abandon
     /// generation the ask carried.
     Enter(benilla_protocol::RealmInfo, u64),
-    /// A new login supersedes the logon, as `CGlueMgr::Login` (`0x46afb0`) starts the next logon
-    /// whatever link the last one left.
+    /// A new login supersedes the logon, as the glue screen's login starts the next logon whatever
+    /// link the last one left.
     Login(LoginRequest),
-    /// `CLoginMgr::Cancel` (`0x5b3320`): the realmd link closes and the thread parks for
-    /// credentials.
+    /// The login manager's cancel: the realmd link closes and the thread parks for credentials.
     Close,
     /// The app dropped a channel end.
     Exit,
@@ -365,9 +362,8 @@ enum WorldEnd {
     Cycle(Cycle),
     /// It failed before the roster, reported, or was cancelled, or Change Realm left the session at
     /// character select: the logon park resumes with the realmd link as it stands, as the
-    /// reference's state-2 failure arm (`0x46bea7`-`0x46bf96`) and `ConnectToRealm`'s disconnect
-    /// (`0x46b22b`) drop only the world socket. Closed since a world entry, it is dialled again by
-    /// the next query ([`query`]).
+    /// reference's state-2 failure arm and the realm connect's disconnect drop only the world
+    /// socket. Closed since a world entry, it is dialled again by the next query ([`query`]).
     Failed,
     /// A new login superseded the session at character select.
     Login(LoginRequest),
@@ -388,19 +384,19 @@ fn publish(
         .is_ok()
 }
 
-/// A realm list query on the realmd link, `RequestRealmList`'s (`0x5ab840`) and the connect's
-/// own (`0x5aab6d`), then the answer published. A request that fails for any reason (the link
-/// realmd closed, the 5 s timeout, a reply that does not parse) dials realmd again and asks once
-/// more; vmangos closes every link after `MaxSessionDuration`, 300 s by default, while a list may
-/// stand longer. False once the app is gone.
+/// A realm list query on the realmd link, `RequestRealmList`'s (`0x5ab840`) and the connect's own,
+/// then the answer published. A request that fails for any reason (the link realmd closed, the 5 s
+/// timeout, a reply that does not parse) dials realmd again and asks once more; vmangos closes
+/// every link after `MaxSessionDuration`, 300 s by default, while a list may stand longer. False
+/// once the app is gone.
 ///
 /// Deviation: the reference re-dials only from `RequestRealmList`, and only when the link is down
-/// (`[CLoginMgr+5]` clear, `0x5ab857` → `0x5b2200`), with the reconnect challenge (`0x5b2134`,
-/// `[Logon+0xc]`); the connect's query sends only on a link in state 6 (`0x5bc14c`) and otherwise
-/// nothing, leaving the screen on its connecting dialog for good. Here both queries re-dial on
-/// any failure, with a full logon from the cycle's credentials, because benilla's logon has no
-/// reconnect exchange and a connect that can never complete is a dead end, not a behaviour; the
-/// new session key serves the next world dial as the reconnect's would.
+/// (the login manager's `+5` clear), with the reconnect challenge (the logon's `+0xc`); the
+/// connect's query sends only on a link in state 6 and otherwise nothing, leaving the screen on its
+/// connecting dialog for good. Here both queries re-dial on any failure, with a full logon from the
+/// cycle's credentials, because benilla's logon has no reconnect exchange and a connect that can
+/// never complete is a dead end, not a behaviour; the new session key serves the next world dial as
+/// the reconnect's would.
 fn query(
     logon: &mut benilla_protocol::Logon,
     req: &LoginRequest,
@@ -704,14 +700,14 @@ fn world(
         }
 
         // The roster as the account holds it, an empty one included: the reference builds
-        // `CMSG_CHAR_CREATE` in one place (`0x5aac50`), reached only from the create screen.
-        // Failures here are still pre-roster.
+        // `CMSG_CHAR_CREATE` in one place, reached only from the create screen. Failures here are
+        // still pre-roster.
         //
         // Only a run with no stock glue VM enumerates here and after a create or delete. The stock
         // screen asks for its roster when it shows and after each action it makes
-        // (`GetCharacterListUpdate`, [`CharRequest::Enumerate`], `0x46c1a7`), as the reference
-        // does: the world connect completes with the authentication response (`0x5ab2b8`), and
-        // the `CMSG_CHAR_ENUM` is the screen's.
+        // (`GetCharacterListUpdate`, [`CharRequest::Enumerate`]), as the reference does: the world
+        // connect completes with the authentication response, and the `CMSG_CHAR_ENUM` is the
+        // screen's.
         let mut asks = screen_asks_roster.load(Ordering::SeqCst);
         let mut characters = if asks {
             Vec::new()
@@ -767,8 +763,8 @@ fn world(
         }
 
         // The link: the character park, the world, and back to the park on the same link after a
-        // logout or a refused character login (`0x5aaeb0`, `0x5aad70`: `0x401ee0` tears the world
-        // down and closes nothing). Its first world entry starts the connection's ping block.
+        // logout or a refused character login (the reference tears the world down and closes
+        // nothing). Its first world entry starts the connection's ping block.
         let mut fresh_link = true;
         // The character screens read the AddOn index space before any world entry: the reply is
         // announced once the park has read it.
@@ -780,11 +776,11 @@ fn world(
             bevy::log::info!("net: parked at character select");
             let guid = loop {
                 // The realm list's requests and the character screen's share one channel, in the
-                // order they were made: `RealmList.xml` is a `frameStrata="DIALOG"` frame, so Change
-                // Realm raises it over character select and both must be served while it is open,
-                // and a roster ask made before a realm change goes out on this link before the
-                // change drops it (the reference sends at the verb, `0x46b880`, and `ConnectToRealm`
-                // only then closes the link, `0x46b22b`).
+                // order they were made: `RealmList.xml` is a `frameStrata="DIALOG"` frame, so
+                // Change Realm raises it over character select and both must be served while it is
+                // open, and a roster ask made before a realm change goes out on this link before
+                // the change drops it (the reference sends at the verb, and the realm connect only
+                // then closes the link).
                 //
                 // No `break` or `continue` inside the `select!` arms: the macro expands into a loop of
                 // its own, which they would bind to. The arms answer with a [`Parked`].
@@ -792,8 +788,7 @@ fn world(
                     recv(park_rx) -> msg => match msg {
                         Err(_) => Parked::Exit,
                         // `RequestRealmList`: a query on the realmd link, dialled again once Enter
-                        // World has closed it (`0x5b2200`), then the list; also Change Realm's
-                        // first list.
+                        // World has closed it, then the list; also Change Realm's first list.
                         Ok(ParkRequest::Realm(RealmRequest::Refresh)) => {
                             if query(logon, req, events_tx) {
                                 Parked::StayPut
@@ -801,14 +796,14 @@ fn world(
                                 Parked::Exit
                             }
                         }
-                        // `RealmListDialogCancelled` over character select is a no-op (`0x46b810`).
+                        // `RealmListDialogCancelled` over character select is a no-op.
                         Ok(ParkRequest::Realm(RealmRequest::Close)) => Parked::StayPut,
                         // `ChangeRealm(category, index)`: dial the chosen realm with the session key
                         // we hold.
                         Ok(ParkRequest::Realm(RealmRequest::Enter { realm, generation })) => {
                             Parked::Realm(realm, generation)
                         }
-                        // `ConnectToRealm` with the world up drops it first (`0x46b22b`).
+                        // The realm connect with the world up drops it first.
                         Ok(ParkRequest::Realm(RealmRequest::Leave)) => Parked::Leave,
                         Ok(ParkRequest::Char(CharRequest::Enter(guid))) => Parked::Play(guid),
                         // Select's Back: drop the parked session, return to the login park.
@@ -819,11 +814,11 @@ fn world(
                         Ok(ParkRequest::Char(CharRequest::Delete(target))) => {
                             Parked::Acted(CharAction::Delete, session.delete_character(target)?)
                         }
-                        // `GetCharacterListUpdate` (`0x4723d0` → `0x46b880` → `0x5aabb0` → `0x5b4690`):
-                        // the reference asks the world server again whenever the glue screen wants
-                        // the list. A Warden refusal is the server's answer, as at the park entry.
-                        // The account's account-data times, and a slot's request or upload: the
-                        // answers are kept by the next read and handed on below.
+                        // `GetCharacterListUpdate`: the reference asks the world server again
+                        // whenever the glue screen wants the list. A Warden refusal is the server's
+                        // answer, as at the park entry. The account's account-data times, and a
+                        // slot's request or upload: the answers are kept by the next read and
+                        // handed on below.
                         Ok(ParkRequest::Char(CharRequest::AccountDataReady)) => {
                             session.ready_for_account_data_times()?;
                             Parked::StayPut
@@ -855,8 +850,8 @@ fn world(
                             }
                             Err(e) => match e.downcast_ref::<WardenRequired>() {
                                 Some(w) => Parked::Refused(w.to_string()),
-                                // The stream failed under the ask: the screen's query fails
-                                // (`0x5ab300`), and the session ends as a dropped socket does.
+                                // The stream failed under the ask: the screen's query fails, and
+                                // the session ends as a dropped socket does.
                                 None => {
                                     let _ = events_tx.send(SessionEvent::RosterFailed { epoch });
                                     return Err(e);
@@ -908,9 +903,9 @@ fn world(
                         continue;
                     }
                 };
-                // A success changed the roster: under the native policy re-emit it before the result,
-                // so the screen has the fresh list when it reacts. The stock screen asks again itself
-                // (`0x46c1a7`).
+                // A success changed the roster: under the native policy re-emit it before the
+                // result, so the screen has the fresh list when it reacts. The stock screen asks
+                // again itself.
                 let changed = match action {
                     CharAction::Create => code == messages::CHAR_CREATE_SUCCESS,
                     CharAction::Delete => code == messages::CHAR_DELETE_SUCCESS,
@@ -942,9 +937,8 @@ fn world(
                 .find(|c| c.guid == guid)
                 .map(|c| c.name.clone())
                 .unwrap_or_default();
-            // `EnterWorld` closes the realmd link (`CLoginMgr::Cancel`, `0x46b70c` → `0x5b3320`)
-            // and nothing in the world reopens it; back at the park, a realm list query dials it
-            // again ([`query`]).
+            // `EnterWorld` closes the realmd link (the login manager's cancel) and nothing in the
+            // world reopens it; back at the park, a realm list query dials it again ([`query`]).
             logon.close();
             // No `CMSG_SET_ACTIVE_MOVER` here: it waits for our own player's create, as the
             // reference's does (`super::enter_world_on_self_create`); a server may drop it before then.
@@ -1001,8 +995,8 @@ fn world(
                 StreamEnd::Exit => return Ok(WorldEnd::Cycle(Cycle::Exit)),
                 StreamEnd::Back(reason) => reason,
             };
-            // The world is torn down (`0x401ee0`'s shutdown) and the link kept: the app's teardown
-            // edge, then the session joined again at the character park.
+            // The world is torn down and the link kept: the app's teardown edge, then the session
+            // joined again at the character park.
             if events_tx
                 .send(SessionEvent::Disconnected {
                     reason: reason.into(),
@@ -1017,8 +1011,8 @@ fn world(
             };
             session = WorldSession::rejoin(reader, writer)?;
             bevy::log::info!("net: {reason} — back at character select on the same link");
-            // With no stock glue VM the park enumerates itself, as on the dial; the stock
-            // screen's `CharacterSelect_OnShow` asks for its roster itself (`0x46b880`).
+            // With no stock glue VM the park enumerates itself, as on the dial; the stock screen's
+            // `CharacterSelect_OnShow` asks for its roster itself.
             asks = screen_asks_roster.load(Ordering::SeqCst);
             if !asks {
                 characters = match session.char_enum() {
@@ -1106,9 +1100,9 @@ fn stream(
                     );
                 }
                 for ev in events {
-                    // The pong bypass: the reference's `OnData` (`0x537b10`) hands `SMSG_PONG` to
-                    // `HandlePong` (`0x537d60`) inline, not onto the game thread's queue, so it is
-                    // timed and consumed here.
+                    // The pong bypass: the reference's receive path hands `SMSG_PONG` to its pong
+                    // handler inline, not onto the game thread's queue, so it is timed and consumed
+                    // here.
                     if let SessionEvent::Pong { sequence } = ev {
                         if let Some(rtt) = ping_clock.lock_recover().record_pong(sequence) {
                             bevy::log::debug!("net: pong seq={sequence} rtt={rtt}ms");
@@ -1221,7 +1215,7 @@ fn apply_swap(
             if fresh_link {
                 ping_clock.lock_recover().clear();
             }
-            // The first keepalive is a full interval after connect (`0x537bcf`).
+            // The first keepalive is a full interval after connect.
             *ping_tick = crossbeam_channel::after(PING_INTERVAL);
         }
         WriterSwap::Reclaim(reply) => {
@@ -1244,7 +1238,7 @@ pub(super) fn writer_loop(
     let mut writer: Option<WorldWriter> = None;
     let mut warned = 0u32;
     // Armed at connect and re-armed by each send, never free-running: the reference pings when
-    // `now - lastSent - 30000 >= 0` (`0x537ff0`), with `lastSent` stamped at connect (`0x537bcf`).
+    // `now - lastSent - 30000 >= 0`, with `lastSent` stamped at connect.
     let mut ping_tick = crossbeam_channel::never();
     loop {
         crossbeam_channel::select! {
@@ -1265,11 +1259,10 @@ pub(super) fn writer_loop(
                         let mut c = ping_clock.lock_recover();
                         c.sequence += 1;
                         c.sent_at = Some(Instant::now());
-                        // `lastRtt` is the latest sample, not the mean (`ring[write-1]`, at
-                        // `0x537e87`). Deviation: the reference's guard at `0x537e85` sends 0
-                        // whenever the write index is 0, one ping in sixteen; we send 0 only before
-                        // the first pong, because the rest is an artefact of its index arithmetic
-                        // that only the server stores.
+                        // `lastRtt` is the latest sample, not the mean (`ring[write-1]`).
+                        // Deviation: the reference's guard sends 0 whenever the write index is 0,
+                        // one ping in sixteen; we send 0 only before the first pong, because the
+                        // rest is an artefact of its index arithmetic that only the server stores.
                         (c.sequence, c.last_rtt_ms.unwrap_or(0))
                     };
                     if let Err(e) = w.ping(sequence, last_rtt) {

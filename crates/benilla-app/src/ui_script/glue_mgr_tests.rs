@@ -33,8 +33,8 @@ fn failed(refusal: Option<LoginRefusal>, terminal: bool) -> LoginFailedMessage {
     }
 }
 
-/// `0x5b2c90`'s arms, after the handlers' clamp past `0x0f`: 0x0E is a success (`0x5b2cd4`), and
-/// a proof's 0x0A reports nothing (`0x5bada2`).
+/// The logon result's arms, after the handlers' clamp past `0x0f`: 0x0E is a success, and a proof's
+/// 0x0A reports nothing.
 #[test]
 fn a_realmd_refusal_maps_through_the_references_table() {
     use benilla_protocol::LogonReply::{Challenge, Proof};
@@ -107,8 +107,8 @@ fn login_guards_then_starts_the_logon() {
     assert_eq!(asks.len(), 1, "a second login waits for state 0");
 }
 
-/// The logon's dialogs come off its `(state, result)` pair once per change (`0x46b140`); the
-/// authenticated state moves to the world connect on the same tick.
+/// The logon's dialogs come off its `(state, result)` pair once per change; the authenticated state
+/// moves to the world connect on the same tick.
 #[test]
 fn the_logon_shows_each_state_once_then_connects() {
     let mut m = accepted();
@@ -177,9 +177,9 @@ fn realm(name: &str) -> RealmInfo {
     }
 }
 
-/// The world connect's failure arm: the status text, `OKAY_WITH_URL` with the URL key for the
-/// five codes of `0x803740`, then the realm list over it (`CLOSE_STATUS_DIALOG` and the rebuild);
-/// `AUTH_FAILED` instead goes from the character screen back to login.
+/// The world connect's failure arm: the status text, `OKAY_WITH_URL` with the URL key for the five
+/// codes, then the realm list over it (`CLOSE_STATUS_DIALOG` and the rebuild); `AUTH_FAILED`
+/// instead goes from the character screen back to login.
 #[test]
 fn a_world_refusal_opens_its_status_and_url() {
     let connected = || {
@@ -242,7 +242,7 @@ fn a_world_refusal_opens_its_status_and_url() {
         "the held list is raised, not asked for"
     );
 
-    // With no realm held the arm asks for the list (`0x46c06e` → `0x46b8d0` with 1).
+    // With no realm held the arm asks for the list.
     let mut m = connected();
     m.holder.clear();
     m.on_failed(&failed(None, false));
@@ -264,8 +264,8 @@ fn a_world_refusal_opens_its_status_and_url() {
 }
 
 /// The world connect re-texts the dialog from its operation each frame: nothing while the connect
-/// runs, `RESPONSE_CONNECTED` when it completes (`0x5aaa90`), nothing while the authentication runs,
-/// then `AUTH_OK` and the character screen.
+/// runs, `RESPONSE_CONNECTED` when it completes, nothing while the authentication runs, then
+/// `AUTH_OK` and the character screen.
 #[test]
 fn the_world_connect_shows_each_completion() {
     let mut m = accepted();
@@ -306,9 +306,9 @@ fn the_world_connect_shows_each_completion() {
     );
 }
 
-/// The authentication response ends the world connect (`0x5ab2b8` → `0x5aab80`): the status text,
-/// state 0, the roster torn down (`0x46c014`) and the character screen up. A roster is no part of
-/// it, and neither is one a request did not ask for.
+/// The authentication response ends the world connect: the status text, state 0, the roster torn
+/// down and the character screen up. A roster is no part of it, and neither is one a request did
+/// not ask for.
 #[test]
 fn the_authentication_puts_the_character_screen_up() {
     let mut m = accepted();
@@ -341,9 +341,9 @@ fn the_authentication_puts_the_character_screen_up() {
     assert!(m.roster.is_empty() && m.park_out.is_empty());
 }
 
-/// `GetCharacterListUpdate`'s host half (`0x46b880`): state 3, the `CHAR_LIST_RETRIEVING` dialog
-/// and a `CMSG_CHAR_ENUM` on every call; the reply that was asked for completes the query and the
-/// next tick closes the dialog and loads the roster (`0x46c084`-`0x46c094`).
+/// `GetCharacterListUpdate`'s host half: state 3, the `CHAR_LIST_RETRIEVING` dialog and a
+/// `CMSG_CHAR_ENUM` on every call; the reply that was asked for completes the query and the next
+/// tick closes the dialog and loads the roster.
 #[test]
 fn the_character_list_query_loads_the_roster_on_its_reply() {
     let done = [
@@ -392,11 +392,10 @@ fn the_character_list_query_loads_the_roster_on_its_reply() {
     }
 }
 
-/// A reply completes the character list query as `SetStatus` does (`0x5aa920`): a reply that
-/// lands between the Cancel and the tick that takes it turns the cancel into a load, as the
-/// reference's does. One that comes once the query is over (the realm list the cancel raised), or
-/// to an operation that is not the query's (a realm change's connect), or from another link,
-/// completes nothing.
+/// A reply completes the character list query as the status set does: a reply that lands between
+/// the Cancel and the tick that takes it turns the cancel into a load, as the reference's does. One
+/// that comes once the query is over (the realm list the cancel raised), or to an operation that is
+/// not the query's (a realm change's connect), or from another link, completes nothing.
 #[test]
 fn a_late_roster_reply_is_dropped_unless_it_lands_before_the_tick() {
     let late = || vec![crate::char_select::test_character(9, "Late")];
@@ -420,7 +419,7 @@ fn a_late_roster_reply_is_dropped_unless_it_lands_before_the_tick() {
         m.outbox
     );
 
-    // A reply in the frame of the Cancel, before the tick takes it: `SetStatus` overwrites the
+    // A reply in the frame of the Cancel, before the tick takes it: the status set overwrites the
     // cancelled status, so the query succeeds and the roster loads (after the teardown the click
     // made).
     let mut m = accepted();
@@ -468,9 +467,9 @@ fn a_late_roster_reply_is_dropped_unless_it_lands_before_the_tick() {
     assert!(m.op.done && m.op.ok);
 }
 
-/// A server that wants Warden refuses the roster ask with its words (a terminal login failure):
-/// the query completes failed and the next tick opens `OKAY` with them (`0x46c173`), where state 3
-/// would otherwise stand on its `CANCEL` dialog for ever. The link is gone.
+/// A server that wants Warden refuses the roster ask with its words (a terminal login failure): the
+/// query completes failed and the next tick opens `OKAY` with them, where state 3 would otherwise
+/// stand on its `CANCEL` dialog for ever. The link is gone.
 #[test]
 fn a_terminal_failure_fails_the_character_list_query_with_its_words() {
     let mut m = accepted();
@@ -499,9 +498,9 @@ fn a_terminal_failure_fails_the_character_list_query_with_its_words() {
     assert!(!m.connected);
 }
 
-/// A roster ask that failed on the stream completes the query `CHAR_LIST_FAILED`
-/// (`0x5ab300`'s failure leg), which the tick opens as `OKAY`, instead of leaving the retrieving
-/// dialog up; one of another link changes nothing.
+/// A roster ask that failed on the stream completes the query `CHAR_LIST_FAILED`, which the tick
+/// opens as `OKAY`, instead of leaving the retrieving dialog up; one of another link changes
+/// nothing.
 #[test]
 fn a_failed_roster_ask_opens_okay_with_char_list_failed() {
     let mut m = accepted();
@@ -547,8 +546,8 @@ fn an_authentication_behind_the_abandon_generation_is_dropped() {
     assert!(app.world().resource::<GlueMgr>().connected);
 }
 
-/// With no world link `0x5aabb0` fails the query `RESPONSE_FAILED_TO_CONNECT` at once, and the
-/// arm opens `OKAY` with that text (`0x46c173`) and goes to state 0.
+/// With no world link fails the query `RESPONSE_FAILED_TO_CONNECT` at once, and the arm opens
+/// `OKAY` with that text and goes to state 0.
 #[test]
 fn a_character_list_query_with_no_link_fails_okay() {
     let mut m = accepted();
@@ -569,9 +568,8 @@ fn a_character_list_query_with_no_link_fails_okay() {
     assert_eq!(m.state, ScreenState::Idle);
 }
 
-/// The dialog's Cancel in state 3 completes the query cancelled and tears the roster down
-/// (`0x46b754`); the next tick tears it down again and raises the realm list
-/// (`RequestRealmList(1)`, `0x46c069`-`0x46c073`).
+/// The dialog's Cancel in state 3 completes the query cancelled and tears the roster down; the next
+/// tick tears it down again and raises the realm list (`RequestRealmList(1)`).
 #[test]
 fn cancelling_the_character_list_raises_the_realm_list() {
     let mut m = accepted();
@@ -601,7 +599,7 @@ fn cancelling_the_character_list_raises_the_realm_list() {
     ));
 }
 
-/// Change Realm with the world up drops the session before the connect's query (`0x46b22b`).
+/// Change Realm with the world up drops the session before the connect's query.
 #[test]
 fn change_realm_with_the_world_up_leaves_it_first() {
     let mut m = accepted();
@@ -639,7 +637,7 @@ fn the_queue_retexts_every_frame() {
     assert_eq!(m.outbox, [Outgoing::Queue, Outgoing::Queue]);
 }
 
-/// `StatusDialogClick` by state (`0x46b7a8`): the logon is cancelled; the world connect completes
+/// `StatusDialogClick` by state: the logon is cancelled; the world connect completes
 /// `RESPONSE_CANCELLED`, whose failure arm shows no dialog, drops the world attempt alone and
 /// raises the realm list; a query is cancelled to state 0; idle does nothing.
 #[test]
@@ -689,8 +687,8 @@ fn status_dialog_click_cancels_by_state() {
 }
 
 /// A session that is over fires `DISCONNECTED_FROM_SERVER`; an unattended reconnect does not; in
-/// the world connect, a completed failed operation opens `OKAY` with its text instead
-/// (`0x46c671`-`0x46c68f`), and a running one still fires the event.
+/// the world connect, a completed failed operation opens `OKAY` with its text instead, and a
+/// running one still fires the event.
 #[test]
 fn a_lost_session_fires_disconnected() {
     let mut m = accepted();
@@ -713,9 +711,9 @@ fn a_lost_session_fires_disconnected() {
     assert_eq!(m.state, ScreenState::Idle);
 }
 
-/// A logout or a refused login keeps the world link (`0x5aaeb0`, `0x5aad70`), so the character
-/// screen that comes back up finds it connected (`0x4dda50`) and its `GetCharacterListUpdate`
-/// sends the roster ask on it (`0x46b880` → `0x5aabb0`), with no dialog of a disconnect.
+/// A logout or a refused login keeps the world link, so the character screen that comes back up
+/// finds it connected (`0x4dda50`) and its `GetCharacterListUpdate` sends the roster ask on it,
+/// with no dialog of a disconnect.
 #[test]
 fn a_logout_keeps_the_link_for_the_screens_roster_ask() {
     let mut m = accepted();
@@ -826,9 +824,9 @@ fn type_and_login(app: &mut App) {
     app.update();
 }
 
-/// `DisconnectFromServer` zeroes the screen state with the operation in flight (`0x46c55d`), so
-/// the roster reply of a query the character screen's Exit left behind cannot complete it on the
-/// login screen and raise the realm list.
+/// `DisconnectFromServer` zeroes the screen state with the operation in flight, so the roster reply
+/// of a query the character screen's Exit left behind cannot complete it on the login screen and
+/// raise the realm list.
 #[test]
 fn disconnecting_from_the_server_ends_the_query_in_flight() {
     let _ = benilla_formats::wow_data_or_skip!();
@@ -844,7 +842,7 @@ fn disconnecting_from_the_server_ends_the_query_in_flight() {
     assert_eq!(mgr.state, ScreenState::Idle);
     assert!(!mgr.connected && mgr.op.kind != OpKind::CharList);
 
-    // With no world connection the verb only cancels the logon (`0x46d34d`): the state stands.
+    // With no world connection the verb only cancels the logon: the state stands.
     app.world_mut().resource_mut::<GlueMgr>().state = ScreenState::RealmList;
     vm(&app).run("DisconnectFromServer()").unwrap();
     app.update();
@@ -1318,8 +1316,8 @@ fn closing_the_realm_list_lets_the_next_login_through() {
 }
 
 /// A server that lists no realm: the connect fails `REALM_LIST_REALM_NOT_FOUND`, the failure arm
-/// finds the holder empty and asks for the list (`0x46bf86` → `0x46c06e`), and the empty reply's
-/// rebuild puts the wizard up; nothing dials a fallback.
+/// finds the holder empty and asks for the list, and the empty reply's rebuild puts the wizard up;
+/// nothing dials a fallback.
 #[test]
 fn an_empty_realm_list_asks_again_and_shows_it() {
     let _ = benilla_formats::wow_data_or_skip!();
@@ -1521,10 +1519,10 @@ fn the_stock_login_loads_the_roster_into_character_select() {
 
 /// An empty roster: the teardown at the connect and the load both select -1, which fires
 /// `UPDATE_SELECTED_CHARACTER` with 1, and each `CHARACTER_LIST_UPDATE` the screen takes ends in
-/// its `SelectCharacter(0)`, which fires it again (`0x4e45fa`). With no realm chosen this session the load
-/// asks for the realm list and fires no `CHARACTER_LIST_UPDATE` (`0x47253d`-`0x47254b`), and the
-/// list's rebuild puts the realm wizard up (an account with no characters); with a realm chosen
-/// it fires the update and the screen stays, with no rows.
+/// its `SelectCharacter(0)`, which fires it again (`0x4e45fa`). With no realm chosen this session
+/// the load asks for the realm list and fires no `CHARACTER_LIST_UPDATE`, and the list's rebuild
+/// puts the realm wizard up (an account with no characters); with a realm chosen it fires the
+/// update and the screen stays, with no rows.
 #[test]
 fn an_empty_roster_asks_for_the_realm_list_only_with_no_realm_chosen() {
     let _ = benilla_formats::wow_data_or_skip!();
@@ -1630,14 +1628,13 @@ fn the_stock_select_stands_the_selected_character_at_the_cells_facing() {
     vm(&app).run("CharacterSelect_SelectCharacter(3)").unwrap();
     app.update();
     let p = preview(&app);
-    assert_eq!(p.yaw, 0.0, "every select zeroes the facing (`0x472a61`)");
+    assert_eq!(p.yaw, 0.0, "every select zeroes the facing");
     assert_eq!(
         p.scene,
         Some(GlueScene::Dwarf),
         "a gnome stands in Dwarf's stage"
     );
-    // The dwarf after the gnome: the stage the scene already holds is kept (`0x4e3c41`), so the
-    // scene runs on.
+    // The dwarf after the gnome: the stage the scene already holds is kept, so the scene runs on.
     let gnome_stage = p.stage;
     vm(&app).run("CharacterSelect_SelectCharacter(4)").unwrap();
     app.update();
@@ -1695,9 +1692,8 @@ fn the_stock_select_stands_the_empty_roster_in_orcs_stage() {
     assert_eq!(vm(&app).errors(), Vec::<String>::new());
 }
 
-/// The roster's race and class names are the DBC rows' `Name_Lang`, the file string the race
-/// row's, and a race or class with no row reads empty (`0x473336`, `0x47336e`); with no catalogs
-/// loaded every row is missing.
+/// The roster's race and class names are the DBC rows' `Name_Lang`, the file string the race row's,
+/// and a race or class with no row reads empty; with no catalogs loaded every row is missing.
 #[test]
 fn the_roster_names_come_from_the_dbc_rows() {
     let data = benilla_formats::wow_data_or_skip!();
@@ -1736,8 +1732,8 @@ fn the_roster_names_come_from_the_dbc_rows() {
         ),
         ("", "", "", false)
     );
-    // The race row's display for the gender byte, nothing for any other (`0x5ec4c0`): a model
-    // only for 0 and 1; and none without the model rows behind the display.
+    // The race row's display for the gender byte, nothing for any other: a model only for 0 and 1;
+    // and none without the model rows behind the display.
     (c.race, c.gender) = (1, 2);
     assert!(!glue_character(&c, &names).model);
     c.gender = 0;
@@ -1768,7 +1764,7 @@ fn the_roster_names_come_from_the_dbc_rows() {
 
 /// The sequence `GlueDialog`'s SUGGEST_REALM and REALM_IS_FULL `OnAccept` run: the character
 /// screen is put up, which asks for its list, and `ChangeRealm` follows in the same Lua call. The
-/// reference sends that `CMSG_CHAR_ENUM` on the old link at once and `ConnectToRealm` then only
+/// reference sends that `CMSG_CHAR_ENUM` on the old link at once and its realm connect then only
 /// drops the link, so the old session sees that ask whichever of the two requests the IO thread
 /// meets first, its reply completes nothing, and the new realm's session is asked once by the
 /// screen's show after the connect and loads its own roster.
@@ -1927,9 +1923,9 @@ fn serve_body(body: &str) -> String {
     format!("http://127.0.0.1:{port}/alert")
 }
 
-/// A fetched alert reaches the stock login screen: the status dialog's button runs first
-/// (`0x46b947`), so a logon in flight is abandoned, `SHOW_SERVER_ALERT` fires once with the text
-/// after the prefix (`0x46b957`), and the stock handler shows `ServerAlertFrame` with it.
+/// A fetched alert reaches the stock login screen: the status dialog's button runs first, so a
+/// logon in flight is abandoned, `SHOW_SERVER_ALERT` fires once with the text after the prefix, and
+/// the stock handler shows `ServerAlertFrame` with it.
 #[test]
 fn a_fetched_alert_cancels_the_logon_and_shows_the_alert_frame() {
     let _ = benilla_formats::wow_data_or_skip!();
@@ -1957,7 +1953,7 @@ fn a_fetched_alert_cancels_the_logon_and_shows_the_alert_frame() {
         shown(app, "ServerAlertFrame")
     });
 
-    // After the prefix, short of the last byte (`SStrCopy` of the whole body, `0x46a59f`).
+    // After the prefix, short of the last byte (a bounded string copy of the whole body).
     let want = &body[b"SERVERALERT:".len()..body.len() - 1];
     assert_eq!(vm(&app).eval::<String>("return ALERT_ARG").unwrap(), want);
     assert_eq!(abandon.load(Ordering::SeqCst), 1, "the logon was abandoned");

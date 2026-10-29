@@ -363,8 +363,8 @@ pub const AUTH_ALREADY_LOGGING_IN: u8 = 0x19;
 pub const AUTH_LOGIN_SERVER_NOT_FOUND: u8 = 0x1A;
 /// The realm is full and we are queued, not refused: the one code here that is not an ending.
 pub const AUTH_WAIT_QUEUE: u8 = 0x1B;
-// The 1.12 client's `OKAY_WITH_URL` table (`0x803740`) keys on banned, no-time, db-busy,
-// suspended and parental, so the URL dialog is reachable only from this enum, never from realmd.
+// The 1.12 client's `OKAY_WITH_URL` table keys on banned, no-time, db-busy, suspended and parental,
+// so the URL dialog is reachable only from this enum, never from realmd.
 pub const AUTH_BANNED: u8 = 0x1C;
 pub const AUTH_ALREADY_ONLINE: u8 = 0x1D;
 pub const AUTH_NO_TIME: u8 = 0x1E;
@@ -378,12 +378,11 @@ pub const LOGOUT_SUCCESS: u32 = 0x0;
 pub const LANGUAGE_COMMON: u32 = 0x7;
 pub const LANGUAGE_ORCISH: u32 = 0x1;
 
-/// `LANG_ADDON` (vmangos `SharedDefines.h:270`): marks a chat line as addon data, not speech;
-/// 1.12 has no addon opcode, and the client routes such a line to `CHAT_MSG_ADDON`. The server
-/// skips language, flood and sanitize checks for it, never rewrites it, and allows it only on the
-/// group, guild and channel lanes (`ChatHandler.cpp:49,84,172-219`). The 1.12 `SendAddonMessage`
-/// (`0x49f920`) sends only PARTY, RAID, GUILD and BATTLEGROUND, and the receive side names any
-/// other lane "UNKNOWN" (`0x49aff4`).
+/// `LANG_ADDON` (vmangos `SharedDefines.h:270`): marks a chat line as addon data, not speech; 1.12
+/// has no addon opcode, and the client routes such a line to `CHAT_MSG_ADDON`. The server skips
+/// language, flood and sanitize checks for it, never rewrites it, and allows it only on the group,
+/// guild and channel lanes (`ChatHandler.cpp:49,84,172-219`). The 1.12 `SendAddonMessage` sends
+/// only PARTY, RAID, GUILD and BATTLEGROUND, and the receive side names any other lane "UNKNOWN".
 pub const LANGUAGE_ADDON: u32 = 0xFFFF_FFFF;
 
 /// A race's faction tongue. vmangos drops a chat line, `.command`s included, in a language the

@@ -1,14 +1,14 @@
-//! The world click's two commits, the legs of the click dispatcher `0x492ce0`. While targeting,
-//! the pick flags (`0x481050`) come only from the word `0xcecac0`, so the word picks the leg:
+//! The world click's two commits, the legs of the click dispatcher. While targeting, the pick flags
+//! come only from the word, so the word picks the leg:
 //!
-//! - terrain (`0x492c90` → `0x492580` → `BindLocation 0x6e60f0`): [`commit_ground_cast_on_click`]
-//! - object (`0x4925d0` → `SetSelection 0x493540` → `BindTarget 0x6e5b40`), whose GameObject,
-//!   unit or corpse arm the picked object's type chooses: [`commit_object_cast_on_click`]
+//! - terrain (the location bind): [`commit_ground_cast_on_click`]
+//! - object (the selection set → the target bind), whose GameObject, unit or corpse arm the picked
+//!   object's type chooses: [`commit_object_cast_on_click`]
 //!
 //! A location-only word yields pick flags 3, whose `& 0x7c == 0` disables the object pick, so an
 //! AoE reticle clicks through a chest. The terrain and GameObject arms gate on nothing, not range,
 //! validity or the lock: the server judges and its `SMSG_CAST_RESULT` is the refusal. The unit and
-//! corpse arms run `BindTarget`'s relation and range checks ([`super::bind_target_unit`],
+//! corpse arms run the target bind's relation and range checks ([`super::bind_target_unit`],
 //! [`super::corpse::bind_target_corpse`]).
 
 use bevy::prelude::*;
@@ -23,10 +23,10 @@ use benilla_world::interact::WorldClick;
 
 use super::TargetingWants;
 
-/// The terrain leg (`0x492580`): bind the press's ground point and send, with no range check and
-/// no error path, then arm the pending cast and GCD and end the mode. No ground hit (sky) commits
-/// nothing and keeps the mode. [`crate::target::click::select_on_click`] holds off while targeting,
-/// so the click neither selects nor deselects.
+/// The terrain leg: bind the press's ground point and send, with no range check and no error path,
+/// then arm the pending cast and GCD and end the mode. No ground hit (sky) commits nothing and
+/// keeps the mode. [`crate::target::click::select_on_click`] holds off while targeting, so the
+/// click neither selects nor deselects.
 ///
 /// Runs after `select_on_click`, which reads the mode this clears.
 pub(crate) fn commit_ground_cast_on_click(
@@ -44,7 +44,7 @@ pub(crate) fn commit_ground_cast_on_click(
     if clicks.read().last().is_none() {
         return;
     }
-    // `TargetingWantsLocation 0x6e6320`: a word without it binds nothing and the mode stays.
+    // The location-wanted test: a word without it binds nothing and the mode stays.
     let Some((spell_id, commit)) = ladder.ground.pending_for(TargetingWants::Location) else {
         return;
     };
@@ -53,8 +53,8 @@ pub(crate) fn commit_ground_cast_on_click(
         return;
     };
     let at = bevy_to_wow(point);
-    // `BindLocation 0x6e60f0`: SOURCE (`0x20`) first, then DEST (`0x40`). `None` cannot happen
-    // behind `pending_for(Location)`; the `let else` fails closed.
+    // The location bind: SOURCE (`0x20`) first, then DEST (`0x40`). `None` cannot happen behind
+    // `pending_for(Location)`; the `let else` fails closed.
     let Some(bound) = ladder.ground.location_bind(at) else {
         return;
     };
@@ -62,23 +62,23 @@ pub(crate) fn commit_ground_cast_on_click(
         "ui_action: ground cast {spell_id} committed at wow ({:.2}, {:.2}, {:.2}) as {bound:?}",
         at[0], at[1], at[2]
     );
-    // `SendCast 0x6e54f0`: a thrown grenade commits as `CMSG_USE_ITEM` with the location block.
+    // The cast send: a thrown grenade commits as `CMSG_USE_ITEM` with the location block.
     ladder.commit_targeted(spell_id, commit, bound);
 }
 
-/// The object leg. A left-click on an object goes `0x492ce0` → `0x4925d0` → `SetSelection
-/// 0x493540`, whose first act while targeting is `BindTarget 0x6e5b40` and return, so the click
-/// never changes the player's target and never reaches the GameObject's unselectable check.
+/// The object leg. A left-click on an object goes to the selection set, whose first act while
+/// targeting is the target bind and return, so the click never changes the player's target and
+/// never reaches the GameObject's unselectable check.
 ///
-/// `BindTarget` picks its arm by the clicked object's typemask. The GameObject arm, when a word in
-/// `0x4800` puts GameObjects in the pick and one is the nearest hit ([`go_is_nearest`]), writes
-/// wire bit `TARGET_FLAG_GAMEOBJECT` (`0x800`), clears those `0x4800` word bits, parks the guid
-/// (`0xceac60`), and the zero word lets it call `SendCast 0x6e54f0`, with no gate before the send,
-/// not range nor the lock: the refusal is the server's `SMSG_CAST_RESULT`. The right-click path
-/// ([`crate::target::click`], `0x5f33e0`) does resolve the lock and can refuse locally. Otherwise
-/// the picked unit goes to the unit arm ([`super::bind_target_unit`]) and the picked corpse to the
-/// corpse arm ([`super::corpse::bind_target_corpse`]). A lock word has no unit bit, so it puts no
-/// unit in the pick and the click reaches what stands behind one ([`super::pick`]).
+/// The target bind picks its arm by the clicked object's typemask. The GameObject arm, when a word
+/// in `0x4800` puts GameObjects in the pick and one is the nearest hit ([`go_is_nearest`]), writes
+/// wire bit `TARGET_FLAG_GAMEOBJECT` (`0x800`), clears those `0x4800` word bits, parks the guid,
+/// and the zero word lets it call the cast send, with no gate before the send, not range nor the
+/// lock: the refusal is the server's `SMSG_CAST_RESULT`. The right-click path
+/// ([`crate::target::click`]) does resolve the lock and can refuse locally. Otherwise the picked
+/// unit goes to the unit arm ([`super::bind_target_unit`]) and the picked corpse to the corpse arm
+/// ([`super::corpse::bind_target_corpse`]). A lock word has no unit bit, so it puts no unit in the
+/// pick and the click reaches what stands behind one ([`super::pick`]).
 ///
 /// Runs after `select_on_click`, as the terrain commit does.
 pub(crate) fn commit_object_cast_on_click(
@@ -97,7 +97,7 @@ pub(crate) fn commit_object_cast_on_click(
     if clicks.read().last().is_none() {
         return;
     }
-    // `TargetingWantsGameObject 0x6e62d0`: without it the pick holds no GameObject.
+    // The object-wanted test: without it the pick holds no GameObject.
     if !(ladder.ground.wants(TargetingWants::GameObject)
         && go_is_nearest(&hovered, &hovered_object))
     {
@@ -176,8 +176,8 @@ mod tests {
         world.run_system(id).expect("the object commit runs");
     }
 
-    /// `BindLocation 0x6e60f0`: the standing word alone binds the point to SOURCE (`Targets 0x20`,
-    /// spell 265) or DEST (`Targets 0x40`, Blizzard).
+    /// The location bind: the standing word alone binds the point to SOURCE (`Targets 0x20`, spell
+    /// 265) or DEST (`Targets 0x40`, Blizzard).
     #[test]
     fn the_terrain_click_binds_source_or_dest_by_the_standing_word() {
         const BLIZZARD: u32 = 10;
@@ -395,9 +395,9 @@ mod tests {
         ));
     }
 
-    /// `BindTarget`'s range leg (`6e6063`): a unit the relation checks accept but out of the
-    /// spell's range raises "Out of range." and the cursor stays armed; a click in range commits.
-    /// Row 5 is 0 to 30 yd, padded by both 1.5 combat reaches to 33.
+    /// The target bind's range leg: a unit the relation checks accept but out of the spell's range
+    /// raises "Out of range." and the cursor stays armed; a click in range commits. Row 5 is 0 to
+    /// 30 yd, padded by both 1.5 combat reaches to 33.
     #[test]
     fn an_out_of_range_unit_click_raises_and_keeps_the_cursor() {
         use std::collections::HashMap;
@@ -469,11 +469,11 @@ mod tests {
         assert!(!world.resource::<super::super::SpellTargeting>().active());
     }
 
-    /// `BindTarget`'s corpse arm from a world click on a released player's corpse: the ally bit on
-    /// a friend's corpse commits with `0x8000` and the corpse guid, the enemy bit on a hostile one
-    /// with `0x200`; bones, a hostile corpse under the ally bit and a word the bit does not empty
-    /// wait silently; out of range raises "Out of range." and waits. An item's corpse cast (Goblin
-    /// Jumper Cables) commits as `CMSG_USE_ITEM` with the same block.
+    /// The target bind's corpse arm from a world click on a released player's corpse: the ally bit
+    /// on a friend's corpse commits with `0x8000` and the corpse guid, the enemy bit on a hostile
+    /// one with `0x200`; bones, a hostile corpse under the ally bit and a word the bit does not
+    /// empty wait silently; out of range raises "Out of range." and waits. An item's corpse cast
+    /// (Goblin Jumper Cables) commits as `CMSG_USE_ITEM` with the same block.
     #[test]
     fn a_click_on_a_released_corpse_binds_the_corpse_arm() {
         use super::super::corpse_fixture as fx;
@@ -542,7 +542,7 @@ mod tests {
             })
         ));
 
-        // Silent refusals: nothing sent, no error, the cursor still up (`6e6026`).
+        // Silent refusals: nothing sent, no error, the cursor still up.
         for (word, corpse, what) in [
             (0x8000, fx::corpse(fx::HUMAN, true), "bones"),
             (0x8000, foe(), "a hostile corpse under the ally bit"),
@@ -614,7 +614,7 @@ mod tests {
             "and the cursor survives the click it cannot consume"
         );
 
-        // (c) Nothing hovered: `BindTarget` is never reached.
+        // (c) Nothing hovered: the target bind is never reached.
         let (mut world, rx, id) = fixture();
         world
             .resource_mut::<super::super::SpellTargeting>()
@@ -623,8 +623,8 @@ mod tests {
         assert!(rx.try_recv().is_err(), "no object, no bind");
         assert!(world.resource::<super::super::SpellTargeting>().active());
 
-        // (d) A unit is nearer than the GameObject: every unit arm of `0x6e5b40` tests a bit this
-        // word lacks, so nothing is written.
+        // (d) A unit is nearer than the GameObject: every unit arm of the reference tests a bit
+        // this word lacks, so nothing is written.
         let (mut world, rx, id) = fixture();
         world
             .resource_mut::<super::super::SpellTargeting>()

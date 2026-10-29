@@ -1,7 +1,6 @@
-//! The death thud: the body-fall sound as a corpse lands, on the `$DTH` event (`0x6236e0`); its
-//! camera shake is [`crate::camera_shake`]'s (`0x625c30`). Every model that keys `$DTH` thuds,
-//! players included (`[unit+0xb34]` holds a player's display too, `0x60afb0`); only the sample
-//! scales with the body.
+//! The death thud: the body-fall sound as a corpse lands, on the `$DTH` event; its camera shake is
+//! [`crate::camera_shake`]'s. Every model that keys `$DTH` thuds, players included (`[unit+0xb34]`
+//! holds a player's display too); only the sample scales with the body.
 //!
 //! ```text
 //! $DTH → sizeClass = CreatureDisplayInfo.SizeClass ?? CreatureModelData.SizeClass
@@ -10,30 +9,26 @@
 //! ```
 //!
 //! The terrain is the footstep's ([`super::footsteps`]): one cached terrain dword per unit
-//! (`CGUnit+0xc60`), read by `$DTH` at `0x623749` and by `$FSD` at `0x62341d`. `None` (the
-//! reference's -1) is silence.
+//! (unit `+0xc60`), read by `$DTH` and by `$FSD`. `None` (the reference's -1) is silence.
 //!
 //! Most indoor floors are silent in the reference too: a WMO surface with no material is
 //! `TerrainType 10 "None"`, `SoundID` 0, which `FootstepTerrainLookup` has a row for and
 //! `DeathThudLookups` does not. That is 97.8 % of shipped WMO materials; stone, metal and wood
 //! floors (Stormwind, Ironforge, most dungeons) thud.
 //!
-//! The handler's gates, in order (`0x6236e0`); there is no hover, stealth, ghost, CVar or distance
-//! gate:
+//! The handler's gates, in order; there is no hover, stealth, ghost, CVar or distance gate:
 //!
-//! 1. In liquid more than 2.0 yd over the feet (`0x62372a`): silent, not the land kit.
-//! 2. Size class outside `0..=4` (`0x623744`, unsigned, so a -1 lands here): silent.
+//! 1. In liquid more than 2.0 yd over the feet: silent, not the land kit.
+//! 2. Size class outside `0..=4` (unsigned, so a -1 lands here): silent.
 //! 3. No terrain, no lookup row or a kit of 0: silent.
 //!
 //! Deviation: the water column is chosen on liquid above the feet (`depth > 0`, the footstep
 //! splash's test), because the reference's test, the flag saying liquid was found at the unit's
-//! sampled position (`[node+0x90] & 0x20`, `0x670630`), has no depth and splashes a body on a
-//! lake's shore.
+//! sampled position (`[node+0x90] & 0x20`), has no depth and splashes a body on a lake's shore.
 //!
-//! The play is `0x458870`: bus 0, uncapped (`0x458880`), at the unit's feet with no lift, not the
-//! capped footstep bus. Its `1.0` multiplies the kit's `SoundEntries.Volume`, and its `-1` is a
-//! file-variation index. Every `DeathThud*` row sets flag `0x400`, the ±15 % pitch draw
-//! (`0x458da0`, [`super::math`]).
+//! The play: bus 0, uncapped, at the unit's feet with no lift, not the capped footstep bus. Its
+//! `1.0` multiplies the kit's `SoundEntries.Volume`, and its `-1` is a file-variation index. Every
+//! `DeathThud*` row sets flag `0x400`, the ±15 % pitch draw ([`super::math`]).
 
 use bevy::prelude::*;
 
@@ -50,8 +45,8 @@ use super::footsteps::Footsteps;
 use super::kit::{play_kit_ext, KitRef, PlayExtras, SoundCategory, SoundKits};
 use super::{AudioListener, SoundConfig, SoundOutput};
 
-/// The liquid depth over the feet that silences the thud (`0x62372a fcomp [0x801628]`), measured
-/// `surfaceZ − feetZ` as the swim decision `0x6030c0` does.
+/// The liquid depth over the feet that silences the thud, measured `surfaceZ − feetZ` as the swim
+/// decision does.
 const DROWNED_DEPTH: f32 = 2.0;
 
 /// The drowned gate, the `TerrainType.SoundID` hop and the lookup; `depth` is `surfaceZ − feetZ`,
@@ -157,7 +152,7 @@ fn death_thud_sounds(
             KitRef::Id(kit),
             Some(transform.translation()),
             SoundCategory::Sfx,
-            PlayExtras::default(), // bus 0, uncapped, volume 1.0: `0x458870`'s
+            PlayExtras::default(), // bus 0, uncapped, volume 1.0, as in the reference
         ) {
             warn!("death thud (kit {kit}): {e:#}");
         }

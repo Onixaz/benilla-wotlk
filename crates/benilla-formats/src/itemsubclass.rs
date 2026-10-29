@@ -1,6 +1,6 @@
 //! `ItemSubClass.dbc` by `(class, subclass)`, 28 fields with no id column: the alternate
-//! proficiencies and the display gate the item tooltip's slot and type line reads (builder
-//! `0x52b650`, row cache `0xc0db90`), and the subclass names requirements are spelled with.
+//! proficiencies and the display gate the item tooltip's slot and type line reads, and the subclass
+//! names requirements are spelled with.
 
 use std::collections::HashMap;
 
@@ -20,8 +20,7 @@ pub struct ItemSubClassInfo {
     /// An alternate subclass whose proficiency also permits use, -1 for none.
     pub prerequisite_proficiency: i32,
     pub postrequisite_proficiency: i32,
-    /// `Flags` (`[row+0x10]`), raw; `0x200` gates the auction house's inventory-slot rows
-    /// (`0x4cfb63`).
+    /// `Flags` (`[row+0x10]`), raw; `0x200` gates the auction house's inventory-slot rows.
     pub flags: u32,
     /// Bit 0: never print the type name on the slot and type line.
     pub display_flags: u32,
@@ -33,8 +32,8 @@ pub struct ItemSubClassInfo {
 /// `ItemSubClass.dbc` by `(class, subclass)`.
 pub struct ItemSubClassCatalog {
     rows: HashMap<(u32, u32), ItemSubClassInfo>,
-    /// The crafting book's header names (`0x4fca20`): the verbose name (`+0x4c`, column 19) when
-    /// non-empty, else the display name (`+0x28`, column 10).
+    /// The crafting book's header names: the verbose name (`+0x4c`, column 19) when non-empty, else
+    /// the display name (`+0x28`, column 10).
     names: HashMap<(u32, u32), String>,
     /// The display name alone, the singular: the cast-fail line says "Must have a Wand equipped"
     /// where the spell tooltip says "Requires Wands".
@@ -57,13 +56,13 @@ impl ItemSubClassCatalog {
             .map(|v| v as u32)
     }
 
-    /// `WeaponSwingSize` (`[row+0x24]`, returned by `0x623870`). An unknown pair is the reference's
-    /// "not a weapon", which plays nothing rather than defaulting to a weight.
+    /// `WeaponSwingSize` (`[row+0x24]`). An unknown pair is the reference's "not a weapon", which
+    /// plays nothing rather than defaulting to a weight.
     pub fn weapon_swing_size(&self, class: u32, subclass: u32) -> Option<u32> {
         Some(self.rows.get(&(class, subclass))?.weapon_swing_size)
     }
 
-    /// The crafting book's header name, verbose first (`0x4fca20`).
+    /// The crafting book's header name, verbose first.
     pub fn name(&self, class: u32, subclass: u32) -> Option<&str> {
         self.names.get(&(class, subclass)).map(String::as_str)
     }
@@ -76,7 +75,7 @@ impl ItemSubClassCatalog {
     }
 
     /// A spell's equipped-item requirement as the spell tooltip spells it, plural and verbose
-    /// ("Requires Wands"). The reference's lookup (`0x6e2380`) has two stages:
+    /// ("Requires Wands"). The reference's lookup has two stages:
     /// 1. `ItemSubClassMask.dbc` on exact whole-mask equality, so Parry's eleven melee subclasses
     ///    (`0x2a5f3`) print "Melee Weapon".
     /// 2. Otherwise every subclass the mask names, comma-joined in file order, by [`Self::name`].
@@ -138,7 +137,7 @@ impl ItemSubClassCatalog {
 
     /// The raw `DisplayFlags`, 0 for an unknown key. Bit 0 is [`Self::hides_name`]; bit 1 keeps a
     /// subclass out of the auction house's category filter; bit 2 makes `GetInventoryItemCount`
-    /// count an equipped bag's contents (`0x4c881a`-`0x4c8826`), set on Soul Bag and every quiver.
+    /// count an equipped bag's contents, set on Soul Bag and every quiver.
     pub fn display_flags(&self, class: u32, subclass: u32) -> u32 {
         self.rows
             .get(&(class, subclass))
@@ -146,7 +145,7 @@ impl ItemSubClassCatalog {
     }
 
     /// Every subclass id of `class` in file order, the order in which the auction house's scans
-    /// count the Nth matching row (`0x4cf9c0`, `0x4ce980`); ids are not dense from 0.
+    /// count the Nth matching row; ids are not dense from 0.
     pub fn subclasses_of(&self, class: u32) -> Vec<u32> {
         self.order
             .iter()
@@ -294,7 +293,7 @@ mod tests {
         assert_eq!(cat.name(99, 0), None);
     }
 
-    /// The requirement lookup's two stages (`0x52eea7`-`0x52f10a`) on the shipped tables.
+    /// The requirement lookup's two stages on the shipped tables.
     #[test]
     fn real_requirement_names_take_the_group_before_the_join() {
         let data = crate::wow_data_or_skip!();
@@ -337,8 +336,8 @@ mod tests {
             Some("Fist Weapon")
         );
 
-        // Class 6, projectile: the cast-fail `0x31` NEED_EXOTIC_AMMO arm's lookup (`0x6e1e5e`,
-        // mask `1 << arg`). Three of the five shipped rows are `(OBSOLETE)` in the data itself.
+        // Class 6, projectile: the cast-fail `0x31` NEED_EXOTIC_AMMO arm's lookup (mask
+        // `1 << arg`). Three of the five shipped rows are `(OBSOLETE)` in the data itself.
         assert_eq!(
             cat.requirement_display_name(6, 1 << 2).as_deref(),
             Some("Arrow")
@@ -351,7 +350,7 @@ mod tests {
             cat.requirement_display_name(6, 1 << 4).as_deref(),
             Some("Thrown(OBSOLETE)")
         );
-        // Past the shipped rows: the arm declines (`0x6e1e6a`, to the shared default `0x6e21d8`).
+        // Past the shipped rows: the arm declines.
         assert_eq!(cat.requirement_display_name(6, 1 << 5), None);
         assert_eq!(cat.requirement_display_name(6, 1 << 31), None);
 

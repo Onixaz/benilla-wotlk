@@ -2,25 +2,21 @@
 //! ([`UiScript::new_glue`]) that stands in the world while no character is in it, where the boot
 //! VM otherwise stands.
 //!
-//! The reference's glue builder (`0x46a7b0`) resets the Lua state on a rebuild (`0x46a87b`; the
-//! cold first build, `0x46a505`, passes 0 and skips it), registers the glue functions
-//! (`0x46abb0`) and the 26 glue events (`0x46a88f`), opens `Logs\GlueXML.log` (`0x46a8ce`), then
-//! checks `GlueXML.toc`'s signature (`0x46a90b`). Only a valid one (`0x6f10f0` answering 3) loads
-//! the toc through the shared runner (`0x6edb90`, at `0x46a9b3`), and only when the loaded files'
-//! MD5 matches the signature's (`0x46a9d3`) does `FRAMES_LOADED` fire (`0x46aa34`). Signature
-//! results 0–2 (the table at `0x46aaac`) log their line, missing, corrupt or modified (`0x836fb8`,
-//! `0x836f98`, `0x836f78`), and load nothing; an MD5 mismatch logs no line, its frames already
-//! built, and skips `FRAMES_LOADED`. Either way the client quits with
-//! error 9 (`0x401560`: the exit code, then the quit post `ForceQuit` makes with code 0).
-//! Deviation: no signature or digest check (`0x46a90b`, `0x46a9d3`, `0x401560(9)`), so the chain's
-//! toc always loads and `FRAMES_LOADED` follows, because the check verifies Blizzard's signature
-//! with a key carried in the client binary, which benilla does not ship, and a modified interface
-//! file is loaded rather than refused.
+//! The reference's glue builder resets the Lua state on a rebuild (the cold first build, passes 0
+//! and skips it), registers the glue functions and the 26 glue events, opens `Logs\GlueXML.log`,
+//! then checks `GlueXML.toc`'s signature. Only a valid one loads the toc through the shared runner,
+//! and only when the loaded files' MD5 matches the signature's does `FRAMES_LOADED` fire. Signature
+//! results 0–2 log their line, missing, corrupt or modified, and load nothing; an MD5 mismatch logs
+//! no line, its frames already built, and skips `FRAMES_LOADED`. Either way the client quits with
+//! error 9 (then the quit post `ForceQuit` makes with code 0). Deviation: no signature or digest
+//! check, so the chain's toc always loads and `FRAMES_LOADED` follows, because the check verifies
+//! Blizzard's signature with a key carried in the client binary, which benilla does not ship, and a
+//! modified interface file is loaded rather than refused.
 //!
 //! The screen comes after the build: at startup the reference fires `SET_GLUE_SCREEN` with
-//! `"movie"` while the `movie` CVar is 1 (clearing it), else `"login"` (`0x402b3b`–`0x402b65`);
-//! back from the world `0x402090` fires it with `"charselect"` or `"login"`. benilla plays no movie
-//! yet (#130), so its boot screen is `"login"`.
+//! `"movie"` while the `movie` CVar is 1 (clearing it), else `"login"`; back from the world fires
+//! it with `"charselect"` or `"login"`. benilla plays no movie yet (#130), so its boot screen is
+//! `"login"`.
 //!
 //! The screens' `ModelFFX` panes drive the glue booth ([`super::glue_scene`]): its scene rig, the
 //! scene M2's own point lights and the `FfxGlow::GLUE_SCENE` pass, never the `ui_models` tile
@@ -40,7 +36,7 @@ pub(crate) enum GlueScreen {
 }
 
 impl GlueScreen {
-    /// The key, as the reference's literals spell it (`0x82e3e0`, `0x82e3e8`).
+    /// The key, as the reference's literals spell it.
     pub(crate) fn key(self) -> &'static str {
         match self {
             GlueScreen::Login => "login",
@@ -50,9 +46,9 @@ impl GlueScreen {
 }
 
 /// Load the chain's `GlueXML.toc` into `script`, a glue VM, and fire `FRAMES_LOADED`: the glue
-/// builder's steps from the toc on (`0x46a9b3`, `0x46aa34`). Returns every failure; a loader error
-/// is tagged `"GlueXML/<file>: <error>"`, a handler that raised during the walk is one too. The
-/// load's record is left for [`finish_glue_load_log`].
+/// builder's steps from the toc on. Returns every failure; a loader error is tagged
+/// `"GlueXML/<file>: <error>"`, a handler that raised during the walk is one too. The load's record
+/// is left for [`finish_glue_load_log`].
 pub(super) fn load_glue(script: &mut UiScript) -> Vec<String> {
     let mut failures = match reference_ui::glue() {
         Some(glue) => {
@@ -65,7 +61,7 @@ pub(super) fn load_glue(script: &mut UiScript) -> Vec<String> {
             failures
         }
         None => {
-            // The runner's `"Couldn't open %s"` (`0x846ff4`) at severity 2; no glue frame exists.
+            // The runner's `"Couldn't open %s"` at severity 2; no glue frame exists.
             let e = format!(
                 "{}: not found — the stock glue screens are not built",
                 reference_ui::GLUE_TOC
@@ -91,14 +87,13 @@ pub(super) fn load_glue(script: &mut UiScript) -> Vec<String> {
     failures
 }
 
-/// Drain the glue load's record into `Logs\GlueXML.log`, as the builder does after
-/// `FRAMES_LOADED` (`0x46aa61`-`0x46aa94`).
+/// Drain the glue load's record into `Logs\GlueXML.log`, as the builder does after `FRAMES_LOADED`.
 pub(super) fn finish_glue_load_log(script: &mut UiScript) {
     script.finish_ui_load_log();
     super::load_log::write_glue(script.take_load_log_writes());
 }
 
-/// Put `screen` up: `SET_GLUE_SCREEN` with its key as `arg1` (`0x46b840`, event 0).
+/// Put `screen` up: `SET_GLUE_SCREEN` with its key as `arg1` (event 0).
 pub(super) fn set_glue_screen(script: &mut UiScript, screen: GlueScreen) {
     script.fire_event(
         "SET_GLUE_SCREEN",
@@ -122,8 +117,8 @@ mod tests {
     const UNREGISTERED_CVARS: &[&str] = &[];
 
     /// What the player's own files make the reference report too: their `tos.html` uses `<H4>`,
-    /// which 1.12's SimpleHTML does not know (`"Frame %s: Unknown element type: %s"`,
-    /// `0x87a95c`, and the walk goes on).
+    /// which 1.12's SimpleHTML does not know (`"Frame %s: Unknown element type: %s"`, and the walk
+    /// goes on).
     const INSTALL_WARNINGS: &[&str] = &["Frame TOSText: Unknown element type: H4"];
 
     /// The movie frame's three handlers, which benilla's `MovieFrame` does not take: it plays no
@@ -164,8 +159,7 @@ mod tests {
     /// list, and the tables it shares with the in-game state).
     fn glue_surface() -> BTreeSet<String> {
         const TABLES: [&str; 9] = [
-            "0xac3e00", "0xac4378", "0xac4228", "0xac4190", "0xad2184", "0xaf5848", "0xb2d928",
-            "0xacd418", "0xacd320",
+            "t022", "t025", "t024", "t023", "t093", "t100", "t113", "t038", "t037",
         ];
         let path = format!(
             "{}/../../reference/3.3.5a-shapes.tsv",
@@ -176,7 +170,7 @@ mod tests {
             .lines()
             .filter(|l| !l.starts_with('#'))
             .map(|l| l.split('\t').collect::<Vec<_>>())
-            .filter(|f| f.len() > 3 && TABLES.contains(&f[3]))
+            .filter(|f| f.len() > 1 && TABLES.contains(&f[1]))
             .map(|f| f[0].to_string())
             .collect()
     }
@@ -345,8 +339,8 @@ mod tests {
         }
     }
 
-    /// `GlueParent` fills the screen root, 768 tall and `768·a` wide (`0x41ad10`, from `0x46ab40`),
-    /// up to 16:9; past that `GlueParent_OnLoad` centres it 16:9 wide on the root's height.
+    /// `GlueParent` fills the screen root, 768 tall and `768·a` wide, up to 16:9; past that
+    /// `GlueParent_OnLoad` centres it 16:9 wide on the root's height.
     #[test]
     fn glue_parent_fills_the_root_up_to_sixteen_by_nine() {
         let _ = benilla_formats::wow_data_or_skip!();

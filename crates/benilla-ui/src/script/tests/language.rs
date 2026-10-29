@@ -1,6 +1,6 @@
-//! The `|4` grammar pass at every text store that runs it (`CSimpleFontString::SetText` with its
-//! process flag, `0x483910`): font strings, button labels, tooltip lines and message lines, but
-//! not the edit box, whose display passes the flag clear.
+//! The `|4` grammar pass at every text store that runs it (the font string's text setter with its
+//! process flag, `0x483910`): font strings, button labels, tooltip lines and message lines, but not
+//! the edit box, whose display passes the flag clear.
 
 use super::common::script;
 use crate::script::QuadContent;

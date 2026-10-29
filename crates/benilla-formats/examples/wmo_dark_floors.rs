@@ -1,7 +1,7 @@
-//! Every WMO surface baked near-black at `MOCV.α = 0` that only the doorway fade
-//! (`FixColorVertexAlpha`) lights: without the fade the TRANS and INT batches render the bake as
-//! is, a black floor. A vertex is dark at luminance < 48 and alpha 0 when the fade lifts it past
-//! 200; a triangle counts when all three are, and batches rank by that area.
+//! Every WMO surface baked near-black at `MOCV.α = 0` that only the doorway fade lights: without
+//! the fade the TRANS and INT batches render the bake as is, a black floor. A vertex is dark at
+//! luminance < 48 and alpha 0 when the fade lifts it past 200; a triangle counts when all three
+//! are, and batches rank by that area.
 //! Output is Blizzard data: never commit it.
 //! `cargo run --release -p benilla-formats --example wmo_dark_floors [-- <substring>]`
 

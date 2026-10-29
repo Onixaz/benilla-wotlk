@@ -1,8 +1,7 @@
-//! The `ScrollingMessageFrame` methods over [`ScrollingMessageState`]: `CSimpleMessageScrollFrame`
-//! (ctor `0x787670`), the chat window's class. A ring of `maxLines` that drops the oldest, colours
-//! quantized `trunc(x*255+0.5)` with alpha forced opaque, a fade that ticks only at the bottom, and
-//! every scroll call re-arming the displayed lines' fade (`0x788b80` when refused at an end,
-//! `0x788af0` when it moves), which is what brings a faded chat back.
+//! The `ScrollingMessageFrame` methods over [`ScrollingMessageState`], the chat window's class. A
+//! ring of `maxLines` that drops the oldest, colours quantized `trunc(x*255+0.5)` with alpha forced
+//! opaque, a fade that ticks only at the bottom, and every scroll call re-arming the displayed
+//! lines' fade, which is what brings a faded chat back.
 
 use mlua::{Lua, Table, Value};
 
@@ -80,13 +79,12 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // The justify quartet, on both classes ([`super::install_justify`]).
     super::install_justify(lua, &m, "ScrollingMessageFrame")?;
 
-    // AddMessage(text [, r, g, b,] id, backFill) (`0x792900`): white without rgb; the state
-    // quantizes the colour and makes the line opaque. The rgb test is three `lua_isnumber` checks;
-    // the id is stack index 6 when they pass (`0x792b13`) and index 3, `r`'s, when they fail
-    // (`0x792b48`), which makes `AddMessage(text, id)` work and gives
-    // `AddMessage(text, nil, nil, nil, nil, 5)` id 0. A missing id is 0, which `UpdateColorByID`
-    // never matches (`0x788250`). `backFill` is stack index 7 or 4 and counts only as a boolean
-    // (`0x972f20`). The text gate (`0x79299c`) is the plain class's ([`super::message_text`]).
+    // AddMessage(text [, r, g, b,] id, backFill): white without rgb; the state quantizes the colour
+    // and makes the line opaque. The rgb test is three `lua_isnumber` checks; the id is stack index
+    // 6 when they pass and index 3, `r`'s, when they fail, which makes `AddMessage(text, id)` work
+    // and gives `AddMessage(text, nil, nil, nil, nil, 5)` id 0. A missing id is 0, which
+    // `UpdateColorByID` never matches. `backFill` is stack index 7 or 4 and counts only as a
+    // boolean (`0x972f20`). The text gate is the plain class's ([`super::message_text`]).
     m.set(
         "AddMessage",
         lua.create_function(
@@ -131,7 +129,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         )?,
     )?;
 
-    // UpdateColorByID(id, r, g, b) (`0x7932b0`) recolours the lines printed under `id`; stock
+    // UpdateColorByID(id, r, g, b) recolours the lines printed under `id`; stock
     // `ChatFrame_OnEvent` calls it on `UPDATE_CHAT_COLOR`.
     m.set(
         "UpdateColorByID",
@@ -218,7 +216,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // SetMaxLines wipes the ring (`0x7938a0`).
+    // SetMaxLines wipes the ring.
     m.set(
         "SetMaxLines",
         lua.create_function(|lua, (this, n): (Table, i64)| {
@@ -241,7 +239,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             with_smf(lua, &this, |smf| smf.fading_enabled = on)
         })?,
     )?;
-    // 1 or nil, the 1.12 predicate shape (`0x793a40`).
+    // 1 or nil, the 1.12 predicate shape.
     m.set(
         "GetFading",
         lua.create_function(|lua, this: Table| {
@@ -267,7 +265,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             })
         })?,
     )?;
-    // XML's `displayDuration` is the Lua `TimeVisible` (`0x788090`).
+    // XML's `displayDuration` is the Lua `TimeVisible`.
     m.set(
         "SetTimeVisible",
         lua.create_function(|lua, (this, s): (Table, f32)| {
@@ -290,8 +288,8 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     )?;
 
     // ── the shared font block ───────────────────────────────────────────────────────────────
-    // The ten font verbs are on this class's own table (`GetShadowColor` `0x792240`), as on
-    // FontString, Font, EditBox, MessageFrame and SimpleHTML; Button's (`0x879d00`) has none.
+    // The ten font verbs are on this class's own table (`GetShadowColor`), as on FontString, Font,
+    // EditBox, MessageFrame and SimpleHTML; Button's has none.
     let resolve: crate::script::font_block::ResolveRegion = |lua, this| {
         let h = frame_handle_of(lua, this)?;
         super::ensure_font_region(lua, h)
@@ -480,7 +478,7 @@ mod tests {
         }
     }
 
-    /// `0x788b80` walks the lines on display, not the ring.
+    /// The fade re-arm walks the lines on display, not the ring.
     #[test]
     fn the_re_arm_reaches_only_the_displayed_lines() {
         let mut s = ScrollingMessageState {
@@ -835,8 +833,8 @@ mod tests {
         assert!(!s.add_chat_message("PlainFrame", "x", 1.0, 1.0, 1.0));
     }
 
-    /// The id is stack index 6 with rgb and index 3 without (`0x792b13`, `0x792b48`), so
-    /// `AceConsole-2.0`'s `AddMessage(text, nil, nil, nil, nil, 5)` stores 0.
+    /// The id is stack index 6 with rgb and index 3 without, so `AceConsole-2.0`'s
+    /// `AddMessage(text, nil, nil, nil, nil, 5)` stores 0.
     #[test]
     fn the_addmessage_id_index_follows_the_rgb_leg() {
         let s = UiScript::new().unwrap();
@@ -936,8 +934,8 @@ mod tests {
         assert_ne!(smf.lines_gen, gen, "a recolour is a redraw");
         assert_eq!(smf.update_color_by_id(11, 0.0, 0.5, 1.0), 0, "idempotent");
         assert_eq!(smf.update_color_by_id(99, 0.0, 0.0, 0.0), 0, "no such id");
-        // Id 0 matches nothing (`0x788250`). REPLY's chat type has id 0 and `UPDATE_CHAT_COLOR`
-        // mirrors WHISPER into it, so without the guard every id-less line turns whisper pink.
+        // Id 0 matches nothing. REPLY's chat type has id 0 and `UPDATE_CHAT_COLOR` mirrors WHISPER
+        // into it, so without the guard every id-less line turns whisper pink.
         assert_eq!(
             smf.update_color_by_id(0, 1.0, 0.5, 1.0),
             0,

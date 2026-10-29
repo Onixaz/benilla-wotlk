@@ -11,11 +11,11 @@ use super::binding_abi::bool_or_default;
 use super::object::{create_frame, decode_id, frame_handle_of, frame_wrapper, point_from_str};
 use super::Model;
 
-/// The arrow's model (`0x8453c0`), not `Rotating-MinimapArrow`.
+/// The arrow's model, not `Rotating-MinimapArrow`.
 pub const ARROW_MODEL: &str = "Interface\\Minimap\\MinimapArrow.mdx";
 
 /// Half the file's bounding box, which is the size-less pane's rect in layout units (33.5 x 33.7
-/// FrameXML units at 4:3); `0x4a7b20` centres the model there.
+/// FrameXML units at 4:3); centres the model there.
 fn centre_of(facts: Option<&crate::widget::ModelFileFacts>) -> (f32, f32, f32) {
     facts.map_or((0.0, 0.0, 0.0), |f| {
         let (x, y) = f.extent();
@@ -51,7 +51,7 @@ impl Arrow {
         }
     }
     /// The model scale over `G48`: `5/3` for the world map, `10/9` for the mini, so the arrow keeps
-    /// its apparent size as the window's shape changes (`0x4a7ad8`).
+    /// its apparent size as the window's shape changes.
     fn scale_over_g48(self) -> f32 {
         match self {
             Arrow::World => 5.0 / 3.0,
@@ -88,8 +88,8 @@ impl Arrow {
     }
 }
 
-/// `G48` (`0x832a48`), the Y half-extent of the reference's layout space: `1/√(A² + 1)` for the
-/// screen's aspect `A`, 0.6 at 4:3.
+/// `G48`, the Y half-extent of the reference's layout space: `1/√(A² + 1)` for the screen's aspect
+/// `A`, 0.6 at 4:3.
 fn g48(model: &Model) -> f32 {
     let (w, h) = (model.screen.width(), model.screen.height());
     let a = if h > 0.0 { w / h } else { 4.0 / 3.0 };
@@ -227,9 +227,9 @@ fn position(lua: &Lua, which: Arrow, args: [Value; 5]) -> mlua::Result<()> {
     }
     let frame_name = as_string(&frame)?;
     let resolved = if let Some(rest) = frame_name.strip_prefix("$parent") {
-        // The reference (`0x76c5b0`) matches `$parent` in any case and takes the first named
-        // ancestor's name, else "Top"; here the prefix matches as spelled and only the direct
-        // parent's name is tried.
+        // The reference matches `$parent` in any case and takes the first named ancestor's name,
+        // else "Top"; here the prefix matches as spelled and only the direct parent's name is
+        // tried.
         let parent_name: Option<String> = arrow
             .call_method::<Option<Table>>("GetParent", ())?
             .and_then(|p| {

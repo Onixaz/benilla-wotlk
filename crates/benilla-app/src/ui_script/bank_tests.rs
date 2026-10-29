@@ -536,7 +536,7 @@ fn a_bank_bag_button_paints_the_drop_and_lets_go_of_the_lock() {
     let mut bags: benilla_ui::script::BankBagSlots = Default::default();
     bags[0] = Some(a_bag(true));
     s.set_bank_bag_slots(bags.clone());
-    // The event carries no arguments (`0x703e50`): every bank button repaints its own slot.
+    // The event carries no arguments: every bank button repaints its own slot.
     s.fire_event("PLAYERBANKSLOTS_CHANGED", vec![]);
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
     assert!(
@@ -544,7 +544,7 @@ fn a_bank_bag_button_paints_the_drop_and_lets_go_of_the_lock() {
         "in flight, the button greys — BankFrameItemButton_UpdateLock's desaturate arm"
     );
     // No count: a bag button's `isBag` makes `SetItemButtonCount` print any count above 0, but
-    // `GetInventoryItemCount` (`0x4c8680`) returns 0 for a container past 0-based slot 0x16.
+    // `GetInventoryItemCount` returns 0 for a container past 0-based slot 0x16.
     assert!(
         !s.eval::<bool>("return BankFrameBag1Count:IsShown()")
             .unwrap(),

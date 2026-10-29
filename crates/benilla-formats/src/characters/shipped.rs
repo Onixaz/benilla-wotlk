@@ -6,7 +6,7 @@ pub(super) struct Shipped {
     /// The ChrRaces fileStrings, guarding `load_races`' string columns.
     pub(super) files: &'static [(u8, &'static str)],
     /// The `CharBaseInfo` rows by race, guarding the 2-byte parse: each must be present, and a
-    /// patch may add more, as the class-list builder `0x4706b0` lists every row for the race.
+    /// patch may add more, as the class-list builder lists every row for the race.
     pub(super) combos: &'static [(u8, &'static [u8])],
     /// The Human Warrior male's start outfit, (display, InventoryType), guarding the packed
     /// CharStartOutfit layout.

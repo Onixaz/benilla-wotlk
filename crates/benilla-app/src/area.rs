@@ -1,21 +1,19 @@
 //! The player's area identity for the UI: the `ZONE_CHANGED` event family and the host globals
 //! behind `GetZoneText`, `GetSubZoneText`, `GetRealZoneText`, `GetMinimapZoneText` and
-//! `GetZonePVPInfo`, all fired from the one updater `0x494780`.
+//! `GetZonePVPInfo`, all fired from the one updater.
 //!
 //! - A zone id change fires `ZONE_CHANGED_NEW_AREA` alone; else a text change fires
 //!   `ZONE_CHANGED_INDOORS` or `ZONE_CHANGED` by the indoor bit. The first world-enter is a zone
 //!   id change from the zeroed cache.
 //! - The zone is the leaf's single-hop parent (AreaTable field 2, itself when 0).
-//! - The indoor bit is the faces-only down-ray (`0x6a87f0`): the surface below is a WMO face whose
-//!   group lacks MOGP `0x8` EXTERIOR.
-//! - Indoor naming (`0x67e670`): while indoors in the same group the whole updater is skipped
-//!   (`[0x868608]`, `[0x86860c]`). On a change, the whole-WMO row (`0x69d830`) overrides the zone
-//!   slot and nulls the subzone when its name is non-empty and differs from the subzone; an
-//!   unnamed row resolves through its `AreaTableID`, a missing row never overrides. Then the
-//!   group's own row (`0x69d8f0`) refills the subzone. Both are exact-key lookups.
+//! - The indoor bit is the faces-only down-ray: the surface below is a WMO face whose group lacks
+//!   MOGP `0x8` EXTERIOR.
+//! - Indoor naming: while indoors in the same group the whole updater is skipped. On a change, the
+//!   whole-WMO row overrides the zone slot and nulls the subzone when its name is non-empty and
+//!   differs from the subzone; an unnamed row resolves through its `AreaTableID`, a missing row
+//!   never overrides. Then the group's own row refills the subzone. Both are exact-key lookups.
 //! - `GetRealZoneText` reads the zone name before the indoor override.
-//! - `GetMinimapZoneText` is subzone-else-zone (`0xb4da28`), with its own `MINIMAP_ZONE_CHANGED`
-//!   (`0x494970`).
+//! - `GetMinimapZoneText` is subzone-else-zone, with its own `MINIMAP_ZONE_CHANGED`.
 //!
 //! On the first world entry the zone updater also sets the world map to the player's zone
 //! (`0x5204f9` into `0x547170`); that half is `crate::ui_world_map`'s first-entry sync.
@@ -26,8 +24,8 @@
 //! Deviation: the indoor dedup keys `(WMOID, MOGP uniqueID)`, not the client's raw per-WMO group
 //! index, because the raw index can alias across adjacent buildings.
 //!
-//! The reference's PvP display gate `[0x88272c]` (a cached boolean, not the realm type) is
-//! untraced; ours is always open.
+//! The reference's PvP display gate (a cached boolean, not the realm type) is untraced; ours is
+//! always open.
 
 use bevy::ecs::system::NonSendMut;
 use bevy::prelude::*;
@@ -59,9 +57,8 @@ fn load_area_table(mut commands: Commands, assets: Option<Res<WorldAssets>>) {
     }
 }
 
-/// The client's zone-text cache: the compare targets of `0x494780`, the minimap line's cache
-/// (`0x494970`) and the indoor dedup pair (`[0x868608]`, `[0x86860c]`). It lives per VM, so every
-/// login starts zeroed and its first resolve is a NEW_AREA.
+/// The client's zone-text cache: the compare targets, the minimap line's cache and the indoor dedup
+/// pair. It lives per VM, so every login starts zeroed and its first resolve is a NEW_AREA.
 #[derive(Default)]
 struct ZoneCache {
     /// `None` until the first resolve.
@@ -69,9 +66,9 @@ struct ZoneCache {
     zone_text: String,
     subzone_text: String,
     minimap_text: String,
-    /// `[0x868608]`.
+    /// Whether the last resolve was indoors.
     indoor: bool,
-    /// The previous hit group (`[0x86860c]`, keyed as the module doc's deviation says).
+    /// The previous hit group (keyed as the module doc's deviation says).
     wmo_id: u32,
     wmo_group: u32,
 }
@@ -84,7 +81,7 @@ struct ZoneSignal {
     indoor: bool,
 }
 
-/// The event election of `0x494780`.
+/// The event election.
 fn elect_event(cache: &ZoneCache, next: &ZoneSignal) -> Option<&'static str> {
     if cache.zone_id != Some(next.zone_id) {
         return Some("ZONE_CHANGED_NEW_AREA");
@@ -127,7 +124,7 @@ fn feed_zone_events(
     let real_zone_text = areas.0.name(zone).unwrap_or_default().to_string();
     let indoor = world.area_interior().is_some();
 
-    // The outdoor texts `0x67e670` starts from.
+    // The outdoor texts the indoor naming starts from.
     let mut zone_text = real_zone_text.clone();
     let mut subzone_text = if leaf == zone {
         String::new()
@@ -288,9 +285,8 @@ impl Plugin for AreaPlugin {
         app.add_systems(Startup, load_area_table.after(AssetSet::Open))
             .add_systems(
                 Update,
-                // After the leaf authority: leaf, indoor bit and names must come from one frame,
-                // as in the client's single-pass resolve (`0x67e510`), or a stale leaf fires a
-                // spurious splash.
+                // After the leaf authority: leaf, indoor bit and names must come from one frame, as
+                // in the client's single-pass resolve, or a stale leaf fires a spurious splash.
                 feed_zone_events
                     .after(crate::ui_script::UiInput)
                     .after(benilla_world::terrain_stream::AreaAuthoritySet),
@@ -320,7 +316,7 @@ mod tests {
         }
     }
 
-    /// The `0x494780` election.
+    /// The election.
     #[test]
     fn election_matches_the_byte_law() {
         let c = ZoneCache::default();
@@ -362,7 +358,7 @@ mod tests {
         );
     }
 
-    /// The `0x67e670` override skip (abbey) and fire (inn) branches on the install's data.
+    /// The override skip (abbey) and fire (inn) branches on the install's data.
     #[test]
     fn indoor_naming_matches_the_byte_law_on_real_data() {
         let data = benilla_formats::wow_data_or_skip!();

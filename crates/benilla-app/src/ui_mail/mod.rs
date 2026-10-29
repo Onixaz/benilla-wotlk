@@ -1,7 +1,7 @@
-//! The mail feed: the app half of [`benilla_ui::script`]'s `mail` module, 12340's `CGMailInfo`.
+//! The mail feed: the app half of [`benilla_ui::script`]'s `mail` module, 12340's mail state.
 //!
 //! A mailbox opens locally, from a mailbox GameObject's use (`0x70c9d0`) or a mailbox NPC's
-//! interaction (`0x6de11f`), or by `SMSG_SHOW_MAILBOX`; each ends in `TalkToMailbox`
+//! interaction (`0x6de11f`), or by `SMSG_SHOW_MAILBOX`; each ends in the mailbox open
 //! (`0x56da60`), which resets the form and fires `MAIL_SHOW`, whose `CheckInbox()` asks for the
 //! list. The VM gates the verbs and queues their packets; this side sends them, keeps the wire
 //! rows and applies each result as the reference's handlers do.
@@ -92,7 +92,7 @@ impl MailRow {
         }
     }
 
-    /// `GetNumAttachments` (`0x56d240`): slots holding an item.
+    /// The attachment count (`0x56d240`): slots holding an item.
     pub(crate) fn num_attachments(&self) -> usize {
         self.slots.iter().flatten().filter(|a| a.entry != 0).count()
     }
@@ -106,7 +106,7 @@ impl MailRow {
         }
     }
 
-    /// The purge `RemoveMoney` (`0x56f770`) and `RemoveItem` (`0x56f8d0`) test after a take: an
+    /// The purge the money and item takes (`0x56f770`, `0x56f8d0`) test after a take: an
     /// auction notice, a COD payment, or a letterless mail, once nothing is left in it.
     fn empty_after_take(&self) -> bool {
         let e = &self.entry;
@@ -119,7 +119,7 @@ impl MailRow {
     }
 }
 
-/// `SStrToInt64`: the leading decimal digits.
+/// The client's string-to-int64 parse: the leading decimal digits.
 fn leading_u64(s: &str) -> u64 {
     s.trim_start()
         .bytes()
@@ -151,15 +151,15 @@ pub(crate) enum MailEffect {
 /// them until a world change, `0x571730`), and the queued effects.
 #[derive(Resource, Default)]
 pub(crate) struct MailOpen {
-    /// The open mailbox (`m_object`).
+    /// The open mailbox.
     pub(crate) mailbox: Option<u64>,
     /// Wire order, which is the 1-based display order.
     pub(crate) rows: Vec<MailRow>,
     /// The server's whole count past the shown rows.
     pub(crate) total: u32,
-    /// The mail `AutoLootMailItem` is emptying one attachment per result (`m_autoLooting`).
+    /// The mail `AutoLootMailItem` is emptying one attachment per result.
     auto_looting: Option<u32>,
-    /// `TalkToMailbox` owed to the VM.
+    /// The mailbox open owed to the VM.
     open_requested: bool,
     /// The engine closed the window (range, despawn); the VM is owed `CloseMail(false)`.
     close_requested: bool,
@@ -169,7 +169,7 @@ pub(crate) struct MailOpen {
 }
 
 impl MailOpen {
-    /// `TalkToMailbox` (`0x56da60`): a mailbox right-click, a mailbox NPC or `SMSG_SHOW_MAILBOX`.
+    /// The mailbox open (`0x56da60`): a mailbox right-click, a mailbox NPC or `SMSG_SHOW_MAILBOX`.
     pub(crate) fn click(&mut self, mailbox: u64) {
         self.mailbox = Some(mailbox);
         self.open_requested = true;
@@ -191,7 +191,7 @@ impl MailOpen {
 }
 
 /// The range guard ([`crate::ui_session`]) closes the window past the client's interaction gate;
-/// `CloseInteraction` on the mailbox is `CloseMail(false)` (`0x51302d`).
+/// the interaction close on the mailbox is `CloseMail(false)` (`0x51302d`).
 impl NpcSession for MailOpen {
     fn npc(&self) -> Option<u64> {
         self.mailbox
@@ -226,7 +226,7 @@ impl Plugin for UiMailPlugin {
     }
 }
 
-/// `CGMailInfo::EnterWorld` (`0x571530`) at each world-enter cascade, after the time query and
+/// The mail state's world entry (`0x571530`) at each world-enter cascade, after the time query and
 /// before the battlefield status: the senders clear and `MSG_QUERY_NEXT_MAIL_TIME` goes out,
 /// stamping "no mail".
 pub(crate) fn send_query_next_mail_time_on_enter(
@@ -341,14 +341,14 @@ impl MailLookups<'_, '_> {
         crate::ui_items::item_icon(self.icons.as_deref(), display_id)
     }
 
-    /// An item's name with its random suffix (`BuildItemName`, `0x706d70`); `None` while its
+    /// An item's name with its random suffix (`0x706d70`); `None` while its
     /// template is in flight.
     fn item_name(&self, entry: u32, random_property: i32) -> Option<String> {
         let t = self.items.template(entry, 0, &self.commands)?;
         Some(self.rolls().name(&t.name, random_property as u32))
     }
 
-    /// `GetSenderName` (`0x56d960`).
+    /// The sender's display name (`0x56d960`).
     fn sender_name(
         &self,
         entry: u32,
@@ -566,8 +566,8 @@ impl MailLookups<'_, '_> {
             });
 
         let me = self.self_q.iter().next().map(|(_, g)| g.0);
-        // `CanComplain` (`0x56fa70`): a player's unreturned, non-GM mail from neither the player
-        // nor a friend.
+        // The complaint gate (`0x56fa70`): a player's unreturned, non-GM mail from neither the
+        // player nor a friend.
         let can_complain = me.is_some()
             && e.message_type == mail_message_type::NORMAL
             && e.flags & mail_flags::RETURNED == 0
@@ -599,7 +599,7 @@ impl MailLookups<'_, '_> {
         }
     }
 
-    /// The usable stationery list (`UpdateStationeryList`, `0x56fc80`): rows always available or
+    /// The usable stationery list (`0x56fc80`): rows always available or
     /// carried in the bags, with a cached template, sorted as `0x56dd00` does: always-available
     /// first, then carried, then by buy price and name. A carried paper has no `cost`.
     fn stationeries(&self, catalog: &Stationery) -> Vec<StationeryView> {
@@ -670,7 +670,7 @@ fn feed_mail(
     };
     let memo = memos.get(&script);
 
-    // `CGMailInfo::EnterWorld` (`0x571530`): the form, the flags and the rows reset.
+    // The mail state's world entry (`0x571530`): the form, the flags and the rows reset.
     if cascades.read().next().is_some() {
         script.mail_enter_world();
         mail.clear_session();
@@ -921,7 +921,7 @@ fn drain_mail(
     }
 }
 
-/// `MarkAsRead`'s local half (`0x56fe30`): the row turns read, the senders with nothing unread
+/// The mark-read's local half (`0x56fe30`): the row turns read, the senders with nothing unread
 /// drop out, the icon goes dark once all is read, and the close will re-ask.
 fn mark_read(mail: &mut MailOpen, pending: &mut MailPending, message_id: u32) {
     let Some(i) = mail.index_of(message_id) else {

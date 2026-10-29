@@ -2,10 +2,9 @@
 //! reference's cycle evaluator over them, in WoW coordinates. The server sends one anchor, the
 //! create block's `UPDATE_FLAG_TRANSPORT` clock (time since creation, modulo the period), and the
 //! client animates the car: bracket the keyframes around `(anchor + elapsed) % period`, lerp their
-//! offsets, rotate by the spawn's `GAMEOBJECT_ROTATION` and add the spawn position (`0x5f6280`,
-//! ticked by `0x5f5f10`), as vmangos's `ElevatorTransport::Update` does (`Transport.cpp:396-435`).
-//! `TransportID` is the `gameobject_template` entry; `SequenceID`, the car's animation per span, is
-//! not read.
+//! offsets, rotate by the spawn's `GAMEOBJECT_ROTATION` and add the spawn position, as vmangos's
+//! `ElevatorTransport::Update` does (`Transport.cpp:396-435`). `TransportID` is the
+//! `gameobject_template` entry; `SequenceID`, the car's animation per span, is not read.
 
 use std::collections::HashMap;
 
@@ -88,16 +87,16 @@ pub fn load_elevator_paths(chain: &mut Chain) -> Result<ElevatorPaths> {
     Ok(ElevatorPaths { by_entry })
 }
 
-/// The cycle period in ms, the last keyframe's time (`0x5f6280`'s modulus).
+/// The cycle period in ms, the last keyframe's time.
 pub fn elevator_period_ms(frames: &[ElevatorKeyframe]) -> u32 {
     frames.last().map_or(1, |f| f.time_ms).max(1)
 }
 
-/// The reference's type-11 evaluator (`0x5f6280`): the car's world position at `cycle_ms`, from
-/// the spawn position and its `GAMEOBJECT_ROTATION` quaternion `(x, y, z, w)`, and whether the
-/// bracketing span moves. The offset turns by `R(q)`, as the reference's transposed 3×3 does;
-/// vmangos's `d * q` with a y sign flip (`Transport.cpp:425-426`) agrees on the 1.12 data's
-/// vertical paths and pure-yaw spawns.
+/// The reference's type-11 evaluator: the car's world position at `cycle_ms`, from the spawn
+/// position and its `GAMEOBJECT_ROTATION` quaternion `(x, y, z, w)`, and whether the bracketing
+/// span moves. The offset turns by `R(q)`, as the reference's transposed 3×3 does; vmangos's
+/// `d * q` with a y sign flip (`Transport.cpp:425-426`) agrees on the 1.12 data's vertical paths
+/// and pure-yaw spawns.
 pub fn elevator_sample(
     frames: &[ElevatorKeyframe],
     spawn_pos: [f32; 3],

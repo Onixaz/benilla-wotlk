@@ -123,8 +123,8 @@ impl PluginGroup for GamePlugins {
             // The combat log, ahead of the animation layer, whose two shared kinds run second.
             .add(crate::combat_log::CombatLogPlugin)
             .add(CreatureAnimPlugin)
-            // The blob shadow (`0x6d7920`), sized from the Stand box (`playableAnimationLookup[0]`,
-            // fixed per model), never the playing sequence.
+            // The blob shadow, sized from the Stand box (`playableAnimationLookup[0]`, fixed per
+            // model), never the playing sequence.
             .add(BlobShadowPlugin)
             .add(CameraShakePlugin)
             .add(FootprintsPlugin)
@@ -227,8 +227,8 @@ impl PluginGroup for GamePlugins {
             .add(UiSpellInfoPlugin)
             .add(UiAchievementPlugin)
             .add(UiTalentWipePlugin)
-            // The form list by the reference's admission and order (`0x4b25b0`, `0x4b2bb0`); after
-            // UiActionPlugin (`Spells`) and SpellPlugin (the cast tail).
+            // The form list by the reference's admission and order; after UiActionPlugin (`Spells`)
+            // and SpellPlugin (the cast tail).
             .add(UiShapeshiftPlugin)
             // The companion lists; after UiSpellbookPlugin, whose feed it follows.
             .add(crate::ui_companion::UiCompanionPlugin)
@@ -1277,7 +1277,7 @@ pub(crate) mod schedule_tests {
         ("screenshot.rs", "report_captures", Because::FilledByVm,
          "the outcome chain starts with the VM's own `Screenshot()` call"),
         ("sound/ui.rs", "feed_drivers", Because::MemoLatched,
-         "the device list rides a `VmMemo` seed, glue VM included, which a gate would starve; a `SOUND_DEVICE_UPDATE` taken before the interface is up is the reference's own drop, as `SI2::HandleSoundDeviceChange` signals only once `CGGameUI` is initialised"),
+         "the device list rides a `VmMemo` seed, glue VM included, which a gate would starve; a `SOUND_DEVICE_UPDATE` taken before the interface is up is the reference's own drop, as the sound device-change handler signals only once the game UI is initialised"),
         ("tutorial.rs", "drain_tutorials", Because::FilledByVm,
          "`sends` exist only after Lua acknowledged, cleared or reset a flag, and go to the wire"),
         ("ui_action/drain.rs", "drain_go_openers", Because::FilledByVm,

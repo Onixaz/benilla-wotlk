@@ -40,26 +40,26 @@ const SLOT_CLEAR: usize = 0;
 const SLOT_CLEAR_UNDERWATER: usize = 1;
 const SLOT_STORM: usize = 2;
 const SLOT_STORM_UNDERWATER: usize = 3;
-/// The ghost profile: the ghost watcher `0x5de9c0` writes slot 4 into the active-slot global
-/// `[0xce9bb0]`, and the colour-table rebuild takes it at once, with no blend, over all else.
+/// The ghost profile: the ghost watcher writes slot 4 into the active-slot global, and the
+/// colour-table rebuild takes it at once, with no blend, over all else.
 const SLOT_DEATH: usize = 4;
 
-/// The fixed global rows for submersion in slime (6) and magma (7): `0x6d2371` branches before
-/// the slot selection, to row 7 at `0x6d23e1` and row 6 at `0x6d239e`, each guarded on `maxId`.
-/// No `Light.dbc` row names them, and the binary has no other magma or slime fog.
+/// The fixed global rows for submersion in slime (6) and magma (7): the reference branches before
+/// the slot selection, to row 7 and row 6, each guarded on `maxId`. No `Light.dbc` row names them,
+/// and the binary has no other magma or slime fog.
 const PARAM_SLIME: u32 = 6;
 const PARAM_MAGMA: u32 = 7;
 
-/// The ocean depth ramp's floor, −30.0 at `0x81162c`; the factors hold flat below it.
+/// The ocean depth ramp's floor, −30.0; the factors hold flat below it.
 const OCEAN_RAMP_FLOOR: f32 = -30.0;
-/// The ramp's reciprocal as the binary stores it, the f32 at `0x811628`, written from its bits
-/// (`0xbd088889`) because the decimal trips clippy's `excessive_precision`.
+/// The ramp's reciprocal as the binary stores it, the f32, written from its bits (`0xbd088889`)
+/// because the decimal trips clippy's `excessive_precision`.
 const OCEAN_RAMP_RECIP: f32 = f32::from_bits(0xbd08_8889);
 
-/// What the camera eye is submerged in. Water and ocean take the zone's underwater slot, magma
-/// and slime a fixed row. The reference's five states, `[0xc7f288]` ∈ {0xf dry, 0 water, 1 ocean,
-/// 2 magma, 3 slime}: only ocean runs the depth ramp, gated on the whole dword `== 1` at
-/// `0x6d2821` (a nibble test would pass 0x11); everything else treats ocean as water.
+/// What the camera eye is submerged in. Water and ocean take the zone's underwater slot, magma and
+/// slime a fixed row. The reference's five states, ∈ {0xf dry, 0 water, 1 ocean, 2 magma, 3 slime}:
+/// only ocean runs the depth ramp, gated on the whole dword `== 1` (a nibble test would pass 0x11);
+/// everything else treats ocean as water.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Submersion {
     /// Dry: the ordinary clear or storm slot.
@@ -88,12 +88,11 @@ impl Submersion {
         matches!(self, Submersion::Water | Submersion::Ocean)
     }
 
-    /// The ocean depth ramp (`0x6d2823`, behind the gate `0x6d2821`): `(fac1, fac2)` multiply the
-    /// light record's colour triples `DNState+0x178` and `DNState+0x174`, running 1.0 → 0.5 and
-    /// 1.0 → 0.75 over the first 30 yd of depth. Keep the multiply by the stored reciprocal:
-    /// `t / 30.0` rounds differently inside the range (at −29 yd, by 6e−8). The fog colour it also
-    /// writes (`0x6d28b0` → `DNState+0x70`) is overwritten from the bands: `0x66ff60` calls
-    /// `0x6cee30` after the tint, whose `0x6cee76` rewrites that slot.
+    /// The ocean depth ramp: `(fac1, fac2)` multiply the light record's colour triples at `+0x178`
+    /// and `+0x174`, running 1.0 → 0.5 and 1.0 → 0.75 over the first 30 yd of depth. Keep the
+    /// multiply by the stored reciprocal: `t / 30.0` rounds differently inside the range (at −29
+    /// yd, by 6e−8). The fog colour it also writes (`+0x70`) is overwritten from the bands: the
+    /// light update runs the band fill after the tint, and the fill rewrites that slot.
     pub fn ocean_depth_factors(self, eye_z: f32) -> Option<(f32, f32)> {
         if self != Submersion::Ocean {
             return None;
@@ -127,10 +126,10 @@ fn weather_slot(ghost: bool, stormy: bool, underwater: bool) -> usize {
     }
 }
 
-/// The zero-match fallback record, by `Light.dbc` ID. When no row matches the map, the light
-/// array build (`0x6d6170`, matching at `0x6d61a9`) writes record 1, the Azeroth global, into
-/// slot 0 (`0x6d62b2`..`0x6d62c9`) with the count seeded at 1 (`0x6d6188`), so `0x6d2d00` has
-/// nothing to blend. Deeprun Tram (369) is the one shipped map reachable in play that needs it.
+/// The zero-match fallback record, by `Light.dbc` ID. When no row matches the map, the light array
+/// build writes record 1, the Azeroth global, into slot 0 with the count seeded at 1, so the
+/// reference has nothing to blend. Deeprun Tram (369) is the one shipped map reachable in play that
+/// needs it.
 const FALLBACK_LIGHT_ID: u32 = 1;
 
 struct Light {
@@ -148,7 +147,7 @@ struct Light {
 }
 
 /// A `Light.dbc` position to world yards: the DBC stores inches in a mirrored, axis-swapped frame
-/// (`LightRec::ConvertDBToGameCoords`), and 17066.666 is half the 34133⅓-yard map.
+/// (the light record's coordinate conversion), and 17066.666 is half the 34133⅓-yard map.
 fn dbc_to_world(x: f32, y: f32, z: f32) -> [f32; 3] {
     const MAP_HALF: f32 = 17066.666;
     [
@@ -213,7 +212,7 @@ pub(crate) fn light_schema() -> Schema {
     s
 }
 
-/// `LightParams.dbc`: 9 fields, 36-byte records, types per the client's reader `0x589030` (5875).
+/// `LightParams.dbc`: 9 fields, 36-byte records, types per the client's reader (5875).
 /// `cloudTypeID` (+0x0C) is 0 in every 5875 and 12340 record; the glow is +0x10, up to 1.0 in
 /// 12340's 850 rows (0 on 47 of them), and the four water alphas follow it.
 pub(crate) fn light_params_schema() -> Schema {
@@ -234,8 +233,8 @@ pub(crate) fn light_params_schema() -> Schema {
     s
 }
 
-/// An area light's strength: 1 within `start`, linear to 0 at `end` (`0x6d2d00`, which admits a
-/// sphere only at `dist ≤ end`), so a sphere enters at 0 and the blend stays continuous.
+/// An area light's strength: 1 within `start`, linear to 0 at `end` (which admits a sphere only at
+/// `dist ≤ end`), so a sphere enters at 0 and the blend stays continuous.
 fn blend_alpha(dist: f32, start: f32, end: f32) -> f32 {
     if dist >= end {
         0.0
@@ -402,7 +401,7 @@ impl LightCatalog {
     }
 
     /// Debug: the band rows of a named `LightParams` id, such as the magma and slime rows 7 and 6
-    /// that only `0x6d2371` reads.
+    /// that only reads.
     pub fn debug_param(&self, p: u32, time: u32) {
         if p < 1 {
             println!("(LightParams ids are 1-based)");
@@ -438,11 +437,11 @@ impl LightCatalog {
         }
     }
 
-    /// The ghost sky here, from slot 4 with no clear-slot fallback, as `0x6d6ab0(row, 4)` reads
-    /// `[row+0x2c]`. The ghost bit is the whole condition: the colour-table build `0x6d2260` fills
-    /// `[0xce9bb4]` at `0x6d26cb` only while `[0xce9bb0] != -1`, which only `0x6d4620` writes, for
-    /// the ghost selector `0x5de9c0` (`mov ecx,4`). The row is [`pick_light`](Self::pick_light)'s;
-    /// all but two of 12340's 715 rows name `DeathSkybox.mdx` in slot 4.
+    /// The ghost sky here, from slot 4 with no clear-slot fallback, as `(row, 4)` reads
+    /// `[row+0x2c]`. The ghost bit is the whole condition: the colour-table build fills only while,
+    /// which only writes, for the ghost selector (`mov ecx,4`). The row is
+    /// [`pick_light`](Self::pick_light)'s; all but two of 12340's 715 rows name `DeathSkybox.mdx`
+    /// in slot 4.
     pub fn ghost_skybox(&self, map: u32, pos: [f32; 3]) -> Option<&str> {
         let light = self.pick_light(map, pos)?;
         let id = self.light_params_skybox.get(&light.params[SLOT_DEATH])?;
@@ -460,8 +459,8 @@ impl LightCatalog {
         submersion: Submersion,
         ghost: bool,
     ) -> Atmosphere {
-        // Magma and slime replace the whole blend with one fixed row (`0x6d2371`, before the slot
-        // selection); without the row the chain falls through, as the `maxId` guard does.
+        // Magma and slime replace the whole blend with one fixed row (before the slot selection);
+        // without the row the chain falls through, as the `maxId` guard does.
         if let Some(p) = submersion.fixed_param() {
             if self.has_param(p) {
                 return self.sample_param(p, time);
@@ -477,9 +476,9 @@ impl LightCatalog {
             (param >= 1).then(|| self.sample_param(param, time))
         };
 
-        // The base: the map's global, else the zero-match record for a rowless map (`0x6d62b2`).
-        // The seven maps with rows but no global (33/37/129/169/209/489/531) start from `DEFAULT`:
-        // the reference leaves slot 0 unwritten there, and what it blends against is untraced.
+        // The base: the map's global, else the zero-match record for a rowless map. The seven maps
+        // with rows but no global (33/37/129/169/209/489/531) start from `DEFAULT`: the reference
+        // leaves slot 0 unwritten there, and what it blends against is untraced.
         let map_has_no_light = !self.lights.iter().any(|l| l.map == map);
         let mut acc = self
             .lights
@@ -493,8 +492,8 @@ impl LightCatalog {
             .and_then(atmo_of)
             .unwrap_or(Atmosphere::DEFAULT);
 
-        // Farthest first, so the nearest lands last: `0x6d2d00` drains a max-heap keyed on
-        // distance, not weight, calling `0x6d30e0(dst, row, w)` for every entry, a lone one too.
+        // Farthest first, so the nearest lands last: the reference drains a max-heap keyed on
+        // distance, not weight, blending `(dst, row, w)` for every entry, a lone one too.
         let mut locals: Vec<(f32, &Light)> = self
             .lights
             .iter()
@@ -713,8 +712,7 @@ impl LightCatalog {
         let fb = |b: u32| self.float_bands.get(&((p - 1) * 6 + b + 1));
         // `d` serves only the record fields; a keyless band row takes the zero-key constant.
         let d = Atmosphere::DEFAULT;
-        // Only the fog end is stored × 36. The reference scales it once at load (`0x53f504` →
-        // `0x6d6160` → `0x6d6100` runs `0x6d6090`, × 1/36 at `0x7ff9d0`, on rows with
+        // Only the fog end is stored × 36. The reference scales it once at load (on rows with
         // `rowIndex % 6 == 0`); scaling the interpolated value here is the same. A 0 end (params 9
         // and 93) stays 0, kept finite by the shaders' `max(end − start, 0.001)`.
         let fog_end = fb(FB_FOG_END)
@@ -738,8 +736,8 @@ impl LightCatalog {
             sun_color: col(IB_SUN_COLOR),
             ambient: col(IB_AMBIENT),
             sky: std::array::from_fn(|i| col(IB_SKY0 + i as u32)),
-            // Water-tint rows, the swatch endpoints (`0x68a830`). An unkeyed row is black, as in
-            // the reference; 53 clear-slot spheres on maps 0 and 1 leave one unkeyed.
+            // Water-tint rows, the swatch endpoints. An unkeyed row is black, as in the reference;
+            // 53 clear-slot spheres on maps 0 and 1 leave one unkeyed.
             water_river: [col(IB_RIVER_SHALLOW), col(IB_RIVER_DEEP)],
             water_ocean: [col(IB_OCEAN_SHALLOW), col(IB_OCEAN_DEEP)],
             water_river_alpha: self
@@ -753,7 +751,7 @@ impl LightCatalog {
                 .map(|a| [a[2], a[3]])
                 .unwrap_or(d.water_ocean_alpha),
             glow: self.light_params_glow.get(&p).copied().unwrap_or(d.glow),
-            // Cloud density and the three cloud palette rows, gathered by `0x6d64d0`.
+            // Cloud density and the three cloud palette rows, gathered.
             cloud_density: fb(FB_CLOUD_DENSITY)
                 .and_then(|b| sample_float(b, t))
                 .unwrap_or(ZERO_KEY_SCALAR),

@@ -1,4 +1,4 @@
-//! The 3.3.5a combat-log entries (`UnitCombatLog_C.cpp`), built per producer and fired once named.
+//! The 3.3.5a combat-log entries, built per producer and fired once named.
 
 use std::collections::VecDeque;
 

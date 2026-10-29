@@ -1,6 +1,6 @@
 //! The duel sends. There is no start-duel opcode: a challenge is a `CMSG_CAST_SPELL` of the spell
-//! whose `Effect[0]` is `SPELL_EFFECT_DUEL`. Both bodies carry the arbiter guid (`AcceptDuel`
-//! `0x4d4830`, `CancelDuel` `0x4d48b0`).
+//! whose `Effect[0]` is `SPELL_EFFECT_DUEL`. Both bodies carry the arbiter guid (`AcceptDuel`,
+//! `CancelDuel`).
 
 use anyhow::Result;
 

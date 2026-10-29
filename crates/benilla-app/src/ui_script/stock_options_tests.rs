@@ -353,7 +353,7 @@ fn every_controls_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
 
 /// The Auto Loot Key dropdown reads and writes the `AUTOLOOTTOGGLE` modified click
 /// (`InterfaceOptionsControlsPanelAutoLootKeyDropDown_OnEvent`), which the loot interact inverts
-/// `autoLootDefault` by (`IsAutoLooting 0x513700`); its label follows the Auto Loot checkbox.
+/// `autoLootDefault` by (the auto-loot test, `0x513700`); its label follows the Auto Loot checkbox.
 #[test]
 fn the_auto_loot_key_dropdown_rebinds_the_modified_click() {
     benilla_formats::wow_data_or_skip!();

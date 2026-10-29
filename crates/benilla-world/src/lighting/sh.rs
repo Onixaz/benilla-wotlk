@@ -5,10 +5,10 @@
 use bevy::math::{Vec3, Vec4};
 
 /// Folds committed lights into the 7-row order-2 SH probe, the closed form of the reference's
-/// accumulators: ambient ×2√π into L00 (`0x71bc70`) and each directional lobe ×16π/17 on the
-/// 9-term basis (`0x71bce0`), with band factors 1, 2/3 and 1/4, reduce to
-/// `E += C·(4/17)·(0.375 + 2μ + 1.875μ²)`, μ = n·u. On the shader basis
-/// `(n, 1, n.xy, n.yz, n.z², n.xz, n.x²−n.y²)`, per lobe of colour C and toward-light unit u:
+/// accumulators: ambient ×2√π into L00 and each directional lobe ×16π/17 on the 9-term basis, with
+/// band factors 1, 2/3 and 1/4, reduce to `E += C·(4/17)·(0.375 + 2μ + 1.875μ²)`, μ = n·u. On the
+/// shader basis `(n, 1, n.xy, n.yz, n.z², n.xz, n.x²−n.y²)`, per lobe of colour C and toward-light
+/// unit u:
 ///
 ///   DC     += C·(4/17)·(0.375 + 0.9375·(uₓ² + u_y²))
 ///   linear += C·(8/17)·u

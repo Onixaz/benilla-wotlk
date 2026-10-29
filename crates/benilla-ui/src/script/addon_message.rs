@@ -1,24 +1,23 @@
 //! `SendAddonMessage(prefix, message [, distribution])`, the addon-to-addon channel. 1.12 has no
-//! addon opcode: the binding (`0x49f920`) sends `prefix`, a TAB and `message` as one
-//! `CMSG_MESSAGECHAT` string with language `LANG_ADDON` (`0xFFFFFFFF`), the only mark of addon
-//! data on either side, and the receiver splits on the first TAB (`0x49a8d0`). The binding reads
-//! Lua arguments 1 to 3 only: 1.12 has no whispered addon message.
+//! addon opcode: the binding sends `prefix`, a TAB and `message` as one `CMSG_MESSAGECHAT` string
+//! with language `LANG_ADDON` (`0xFFFFFFFF`), the only mark of addon data on either side, and the
+//! receiver splits on the first TAB. The binding reads Lua arguments 1 to 3 only: 1.12 has no
+//! whispered addon message.
 //!
-//! Deviation: the reference drops a send that resolves to PARTY while party slot 0's guid
-//! (`0xbc6f48`) is zero (`0x49fa9f`-`0x49faab`); benilla sends it, because `PartyState` is empty
-//! until the first `SMSG_GROUP_LIST` and the gate would swallow a real broadcast. vmangos drops a
-//! group-less party line anyway (`ChatHandler.cpp:476`).
+//! Deviation: the reference drops a send that resolves to PARTY while party slot 0's guid is zero;
+//! benilla sends it, because `PartyState` is empty until the first `SMSG_GROUP_LIST` and the gate
+//! would swallow a real broadcast. vmangos drops a group-less party line anyway
+//! (`ChatHandler.cpp:476`).
 
 use mlua::{Lua, Value};
 
-/// The four distributions the binding sends on (whitelist `0x49fa3f`-`0x49fa4e`); the receiving
-/// side's jump table (`0x49afe0`) names the same four. vmangos also accepts `LANG_ADDON` on the
-/// officer, raid-leader, raid-warning, battleground-leader and channel lanes
-/// (`ChatHandler.cpp:78`), where the 1.12 client never sends it.
+/// The four distributions the binding sends on; the receiving side's jump table names the same
+/// four. vmangos also accepts `LANG_ADDON` on the officer, raid-leader, raid-warning,
+/// battleground-leader and channel lanes (`ChatHandler.cpp:78`), where the 1.12 client never sends
+/// it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AddonDistribution {
-    /// Chat type `0x01`; the default when the third argument is absent or not a string
-    /// (`0x49fa06`).
+    /// Chat type `0x01`; the default when the third argument is absent or not a string.
     Party,
     /// Chat type `0x02`; sent as PARTY outside a raid.
     Raid,
@@ -29,9 +28,9 @@ pub enum AddonDistribution {
 }
 
 impl AddonDistribution {
-    /// A Lua distribution token, case-insensitive like the reference's lookup (`0x64a4c0` over the
-    /// table at `0x49f7a0`). `None` raises `Unknown addon chat type`, the one error the reference
-    /// gives an unknown token and a chat type outside the four alike (`0x49fa53`).
+    /// A Lua distribution token, case-insensitive like the reference's lookup. `None` raises
+    /// `Unknown addon chat type`, the one error the reference gives an unknown token and a chat
+    /// type outside the four alike.
     pub fn from_token(token: &str) -> Option<Self> {
         for (name, dist) in [
             ("PARTY", Self::Party),
@@ -46,7 +45,7 @@ impl AddonDistribution {
         None
     }
 
-    /// The token the receiving side reports as `CHAT_MSG_ADDON`'s third argument (`0x49afe0`).
+    /// The token the receiving side reports as `CHAT_MSG_ADDON`'s third argument.
     pub fn token(self) -> &'static str {
         match self {
             Self::Party => "PARTY",
@@ -56,10 +55,9 @@ impl AddonDistribution {
         }
     }
 
-    /// RAID outside a raid silently goes out as PARTY (`0x49fa8b`-`0x49fa93`); vmangos drops a raid
-    /// line from a non-raid group (`ChatHandler.cpp:522`). The reference tests the raid member
-    /// count at `0xb713e0`, the cell `GetNumRaidMembers` (`0x4bb530`) returns, so `in_raid` is
-    /// `PartyState::raid` being non-empty.
+    /// RAID outside a raid silently goes out as PARTY; vmangos drops a raid line from a non-raid
+    /// group (`ChatHandler.cpp:522`). The reference tests the raid member count, the cell
+    /// `GetNumRaidMembers` returns, so `in_raid` is `PartyState::raid` being non-empty.
     pub fn effective(self, in_raid: bool) -> Self {
         match self {
             Self::Raid if !in_raid => Self::Party,
@@ -68,8 +66,8 @@ impl AddonDistribution {
     }
 }
 
-/// One queued addon broadcast, composed at the binding as the reference's is (`_snprintf` at
-/// `0x49f9b3`) and drained by the app onto the wire.
+/// One queued addon broadcast, composed at the binding as the reference's is (`_snprintf`) and
+/// drained by the app onto the wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct AddonSend {
     /// `prefix`, TAB, `message`, cut at 2047 bytes. vmangos passes a `LANG_ADDON` line through
@@ -79,14 +77,13 @@ pub struct AddonSend {
     pub distribution: AddonDistribution,
 }
 
-/// `_snprintf(dst, 0x800, …)` writes at most 2047 bytes plus its NUL (`0x64a861`-`0x64a868`).
+/// `_snprintf(dst, 0x800, …)` writes at most 2047 bytes plus its NUL.
 const ADDON_MESSAGE_CAP: usize = 0x800 - 1;
 
-/// The reference's `|`-escape scan (`0x49f9bb`-`0x49fa04`), its only text check, run on the
-/// composed payload before the distribution is read. After each `|`: `||` skips both bytes; `|c`
-/// skips past the first later `|r` (case-sensitive `strstr`, `0x49f9f4`), leaving the run between
-/// unchecked; `|c` with no `|r` cuts `text` at the `|` and accepts (`0x49fa6a`); anything else,
-/// the NUL after a trailing `|` included, is `Err` (`0x49fa6f`).
+/// The reference's `|`-escape scan, its only text check, run on the composed payload before the
+/// distribution is read. After each `|`: `||` skips both bytes; `|c` skips past the first later
+/// `|r` (case-sensitive `strstr`), leaving the run between unchecked; `|c` with no `|r` cuts `text`
+/// at the `|` and accepts; anything else, the NUL after a trailing `|` included, is `Err`.
 fn validate_escapes(text: &mut String) -> Result<(), ()> {
     let bytes = text.as_bytes();
     let mut i = 0usize;
@@ -117,8 +114,8 @@ fn validate_escapes(text: &mut String) -> Result<(), ()> {
     Ok(())
 }
 
-/// `lua_tostring` with the reference's NULL-to-empty replacement (`0x49f96b`-`0x49f97a`): strings
-/// and numbers coerce, anything else is `""`.
+/// `lua_tostring` with the reference's NULL-to-empty replacement: strings and numbers coerce,
+/// anything else is `""`.
 fn lua_tostring(lua: &Lua, v: &Value) -> mlua::Result<String> {
     Ok(lua
         .coerce_string(v.clone())?
@@ -133,7 +130,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             |lua, (prefix, message, distribution): (Value, Value, Value)| {
                 let prefix = lua_tostring(lua, &prefix)?;
                 let message = lua_tostring(lua, &message)?;
-                // Only both empty is the usage error (`0x49f97f`-`0x49f987`): AceEvent-2.0 sends
+                // Only both empty is the usage error: AceEvent-2.0 sends
                 // `SendAddonMessage("LOOT_OPENED", "", "RAID")`.
                 if prefix.is_empty() && message.is_empty() {
                     return Err(mlua::Error::RuntimeError(
@@ -150,15 +147,15 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     }
                     text.truncate(cut);
                 }
-                // After the compose, before argument 3 is read (`0x49fa06` precedes `0x49fa0b`),
-                // so a bad escape is reported over a bad distribution.
+                // After the compose, before argument 3 is read, so a bad escape is reported over a
+                // bad distribution.
                 if validate_escapes(&mut text).is_err() {
                     return Err(mlua::Error::RuntimeError(
                         "Invalid escape code in chat message".into(),
                     ));
                 }
-                // `lua_isstring` (`0x49fa15`) is true for a number, so `1` is the token "1" and
-                // raises; anything else that is not a string is PARTY (`0x49fa1c`).
+                // `lua_isstring` is true for a number, so `1` is the token "1" and raises; anything
+                // else that is not a string is PARTY.
                 let asked = match lua.coerce_string(distribution)? {
                     Some(token) => AddonDistribution::from_token(&token.to_string_lossy())
                         .ok_or_else(|| {
@@ -234,8 +231,8 @@ mod tests {
             assert_eq!(sent.len(), 1, "{token}");
             assert_eq!(sent[0].distribution, want, "{token}");
         }
-        // Chat types the reference's table resolves (`0x49f7a0`) but the whitelist refuses, and
-        // unknown tokens: one error for both.
+        // Chat types the reference's table resolves but the whitelist refuses, and unknown tokens:
+        // one error for both.
         for token in [
             "SAY",
             "YELL",

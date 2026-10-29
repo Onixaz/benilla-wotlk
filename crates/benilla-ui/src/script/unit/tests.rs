@@ -23,7 +23,7 @@ fn player() -> UnitState {
     }
 }
 
-/// `0x6e6d90`'s order: the `Usage:` check, the not-targeting no-op, the queue.
+/// The reference's order: the `Usage:` check, the not-targeting no-op, the queue.
 #[test]
 fn spell_target_unit_checks_in_the_references_order() {
     let mut s = UiScript::new().unwrap();
@@ -371,7 +371,7 @@ fn unit_level_reads_minus_one_when_the_level_cant_be_told() {
         }),
     );
     assert_eq!(s.eval::<i64>(r#"return UnitLevel("target")"#).unwrap(), 60);
-    // An unstreamed level 0 answers 0, not -1: `0x517fc0` pushes the raw field.
+    // An unstreamed level 0 answers 0, not -1: the reference pushes the raw field.
     s.set_unit(
         "target",
         Some(UnitState {
@@ -388,7 +388,7 @@ fn unit_level_reads_minus_one_when_the_level_cant_be_told() {
 fn corpse_can_attack_and_green_range_bindings() {
     use crate::script::PlayerReqState;
     let mut s = UiScript::new().unwrap();
-    // `UnitIsCorpse` is an object-type check (`0x5161c0`): a dead unit is not a corpse.
+    // `UnitIsCorpse` is an object-type check: a dead unit is not a corpse.
     s.set_unit(
         "target",
         Some(UnitState {
@@ -490,8 +490,9 @@ fn the_selection_queue_carries_all_three_verbs_in_call_order() {
     assert!(s.take_selection_requests().is_empty());
 }
 
-/// The reverse flag as `0x6f1c10` reads it (default 0): absent, nil, 0 and `"0"` are forward, 1,
-/// `true` and `"1"` reverse (`Bindings.xml:458`). The four shims differ only in the mode.
+/// The reverse flag as the boolean coercion reads it (default 0): absent, nil, 0 and `"0"` are
+/// forward, 1, `true` and `"1"` reverse (`Bindings.xml:458`). The four shims differ only in the
+/// mode.
 #[test]
 fn target_nearest_queues_its_mode_and_reverse_flag() {
     use crate::script::NearestMode::{Enemy, Friend, PartyMember, RaidMember};
@@ -590,9 +591,9 @@ fn a_dead_unit_reports_dead_and_zero_health() {
     );
 }
 
-/// `UnitName` (`0x517020`) is nil only for a zero guid or an empty `"player"` record, else a
-/// string: the name, or `UNKNOWNOBJECT` while it is in flight (`0x609324`). `PetStable.lua:129`
-/// concatenates it on `UNIT_PET`, before a called pet's name arrives.
+/// `UnitName` is nil only for a zero guid or an empty `"player"` record, else a string: the name,
+/// or `UNKNOWNOBJECT` while it is in flight. `PetStable.lua:129` concatenates it on `UNIT_PET`,
+/// before a called pet's name arrives.
 #[test]
 fn unitname_reads_unknownobject_for_a_resolved_unit_whose_name_is_in_flight() {
     let mut s = UiScript::new().unwrap();
@@ -606,7 +607,7 @@ fn unitname_reads_unknownobject_for_a_resolved_unit_whose_name_is_in_flight() {
     };
     s.set_unit("pet", Some(pending.clone()));
 
-    // No GlobalStrings: the literal fallback (`0x860fa4`).
+    // No GlobalStrings: the literal fallback.
     assert_eq!(
         s.eval::<String>(r#"return UnitName("pet")"#).unwrap(),
         "Unknown Being"
@@ -660,7 +661,7 @@ fn unitname_reads_unknownobject_for_a_resolved_unit_whose_name_is_in_flight() {
 fn power_bindings_read_the_active_type() {
     let mut s = UiScript::new().unwrap();
     s.set_unit("player", Some(player())); // rage 35/100
-                                          // The type and its `GetPowerString` token (`0x60f100`).
+                                          // The type and its power-type token (`0x60f100`).
     assert_eq!(
         s.eval::<(i64, String)>(r#"return UnitPowerType("player")"#)
             .unwrap(),
@@ -870,7 +871,7 @@ fn unit_race_class_sex_report_the_snapshot_or_the_absent_shape() {
         ("Warrior".into(), "WARRIOR".into())
     );
     assert_eq!(s.eval::<i64>(r#"return UnitSex("player")"#).unwrap(), 3);
-    // An absent token: `nil, nil` for the pairs, but `UnitSex` answers the number 2 (`0x517f9f`).
+    // An absent token: `nil, nil` for the pairs, but `UnitSex` answers the number 2.
     assert!(s
         .eval::<bool>(r#"local a, b = UnitRace("target") return a == nil and b == nil"#)
         .unwrap());
@@ -956,8 +957,8 @@ fn faction_group_pair_and_the_pvp_toggle() {
     assert_eq!(s.take_pvp_toggles(), 0, "the drain empties the queue");
 }
 
-/// The word table at `0x850424` by gated rank answers a string for every input: an absent token
-/// reads index 0, "normal", never nil.
+/// The word table by gated rank answers a string for every input: an absent token reads index 0,
+/// "normal", never nil.
 #[test]
 fn unit_classification_reads_the_five_word_table() {
     let mut s = UiScript::new().unwrap();
@@ -1001,8 +1002,7 @@ fn unit_classification_reads_the_five_word_table() {
 
 // ── `UnitAffectingCombat` and `TargetByName` ────────────────────────────────────────────────────
 
-/// Not in combat and no such unit share one nil arm: `0x517e48` and `0x517e5c` both jump to
-/// `0x517e73`.
+/// Not in combat and no such unit share one nil arm: both jump to it in the reference.
 #[test]
 fn unit_affecting_combat_is_one_or_nil_and_hides_the_missing_unit() {
     let mut s = UiScript::new().unwrap();
@@ -1025,13 +1025,13 @@ fn unit_affecting_combat_is_one_or_nil_and_hides_the_missing_unit() {
             .unwrap(),
         "an unresolvable token is the SAME nil a peaceful unit gives"
     );
-    // A number passes the gate (`0x6f3510`) as the token "5", which matches no prefix: nobody.
+    // A number passes the gate as the token "5", which matches no prefix: nobody.
     assert!(s
         .eval::<bool>("return UnitAffectingCombat(5) == nil")
         .unwrap());
 }
 
-/// The usage raise is `luaL_error` (`0x6f4940`), which does not return.
+/// The usage raise is `luaL_error`, which does not return.
 #[test]
 fn unit_affecting_combat_raises_on_a_bad_argument() {
     let s = UiScript::new().unwrap();
@@ -1057,7 +1057,7 @@ fn target_by_name_queues_the_name_and_the_exact_flag() {
     s.run(r#"TargetByName("Ragnaros", 1)"#).unwrap();
     s.run(r#"TargetByName("Ragnaros", 0)"#).unwrap();
     s.run(r#"TargetByName("Ragnaros", true)"#).unwrap();
-    s.run("TargetByName(5)").unwrap(); // a number stringifies, as `0x6f3690` does
+    s.run("TargetByName(5)").unwrap(); // a number stringifies, as the reference does
     assert_eq!(
         s.take_target_by_name_requests(),
         vec![
@@ -1070,7 +1070,7 @@ fn target_by_name_queues_the_name_and_the_exact_flag() {
     );
     assert!(s.take_target_by_name_requests().is_empty());
 
-    // A missing name raises: the gate call at `0x489d69` fails to `0x489de1`.
+    // A missing name raises: the gate call fails.
     let err = s.eval::<mlua::Value>("return TargetByName()").unwrap_err();
     assert!(
         format!("{err}").contains(r#"Usage: TargetByName("name")"#),
@@ -1078,7 +1078,8 @@ fn target_by_name_queues_the_name_and_the_exact_flag() {
     );
 }
 
-/// `0x516cf0` tests `UNIT_FIELD_CHARMEDBY` (fields 10-11) non-zero, not a `UNIT_FIELD_FLAGS` bit.
+/// The reference tests `UNIT_FIELD_CHARMEDBY` (fields 10-11) non-zero, not a `UNIT_FIELD_FLAGS`
+/// bit.
 #[test]
 fn unit_is_charmed_answers_one_or_nil_and_only_for_the_charmed_side() {
     let mut s = UiScript::new().unwrap();
@@ -1126,8 +1127,8 @@ fn unit_is_charmed_answers_one_or_nil_and_only_for_the_charmed_side() {
     );
 }
 
-/// `0x516d40` tests `UNIT_FLAG_PLUS_MOB` (`0x40`) and never the rank getter (`0x605620`). The
-/// server sets the bit from the rank, so the two part only while the creature record is missing.
+/// The reference tests `UNIT_FLAG_PLUS_MOB` (`0x40`) and never the rank getter. The server sets the
+/// bit from the rank, so the two part only while the creature record is missing.
 #[test]
 fn unit_is_plus_mob_reads_the_flag_bit_and_not_the_rank() {
     let with = |flags: u32, rank: u32| UnitState {
@@ -1195,7 +1196,7 @@ fn unit_is_plus_mob_reads_the_flag_bit_and_not_the_rank() {
         .unwrap());
 }
 
-/// The resolver (`0x515970`) compares every literal with `_strnicmp`, folding ASCII case.
+/// The resolver compares every literal with `_strnicmp`, folding ASCII case.
 #[test]
 fn a_unit_token_resolves_whatever_its_case() {
     let mut s = UiScript::new().unwrap();
@@ -1315,8 +1316,7 @@ fn an_unrecognised_unit_token_is_quiet_like_a_recognised_empty_one() {
     // empty guard.
     assert!(s.run(r#"UnitName("")"#).is_ok());
 
-    // An absent or nil argument raises `Usage: UnitName("unit")` (`0x850ee0`) from `UnitName`'s
-    // own gate (`0x517048`).
+    // An absent or nil argument raises `Usage: UnitName("unit")` from `UnitName`'s own gate.
     assert!(s.run("UnitName()").is_err(), "absent argument raises");
     assert!(s.run("UnitName(nil)").is_err(), "nil argument raises");
     // A number passes the gate as "5" and names nobody.
@@ -1364,8 +1364,8 @@ fn a_multibyte_unit_token_names_nobody_rather_than_panicking() {
     );
 }
 
-/// `0x516030` tests only that the client holds the object, so an out-of-range party member exists
-/// but is not visible.
+/// The reference tests only that the client holds the object, so an out-of-range party member
+/// exists but is not visible.
 #[test]
 fn unit_is_visible_is_object_presence_not_existence() {
     let mut s = UiScript::new().unwrap();
@@ -1421,7 +1421,7 @@ fn unit_is_visible_is_object_presence_not_existence() {
     );
 }
 
-/// `0x519c90` and `0x519d00` test `UNIT_DYNAMIC_FLAGS` bits `0x4` and `0x8` behind object
+/// The two reference bindings test `UNIT_DYNAMIC_FLAGS` bits `0x4` and `0x8` behind object
 /// presence, and unlike `UnitIsVisible` both raise `Usage:` on a bad argument.
 #[test]
 fn the_tapped_pair_is_two_masks_of_one_field_and_raises_on_a_bad_argument() {
@@ -1507,8 +1507,8 @@ fn the_tapped_pair_is_two_masks_of_one_field_and_raises_on_a_bad_argument() {
     }
 }
 
-/// `0x516210`: the player object's `PLAYER_FLAGS & 0x1`, or the resolved guid is the group
-/// leader's; each leg is asserted with the other dead.
+/// The player object's `PLAYER_FLAGS & 0x1`, or the resolved guid is the group leader's; each leg
+/// is asserted with the other dead.
 #[test]
 fn unit_is_party_leader_ors_two_legs_and_answers_one_when_solo() {
     let mut s = UiScript::new().unwrap();
@@ -1577,8 +1577,8 @@ fn unit_is_party_leader_ors_two_legs_and_answers_one_when_solo() {
         None
     );
 
-    // No zero guard: solo, the cached leader is 0 and an unresolved token is 0, so the answer is
-    // 1; `IsPartyLeader` (`0x4e9130`) guards a zero leader, `0x516210` does not.
+    // No zero guard: solo, the cached leader is 0 and an unresolved token is 0, so the answer is 1;
+    // `IsPartyLeader` guards a zero leader, the reference does not.
     s.set_party(PartyState::default());
     assert_eq!(
         s.eval::<i64>("return UnitIsPartyLeader(nil)").unwrap(),
@@ -1595,8 +1595,8 @@ fn unit_is_party_leader_ors_two_legs_and_answers_one_when_solo() {
     assert!(s.run(r#"UnitIsPartyLeader("notatoken")"#).is_ok());
 }
 
-/// `GetDamageBonusStat()` (`0x48b520`) is the player's class row's field 2 plus one, 0 with no
-/// player or no row; it takes no unit, so another unit's class never answers.
+/// `GetDamageBonusStat()` is the player's class row's field 2 plus one, 0 with no player or no row;
+/// it takes no unit, so another unit's class never answers.
 #[test]
 fn damage_bonus_stat_is_the_player_class_stat_one_based() {
     let mut s = UiScript::new().unwrap();
@@ -1640,7 +1640,7 @@ fn unit_has_relic_slot_answers_one_or_nil() {
     warrior.has_relic_slot = false;
     s.set_unit("target", Some(warrior));
 
-    // The true leg is the number 1 (`0x519ec8`).
+    // The true leg is the number 1.
     assert_eq!(
         s.eval::<String>(r#"return tostring(UnitHasRelicSlot("player"))"#)
             .unwrap(),
@@ -1651,7 +1651,7 @@ fn unit_has_relic_slot_answers_one_or_nil() {
             .unwrap(),
         "number"
     );
-    // The false leg is nil, never false (`0x519edb`).
+    // The false leg is nil, never false.
     assert_eq!(
         s.eval::<String>(r#"return type(UnitHasRelicSlot("target"))"#)
             .unwrap(),
@@ -1669,8 +1669,7 @@ fn unit_has_relic_slot_answers_one_or_nil() {
     );
 }
 
-/// Each of these carries two `lua_isstring` gates in the table at `0x850438`, so either argument
-/// nil raises.
+/// Each of these carries two `lua_isstring` gates in the table, so either argument nil raises.
 #[test]
 fn a_two_token_predicate_raises_on_either_nil_argument() {
     let mut s = UiScript::new().unwrap();
@@ -1719,9 +1718,9 @@ fn a_two_token_predicate_raises_on_either_nil_argument() {
 
 // ── The predicates' return shape ────────────────────────────────────────────────────────────────
 
-/// The reference pushes the number 1 (`lua_pushnumber`, `0x6f3810`) or nil (`0x6f37f0`), and no
-/// unit binding calls `lua_pushboolean` (`0x6f39f0`). mlua reads 1 as `true`, so only `type`,
-/// `== 1` and `== nil` tell the shapes apart.
+/// The reference pushes the number 1 (`lua_pushnumber`) or nil, and no unit binding calls
+/// `lua_pushboolean`. mlua reads 1 as `true`, so only `type`, `== 1` and `== nil` tell the shapes
+/// apart.
 #[test]
 fn every_unit_predicate_is_one_or_nil_and_never_a_boolean() {
     // (binding, the call, a UnitState that makes it true)
@@ -2010,8 +2009,8 @@ fn the_equals_one_idiom_branches_correctly_on_a_live_and_a_dead_token() {
     );
 }
 
-/// `UnitOnTaxi` (`0x517a40`), registered with the taxi module's ride flag, has the family's shape
-/// and raises `Usage:` from its gate (`0x517a48`).
+/// `UnitOnTaxi`, registered with the taxi module's ride flag, has the family's shape and raises
+/// `Usage:` from its gate.
 #[test]
 fn unit_on_taxi_is_one_or_nil_and_raises_the_reference_usage() {
     let mut s = UiScript::new().unwrap();
@@ -2042,8 +2041,8 @@ fn unit_on_taxi_is_one_or_nil_and_raises_the_reference_usage() {
     );
 }
 
-/// The reference's `"player"` arm reads the record (`0x51708c` reads `0xc27d88`), never the
-/// snapshot, so a nameless player push cannot blank the name.
+/// The reference's `"player"` arm reads the record, never the snapshot, so a nameless player push
+/// cannot blank the name.
 #[test]
 fn the_player_record_outlives_every_snapshot() {
     let mut s = UiScript::new().unwrap();
@@ -2093,7 +2092,7 @@ fn the_player_record_outlives_every_snapshot() {
         "UnitClass's second return is the UPPERCASE token"
     );
     assert_eq!(s.eval::<i64>(r#"return UnitSex("player")"#).unwrap(), 2);
-    // `UnitLevel` reads the snapshot: the record's level accessor (`0x5abe00`) has no caller.
+    // `UnitLevel` reads the snapshot: the record's level accessor has no caller.
     assert_eq!(s.eval::<i64>(r#"return UnitLevel("player")"#).unwrap(), 5);
 
     // Removing the token, as at logout, keeps the record.
@@ -2152,9 +2151,9 @@ fn the_player_record_outlives_every_snapshot() {
     );
 }
 
-/// An all-zero record, which a bare VM here can reach: `UnitName` nil (`0x517095`), `UnitRace` and
-/// `UnitClass` `nil, nil` as race and class 0 have no row, and `UnitSex` 2, as `0x517ef9` indexes
-/// its table (`0x808be4`) unchecked.
+/// An all-zero record, which a bare VM here can reach: `UnitName` nil, `UnitRace` and `UnitClass`
+/// `nil, nil` as race and class 0 have no row, and `UnitSex` 2, as the reference indexes its table
+/// unchecked.
 #[test]
 fn an_unseeded_player_record_answers_the_references_four_ways() {
     let s = UiScript::new().unwrap();

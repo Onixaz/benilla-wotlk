@@ -200,8 +200,8 @@ fn in_raid_list(
             .any(|e| matches!(e, 27 | 35 | 65 | 119 | 128 | 129 | 143))
 }
 
-/// What `CanShowAura 0x53d580` reads off the active player: the casters its caster-only leg
-/// admits, the player and its pet, and the aura vision byte (`PLAYER_FIELD_BYTES2` byte 3).
+/// What the aura-show check (`0x53d580`) reads off the active player: the casters its caster-only
+/// leg admits, the player and its pet, and the aura vision byte (`PLAYER_FIELD_BYTES2` byte 3).
 #[derive(Clone, Copy, Debug, Default)]
 struct Viewer {
     player: u64,
@@ -300,10 +300,10 @@ fn record_inputs<'a>(
         })
 }
 
-/// `UnitBuff 0x519500`'s unit-level gate, before any slot: a unit's buffs are listed only if it
-/// has `UNIT_FLAG_AURAS_VISIBLE` or the uncharmed player can assist it (`0x5195aa`-`0x5195f7`),
-/// else every index is nil; `UnitDebuff` has no gate. vmangos sets the flag for Detect Magic
-/// (`UnitDefines.h:572`) and for a GM viewer (`Object.cpp:765-766`), so it is read as received.
+/// `UnitBuff`'s unit-level gate, before any slot: a unit's buffs are listed only if it has
+/// `UNIT_FLAG_AURAS_VISIBLE` or the uncharmed player can assist it, else every index is nil;
+/// `UnitDebuff` has no gate. vmangos sets the flag for Detect Magic (`UnitDefines.h:572`) and for a
+/// GM viewer (`Object.cpp:765-766`), so it is read as received.
 fn buffs_visible_on(
     store: &ObjectStore,
     self_store: Option<&ObjectStore>,
@@ -315,26 +315,25 @@ fn buffs_visible_on(
     if store.0.unit_flags() & UNIT_FLAG_AURAS_VISIBLE != 0 {
         return true;
     }
-    // While charmed you assist nobody (`0x5195f1`-`0x5195f7`).
+    // While charmed you assist nobody.
     if self_store.is_some_and(|s| s.0.unit_charmed_by().is_some()) {
         return false;
     }
     can_assist(Some(store), factions, reputations, party, self_store, names)
 }
 
-/// `UNIT_FIELD_FLAGS` bit 27, `0x08000000` (`0x5195b6`).
+/// `UNIT_FIELD_FLAGS` bit 27, `0x08000000`.
 const UNIT_FLAG_AURAS_VISIBLE: u32 = 0x0800_0000;
 
-/// `AttributesEx & 0x4` (vmangos `SpellDefines.h:834`), the cancel gate's DBC arm (`0x4e4a10`).
+/// `AttributesEx & 0x4` (vmangos `SpellDefines.h:834`), the cancel gate's DBC arm.
 const SPELL_ATTR_EX_IS_CHANNELED: u32 = 0x4;
 
-/// `GetPlayerBuff`'s second return, cache record `+0xc`, set by `BuildBuffRecord 0x4e44b0` when
-/// `DurationIndex` names an infinite `SpellDuration.dbc` row, base < 0 and per level <= 0
-/// (`0x4e456e`-`0x4e457a`), or no row (`0x4e4580`); or when the aura is not cancelable and an
-/// effect is an area aura, `0x23`, `0x77`, `0x80` or `0x81` (`0x4e4588`-`0x4e45be`).
-/// `BuffFrame.lua:124` then shows no countdown. Deviation: on a catalog miss the reference keeps
-/// the record's stale value (`0x4e4533`, `0x4e4550` skip the write); this answers from the joined
-/// expiry, because a stale value is no mechanism to reproduce.
+/// `GetPlayerBuff`'s second return, cache record `+0xc`, set by the buff record's build when
+/// `DurationIndex` names an infinite `SpellDuration.dbc` row, base < 0 and per level <= 0, or no
+/// row; or when the aura is not cancelable and an effect is an area aura, `0x23`, `0x77`, `0x80` or
+/// `0x81`. `BuffFrame.lua:124` then shows no countdown. Deviation: on a catalog miss the reference
+/// keeps the record's stale value; this answers from the joined expiry, because a stale value is no
+/// mechanism to reproduce.
 fn until_cancelled(
     display: Option<&benilla_formats::SpellDisplay>,
     duration_row: Option<&benilla_formats::SpellDuration>,
@@ -346,7 +345,7 @@ fn until_cancelled(
     };
     let permanent = match duration_row {
         Some(row) => row.base_ms < 0 && row.per_level_ms <= 0,
-        // A negative, out-of-range or empty `DurationIndex`: all three reach `0x4e4580`.
+        // A negative, out-of-range or empty `DurationIndex`: all three reach.
         None => true,
     };
     permanent
@@ -358,10 +357,10 @@ fn until_cancelled(
 
 /// The filter of every aura display, the player's bar and other units' rows alike, as the display
 /// index rebuild admits a slot (`0x72c510`): an id with no `Spell.dbc` row is never indexed
-/// (`0x72c73d`-`0x72c75f`), so a server-only spell takes no `UnitAura` index; then
-/// `CanShowAura 0x53d580` on the aura's self-cast flag (`0x08`) and caster: the spell's own legs,
-/// a caster-only aura cast by the player or its pet, and the aura vision bit
-/// (`HasAuraVision 0x4f72e0`). With no catalog at all every aura stays listed.
+/// (`0x72c73d`-`0x72c75f`), so a server-only spell takes no `UnitAura` index; then the aura-show
+/// check (`0x53d580`) on the aura's self-cast flag (`0x08`) and caster: the spell's own legs, a
+/// caster-only aura cast by the player or its pet, and the aura vision bit (`0x4f72e0`). With no
+/// catalog at all every aura stays listed.
 fn shown_in_aura_ui(ctx: ListCtx, spell_id: u32, flags: u8, caster: u64) -> bool {
     let Some(catalog) = ctx.catalog else {
         return true;
@@ -501,10 +500,9 @@ fn feed_auras(
     let held = |guid: u64| index.0.get(&guid).and_then(|&e| stores.get(e).ok());
     let table_of = |guid: u64| index.0.get(&guid).and_then(|&e| tables.get(e).ok());
     // `UnitBuff`'s unit gate on a live unit. `unit` is never `store`, the player's, which is the
-    // gate's second argument. The pet is ungated; the reference gates a pet too, but `CanAssist`'s
-    // player-controlled arm (`0x60673e`-`0x60679f`, the controlling players' duel and FFA-PvP
-    // state) passes for your own pet, leaving only the charm, selectable and reaction clauses to
-    // hide its buffs.
+    // gate's second argument. The pet is ungated; the reference gates a pet too, but the assist
+    // check's player-controlled arm (the controlling players' duel and FFA-PvP state) passes for
+    // your own pet, leaving only the charm, selectable and reaction clauses to hide its buffs.
     let buffs_visible = |guid: u64, unit: &ObjectStore| {
         guid == pet_guid
             || buffs_visible_on(
@@ -569,8 +567,8 @@ fn feed_auras(
         // The 1.12.1 buff bar's own event, with no arguments; `MiniMapTrackingFrame` registers it.
         script.fire_event("PLAYER_AURAS_CHANGED", vec![]);
     }
-    // To every token naming a unit whose list moved (`0x515e50`); a token naming a new unit fires
-    // too, and a token clearing fires nothing, since the frames react to their own events
+    // To every token naming a unit whose list moved; a token naming a new unit fires too, and a
+    // token clearing fires nothing, since the frames react to their own events
     // (`PLAYER_TARGET_CHANGED`, `UNIT_PET`, `PARTY_MEMBERS_CHANGED`).
     for token in unit_changed {
         script.fire_event("UNIT_AURA", vec![ScriptValue::Str(token.into())]);
@@ -588,8 +586,8 @@ fn end_session_aura_state(script: Option<NonSendMut<UiScript>>) {
     // No `AuraFeedMemory` reset: its edge keys die with the VM.
 }
 
-/// A `CMSG_CANCEL_AURA` per queued `CancelUnitBuff` or `SetTracking`, naming the spell,
-/// not the slot (`0x6e7040`).
+/// A `CMSG_CANCEL_AURA` per queued `CancelUnitBuff` or `SetTracking`, naming the spell, not the
+/// slot.
 fn drain_aura_cancels(script: Option<NonSendMut<UiScript>>, net: Res<NetCommands>) {
     let Some(mut script) = script else {
         return;
@@ -773,9 +771,9 @@ mod tests {
         assert_eq!(table_inputs(&table, NO_SPELLS, true).count(), 2);
     }
 
-    /// `CanShowAura`'s viewer legs (`0x53d580`): a caster-only aura lists only when the player or
-    /// its pet cast it, and never from a roster record; an aura-vision aura only while the
-    /// player's vision byte carries its bit; the self-cast flag picks the `AttributesEx5` bit.
+    /// The aura-show check's viewer legs (`0x53d580`): a caster-only aura lists only when the
+    /// player or its pet cast it, and never from a roster record; an aura-vision aura only while
+    /// the player's vision byte carries its bit; the self-cast flag picks the `AttributesEx5` bit.
     #[test]
     fn the_aura_filter_reads_the_caster_the_vision_and_the_self_cast_flag() {
         use benilla_formats::SpellDisplay;
@@ -833,9 +831,8 @@ mod tests {
         assert!(shown(ctx, 3, 0, 0x99), "bit 27 hides only a self-cast aura");
     }
 
-    // == `UnitBuff`'s unit-level gate (`0x519500`) ==
-    // A stealthed Ridge Stalker carries 5916 helpful and 22766 harmful; the reference draws only
-    // 22766, as `UnitBuff` lists no hostile creature's buffs.
+    // == `UnitBuff`'s unit-level gate == A stealthed Ridge Stalker carries 5916 helpful and 22766
+    // harmful; the reference draws only 22766, as `UnitBuff` lists no hostile creature's buffs.
 
     /// `UNIT_FIELD_FLAGS`'s index.
     const F_FLAGS: u16 = 46;
@@ -905,12 +902,12 @@ mod tests {
         );
     }
 
-    /// `NOT_SELECTABLE` is `CanAssist`'s; the charm clause is `UnitBuff`'s (`0x5195f1`-`0x5195f7`).
+    /// `NOT_SELECTABLE` is the assist check's; the charm clause is `UnitBuff`'s.
     #[test]
     fn not_selectable_and_being_charmed_each_close_the_gate_on_their_own() {
         let reputations = Reputations::default();
 
-        // AURAS_VISIBLE is tested before `CanAssist`, so it wins over NOT_SELECTABLE.
+        // AURAS_VISIBLE is tested before the assist check, so it wins over NOT_SELECTABLE.
         let both = ridge_stalker_slots(UNIT_FLAG_AURAS_VISIBLE | (1 << 25));
         assert!(
             buffs_visible_on(
@@ -921,10 +918,10 @@ mod tests {
                 &crate::target::NoGroup,
                 None
             ),
-            "AURAS_VISIBLE is tested FIRST and short-circuits CanAssist entirely"
+            "AURAS_VISIBLE is tested FIRST and short-circuits the assist check entirely"
         );
 
-        // Being charmed closes the gate before `CanAssist` runs.
+        // Being charmed closes the gate before the assist check runs.
         let friendly_pc = ridge_stalker_slots(0x8);
         let charmed_self = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[
             (F_CHARMEDBY, 0x1234),
@@ -943,7 +940,7 @@ mod tests {
         );
     }
 
-    /// The two clauses of `0x4e452e`-`0x4e45c5`.
+    /// The two clauses.
     #[test]
     fn until_cancelled_follows_the_duration_row_and_the_area_aura_override() {
         use benilla_formats::{SpellDisplay, SpellDuration};
@@ -990,10 +987,10 @@ mod tests {
             !until_cancelled(Some(&ordinary), Some(&scaling_row), true, 0.0),
             "a negative base with a positive per-level term is a SCALING duration, not permanence"
         );
-        // No row: permanent (`0x4e4580`).
+        // No row: permanent.
         assert!(until_cancelled(Some(&ordinary), None, true, 0.0));
 
-        // Clause 2: the area-aura override applies only to a non-cancelable aura (`0x4e4588`).
+        // Clause 2: the area-aura override applies only to a non-cancelable aura.
         assert!(until_cancelled(Some(&area), Some(&timed_row), false, 0.0));
         assert!(
             !until_cancelled(Some(&area), Some(&timed_row), true, 0.0),

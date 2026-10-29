@@ -1,11 +1,10 @@
 //! The straddle split: a translucent model crossing its water plane draws on both sides of the
 //! water pass, each copy clipped at the waterline.
 //!
-//! The reference (`0x707680`, `M2UseClipPlanes` at its default 1, caps-gated at `0x7066a6`) dots
-//! each instance's bound-box centre with its liquid plane `{0, 0, 1, −surfaceZ}` and keeps two
-//! booleans, above `d ≥ −r` and below `d ≤ r`, `r` the world-scaled bound radius. Inside the band
-//! a model and its depth primes (`0x707ffe`/`0x708048`) go on both lists, each copy under a clip
-//! plane at the waterline (`0x70baf0`, `0x70c094`–`0x70c103`): the eye's far list draws before the
+//! The reference (`M2UseClipPlanes` at its default 1) dots each instance's bound-box centre with
+//! its liquid plane `{0, 0, 1, −surfaceZ}` and keeps two booleans, above `d ≥ −r` and below
+//! `d ≤ r`, `r` the world-scaled bound radius. Inside the band a model and its depth primes go on
+//! both lists, each copy under a clip plane at the waterline: the eye's far list draws before the
 //! water, the near list after.
 //!
 //! The plane goes into the instance's rig-slot [`WaterClips`] word, which both the twin set
@@ -34,8 +33,7 @@ use crate::rig_palette::RigSkin;
 use crate::world_unit::WorldUnit;
 
 /// One slot's clip word, `[plane height, near side]`: the waterline's Bevy Y and the side the near
-/// copy keeps, `+1` above for a dry eye, `−1` below for a submerged one (`0x4836d6`), 0 when not
-/// straddling.
+/// copy keeps, `+1` above for a dry eye, `−1` below for a submerged one, 0 when not straddling.
 pub type ClipWord = [f32; 2];
 
 /// The no-clip word; zero, so a zeroed region (a studio buffer's) is inert.
@@ -117,7 +115,7 @@ pub(crate) struct StraddleTwin(Entity);
 pub(crate) struct StraddleTwinOf(Entity);
 
 /// The reference's side booleans for a bound centre `d` yd over its plane with slack `r`,
-/// `(d ≥ −r, d ≤ r)` (`0x7079a2`–`0x707a17`), both ties inclusive (`0x7079e2`); NaN keeps neither.
+/// `(d ≥ −r, d ≤ r)`, both ties inclusive; NaN keeps neither.
 pub(crate) fn side_booleans(d: f32, r: f32) -> (bool, bool) {
     (d >= -r, d <= r)
 }
@@ -228,7 +226,7 @@ pub(crate) fn band_instances(
     let eye = interleave.eye_submerged();
     let full = *eye_was_submerged != Some(eye) || interleave.surfaces_changed();
     *eye_was_submerged = Some(eye);
-    // A dry eye's near list is the above one; a submerged eye's, the below one (`0x4836d6`).
+    // A dry eye's near list is the above one; a submerged eye's, the below one.
     let near_side = if eye { -1.0 } else { 1.0 };
     if full {
         for root in &mut roots {
@@ -299,9 +297,9 @@ fn band_one(
     near_side: f32,
     (entity, gt, unit, rig, band): BandRoot<'_>,
 ) {
-    // The reference's point and slack: the bound centre through the instance matrix (`0x70848d`),
-    // the radius by its row-0 scale (`0x708478`). The bound here is the armed idle's CAaBox, so the
-    // slack is its circumscribed sphere; a wider band costs only a copy the clip empties.
+    // The reference's point and slack: the bound centre through the instance matrix, the radius by
+    // its row-0 scale. The bound here is the armed idle's CAaBox, so the slack is its circumscribed
+    // sphere; a wider band costs only a copy the clip empties.
     let was = band.as_ref().is_some_and(|b| b.straddles);
     let word = unit.bound.and_then(|b| {
         let centre = gt.transform_point(Vec3::from(b.center));

@@ -38,13 +38,13 @@ pub const FIELD_UNIT_CHARM: u16 = 6;
 /// The unit this one summoned (`UpdateFields_1_12_1.h:42`); on us, the `"pet"` unit. The pet bar
 /// reads its guid off `SMSG_PET_SPELLS`, so the two can disagree briefly around a summon.
 pub const FIELD_UNIT_SUMMON: u16 = 8;
-/// The charmer, 0 for none. The attack-start check `0x612df0` refuses a swing when it is set and
-/// is not us (`ERR_ATTACK_CHARMED`); `0x5ee5a0` and `0x5ff580` prefer it as the owner.
+/// The charmer, 0 for none. The attack-start check refuses a swing when it is set and is not us
+/// (`ERR_ATTACK_CHARMED`); prefer it as the owner.
 const FIELD_UNIT_CHARMEDBY: u16 = 10;
 /// 3.3.5a's `UNIT_FIELD_CRITTER`, the summoned companion, kept in 1.12.1's unread
 /// `UNIT_FIELD_PERSUADED` words.
 const FIELD_UNIT_CRITTER: u16 = 18;
-/// The summoner of a pet, guardian or totem; with CREATEDBY, the "owned by me" test of `0x5efea0`.
+/// The summoner of a pet, guardian or totem; with CREATEDBY, the "owned by me" test.
 const FIELD_UNIT_SUMMONEDBY: u16 = 12;
 const FIELD_UNIT_CREATEDBY: u16 = 14;
 /// The channel's target, possibly the caster (`UpdateFields_1_12_1.h:48`). Public, so another
@@ -80,30 +80,30 @@ const FIELD_UNIT_BASE_MANA: u16 = 162;
 const FIELD_UNIT_BASE_HEALTH: u16 = 163;
 const FIELD_UNIT_DISPLAYID: u16 = 131;
 /// The unshifted appearance, untouched by forms, morphs and polymorph (`UpdateFields_1_12_1.h:77`).
-/// The client sizes the mover collision box from it (`0x60b270`), so a shapeshift keeps the box.
+/// The client sizes the mover collision box from it, so a shapeshift keeps the box.
 const FIELD_UNIT_NATIVEDISPLAYID: u16 = 132;
 /// The ridden mount's `CreatureDisplayInfo` id, 0 when unmounted; this field, not the aura, is the
 /// mounted state (`Unit::IsMounted`; client `[unit+0x110]+0x1fc`).
 pub const FIELD_UNIT_MOUNTDISPLAYID: u16 = 133;
 /// `UNIT_FIELD_FLAGS_2`, 3.3.5a's second flags word.
 const FIELD_UNIT_FLAGS_2: u16 = 44;
-/// Nonzero on a pet or charm; the rank getter `0x605620` then forces rank 0, so an enslaved mob
-/// shows no elite dragon, tooltip rank word or boss skull.
+/// Nonzero on a pet or charm; the rank getter then forces rank 0, so an enslaved mob shows no elite
+/// dragon, tooltip rank word or boss skull.
 const FIELD_UNIT_PETNUMBER: u16 = 139;
 /// Unix time of the pet's last rename (`Pet.cpp:285`). The name itself comes from
 /// `CMSG_PET_NAME_QUERY`, cached by pet number, so a change here invalidates that cache.
 const FIELD_UNIT_PET_NAME_TIMESTAMP: u16 = 140;
-/// With the next field, the `(currXP, nextXP)` pair `GetPetExperience` (`0x4be840`) returns; the
-/// client reads both unsigned.
+/// With the next field, the `(currXP, nextXP)` pair `GetPetExperience` returns; the client reads
+/// both unsigned.
 const FIELD_UNIT_PETEXPERIENCE: u16 = 141;
 const FIELD_UNIT_PETNEXTLEVELEXP: u16 = 142;
-/// Two `u16`s: `GetPetTrainingPoints` (`0x4be790`) returns the high word first, which
-/// `PetPaperDollFrame.lua` names `totalPoints`, then the low word as `spent`.
+/// Two `u16`s: `GetPetTrainingPoints` returns the high word first, which `PetPaperDollFrame.lua`
+/// names `totalPoints`, then the low word as `spent`.
 const FIELD_UNIT_TRAINING_POINTS: u16 = 149;
 pub const FIELD_UNIT_DYNAMIC_FLAGS: u16 = 143;
 /// The spell being channeled, 0 for none (`UpdateFields_1_12_1.h:89`).
 pub const FIELD_UNIT_CHANNEL_SPELL: u16 = 144;
-/// The summoning spell, 0 for none; the first gate of the client's feed-pet path `0x6ea1e0`.
+/// The summoning spell, 0 for none; the first gate of the client's feed-pet path.
 const FIELD_UNIT_CREATED_BY_SPELL: u16 = 146;
 pub const FIELD_UNIT_NPC_FLAGS: u16 = 147;
 /// The looping state emote, an `Emotes.dbc` id or 0; on a player, the server's echo of a
@@ -178,7 +178,7 @@ impl UnitAuraSlot {
     }
 }
 
-// PLAYER fields start at UNIT_END (188); the client decodes appearance bytes at `0x5fb200`.
+// PLAYER fields start at UNIT_END (188); the client decodes appearance bytes.
 const FIELD_PLAYER_BYTES: u16 = 193;
 const FIELD_PLAYER_BYTES_2: u16 = 194;
 // The low u16 is `gender | (drunk & 0xFFFE)`, so byte 1 is the drunk level the client reads at
@@ -337,11 +337,11 @@ const FIELD_PLAYER_SELF_RES_SPELL: u16 = 1224;
 // Bit 0x10 is PLAYER_FLAGS_GHOST (`Player.h:319`), held by the ghost aura 8326 until resurrection.
 pub const FIELD_PLAYER_FLAGS: u16 = 190;
 // The client's player block base `[player+0xe68]` is field 188: the arbiter at +0x0, PLAYER_FLAGS
-// at +0x8 and the duel team at +0x20, the three reads of `UnitReaction`'s duel leg (`0x6061e0`).
+// at +0x8 and the duel team at +0x20, the three reads of `UnitReaction`'s duel leg.
 const FIELD_PLAYER_DUEL_ARBITER: u16 = 188;
 const FIELD_PLAYER_DUEL_TEAM: u16 = 196;
-// Public, so `GetGuildInfo(unit)` (`0x4c9330`, reading block +0xc and +0x10) answers for any
-// visible player; a guild id of 0 is guildless.
+// Public, so `GetGuildInfo(unit)` (reading block +0xc and +0x10) answers for any visible player; a
+// guild id of 0 is guildless.
 const FIELD_PLAYER_GUILDID: u16 = 191;
 const FIELD_PLAYER_GUILDRANK: u16 = 192;
 // A slot of the shared index space only: 3.3.5a sends combo points in `SMSG_UPDATE_COMBO_POINTS`.
@@ -385,8 +385,8 @@ pub struct PlayerSkillSlot {
     pub perm_bonus: i16,
 }
 
-/// A corpse's own appearance, snapshotted at death: the seven `CORPSE_FIELD_BYTES_1`/`_2` bytes
-/// the client's dress `0x5d6260` loads, not the owner's live `PLAYER_BYTES`.
+/// A corpse's own appearance, snapshotted at death: the seven `CORPSE_FIELD_BYTES_1`/`_2` bytes the
+/// client's dress loads, not the owner's live `PLAYER_BYTES`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CorpseLook {
     pub race: u8,
@@ -415,10 +415,10 @@ pub struct ObjectFields {
 }
 
 /// What the client keeps beside a unit's descriptor and reads in its place: the power
-/// `SMSG_POWER_UPDATE` sets (`CGUnit_C::SetPredictedPower` `0x722c50`, `[unit+0xfb4]`) and the
-/// mount `SMSG_DISMOUNT` drops ahead of the field (`0x741a40`). A move of the shadowed field drops
-/// the copy, as its field handler re-seeds it (`0x7234d0`, `0x7235c0`, `0x723620`). benilla
-/// predicts no spend, so the handler's keep-a-lower-prediction leg for our own unit never differs.
+/// `SMSG_POWER_UPDATE` sets (the predicted-power set `0x722c50`, `[unit+0xfb4]`) and the mount
+/// `SMSG_DISMOUNT` drops ahead of the field (`0x741a40`). A move of the shadowed field drops the
+/// copy, as its field handler re-seeds it (`0x7234d0`, `0x7235c0`, `0x723620`). benilla predicts no
+/// spend, so the handler's keep-a-lower-prediction leg for our own unit never differs.
 #[derive(Debug, Clone, Default)]
 struct Shadow {
     /// By power type, 0..7.
@@ -489,7 +489,7 @@ impl ObjectFields {
     }
 
     /// The body's `CreatureDisplayInfo` id, the owner's native display (`Player.cpp:4809`). A bone
-    /// pile keeps it, but `0x5d6700` ignores it there and builds the skeleton from race and sex.
+    /// pile keeps it, but the reference ignores it there and builds the skeleton from race and sex.
     pub fn corpse_display_id(&self) -> Option<u32> {
         self.get_u32(12).filter(|&d| d != 0)
     }
@@ -503,7 +503,7 @@ impl ObjectFields {
     }
 
     /// The owner's guild id at death, 0 for none; the client builds the corpse's tabard crest from
-    /// it (`0x5d6ec0`).
+    /// it.
     pub fn corpse_guild(&self) -> u32 {
         self.get_u32(34).unwrap_or(0)
     }
@@ -517,7 +517,7 @@ impl ObjectFields {
         self.get_u32(33)
     }
     /// The dead player's race, `CORPSE_FIELD_BYTES_1` byte 1, the one corpse field the reaction
-    /// gate reads (`0x5d7120`); 0, which no `ChrRaces` row names, when absent.
+    /// gate reads; 0, which no `ChrRaces` row names, when absent.
     pub fn corpse_race(&self) -> u8 {
         self.corpse_bytes_1().map_or(0, |b1| (b1 >> 8) as u8)
     }
@@ -544,29 +544,28 @@ impl ObjectFields {
     pub fn corpse_flags_present(&self) -> Option<u32> {
         self.get_u32(35)
     }
-    /// `CORPSE_FLAG_BONES`: a bone pile, which `0x5d6260` tests first; it wears nothing and takes
-    /// its model from race and sex.
+    /// `CORPSE_FLAG_BONES`: a bone pile, which the reference tests first; it wears nothing and
+    /// takes its model from race and sex.
     pub fn corpse_is_bones(&self) -> bool {
         self.corpse_flags() & 0x01 != 0
     }
-    /// `CORPSE_FLAG_HIDE_HELM`, the owner's setting at death; the client skips slot 0 (`0x5d6465`).
+    /// `CORPSE_FLAG_HIDE_HELM`, the owner's setting at death; the client skips slot 0.
     pub fn corpse_hides_helm(&self) -> bool {
         self.corpse_flags() & 0x08 != 0
     }
-    /// `CORPSE_FLAG_HIDE_CLOAK`: the same for slot 14 (`0x5d6470`).
+    /// `CORPSE_FLAG_HIDE_CLOAK`: the same for slot 14.
     pub fn corpse_hides_cloak(&self) -> bool {
         self.corpse_flags() & 0x10 != 0
     }
 
-    /// `CORPSE_DYNFLAG_LOOTABLE` (`Map.cpp:3655`): the bone pile has insignia; `0x5d6e20` gates the
-    /// loot highlight and the `CMSG_LOOT` click on it.
+    /// `CORPSE_DYNFLAG_LOOTABLE` (`Map.cpp:3655`): the bone pile has insignia; the reference gates
+    /// the loot highlight and the `CMSG_LOOT` click on it.
     pub fn corpse_lootable(&self) -> bool {
         self.get_u32(FIELD_CORPSE_DYNAMIC_FLAGS).unwrap_or(0) & 0x01 != 0
     }
 
     /// `CORPSE_FLAG_LOOTABLE`: the battleground insignia is takeable, by spell 22027 "Remove
-    /// Insignia". The cursor `0x482740` and right-click `0x5d6bf0` test it; the corpse's PvP flag
-    /// is bit 2 (`UnitIsPVP`, `0x516460`).
+    /// Insignia". The cursor and right-click test it; the corpse's PvP flag is bit 2 (`UnitIsPVP`).
     pub fn corpse_pvp_insignia(&self) -> bool {
         self.corpse_flags() & 0x20 != 0
     }
@@ -662,8 +661,8 @@ impl ObjectFields {
     }
 
     /// [`Self::merge`], calling `changed(index, old, new)` once per changed dword in ascending
-    /// order, as the client's `CMirrorHandler` pass does (`0x465330`): a resend of the same value
-    /// reports nothing, and an absent old value reads 0. A first create is seeded, never merged.
+    /// order, as the client's `CMirrorHandler` pass does: a resend of the same value reports
+    /// nothing, and an absent old value reads 0. A first create is seeded, never merged.
     pub fn merge_diff(&mut self, delta: ObjectFields, mut changed: impl FnMut(u16, u32, u32)) {
         if delta.descriptor_end != 0 {
             let words = self.present.len().max(delta.present.len());
@@ -703,9 +702,9 @@ impl ObjectFields {
         }
     }
 
-    /// `SMSG_POWER_UPDATE` (`CGUnit_C::SetPredictedPower` `0x722c50`): power type `ty` reads
-    /// `value`, capped at its maximum, until its field next moves. Whether the read moved; a type
-    /// past the seven has no slot.
+    /// `SMSG_POWER_UPDATE` (the predicted-power set `0x722c50`): power type `ty` reads `value`,
+    /// capped at its maximum, until its field next moves. Whether the read moved; a type past the
+    /// seven has no slot.
     pub fn set_predicted_power(&mut self, ty: u8, value: u32) -> bool {
         if usize::from(ty) >= 7 {
             return false;

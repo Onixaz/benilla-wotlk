@@ -1,15 +1,15 @@
-//! Weather's visual state, driven by `SMSG_WEATHER`: the two channels of the reference's ramp
-//! (`0x67bc70`), each a clamped lerp over `(|Δ|·scale + 0.001)·10` seconds.
+//! Weather's visual state, driven by `SMSG_WEATHER`: the two channels of the reference's ramp, each
+//! a clamped lerp over `(|Δ|·scale + 0.001)·10` seconds.
 //!
 //! - Channel A, the effect intensity (scale 1), swings fully in about 10 s. The effect density is
 //!   `max((A − 0.25)·4/3, 0)`, so nothing falls below 0.25.
-//! - Channel B, the sky density (scale 4), has its endpoints clamped to [0, 0.25] by `SetWeather`
-//!   (`0x67baf0`), so it also swings in about 10 s. Lighting turns it into the storm blend
-//!   (`0x6d4500`): the overcast leads the rain up and starts clearing at once on the way down.
+//! - Channel B, the sky density (scale 4), has its endpoints clamped to [0, 0.25] by the weather
+//!   setter, so it also swings in about 10 s. Lighting turns it into the storm blend: the overcast
+//!   leads the rain up and starts clearing at once on the way down.
 //!
-//! The wire's last byte is 0 for smooth, nonzero for instant: the net handler (`0x48fa5f`) inverts
-//! it for `SetWeather`, whose flag is 1 for smooth; vmangos always sends 0. The channels run on
-//! real time, like the reference's ms tick (`0x42c010`), so a ramp continues through loading.
+//! The wire's last byte is 0 for smooth, nonzero for instant: the net handler inverts it for the
+//! weather setter, whose flag is 1 for smooth; vmangos always sends 0. The channels run on real
+//! time, like the reference's ms tick, so a ramp continues through loading.
 
 use bevy::prelude::*;
 
@@ -20,7 +20,7 @@ mod precip;
 /// Rain's forced-fog window, read by the effect lane's `EffectFog::Rain` row.
 pub(crate) use precip::{RAIN_FOG_END, RAIN_FOG_START};
 
-/// `Weather.dbc`'s effect types, which `SetWeather` (`0x7846a0`) takes below 4.
+/// `Weather.dbc`'s effect types, which the weather setter (`0x7846a0`) takes below 4.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum WeatherKind {
     #[default]
@@ -41,7 +41,7 @@ impl WeatherKind {
     }
 }
 
-/// One ramped channel of the reference's ramp (`0x67bc70`).
+/// One ramped channel of the reference's ramp.
 #[derive(Clone, Copy, Debug)]
 struct Channel {
     from: f32,
@@ -62,14 +62,14 @@ impl Channel {
     }
 
     fn value(&self, now: f64) -> f32 {
-        // The `+ 0.001` sits inside the abs, as in `0x67bc70`.
+        // The `+ 0.001` sits inside the abs, as in the reference.
         let den = ((self.to - self.from) * self.span_scale + 0.001).abs() * 10.0;
         let t = (((now - self.start) as f32) / den).clamp(0.0, 1.0);
         self.from + (self.to - self.from) * t
     }
 
-    /// Ramps toward `target` from the old target, not the current value, as `SetWeather`
-    /// (`0x67baf0`) does: a mid-swing retarget jumps back to the previous endpoint.
+    /// Ramps toward `target` from the old target, not the current value, as the weather setter
+    /// does: a mid-swing retarget jumps back to the previous endpoint.
     fn retarget(&mut self, target: f32, now: f64) {
         self.from = self.to;
         self.to = target;
@@ -83,7 +83,7 @@ impl Channel {
     }
 }
 
-/// The zone weather, the reference's `CMapWeather` manager.
+/// The zone weather, the reference's map weather manager.
 #[derive(Resource)]
 pub struct WeatherState {
     /// The latest wire type (`Fine` included).
@@ -103,13 +103,13 @@ pub struct WeatherState {
     /// Deviation: it defaults to 3 where the reference registers 2, because the precipitation
     /// rates were graded against a reference install running 3.
     pub weather_density: u8,
-    /// Bumped on every wire type change, the cut: emission stops at once (`0x67585d`), the open
-    /// packet retires and every unreplayed packet is discarded (`0x67575a`). A same-type grade
-    /// change does not cut; the rain thins on the ramp.
+    /// Bumped on every wire type change, the cut: emission stops at once, the open packet retires
+    /// and every unreplayed packet is discarded. A same-type grade change does not cut; the rain
+    /// thins on the ramp.
     pub(crate) cut_seq: u32,
 }
 
-/// The `weatherDensity` quality table (`0x67b870`): the spawn-rate gain `K` in `rate = K·P·grade`.
+/// The `weatherDensity` quality table: the spawn-rate gain `K` in `rate = K·P·grade`.
 const DENSITY_GAIN: [f32; 4] = [0.1, 0.33, 0.66, 1.0];
 
 impl Default for WeatherState {
@@ -129,22 +129,22 @@ impl Default for WeatherState {
 }
 
 impl WeatherState {
-    /// Applies one wire update as `SetWeather` (`0x67baf0`); `Fine` targets 0 whatever its grade.
+    /// Applies one wire update as the weather setter does; `Fine` targets 0 whatever its grade.
     fn apply(&mut self, kind: WeatherKind, grade: f32, instant: bool, now: f64) {
         let target = if kind == WeatherKind::Fine {
             0.0
         } else {
             grade.clamp(0.0, 1.0)
         };
-        // A type change cuts (`0x67585d`): `effect_kind` flips at once, so a rain-to-snow swap
-        // starts snow while the old drops fall out.
+        // A type change cuts: `effect_kind` flips at once, so a rain-to-snow swap starts snow while
+        // the old drops fall out.
         if kind != self.kind {
             self.cut_seq = self.cut_seq.wrapping_add(1);
             self.effect_kind = kind;
         }
         self.kind = kind;
-        // `SetWeather` clamps both sky endpoints to 0.25 (`0x8029b0`); the full grade here would
-        // hold the fog at 100% for most of every downswing.
+        // The weather setter clamps both sky endpoints to 0.25; the full grade here would hold the
+        // fog at 100% for most of every downswing.
         let sky_target = target.min(0.25);
         if instant {
             self.intensity.snap(target);
@@ -155,7 +155,7 @@ impl WeatherState {
         }
     }
 
-    /// Resolves the frame's published values, as the reference's update driver (`0x67be40`) does.
+    /// Resolves the frame's published values, as the reference's update driver does.
     fn resolve(&mut self, now: f64) {
         let a = self.intensity.value(now);
         self.intensity_a = a;
@@ -178,8 +178,8 @@ impl WeatherState {
     }
 }
 
-/// The storm light-blend weight (`0x6d4500`), from the sky density alone with no sun term;
-/// lighting lerps the storm `LightParams` over the clear one by it.
+/// The storm light-blend weight, from the sky density alone with no sun term; lighting lerps the
+/// storm `LightParams` over the clear one by it.
 pub fn storm_blend(sky_density: f32) -> f32 {
     (sky_density * 4.0).min(1.0)
 }

@@ -91,7 +91,7 @@ pub(super) fn current_form_index(model: &Model, shifted_only: bool) -> u32 {
 pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     let g = lua.globals();
 
-    // `GetShapeshiftForm([shiftedOnly])` (`0x53de10`): the flag through `GetBoolOrDefault`, false.
+    // `GetShapeshiftForm([shiftedOnly])` (`0x53de10`): the flag read as a boolean, default false.
     g.set(
         "GetShapeshiftForm",
         lua.create_function(|lua, shifted_only: Value| {
@@ -262,7 +262,7 @@ mod tests {
         assert_eq!(form(&mut s, ""), 3);
 
         // A lit button with the form byte clear (a paladin aura): only the flag hides it, and
-        // `GetBoolOrDefault` reads 1 as true and nil as false.
+        // the boolean read takes 1 as true and nil as false.
         bar[0].active = true;
         s.set_shapeshift_forms(bar);
         s.set_shapeshift_form_byte(0);

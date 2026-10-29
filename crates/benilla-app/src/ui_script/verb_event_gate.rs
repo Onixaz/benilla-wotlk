@@ -1,8 +1,8 @@
 //! The verb-fired event gate: an event the reference fires on a verb's own call path
-//! (`reference/3.3.5a-verb-events.tsv`) must be fired by a file that registers the verb, since stock
-//! Lua calls such a verb for its event (`0x4d8c90`, the trainer filter's commit, fires
-//! `TRAINER_UPDATE`). Otherwise the pair is declared in [`ELSEWHERE`] or [`GAP`], and the verb's
-//! own file must not fire it. The check is textual, so it cannot see a fire off the verb's path.
+//! (`reference/3.3.5a-verb-events.tsv`) must be fired by a file that registers the verb, since
+//! stock Lua calls such a verb for its event (the trainer filter's commit, fires `TRAINER_UPDATE`).
+//! Otherwise the pair is declared in [`ELSEWHERE`] or [`GAP`], and the verb's own file must not
+//! fire it. The check is textual, so it cannot see a fire off the verb's path.
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
@@ -109,15 +109,14 @@ const GAP: &[(&str, &str, &str)] = &[
     (
         "CancelSkillUps",
         "SKILL_LINES_CHANGED",
-        "the reference's verb (0x4d3e30) calls the temp-point reset and fires unconditionally at \
-         0x4d3e35; here the reset runs over a table this model keeps empty (`skills.rs`), so \
+        "the reference's verb calls the temp-point reset and fires unconditionally; here the reset runs over a table this model keeps empty (`skills.rs`), so \
          nothing moves and `ui_char.rs`'s feed has nothing to announce — the stock SkillFrame \
          would only repaint under its own Close",
     ),
     (
         "ClickTargetTradeButton",
         "TRADE_REPLACE_ENCHANT",
-        "the reference runs the enchant clash check 0x496170 when a spell is on the cursor and \
+        "the reference runs the enchant clash check when a spell is on the cursor and \
          fires this for the replace dialog; casting \
          an enchant onto the partner's slot is not built here — `ui_trade.rs` only mirrors the \
          wire's enchant slot — so the verb is the money arm alone",
@@ -125,7 +124,7 @@ const GAP: &[(&str, &str, &str)] = &[
     (
         "CloseTrade",
         "PLAYER_TRADE_MONEY",
-        "fired only when the trade did not complete (`[0xb71748] == 0`), \
+        "fired only when the trade did not complete, \
          zeroing the cancelled offer under a frame TRADE_CLOSED \
          hides; here `TradeSession::begin` resets the whole session at the next trade, so the \
          next window opens at zero either way",
@@ -133,14 +132,14 @@ const GAP: &[(&str, &str, &str)] = &[
     (
         "PetDismiss",
         "PET_DISMISS_START",
-        "the worker 0x4bd6e0 sends the dismiss and fires this with a duration (`%d`, 10000); \
+        "the worker sends the dismiss and fires this with a duration (`%d`, 10000); \
          no shipped file listens, the dismiss reaches the \
          wire through the app's drain, and the pet frame follows the unit's departure",
     ),
     (
         "SelectGossipOption",
         "GOSSIP_ENTER_CODE",
-        "a coded option raises the code-entry popup in the reference (the worker 0x4e2320); here \
+        "a coded option raises the code-entry popup in the reference; here \
          coded options are greyed and unselectable (`reference_ui`'s UNPRODUCED row), and \
          vmangos's `gossip_menu_option` carries zero coded rows, so no NPC on this server reaches it",
     ),

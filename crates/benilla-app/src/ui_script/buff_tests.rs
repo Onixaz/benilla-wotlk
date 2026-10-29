@@ -514,7 +514,7 @@ fn a_settled_buff_button_rewrites_alpha_and_duration_every_tick() {
 }
 
 /// The aura tooltip's duration line over the install's own `GlobalStrings.lua`, formatted by
-/// `tooltip::duration_text` on the reference's ladder (`0x52fa50`).
+/// `tooltip::duration_text` on the reference's ladder.
 #[test]
 fn the_duration_line_reads_the_real_global_strings() {
     let data = benilla_formats::wow_data_or_skip!();

@@ -6,7 +6,7 @@
 //! A known spell past the registrar's `0x80`/`0x20` exits that summons into a slot-5
 //! `SummonProperties` row or applies `MOUNTED` first joins a list (`0x5426a5`, [`CompanionKind`])
 //! instead of the book. Each list sorts by its creature's cached name once no record is pending
-//! (`0x53cec0`, `SStrSortUTF8I`); until then it keeps spell order.
+//! (`0x53cec0`, a case-insensitive UTF-8 sort); until then it keeps spell order.
 //!
 //! Events, in the reference's order:
 //! - `COMPANION_UPDATE` (no type) whenever the lists re-sort (`0x53cec0`): the login once every
@@ -14,8 +14,8 @@
 //! - `ERR_LEARN_COMPANION_S` with the creature's name, then `COMPANION_LEARNED`, on a live learn
 //!   once its record is cached (`0x5427be`, `0x53ebc0`); `COMPANION_UNLEARNED` on an unlearn
 //!   (`0x53fad0`);
-//! - `COMPANION_UPDATE "CRITTER"` on a `UNIT_FIELD_CRITTER` change (`0x6cf6c0`), `"MOUNT"` on a
-//!   `MOUNTED` aura's arrival or removal (`0x724820`, `0x71e930`).
+//! - `COMPANION_UPDATE "CRITTER"` on a `UNIT_FIELD_CRITTER` change, `"MOUNT"` on a `MOUNTED` aura's
+//!   arrival or removal (`0x724820`, `0x71e930`).
 //!
 //! Not modelled: the vehicle arm of the active test (`0x802cf3`), and the learn's tutorials
 //! (`0x33`, `0x34`).
@@ -90,9 +90,9 @@ struct SelfFacts<'a> {
     auras: Option<&'a UnitAuras>,
 }
 
-/// `Spell_C_IsActiveSpell` (`0x802cb0`) for a companion: a slot-5 summon is active while the
-/// critter out is its creature (`0x802dcc`, the guid's entry bits); a mount while an aura of its
-/// spell is up, or any `MOUNTED` aura riding the same creature (the walk's tail).
+/// The active-spell test (`0x802cb0`) for a companion: a slot-5 summon is active while the critter
+/// out is its creature (`0x802dcc`, the guid's entry bits); a mount while an aura of its spell is
+/// up, or any `MOUNTED` aura riding the same creature (the walk's tail).
 fn companion_active(
     spell_id: u32,
     d: &benilla_formats::SpellDisplay,
@@ -163,7 +163,7 @@ fn build_lists(
         }
     }
     if !pending {
-        // `SortCompanions` (`0x53c7c0`): the names case-insensitively, as `SStrSortUTF8I` does.
+        // The companion sort (`0x53c7c0`): the names case-insensitively, as its UTF-8 compare does.
         for list in [&mut state.critters, &mut state.mounts] {
             list.sort_by_cached_key(|c| {
                 (
@@ -357,7 +357,7 @@ fn feed_companions(
     }
 }
 
-/// `Spell_C_CancelAura` (`0x802f80`) on our own player for one companion: nothing while charmed;
+/// The aura cancel (`0x802f80`) on our own player for one companion: nothing while charmed;
 /// a slot-5 summon whose creature is out sends `CMSG_DISMISS_CRITTER` with the critter's guid
 /// (`0x80303d`); an aura spell cancels its aura, a mount ridden through another spell of the same
 /// creature that one (`0x8030bc`).
@@ -430,7 +430,7 @@ fn drain_companions(
 }
 
 /// Point the preview booth at the pane's `SetCreature` creature by its cached record's display
-/// (`0x597960`, `CreatureStats::m_displayID[0]`), asking for a record not yet cached. The pane's
+/// (`0x597960`, the record's first display id), asking for a record not yet cached. The pane's
 /// rotate buttons own the yaw.
 fn feed_companion_booth(
     script: Option<NonSend<UiScript>>,

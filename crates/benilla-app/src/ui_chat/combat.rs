@@ -1,6 +1,6 @@
-//! The combat chat lines 3.3.5a still prints beside its combat log (`CGChat::Log*`): created items,
-//! pet lines, opened locks, the death's durability loss and reputation changes. Each picks a
-//! GlobalString key by whether its subject is the player and fills it as `SStrPrintf` does.
+//! The combat chat lines 3.3.5a still prints beside its combat log: created items, pet lines,
+//! opened locks, the death's durability loss and reputation changes. Each picks a GlobalString key
+//! by whether its subject is the player and fills it as the reference's formatter does.
 
 use crate::names::NameCache;
 use crate::net::{NetCommands, ObjectStore};
@@ -94,13 +94,13 @@ pub(crate) fn compose_line(
     line
 }
 
-/// One `SStrPrintf` argument.
+/// One formatter argument.
 enum Arg<'a> {
     Str(&'a str),
     Num(i64),
 }
 
-/// `SStrPrintf` over the `%s`/`%d` subset these templates use; `None` on any mismatch.
+/// The reference's formatter over the `%s`/`%d` subset these templates use; `None` on any mismatch.
 fn fill(template: &str, args: &[Arg<'_>]) -> Option<String> {
     let mut out = String::with_capacity(template.len() + 32);
     let mut next = args.iter();
@@ -137,7 +137,7 @@ pub(crate) fn global_string(script: &benilla_ui::script::UiScript, key: &str) ->
         .filter(|s| !s.is_empty())
 }
 
-/// A unit's display name (`GetObjectNameFromGuid`); `None` until the name cache answers.
+/// A unit's display name, by GUID; `None` until the name cache answers.
 pub(crate) fn object_name(
     guid: u64,
     unit: Option<&ObjectStore>,
@@ -178,7 +178,7 @@ duo!(
     "_FIRSTPERSON",
     "_THIRDPERSON",
     [Subject, Named],
-    "`LogTradeSkillCreate` (`0x50bd90`): the created item."
+    "The tradeskill-create line (`0x50bd90`): the created item."
 );
 duo!(
     FEEDPET_LOG,
@@ -186,7 +186,7 @@ duo!(
     "_FIRSTPERSON",
     "_THIRDPERSON",
     [Subject, Named],
-    "`LogFeedPet` (`0x50baf0`): the food."
+    "The feed-pet line (`0x50baf0`): the food."
 );
 duo!(
     SPELLDISMISSPET,
@@ -194,7 +194,7 @@ duo!(
     "SELF",
     "OTHER",
     [Subject, Named],
-    "`LogDismissPet` (`0x50bcc0`): the pet."
+    "The dismiss-pet line (`0x50bcc0`): the pet."
 );
 duo!(
     SPELLHAPPINESSDRAIN,
@@ -202,7 +202,7 @@ duo!(
     "SELF",
     "OTHER",
     [Subject, Named, Amount],
-    "`LogPetHappinessDecrease` (`0x50bbf0`): the pet, then the shown amount."
+    "The pet-happiness line (`0x50bbf0`): the pet, then the shown amount."
 );
 duo!(
     OPEN_LOCK,
@@ -210,7 +210,7 @@ duo!(
     "SELF",
     "OTHER",
     [Subject, Spell, Named],
-    "`LogOpenLock` (`0x50dde0`, `0x50deb0`): the spell, then the opened item or object."
+    "The open-lock line (`0x50dde0`, `0x50deb0`): the spell, then the opened item or object."
 );
 single!(
     DURABILITYDAMAGE_DEATH,
@@ -222,13 +222,13 @@ single!(
     FACTION_STANDING_INCREASED,
     "FACTION_STANDING_INCREASED",
     [Named, Amount],
-    "`LogFactionChanged` (`0x50b8c0`): the faction, the delta."
+    "The faction-change line (`0x50b8c0`): the faction, the delta."
 );
 single!(
     FACTION_STANDING_DECREASED,
     "FACTION_STANDING_DECREASED",
     [Named, Amount],
-    "`LogFactionChanged` (`0x50b8c0`): the faction, the delta."
+    "The faction-change line (`0x50b8c0`): the faction, the delta."
 );
 
 /// Every family, for the sweep against the shipped templates.

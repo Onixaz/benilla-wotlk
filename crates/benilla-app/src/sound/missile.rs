@@ -1,9 +1,8 @@
 //! Projectile flight sound: the `SpellVisual` field 10 loop a missile carries in flight. The
-//! reference's first flight step (`0x61e2a0`) starts it (`0x61e79e call 0x4589a0`, handle at
-//! `CMissile+0x44`), each later step moves it (`0x61e77c call 0x7a5b10`), and arrival kills it.
-//! Here it is a channel tagged to the missile entity from [`MissileSound::Start`] to
-//! [`MissileSound::Stop`]. Force-looped: the loop handle makes it loop, not the kit's `0x200`
-//! flag.
+//! reference's first flight step starts it (handle at the missile's `+0x44`), each later step moves
+//! it, and arrival kills it. Here it is a channel tagged to the missile entity from
+//! [`MissileSound::Start`] to [`MissileSound::Stop`]. Force-looped: the loop handle makes it loop,
+//! not the kit's `0x200` flag.
 
 use bevy::prelude::*;
 

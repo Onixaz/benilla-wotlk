@@ -100,8 +100,8 @@ fn main() -> anyhow::Result<()> {
 
     // The sampled mip decides the cut: on the binary-alpha atlases a fragment keeps full alpha only
     // inside an all-opaque 2x2 neighbourhood, which runs out between mip 2 and 3, so past ~3 a tuft
-    // erodes and below it leaves cross whole. The reference biases stage 0 by +0.25 (`0x6813d0`);
-    // its lambda was measured at 2.9-3.3 at 1152x648, and ~2.45 at 1920x1080 is computed from that.
+    // erodes and below it leaves cross whole. The reference biases stage 0 by +0.25; its lambda was
+    // measured at 2.9-3.3 at 1152x648, and ~2.45 at 1920x1080 is computed from that.
     const DENSITY: f32 = 100.0; // texels per yard, the median from `clutter_state`
     println!("\nsampled mip at the {CROSSING:.1} yd crossing (median {DENSITY:.0} texels/yd art):");
     for height in [648.0f32, 1080.0, 1440.0, 2160.0] {

@@ -198,23 +198,23 @@ pub(crate) struct NetEntity {
     pub(crate) display_id: Option<u32>,
     /// `OBJECT_FIELD_SCALE_X`, the complete render scale: the server already folds in the DBC
     /// scale, so it is never multiplied by ours. A live change eases over 2 s with a cosine
-    /// smoothstep (`0x614bbf`), through `entities::live_display`.
+    /// smoothstep, through `entities::live_display`.
     pub(crate) scale: f32,
 }
 
 /// A unit's movement speeds (yd/s) from its `LIVING` movement block. The animation selector runs
-/// above 2x `walk` (`0x5fd224`).
+/// above 2x `walk`.
 #[derive(Component, Clone, Copy)]
 pub(crate) struct UnitSpeeds(pub(crate) MoveSpeeds);
 
-/// A mover's speed from its move flags (`CMovement::GetCurrentSpeed 0x7c4c90`). The order is the
-/// fact: no direction bit is 0 (`0x7c4c99`); swimming first (`0x7c4cd9`); then walk mode as
-/// `min(walk, run)` even backward (`0x7c4d11`); then run, backward as `min(run_back, run)`
-/// (`0x7c4d1d`). Each min is x87 `fcompp`, ties and NaN taking the forward field. 3.3.5a's
-/// `GetBaseSpeed` (`0x987570`) counts the vertical bits as moving and puts flight ahead of swim.
+/// A mover's speed from its move flags, as the movement object's current-speed getter picks it.
+/// The order is the fact: no direction bit is 0; swimming first; then walk mode as
+/// `min(walk, run)` even backward; then run, backward as `min(run_back, run)`. Each min is x87
+/// `fcompp`, ties and NaN taking the forward field. 3.3.5a's base-speed getter (`0x987570`) counts
+/// the vertical bits as moving and puts flight ahead of swim.
 ///
-/// No zero-`walk` fallback: the ctor's zeroed speeds (`0x7c48e8`) are never observable, since
-/// the post-create apply `0x5fad50` applies our own speed block as it does a remote one.
+/// No zero-`walk` fallback: the constructor's zeroed speeds are never observable, since the
+/// post-create apply applies our own speed block as it does a remote one.
 pub(crate) fn current_speed(s: &MoveSpeeds, flags: u32) -> f32 {
     use crate::creature_anim::move_flags as f;
     if flags & (f::ANY_MOVE | f::ASCENDING | f::DESCENDING) == 0 {
@@ -249,8 +249,8 @@ pub(crate) fn current_speed(s: &MoveSpeeds, flags: u32) -> f32 {
 pub(crate) struct ObjectStore(pub(crate) ObjectFields);
 
 impl ObjectStore {
-    /// The object manager's unit lookup (`0x468460`, `ecx = 8`): a unit or a player, which share
-    /// the unit block; a game object, corpse or item is not one.
+    /// The object manager's unit lookup (`ecx = 8`): a unit or a player, which share the unit
+    /// block; a game object, corpse or item is not one.
     pub(crate) fn is_unit(&self) -> bool {
         use benilla_protocol::messages::ObjectType;
         matches!(
@@ -260,9 +260,9 @@ impl ObjectStore {
     }
 }
 
-/// One descriptor dword moved on a streamed object, the reference's `CMirrorHandler` edge: the
-/// values notifier (`0x465330`) diffs live against a shadow copy and passes the old value
-/// (`0x465570`). A first create fires nothing; a re-create of a live guid fires like a delta.
+/// One descriptor dword moved on a streamed object, the reference's field-mirror edge: the values
+/// notifier diffs live against a shadow copy and passes the old value. A first create fires
+/// nothing; a re-create of a live guid fires like a delta.
 ///
 /// `kind` is the store's class from its create block, since a raw index differs per class (`36`
 /// is a unit's `BYTES_0` and a corpse's `DYNAMIC_FLAGS`).
@@ -289,7 +289,7 @@ impl FieldChanged {
 }
 
 /// The field edges one feed saw this run, by guid and index: the reference fans a moved field out
-/// to every unit token naming the unit (`0x515e50`).
+/// to every unit token naming the unit.
 #[derive(Default)]
 pub(crate) struct FieldEdges(HashSet<(u64, u16)>);
 
@@ -357,8 +357,8 @@ pub(crate) fn apply_fields_for_test(world: &mut World, entity: Entity, delta: Ob
 #[derive(Component)]
 pub(crate) struct SelfPlayer;
 
-/// The body this client is attached to: the reference's camera anchor (`camera+0x88`), written
-/// only by the constructor and `SetTarget 0x50d0f0`, never by a control update. Normally our own
+/// The body this client is attached to: the reference's camera anchor (`camera+0x88`), written only
+/// by the constructor and the camera's target setter, never by a control update. Normally our own
 /// body; under possession, the possessed unit.
 ///
 /// At most one entity carries it, and a claimed mover not yet streamed is none: outbound
@@ -367,10 +367,9 @@ pub(crate) struct SelfPlayer;
 #[derive(Component)]
 pub(crate) struct Embodied;
 
-/// The unit this client authors motion for: the reference's active-mover global
-/// (`0xc4da98`/`0xc4da9c`, written only by `SetActiveMover 0x6006e0`). A control update that
-/// forbids the unit zeroes it (`0x5fa600`), which stops input (`0x514640`) and every movement
-/// report (`0x600860`).
+/// The unit this client authors motion for: the reference's active-mover global (written only by
+/// its active-mover setter). A control update that forbids the unit zeroes it, which stops input
+/// and every movement report.
 ///
 /// The server-replay lanes filter `Without<ActiveMover>`, not `Without<Embodied>`, so a body we
 /// are attached to but lost control of still follows the server.
@@ -512,10 +511,9 @@ pub(crate) struct RealmChoice(pub(crate) ParkSender<RealmRequest>);
 /// select; at the login park a query fails and the rest are dropped.
 #[derive(Debug)]
 pub(crate) enum RealmRequest {
-    /// Dial this realm (`ConnectToRealm`, `0x46b210`), the record as the list held it, as the
-    /// reference dials its copy (`0xc27fb8`) whatever a later list says. `generation` is the
-    /// abandon generation the app held when it asked: a later Cancel ends the dial however early
-    /// it lands.
+    /// Dial this realm, the record as the list held it, as the reference's realm connect dials its
+    /// copy whatever a later list says. `generation` is the abandon generation the app held when it
+    /// asked: a later Cancel ends the dial however early it lands.
     Enter {
         realm: benilla_protocol::RealmInfo,
         generation: u64,
@@ -523,13 +521,13 @@ pub(crate) enum RealmRequest {
     /// Query the realm list (`RequestRealmList`, every 5 s from `RealmList_OnUpdate`); the answer
     /// is a [`RealmListMessage`], failed when the link gave none.
     Refresh,
-    /// `CLoginMgr::Cancel` (`0x5b3320`, from `RealmListDialogCancelled` on the login screen, the
-    /// logon's Cancel and `DisconnectFromServer`): the realmd link closes and the thread parks for
+    /// The login manager's cancel (from `RealmListDialogCancelled` on the login screen, the logon's
+    /// Cancel and `DisconnectFromServer`): the realmd link closes and the thread parks for
     /// credentials. At character select, where `RealmListDialogCancelled` is a no-op, nothing.
     Close,
-    /// `ConnectToRealm` with the world up (`0x46b22b` → `0x5ab1a0`): the session at character
-    /// select drops and the thread returns to the logon park, the realmd link as it was (closed
-    /// since a world entry). Elsewhere, nothing.
+    /// The realm connect with the world up: the session at character select drops and the thread
+    /// returns to the logon park, the realmd link as it was (closed since a world entry).
+    /// Elsewhere, nothing.
     Leave,
 }
 
@@ -549,13 +547,13 @@ impl LoginAbandon {
     }
 }
 
-/// Guid to entity for every kind, items included, like the reference's one `ClntObjMgr` index.
+/// Guid to entity for every kind, items included, like the reference's one object-manager index.
 /// Written only by `net::objects`.
 #[derive(Resource, Default)]
 pub(crate) struct GuidIndex(pub(crate) HashMap<u64, Entity>);
 
 /// The streamed objects, whatever the kind, with their descriptor stores, our own player, and an
-/// item's countdown cells. Read-only. The by-guid lookups are `ClntObjMgrObjectPtr` (`0x468460`).
+/// item's countdown cells. Read-only. The by-guid lookups are the object manager's.
 #[derive(SystemParam)]
 pub struct Objects<'w, 's> {
     index: Res<'w, GuidIndex>,
@@ -565,12 +563,12 @@ pub struct Objects<'w, 's> {
 }
 
 impl Objects<'_, '_> {
-    /// The entity behind a guid, if streamed (`ClntObjMgrObjectPtr`, `0x468460`).
+    /// The entity behind a guid, if streamed, as the object manager's guid lookup finds it.
     pub fn entity(&self, guid: u64) -> Option<Entity> {
         self.index.0.get(&guid).copied()
     }
 
-    /// A streamed object's merged descriptor fields, found as `0x468460` does, by guid.
+    /// A streamed object's merged descriptor fields, found as the reference does, by guid.
     pub fn object(&self, guid: u64) -> Option<&ObjectFields> {
         self.index
             .0
@@ -694,13 +692,11 @@ impl ServerWallClock {
     }
 }
 
-/// The wall-clock resync interval: the reference re-asks after an hour (`0x4de836` gated on
-/// `[0xbb749c]`, armed `now + 0xe10` at `0x4def11`).
+/// The wall-clock resync interval: the reference re-asks after an hour (armed `now + 0xe10`).
 const RESYNC_AFTER: Duration = Duration::from_secs(3600);
 
-/// Ask for the server's wall clock at each world-enter cascade (the quest-log init `0x4de430`,
-/// called at `0x4909a1`, sends it at `0x4de45b`) and hourly after, which tracks a server
-/// re-clocked under us.
+/// Ask for the server's wall clock at each world-enter cascade and hourly after, which tracks a
+/// server re-clocked under us.
 pub(crate) fn send_query_time(
     mut cascades: MessageReader<WorldEnterCascadeMessage>,
     commands: Res<NetCommands>,
@@ -724,14 +720,13 @@ pub(crate) fn send_query_time(
 /// excludes the DBC race/class base, which consumers add before ranking. Filled by
 /// `SMSG_INITIALIZE_FACTIONS`, kept current by `SMSG_SET_FACTION_STANDING` (which also reveals)
 /// and `SMSG_SET_FACTION_VISIBLE`. Flag bit `0x08` marks a pane header. Then the `(faction,
-/// reaction)` list `SMSG_SET_FORCED_REACTIONS` replaces whole (`CGReputationInfo`'s forced
-/// reactions), emptied when the world is left (`CGReputationInfo::LeaveWorld` `0x5d24c0`).
+/// reaction)` list `SMSG_SET_FORCED_REACTIONS` replaces whole (the reputation store's forced
+/// reactions), emptied when the world is left (`0x5d24c0`).
 #[derive(Resource, Default)]
 pub(crate) struct Reputations(pub(crate) Vec<(u8, i32)>, pub(crate) Vec<(u32, u32)>);
 
 impl Reputations {
-    /// `CGReputationInfo::GetForcedReaction` (`0x5d06a0`): the first entry naming the
-    /// `Faction.dbc` faction.
+    /// The forced-reaction lookup (`0x5d06a0`): the first entry naming the `Faction.dbc` faction.
     pub(crate) fn forced_reaction(&self, faction: u32) -> Option<u32> {
         self.1.iter().find(|&&(f, _)| f == faction).map(|&(_, r)| r)
     }
@@ -748,7 +743,7 @@ pub(crate) struct HomeBind(pub(crate) Option<u32>);
 pub(crate) struct PlayedTimeAnswer(pub(crate) Option<(u32, u32)>);
 
 /// Equip proficiencies (`SMSG_SET_PROFICIENCY`): item class (2 weapon, 4 armor) to a subclass
-/// bitmask, the client's `0xc4d4a0[class]` store.
+/// bitmask, the client's `[class]` store.
 #[derive(Resource, Default)]
 pub(crate) struct Proficiencies(pub(crate) std::collections::HashMap<u32, u32>);
 
@@ -762,7 +757,7 @@ pub(crate) struct GameTime {
     base_day: u32,
     timescale: f32,
     received: Instant,
-    /// The packed date and clock at `received`, `g_clientGameTime`'s seed (`0x7e28e0`).
+    /// The packed date and clock at `received`, the client game clock's seed (`0x7e28e0`).
     base: benilla_ui::script::WowTime,
 }
 
@@ -786,8 +781,8 @@ impl GameTime {
         self
     }
 
-    /// `g_clientGameTime`: the seed advanced a minute per elapsed game minute, its date carried
-    /// across midnight (`CGameTime::TickMinute` `0x76d740`).
+    /// The client game clock: the seed advanced a minute per elapsed game minute, its date carried
+    /// across midnight (`0x76d740`).
     pub(crate) fn calendar_now(&self) -> benilla_ui::script::WowTime {
         let elapsed = self.received.elapsed().as_secs_f64() * f64::from(self.timescale);
         let mut now = self.base;
@@ -814,7 +809,7 @@ impl GameTime {
     }
 
     /// Days and day fraction since the serial epoch, unwrapped, for the moon phase
-    /// `(dayCounter + todPhase) mod 1.7` (`0x6d41b9`); `f64` for sub-minute grain at ~12k days.
+    /// `(dayCounter + todPhase) mod 1.7`; `f64` for sub-minute grain at ~12k days.
     pub(crate) fn day_continuous(&self) -> f64 {
         let elapsed = self.received.elapsed().as_secs_f64() * self.timescale as f64;
         self.base_day as f64 + (self.base_minute as f64 + elapsed) / 1440.0
@@ -846,8 +841,8 @@ pub(crate) enum MoveKind {
     StopAscend,
     /// 3.3.5a's `CMSG_MOVE_SET_FLY`, the report of a flight starting or ending.
     SetFly,
-    /// The walk/run toggle: sent from the toggle handler (`ToggleRun 0x513d50` to `0x617de0`),
-    /// not the move broadcaster, so it goes out standing still (`0x61a99d` gates the latter).
+    /// The walk/run toggle: sent from the toggle handler (`ToggleRun`), not the move broadcaster,
+    /// so it goes out standing still.
     SetWalkMode,
     SetRunMode,
     SetFacing,
@@ -1033,8 +1028,7 @@ pub(crate) enum ClientCommand {
         transport: Option<TransportPose>,
     },
     /// `CMSG_MOVE_TIME_SKIPPED`: our mover skipped `lag_ms` without integrating; `guid` must be the
-    /// active mover (`0x600be0`). Just after boarding, the server answers with the transport's
-    /// create update.
+    /// active mover. Just after boarding, the server answers with the transport's create update.
     MoveTimeSkipped {
         guid: u64,
         lag_ms: u32,
@@ -1141,8 +1135,8 @@ pub(crate) enum ClientCommand {
         bag_index: u8,
         slot: u8,
     },
-    /// `CMSG_SET_AMMO`, the auto-equip fork for ammo (`0x5e1480`): by entry, the stack stays in
-    /// the bag and `PLAYER_AMMO_ID` names it.
+    /// `CMSG_SET_AMMO`, the auto-equip fork for ammo: by entry, the stack stays in the bag and
+    /// `PLAYER_AMMO_ID` names it.
     SetAmmo {
         entry: u32,
     },
@@ -1159,7 +1153,7 @@ pub(crate) enum ClientCommand {
         src_bag: u8,
         src_slot: u8,
     },
-    /// `CMSG_AUTOSTORE_BAG_ITEM`: into `dst_bag` with no destination slot (`0x5e12e0`).
+    /// `CMSG_AUTOSTORE_BAG_ITEM`: into `dst_bag` with no destination slot.
     AutoStoreBagItem {
         src_bag: u8,
         src_slot: u8,
@@ -1204,8 +1198,7 @@ pub(crate) enum ClientCommand {
         spell_id: u32,
         dest: [f32; 3],
     },
-    /// `CMSG_CAST_SPELL` with `TARGET_FLAG_SOURCE_LOCATION` (`BindLocation 0x6e60f0`, bit 5);
-    /// `src` in WoW coordinates.
+    /// `CMSG_CAST_SPELL` with `TARGET_FLAG_SOURCE_LOCATION` (bit 5); `src` in WoW coordinates.
     CastSpellAtSource {
         spell_id: u32,
         src: [f32; 3],
@@ -1230,17 +1223,15 @@ pub(crate) enum ClientCommand {
     TotemDestroyed {
         slot: u8,
     },
-    /// `CMSG_SET_ACTIONBAR_TOGGLES` (sent by `0x4e76e0`), one per call. The byte is server-owned
-    /// (`PLAYER_FIELD_BYTES` byte 2, read at `0x4e768c`; nothing in the client writes it), so it
-    /// only changes by the descriptor echo. Disconnected, a silent no-op (`0x5ab637`, `0x5379ab`,
-    /// `0x5379b6`).
+    /// `CMSG_SET_ACTIONBAR_TOGGLES`, one per call. The byte is server-owned (`PLAYER_FIELD_BYTES`
+    /// byte 2, nothing in the client writes it), so it only changes by the descriptor echo.
+    /// Disconnected, a silent no-op.
     SetActionBarToggles {
         toggles: u8,
     },
     /// `CMSG_PET_ACTION`: `packed` is the slot's word as the server sent it, dispatched on its type
-    /// byte; `target_guid` is our selection (`0x4bd212`), or the player under the pet book's
-    /// `onSelf` (`0x4b4345`). The server does not reply, so the caller applies the change locally
-    /// first.
+    /// byte; `target_guid` is our selection, or the player under the pet book's `onSelf`. The
+    /// server does not reply, so the caller applies the change locally first.
     PetAction {
         pet_guid: u64,
         packed: u32,
@@ -1268,15 +1259,15 @@ pub(crate) enum ClientCommand {
         pet_guid: u64,
         spell_id: u32,
     },
-    /// `CMSG_PET_SPELL_AUTOCAST`: the pet spellbook's `ToggleSpellAutocast`, by spell id
-    /// (`0x4b4240` to `0x4bccb0`); the bar's toggle is [`Self::PetSetAction`]. No reply.
+    /// `CMSG_PET_SPELL_AUTOCAST`: the pet spellbook's `ToggleSpellAutocast`, by spell id; the bar's
+    /// toggle is [`Self::PetSetAction`]. No reply.
     PetSpellAutocast {
         pet_guid: u64,
         spell_id: u32,
         enabled: bool,
     },
-    /// `CMSG_PET_ABANDON`: the menu's Abandon only. Dismiss (`PetDismiss 0x4be4d0`) is a
-    /// [`Self::PetAction`] with word `0x07000003`. Answered by a zero-guid `SMSG_PET_SPELLS`.
+    /// `CMSG_PET_ABANDON`: the menu's Abandon only. Dismiss (`PetDismiss`) is a [`Self::PetAction`]
+    /// with word `0x07000003`. Answered by a zero-guid `SMSG_PET_SPELLS`.
     PetAbandon {
         pet_guid: u64,
     },
@@ -1291,11 +1282,10 @@ pub(crate) enum ClientCommand {
     },
     /// `CMSG_ATTACKSTOP`, sent when the target is lost; the weapons stay drawn.
     AttackStop,
-    /// `CMSG_CANCEL_AUTO_REPEAT_SPELL`, sent by every local cancel (`0x6ea0c6` in `0x6ea080`);
-    /// harmless when the server cancelled first.
+    /// `CMSG_CANCEL_AUTO_REPEAT_SPELL`, sent by every local cancel; harmless when the server
+    /// cancelled first.
     CancelAutoRepeat,
-    /// `CMSG_CANCEL_CAST`: from the wand auto-repeat handoff (`0x6095b8`) and a local cancel
-    /// (`AbortCast 0x6e4940`).
+    /// `CMSG_CANCEL_CAST`: from the wand auto-repeat handoff and a local cancel.
     CancelCast {
         spell_id: u32,
     },
@@ -1304,7 +1294,7 @@ pub(crate) enum ClientCommand {
         spell_id: u32,
     },
     /// `CMSG_SETSHEATHED` (0 stowed, 1 melee, 2 ranged); the client sends 1 on starting melee
-    /// stowed (`0x5ecb70` to `0x611cf0`). Our own pose follows the `UNIT_FIELD_BYTES_2` echo.
+    /// stowed. Our own pose follows the `UNIT_FIELD_BYTES_2` echo.
     SetSheathed {
         state: u32,
     },
@@ -1416,7 +1406,7 @@ pub(crate) enum ClientCommand {
         healer: u64,
     },
     /// `CMSG_AREA_SPIRIT_HEALER_QUERY`, asking a newly adopted healer's wave clock. No Lua verb
-    /// sends it: only the set-current-healer routine `0x4921c0`.
+    /// sends it: only the set-current-healer routine.
     AreaSpiritHealerQuery {
         healer: u64,
     },
@@ -1871,11 +1861,11 @@ pub(crate) enum ClientCommand {
     /// `CMSG_BEGIN_TRADE`: accept a request; the server sends `OPEN_WINDOW` to both. Sent only by
     /// [`crate::ui_trade::answer_trade_request`].
     BeginTrade,
-    /// `CMSG_IGNORE_TRADE` (`0x119`): the refusal ladder's ignore leg (`0x4bf759` to `0x5d41c0`);
-    /// vmangos answers the initiator `TRADE_STATUS_IGNORE_YOU`.
+    /// `CMSG_IGNORE_TRADE` (`0x119`): the refusal ladder's ignore leg; vmangos answers the
+    /// initiator `TRADE_STATUS_IGNORE_YOU`.
     IgnoreTrade,
-    /// `CMSG_BUSY_TRADE` (`0x118`, sent by `0x5d4150`): five of the ladder's eight refusal legs;
-    /// vmangos sends `TRADE_STATUS_BUSY` to both. The player's own No is [`Self::CancelTrade`].
+    /// `CMSG_BUSY_TRADE` (`0x118`): five of the ladder's eight refusal legs; vmangos sends
+    /// `TRADE_STATUS_BUSY` to both. The player's own No is [`Self::CancelTrade`].
     BusyTrade,
     /// `CMSG_ACCEPT_TRADE`: the Trade button, carrying the partner's offer state.
     AcceptTrade {
@@ -1995,7 +1985,7 @@ pub(crate) enum ClientCommand {
     PlayedTime,
     /// An account-data request or upload in the world ([`crate::account_data`]). With the world
     /// stream over and the link parked, as after the logout an Exit Game makes, it goes out on the
-    /// parked session, where 12340's UI shutdown sends it (`AccountDataFlush` `0x6b9b90`).
+    /// parked session, where 12340's UI shutdown sends it (`0x6b9b90`).
     AccountData(crate::account_data::Wire),
     /// A barrier: answered once every command before it is on the wire, the parked session's
     /// included.
@@ -2006,7 +1996,7 @@ pub(crate) enum ClientCommand {
     /// Unacked, vmangos keeps visibility on the cinematic camera and nearby NPCs despawn.
     CompleteCinematic,
     /// `CMSG_NEXT_CINEMATIC_CAMERA`, for every shot including the first: the send is in the shot
-    /// arm (`0x48ef11`), so a single-camera intro sends one.
+    /// arm, so a single-camera intro sends one.
     NextCinematicCamera,
     /// Acknowledge a root, water-walk, feather-fall or hover on [`MoveMode::ack_opcode`];
     /// unacked, the server never applies it. `flags` must carry the mode bit: vmangos kicks a
@@ -2030,8 +2020,8 @@ pub(crate) enum ClientCommand {
         orientation: f32,
     },
     /// `CMSG_MOVE_KNOCK_BACK_ACK`, `launch` echoed as the jump tail. Sent on the frame the mover
-    /// takes off, never on receipt: the reference applies (`0x61624d call 0x6179c0`) then sends
-    /// (`0x616261`) in one call, so the wire pose is post-launch.
+    /// takes off, never on receipt: the reference applies then sends in one call, so the wire pose
+    /// is post-launch.
     KnockBackAck {
         guid: u64,
         counter: u32,
@@ -2090,7 +2080,7 @@ pub(crate) enum ClientCommand {
     /// `CMSG_GROUP_RAID_CONVERT`, leader only.
     GroupRaidConvert,
     /// `CMSG_REQUEST_PARTY_MEMBER_STATS`, only on the reference's two edges: a member's object
-    /// leaves (`0x4e8646`), or a new roster member's object is not held (`0x4e83f1`). No timer.
+    /// leaves, or a new roster member's object is not held. No timer.
     RequestPartyMemberStats {
         guid: u64,
     },
@@ -2395,7 +2385,7 @@ pub(crate) struct CharListMessage {
 }
 
 /// The world server accepted the authentication: the world connect to `realm` is done and the IO
-/// thread is at the character park (`SMSG_AUTH_RESPONSE` success, `0x5ab2b8`).
+/// thread is at the character park (`SMSG_AUTH_RESPONSE` success).
 #[derive(Message)]
 pub(crate) struct WorldAuthMessage {
     pub(crate) realm: benilla_protocol::RealmInfo,
@@ -2436,9 +2426,9 @@ pub(crate) struct EnteredWorldMessage {
     pub(crate) tutorial_flags: Option<Vec<u8>>,
 }
 
-/// The reference's world-enter cascade (`0x4908c0`) ran: our own player's create, at login and
-/// every cross-map worldport ([`enter_world_on_self_create`]), or a `/reload`. Its sends wait for
-/// this, not [`EnteredWorldMessage`], which fires before the server has seated the player.
+/// The reference's world-enter cascade ran: our own player's create, at login and every cross-map
+/// worldport ([`enter_world_on_self_create`]), or a `/reload`. Its sends wait for this, not
+/// [`EnteredWorldMessage`], which fires before the server has seated the player.
 #[derive(Message)]
 pub(crate) struct WorldEnterCascadeMessage;
 
@@ -2533,8 +2523,8 @@ pub(crate) struct TeleportMessage {
 
 /// An inbound `MSG_MOVE_*` for our own mover: always server-authored (vmangos
 /// `MovementInfo::SetAsServerSide`), from GM moves and the anticheat snap-back, with no ack owed.
-/// The reference applies it like a remote's, having no mover-guid gate (`0x603bb0`); ours lands
-/// in `player::wire_in`.
+/// The reference applies it like a remote's, having no mover-guid gate; ours lands in
+/// `player::wire_in`.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct SelfMoveMessage {
     pub(crate) position: [f32; 3],
@@ -2549,8 +2539,9 @@ pub(crate) struct SelfMoveMessage {
     pub(crate) transport: Option<benilla_protocol::TransportPose>,
 }
 
-/// Our own body's create-block mover state: `SetUpdateInfo` (`0x6f1520`) zeroes the active mover's
-/// flags and forces these in, so a login or worldport arriving mid-flight is flying at once.
+/// Our own body's create-block mover state: the create block's movement apply (`0x6f1520`) zeroes
+/// the active mover's flags and forces these in, so a login or worldport arriving mid-flight is
+/// flying at once.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct SelfCreateMover {
     pub(crate) flags: u32,
@@ -2657,15 +2648,15 @@ pub(crate) enum EmoteKind {
 }
 
 /// `SMSG_AI_REACTION`: `hostile` is reaction 2 (each melee start), else 0 (the stealth alert).
-/// Audio only in the client (`0x6056e0`).
+/// Audio only in the client.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct AiReactionMessage {
     pub(crate) unit: Entity,
     pub(crate) hostile: bool,
 }
 
-/// `SMSG_PET_ACTION_SOUND`: `talk` is `PET_TALK_ORDER` or `PET_TALK_ATTACK`, resolved through
-/// the pet's `CreatureSoundData`. Audio only (`0x6040c0`).
+/// `SMSG_PET_ACTION_SOUND`: `talk` is `PET_TALK_ORDER` or `PET_TALK_ATTACK`, resolved through the
+/// pet's `CreatureSoundData`. Audio only.
 #[derive(Message, Clone, Copy)]
 pub(crate) struct PetTalkMessage {
     pub(crate) unit: Entity,
@@ -2800,7 +2791,7 @@ mod tests {
         }
     }
 
-    /// The walk arm (`0x7c4d11`) precedes the backward min (`0x7c4d1d`).
+    /// The walk arm precedes the backward min.
     #[test]
     fn the_walk_arm_outranks_the_backward_min() {
         use crate::creature_anim::move_flags as f;
@@ -2817,7 +2808,7 @@ mod tests {
         assert_eq!(current_speed(&s, f::STRAFE_LEFT | f::WALK_MODE), 2.5);
     }
 
-    /// `0x7c4cd9` precedes `0x7c4d11`.
+    /// The swim arm precedes the walk arm.
     #[test]
     fn swimming_is_tested_first_so_there_is_no_swim_walk() {
         use crate::creature_anim::move_flags as f;
@@ -2853,8 +2844,8 @@ mod tests {
         assert_eq!(current_speed(&s, f::BACKWARD | f::SWIMMING), 4.0);
     }
 
-    /// No direction bit is 0 (`0x7c4c99`). No zero-`walk` fallback: our own create applies the
-    /// speed block like any other (`0x5fad50`).
+    /// No direction bit is 0. No zero-`walk` fallback: our own create applies the speed block like
+    /// any other.
     #[test]
     fn a_mode_is_not_a_motion_and_a_zero_walk_speed_is_a_zero() {
         use crate::creature_anim::move_flags as f;

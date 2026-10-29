@@ -48,7 +48,7 @@ pub const PET_REACT_AGGRESSIVE: u32 = 2;
 pub const PET_STATE_VEHICLE: u32 = 0x0800_0000;
 
 /// The pet's `UNIT_FIELD_FLAGS` bits that make it uncontrollable: stunned, fleeing, confused
-/// (`CGUnit_C::IsControllable`, `0x5d3310`).
+/// (`0x5d3310`).
 pub const PET_UNUSABLE_UNIT_FLAGS: u32 = 0x0004_0000 | 0x0040_0000 | 0x0080_0000;
 
 /// The flag bit of a pet cooldown's category duration, which 12340 splits off before using the
@@ -124,7 +124,7 @@ pub struct PetSpellCooldown {
 pub struct PetSpells {
     /// The pet, possessed minion or charmed creature; zero means the bar is gone.
     pub pet_guid: u64,
-    /// The pet's `CreatureFamily.dbc` id, which picks its talent tabs (`SetPet`, `0x5d6ab6`).
+    /// The pet's `CreatureFamily.dbc` id, which picks its talent tabs (`0x5d6ab6`).
     pub family: u16,
     /// The possess or charm aura's remaining ms; 0 for a real pet.
     pub duration_ms: u32,
@@ -133,7 +133,7 @@ pub struct PetSpells {
     pub state: u32,
     /// The ten bar slots, in bar order.
     pub bar: [PetActionEntry; PET_ACTION_SLOTS],
-    /// The pet spellbook, packed like the bar (`AddPetSpell`, `0x5d6ca9`).
+    /// The pet spellbook, packed like the bar (`0x5d6ca9`).
     pub spells: Vec<PetActionEntry>,
     pub cooldowns: Vec<PetSpellCooldown>,
 }
@@ -242,7 +242,7 @@ pub(super) fn read_pet_tame_failure(r: &mut impl Read) -> io::Result<u8> {
 }
 
 /// Read `SMSG_PET_NAME_INVALID` as 12340's arm does (`0x6e2fb1`): the `u32` name code it hands
-/// `DisplayNameError`, the refused name, a `u8` declension flag and, when set, five declined
+/// the name-error display, the refused name, a `u8` declension flag and, when set, five declined
 /// forms. Only the code is kept; the declensions feed `PET_FORCE_NAME_DECLENSION`, which the
 /// ruRU client alone asks for.
 pub(super) fn read_pet_name_invalid(r: &mut impl Read) -> io::Result<u32> {
@@ -265,7 +265,7 @@ fn skip_declined_names(r: &mut impl Read) -> io::Result<()> {
 
 /// Read `SMSG_PET_NAME_QUERY_RESPONSE` as 12340's handler does (`0x6352c0`): `u32 petNumber`,
 /// the name, `u32 nameTimestamp`, then the declension block, read and dropped. An empty name is
-/// the negative answer (`DBCache::DenyItem`, `0x635365`); the timestamp only ages the disk cache.
+/// the negative answer (the cache's deny, `0x635365`); the timestamp only ages the disk cache.
 pub(super) fn read_pet_name_query_response(r: &mut impl Read) -> io::Result<(u32, String)> {
     let pet_number = read_u32_le(r)?;
     let name = read_cstring(r)?;
@@ -275,7 +275,7 @@ pub(super) fn read_pet_name_query_response(r: &mut impl Read) -> io::Result<(u32
 }
 
 /// The `GlobalStrings.lua` key filling `ERR_TAME_FAILED`'s `%s`: the reference's table
-/// (`Spell_C_PetTameFailure`, `0x800390`) covers `1..=12`; anything else is the default arm.
+/// (`0x800390`) covers `1..=12`; anything else is the default arm.
 pub fn pet_tame_failure_key(reason: u8) -> &'static str {
     match reason {
         1 => "PETTAME_INVALIDCREATURE",
@@ -312,8 +312,8 @@ pub(super) fn read_pet_dismiss_sound(r: &mut impl Read) -> io::Result<(u32, Vect
     Ok((read_u32_le(r)?, Vector3d::read(r)?))
 }
 
-/// Body of `CMSG_PET_ACTION` (opcode 373, `SendPetAction` `0x5d455e`): `u64` pet guid, the slot's
-/// `u32` word echoed verbatim, `u64` target guid (0 when the action needs none).
+/// Body of `CMSG_PET_ACTION` (opcode 373, sent at `0x5d455e`): `u64` pet guid, the slot's `u32`
+/// word echoed verbatim, `u64` target guid (0 when the action needs none).
 pub fn pet_action(pet_guid: u64, packed: u32, target_guid: u64) -> Vec<u8> {
     let mut body = Vec::with_capacity(20);
     body.extend_from_slice(&pet_guid.to_le_bytes());
@@ -709,8 +709,8 @@ mod tests {
     }
 }
 
-/// `SMSG_PET_UNLEARN_CONFIRM` (`0x5e4a26`): the trainer's guid and the unlearn cost in copper,
-/// which the reference latches before firing `CONFIRM_PET_UNLEARN(cost)`.
+/// `SMSG_PET_UNLEARN_CONFIRM`: the trainer's guid and the unlearn cost in copper, which the
+/// reference latches before firing `CONFIRM_PET_UNLEARN(cost)`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PetUnlearnConfirm {
     pub trainer: u64,
@@ -727,7 +727,7 @@ pub(super) fn read_pet_unlearn_confirm(
     })
 }
 
-/// Body of `CMSG_PET_UNLEARN` (the confirm arm of `0x5dfba0`): the latched trainer guid.
+/// Body of `CMSG_PET_UNLEARN`: the latched trainer guid.
 pub fn pet_unlearn(trainer: u64) -> Vec<u8> {
     trainer.to_le_bytes().to_vec()
 }

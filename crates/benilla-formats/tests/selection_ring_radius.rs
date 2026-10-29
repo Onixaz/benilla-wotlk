@@ -1,7 +1,7 @@
-//! A living unit's selection ring (draw `0x608e00`, sizer `0x60aee0`) has radius
-//! `OBJECT_FIELD_SCALE_X * sqrt(0.5 * sqrt(dx² + dy²))` over the Stand sequence box's horizontal
-//! extents (`animationLookup[0]`). The render sphere (`0xCC`) sizes the corpse decal instead
-//! (`0x5d6fe0`, `[unit+0x2b0]`). `M2Bounds::ring_footprint` is the pre-scale part.
+//! A living unit's selection ring has radius `OBJECT_FIELD_SCALE_X * sqrt(0.5 * sqrt(dx² + dy²))`
+//! over the Stand sequence box's horizontal extents (`animationLookup[0]`). The render sphere
+//! (`0xCC`) sizes the corpse decal instead (`[unit+0x2b0]`). `M2Bounds::ring_footprint` is the
+//! pre-scale part.
 
 use benilla_formats::{load_m2_bounds, open_chain};
 
@@ -33,9 +33,9 @@ fn ring_footprint_matches_reference_pixels() {
     }
 }
 
-/// A box whose X and Y extents are both zero takes the literal 1.2 (`0x60af4f`..`0x60af67`,
-/// `0x3f99999a`): `InvisibleStalker` authors all 135 sequence boxes at zero, so the Naxxramas
-/// weapon mobs on its body (display 15294, scale 2.25) ring at 2.7 yd.
+/// A box whose X and Y extents are both zero takes the literal 1.2 (`0x3f99999a`):
+/// `InvisibleStalker` authors all 135 sequence boxes at zero, so the Naxxramas weapon mobs on its
+/// body (display 15294, scale 2.25) ring at 2.7 yd.
 #[test]
 #[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_degenerate_stand_box_rings_at_the_reference_constant() {

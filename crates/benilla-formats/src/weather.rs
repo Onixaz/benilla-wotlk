@@ -1,5 +1,5 @@
 //! `Weather.dbc`: what an `SMSG_WEATHER` id names. 12340's handler (`0x526a77`) looks the
-//! packet's id up in this table (`[0xad4eb0]`) and hands `SetWeather` (`0x7846a0`) the row's
+//! packet's id up in this table (`[0xad4eb0]`) and hands the weather setter (`0x7846a0`) the row's
 //! effect type (`+0x08`, honoured below 4); the row's ambience kit (`+0x04`) becomes the weather
 //! sound (`0x4c8610`). An id the table lacks is fine weather with no sound.
 
@@ -14,7 +14,7 @@ use crate::Chain;
 /// One `Weather.dbc` row, as far as the reference's packet handler reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct WeatherRow {
-    /// The effect type `SetWeather` takes: 0 fine, 1 rain, 2 snow, 3 sand.
+    /// The effect type the weather setter takes: 0 fine, 1 rain, 2 snow, 3 sand.
     pub effect_type: u32,
     /// The ambience `SoundEntries` kit, 0 for none.
     pub ambience_kit: u32,
@@ -45,7 +45,7 @@ pub(crate) fn schema() -> Schema {
     for name in ["ID", "AmbienceID", "EffectType"] {
         s.add_field(SchemaField::new(name, FieldType::UInt32));
     }
-    // `+0x0c` goes to `SetWeather` as its last argument; `+0x10..0x18` the effect colour.
+    // `+0x0c` goes to the weather setter as its last argument; `+0x10..0x18` the effect colour.
     for name in ["Scale", "EffectColorR", "EffectColorG", "EffectColorB"] {
         s.add_field(SchemaField::new(name, FieldType::Float32));
     }

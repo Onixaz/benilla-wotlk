@@ -1,15 +1,15 @@
 //! Spell-visual effect models: the attach-point `.mdx` a kit hangs on a unit, and the
-//! lootable-corpse sparkle, which the client hangs on the same `Effect_C` node type.
+//! lootable-corpse sparkle, which the client hangs on the same effect node type.
 //!
-//! Each instance root is parented once under the unit's attach joint and rides the bone through
-//! the transform tree, as the reference's `0x620be0` parents the effect model to the host once and
-//! its transform refresh `0x714000` carries it. Every instance takes `CMissile`'s attach cascade
-//! (`ATTACH_FALLBACKS`); the reference's kit effect has none, since `AddEffect 0x61fdd0` tests no
-//! attachment, so on a model lacking the tag `0x620be0` draws nothing and never retries.
+//! Each instance root is parented once under the unit's attach joint and rides the bone through the
+//! transform tree, as the reference parents the effect model to the host once and its transform
+//! refresh carries it. Every instance takes the missile's attach cascade (`ATTACH_FALLBACKS`); the
+//! reference's kit effect has none, since its effect add tests no attachment, so on a model lacking
+//! the tag it draws nothing and never retries.
 //!
-//! A persistent instance lives until its spell's [`SpellKitFx::Reap`] (`0x614150`); a
-//! self-terminating one despawns after one pass of its model's sequence 0, a span clock standing in
-//! for the client's completion callback.
+//! A persistent instance lives until its spell's [`SpellKitFx::Reap`]; a self-terminating one
+//! despawns after one pass of its model's sequence 0, a span clock standing in for the client's
+//! completion callback.
 
 mod lifecycle;
 
@@ -32,8 +32,8 @@ use super::{BoneAttach, DisplayModel, EntityPart, ModelHandle};
 pub(super) use lifecycle::advance_fx_anim;
 use lifecycle::{decay_span, FxAnimLife, FxDecay};
 
-/// `CMissile`'s attach cascade (`0x61ceb0`) for a model lacking the requested point: `0xf`, then
-/// `0x13`, then the unit root.
+/// The missile's attach cascade for a model lacking the requested point: `0xf`, then `0x13`, then
+/// the unit root.
 const ATTACH_FALLBACKS: [u16; 2] = [0xf, 0x13];
 
 /// The self-termination span of a model with no sequence table; [`super::dest_fx`] shares it.
@@ -172,7 +172,7 @@ pub(crate) fn attach_effect_visuals(
     let Some(parts) = dm.parts.as_ref() else {
         return false; // still loading
     };
-    // Chained onto its host model, its alpha composes through the parent's, as `0x714000` does.
+    // Chained onto its host model, its alpha composes through the parent's, as the reference does.
     if let Some(parent) = host.parent {
         commands
             .entity(root)
@@ -214,7 +214,7 @@ pub(crate) fn attach_effect_visuals(
         .as_ref()
         .and_then(|a| a.preferred_clip(preferred_anim));
     let played_seq = played.map(|c| c.seq_index);
-    // A `CEffect`'s riders follow its player's live sequence; other lanes keep the opening one.
+    // A kit effect's riders follow its player's live sequence; other lanes keep the opening one.
     let seq_host = (armed && stage.is_some()).then_some(root);
     commands.entity(root).with_children(|children| {
         for (part, material) in parts.iter().zip(&part_materials) {
@@ -315,9 +315,9 @@ pub(crate) fn attach_effect_visuals(
             ));
         }
     }
-    // Ground quads as projected decals on their joints: texture, blend, fog policy (`0x70baf0`) and
-    // RGB loop ride the record. No UV scroll: no effect model with a texture transform has a ground
-    // quad (`benilla-extract fxuvscan`).
+    // Ground quads as projected decals on their joints: texture, blend, fog policy and RGB loop
+    // ride the record. No UV scroll: no effect model with a texture transform has a ground quad
+    // (`benilla-extract fxuvscan`).
     let binds = dm.inverse_bindposes.as_ref().and_then(|h| ibps.get(h));
     for part in parts.iter() {
         let Some(quad) = part.ground_quad.filter(|_| is_ground_decal(part)) else {
@@ -381,8 +381,8 @@ pub(crate) fn attach_effect_visuals(
                 // Every `Spells\` emitter sets the unlit bit; a lit one would take the scene light.
                 light_node: None,
             },
-            // Rate and enable windows follow the current sequence, as the animate kernel `0x714260`
-            // samples it; global sequences run on the instance's own age.
+            // Rate and enable windows follow the current sequence, as the animate kernel samples
+            // it; global sequences run on the instance's own age.
             match seq_host {
                 Some(h) => particles::EmitClock::Host(h),
                 None => particles::EmitClock::Effect(played_seq),
@@ -435,12 +435,12 @@ pub(super) fn arm_effect_rig(
         // The caller's sequence (a thrown weapon's InFlight), else the bootstrap's `Stand`.
         if let Some(clip) = anims.preferred_clip(preferred_anim) {
             let mut player = AnimationPlayer::default();
-            // The stage owns the repeat policy (`0x60ed00` repeats a clamping precast).
+            // The stage owns the repeat policy (the re-arm stages repeat a clamping precast).
             let life = FxAnimLife::arm(&mut player, clip, stage.unwrap_or(FxStage::OneShot));
             commands
                 .entity(root)
                 .insert((player, AnimationGraphHandle(anims.graph.clone())));
-            // The lifecycle watcher, on a `CEffect` only.
+            // The lifecycle watcher, on a kit effect only.
             if stage.is_some() {
                 commands.entity(root).insert((life, anims.clone()));
             }
@@ -463,7 +463,7 @@ pub(super) fn arm_effect_rig(
 
 /// One live (or pending) effect-model instance on a unit.
 struct FxInstance {
-    /// The reap key (the client's `CEffect+0x18`); the lootable-corpse sparkle uses `u32::MAX`.
+    /// The reap key (the effect node's `+0x18`); the lootable-corpse sparkle uses `u32::MAX`.
     spell_id: u32,
     /// Reaped by spell id (precast, channel) rather than self-terminating (cast release).
     persistent: bool,
@@ -474,14 +474,14 @@ struct FxInstance {
     /// The M2 attachment id to hang from ([`benilla_formats::KIT_SLOT_TAGS`]), or
     /// [`benilla_formats::WORLD_EFFECT_TAG`] for the field-12 world-plant slot.
     tag: u16,
-    /// The `SpellVisualEffectName` id; with `tag`, the same-slot replace key (`0x6208e0`).
+    /// The `SpellVisualEffectName` id; with `tag`, the same-slot replace key.
     effect: u32,
     path: String,
     root: Option<Entity>,
     /// The self-termination deadline on `time.elapsed_secs()`, or a reaped instance's `Decay` end.
     expires: Option<f32>,
-    /// Reaped and playing its `Decay` out (`0x6141f0`). A reap or replace cannot reach it, as the
-    /// reference has moved it to its pending-destroy list.
+    /// Reaped and playing its `Decay` out. A reap or replace cannot reach it, as the reference has
+    /// moved it to its pending-destroy list.
     decaying: bool,
 }
 
@@ -491,8 +491,8 @@ pub(super) struct FxAttached {
     instances: Vec<FxInstance>,
 }
 
-/// A world-planted kit instance root (kit column 14): a free entity planted once at its owner
-/// (`0x620a90`), and re-planted on displacement for a root-aura spell (`0x620580`).
+/// A world-planted kit instance root (kit column 14): a free entity planted once at its owner, and
+/// re-planted on displacement for a root-aura spell.
 #[derive(Component)]
 pub(super) struct WorldPlantFx {
     owner: Entity,
@@ -500,10 +500,10 @@ pub(super) struct WorldPlantFx {
     follow: bool,
 }
 
-/// The client's re-plant gate, distance² > 1e-3 in world units (`0x620580`).
+/// The client's re-plant gate, distance² > 1e-3 in world units.
 const REPLANT_EPS_SQ: f32 = 1e-3;
 
-/// The plant transform (`0x620a90`): the owner's position, yaw only and scale.
+/// The plant transform: the owner's position, yaw only and scale.
 fn world_plant_transform(owner: &GlobalTransform) -> Transform {
     let (scale, rotation, translation) = owner.to_scale_rotation_translation();
     let (yaw, _, _) = rotation.to_euler(EulerRot::YXZ);
@@ -515,7 +515,7 @@ fn world_plant_transform(owner: &GlobalTransform) -> Transform {
 }
 
 /// Whether an `EffectApplyAuraName` slot is `SPELL_AURA_MOD_ROOT` (26): the client's
-/// `spellRec+0x16c[0..2] == 0x1a` scan that arms the re-plant flag `0x4000` (`0x60f081`).
+/// `spellRec+0x16c[0..2] == 0x1a` scan that arms the re-plant flag `0x4000`.
 fn spell_has_root_aura(spells: Option<&crate::ui_action::Spells>, spell_id: u32) -> bool {
     const SPELL_AURA_MOD_ROOT: u32 = 26;
     spells
@@ -538,7 +538,7 @@ pub(super) fn spell_forces_projection(
 }
 
 /// Despawn a plant whose owner is gone, and re-plant a `follow` one whose owner moved past
-/// [`REPLANT_EPS_SQ`] (`0x620580`, per frame).
+/// [`REPLANT_EPS_SQ`] (per frame).
 pub(super) fn tend_world_plants(
     mut commands: Commands,
     mut plants: Query<(Entity, &WorldPlantFx, &mut Transform)>,
@@ -608,7 +608,7 @@ pub(super) fn resolve_spell_fx(
                         );
                     }
                     for FxSlot { tag, effect, path } in effects {
-                        // Per slot, as `AddEffect 0x61fdd0` opens with `0x6208e0(owner, rec, tag)`.
+                        // Per slot, as the reference's effect add opens with the same-slot replace.
                         replace_same_slot(
                             &mut instances,
                             *effect,
@@ -655,9 +655,9 @@ pub(super) fn resolve_spell_fx(
     }
 }
 
-/// Hand an ending instance's emitters to the drain, the half of the teardown `0x6203e0` that is not
-/// a despawn: emission stops and live particles age out, since the reference gates the particle
-/// draw on the live count (`0x7b4b46`) while the meshes leave the draw list at once (`0x719207`).
+/// Hand an ending instance's emitters to the drain, the half of the teardown that is not a despawn:
+/// emission stops and live particles age out, since the reference gates the particle draw on the
+/// live count while the meshes leave the draw list at once.
 fn drain_instance_emitters(
     emitters: &mut Query<&mut benilla_world::particles::ParticleEmitter>,
     root: Entity,
@@ -669,9 +669,9 @@ fn drain_instance_emitters(
     }
 }
 
-/// The same-slot replace (`0x6208e0`): destroy each live node with the same `SpellVisualEffectName`
-/// record at the same tag, without a decay, which keeps the effect count flat in the number of
-/// attackers. The world-plant tag (-1) is exempt (`0x620913`); a decaying instance is out of reach.
+/// The same-slot replace: destroy each live node with the same `SpellVisualEffectName` record at
+/// the same tag, without a decay, which keeps the effect count flat in the number of attackers. The
+/// world-plant tag (-1) is exempt; a decaying instance is out of reach.
 fn replace_same_slot(
     instances: &mut Vec<FxInstance>,
     effect: u32,
@@ -687,7 +687,7 @@ fn replace_same_slot(
             return true;
         }
         if let Some(root) = i.root {
-            // Through the shared teardown `0x6203e0`, so its particles finish.
+            // Through the shared teardown, so its particles finish.
             drain_instance_emitters(emitters, root);
             commands.entity(root).despawn();
         }
@@ -695,8 +695,8 @@ fn replace_same_slot(
     });
 }
 
-/// The spell-id reap (`0x614150`): each persistent instance of `(spell_id, class)` plays `Decay`
-/// out, or goes at once without a model, a ready model or a `Decay` (`0x614187`–`0x6141a1`).
+/// The spell-id reap: each persistent instance of `(spell_id, class)` plays `Decay` out, or goes at
+/// once without a model, a ready model or a `Decay`.
 fn reap_matching(
     instances: &mut Vec<FxInstance>,
     spell_id: u32,
@@ -720,7 +720,8 @@ fn reap_matching(
             .and_then(|dm| decay_span(dm.animations.as_ref()));
         let (Some(root), Some(span)) = (i.root, span) else {
             if let Some(root) = i.root {
-                // Destroyed at once, through `0x6203e0` like any other, so its particles drain.
+                // Destroyed at once, through the shared teardown like any other, so its particles
+                // drain.
                 drain_instance_emitters(emitters, root);
                 commands.entity(root).despawn();
             }
@@ -769,7 +770,7 @@ pub(super) fn attach_spell_fx(
             if let Some(expires) = inst.expires {
                 if now >= expires {
                     if let Some(root) = inst.root {
-                        // The `0x6203e0` teardown: the particles outlive the flash.
+                        // The teardown: the particles outlive the flash.
                         drain_instance_emitters(&mut emitters, root);
                         commands.entity(root).despawn();
                     }
@@ -782,9 +783,9 @@ pub(super) fn attach_spell_fx(
                     return false;
                 }
             }
-            // A root lost with the unit's visual: the reference's rebuild `0x60abe0` drains the
-            // effect list and re-creates what persists (`0x5ff130` auras, `0x612a30` channels), so
-            // a persistent instance re-arms here and a one-shot or decaying one goes.
+            // A root lost with the unit's visual: the reference's rebuild drains the effect list
+            // and re-creates what persists, so a persistent instance re-arms here and a one-shot or
+            // decaying one goes.
             if let Some(root) = inst.root {
                 if commands.get_entity(root).is_ok() {
                     return true;
@@ -820,12 +821,12 @@ pub(super) fn attach_spell_fx(
             if dm.parts.is_none() {
                 return true; // model still loading
             }
-            // The world-plant slot (kit column 14): no attach tag (`0x61fcf0` pushes -1), planted
-            // once in world space (`0x620c86` via `0x620a90`), riding no bone.
+            // The world-plant slot (kit column 14): no attach tag, planted once in world space,
+            // riding no bone.
             let planted = inst.tag == benilla_formats::WORLD_EFFECT_TAG;
             // A bone-riding effect waits for the body: before it is built there are no attach
             // points, and a live root is never re-seated. The reference re-arms after the rebuild
-            // sets the model (`0x60abe0` → `0x5ff130`); the cube fallback counts as built.
+            // sets the model; the cube fallback counts as built.
             if !planted && !body_built {
                 return true;
             }
@@ -848,7 +849,7 @@ pub(super) fn attach_spell_fx(
                     .id();
                 (root, true)
             } else {
-                // `CMissile`'s cascade: the slot's tag, `0xf`, `0x13`, else the unit root.
+                // The missile's cascade: the slot's tag, `0xf`, `0x13`, else the unit root.
                 let point = bones.and_then(|b| {
                     std::iter::once(inst.tag)
                         .chain(ATTACH_FALLBACKS)
@@ -883,7 +884,7 @@ pub(super) fn attach_spell_fx(
                 ground_anchor,
                 // Chained to the unit: it fades and is freed with the body.
                 EffectHost { parent: Some(unit) },
-                // A kit effect is a `CEffect`: it runs the stage's lifecycle.
+                // A kit effect runs the stage's lifecycle.
                 Some(inst.stage),
                 &mut FxMaterials {
                     store: &mut wow_materials,
@@ -1047,7 +1048,7 @@ mod tests {
             .collect()
     }
 
-    /// The reference's rebuild (`0x60abe0`) drains every effect node and re-creates what persists.
+    /// The reference's rebuild drains every effect node and re-creates what persists.
     #[test]
     fn a_persistent_instance_whose_root_died_as_collateral_is_re_armed() {
         let (mut app, unit, roots) = standing(&[true, false]);
@@ -1114,7 +1115,7 @@ mod tests {
         assert_eq!(instances_of(&app, unit), vec![(true, Some(roots[0]))]);
     }
 
-    // ---- the same-slot replace (`0x6208e0`) ----
+    // ---- the same-slot replace ----
 
     /// The blood spurt's record and the two flank tags.
     const SPURT: u32 = 63;
@@ -1165,7 +1166,7 @@ mod tests {
             .unwrap_or_default()
     }
 
-    /// `0x6208e0`: a second play of the same record at the same tag destroys the first.
+    /// A second play of the same record at the same tag destroys the first.
     #[test]
     fn a_replay_of_the_same_record_at_the_same_tag_replaces_rather_than_stacks() {
         let (mut app, unit) = resolving();
@@ -1215,7 +1216,7 @@ mod tests {
         );
     }
 
-    /// The walk skips tag -1 (`0x620913`): a second Thunder Clap ring does not eat the first.
+    /// The walk skips tag -1: a second Thunder Clap ring does not eat the first.
     #[test]
     fn the_world_plant_slot_is_excluded_from_the_replace() {
         let (mut app, unit) = resolving();

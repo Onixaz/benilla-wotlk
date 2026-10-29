@@ -153,8 +153,8 @@ pub const NPC_TEXT_BLOCKS: usize = 8;
 /// Read `SMSG_NPC_TEXT_UPDATE` (vmangos `GossipDef.cpp:298-369`), all eight blocks undecided; the
 /// greeting is picked when the frame opens, by [`select_greeting`].
 ///
-/// The language is parsed and dropped: the 1.12 client garbles a block in a non-zero language
-/// (`0x49b560`), which is not built, and no 1.12 record is known to set one.
+/// The language is parsed and dropped: the 1.12 client garbles a block in a non-zero language,
+/// which is not built, and no 1.12 record is known to set one.
 pub(super) fn read_npc_text_update(r: &mut &[u8]) -> io::Result<(u32, Vec<NpcTextBlock>)> {
     let text_id = read_u32_le(r)?;
     let mut blocks = Vec::with_capacity(NPC_TEXT_BLOCKS);
@@ -178,7 +178,7 @@ pub(super) fn read_npc_text_update(r: &mut &[u8]) -> io::Result<(u32, Vec<NpcTex
 
 /// `SMSG_GOSSIP_POI`, the map flag a guard drops when asked for directions; the server sends it
 /// unasked from a gossip option (`Player::OnGossipSelect`). The 1.12 client treats it as an
-/// `AreaPOI.dbc` record in minimap blip slot 1 (`0x4e2840`), hence the DBC field names.
+/// `AreaPOI.dbc` record in minimap blip slot 1, hence the DBC field names.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GossipPoi {
     /// As `AreaPOI.dbc` `Flags`: bit 0 makes it a candidate, bit 1 draws the in-range icon; every

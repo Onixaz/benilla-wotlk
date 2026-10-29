@@ -1,7 +1,7 @@
-//! The trainer's state re-evaluator, the reference's `Trainer_ReEvaluateServices` (`0x596b00`):
-//! on any of its triggers it re-derives every service's state from the player's book, skills and
-//! level, so the wire state lasts only until the first. Not built: its gray for a row in the
-//! `SMSG_SEND_UNLEARN_SPELLS` list (`0x596f66`), a packet benilla does not read.
+//! The trainer's state re-evaluator, as the reference runs it (`0x596b00`): on any of its triggers
+//! it re-derives every service's state from the player's book, skills and level, so the wire state
+//! lasts only until the first. Not built: its gray for a row in the `SMSG_SEND_UNLEARN_SPELLS` list
+//! (`0x596f66`), a packet benilla does not read.
 
 use std::collections::BTreeSet;
 
@@ -21,7 +21,7 @@ pub(super) struct SkillSlot {
 /// Everything `0x596b00` reads off the player, gathered once per re-evaluation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct PlayerView {
-    /// The player's known-spell set, the bitmap `TalentInfoIsSpellKnown` (`0x7260e0`) tests.
+    /// The player's known-spell set, the bitmap the known-spell test (`0x7260e0`) reads.
     pub known: BTreeSet<u32>,
     pub level: u32,
     /// The occupied `PLAYER_SKILL_INFO` slots, in slot order.
@@ -35,7 +35,7 @@ impl PlayerView {
     }
 }
 
-/// `TalentInfoIsSpellKnown(id) || Spell_KnownHigherRank(id)` (`0x7260e0`, `0x726160`).
+/// The spell is known, or a higher rank of it is (`0x7260e0`, `0x726160`).
 pub(super) fn known_or_higher(
     id: u32,
     known: &BTreeSet<u32>,

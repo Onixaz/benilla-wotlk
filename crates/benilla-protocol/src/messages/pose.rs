@@ -17,8 +17,8 @@ pub fn stand_state_change(state: u32) -> Vec<u8> {
     state.to_le_bytes().to_vec()
 }
 
-/// Read `SMSG_STANDSTATE_UPDATE`: one `u8` stand state (vmangos `Unit.cpp:9541`), with no guid;
-/// the reference (`0x603e50`) applies it to the local player whatever unit the server meant.
+/// Read `SMSG_STANDSTATE_UPDATE`: one `u8` stand state (vmangos `Unit.cpp:9541`), with no guid; the
+/// reference applies it to the local player whatever unit the server meant.
 pub(super) fn read_stand_state_update(r: &mut &[u8]) -> io::Result<u8> {
     read_u8(r)
 }

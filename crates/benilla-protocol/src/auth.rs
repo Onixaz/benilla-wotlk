@@ -54,15 +54,14 @@ pub struct AuthReject {
 /// The two realmd replies a logon reads a result byte from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LogonReply {
-    /// `CMD_AUTH_LOGON_CHALLENGE` (`Grunt::ClientLink::CmdAuthLogonChallenge`, `0x8cc3e0`).
+    /// `CMD_AUTH_LOGON_CHALLENGE`.
     Challenge,
-    /// `CMD_AUTH_LOGON_PROOF` (`Grunt::ClientLink::CmdAuthLogonProof`, `0x8cc7a0`).
+    /// `CMD_AUTH_LOGON_PROOF`.
     Proof,
 }
 
 /// `GRUNT_RESULT_SUCCESS_SURVEY`: a success. Both reply handlers read nothing after a nonzero byte,
-/// and `GruntLogin::LogonResult` (`0x8cb160`) sends it down 0x00's success arm (`cmp eax,0xe` at
-/// `0x8cb1a6`).
+/// and the client's logon-result dispatch sends it down 0x00's success arm (`cmp eax,0xe`).
 pub const SUCCESS_SURVEY: u8 = 0x0e;
 
 impl std::fmt::Display for AuthReject {

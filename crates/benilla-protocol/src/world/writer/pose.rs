@@ -9,8 +9,8 @@ use super::WorldWriter;
 
 impl WorldWriter {
     /// `CMSG_SETSHEATHED`: `state` 0 stowed, 1 melee drawn, 2 ranged drawn, stored as our
-    /// `UNIT_FIELD_BYTES_2` sheath byte. The reference setter `0x611cf0` sends it whenever
-    /// `bFireEvent` is set.
+    /// `UNIT_FIELD_BYTES_2` sheath byte. The reference setter sends it whenever `bFireEvent` is
+    /// set.
     pub fn set_sheathed(&mut self, state: u32) -> Result<()> {
         self.send(opcode::CMSG_SETSHEATHED, &messages::set_sheathed(state))
     }

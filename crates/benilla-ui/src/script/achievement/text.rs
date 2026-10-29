@@ -1,6 +1,6 @@
-//! The criteria and statistic text (`BuildOutputString`, `0x5b0ea0`), the money strings it
-//! formats with (`GetCurrencyTextureString` `0x7e7e10`, `GetCurrencyShortText` `0x7e7ee0`), and
-//! the `|Hachievement:` link (`0x61bff0`).
+//! The criteria and statistic text (`0x5b0ea0`), the money strings it formats with (the coin
+//! texture string `0x7e7e10`, the short coin text `0x7e7ee0`), and the `|Hachievement:` link
+//! (`0x61bff0`).
 
 use mlua::Lua;
 
@@ -59,7 +59,7 @@ impl TextCtx<'_> {
     }
 }
 
-/// `BuildOutputString`'s inputs: the walk over the source's criteria and the one row shown.
+/// The output string build's inputs: the walk over the source's criteria and the one row shown.
 pub(super) struct Output<'a> {
     pub(super) sum: u64,
     pub(super) highest: u64,
@@ -75,7 +75,7 @@ pub(super) struct Output<'a> {
     pub(super) required: u32,
 }
 
-/// `BuildOutputString` (`0x5b0ea0`): the shown text and the number it shows.
+/// The output string build (`0x5b0ea0`): the shown text and the number it shows.
 pub(super) fn build_output(ctx: &TextCtx, db: &AchievementDb, o: &Output) -> (String, i64) {
     let dashes = |o: &Output| {
         if o.flags & flag::STATISTIC != 0 {
@@ -190,8 +190,8 @@ pub(super) fn build_output(ctx: &TextCtx, db: &AchievementDb, o: &Output) -> (St
     (text, result)
 }
 
-/// `GetAchievementHyperlink` (`0x61bff0`): the yellow `|Hachievement:` link, `""` for an id the
-/// table lacks. `date` fills month, day and year (1-based month and day, years since 2000); the
+/// The achievement hyperlink build (`0x61bff0`): the yellow `|Hachievement:` link, `""` for an id
+/// the table lacks. `date` fills month, day and year (1-based month and day, years since 2000); the
 /// four words are the met-criteria bits.
 pub fn achievement_hyperlink(
     db: &AchievementDb,

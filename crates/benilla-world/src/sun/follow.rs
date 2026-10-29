@@ -1,8 +1,8 @@
 //! Per-frame placement of the celestial layer: discs, glares and the star dome face the camera at
 //! their world directions, tinted by the celestial diffuse. The glares sit on the reference's near
-//! sphere (`cam + 12·dir`), clipped per pixel by depth (its `[0.995, 1.0]` slice, `0x7e5a0c`) and
-//! dimmed by the [`FlareGate`] envelope. These run after propagation and write `GlobalTransform`,
-//! so they place from this frame's camera: a frame of lag is ~1% of the glare's distance.
+//! sphere (`cam + 12·dir`), clipped per pixel by depth (its `[0.995, 1.0]` slice) and dimmed by the
+//! [`FlareGate`] envelope. These run after propagation and write `GlobalTransform`, so they place
+//! from this frame's camera: a frame of lag is ~1% of the glare's distance.
 
 use bevy::camera::Projection;
 use bevy::ecs::system::SystemParam;
@@ -20,12 +20,12 @@ use benilla_assets::AdtTile;
 use super::materials::{CelestialMaterial, StarMaterial};
 use super::{MoonPart, MoonSprite, StarDome, SunPart, SunSprite};
 
-/// Every disc and glare is a unit quad at radius 12 (`[0x80c4e8]`), 4.77° per world unit, so a
-/// billboard at distance `d` scales by `0.0833 × size × d`.
+/// Every disc and glare is a unit quad at radius 12, 4.77° per world unit, so a billboard at
+/// distance `d` scales by `0.0833 × size × d`.
 const SUN_SIZE: f32 = 0.0833;
 
-/// The glares sit on the reference's near sphere, `cam + 12·dir` (`[0x80c4e8]`), in world units,
-/// at the sky's far depth pin (`sky_vertex.wgsl`), drawn last ([`crate::sky_order::GLARE_BIAS`]).
+/// The glares sit on the reference's near sphere, `cam + 12·dir`, in world units, at the sky's far
+/// depth pin (`sky_vertex.wgsl`), drawn last ([`crate::sky_order::GLARE_BIAS`]).
 const GLARE_DIST: f32 = 12.0;
 
 /// The occlusion march: 48 quadratic samples to just inside the far plane, across the ADT ring and
@@ -33,11 +33,11 @@ const GLARE_DIST: f32 = 12.0;
 const FLARE_RAY_SAMPLES: u32 = 48;
 const FLARE_RAY_RANGE: f32 = 2800.0;
 
-/// The envelope's linear slew rates per second (`[glare+0x28]`/`[+0x2c]`, applied by `0x6cf5ea`):
-/// the sun rises at 4.0, the moon at 100/33, and both fall at 50/33.
-const SUN_FLARE_RISE: f32 = 4.0; // [0xce97d0]
-const MOON_FLARE_RISE: f32 = f32::from_bits(0x4041_f07c); // [0xce9720] ≈ 3.0303
-const FLARE_FALL: f32 = f32::from_bits(0x3fc1_f07c); // [0xce97d4]/[0xce9724] ≈ 1.5152
+/// The envelope's linear slew rates per second (`[glare+0x28]`/`[+0x2c]`): the sun rises at 4.0,
+/// the moon at 100/33, and both fall at 50/33.
+const SUN_FLARE_RISE: f32 = 4.0;
+const MOON_FLARE_RISE: f32 = f32::from_bits(0x4041_f07c); // ≈ 3.0303
+const FLARE_FALL: f32 = f32::from_bits(0x3fc1_f07c); // ≈ 1.5152
 
 /// A body's sprite rows; every disc and glare rides [`CelestialMaterial`].
 type BodySprites<'w, 's, T> = Query<
@@ -53,19 +53,19 @@ type BodySprites<'w, 's, T> = Query<
     Without<WorldCamera>,
 >;
 
-/// The lens flare's view lerp (`0x6cf490`), growing as the view swings onto the body.
+/// The lens flare's view lerp, growing as the view swings onto the body.
 fn view_lerp(cam_forward: Vec3, to_body: Vec3) -> f32 {
     ((cam_forward.dot(to_body) - 0.7) / 0.3).clamp(0.0, 1.0)
 }
 
 /// A smoothstep to 0 at the horizon for the glares, which skip the disc clip: our stand-in for the
-/// reference's occlusion query seeing a set body sink, a factor of the slew target (`0x6cf490`).
+/// reference's occlusion query seeing a set body sink, a factor of the slew target.
 fn horizon_gate(to_body: Vec3) -> f32 {
     let t = (to_body.y / 0.035).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
 
-/// One step of the `[glare+0x30]` slew toward `target` (`0x6cf59b`-`0x6cf5ea`).
+/// One step of the `[glare+0x30]` slew toward `target`.
 fn flare_slew(current: f32, target: f32, rise: f32, fall: f32, dt: f32) -> f32 {
     current + (target - current).clamp(-fall * dt, rise * dt)
 }
@@ -110,8 +110,8 @@ const FLARE_CELLS: u32 = FLARE_FRACTION_GRID * FLARE_FRACTION_GRID;
 const FLARE_RAYS_PER_FRAME: u32 = 2;
 
 /// The visible fraction of the body's quad against terrain, a ray grid over its extent; the
-/// reference takes `visiblePixels / projectedArea` of the disc's quad from a GPU occlusion query
-/// (`0x7e5220`), WMOs and doodads included. The tests' oracle for the live drip.
+/// reference takes `visiblePixels / projectedArea` of the disc's quad from a GPU occlusion query,
+/// WMOs and doodads included. The tests' oracle for the live drip.
 #[cfg(test)]
 fn flare_visible_fraction(
     height_under: impl Fn(Vec3) -> Option<f32>,
@@ -165,9 +165,9 @@ fn flare_mask_update(
 }
 
 /// The flare envelope, the reference's `[glare+0x30]`, seeded at 0 like its `.bss` and slewed
-/// toward dnCurve × horizon × cloud cover `occ1` (`0x6cf7b0`, `0x6cf7d0`) × the quad's visible
-/// fraction, 0 in a WMO interior; a 0 target skips the probe (`0x6cf58c`). Not modelled: the
-/// reference's `occ2` and lens-flare-slot gate `1−V`, both 1.0 outdoors without scene-light flares.
+/// toward dnCurve × horizon × cloud cover `occ1` × the quad's visible fraction, 0 in a WMO
+/// interior; a 0 target skips the probe. Not modelled: the reference's `occ2` and lens-flare-slot
+/// gate `1−V`, both 1.0 outdoors without scene-light flares.
 #[derive(SystemParam)]
 pub(super) struct FlareGate<'w, 's> {
     time: Res<'w, Time>,
@@ -176,8 +176,8 @@ pub(super) struct FlareGate<'w, 's> {
     /// The whole-map WDL heightfield, the march's far leg beyond the ADT ring.
     wdl: Option<Res<'w, WdlStreamer>>,
     camera_interior: Res<'w, CameraInteriorClaim>,
-    /// For the glare's own submersion fade: its pass (`0x6cf490` ← `0x6d48c0` ← `0x483740`) is
-    /// outside the sky pass (`0x6d4940` in `0x681070`) that `0x6812a4` skips underwater.
+    /// For the glare's own submersion fade: its pass is outside the sky pass that the reference
+    /// skips underwater.
     submerged: Res<'w, crate::liquid::SubmergedEye>,
     /// The cloud coverage `occ1` samples; as in the reference, the visible clouds draw from it too.
     clouds: Res<'w, CloudCoverage>,
@@ -189,22 +189,21 @@ pub(super) struct FlareGate<'w, 's> {
 }
 
 /// The glares' submersion fade, a 10-yard ramp on `liquidSurfaceHeight − probeZ`, reached through
-/// vtable slot 4 (`0x6cf4fe call [edx+0x10]` → `0x6cf800`, from `0x6d48cf`/`0x6d48ea`); the discs
-/// have none, as their whole sky pass is skipped.
+/// vtable slot 4; the discs have none, as their whole sky pass is skipped.
 fn submersion_glare_fade(depth: f32) -> f32 {
     1.0 - (depth * 0.1).clamp(0.0, 1.0)
 }
 
-/// The weather alpha seed (`0x6d2c74`): with `bcc > 0` the recompute writes `floor(255·(1−bcc))`
-/// over all five body alpha bytes, moon02's included; clear weather leaves them alone.
+/// The weather alpha seed: with `bcc > 0` the recompute writes `floor(255·(1−bcc))` over all five
+/// body alpha bytes, moon02's included; clear weather leaves them alone.
 fn celestial_alpha_seed(bcc: f32) -> Option<f32> {
     (bcc > 0.0).then(|| (255.0 * (1.0 - bcc.min(1.0))).floor() / 255.0)
 }
 
 impl FlareGate<'_, '_> {
     /// The envelope along `dir`, `half` the quad's angular half-size. The submersion fade is inside
-    /// the slew, so surfacing ramps the glare back in: the target `[glare+0x34]` (reset at
-    /// `0x6cf499`) takes it at `0x6cf501`/`0x6cf504`, before the limiter reads it at `0x6cf59b`.
+    /// the slew, so surfacing ramps the glare back in: the target `[glare+0x34]` takes it, before
+    /// the limiter reads it.
     fn envelope(
         &mut self,
         cam_pos: Vec3,
@@ -248,9 +247,9 @@ impl FlareGate<'_, '_> {
     }
 }
 
-/// Place the sun's disc and glare, tinted by the `0x6d2260` broadcast. The disc is the unit quad ×
-/// the day curve (`0xce8cac`: 2× at the horizon, 1× at midday); the glare is `0x6cf490`'s flare,
-/// `lerp(3, 20, f)` units at `lerp(0.5, 1, f)` × the envelope, a day flare (07:30 to 19:30).
+/// Place the sun's disc and glare, tinted by the broadcast. The disc is the unit quad × the day
+/// curve (1× at midday); the glare is the reference's flare, `lerp(3, 20, f)` units at
+/// `lerp(0.5, 1, f)` × the envelope, a day flare (07:30 to 19:30).
 pub(super) fn follow_sun(
     cam: Query<(&GlobalTransform, &Projection), With<WorldCamera>>,
     light: Res<WowLighting>,
@@ -280,9 +279,9 @@ pub(super) fn follow_sun(
     // Byte-quantized like the reference's colour lanes, so the write gates fire on visible change.
     let tint = benilla_assets::quant255(light.celestial_tint);
     let seed = celestial_alpha_seed(light.storm_bcc);
-    // The occlusion probe (`0x7e5220`) covers the disc's own quad: its angular half-size.
+    // The occlusion probe covers the disc's own quad: its angular half-size.
     let sun_half = (0.5 * SUN_SIZE * light.sun_disc_scale).atan();
-    // occ1: the cloud cover at the glare point, `cam + 12·dir` (`0x6cf7b0`), dims the flare.
+    // occ1: the cloud cover at the glare point, `cam + 12·dir`, dims the flare.
     let occ1 = occ1_sun(gate.clouds.coverage(to_light * GLARE_DIST));
     let env30 = gate.envelope(
         cam_pos,
@@ -324,11 +323,11 @@ pub(super) fn follow_sun(
             }
             SunPart::Glare => {
                 tf.translation = cam_pos + to_light * GLARE_DIST;
-                // `lerp(3, 20, f)` world units (`[0xce9838]`/`[0xce983c]`).
+                // `lerp(3, 20, f)` world units.
                 let units = 3.0 + 17.0 * f;
                 tf.scale = Vec3::splat(if hidden { 0.0 } else { units });
                 // Alpha is `lerp(0.5, 1, f)` (`[glare+0x9c]`) × the envelope × the weather seed,
-                // `0x6cf490`'s `[+0x1b] = floor(255·lerp·[+0x30])` on the seed byte.
+                // the reference's `[+0x1b] = floor(255·lerp·[+0x30])` on the seed byte.
                 let env =
                     benilla_assets::quantize((0.5 + 0.5 * f) * env30 * seed.unwrap_or(1.0), 255.0);
                 let color = Color::srgba(tint[0], tint[1], tint[2], env);
@@ -346,8 +345,8 @@ pub(super) fn follow_sun(
 }
 
 /// Place the white moon (azimuth 45°) and its glare, tinted by the same broadcast, and moon02. The
-/// disc is the unit quad × 1.75 × the size curve (`0xce8c8c`: 1.5× at the horizon, 1× overhead);
-/// the glare is 2.0 × that curve at `lerp(0.1, 1, f)` × the envelope, dark until 22:45.
+/// disc is the unit quad × 1.75 × the size curve (1× overhead); the glare is 2.0 × that curve at
+/// `lerp(0.1, 1, f)` × the envelope, dark until 22:45.
 pub(super) fn follow_moons(
     cam: Query<(&GlobalTransform, &Projection), With<WorldCamera>>,
     light: Res<WowLighting>,
@@ -373,10 +372,9 @@ pub(super) fn follow_moons(
     let env30 = if to_white == Vec3::ZERO {
         0.0
     } else {
-        // The occlusion probe (`0x7e5220`) covers the white moon's own disc quad.
+        // The occlusion probe covers the white moon's own disc quad.
         let moon_half = (0.5 * SUN_SIZE * 1.75 * light.moon_disc_scale).atan();
-        // occ1: the tent `1−|2(R−0.5)|` (`0x6cf7d0`), 0 in clear sky and under full cover,
-        // peaking on a wisp.
+        // occ1: the tent `1−|2(R−0.5)|`, 0 in clear sky and under full cover, peaking on a wisp.
         let occ1 = occ1_moon(gate.clouds.coverage(to_white * GLARE_DIST));
         gate.envelope(
             cam_pos,
@@ -425,9 +423,9 @@ pub(super) fn follow_moons(
                 );
             }
             MoonPart::Moon02 => {
-                // Base ×1.0 on its own phase clock. Its colour (`0xce98a4`) is never written, black
-                // at alpha 0, but the weather seed lands on its alpha byte, a faint dark disc
-                // (`0x6d2c74`); the span still drives its wedge in the horizon band.
+                // Base ×1.0 on its own phase clock. Its colour is never written, black at alpha 0,
+                // but the weather seed lands on its alpha byte, a faint dark disc; the span still
+                // drives its wedge in the horizon band.
                 tf.translation = cam_pos + to_moon * dist;
                 let size = if hidden {
                     0.0
@@ -448,7 +446,7 @@ pub(super) fn follow_moons(
                 );
             }
             MoonPart::Glare => {
-                // `2.0 × the size curve` (`[0xce9718]`) at both lerp ends, whatever `f`.
+                // `2.0 × the size curve` at both lerp ends, whatever `f`.
                 tf.translation = cam_pos + to_moon * GLARE_DIST;
                 let size = if hidden {
                     0.0
@@ -456,9 +454,9 @@ pub(super) fn follow_moons(
                     2.0 * light.moon_disc_scale
                 };
                 tf.scale = Vec3::splat(size);
-                // `lerp(0.1, 1, f)` (`[0xce9794]`) × the envelope, `0x6cf490`'s byte shape.
+                // `lerp(0.1, 1, f)` × the envelope, the reference's byte shape.
                 let f = view_lerp(*cam_gt.forward(), to_moon);
-                // × the weather seed on the glare's alpha byte (`0x6d2c74`).
+                // × the weather seed on the glare's alpha byte.
                 let env =
                     benilla_assets::quantize((0.1 + 0.9 * f) * env30 * seed.unwrap_or(1.0), 255.0);
                 let color = Color::srgba(tint[0], tint[1], tint[2], env);
@@ -476,7 +474,7 @@ pub(super) fn follow_moons(
 }
 
 /// Anchor the star dome and fade it by the model-global byte `trunc(curve·254 + 1)`, the draw
-/// skipped below 2 (`0x6d1b50`/`0x7e6120`), times each patch's [`StarDome::weight`].
+/// skipped below 2, times each patch's [`StarDome::weight`].
 pub(super) fn follow_stars(
     cam: Query<(&GlobalTransform, &Projection), With<WorldCamera>>,
     light: Res<WowLighting>,
@@ -681,7 +679,7 @@ mod tests {
         let half = 2.0_f32.to_radians();
         assert_eq!(flare_visible_fraction(ridge, cam, dir(12.0), half), 1.0);
         assert_eq!(flare_visible_fraction(ridge, cam, dir(1.0), half), 0.0);
-        // Straddling the crest, partly visible (`0x7e5220`: half hidden, about half the flare).
+        // Straddling the crest, partly visible (about half the flare).
         let frac = flare_visible_fraction(ridge, cam, dir(5.4), half);
         assert!(
             (0.25..=0.75).contains(&frac),

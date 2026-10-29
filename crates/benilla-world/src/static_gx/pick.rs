@@ -48,7 +48,7 @@ impl PickSource for StaticGx {
 
 impl StaticGx {
     /// The nearest drawn doodad batch the mouse trace tests along `ray`, closer than `max`: the
-    /// doodad leg of `CMap::VectorIntersectDoodadDefs` (`0x7a2760`) under the mouse flags, which
+    /// doodad leg of the map's doodad trace (`0x7a2760`) under the mouse flags, which
     /// skips culled defs (`0x1000000`) and tests the rest by their drawn geometry (mode 1).
     pub fn cast_doodad_occluders(&self, ray: Ray3d, max: f32) -> Option<f32> {
         let (origin, dir) = (ray.origin, *ray.direction);

@@ -1,10 +1,9 @@
 //! The cinematic narration: the race intro's voice-over, held by a handle so a skip cuts it off.
 //!
-//! Each race fly-by's `CinematicCamera` row names one streamed `<Race>Narration.mp3` kit (type
-//! 31); the two non-intro rows name id 0. A dropped kira handle keeps playing, so the handle is
-//! held here. The reference keeps the narration in `[0xb4e274]` (written at `0x48ef3e`) and
-//! releases it on shot advance (`0x48efef`), stop/ESC (`0x48f055`) and local abort (`0x490b8d`);
-//! this module follows [`Cinematic`]'s published shot the same way.
+//! Each race fly-by's `CinematicCamera` row names one streamed `<Race>Narration.mp3` kit (type 31);
+//! the two non-intro rows name id 0. A dropped kira handle keeps playing, so the handle is held
+//! here. The reference keeps the narration and releases it on shot advance, stop/ESC and local
+//! abort; this module follows [`Cinematic`]'s published shot the same way.
 
 use bevy::prelude::*;
 
@@ -15,8 +14,8 @@ use super::mixer::{self, StreamingSoundHandle};
 use super::{kit::SoundKits, SoundOutput};
 use crate::cinematic::Cinematic;
 
-/// A stopped narration is cut with no fade: every release of `[0xb4e274]` is plain. The 0.25 s
-/// fade the reference schedules at both edges (`0x4c0d10`, `[0x804550]`) is a screen fade.
+/// A stopped narration is cut with no fade: every release in the reference is plain. The 0.25 s
+/// fade the reference schedules at both edges is a screen fade.
 const CUT_FADE_MS: u64 = 0;
 
 /// The narration channel: which shot it belongs to, and its live handle.
@@ -111,11 +110,10 @@ fn narrate(
             return;
         }
     };
-    // No category slider applies: the narration opens (`0x48ef29` → `0x458a40` → `0x45ce60`)
-    // with flags `0x15`, and bit `0x10` skips the category multiply at `0x7a5dc0`, so its gain is
-    // the kit volume flat. Only bit `0x2` bypasses the `Sound_EnableAllSound` gate (`0x7a529c`),
-    // so "Enable Sound Effects" still silences it; that gate rides the master track, which
-    // re-reads `SoundConfig::enabled` every frame, never this starting amp.
+    // No category slider applies: the narration opens with flags `0x15`, and bit `0x10` skips the
+    // category multiply, so its gain is the kit volume flat. Only bit `0x2` bypasses the
+    // `Sound_EnableAllSound` gate, so "Enable Sound Effects" still silences it; that gate rides the
+    // master track, which re-reads `SoundConfig::enabled` every frame, never this starting amp.
     let amp = kit_vol;
     match mixer_ref.play_stream(data.volume(mixer::amp_to_db(amp))) {
         Ok(h) => {

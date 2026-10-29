@@ -1,5 +1,5 @@
-//! The `M2Sequence` bounds (box at `+0x24` and `+0x30`, radius at `+0x3c`): the sphere is the
-//! mouse pick's broad phase for the current animation (`0x7089c0`).
+//! The `M2Sequence` bounds (box at `+0x24` and `+0x30`, radius at `+0x3c`): the sphere is the mouse
+//! pick's broad phase for the current animation.
 
 use benilla_formats::{open_chain, parse_m2_animations};
 

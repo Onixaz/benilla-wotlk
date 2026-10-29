@@ -1,22 +1,22 @@
 //! The five camera views (`SetView`, `SaveView`, `ResetView`, `NextView`, `PrevView`) and
 //! `FlipCameraYaw`: the engine half of [`benilla_ui::script::CameraViewRequest`].
 //!
-//! The reference's rows are `FIRST_PERSON` and `THIRD_PERSON_A`..`D` (names at `0x84f848`); Lua
-//! `SetView(n)` takes row `n - 1`. Pitch is in degrees down-positive, the opposite of
-//! [`FlyCam::pitch`], converted only by [`super::camera_saved::pitch_from_file`]. Row 0's distance
-//! `0.0` is real first person ([`CAM_DIST_MIN`] is `0.0`).
+//! The reference's rows are `FIRST_PERSON` and `THIRD_PERSON_A`..`D`; Lua `SetView(n)` takes row
+//! `n - 1`. Pitch is in degrees down-positive, the opposite of [`FlyCam::pitch`], converted only by
+//! [`super::camera_saved::pitch_from_file`]. Row 0's distance `0.0` is real first person
+//! ([`CAM_DIST_MIN`] is `0.0`).
 //!
-//! The views persist as the reference's archived CVars (registered at `0x50b9b0`). [`CameraViews`]
-//! is seeded from them once and writes every change back, so a live `SetCVar` does not reach the
-//! slots; the reference also loads them only at camera construction (`0x50fb80`). The live view is
-//! remembered, not applied at startup: [`super::camera_saved`]'s pose lands over it, as the
-//! reference's saved pose lands over `cameraView`'s row at UI load.
+//! The views persist as the reference's archived CVars. [`CameraViews`] is seeded from them once
+//! and writes every change back, so a live `SetCVar` does not reach the slots; the reference also
+//! loads them only at camera construction. The live view is remembered, not applied at startup:
+//! [`super::camera_saved`]'s pose lands over it, as the reference's saved pose lands over
+//! `cameraView`'s row at UI load.
 //!
 //! Deviation: `ResetView` writes the CVars back to their defaults, because the CVar store is our
-//! persistence; the reference (`0x50fae0`) touches no CVar, so its reset reverts at next launch.
+//! persistence; the reference touches no CVar, so its reset reverts at next launch.
 //!
-//! `SetView` glides the distance and snaps pitch and yaw: the reference arms three glide channels
-//! (`0x513189`, `0x5131a3`, `0x5131b8`), the rig has only the distance one.
+//! `SetView` glides the distance and snaps pitch and yaw: the reference arms three glide channels,
+//! the rig has only the distance one.
 
 use bevy::prelude::*;
 
@@ -33,10 +33,10 @@ use super::Player;
 /// The reference's five views, through the UI crate's constant so the Lua range check agrees.
 const VIEW_COUNT: usize = CAMERA_VIEW_COUNT as usize;
 
-/// The live view's CVar (`0x84fdc8`), holding the internal index as `"%d"` (`0x512ef1`).
+/// The live view's CVar, holding the internal index as `"%d"`.
 pub(crate) const CVAR_ACTIVE_VIEW: &str = "cameraView";
 
-/// The fifteen saved-view CVars, `[view][field]` (distance, pitch, yaw), as `0x50b9b0` composes
+/// The fifteen saved-view CVars, `[view][field]` (distance, pitch, yaw), as the reference composes
 /// them; [`crate::cvars::REGISTERED`] must hold the same names (tested).
 pub(crate) const VIEW_CVARS: [[&str; 3]; VIEW_COUNT] = [
     ["cameraDistance", "cameraPitch", "cameraYaw"],
@@ -46,8 +46,8 @@ pub(crate) const VIEW_CVARS: [[&str; 3]; VIEW_COUNT] = [
     ["cameraDistanceD", "cameraPitchD", "cameraYawD"],
 ];
 
-/// The reference's default strings (`0x84f488`), kept as text: [`crate::cvars`]'s file is a diff
-/// against the registered default string, so a reset strips the key only by writing this text.
+/// The reference's default strings, kept as text: [`crate::cvars`]'s file is a diff against the
+/// registered default string, so a reset strips the key only by writing this text.
 pub(crate) const VIEW_DEFAULTS: [[&str; 3]; VIEW_COUNT] = [
     ["0.0", "0.0", "0.0"],
     ["5.55", "10.0", "0.0"],
@@ -56,11 +56,11 @@ pub(crate) const VIEW_DEFAULTS: [[&str; 3]; VIEW_COUNT] = [
     ["13.88", "10.0", "0.0"],
 ];
 
-/// [`CVAR_ACTIVE_VIEW`]'s default (`[0x84f484]`): internal index 1, `THIRD_PERSON_A`.
+/// [`CVAR_ACTIVE_VIEW`]'s default: internal index 1, `THIRD_PERSON_A`.
 pub(crate) const ACTIVE_VIEW_DEFAULT: &str = "1";
 
 /// One view's pose: yards, radians with [`FlyCam::pitch`]'s up-positive sign, and `yaw` as an
-/// offset from the subject's facing, which the reference re-adds every frame (`0x50f7f2`).
+/// offset from the subject's facing, which the reference re-adds every frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct ViewPose {
     pub(crate) distance: f32,
@@ -70,8 +70,8 @@ pub(crate) struct ViewPose {
 
 impl ViewPose {
     /// From the CVar units (yards, degrees down-positive, degrees), clamped to the rig's zoom range
-    /// and ±89° pitch (reference validators: `[0, 50]` at `0x50b310`, ±89° at `0x50b380`). Yaw is
-    /// wrapped, as the reference validates `[0, 360]` (`0x50b3c0`) but `SaveView` writes an offset.
+    /// and ±89° pitch (reference validators: `[0, 50]`). Yaw is wrapped, as the reference validates
+    /// `[0, 360]` but `SaveView` writes an offset.
     fn from_reference(distance: f32, pitch_deg: f32, yaw_deg: f32) -> Self {
         Self {
             distance: distance.clamp(CAM_DIST_MIN, CAM_DIST_MAX),
@@ -80,7 +80,7 @@ impl ViewPose {
         }
     }
 
-    /// The three CVar strings, in the reference's `"%f"` (`0x50f9f3`, format `0x835160`).
+    /// The three CVar strings, in the reference's `"%f"`.
     fn to_reference(self) -> [String; 3] {
         [
             format!("{:.6}", self.distance),
@@ -126,25 +126,25 @@ impl CameraViews {
         self.views[view]
     }
 
-    /// `SetView`, and whether the index moved: the gate on writing the CVar (`0x512ee6`).
+    /// `SetView`, and whether the index moved: the gate on writing the CVar.
     fn set(&mut self, view: usize) -> (ViewPose, bool) {
         let moved = self.current != view;
         self.current = view;
         (self.views[view], moved)
     }
 
-    /// `SaveView`: the reference stores the camera's target fields, not the live ones (`0x50fa30`).
+    /// `SaveView`: the reference stores the camera's target fields, not the live ones.
     fn save(&mut self, view: usize, pose: ViewPose) {
         self.views[view] = pose;
     }
 
-    /// `ResetView`; `true` when `view` is live, which the reference re-applies (`0x50fb5b`).
+    /// `ResetView`; `true` when `view` is live, which the reference re-applies.
     fn reset(&mut self, view: usize) -> bool {
         self.views[view] = ViewPose::shipped(view);
         self.current == view
     }
 
-    /// `NextView`/`PrevView`, with no wrap at either end (`0x50faa0`, `0x50fac0`).
+    /// `NextView`/`PrevView`, with no wrap at either end.
     fn step(&self, forward: bool) -> Option<usize> {
         if forward {
             (self.current + 1 < VIEW_COUNT).then(|| self.current + 1)
@@ -184,9 +184,9 @@ fn load_saved_views(cvars: Res<crate::cvars::Cvars>, mut views: ResMut<CameraVie
     }
 }
 
-/// The barber chair's view (`0x603900`, view 7): level, facing the character from `distance`;
-/// the close goes back to the view the chair left (`0x52ea2e`). Not one of the five saved
-/// views, so it writes no CVar.
+/// The barber chair's view (view 7): level, facing the character from `distance`; the close goes
+/// back to the view the chair left (`0x52ea2e`). Not one of the five saved views, so it writes no
+/// CVar.
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub(crate) enum BarberView {
     Enter { distance: f32 },
@@ -244,7 +244,7 @@ fn drain_view_requests(
         return;
     }
     let Ok(mut cam) = targets.cam.single_mut() else {
-        return; // no camera: a silent drop, as the reference's `0x4818f0` miss
+        return; // no camera: a silent drop, as on the reference's camera-lookup miss
     };
     let face_yaw = targets.player.facing();
     // Written to the CVars after the batch: the slots a save or reset moved, and the live index.
@@ -301,10 +301,9 @@ fn drain_view_requests(
                 }
             }
             CameraViewRequest::FlipYaw(degrees) => {
-                // `cam[+0x100] += arg * pi/180` (`0x50b6a0`). The reference keeps the flip in its
-                // own yaw field, added outside the follow channel (`0x50f7de`), so it survives
-                // re-centring; the rig has one yaw, so auto-follow reels the flip back in on Smart
-                // and Always.
+                // `cam[+0x100] += arg * pi/180`. The reference keeps the flip in its own yaw field,
+                // added outside the follow channel, so it survives re-centring; the rig has one
+                // yaw, so auto-follow reels the flip back in on Smart and Always.
                 cam.yaw = wrap_pi(cam.yaw + degrees.to_radians());
             }
         }
@@ -367,7 +366,7 @@ mod tests {
 
     #[test]
     fn each_shipped_view_lands_its_recorded_pose() {
-        // (Lua arg, distance yd, pitch in degrees down-positive), from `0x84f488`.
+        // (Lua arg, distance yd, pitch in degrees down-positive).
         let table = [
             (1, 0.0_f32, 0.0_f32),
             (2, 5.55, 10.0),
@@ -440,8 +439,7 @@ mod tests {
         assert!(views.reset(3));
     }
 
-    /// The engine takes `1..=5` (`0x50b5d2`, `0x50b626`, `0x50b666`); the stock
-    /// `SAVEVIEW`/`RESETVIEW` bindings start at 2.
+    /// The engine takes `1..=5`; the stock `SAVEVIEW`/`RESETVIEW` bindings start at 2.
     #[test]
     fn view_one_is_saveable_and_resettable() {
         let mut views = CameraViews::default();

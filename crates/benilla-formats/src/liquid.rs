@@ -15,23 +15,22 @@ use crate::terrain::{snap_to_lattice, UNIT_SIZE};
 pub enum LiquidKind {
     /// Still water, `XTextures\river\lake_a.*` (30 frames): lakes, ponds, slow rivers, WMO canals.
     Still,
-    /// Rapids, `XTextures\river\fast_a.*` (16 frames), nibble 8 in the name table `0x86a000`. No
-    /// shipped MLIQ cell carries 8, and the ADT path cannot reach it.
+    /// Rapids, `XTextures\river\fast_a.*` (16 frames), nibble 8 in the name table. No shipped MLIQ
+    /// cell carries 8, and the ADT path cannot reach it.
     Rapids,
     /// Ocean, `XTextures\ocean\ocean_h.*` (30 frames).
     Ocean,
     /// Magma, `XTextures\lava\lava.*`: opaque and unlit, but fogged like every liquid batch, since
-    /// no liquid setup overrides the device's fog-on default (`0x593d18`). Its ADT UVs are
-    /// authored per vertex under vertex format 1.
+    /// no liquid setup overrides the device's fog-on default. Its ADT UVs are authored per vertex
+    /// under vertex format 1.
     Magma,
-    /// Slime, `XTextures\slime\slime.*`: magma's render path with its own texture (one handler,
-    /// `0x6b68f0`).
+    /// Slime, `XTextures\slime\slime.*`: magma's render path with its own texture (one handler).
     Slime,
 }
 
 impl LiquidKind {
-    /// The kind a WMO tile nibble selects: it indexes the animated-texture name table `0x86a000`
-    /// directly, with 4, 6 and 7 as variants of 0, 2 and 3.
+    /// The kind a WMO tile nibble selects: it indexes the animated-texture name table directly,
+    /// with 4, 6 and 7 as variants of 0, 2 and 3.
     pub fn from_nibble(nibble: u8) -> Option<LiquidKind> {
         match nibble & 0xf {
             0 | 4 => Some(LiquidKind::Still),
@@ -44,16 +43,16 @@ impl LiquidKind {
     }
 
     /// Whether this kind is opaque and unlit, its texture the body colour (magma, slime); water and
-    /// ocean take the `ocean0_s.bls` depth-swatch path. Unlit is not unfogged (`0x593d18`).
+    /// ocean take the `ocean0_s.bls` depth-swatch path. Unlit is not unfogged.
     pub fn is_fullbright(self) -> bool {
         matches!(self, LiquidKind::Magma | LiquidKind::Slime)
     }
 }
 
-/// One liquid surface, an MCLQ block, an MH2O instance or a WMO group's MLIQ: a regular vertex
-/// grid in raw WoW coords and the triangles over its wet cells. Queries read the grid, as the
-/// reference samples liquid height bilinearly over the containing cell's corners (`0x7ce0b0`).
-/// Drawn two-sided, as every reference liquid pass turns culling off (`0x6851da`, `0x6b6302`).
+/// One liquid surface, an MCLQ block, an MH2O instance or a WMO group's MLIQ: a regular vertex grid
+/// in raw WoW coords and the triangles over its wet cells. Queries read the grid, as the reference
+/// samples liquid height bilinearly over the containing cell's corners (`0x7ce0b0`). Drawn
+/// two-sided, as every reference liquid pass turns culling off.
 #[derive(Debug, Clone)]
 pub struct LiquidMesh {
     /// Vertex counts `[cols, rows]`, cols fastest: `[9, 9]` for MCLQ, `[width+1, height+1]` for
@@ -72,9 +71,9 @@ pub struct LiquidMesh {
     /// Texture UVs: generated at ¼ per cell, world-continuous (WMO liquid in model space, same
     /// period); authored per vertex under vertex format 1 (`u = s · 3/256`, `0x7ce390`).
     pub uvs: Vec<[f32; 2]>,
-    /// Per-vertex swatch coord V (0..1) from the depth byte through the type's depth table
-    /// (`0x79e3c0`). The reference indexes the depth swatch with this one V for both the body
-    /// colour and the opacity ramp. 0 where the type reads no depth.
+    /// Per-vertex swatch coord V (0..1) from the depth byte through the type's depth table. The
+    /// reference indexes the depth swatch with this one V for both the body colour and the opacity
+    /// ramp. 0 where the type reads no depth.
     pub depths: Vec<f32>,
     /// Triangle indices, 6 per wet cell in row-major order, derived from [`Self::wet`].
     pub indices: Vec<u32>,

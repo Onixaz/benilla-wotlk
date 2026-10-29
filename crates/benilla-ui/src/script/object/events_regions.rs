@@ -19,7 +19,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, event): (Table, String)| {
             let h = frame_handle_of(lua, &this)?;
             let mut model = crate::script::model_mut_of(lua);
-            // A name the VM's event table lacks registers nothing and raises nothing (`0x702140`).
+            // A name the VM's event table lacks registers nothing and raises nothing.
             let Some(event) = model.vm.event_key(&event).map(str::to_string) else {
                 return Ok(());
             };
@@ -38,7 +38,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
         lua.create_function(|lua, (this, event): (Table, String)| {
             let h = frame_handle_of(lua, &this)?;
             let mut model = crate::script::model_mut_of(lua);
-            // Matched as `RegisterEvent` matches (`0x702280`).
+            // Matched as `RegisterEvent` matches.
             let Some(event) = model.vm.event_key(&event).map(str::to_string) else {
                 return Ok(());
             };
@@ -51,7 +51,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // `RegisterAllEvents()` (`0x774c20`): the frame's `OnEvent` receives every event until
+    // `RegisterAllEvents()`: the frame's `OnEvent` receives every event until
     // `UnregisterAllEvents`, the only way out. A flag (`Model::all_event_frames`), not a name list.
     m.set(
         "RegisterAllEvents",
@@ -95,7 +95,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
     // `HasScript(name)`: 1 if the widget can carry that script kind, else nil, whether or not one
     // is set. Answered from the flat `SCRIPT_KINDS`, so another type's kind reads 1 too, where the
-    // reference's tables are per widget type (base `0x76a0d0`; a plain Frame has no `OnClick`).
+    // reference's tables are per widget type (a plain Frame has no `OnClick`).
     m.set(
         "HasScript",
         lua.create_function(|lua, (_this, name): (Table, String)| {
@@ -104,8 +104,8 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             ))
         })?,
     )?;
-    // `RegisterForDrag(button, ...)` (`0x776d60`): on the shared table, since any frame can be a
-    // drag source; each call replaces the set (none clears it), matched case-insensitively.
+    // `RegisterForDrag(button, ...)`: on the shared table, since any frame can be a drag source;
+    // each call replaces the set (none clears it), matched case-insensitively.
     m.set(
         "RegisterForDrag",
         lua.create_function(|lua, (this, args): (Table, MultiValue)| {
@@ -121,11 +121,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
-    // Regions
-    // `CreateTexture(name, layer, inherits)` (`0x773a20`).
+    // Regions `CreateTexture(name, layer, inherits)`.
     m.set(
-        // `name` and `layer` pass `lua_isstring` (`0x6f3510`, then `0x6f3690`) with the result
-        // unchecked, so a table is absent and a number is stringified: no argument type raises.
+        // `name` and `layer` pass `lua_isstring` with the result unchecked, so a table is absent
+        // and a number is stringified: no argument type raises.
         "CreateTexture",
         lua.create_function(
             |lua, (this, name, layer, inherits): (Table, Value, Value, Value)| {
@@ -141,10 +140,10 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
     )?;
     // ── Title region: CreateTitleRegion / GetTitleRegion ──
     //
-    // `CreateTitleRegion` (`0x773910`) reads no argument and keeps one region per frame
-    // (`CSimpleFrame+0xA8`): a second call clears that region's anchors and returns it, and a new
-    // one has none. The reference's region answers only the Region-map methods (`0x7a2ea0`); ours
-    // shares the region metatable, so it also accepts the texture methods, inertly.
+    // `CreateTitleRegion` reads no argument and keeps one region per frame (frame `+0xA8`): a
+    // second call clears that region's anchors and returns it, and a new one has none. The
+    // reference's region answers only the Region-map methods; ours shares the region metatable, so
+    // it also accepts the texture methods, inertly.
     m.set(
         "CreateTitleRegion",
         lua.create_function(|lua, this: Table| {
@@ -195,13 +194,13 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             };
             match found {
                 Some(id) => Ok(Value::Table(region_wrapper(lua, id)?)),
-                // One nil value (`0x773820`), where `GetBackdrop` answers none.
+                // One nil value, where `GetBackdrop` answers none.
                 None => Ok(Value::Nil),
             }
         })?,
     )?;
 
-    // `CreateFontString(name, layer, inherits)` (`0x773c30`), with the same argument rules.
+    // `CreateFontString(name, layer, inherits)`, with the same argument rules.
     m.set(
         "CreateFontString",
         lua.create_function(
@@ -302,9 +301,8 @@ fn get_script(lua: &Lua, this: &Table, name: &str) -> mlua::Result<Value> {
     }
 }
 
-/// Apply the `inherits` argument: the font-object registry first (`0x773d39`), then the template
-/// registry (`0x773d47`), whose node loads into the region; a name in neither raises
-/// (`0x87957c` / `0x879544`).
+/// Apply the `inherits` argument: the font-object registry first, then the template registry, whose
+/// node loads into the region; a name in neither raises.
 fn apply_region_inherits(lua: &Lua, wrapper: &Table, tag: &str, from: &str) -> mlua::Result<()> {
     use mlua::ObjectLike;
     // Through `SetFontObject`, the binding the XML `inherits=` path uses.
@@ -331,9 +329,9 @@ fn apply_region_inherits(lua: &Lua, wrapper: &Table, tag: &str, from: &str) -> m
     )))
 }
 
-/// The region constructors' strict `lua_type == LUA_TSTRING` gate on `inherits` (`0x773d28`
-/// `CreateFontString`, `0x773b06` `CreateTexture`): unlike [`optional_string`], a number is
-/// ignored, where `CreateFrame` stringifies it first and looks it up as a name.
+/// The region constructors' strict `lua_type == LUA_TSTRING` gate on `inherits`
+/// (`CreateFontString`, `CreateTexture`): unlike [`optional_string`], a number is ignored, where
+/// `CreateFrame` stringifies it first and looks it up as a name.
 fn strict_string_arg(v: &Value) -> Option<String> {
     match v {
         Value::String(s) => s.to_str().ok().map(|s| s.to_owned()),
@@ -367,8 +365,7 @@ fn create_region(
     let wrapper = region_wrapper(lua, id)?;
     if let Some(name) = name {
         // A leading `$parent` expands as in XML, its walk to a named frame starting at the owner:
-        // both bindings name the region through `CScriptRegion::SetName 0x76c650` (`0x773ba1`,
-        // `0x773dc4`).
+        // both bindings name the region through the script region's name set.
         let name = {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()

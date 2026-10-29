@@ -54,8 +54,7 @@ pub(crate) fn languages_schema() -> Schema {
 /// Horde's. Field 8 beside it is the creature type, 7 on every playable race.
 const CHR_RACES_BASE_LANGUAGE: usize = 7;
 
-/// `Languages.dbc` in row order, the order `GetNumLanguages` and `GetLanguageByIndex` count in
-/// (`0x49fb30`, `0x49fbe0`).
+/// `Languages.dbc` in row order, the order `GetNumLanguages` and `GetLanguageByIndex` count.
 #[derive(Debug, Default, Clone)]
 pub struct Languages(Vec<(u32, [Option<String>; LOCALES])>);
 
@@ -140,9 +139,9 @@ pub fn load_default_languages(chain: &mut Chain) -> Result<DefaultLanguages> {
 }
 
 /// `LanguageWords.dbc`, the fake words the client substitutes, word for word, when it renders
-/// speech in a language the listener's character does not know. The wire carries plaintext
-/// (vmangos `ChatHandler.cpp` never rewrites it): the garble is the client's, `0x49b560`, called
-/// from the chat display chokepoint `0x49a870` at `0x49aa7c`.
+/// speech in a language the listener's character does not know. The wire carries plaintext (vmangos
+/// `ChatHandler.cpp` never rewrites it): the garble is the client's, called from the chat display
+/// chokepoint.
 #[derive(Debug, Default, Clone)]
 pub struct LanguageWords(HashMap<u32, LanguagePool>);
 
@@ -151,8 +150,8 @@ pub struct LanguageWords(HashMap<u32, LanguagePool>);
 pub struct LanguagePool {
     words: Vec<String>,
     /// `by_len[n]`: indices of the words exactly `n` bytes long; slot 0 is empty. Bytes, as the
-    /// reference's index build takes `strlen` (`0x4982c0`, `0x64a6f0`), and the source word it is
-    /// matched against is arbitrary player text.
+    /// reference's index build takes `strlen`, and the source word it is matched against is
+    /// arbitrary player text.
     by_len: Vec<Vec<u32>>,
 }
 
@@ -183,8 +182,8 @@ impl LanguagePool {
     }
 
     /// The reference's substitute for a word of `len` bytes: `words[hash % count]` over that
-    /// length's words in row order (`0x49b885`). `None` means no word that long, and the caller
-    /// steps the length down and asks again.
+    /// length's words in row order. `None` means no word that long, and the caller steps the length
+    /// down and asks again.
     pub fn nth_of_len(&self, len: usize, hash: u32) -> Option<&String> {
         let bucket = self.by_len.get(len)?;
         let count = u32::try_from(bucket.len()).ok()?;
@@ -197,8 +196,8 @@ impl LanguagePool {
 }
 
 impl LanguageWords {
-    /// A `Languages.dbc` id's pool. Universal (0) and `LANG_ADDON` (`-1`, tested at `0x49a89b`)
-    /// have none and are never garbled.
+    /// A `Languages.dbc` id's pool. Universal (0) and `LANG_ADDON` (`-1`) have none and are never
+    /// garbled.
     pub fn pool(&self, language: u32) -> Option<&LanguagePool> {
         self.0.get(&language)
     }

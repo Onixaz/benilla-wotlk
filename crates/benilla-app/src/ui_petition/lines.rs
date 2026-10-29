@@ -1,7 +1,7 @@
-//! The charter session's system lines, by message-catalog key. The catalog (`0xb4b498`, in
-//! [`benilla_ui::messages`]) sends the success ids `0x141`-`0x144` to chat as `CHAT_MSG_SYSTEM`
-//! and the refusals `0x145`-`0x149` and `0x7c` to the red `UI_ERROR_MESSAGE` line, a split the
-//! key names do not predict. The sink also plays the sound a row names (`0x142`-`0x149` do).
+//! The charter session's system lines, by message-catalog key. The catalog (in
+//! [`benilla_ui::messages`]) sends the success ids `0x141`-`0x144` to chat as `CHAT_MSG_SYSTEM` and
+//! the refusals `0x145`-`0x149` and `0x7c` to the red `UI_ERROR_MESSAGE` line, a split the key
+//! names do not predict. The sink also plays the sound a row names (`0x142`-`0x149` do).
 
 use benilla_protocol::messages::petition_result;
 
@@ -12,8 +12,8 @@ use crate::ui_action::UiError;
 /// because the sink reads the row's sound too.
 pub(super) type Line = UiError;
 
-/// The line `SMSG_PETITION_SIGN_RESULTS` prints when we signed (the switch at `0x5eeff5`); the
-/// owner's copy never reads the result ([`signed_by_other`]).
+/// The line `SMSG_PETITION_SIGN_RESULTS` prints when we signed; the owner's copy never reads the
+/// result ([`signed_by_other`]).
 pub(super) fn my_sign_line(result: u32) -> Option<Line> {
     Some(UiError::key(match result {
         petition_result::OK => "ERR_PETITION_SIGNED",
@@ -21,13 +21,13 @@ pub(super) fn my_sign_line(result: u32) -> Option<Line> {
         petition_result::ALREADY_IN_GUILD => "ERR_PETITION_IN_GUILD",
         petition_result::CANT_SIGN_OWN => "ERR_PETITION_CREATOR",
         petition_result::NOT_SERVER => "ERR_PETITION_NOT_SAME_SERVER",
-        // `NEED_MORE` (4) and >= 6: the default arm, debug console only (`0x63cb50`).
+        // `NEED_MORE` (4) and >= 6: the default arm, debug console only.
         _ => return None,
     }))
 }
 
-/// The owner's chat line when another player signs, only when the signer's name is already cached
-/// (`0x4f42f6`); on a miss the client bumps its pending-name counter and says nothing.
+/// The owner's chat line when another player signs, only when the signer's name is already cached;
+/// on a miss the client bumps its pending-name counter and says nothing.
 pub(super) fn signed_by_other(name: &str) -> Line {
     UiError::s("ERR_PETITION_SIGNED_S", name)
 }
@@ -43,25 +43,25 @@ pub(super) fn turn_in_line(result: u32) -> Option<Line> {
 }
 
 /// The owner's chat line for an inbound `MSG_PETITION_DECLINE`, only if the decliner's name is
-/// already cached, with no query or retry (`0x5ef12a`/`0x5ef139`).
+/// already cached, with no query or retry.
 pub(super) fn declined_line(name: &str) -> Line {
     UiError::s("ERR_PETITION_DECLINED_S", name)
 }
 
-/// The echo for a charter we offered, printed on the send without confirmation (`0x4f48fa`);
-/// the server answers only the target.
+/// The echo for a charter we offered, printed on the send without confirmation; the server answers
+/// only the target.
 pub(super) fn offered_line(name: &str) -> Line {
     UiError::s("ERR_PETITION_OFFERED_S", name)
 }
 
-/// Offering a charter to yourself: guard 6 of `OfferPetition`'s eight (`0x4f4839`), the same red
-/// line signing your own charter gets.
+/// Offering a charter to yourself: guard 6 of `OfferPetition`'s eight, the same red line signing
+/// your own charter gets.
 pub(super) fn self_offer_line() -> Line {
     UiError::key("ERR_PETITION_CREATOR")
 }
 
-/// `TurnInGuildCharter()` found no charter in the bags: a red line and no packet (`0x5ef49a`
-/// emits id `0x7c`, kind 2).
+/// `TurnInGuildCharter()` found no charter in the bags: a red line and no packet (emits id `0x7c`,
+/// kind 2).
 pub(super) fn no_charter_line() -> Line {
     UiError::key("ERR_NO_GUILD_CHARTER")
 }
@@ -72,7 +72,7 @@ pub(super) fn no_arena_charter_line() -> Line {
 }
 
 /// A name the client's own validator refused ([`benilla_ui::script::validate_guild_name`]): the
-/// `ERR_NAME_*` row `DisplayNameError 0x5218c0` picked, a red line.
+/// `ERR_NAME_*` row the name-error display (`0x5218c0`) picked, a red line.
 pub(super) fn name_refused_line(key: &'static str) -> Line {
     UiError::key(key)
 }
@@ -196,7 +196,7 @@ mod tests {
         }
     }
 
-    /// Every `DisplayNameError` row is `kind 2`, the red `UI_ERROR_MESSAGE`.
+    /// Every name-error display row is `kind 2`, the red `UI_ERROR_MESSAGE`.
     #[test]
     fn refused_names_show_as_red_lines() {
         assert_eq!(

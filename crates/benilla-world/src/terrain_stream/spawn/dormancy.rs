@@ -1,10 +1,10 @@
 //! Dormant placements: a world-static M2 placement past its fade band draws, ticks and animates
-//! nothing, as the reference admits a doodad to the frame's worklist only inside its fade
-//! distance (`0x683f80`). Its static-pass and merged batches, its collision hull, its lights and
-//! an interior prop's probe slot stay; its entity phase (parts, cards, anim host and anchors,
-//! emitters, ribbons) exists only while the camera is within the band's far edge, so a city's
-//! thousands of out-of-range placements are records rather than rows in every per-entity pass.
-//! `WOW_DORMANT=0` spawns every placement whole, as before.
+//! nothing, as the reference admits a doodad to the frame's worklist only inside its fade distance.
+//! Its static-pass and merged batches, its collision hull, its lights and an interior prop's probe
+//! slot stay; its entity phase (parts, cards, anim host and anchors, emitters, ribbons) exists only
+//! while the camera is within the band's far edge, so a city's thousands of out-of-range placements
+//! are records rather than rows in every per-entity pass. `WOW_DORMANT=0` spawns every placement
+//! whole, as before.
 //!
 //! Deviation: a woken placement's animation and particles start fresh, where the reference's
 //! frozen ones resume; the restart falls at the far edge of its fade band, where it is faint.

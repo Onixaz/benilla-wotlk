@@ -1,6 +1,6 @@
-//! The area blend applies spheres farthest-first and carries the water swatch. `0x6d2d00` heaps
+//! The area blend applies spheres farthest-first and carries the water swatch. The reference heaps
 //! every `Light.dbc` row within its outer radius by distance and drains the farthest first, so the
-//! nearest merges last and dominates. `0x6d30e0` merges all 18 colour slots per light, the water
+//! nearest merges last and dominates. Each merge takes all 18 colour slots of its light, the water
 //! swatch among them (IntBand rows 14-17, its step-9 loop `+0x34..+0x40`): no single-sphere pick.
 
 use benilla_formats::{Chain, LightCatalog, Submersion};

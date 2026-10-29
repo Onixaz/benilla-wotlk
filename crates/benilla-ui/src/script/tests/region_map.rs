@@ -111,8 +111,8 @@ fn get_num_points_answers_on_a_frame_too() {
     assert_eq!(s.eval::<i64>("return Host:GetNumPoints()").unwrap(), 0);
 }
 
-/// Frame, Texture and FontString each register their own copy of these six (Texture `SetAlpha`
-/// `0x79b580`, FontString's `0x79cb70`, Frame's `0x774e90`), so `WorldFrame.Show(tex)` fails.
+/// Frame, Texture and FontString each register their own copy of these six (Texture `SetAlpha`), so
+/// `WorldFrame.Show(tex)` fails.
 #[test]
 fn the_six_look_alikes_are_not_shared() {
     let s = vm();

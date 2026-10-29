@@ -76,8 +76,8 @@ pub(super) fn run(
     match drv.mode {
         Mode::Entering(sp) => {
             // A swim re-latch lets JumpStart play out and the swim gait resume at its end, as the
-            // reference plays it; the byte reading, a cut where `0x5fd8e8` releases, does not
-            // reproduce that. A ground landing, a water exit or a new Special still cuts.
+            // reference plays it; the byte reading, a cut where the airborne freeze releases, does
+            // not reproduce that. A ground landing, a water exit or a new Special still cuts.
             let swim_relatch_hold = sp == select::Special::Jump
                 && special.is_none()
                 && mv.flags & move_flags::SWIMMING != 0
@@ -184,8 +184,8 @@ pub(super) fn run(
         Mode::Swing { id, under } => {
             if special != under {
                 // The replaced state changed: the next event play (a Special entry, the latch's
-                // Fall, the `0x602c60` land pick) takes bone 0 plainly, but a live cast or combat
-                // clip facing a locomotion request (37, 39/187) first transplants to the key-bone.
+                // Fall) takes bone 0 plainly, but a live cast or combat clip facing a locomotion
+                // request (37, 39/187) first transplants to the key-bone.
                 let incoming_locomotion = match (under, special) {
                     (_, Some(next)) => select::is_locomotion(next.enter()),
                     (Some(select::Special::Jump | select::Special::Fall), None) => {
@@ -228,9 +228,9 @@ pub(super) fn run(
                     Mode::Gait // unreachable: special != under with under None ⇒ special Some
                 };
             } else if matches!(under, Some(select::Special::Jump | select::Special::Fall)) {
-                // The airborne freeze (`0x5fd8e8`): nothing re-picks bone 0 mid-arc and a finished
-                // clip clamps (`0x7145db`). Fall plays once, at its latch (`0x61a9eb`), never per
-                // tick, so a clip armed after the latch holds until landing.
+                // The airborne freeze: nothing re-picks bone 0 mid-arc and a finished clip clamps.
+                // Fall plays once, at its latch, never per tick, so a clip armed after the latch
+                // holds until landing.
             } else if let Some(sp) = under {
                 // A pose under the one-shot: on finish, straight back to its loop, never the enter.
                 if oneshot_finished(player, anims, id, catalog) {
@@ -251,17 +251,16 @@ pub(super) fn run(
                 }
             } else if oneshot_finished(player, anims, id, catalog) || mv.flags != drv.gait_flags {
                 // A finished one-shot recomputes the base, fire clips too: bow ids reach the
-                // dispatcher `0x5fc3f0` through its deferred site (`0x7194f5`, `0x7074b0`), and
-                // 46/49/107 land on slot 22, `RecomputeBaseAnim(-1)`, so a shooter re-pulls.
-                // A movement-flag edge re-arms the base over any one-shot; steady flags let it
-                // play out. The edge is against `gait_flags`, what the base was armed for, as the
-                // reference keeps no per-one-shot latch.
+                // dispatcher through its deferred site, and 46/49/107 land on slot 22, a base
+                // recompute with no id, so a shooter re-pulls. A movement-flag edge re-arms the
+                // base over any one-shot; steady flags let it play out. The edge is against
+                // `gait_flags`, what the base was armed for, as the reference keeps no per-one-shot
+                // latch.
                 if mv.flags != drv.gait_flags {
                     // The re-arm is a normal play, so the deferred-combat cache clears with it.
                     drv.deferred = None;
-                    // Only a locomotion re-arm moves a live cast or combat clip to the key-bone
-                    // (`0x5fee80` on the requested id, `0x5fe912`); Stand overwrites it, and a
-                    // finished clip reads as id −1 (`0x5fe1f0`), so it never moves.
+                    // Only a locomotion re-arm moves a live cast or combat clip to the key-bone;
+                    // Stand overwrites it, and a finished clip reads as id −1, so it never moves.
                     if select::gait_is_locomotion(&mv, walk) {
                         transplant_up(drv, player, tr, anims, entity, id);
                     }
@@ -285,21 +284,21 @@ pub(super) fn run(
                 );
                 drv.gait = None;
             } else if airborne_frozen && drv.gait.is_some_and(|g| g != DEATH) {
-                // The step-off arc's airborne freeze, `0x5fd8e8` right after the death legs:
+                // The step-off arc's airborne freeze, right after the death legs:
                 // `FALLING && (FALLINGFAR || vz ≠ 0)` holds the takeoff gait against every pin
                 // until touchdown. Death is excluded: a mid-air revive must re-select.
             } else {
-                // The ordinary pick, which a step-off landing also takes: the land dispatcher
-                // (`0x602c60`) plays nothing for an unlatched arc, so an unchanged target keeps its
-                // clip (a re-pick would restart it) and changed keys cross-fade. A fresh walk-off's
-                // vz == 0 substep, which the freeze gate leaves uncovered, takes this pick too.
+                // The ordinary pick, which a step-off landing also takes: the land dispatcher plays
+                // nothing for an unlatched arc, so an unchanged target keeps its clip (a re-pick
+                // would restart it) and changed keys cross-fade. A fresh walk-off's vz == 0
+                // substep, which the freeze gate leaves uncovered, takes this pick too.
                 //
-                // Ready pick (`0x5fcdc0`, visFlag 0): a disarmed unit stands in ReadyUnarmed(25).
+                // Ready pick (visFlag 0): a disarmed unit stands in ReadyUnarmed(25).
                 let ready =
                     (engaged && !moving).then(|| ready_anim(wielded.and_then(|w| w.armed_main())));
-                // The ranged idle (`0x5fd460`), entered on the drawn ranged sheath and the local
-                // auto-repeat bit `0x200` (`select::ranged_idle_gate`): the Load plays once and its
-                // completion arms the Hold, 105/106/112 → 109/110/111.
+                // The ranged idle, entered on the drawn ranged sheath and the local auto-repeat bit
+                // `0x200` (`select::ranged_idle_gate`): the Load plays once and its completion arms
+                // the Hold, 105/106/112 → 109/110/111.
                 let ranged_load =
                     (!moving && select::ranged_idle_gate(auto_repeat, drv.sheath_cur)).then(|| {
                         let load = select::ranged_load_anim(wielded.and_then(|w| w.ranged));
@@ -315,9 +314,9 @@ pub(super) fn run(
                             load
                         }
                     });
-                // The looping state-emote idle (`UNIT_NPC_EMOTESTATE`: `/dance`, NPC work loops, and
-                // `/stand`'s state 26) is the resolver `0x5fd770`: it claims the base ahead of the
-                // idle fallbacks (swim, prowl, Stand) and behind everything else in the chain.
+                // The looping state-emote idle (`UNIT_NPC_EMOTESTATE`: `/dance`, NPC work loops,
+                // and `/stand`'s state 26) is the resolver: it claims the base ahead of the idle
+                // fallbacks (swim, prowl, Stand) and behind everything else in the chain.
                 let state_anim = store.and_then(|s| {
                     let state = s.0.unit_emote_state();
                     emote_sounds.and_then(|e| {
@@ -331,7 +330,7 @@ pub(super) fn run(
                 });
                 let base = base_candidates(&mv, walk, ready, ranged_load, state_anim);
                 let cands = base.as_slice();
-                // The stationary cast/channel pin (`[CGUnit+0xb4]`), full-body over the Ready and
+                // The stationary cast/channel pin (`[unit+0xb4]`), full-body over the Ready and
                 // state-emote idles; stationary is `[9e8] & 0x20000f`, never the turn bits, so a
                 // turning caster keeps it and a moving one gets the masked hold instead.
                 let hold_cands;
@@ -344,8 +343,8 @@ pub(super) fn run(
                 };
                 // The loot kneel (Loot 50) of a stationary, unmounted unit with the trigger up,
                 // over the cast pin, the Ready and ranged idles, the chair loops and the state
-                // emote: `0x5fd8b0` tries locomotion, then loot (`0x5fd260`), then the cast/channel
-                // pin (`0x5fd2e0`) and the Ready idle (`0x5fd360`) before the rest.
+                // emote: the reference's base selector tries locomotion, then loot, then the
+                // cast/channel pin and the Ready idle before the rest.
                 let loot_cands;
                 let cands: &[u16] = if looting {
                     loot_cands = [select::LOOT, STAND];
@@ -354,8 +353,8 @@ pub(super) fn run(
                     cands
                 };
                 // The mounted pin: the rider holds Mount(91), the mount plays the locomotion. The
-                // client arms 91 outside this chain, at attach (`0x607b44`) and on every play
-                // (`0x5fe803`–`0x5fe816`); the mount edge arms the attach over a live one-shot.
+                // client arms 91 outside this chain, at attach and on every play; the mount edge
+                // arms the attach over a live one-shot.
                 let mount_cands;
                 let cands: &[u16] = if mounted {
                     mount_cands = [select::MOUNT, STAND];
@@ -364,11 +363,11 @@ pub(super) fn run(
                     cands
                 };
                 let target = cands[0];
-                // A turn shuffle ends at its own clip window, not with the turn: `0x607ed0`'s
-                // per-frame tail can start one but not stop it (`0x5fce30` needs a turn bit, so
-                // `0x6084da je` skips), and the completion callback (`0x60781b`) ends it, so a
-                // step lasts `ceil(t_turn / span) · span`. Only against Stand: other targets
-                // arrive through `0x5fd9e0`'s edge sites at once.
+                // A turn shuffle ends at its own clip window, not with the turn: the reference's
+                // per-frame tail can start one but not stop it (stopping needs a turn bit), and the
+                // completion callback ends it, so a step lasts `ceil(t_turn / span) · span`. Only
+                // against Stand: other targets arrive through the base recompute's edge sites at
+                // once.
                 let target = match drv.gait {
                     Some(g @ (select::SHUFFLE_LEFT | select::SHUFFLE_RIGHT))
                         if target == STAND && !window_complete(drv, player) =>
@@ -386,17 +385,17 @@ pub(super) fn run(
                 if drv.gait == Some(target) {
                     // Already armed; the per-frame rate write keeps its rate.
                 } else if let Some(c) = clip {
-                    // The death pose (`0x5fc563`) and the mount attach (`0x607b44`) arm past the
-                    // lock in the reference; here they are gait targets, so they drop it first.
+                    // The death pose and the mount attach arm past the lock in the reference; here
+                    // they are gait targets, so they drop it first.
                     if target == DEATH || target == select::MOUNT {
                         drv.base_lock.release();
                     }
-                    // Locked: no roll. The reference re-picks on events (`0x5fd9e0(-1)`), so a
-                    // per-frame retry would drain the shared random stream; it picks on release.
+                    // Locked: no roll. The reference re-picks on events, so a per-frame retry would
+                    // drain the shared random stream; it picks on release.
                     if drv.base_lock.refuses() {
                         armed = false;
                     } else {
-                        // Variation (when relaxed) and budget, the watchdog window (`0x712784`).
+                        // Variation (when relaxed) and budget, the watchdog window.
                         let (c, budget) = roll_loop(anims, c, relaxed, rng);
                         if traced && benilla_assets::trace::enabled() {
                             // Every fresh gait play, same-clip replays included.
@@ -441,8 +440,8 @@ pub(super) fn run(
     }
 }
 
-/// Whether the base's looping clip has run its replay window, `windowHi = windowLo + span·R`
-/// (`0x712784`); `true` when there is no window to wait on.
+/// Whether the base's looping clip has run its replay window, `windowHi = windowLo + span·R`;
+/// `true` when there is no window to wait on.
 fn window_complete(drv: &AnimDriver, player: &AnimationPlayer) -> bool {
     drv.loop_window.is_none_or(|(node, budget)| {
         player

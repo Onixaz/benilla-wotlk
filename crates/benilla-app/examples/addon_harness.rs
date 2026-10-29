@@ -606,9 +606,9 @@ fn main() {
         println!("    {label:>5}  {n:>4}  {}", "#".repeat(n.min(60)));
     }
 
-    // Whose package is incomplete: a `.toc` entry whose file the addon does not ship is the
-    // addon's defect, and the reference logs `Couldn't open %s` and carries on (`0x6edaa0`).
-    // Nothing is subtracted from the headline.
+    // Whose package is incomplete: a `.toc` entry whose file the addon does not ship is the addon's
+    // defect, and the reference logs `Couldn't open %s` and carries on. Nothing is subtracted from
+    // the headline.
     let own: Vec<&addon_harness::AddonReport> = reports
         .iter()
         .filter(|r| !r.absent_own_files.is_empty())
