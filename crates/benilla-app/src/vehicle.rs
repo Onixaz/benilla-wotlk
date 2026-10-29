@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod control;
 mod passenger;
 mod ride;
 mod seats;
@@ -87,6 +88,7 @@ pub(crate) struct VehiclePlugin;
 impl Plugin for VehiclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VehicleTables>()
+            .init_resource::<control::VehicleAim>()
             .init_resource::<VehicleSignals>()
             .add_message::<EnteredWorldMessage>()
             // After the object handlers, whose commands spawn the unit this reads.
@@ -112,6 +114,11 @@ impl Plugin for VehiclePlugin {
                     send_vehicle_requests
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(feed_vehicle_signals),
+                    // After the passenger events, as the mover's claim follows the seat.
+                    control::on_mover_change
+                        .in_set(crate::ui_unit::UnitFeed)
+                        .after(feed_vehicle_signals)
+                        .before(send_vehicle_requests),
                     // With the entity visuals, after the rigs are built and any mount re-seat.
                     (ride::ride_seats, ride::sweep_seat_anchors)
                         .chain()
@@ -622,6 +629,7 @@ mod tests {
                 vehicle: CART,
                 seat: 0,
                 state: SEATED,
+                stopped: false,
             },
             TransportRider {
                 transport_guid: CART,

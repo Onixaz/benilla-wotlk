@@ -21,6 +21,8 @@ pub(crate) struct Passenger {
     pub(crate) vehicle: u64,
     pub(crate) seat: u8,
     pub(crate) state: u8,
+    /// Our seat stopped its movement ahead of a local seat change or dismiss (`m_flags & 0x8`).
+    pub(crate) stopped: bool,
 }
 
 /// A vehicle or a player guid, the transports a passenger rides (`0x74b8b0`): `HighGuid` `0xF150`,
@@ -123,6 +125,9 @@ pub(super) fn track_passengers(
                 vehicle: r.transport_guid,
                 seat: r.seat as u8,
                 state: SEATED,
+                stopped: held.is_some_and(|h| {
+                    h.vehicle == r.transport_guid && i8::try_from(h.seat) == Ok(r.seat) && h.stopped
+                }),
             });
         if wanted == held.copied() {
             continue;
@@ -264,6 +269,7 @@ mod tests {
                 vehicle: CART,
                 seat: 0,
                 state: SEATED,
+                stopped: false,
             })
         );
         let s = w.resource::<VehicleSignals>();
