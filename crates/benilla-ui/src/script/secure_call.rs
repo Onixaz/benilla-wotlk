@@ -1,5 +1,6 @@
 //! 3.3.5a's `securecall(f, ...)`, the base-library call `UIDropDownMenu.lua` makes every menu
-//! through (`UIDropDownMenu.lua:64`), and `issecure()`, which `UIDropDownMenu_CreateInfo` asks.
+//! through, `issecure()`, which `UIDropDownMenu_CreateInfo` asks, and the rest of the security
+//! family: `hooksecurefunc`, `issecurevariable` and `forceinsecure`.
 //!
 //! `0x816f30`: a string first argument is replaced by the global of that name; the call then runs
 //! under `lua_pcall` with the error handler (`geterrorhandler()`'s reference) as its message
@@ -37,6 +38,57 @@ function securecall(...)
         return msg
     end))
 end
+
+-- hooksecurefunc([table,] "name", hook) (`0x817170`): the named function becomes a wrapper
+-- (`FrameScript_HookWrapper`) that calls the original, its errors propagating, then the hook with
+-- the same arguments under the error handler, and answers the original's results.
+local error, rawset, tostring = error, rawset, tostring
+function hooksecurefunc(t, name, hook)
+    if type(t) ~= "table" then
+        t, name, hook = _G, t, name
+    end
+    local tn = type(name)
+    if (tn ~= "string" and tn ~= "number") or type(hook) ~= "function" then
+        error('Usage: hooksecurefunc([table,] "function", hookfunc)', 2)
+    end
+    name = tostring(name)
+    local original = t[name]
+    if type(original) ~= "function" then
+        error("hooksecurefunc(): " .. name .. " is not a function", 2)
+    end
+    rawset(t, name, function(...)
+        local n = select("#", ...)
+        local args = { ... }
+        local out = { original(...) }
+        local outn = table.maxn(out)
+        xpcall(function()
+            hook(unpack(args, 1, n))
+        end, function(msg)
+            local handler = geterrorhandler()
+            if handler then
+                handler(msg)
+            end
+            return msg
+        end)
+        return unpack(out, 1, outn)
+    end)
+end
+
+-- issecurevariable([table,] "name") (`0x816de0`): 1 and nil for an untainted variable; benilla
+-- taints nothing.
+function issecurevariable(t, name)
+    if type(t) ~= "table" then
+        t, name = _G, t
+    end
+    local tn = type(name)
+    if tn ~= "string" and tn ~= "number" then
+        error('Usage: issecurevariable([table,] "variable")', 2)
+    end
+    return 1, nil
+end
+
+-- forceinsecure() (`0x816f00`) taints the running code; with no taint to set, it does nothing.
+function forceinsecure() end
 "##;
 
 /// Install `securecall` on a target whose base library has it.
