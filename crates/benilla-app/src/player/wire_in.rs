@@ -280,6 +280,11 @@ pub(super) fn apply_server_moves(
         else if m.mode == MoveMode::CanFly && !m.apply && player.flying {
             super::flight::land(player);
         }
+        // Gravity off stops a fall where it is (`0x6eba60`: StopFalling, then the landing); on
+        // again, an unsupported body falls by itself.
+        else if m.mode == MoveMode::DisableGravity && m.apply {
+            player.vel_y = 0.0;
+        }
         let facing = player.face_yaw.rem_euclid(std::f32::consts::TAU);
         let flying = if player.flying { move_flags::FLYING } else { 0 };
         let _ = net_cmds.0.send(ClientCommand::MoveModeAck {

@@ -994,15 +994,22 @@ pub enum ServerPacket {
     SpiritHealerConfirm {
         npc: u64,
     },
-    /// Root, water-walk, feather-fall or hover granted (`apply`) or revoked on our mover. Unless
-    /// acked with `counter` ([`MoveMode::ack_opcode`]), the server never applies it.
+    /// `SMSG_MOVE_SET_COLLISION_HGT`: our mover's collision height, acked with the height.
+    MoveSetCollisionHeight {
+        guid: u64,
+        counter: u32,
+        height: f32,
+    },
+    /// Root, water-walk, feather-fall, hover, can-fly or gravity granted (`apply`) or revoked on
+    /// our mover. Unless acked with `counter` ([`MoveMode::ack_opcode`]), the server never applies
+    /// it.
     MoveMode {
         guid: u64,
         counter: u32,
         mode: MoveMode,
         apply: bool,
     },
-    /// The twelve `SMSG_SPLINE_MOVE_*`: any unit's mode change, a bare packed guid with no ack.
+    /// The sixteen `SMSG_SPLINE_MOVE_*`: any unit's mode change, a bare packed guid with no ack.
     /// `apply` is the direction of [`SplineMode::flag`]'s bit, run/walk inversion already folded.
     SplineMoveMode {
         guid: u64,
@@ -1714,6 +1721,7 @@ impl ServerPacket {
             ServerPacket::DurabilityDamageDeath => "SMSG_DURABILITY_DAMAGE_DEATH".into(),
             ServerPacket::ResurrectRequest(_) => "SMSG_RESURRECT_REQUEST".into(),
             ServerPacket::SpiritHealerConfirm { .. } => "SMSG_SPIRIT_HEALER_CONFIRM".into(),
+            ServerPacket::MoveSetCollisionHeight { .. } => "SMSG_MOVE_SET_COLLISION_HGT".into(),
             ServerPacket::MoveMode { mode, apply, .. } => match (mode, apply) {
                 (MoveMode::Root, true) => "SMSG_FORCE_MOVE_ROOT".into(),
                 (MoveMode::Root, false) => "SMSG_FORCE_MOVE_UNROOT".into(),
@@ -1725,6 +1733,8 @@ impl ServerPacket {
                 (MoveMode::Hover, false) => "SMSG_MOVE_UNSET_HOVER".into(),
                 (MoveMode::CanFly, true) => "SMSG_MOVE_SET_CAN_FLY".into(),
                 (MoveMode::CanFly, false) => "SMSG_MOVE_UNSET_CAN_FLY".into(),
+                (MoveMode::DisableGravity, true) => "SMSG_MOVE_GRAVITY_DISABLE".into(),
+                (MoveMode::DisableGravity, false) => "SMSG_MOVE_GRAVITY_ENABLE".into(),
             },
             ServerPacket::SplineMoveMode { mode, apply, .. } => match (mode, apply) {
                 (SplineMode::Root, true) => "SMSG_SPLINE_MOVE_ROOT".into(),
@@ -1740,6 +1750,10 @@ impl ServerPacket {
                 // Inverted on purpose: see `SplineMode::WalkMode`.
                 (SplineMode::WalkMode, true) => "SMSG_SPLINE_MOVE_SET_WALK_MODE".into(),
                 (SplineMode::WalkMode, false) => "SMSG_SPLINE_MOVE_SET_RUN_MODE".into(),
+                (SplineMode::Flying, true) => "SMSG_SPLINE_MOVE_SET_FLYING".into(),
+                (SplineMode::Flying, false) => "SMSG_SPLINE_MOVE_UNSET_FLYING".into(),
+                (SplineMode::DisableGravity, true) => "SMSG_SPLINE_MOVE_GRAVITY_DISABLE".into(),
+                (SplineMode::DisableGravity, false) => "SMSG_SPLINE_MOVE_GRAVITY_ENABLE".into(),
             },
             ServerPacket::KnockBack { .. } => "SMSG_MOVE_KNOCK_BACK".into(),
             ServerPacket::LogoutComplete => "SMSG_LOGOUT_COMPLETE".into(),

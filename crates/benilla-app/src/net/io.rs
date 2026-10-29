@@ -1910,6 +1910,14 @@ pub(super) fn writer_loop(
                         pos,
                         orientation,
                     } => w.move_mode_ack(guid, counter, mode, apply, flags, (pos, orientation)),
+                    ClientCommand::CollisionHeightAck {
+                        guid,
+                        counter,
+                        height,
+                        flags,
+                        pos,
+                        orientation,
+                    } => w.collision_height_ack(guid, counter, height, flags, (pos, orientation)),
                     ClientCommand::KnockBackAck {
                         guid,
                         counter,

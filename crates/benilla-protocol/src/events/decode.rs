@@ -607,6 +607,15 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::SpiritHealerConfirm { npc } => {
             vec![SessionEvent::SpiritHealerConfirm { npc }]
         }
+        ServerPacket::MoveSetCollisionHeight {
+            guid,
+            counter,
+            height,
+        } => vec![SessionEvent::MoveSetCollisionHeight {
+            guid,
+            counter,
+            height,
+        }],
         ServerPacket::MoveMode {
             guid,
             counter,
