@@ -15,6 +15,7 @@ mod arena_team;
 mod attack;
 mod auction;
 mod bank;
+mod barber;
 mod battlefield;
 mod binder;
 mod calendar;

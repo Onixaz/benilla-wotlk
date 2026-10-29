@@ -998,6 +998,8 @@ pub(crate) struct Model {
     pub(crate) tabard_preview: Option<[i32; 5]>,
     pub(crate) tabard_host: super::tabard::TabardHost,
     pub(crate) tabard_intents: Vec<super::tabard::TabardIntent>,
+    /// The barber shop's host facts, preview dials and queued calls.
+    pub(crate) barber: super::barber::BarberState,
     /// The `WorldFrame` type's one-shot record: true once the first is made.
     pub(crate) world_frame_made: bool,
     /// Per live-unit guid, reach for `CanInspect`/`CheckInteractDistance`; absent: nil.
@@ -1658,6 +1660,7 @@ impl Model {
             tabard_preview: None,
             tabard_host: Default::default(),
             tabard_intents: Vec::new(),
+            barber: Default::default(),
             world_frame_made: false,
             unit_reach: HashMap::new(),
             chat_input: Vec::new(),

@@ -1681,6 +1681,7 @@ pub(super) fn writer_loop(
                     ClientCommand::SaveGuildEmblem { vendor, design } => {
                         w.save_guild_emblem(vendor, design)
                     }
+                    ClientCommand::AlterAppearance { styles } => w.alter_appearance(styles),
                     ClientCommand::BattlemasterHello { npc } => w.battlemaster_hello(npc),
                     ClientCommand::BattlemasterJoin {
                         battlemaster,

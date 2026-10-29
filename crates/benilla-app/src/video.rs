@@ -735,7 +735,9 @@ pub(crate) fn video_caps() -> benilla_ui::script::VideoCaps {
 /// [`publish_display_modes`]' push and the device caps for a VM about to load, which the
 /// reference has before `UI_Init`: `UpdateMenuBarTop` divides the current entry's sides at load
 /// (`UIParent.lua:1171`), and the Resolution panel's `PLAYER_ENTERING_WORLD` arm disables
-/// Hardware Cursor for good on a nil cursor cap (`VideoOptionsPanels.lua:119`).
+/// Hardware Cursor for good on a nil cursor cap (`VideoOptionsPanels.lua:119`). The list is
+/// never empty, as `SetupFormats` always leaves one: with no window to size the current entry,
+/// `GetCurrentResolution` answers 1 and `UpdateMenuBarTop` reads the first.
 pub(crate) fn seed_display_modes_for_vm(
     world: &mut World,
     script: &mut benilla_ui::script::UiScript,
@@ -746,9 +748,10 @@ pub(crate) fn seed_display_modes_for_vm(
         .copied()
         .unwrap_or_default();
     let mut windows = world.query_filtered::<&Window, With<PrimaryWindow>>();
-    let Ok(current) = windows.single(world).map(|w| current_mode(&cfg, w)) else {
-        return;
-    };
+    let current = windows
+        .single(world)
+        .ok()
+        .and_then(|w| current_mode(&cfg, w));
     let mut monitors = world.query_filtered::<&bevy::window::Monitor, With<PrimaryMonitor>>();
     let offered = offered_modes(monitors.iter(world).next());
     script.set_screen_modes(offered, current);
@@ -1388,6 +1391,32 @@ mod tests {
         seed_display_modes_for_vm(&mut world, &mut script);
         let cursor: Option<f64> = script.eval("return select(7, GetVideoCaps())").unwrap();
         assert_eq!(cursor, Some(1.0));
+    }
+
+    /// `UpdateMenuBarTop` (`UIParent.lua:1170-1171`) divides the current entry's sides at load; a
+    /// VM seeded with no window still answers it, so the managed pass does not raise there.
+    #[test]
+    fn a_loading_vm_answers_update_menu_bar_tops_resolution() {
+        let menu_bar_entry = r#"
+            local width, height = string.match((({GetScreenResolutions()})[GetCurrentResolution()]
+                or ""), "(%d+).-(%d+)")
+            return tonumber(width) / tonumber(height)"#;
+        let mut world = World::new();
+        let mut script = benilla_ui::script::UiScript::new().unwrap();
+        seed_display_modes_for_vm(&mut world, &mut script);
+        let aspect: f64 = script.eval(menu_bar_entry).unwrap();
+        assert!(aspect > 0.0, "{aspect}");
+
+        // With a window, the entry is the size in use: the issue's 16:9 window reads widescreen.
+        let mut world = World::new();
+        world.insert_resource(VideoConfig::default());
+        let mut window = Window::default();
+        window.resolution.set_physical_resolution(1920, 1080);
+        world.spawn((window, PrimaryWindow));
+        let mut script = benilla_ui::script::UiScript::new().unwrap();
+        seed_display_modes_for_vm(&mut world, &mut script);
+        let aspect: f64 = script.eval(menu_bar_entry).unwrap();
+        assert!(aspect > 4.0 / 3.0, "{aspect}");
     }
 
     /// A saved rate the monitor does not offer becomes the desktop's at boot; an offered one stays.

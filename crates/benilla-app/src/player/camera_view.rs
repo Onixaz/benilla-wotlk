@@ -105,6 +105,8 @@ pub(crate) struct CameraViews {
     views: [ViewPose; VIEW_COUNT],
     /// The live view, persisted as [`CVAR_ACTIVE_VIEW`].
     current: usize,
+    /// The view the barber chair left, restored by its close (`[0xacc784]`).
+    barber_left: Option<usize>,
 }
 
 impl Default for CameraViews {
@@ -114,6 +116,7 @@ impl Default for CameraViews {
             current: ACTIVE_VIEW_DEFAULT
                 .parse::<usize>()
                 .expect("the registrar default is an index"),
+            barber_left: None,
         }
     }
 }
@@ -181,6 +184,15 @@ fn load_saved_views(cvars: Res<crate::cvars::Cvars>, mut views: ResMut<CameraVie
     }
 }
 
+/// The barber chair's view (`0x603900`, view 7): level, facing the character from `distance`;
+/// the close goes back to the view the chair left (`0x52ea2e`). Not one of the five saved
+/// views, so it writes no CVar.
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub(crate) enum BarberView {
+    Enter { distance: f32 },
+    Leave,
+}
+
 /// Everything one drained request may write.
 #[derive(bevy::ecs::system::SystemParam)]
 struct ViewTargets<'w, 's> {
@@ -190,12 +202,40 @@ struct ViewTargets<'w, 's> {
     player: Res<'w, Player>,
 }
 
-/// Drain the Lua queue into the rig, before [`super::control`] seats this frame's camera.
+/// Drain the Lua queue and the barber chair's view into the rig, before [`super::control`] seats
+/// this frame's camera.
 fn drain_view_requests(
     script: Option<NonSendMut<UiScript>>,
     mut cvars: ResMut<crate::cvars::Cvars>,
     mut targets: ViewTargets,
+    mut barber: MessageReader<BarberView>,
 ) {
+    for request in barber.read() {
+        let Ok(mut cam) = targets.cam.single_mut() else {
+            continue;
+        };
+        let face_yaw = targets.player.facing();
+        match *request {
+            BarberView::Enter { distance } => {
+                let current = targets.views.current;
+                targets.views.barber_left.get_or_insert(current);
+                targets.rig.target_distance = distance.clamp(CAM_DIST_MIN, CAM_DIST_MAX);
+                cam.pitch = 0.0;
+                cam.yaw = wrap_pi(face_yaw + std::f32::consts::PI);
+            }
+            BarberView::Leave => {
+                if let Some(view) = targets.views.barber_left.take() {
+                    apply(
+                        &mut targets.views,
+                        &mut targets.rig,
+                        &mut cam,
+                        face_yaw,
+                        view,
+                    );
+                }
+            }
+        }
+    }
     let Some(mut script) = script else {
         return;
     };
@@ -306,6 +346,7 @@ fn apply(
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<CameraViews>()
+        .add_message::<BarberView>()
         // After the config load, so the persisted views are in before anything selects one.
         .add_systems(Startup, load_saved_views.after(crate::cvars::CvarLoad))
         .add_systems(
@@ -313,6 +354,7 @@ pub(super) fn plugin(app: &mut App) {
             drain_view_requests
                 // After the Lua tick that queues them, before the control pass seats the pose.
                 .after(crate::ui_script::UiInput)
+                .after(crate::ui_barber::BarberDrain)
                 .before(super::control)
                 // Capture parks the camera itself; a queued view must not move it.
                 .run_if(not(resource_exists::<crate::run_mode::CaptureMode>)),

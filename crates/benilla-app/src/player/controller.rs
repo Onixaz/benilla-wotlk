@@ -96,7 +96,7 @@ pub(super) fn control(
     let (mut window, mut cursor_opts) = window.into_inner();
     let mouse_motion = &pointer.0;
     let look_cfg = *pointer.1;
-    let zoom_max = pointer.2.max;
+    let (zoom_max, zoom_floor) = (pointer.2.max, pointer.2.barber_floor);
     let (move_speed, capsule, inspect, ui_capture, click_consumed) = (
         &speed_capsule.0,
         &speed_capsule.1 .0,
@@ -276,7 +276,7 @@ pub(super) fn control(
     // A rebound zoom key steps 1.0 per press, the stock `CameraZoomIn(1.0)` (`Bindings.xml:707`).
     let zoom = binds.amount(crate::bindings::Input::CameraZoomIn)
         - binds.amount(crate::bindings::Input::CameraZoomOut);
-    apply_zoom_scroll(zoom, dt, &mut rig, zoom_max);
+    apply_zoom_scroll(zoom, dt, &mut rig, zoom_max, zoom_floor);
 
     // Free fly is a dev tool on the dev chord: a bare `F` is the player's to bind.
     if crate::run_mode::dev_chord(&keys, KeyCode::KeyF) {

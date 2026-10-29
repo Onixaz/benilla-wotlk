@@ -239,7 +239,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     // (`0x4e7072` `dec eax`). An empty name answers "": it is an inline buffer at `+0x24`, so
     // `0x6f3890`'s null guard never fires.
     // The reference's macro payload (`raw & 0x3fffffff`) is a hash key into `[0xbdcc54]`; ours is
-    // the 1..36 index, the lookup the app's macro icon makes too, so text and icon agree.
+    // the 1..54 index, the lookup the app's macro icon makes too, so text and icon agree.
     // Deviation: an out-of-range slot answers nil, because the reference indexes `0xbc6980` with
     // no bounds check and reads the memory beside its 120 slots.
     g.set(

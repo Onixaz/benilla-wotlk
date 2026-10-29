@@ -639,6 +639,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                     // nothing openable is equippable.
                                     openable_source: false,
                                     duration_ms: s.duration_ms,
+                                    guid: s.guid,
                                 },
                             )
                         });
@@ -754,6 +755,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                                 // ITEM_COOLDOWN_TIME instead, which is not built.
                                 openable_source: !has_cd,
                                 duration_ms: s.duration_ms,
+                                guid: s.guid,
                             },
                             cost.unwrap_or(0),
                         )

@@ -126,6 +126,7 @@ mod ui_arena_team;
 mod ui_auction;
 mod ui_aura;
 mod ui_bank;
+mod ui_barber;
 mod ui_battlefield;
 mod ui_battlefield_positions;
 mod ui_battlefield_score;

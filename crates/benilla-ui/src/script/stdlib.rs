@@ -182,6 +182,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
     install_debuglocals(lua)?;
     install_time(lua)?;
     install_profile(lua)?;
+    install_extras(lua)?;
     lua.load(WOW_STDLIB)
         .set_name("=[benilla wow stdlib]")
         .set_mode(mlua::ChunkMode::Text)
@@ -433,11 +434,9 @@ const WOW_STDLIB: &str = r#"
 -- from the running reference client (19,572 entries), which is the
 -- authority this file answers to.
 --
--- `strmatch`, `strrev`, `gmatch`, `strlenutf8` and `strcmputf8i` come from Blizzard's *Era*
--- enumeration, which a Classic Era addon may reach for. **None of them exist in
--- 1.12** — `string.match`/`gmatch` are Lua 5.1 additions the 5.0 client never had — and Era is
--- not our target. They stay out; adding a global the client does not have is how an addon that
--- feature-detects gets sent down a path we cannot honour.
+-- `strlenutf8` is an engine function, installed in Rust; `strmatch`, `strrev` and `gmatch` are
+-- the stock `Compat.lua`'s. `strcmputf8i` is not in 12340's table and stays out: a global the
+-- client lacks sends a feature-detecting addon down a path we cannot honour.
 strlen  = string.len
 strsub  = string.sub
 strupper = string.upper
@@ -604,6 +603,90 @@ do
     format = reformat
 end
 "#;
+
+/// The rest of 12340's base-library extras table (`s_extraFuncs`, `0xa443a8`) that FrameXML and
+/// addons call: `strlenutf8` (`0x817c70`, stock `AutoComplete.lua` measures the typed text with
+/// it), `strreplace` (`0x816c40`), `scrub` (`0x817bf0`), `difftime` (`0x8178a0`) and the no-op
+/// `debughook`.
+fn install_extras(lua: &Lua) -> mlua::Result<()> {
+    use mlua::{MultiValue, Value};
+    let g = lua.globals();
+    // The UTF-8 characters of a string or number: every byte but a continuation byte.
+    g.set(
+        "strlenutf8",
+        lua.create_function(|_, s: Value| {
+            let bytes = match &s {
+                Value::String(s) => s.as_bytes().to_vec(),
+                Value::Integer(_) | Value::Number(_) => s.to_string()?.into_bytes(),
+                _ => return Err(mlua::Error::runtime("Usage: strlenutf8(string)")),
+            };
+            Ok(bytes.iter().filter(|&&b| b & 0xc0 != 0x80).count() as i64)
+        })?,
+    )?;
+    // strreplace(string, search, replace[, limit]): the text with up to `limit` plain matches
+    // replaced (every one at 0) and the count, the result capped at the reference's 4096-byte
+    // buffer. Deviation: an empty search answers the string unchanged, where the reference never
+    // leaves its loop.
+    g.set(
+        "strreplace",
+        lua.create_function(
+            |lua,
+             (string, search, replace, limit): (
+                mlua::String,
+                mlua::String,
+                mlua::String,
+                Option<i64>,
+            )| {
+                const BUFFER: usize = 4096;
+                let (src, find, with) = (string.as_bytes(), search.as_bytes(), replace.as_bytes());
+                let limit = limit.unwrap_or(0);
+                let (mut out, mut count, mut at) = (Vec::new(), 0i64, 0usize);
+                if !find.is_empty() {
+                    while limit == 0 || count < limit {
+                        let Some(hit) = src[at..].windows(find.len()).position(|w| w == &find[..])
+                        else {
+                            break;
+                        };
+                        out.extend_from_slice(&src[at..at + hit]);
+                        out.extend_from_slice(&with[..]);
+                        count += 1;
+                        at += hit + find.len();
+                    }
+                }
+                if count == 0 {
+                    return Ok((string.clone(), 0));
+                }
+                out.extend_from_slice(&src[at..]);
+                out.truncate(BUFFER);
+                Ok((lua.create_string(&out)?, count))
+            },
+        )?,
+    )?;
+    // scrub(...): every argument that is not a boolean, number or string becomes nil.
+    g.set(
+        "scrub",
+        lua.create_function(|_, args: MultiValue| {
+            Ok(MultiValue::from_vec(
+                args.into_iter()
+                    .map(|v| match v {
+                        Value::Boolean(_) | Value::Integer(_) | Value::Number(_) => v,
+                        Value::String(_) => v,
+                        _ => Value::Nil,
+                    })
+                    .collect(),
+            ))
+        })?,
+    )?;
+    // difftime(t2[, t1]): both truncated to whole seconds, as the C `time_t` casts do.
+    g.set(
+        "difftime",
+        lua.create_function(|_, (t2, t1): (f64, Option<f64>)| {
+            Ok(t2.trunc() - t1.unwrap_or(0.0).trunc())
+        })?,
+    )?;
+    g.set("debughook", lua.create_function(|_, _: MultiValue| Ok(()))?)?;
+    Ok(())
+}
 
 /// `time()` and `date([format [, when]])`: 1.12 engine globals (`0x7035a0`, `0x7033a0`), Lua 5.0's
 /// `os.time`/`os.date` hoisted. `time` is wall-clock epoch seconds, as addons persist it across

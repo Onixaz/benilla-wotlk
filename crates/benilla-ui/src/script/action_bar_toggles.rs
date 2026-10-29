@@ -1,8 +1,8 @@
 //! `GetActionBarToggles` and `SetActionBarToggles`: the four extra action bars' visibility, the
 //! low nibble of the server's `PLAYER_FIELD_BYTES` byte 2.
 //!
-//! The setter (`Script_SetActionBarToggles 0x5a8290`) only posts `CMSG_SET_ACTIONBAR_TOGGLES`
-//! (`0x2bf`, `0x5a82cf`); the getter (`Script_GetActionBarToggles 0x5a8790`) reads the live
+//! The setter (`SetActionBarToggles`, `0x5a8290`) only posts `CMSG_SET_ACTIONBAR_TOGGLES`
+//! (`0x2bf`, `0x5a82cf`); the getter (`GetActionBarToggles`, `0x5a8790`) reads the live
 //! descriptor byte, which only the server moves. A `Get` right after a `Set` returns the old value
 //! for a round trip; the stock UI reads it at `PLAYER_ENTERING_WORLD` and keeps its own uvars.
 //!

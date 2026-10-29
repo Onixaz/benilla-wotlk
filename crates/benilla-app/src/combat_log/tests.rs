@@ -30,6 +30,8 @@ const HEAL: u32 = 2050;
 const PURGE: u32 = 527;
 /// A ranged basic shot.
 const SHOT: u32 = 75;
+/// A crowd-control spell: `AttributesExF & 0x200000` and a stun effect mechanic (12).
+const STUN: u32 = 853;
 
 fn spell(name: &str, school: u32, cast_row: u32) -> SpellDisplay {
     SpellDisplay {
@@ -53,6 +55,14 @@ fn spells() -> crate::ui_action::Spells {
                 SpellDisplay {
                     attributes_ex3: 0x8000,
                     ..spell("Auto Shot", 1, 1)
+                },
+            ),
+            (
+                STUN,
+                SpellDisplay {
+                    attributes_ex6: 0x20_0000,
+                    effect_mechanic: [12, 12, 0],
+                    ..spell("Hammer of Justice", 2, 1)
                 },
             ),
         ]
@@ -255,6 +265,60 @@ fn a_periodic_crit_floats_as_a_crit_under_its_cvar() {
     run(&mut app, |log| log.periodic_aura_log(&tick(false)));
     assert_eq!(entries(&app).len(), 2, "the entry still logs");
     assert!(floated(&mut app).is_empty(), "the number does not float");
+}
+
+/// The mechanic word (`0x74da70`): an aura from a flagged spell floats its upper-cased state
+/// name in the mechanic gold, the player's own bare under `fctSpellMechanics`, another caster's
+/// with its name only under `fctSpellMechanicsOther`; `fctAllSpellMechanics` shows every one, and
+/// an unflagged spell none.
+#[test]
+fn a_flagged_auras_mechanic_floats_by_its_three_cvars() {
+    let mut app = rig();
+    app.insert_resource(crate::ui_action::SpellMechanics {
+        catalog: benilla_formats::SpellMechanicCatalog::from_names([
+            (12, "stunned".to_string()),
+            (26, "interrupted".to_string()),
+        ]),
+    });
+    let gold = Some(crate::combat_text::COLOR_MECHANIC);
+    let applied = |app: &mut App, caster| {
+        run(app, move |log| {
+            log.aura_added_or_removed(MOB, caster, STUN, true, true);
+        });
+        floated(app)
+    };
+    assert!(applied(&mut app, ME).is_empty(), "the rows boot off");
+    app.world_mut().resource_mut::<DamageTextGates>().mechanics = true;
+    assert_eq!(
+        applied(&mut app, ME),
+        [("Stunned".to_string(), 0, gold)],
+        "one word for the two equal effect mechanics"
+    );
+    assert!(applied(&mut app, MOB).is_empty(), "another's needs its row");
+    app.world_mut()
+        .resource_mut::<DamageTextGates>()
+        .mechanics_other = true;
+    let other = applied(&mut app, MOB);
+    assert!(
+        other.len() == 1 && other[0].0.starts_with("Stunned ("),
+        "{other:?}"
+    );
+    *app.world_mut().resource_mut::<DamageTextGates>() = DamageTextGates {
+        all_mechanics: true,
+        ..DamageTextGates::default()
+    };
+    assert_eq!(
+        applied(&mut app, MOB).len(),
+        1,
+        "the all row alone shows it"
+    );
+    run(&mut app, |log| {
+        log.aura_added_or_removed(MOB, ME, NOVA, true, true)
+    });
+    assert!(
+        floated(&mut app).is_empty(),
+        "an unflagged spell floats none"
+    );
 }
 
 /// A heal over someone else floats green `+N`; over the player it is centre text with the healer.

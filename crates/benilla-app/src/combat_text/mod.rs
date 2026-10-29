@@ -48,7 +48,9 @@ use law::{
     argb, claimed_box_px, fade_alpha, melee_text, scale_value, shadow_offset_px, text_px,
     CATEGORIES,
 };
-pub(crate) use law::{damage_color, melee_styled, miss_word, DamageSource, DamageTextGates};
+pub(crate) use law::{
+    damage_color, melee_styled, miss_word, DamageSource, DamageTextGates, COLOR_MECHANIC,
+};
 
 use bevy::prelude::*;
 
@@ -404,7 +406,7 @@ fn melee_impact_text(
 /// inside the append window the mesh rebuild waits on).
 pub(crate) struct CombatTextPlugin;
 
-/// The floating-text gates' change callback: five flags.
+/// The floating-text gates' change callback: the damage rows and the mechanic rows.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut gates: ResMut<DamageTextGates>) {
     match ev.key().as_str() {
         "combatdamage" => gates.combat_damage = ev.flag(),
@@ -412,6 +414,9 @@ pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut gates: ResMut<Damag
         "petspelldamage" => gates.pet_spell = ev.flag(),
         "combatlogperiodicspells" => gates.periodic = ev.flag(),
         "combathealing" => gates.healing = ev.flag(),
+        "fctallspellmechanics" => gates.all_mechanics = ev.flag(),
+        "fctspellmechanics" => gates.mechanics = ev.flag(),
+        "fctspellmechanicsother" => gates.mechanics_other = ev.flag(),
         _ => {}
     }
 }
