@@ -1293,6 +1293,7 @@ mod tests {
                 transport_progress: None,
                 transport: None,
                 spline: None,
+                vehicle: None,
                 // `OBJECT_FIELD_TYPE` (2) 0x9, object and unit, as a creature's create carries it:
                 // `SetSelection`'s `IsSelectable` refuses any other type.
                 fields: ObjectFields::from_pairs(&[

@@ -120,7 +120,7 @@ pub(crate) fn wotlk_flags_from_classic(classic: u32) -> u32 {
 /// `u32` transport time, the `i8` seat, and a second time under `INTERPOLATED_MOVEMENT`; pitch when
 /// swimming, flying or `ALWAYS_ALLOW_PITCHING`; fall time; the jump under `FALLING` as `zspeed,
 /// sin, cos, xyspeed`; the spline elevation. The flags come back in 1.12.1's bits
-/// ([`classic_flags_from_wotlk`]); the extra flags, transport time and seat are read and dropped.
+/// ([`classic_flags_from_wotlk`]); the extra flags and transport time are read and dropped.
 pub(crate) fn read_movement_info_wotlk(r: &mut impl Read) -> io::Result<MovementInfo> {
     use crate::wire::{read_packed_guid, read_u16_le, read_u8};
     let flags = read_u32_le(r)?;
@@ -129,13 +129,16 @@ pub(crate) fn read_movement_info_wotlk(r: &mut impl Read) -> io::Result<Movement
     let position = Vector3d::read(r)?;
     let orientation = read_f32_le(r)?;
     let transport = if flags & wotlk_flag::ON_TRANSPORT != 0 {
-        let pose = TransportPose {
-            guid: read_packed_guid(r)?,
-            pos: Vector3d::read(r)?,
-            orientation: read_f32_le(r)?,
-        };
+        let guid = read_packed_guid(r)?;
+        let pos = Vector3d::read(r)?;
+        let orientation = read_f32_le(r)?;
         let _transport_time = read_u32_le(r)?;
-        let _seat = read_u8(r)?;
+        let pose = TransportPose {
+            guid,
+            pos,
+            orientation,
+            seat: read_u8(r)? as i8,
+        };
         if flags2 & wotlk_flag::FLAG2_INTERPOLATED_MOVEMENT != 0 {
             let _transport_time_2 = read_u32_le(r)?;
         }
@@ -347,10 +350,14 @@ pub struct JumpInfo {
 /// position and facing in the transport's own frame.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TransportPose {
-    /// The transport GameObject's guid, `HIGH_MO_TRANSPORT` or `HIGH_TRANSPORT`.
+    /// The transport's guid: a GameObject (`HIGH_MO_TRANSPORT`, `HIGH_TRANSPORT`), or a vehicle
+    /// or player the rider sits on.
     pub guid: u64,
     pub pos: Vector3d,
     pub orientation: f32,
+    /// The vehicle seat, `-1` (`0xff`) for none; a seated passenger's slot in its vehicle
+    /// (`0x6ea1d0` reads it with the guid).
+    pub seat: i8,
 }
 
 /// The body of every `MSG_MOVE_*`, in both directions, and of the teleport ack.
@@ -400,6 +407,7 @@ impl MovementInfo {
                     z: 0.0,
                 },
                 orientation: 0.0,
+                seat: -1,
             });
             crate::wire::write_packed_guid(t.guid, w).expect("a Vec write cannot fail");
             w.extend_from_slice(&t.pos.x.to_le_bytes());
@@ -407,7 +415,7 @@ impl MovementInfo {
             w.extend_from_slice(&t.pos.z.to_le_bytes());
             w.extend_from_slice(&t.orientation.to_le_bytes());
             w.extend_from_slice(&self.timestamp.to_le_bytes());
-            w.push(0xff);
+            w.push(t.seat as u8);
         }
         if flags & (wotlk_flag::SWIMMING | wotlk_flag::FLYING) != 0 {
             w.extend_from_slice(&self.pitch.to_le_bytes());
@@ -561,6 +569,7 @@ mod tests {
                 z: 8.0,
             },
             orientation: 1.5,
+            seat: 2,
         });
         let (_, back, len) = round_trip(&riding);
         let (_, _, walking) = round_trip(&info(0));

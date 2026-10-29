@@ -118,6 +118,7 @@ fn on_object_create(In(ev): In<SessionEvent>, mut sc: Scene) {
         transport,
         spline,
         fields,
+        vehicle: _,
     } = ev
     {
         crate::death::net::note_corpse(guid, kind, &fields, &sc.self_guid, &mut sc.death_net);

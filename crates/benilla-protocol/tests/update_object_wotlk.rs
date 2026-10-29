@@ -314,3 +314,25 @@ fn destroy_and_time_speed_read_their_3_3_5a_tails() {
         ServerPacket::TimeSpeed { .. }
     ));
 }
+
+/// `UPDATEFLAG_VEHICLE` (`0x80`): the vehicle id and its facing sit between the transport time
+/// and the rotation, and reach the create event.
+#[test]
+fn a_vehicle_create_carries_its_vehicle_id_and_facing() {
+    let mut b = Body::default();
+    b.u32(1);
+    // `LIVING | VEHICLE`, standing.
+    b.u8(2).guid(CREATURE).u8(3).u16(0x0020 | 0x0080);
+    b.u32(0).u16(0).u32(1_000);
+    b.xyz([1.0, 2.0, 3.0]).f32(0.5);
+    b.u32(0); // fall time
+    b.speeds();
+    b.u32(36).f32(1.25); // vehicle id, facing
+    b.fields(&[(2, 0x9), (24, 100)]);
+    let events = decode(parse(opcode::SMSG_UPDATE_OBJECT, &b.0));
+    assert!(events.iter().any(|e| matches!(
+        e,
+        SessionEvent::ObjectCreate { guid, vehicle: Some((36, f)), .. }
+            if *guid == CREATURE && *f == 1.25
+    )));
+}

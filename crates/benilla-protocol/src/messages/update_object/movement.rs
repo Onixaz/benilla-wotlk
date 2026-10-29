@@ -76,6 +76,9 @@ pub struct MovementBlock {
     pub transport: Option<TransportPose>,
     /// The path this unit is already walking at create (`MOVEFLAG_SPLINE_ENABLED`).
     pub spline: Option<CreateSpline>,
+    /// `UPDATEFLAG_VEHICLE`: the unit's `Vehicle.dbc` id and its facing at create, from which
+    /// the vehicle's facing limits run (`0x757fa0`).
+    pub vehicle: Option<(u32, f32)>,
 }
 
 impl MovementBlock {}

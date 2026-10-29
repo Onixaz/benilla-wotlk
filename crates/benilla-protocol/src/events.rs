@@ -246,6 +246,8 @@ pub enum SessionEvent {
         transport: Option<TransportPose>,
         /// The path it was already walking (`MOVEFLAG_SPLINE_ENABLED`), with the ms already ridden.
         spline: Option<CreateSpline>,
+        /// `UPDATEFLAG_VEHICLE`: the unit's `Vehicle.dbc` id and its facing at create.
+        vehicle: Option<(u32, f32)>,
         /// The full descriptor from the create mask; later [`Self::ObjectValues`] merge into it.
         fields: ObjectFields,
     },
