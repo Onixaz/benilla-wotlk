@@ -164,7 +164,7 @@ pub(crate) struct MinimapWidget(pub(crate) Option<MinimapSlot>);
 
 /// The player's WMO containment this frame, [`feed_minimap_inside`]'s verdict; the reference keeps
 /// one flag (`0xceaa60`) for the draw and the zoom buttons.
-#[derive(Resource, Default)]
+#[derive(Resource, Default, PartialEq)]
 pub(crate) struct MinimapInside(pub(crate) bool);
 
 /// The persisted zoom, CVars `minimapZoom` and `minimapInsideZoom` (default `"3"`, `0x63db90`):
@@ -924,6 +924,16 @@ impl IndoorMemo {
     }
 }
 
+/// The inputs [`feed_minimap_inside`]'s verdict last read.
+#[derive(Clone, Copy, PartialEq)]
+struct InsideProbe {
+    pos: Vec3,
+    area: Option<benilla_world::wmo_portal::WmoInteriorKeys>,
+    terrain: Option<f32>,
+    instances: usize,
+    wmos: usize,
+}
+
 /// Push the player's WMO containment onto the Minimap widget (`0xceaa60`), so the zoom buttons
 /// drive the indoor index indoors and the outdoor one outside; the verdict is [`emit_minimap`]'s,
 /// as the reference keeps one flag. Pushed on the edge and whenever the VM's Minimap-creation
@@ -939,9 +949,32 @@ fn feed_minimap_inside(
     mut inside_res: ResMut<MinimapInside>,
     mut was_inside: Local<crate::ui_script::VmMemo<Option<bool>>>,
     mut pushed_at: Local<crate::ui_script::VmMemo<u64>>,
+    mut probed: Local<Option<InsideProbe>>,
+    moved_instances: Query<(), Changed<WmoPortalInstance>>,
 ) {
-    let inside = minimap_interior(&player, &instances, &wmos, &world, &asset_server).is_some();
-    inside_res.0 = inside;
+    // The verdict reads these alone: a still player over the same ground under unchanged buildings
+    // keeps it. The WMO store is watched by count, as `Assets` is marked changed every frame.
+    let area = world.area_interior();
+    let inside = if !player.active || player.detached || area.is_none() {
+        // `minimap_interior`'s own first exit, before any probe.
+        *probed = None;
+        false
+    } else {
+        let probe = InsideProbe {
+            pos: player.pos,
+            area,
+            terrain: world.terrain_height_under(player.pos + Vec3::Y * INTERIOR_PROBE_HEIGHT),
+            instances: instances.iter().len(),
+            wmos: wmos.len(),
+        };
+        if *probed == Some(probe) && moved_instances.is_empty() {
+            inside_res.0
+        } else {
+            *probed = Some(probe);
+            minimap_interior(&player, &instances, &wmos, &world, &asset_server).is_some()
+        }
+    };
+    inside_res.set_if_neq(MinimapInside(inside));
     let Some(mut script) = script else { return };
     let edge = *was_inside.get(&script) != Some(inside);
     let created = script.minimap_widgets_created();
