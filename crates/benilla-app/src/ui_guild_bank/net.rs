@@ -131,8 +131,8 @@ fn on_event(
     }
 }
 
-/// The guild events' bank arms (`SMSG_GUILD_EVENT`'s handler, wowdecomp `Player_C.cpp`); the
-/// money event is the guild mirror's.
+/// The guild events' bank arms (`SMSG_GUILD_EVENT`'s handler); the money event is the guild
+/// mirror's.
 fn apply_event(state: &mut GuildBankState, commands: &NetCommands, notice: &GuildEventNotice) {
     match notice.event {
         guild_event::DISBANDED => {
