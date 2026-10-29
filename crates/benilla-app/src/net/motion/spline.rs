@@ -16,8 +16,10 @@ use crate::player::swim_enter_depth;
 use super::super::{NetEntity, ObjectStore};
 
 /// A server-dictated path (`SMSG_MONSTER_MOVE`) in raw WoW coordinates, walked at constant speed
-/// over `duration` from `start`; present only while the unit is on it.
+/// over `duration` from `start`; present only while the unit is on it. Sparse, as it comes and
+/// goes with every path.
 #[derive(Component, Debug, Clone)]
+#[component(storage = "SparseSet")]
 pub(crate) struct Spline {
     pub(crate) points: Vec<[f32; 3]>,
     pub(crate) start: Instant,

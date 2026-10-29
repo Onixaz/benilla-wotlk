@@ -40,8 +40,9 @@ use benilla_world::terrain_stream::{
 use super::{GameObjects, ModelHandle, VisualAttached};
 
 /// Marks an entity the prop resolver has visited, units and M2 GameObjects included, so it is
-/// never scanned again.
+/// never scanned again. Sparse, as it lands frames after the entity's other parts.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(super) struct WmoPropsResolved;
 
 /// A WMO GameObject's props still waiting on their M2s; removed when the list drains.
