@@ -772,14 +772,6 @@ pub(super) fn click(s: &mut UiScript, name: &str, button: &str) {
     s.mouse_button(x, y, button, false);
 }
 
-/// Stock `WorldFrame.xml` and `MirrorTimer.xml`: `WorldFrame_OnUpdate` loops to
-/// `MIRRORTIMER_NUMTIMERS`, which `MirrorTimer.lua` declares, and raises every tick without it.
-/// Its other loop reads `STATICPOPUP_NUMDIALOGS`, which every caller already loads.
-pub(super) const WORLD_FRAME_UI: &[&str] = &[
-    r"Interface\FrameXML\WorldFrame.xml",
-    r"Interface\FrameXML\MirrorTimer.xml",
-];
-
 /// A completed left click on the game world, at a point the loaded `WorldFrame` owns: searched on
 /// a grid, since a harness's windows may cover any fixed point.
 pub(super) fn world_click(s: &mut UiScript) {

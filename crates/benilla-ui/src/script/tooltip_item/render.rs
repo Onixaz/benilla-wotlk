@@ -46,6 +46,27 @@ pub(super) struct ItemInstance {
     /// A timed item's remaining lifetime in ms, from `SMSG_ITEM_TIME_UPDATE`, not
     /// `ITEM_FIELD_DURATION`: the client displays from the packet (`Objects/Item.cpp:1093`).
     pub duration_ms: Option<u64>,
+    /// The item object's guid, which the equipment-set line looks up; 0 for a source with none.
+    pub guid: u64,
+}
+
+/// The sets holding `item` (`0x5ae380`): each set's name once per slot that holds it, in set
+/// order, joined by `delimiter`; `None` when no set does.
+pub(super) fn equipment_set_list(
+    sets: &[crate::script::EquipmentSetView],
+    item: u64,
+    delimiter: &str,
+) -> Option<String> {
+    let mut out = String::new();
+    for set in sets {
+        for _ in set.items.iter().filter(|&&g| g == item) {
+            if !out.is_empty() {
+                out.push_str(delimiter);
+            }
+            out.push_str(&set.name);
+        }
+    }
+    (!out.is_empty()).then_some(out)
 }
 
 /// The set block's blank gold line, the reference's literal `0x854b2c`: a space and a newline. An
@@ -686,6 +707,31 @@ pub(super) fn render_view(
         } else if v.page_text != 0 || inst.has_text {
             keyed("ITEM_READABLE", &[], GREEN, false)?;
         }
+        // The equipment-set line (`0x62d35a`-`0x62d3fc`): with `equipmentManager` on and
+        // `dontShowEquipmentSetsOnItems` off, the sets holding this item, wrapped.
+        if inst.guid != 0 {
+            let list = {
+                let model = crate::script::model_mut_of(lua);
+                let on = |n: &str| {
+                    model
+                        .cvars
+                        .get(n)
+                        .is_some_and(|c| crate::script::cvars::sstr_to_int(&c.value) != 0)
+                };
+                (on("equipmentmanager") && !on("dontshowequipmentsetsonitems"))
+                    .then(|| {
+                        equipment_set_list(
+                            &model.equipment_manager.sets,
+                            inst.guid,
+                            &get("PLAYER_LIST_DELIMITER").unwrap_or_default(),
+                        )
+                    })
+                    .flatten()
+            };
+            if let Some(list) = list {
+                keyed("EQUIPMENT_SETS", &[Arg::S(&list)], GOLD, true)?;
+            }
+        }
     }
     add_sell_price(lua, this, v, flags.sell)
 }
@@ -824,5 +870,31 @@ mod tests {
         assert_eq!(charges_phrase(1, &table).as_deref(), Some("<1 chg>"));
         assert_eq!(charges_phrase(5, &table).as_deref(), Some("<5 chgs>"));
         assert_eq!(charges_phrase(0, &table), None);
+    }
+
+    /// `0x5ae380`: each set holding the item, in set order, once per slot that holds it.
+    #[test]
+    fn the_set_list_names_each_set_holding_the_item() {
+        let set = |name: &str, items: &[(usize, u64)]| {
+            let mut v = crate::script::EquipmentSetView {
+                name: name.into(),
+                ..Default::default()
+            };
+            for &(slot, guid) in items {
+                v.items[slot] = guid;
+            }
+            v
+        };
+        let sets = [
+            set("Tank", &[(0, 7), (15, 9)]),
+            set("Heal", &[(15, 8)]),
+            set("Rings", &[(10, 7), (11, 7)]),
+        ];
+        assert_eq!(
+            equipment_set_list(&sets, 7, ", ").as_deref(),
+            Some("Tank, Rings, Rings")
+        );
+        assert_eq!(equipment_set_list(&sets, 8, ", ").as_deref(), Some("Heal"));
+        assert_eq!(equipment_set_list(&sets, 5, ", "), None);
     }
 }

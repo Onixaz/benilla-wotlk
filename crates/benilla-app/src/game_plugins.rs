@@ -267,6 +267,7 @@ impl PluginGroup for GamePlugins {
             .add(crate::account_data::AccountDataPlugin)
             .add(UiStablePlugin)
             .add(TabardUiPlugin)
+            .add(crate::ui_barber::BarberUiPlugin)
             .add(UiTrainerPlugin)
             .add(UiTaxiPlugin)
             .add(UiTradeSkillPlugin)
@@ -844,6 +845,9 @@ pub(crate) mod schedule_tests {
     ///   `drain_social` and `drain_chat_input`. They only read membership, so a frame on either
     ///   side of a roster change gives the same colour a frame late, and nothing else they touch is
     ///   written by those drains.
+    /// - The zone PvP answer (#689) adds 6: `area::feed_zone_events` reads the character
+    ///   `Roster` for the realm's PvP type against its six writers in `char_select` and
+    ///   `drive_glue_mgr`, which change it only at character select, where no zone feeds.
     /// - `ui_threat::feed_threat` (#629) adds 10: against the `Transform` writers
     ///   `transport::tick_transports`, `reseek_ridden_transport_at_worldport`, `compose_riders`,
     ///   `ground_deck_riders` and `portrait::booth::face_booth_billboards`, whose poses its melee
@@ -852,8 +856,6 @@ pub(crate) mod schedule_tests {
     ///   against the `TutorialEvent` writers `tutorial::watch_self`, `watch_windows`,
     ///   `ui_battlefield::feed_battlefield` and `ui_dialog_verbs::feed_meeting_stone` and the
     ///   drain `tutorial::feed_tutorials`: it only appends one fire-once ask.
-    /// - `main` at `8c4f8ff` already counts 3895 against its 3889: 6 more pairs this branch does
-    ///   not add and does not argue, carried here so the ratchet measures only this change.
     const UPDATE_ACTIONABLE_CEILING: usize = 3_905;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 

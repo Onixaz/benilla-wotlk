@@ -41,7 +41,6 @@ pub(super) fn parse(text: &str, base: u32) -> Vec<MacroView> {
                     name: std::mem::take(name),
                     texture: icon.take().map(icon_path),
                     body: body.join("\n"),
-                    local_only: false,
                 };
                 out.push((*id, m));
                 open = None;
@@ -70,7 +69,6 @@ pub(super) fn parse(text: &str, base: u32) -> Vec<MacroView> {
                 name,
                 texture: icon.map(icon_path),
                 body: String::new(),
-                local_only: false,
             },
         ));
     }
@@ -149,7 +147,6 @@ mod tests {
             name: name.into(),
             texture: icon.map(|i| format!("{ICON_PREFIX}{i}")),
             body: body.into(),
-            local_only: false,
         }
     }
 

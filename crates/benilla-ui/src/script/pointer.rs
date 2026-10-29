@@ -369,7 +369,7 @@ impl UiScript {
                 .as_ref()
                 .is_some_and(|m| m.auto_stop)
         {
-            set_field!(self, moving, None);
+            crate::script::object::movable::stop_auto_move(&mut self.model_mut());
         }
         // The press this release belongs to, read before the borrow below drains `mouse_down_on`.
         let captured_id: Option<u32> = if down {

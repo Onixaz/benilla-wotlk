@@ -229,6 +229,8 @@ pub(crate) struct Dispatch<'w, 's> {
     feedback: Feedback<'w>,
     auto: crate::player::AutoMove<'w, 's>,
     player: Res<'w, crate::player::Player>,
+    // `SpellShapeshiftForm.dbc`'s flags, the barber chair's shapeshift test.
+    sheet: Option<Res<'w, crate::ui_char::SheetTables>>,
 }
 
 /// What the skin legs read: `GetSkinningSpell 0x53bce0`'s learned slots, and `CanAssist`'s
@@ -467,6 +469,28 @@ impl Dispatch<'_, '_> {
                 self.walk_to_object(entity, guid, go_type, walk);
             }
             return;
+        }
+        // BARBER_CHAIR (type 32) adds to the chair's use check (`0x711eb0`): our own display, and
+        // no form but one flagged `0x1` in `SpellShapeshiftForm.dbc` (`0x721ca0`).
+        if go_type == cursor_mode::GO_TYPE_BARBER_CHAIR && in_reach {
+            let refused = self_store.is_some_and(|s| {
+                let f = &s.0;
+                let form = f.unit_shapeshift_form();
+                let flags = self
+                    .sheet
+                    .as_deref()
+                    .and_then(|t| t.form_flags.get(&u32::from(form)).copied())
+                    .unwrap_or(0);
+                f.unit_displayid() != f.unit_native_displayid() || (form != 0 && flags & 0x1 == 0)
+            });
+            if refused {
+                debug!("right-click barber chair {guid:#x}: refused, shapeshifted");
+                self.feedback
+                    .errors
+                    .0
+                    .push(crate::ui_action::UiError::key("ERR_NOT_WHILE_SHAPESHIFTED"));
+                return;
+            }
         }
         // By lock: used, opened by its opener cast, or refused locally (`0x5f3427..`).
         let action = resolve_go_action(

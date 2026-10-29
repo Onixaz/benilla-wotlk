@@ -362,6 +362,8 @@ mod server_messages;
 pub use server_messages::{load_server_messages_catalog, ServerMessagesCatalog};
 mod game_tips;
 pub use game_tips::{load_game_tips, GameTipsCatalog};
+mod barber_shop_style;
+pub use barber_shop_style::{load_barber_shop_styles, BarberShopStyle};
 mod text_filter_lists;
 pub use text_filter_lists::{load_chat_profanity, load_spam_messages, FilterPattern};
 mod race_sound;

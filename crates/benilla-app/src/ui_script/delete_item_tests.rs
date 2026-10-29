@@ -1,12 +1,10 @@
 //! The delete confirm: the world drop's `DELETE_ITEM_CONFIRM` raises the stock `DELETE_ITEM`
-//! popup, or `DELETE_GOOD_ITEM` for quality 3 and up (`UIParent.lua:344-352`). The fixtures are
-//! real 1.12 items: Tough Jerky (117, quality 1) and Flurry Axe (871, quality 4).
+//! popup, or `DELETE_GOOD_ITEM` for quality 3 and up (`UIParent.lua`). The fixtures are Tough
+//! Jerky (117, quality 1) and Flurry Axe (871, quality 4).
 
 use benilla_ui::script::{ContainerSlot, ContainerState, UiScript};
 
-use super::test_ui::{
-    bag_open, bag_slot_button, load_ui as load_xml, world_click, BAG_UI, WORLD_FRAME_UI,
-};
+use super::test_ui::{bag_open, bag_slot_button, world_click};
 
 /// A backpack holding a 5-stack of `item_id` at `quality`, the parameter the popup forks on.
 fn one_item_backpack(item_id: u32, name: &str, quality: u32) -> ContainerState {
@@ -45,60 +43,16 @@ fn one_item_backpack(item_id: u32, name: &str, quality: u32) -> ContainerState {
     }
 }
 
-/// The stock popup stack and the world frame the drop is clicked on.
+/// The stock interface, with the popup stack and the world frame the drop is clicked on.
 fn setup() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    // The drop is a click on the full-screen world frame, so it must be loaded.
-    for file in super::test_ui::production_order(&[
-        &[
-            r"Interface\FrameXML\GlobalStrings.lua",
-            "Interface\\FrameXML\\Fonts.xml",
-            r"Interface\FrameXML\BasicControls.xml",
-            r"Interface\FrameXML\LocaleProperties.lua",
-            r"Interface\FrameXML\UIParent.xml",
-            r"Interface\FrameXML\MoneyFrame.lua",
-            r"Interface\FrameXML\MoneyFrame.xml",
-            "Interface\\FrameXML\\GameTooltip.xml", // TOOLTIP_DEFAULT_COLOR, for dropdowns
-            r"Interface\FrameXML\UIMenu.xml",
-            r"Interface\FrameXML\UIDropDownMenu.xml",
-            r"Interface\FrameXML\UIPanelTemplates.lua",
-            r"Interface\FrameXML\UIPanelTemplates.xml",
-            r"Interface\FrameXML\StaticPopup.xml",
-            // The stock `DELETE_GOOD_ITEM`'s `OnHide` hands focus back to `ChatFrameEditBox`,
-            // which FloatingChatFrame.xml declares.
-            r"Interface\FrameXML\ChatFrame.xml",
-            r"Interface\FrameXML\FloatingChatFrame.xml",
-        ],
-        WORLD_FRAME_UI,
-    ]) {
-        load_xml(&s, file);
-    }
+    let mut s = super::test_ui::stock_ui(1024.0, 768.0);
     s.set_money(0);
     s
 }
 
-/// The stock bag windows (`BAG_UI`) and the world frame, for the test that watches a bag repaint.
+/// The stock interface, for the test that watches a bag repaint.
 fn bag_setup() -> UiScript {
-    let mut s = UiScript::new().unwrap();
-    s.set_screen_size(1024.0, 768.0);
-    for file in crate::ui_script::test_ui::production_order(&[
-        BAG_UI,
-        &[
-            "Interface\\FrameXML\\CharacterFrameTemplates.xml",
-            // `ContainerFrame_Update` reads `MerchantFrame:IsShown()` on any slot the tooltip owns.
-            "Interface\\FrameXML\\MerchantFrame.xml",
-            "ScrollTemplates.xml", // our scroll kits
-        ],
-        WORLD_FRAME_UI, // the drop target
-    ]) {
-        load_xml(&s, file);
-    }
-
-    // `BAG_UI` leaves out `CharacterFrame.xml`, so `PaperDollFrame` has no hidden parent and would
-    // cover the world; the real client never shows it here.
-    s.run("PaperDollFrame:Hide()")
-        .expect("the paper doll the missing CharacterFrame would have hidden");
+    let mut s = super::test_ui::stock_ui(1024.0, 768.0);
     s.set_money(0);
     s
 }
@@ -119,7 +73,6 @@ fn drop_in_world(s: &mut UiScript, item_id: u32, name: &str, quality: u32) {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn delete_item_confirm_shows_the_real_strings_and_yes_deletes() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -158,16 +111,15 @@ fn delete_item_confirm_shows_the_real_strings_and_yes_deletes() {
 }
 
 /// No runs `OnCancel` (`ClearCursor()`) and destroys nothing; only the clear's `ITEM_LOCK_CHANGED`
-/// can repaint the open bag, un-darkening the slot (`ContainerFrame.lua:39-42`, `:246`).
+/// can repaint the open bag, un-darkening the slot (`ContainerFrame.lua`, `:246`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn delete_item_confirm_no_clears_without_destroying() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = bag_setup();
     s.set_container(0, Some(one_item_backpack(117, "Tough Jerky", 1)));
     s.run("ToggleBackpack()").unwrap();
     assert!(bag_open(&s, 0), "the backpack window is up");
-    // `ContainerFrame_GenerateFrame` numbers buttons backwards (`ContainerFrame.lua:426-428`).
+    // `ContainerFrame_GenerateFrame` numbers buttons backwards (`ContainerFrame.lua`).
     let slot1 = bag_slot_button(&s, 0, 1);
 
     pick_up_and_drop_in_world(&mut s);
@@ -176,15 +128,6 @@ fn delete_item_confirm_no_clears_without_destroying() {
         "held on the cursor, the source slot draws dark (ref SetItemButtonDesaturated(_, locked))"
     );
 
-    // Count repaints. The 1.12 client's Lua 5.0 has no `...` as a value: forward `arg` by `unpack`.
-    s.run(
-        "repaints = 0\n\
-         local real = ContainerFrame_Update\n\
-         ContainerFrame_Update = function(...) repaints = repaints + 1; \
-         return real(unpack(arg, 1, arg.n)) end",
-    )
-    .unwrap();
-
     s.run("StaticPopup_OnClick(StaticPopup1, 2)").unwrap();
     assert!(
         !s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
@@ -192,11 +135,9 @@ fn delete_item_confirm_no_clears_without_destroying() {
     );
     assert!(s.cursor_item().is_none(), "ClearCursor cleared it");
     assert!(s.take_container_destroys().is_empty(), "No never destroys");
-    s.tick(0.01); // ITEM_LOCK_CHANGED fires from the pending queue at the next tick
-    assert!(
-        s.eval::<i64>("return repaints").unwrap() >= 1,
-        "the clear's ITEM_LOCK_CHANGED repaints the bag (no stuck-darkened slot)"
-    );
+    // `ITEM_LOCK_CHANGED(0, 1)` fires from the pending queue at the next tick, and the backpack's
+    // `ContainerFrame_UpdateLockedItem` repaints the one slot.
+    s.tick(0.01);
     assert!(
         !s.eval::<bool>("local _, _, locked = GetContainerItemInfo(0, 1) return locked")
             .unwrap(),
@@ -226,9 +167,8 @@ fn desaturated(s: &mut UiScript, button: &str) -> bool {
 }
 
 /// ESC runs stock `StaticPopup_EscapePressed`: `DELETE_ITEM` is `hideOnEscape`, so its `OnCancel`
-/// runs as No would (`StaticPopup.lua:1879-1893`).
+/// runs as No would (`StaticPopup.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn escape_closes_the_delete_confirm_popup() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -244,9 +184,8 @@ fn escape_closes_the_delete_confirm_popup() {
 }
 
 /// The stock `DELETE_ITEM`'s `OnUpdate` hides it once the cursor empties by any path
-/// (`StaticPopup.lua:669-673`); the poll is the entry's own.
+/// (`StaticPopup.lua`); the poll is the entry's own.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_delete_entry_polls_itself_hidden_and_other_dialogs_are_untouched() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -276,9 +215,8 @@ fn the_delete_entry_polls_itself_hidden_and_other_dialogs_are_untouched() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Quality 3 and up raises `DELETE_GOOD_ITEM` instead (`UIParent.lua:346-350`).
+/// Quality 3 and up raises `DELETE_GOOD_ITEM` instead (`UIParent.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn a_rare_payload_raises_the_typed_confirm_with_okay_disabled() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -315,9 +253,8 @@ fn a_rare_payload_raises_the_typed_confirm_with_okay_disabled() {
 }
 
 /// `EditBoxOnTextChanged` compares the `strupper` of the text with `DELETE_ITEM_CONFIRM_STRING`
-/// (`StaticPopup.lua:718-723`).
+/// (`StaticPopup.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn typing_the_confirm_word_enables_okay_and_untyping_it_disables_again() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -365,9 +302,8 @@ fn typing_the_confirm_word_enables_okay_and_untyping_it_disables_again() {
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
-/// Stock `EditBoxOnEnterPressed` destroys only while OKAY is enabled (`StaticPopup.lua:712-717`).
+/// Stock `EditBoxOnEnterPressed` destroys only while OKAY is enabled (`StaticPopup.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn enter_in_the_box_destroys_only_once_okay_is_enabled() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -396,7 +332,6 @@ fn enter_in_the_box_destroys_only_once_okay_is_enabled() {
 
 /// The stock `OnHide` empties the box, so the next raise opens blank and disarmed.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_on_the_typed_confirm_clears_and_leaves_the_box_empty_for_next_time() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -430,10 +365,11 @@ fn no_on_the_typed_confirm_clears_and_leaves_the_box_empty_for_next_time() {
 }
 
 /// Stock `DELETE_GOOD_ITEM` has no `EditBoxOnEscapePressed`, so ESC in its box does nothing
-/// (`StaticPopup.lua:1817-1822`).
+/// (`StaticPopup.lua`).
+/// Escape in the typed box runs the entry's `EditBoxOnEscapePressed`: the dialog hides and the
+/// cursor is cleared, destroying nothing.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
-fn escape_in_the_typed_confirms_box_is_swallowed_as_the_reference_leaves_it() {
+fn escape_in_the_typed_confirms_box_closes_it_and_clears_the_cursor() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
     drop_in_world(&mut s, 871, "Flurry Axe", 4);
@@ -444,21 +380,15 @@ fn escape_in_the_typed_confirms_box_is_swallowed_as_the_reference_leaves_it() {
 
     assert!(s.key_input("ESCAPE"), "the focused box consumes ESCAPE");
     assert!(
-        s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
-        "the dialog stays: the entry names no escape handler"
+        !s.eval::<bool>("return StaticPopup1:IsVisible()").unwrap(),
+        "the dialog hides"
     );
-    assert_eq!(
-        s.focused_editbox_name().as_deref(),
-        Some("StaticPopup1EditBox"),
-        "and the box keeps focus"
-    );
-    assert!(s.cursor_item().is_some(), "the item is still on the cursor");
+    assert!(s.cursor_item().is_none(), "and the cursor is cleared");
     assert!(s.take_container_destroys().is_empty(), "ESC never destroys");
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_plain_arm_shows_no_edit_box() {
     benilla_formats::wow_data_or_skip!();
     let mut s = setup();
@@ -485,11 +415,11 @@ fn the_plain_arm_shows_no_edit_box() {
 /// The world drop under the whole shipped manifest: a fixture is a subset, and can miss the file
 /// that breaks the drop.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_world_drop_survives_the_whole_shipped_interface() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
+    super::test_ui::seat_login(&mut s);
     let failures = super::load_default_ui(&s);
     assert!(failures.is_empty(), "manifest load errors: {failures:#?}");
     s.set_money(0);

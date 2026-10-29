@@ -88,9 +88,37 @@ fn on_complete(
     In(ev): In<SessionEvent>,
     mut quest: ResMut<QuestGiver>,
     mut lines: ResMut<QuestLines>,
+    mut chat: ResMut<crate::ui_chat::ChatLog>,
+    mut center: MessageWriter<crate::ui_unit::CombatTextEvent>,
 ) {
     if let SessionEvent::QuestComplete(c) = ev {
+        turn_in_awards(&c, &mut chat, &mut center);
         quest_complete(c, &mut quest, &mut lines);
+    }
+}
+
+/// The turn-in's honor and arena awards (`0x6d0ed0`-`0x6d0fd0`): the honor, a tenth of the
+/// wire's, prints `COMBATLOG_HONORAWARD` and sends `HONOR_GAINED`; the arena points send
+/// `ARENA_POINTS_GAINED`.
+fn turn_in_awards(
+    c: &QuestComplete,
+    chat: &mut crate::ui_chat::ChatLog,
+    center: &mut MessageWriter<crate::ui_unit::CombatTextEvent>,
+) {
+    use benilla_ui::script::ScriptValue;
+    let honor = c.honor / 10;
+    if c.honor as i32 > 0 {
+        chat.push_pvp_credit(honor as i32, 0, 0);
+        center.write(crate::ui_unit::CombatTextEvent {
+            message_type: "HONOR_GAINED",
+            args: vec![ScriptValue::Int(i64::from(honor))],
+        });
+    }
+    if c.arena_points as i32 > 0 {
+        center.write(crate::ui_unit::CombatTextEvent {
+            message_type: "ARENA_POINTS_GAINED",
+            args: vec![ScriptValue::Int(i64::from(c.arena_points))],
+        });
     }
 }
 
@@ -384,6 +412,49 @@ mod tests {
             Some(dialog_status::REWARD2),
             "and a player passes the same typemask, as it does in the reference"
         );
+    }
+
+    /// The turn-in's awards (`0x6d0ed0`-`0x6d0fd0`): a tenth of the wire's honor to
+    /// `HONOR_GAINED`, the arena points to `ARENA_POINTS_GAINED`, and nothing without either.
+    #[test]
+    fn a_turn_in_sends_its_honor_and_arena_awards_to_the_combat_text() {
+        use benilla_ui::script::ScriptValue;
+        use bevy::ecs::system::RunSystemOnce;
+        let sent = |c: QuestComplete| {
+            let mut app = App::new();
+            app.init_resource::<crate::ui_chat::ChatLog>()
+                .add_message::<crate::ui_unit::CombatTextEvent>();
+            app.world_mut()
+                .run_system_once(
+                    move |mut chat: ResMut<crate::ui_chat::ChatLog>,
+                          mut center: MessageWriter<crate::ui_unit::CombatTextEvent>| {
+                        turn_in_awards(&c, &mut chat, &mut center)
+                    },
+                )
+                .unwrap();
+            app.world_mut()
+                .resource_mut::<Messages<crate::ui_unit::CombatTextEvent>>()
+                .drain()
+                .map(|e| (e.message_type, e.args))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            sent(QuestComplete {
+                quest_id: 7,
+                honor: 1_250,
+                arena_points: 15,
+                ..Default::default()
+            }),
+            [
+                ("HONOR_GAINED", vec![ScriptValue::Int(125)]),
+                ("ARENA_POINTS_GAINED", vec![ScriptValue::Int(15)]),
+            ]
+        );
+        assert!(sent(QuestComplete {
+            quest_id: 7,
+            ..Default::default()
+        })
+        .is_empty());
     }
 
     /// `0x6d0e10`'s order: the completion, the XP, the money, the template's reward items, then

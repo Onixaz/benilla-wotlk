@@ -10,7 +10,6 @@ use super::reference_surface::engine_globals;
 /// interface. Byte-sorted.
 const ADDON_ONLY_UNBUILT: &[&str] = &[
     "AppendToFile",
-    "ApplyBarberShopStyle",
     "BNIsBlocked",
     "BNReportFriendInvite",
     "BNSetFocus",
@@ -73,7 +72,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "GetCurrentKeyBoardFocus",
     "GetEventCPUUsage",
     "GetExtendedItemInfo",
-    "GetFacialHairCustomization",
     "GetFrameCPUUsage",
     "GetFramesRegisteredForEvent",
     "GetFunctionCPUUsage",
@@ -223,10 +221,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "VoiceGetCurrentOutputDevice",
     "VoicePushToTalkStart",
     "VoicePushToTalkStop",
-    "debughook",
-    "difftime",
-    "hooksecurefunc",
-    "issecurevariable",
 ];
 
 /// `reference/3.3.5a-globals.tsv`'s `engine` names.

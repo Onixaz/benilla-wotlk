@@ -194,8 +194,94 @@ fn an_interface_panel_okay_writes_its_cvar() {
         .unwrap());
 }
 
+/// The Features panel's checkboxes, `(button suffix, CVar, registered default, what its write
+/// reaches)` (`InterfaceOptionsPanels.xml`; the game CVar registrar `0x51d9b0`).
+const FEATURES_CHECKBOXES: [(&str, &str, &str, &str); 2] = [
+    (
+        "EquipmentManager",
+        "equipmentManager",
+        "0",
+        "GearManagerToggleButton:IsShown() == 1 and '1' or '0'",
+    ),
+    (
+        "PreviewTalentChanges",
+        "previewTalents",
+        "0",
+        "GetCVarBool('previewTalents') and '1' or '0'",
+    ),
+];
+
+/// Each Features checkbox boots at its CVar's 12340 default, a click and Okay writes the flip and
+/// reaches its reader (Equipment Manager shows the paper doll's set button), a click and Cancel
+/// writes nothing, and Defaults puts the registered value back; `CanUseEquipmentSets` follows
+/// `equipmentManager`.
+#[test]
+fn every_features_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-features");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsFeaturesPanel)";
+    for (suffix, cvar, default, reader) in FEATURES_CHECKBOXES {
+        let button = format!("InterfaceOptionsFeaturesPanel{suffix}");
+        let read = |s: &UiScript| {
+            s.eval::<String>(&format!("return tostring({reader})"))
+                .unwrap()
+        };
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        assert_eq!(read(&s), flip(default), "{cvar} reaches {reader}");
+        if cvar == "equipmentManager" {
+            assert_eq!(
+                s.eval::<i64>("return CanUseEquipmentSets()").unwrap(),
+                1,
+                "the verb follows the CVar"
+            );
+        }
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+        assert_eq!(read(&s), default, "{reader} is back");
+    }
+    assert_eq!(s.eval::<i64>("return CanUseEquipmentSets()").unwrap(), 0);
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Controls panel's checkboxes, `(button suffix, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const CONTROLS_CHECKBOXES: [(&str, &str, &str); 6] = [
     ("StickyTargeting", "deselectOnClick", "1"),
     ("AutoDismount", "autoDismountFlying", "0"),
@@ -354,6 +440,102 @@ fn loot_under_mouse_opens_the_loot_window_at_the_cursor() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Help panel's checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`).
+const HELP_CHECKBOXES: [(&str, &str, &str); 5] = [
+    ("ShowTutorials", "showTutorials", "1"),
+    ("LoadingScreenTips", "showGameTips", "1"),
+    ("EnhancedTooltips", "UberTooltips", "1"),
+    ("BeginnerTooltips", "showNewbieTips", "1"),
+    ("ShowLuaErrors", "scriptErrors", "0"),
+];
+
+/// Each Help checkbox boots at its CVar's 12340 default, a click and Okay writes the flip (Beginner
+/// Tooltips its `SHOW_NEWBIE_TIPS` uvar too), a click and Cancel writes nothing, and Defaults puts
+/// the registered value back; Reset Tutorials, enabled once a tutorial has been seen, calls
+/// `ResetTutorials`.
+#[test]
+fn every_help_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-help");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsHelpPanel)";
+    for (suffix, cvar, default) in HELP_CHECKBOXES {
+        let button = format!("InterfaceOptionsHelpPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        if cvar == "showNewbieTips" {
+            assert_eq!(
+                s.eval::<String>("return tostring(SHOW_NEWBIE_TIPS)")
+                    .unwrap(),
+                flip(default),
+                "the uvar follows"
+            );
+        }
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    // `CanResetTutorials` (`0x530700`) greys the button until a tutorial has been seen.
+    let _ = s.take_tutorial_resets();
+    s.run(&format!(
+        "{open} InterfaceOptionsHelpPanelResetTutorials:Click()"
+    ))
+    .unwrap();
+    assert_eq!(
+        s.take_tutorial_resets(),
+        0,
+        "nothing seen: the button is greyed"
+    );
+    let mut bank = vec![0u8; 32];
+    bank[0] = 1;
+    s.set_tutorial_bank(Some(bank));
+    s.run(&format!(
+        "InterfaceOptionsFrameCancel:Click() {open} InterfaceOptionsHelpPanelResetTutorials:Click()"
+    ))
+    .unwrap();
+    assert_eq!(
+        s.take_tutorial_resets(),
+        1,
+        "the button resets the tutorials"
+    );
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Sound panel's device dropdown lists "System Default" and the engine's devices; a pick writes
 /// `Sound_OutputDriverIndex` and restarts the sound system at once, and Cancel puts the old index
 /// back with another restart (`AudioOptionsPanels.lua`, `AudioOptionsFrame_AudioRestart`).
@@ -432,8 +614,105 @@ fn escape_on_an_options_window_returns_to_the_menu() {
         .unwrap());
 }
 
+/// The Mouse panel's checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`).
+const MOUSE_CHECKBOXES: [(&str, &str, &str); 3] = [
+    ("InvertMouse", "mouseInvertPitch", "0"),
+    ("ClickToMove", "autointeract", "0"),
+    ("WoWMouse", "enableWoWMouse", "0"),
+];
+
+/// The Mouse panel: each checkbox boots at its 12340 default, Okay writes the flip, Cancel keeps
+/// it and Defaults restores it; the sensitivity slider writes `mouseSpeed`, the look-speed slider
+/// `cameraYawMoveSpeed` and half of it to `cameraPitchMoveSpeed`; the click-to-move camera
+/// dropdown is greyed until Click to Move is on, then writes `cameraSmoothTrackingStyle`.
+#[test]
+fn every_mouse_control_writes_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-mouse");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsMousePanel)";
+    for (suffix, cvar, default) in MOUSE_CHECKBOXES {
+        let button = format!("InterfaceOptionsMousePanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let number = |s: &UiScript, cvar: &str| -> f64 {
+        s.eval::<f64>(&format!("return tonumber(GetCVar('{cvar}'))"))
+            .unwrap()
+    };
+    assert_eq!(number(&s, "mouseSpeed"), 1.0);
+    assert_eq!(number(&s, "cameraYawMoveSpeed"), 180.0);
+    s.run(&format!(
+        "{open} InterfaceOptionsMousePanelMouseSensitivitySlider:SetValue(1.25) \
+         InterfaceOptionsMousePanelMouseLookSpeedSlider:SetValue(240) InterfaceOptionsFrameOkay:Click()"
+    ))
+    .unwrap();
+    assert_eq!(number(&s, "mouseSpeed"), 1.25);
+    assert_eq!(number(&s, "cameraYawMoveSpeed"), 240.0);
+    assert_eq!(
+        number(&s, "cameraPitchMoveSpeed"),
+        120.0,
+        "half the yaw speed"
+    );
+    s.run(open).unwrap();
+    assert!(
+        s.eval::<bool>(
+            "return InterfaceOptionsMousePanelClickMoveStyleDropDownButton:IsEnabled() ~= 1"
+        )
+        .unwrap(),
+        "the camera style waits for Click to Move"
+    );
+    s.run(
+        "InterfaceOptionsMousePanelClickToMove:Click() \
+         InterfaceOptionsMousePanelClickMoveStyleDropDown_OnClick({ value = '2' }) \
+         InterfaceOptionsFrameOkay:Click()",
+    )
+    .unwrap();
+    assert_eq!(s.cvar("autointeract").as_deref(), Some("1"));
+    assert_eq!(s.cvar("cameraSmoothTrackingStyle").as_deref(), Some("2"));
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Objectives panel's checkboxes, `(button suffix, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const OBJECTIVES_CHECKBOXES: [(&str, &str, &str); 6] = [
     ("InstantQuestText", "questFadingDisable", "1"),
     ("AutoQuestTracking", "autoQuestWatch", "1"),
@@ -525,8 +804,109 @@ fn every_objectives_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Camera panel's checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`; the camera CVar registrar's rows).
+const CAMERA_CHECKBOXES: [(&str, &str, &str); 4] = [
+    ("FollowTerrain", "cameraTerrainTilt", "0"),
+    ("HeadBob", "cameraBobbing", "0"),
+    ("WaterCollision", "cameraWaterCollision", "1"),
+    ("SmartPivot", "cameraPivot", "1"),
+];
+
+/// The Camera panel: each checkbox boots at its 12340 default, Okay writes the flip, Cancel keeps
+/// it and Defaults restores it; the follow-speed slider writes `cameraYawSmoothSpeed` and a
+/// quarter of it to `cameraPitchSmoothSpeed`, the distance slider `cameraDistanceMaxFactor`; the
+/// style dropdown writes `cameraSmoothStyle`, its "never" value ("0") greys Follow Terrain and the
+/// speed slider, and Cancel puts the old style back.
+#[test]
+fn every_camera_control_writes_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-camera");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsCameraPanel)";
+    for (suffix, cvar, default) in CAMERA_CHECKBOXES {
+        let button = format!("InterfaceOptionsCameraPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let number = |s: &UiScript, cvar: &str| -> f64 {
+        s.eval::<f64>(&format!("return tonumber(GetCVar('{cvar}'))"))
+            .unwrap()
+    };
+    assert_eq!(number(&s, "cameraYawSmoothSpeed"), 180.0);
+    s.run(&format!(
+        "{open} InterfaceOptionsCameraPanelFollowSpeedSlider:SetValue(240) \
+         InterfaceOptionsCameraPanelMaxDistanceSlider:SetValue(1.5) InterfaceOptionsFrameOkay:Click()"
+    ))
+    .unwrap();
+    assert_eq!(number(&s, "cameraYawSmoothSpeed"), 240.0);
+    assert_eq!(
+        number(&s, "cameraPitchSmoothSpeed"),
+        60.0,
+        "a quarter of the yaw speed"
+    );
+    assert_eq!(number(&s, "cameraDistanceMaxFactor"), 1.5);
+    assert_eq!(s.cvar("cameraSmoothStyle").as_deref(), Some("1"));
+    s.run(&format!(
+        "{open} InterfaceOptionsCameraPanelStyleDropDown_OnClick({{ value = '0' }})"
+    ))
+    .unwrap();
+    assert_eq!(s.cvar("cameraSmoothStyle").as_deref(), Some("0"));
+    let greyed: (bool, bool) = s
+        .eval(
+            "return InterfaceOptionsCameraPanelFollowTerrain:IsEnabled() ~= 1, \
+             InterfaceOptionsCameraPanelFollowSpeedSlider:IsEnabled() ~= 1",
+        )
+        .unwrap();
+    assert_eq!(greyed, (true, true), "the never style greys its dependents");
+    s.run("InterfaceOptionsFrameCancel:Click()").unwrap();
+    assert_eq!(
+        s.cvar("cameraSmoothStyle").as_deref(),
+        Some("1"),
+        "Cancel puts the old style back"
+    );
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Social panel's checkboxes, `(button suffix, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`). `showChatIcons`, in
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`). `showChatIcons`, in
 /// `SocialPanelOptions`, has no checkbox and no registration in 12340.
 const SOCIAL_CHECKBOXES: [(&str, &str, &str); 9] = [
     ("ProfanityFilter", "profanityFilter", "1"),
@@ -608,8 +988,97 @@ fn every_social_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Buffs and Debuffs panel's checkboxes, `(button suffix, CVar, registered default, what its
+/// write reaches)` (`InterfaceOptionsPanels.xml`; registered at `0x51e8b3`-`0x51e93e`).
+const BUFF_CHECKBOXES: [(&str, &str, &str, &str); 5] = [
+    ("BuffDurations", "buffDurations", "1", "SHOW_BUFF_DURATIONS"),
+    (
+        "DispellableDebuffs",
+        "showDispelDebuffs",
+        "0",
+        "GetCVar('showDispelDebuffs')",
+    ),
+    (
+        "CastableBuffs",
+        "showCastableBuffs",
+        "0",
+        "GetCVar('showCastableBuffs')",
+    ),
+    (
+        "ConsolidateBuffs",
+        "consolidateBuffs",
+        "0",
+        "CONSOLIDATE_BUFFS",
+    ),
+    (
+        "ShowCastableDebuffs",
+        "showCastableDebuffs",
+        "0",
+        "SHOW_CASTABLE_DEBUFFS",
+    ),
+];
+
+/// Each Buffs and Debuffs checkbox boots at its CVar's 12340 default, a click and Okay writes the
+/// flip and reaches its reader, a click and Cancel writes nothing, and Defaults puts the
+/// registered value back.
+#[test]
+fn every_buff_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-buffs");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsBuffsPanel)";
+    for (suffix, cvar, default, reader) in BUFF_CHECKBOXES {
+        let button = format!("InterfaceOptionsBuffsPanel{suffix}");
+        let read = |s: &UiScript| {
+            s.eval::<String>(&format!("return tostring({reader})"))
+                .unwrap()
+        };
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        assert_eq!(read(&s), flip(default), "{cvar} reaches {reader}");
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The ActionBars panel's CVar checkboxes, `(button suffix, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const ACTIONBARS_CHECKBOXES: [(&str, &str, &str); 3] = [
     ("LockActionBars", "lockActionBars", "1"),
     ("AlwaysShowActionBars", "alwaysShowActionBars", "0"),
@@ -701,8 +1170,471 @@ fn every_actionbars_checkbox_writes_its_cvar_or_its_toggle_bit() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Unit Frames panel's checkboxes, `(button suffix, CVar, registered default, what its
+/// write reaches)` (`InterfaceOptionsPanels.xml`; the game CVar registrar `0x51d9b0`): a uvar, or
+/// the Lua expression its `setFunc` moves.
+const UNIT_FRAME_CHECKBOXES: [(&str, &str, &str, &str); 8] = [
+    (
+        "PartyBackground",
+        "showPartyBackground",
+        "0",
+        "SHOW_PARTY_BACKGROUND",
+    ),
+    (
+        "PartyInRaid",
+        "hidePartyInRaid",
+        "0",
+        "HIDE_PARTY_INTERFACE",
+    ),
+    ("PartyPets", "showPartyPets", "1", "SHOW_PARTY_PETS"),
+    (
+        "RaidRange",
+        "showRaidRange",
+        "0",
+        "RaidFrame.showRange and '1' or '0'",
+    ),
+    (
+        "ArenaEnemyFrames",
+        "showArenaEnemyFrames",
+        "1",
+        "SHOW_ARENA_ENEMY_FRAMES",
+    ),
+    (
+        "ArenaEnemyCastBar",
+        "showArenaEnemyCastbar",
+        "1",
+        "SHOW_ARENA_ENEMY_CASTINGBAR",
+    ),
+    (
+        "ArenaEnemyPets",
+        "showArenaEnemyPets",
+        "1",
+        "SHOW_ARENA_ENEMY_PETS",
+    ),
+    (
+        "FullSizeFocusFrame",
+        "fullSizeFocusFrame",
+        "0",
+        "FocusFrame.smallSize and '0' or '1'",
+    ),
+];
+
+/// Each Unit Frames checkbox boots at its CVar's 12340 default, a click and Okay writes the flip
+/// and reaches its uvar or `setFunc` target, a click and Cancel writes nothing, and Defaults puts
+/// the registered value back.
+#[test]
+fn every_unit_frame_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-unitframes");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsUnitFramePanel)";
+    for (suffix, cvar, default, reader) in UNIT_FRAME_CHECKBOXES {
+        let button = format!("InterfaceOptionsUnitFramePanel{suffix}");
+        let read = |s: &UiScript| {
+            s.eval::<String>(&format!("return tostring({reader})"))
+                .unwrap()
+        };
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        assert_eq!(read(&s), flip(default), "{cvar} reaches {reader}");
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+        assert_eq!(read(&s), default, "{reader} is back");
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
+/// The Names panel's checkboxes, `(button path, CVar, registered default, parent)`
+/// (`InterfaceOptionsPanels.xml`; the registrars `0x7e6150` and `0x51d9b0`). A plate sub-row is
+/// a dependent control of its side's row.
+const NAMES_CHECKBOXES: [(&str, &str, &str, Option<&str>); 22] = [
+    ("MyName", "UnitNameOwn", "0", None),
+    ("NPCNames", "UnitNameNPC", "0", None),
+    (
+        "NonCombatCreature",
+        "UnitNameNonCombatCreatureName",
+        "0",
+        None,
+    ),
+    ("Guilds", "UnitNamePlayerGuild", "1", None),
+    ("Titles", "UnitNamePlayerPVPTitle", "1", None),
+    (
+        "FriendlyPlayerNames",
+        "UnitNameFriendlyPlayerName",
+        "1",
+        None,
+    ),
+    ("FriendlyPets", "UnitNameFriendlyPetName", "1", None),
+    (
+        "FriendlyGuardians",
+        "UnitNameFriendlyGuardianName",
+        "0",
+        None,
+    ),
+    ("FriendlyTotems", "UnitNameFriendlyTotemName", "0", None),
+    ("EnemyPlayerNames", "UnitNameEnemyPlayerName", "1", None),
+    ("EnemyPets", "UnitNameEnemyPetName", "1", None),
+    ("EnemyGuardians", "UnitNameEnemyGuardianName", "0", None),
+    ("EnemyTotems", "UnitNameEnemyTotemName", "0", None),
+    (
+        "UnitNameplatesAllowOverlap",
+        "nameplateAllowOverlap",
+        "1",
+        None,
+    ),
+    ("UnitNameplatesFriends", "nameplateShowFriends", "0", None),
+    ("UnitNameplatesEnemies", "nameplateShowEnemies", "0", None),
+    (
+        "UnitNameplatesFriendlyPets",
+        "nameplateShowFriendlyPets",
+        "1",
+        Some("nameplateShowFriends"),
+    ),
+    (
+        "UnitNameplatesFriendlyGuardians",
+        "nameplateShowFriendlyGuardians",
+        "1",
+        Some("nameplateShowFriends"),
+    ),
+    (
+        "UnitNameplatesFriendlyTotems",
+        "nameplateShowFriendlyTotems",
+        "1",
+        Some("nameplateShowFriends"),
+    ),
+    (
+        "UnitNameplatesEnemyPets",
+        "nameplateShowEnemyPets",
+        "1",
+        Some("nameplateShowEnemies"),
+    ),
+    (
+        "UnitNameplatesEnemyGuardians",
+        "nameplateShowEnemyGuardians",
+        "1",
+        Some("nameplateShowEnemies"),
+    ),
+    (
+        "UnitNameplatesEnemyTotems",
+        "nameplateShowEnemyTotems",
+        "1",
+        Some("nameplateShowEnemies"),
+    ),
+];
+
+/// Each Names checkbox boots at its CVar's 12340 default, a click and Okay writes the flip, a
+/// click and Cancel writes nothing, and Defaults puts the registered value back; a plate sub-row
+/// is greyed until its side's row is on.
+#[test]
+fn every_names_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-names");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsNamesPanel)";
+    for (suffix, cvar, default, parent) in NAMES_CHECKBOXES {
+        let button = format!("InterfaceOptionsNamesPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        if let Some(parent) = parent {
+            s.run(open).unwrap();
+            assert!(
+                !s.eval::<bool>(&format!("return {button}:IsEnabled() == 1"))
+                    .unwrap(),
+                "{button} is greyed with {parent} off"
+            );
+            // The side's row enables its dependents on its click, not on a CVar write.
+            let side = parent.trim_start_matches("nameplateShow");
+            s.run(&format!(
+                "InterfaceOptionsNamesPanelUnitNameplates{side}:Click() \
+                 InterfaceOptionsFrameOkay:Click()"
+            ))
+            .unwrap();
+            assert_eq!(s.cvar(parent).as_deref(), Some("1"), "{parent} on");
+        }
+        s.run(open).unwrap();
+        if parent.is_some() {
+            assert!(
+                s.eval::<bool>(&format!("return {button}:IsEnabled() == 1"))
+                    .unwrap(),
+                "{button} enables with its side"
+            );
+        }
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+        if let Some(parent) = parent {
+            assert_eq!(
+                s.cvar(parent).as_deref(),
+                Some("0"),
+                "Defaults resets {parent}"
+            );
+        }
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
+/// The Combat Text panel's checkboxes, `(button suffix, CVar, registered default, uvar, parent
+/// row)` (`InterfaceOptionsPanels.xml`; the game CVar registrar `0x51d9b0`). The parent is the row
+/// whose click enables this one.
+type CombatTextRow = (
+    &'static str,
+    &'static str,
+    &'static str,
+    Option<&'static str>,
+    Option<&'static str>,
+);
+const COMBAT_TEXT_CHECKBOXES: [CombatTextRow; 18] = [
+    ("TargetDamage", "CombatDamage", "1", None, None),
+    ("PeriodicDamage", "CombatLogPeriodicSpells", "1", None, None),
+    ("PetDamage", "PetMeleeDamage", "1", None, None),
+    ("Healing", "CombatHealing", "1", None, None),
+    ("TargetEffects", "fctSpellMechanics", "0", None, None),
+    (
+        "OtherTargetEffects",
+        "fctSpellMechanicsOther",
+        "0",
+        None,
+        Some("TargetEffects"),
+    ),
+    (
+        "DodgeParryMiss",
+        "fctDodgeParryMiss",
+        "0",
+        Some("COMBAT_TEXT_SHOW_DODGE_PARRY_MISS"),
+        None,
+    ),
+    (
+        "DamageReduction",
+        "fctDamageReduction",
+        "0",
+        Some("COMBAT_TEXT_SHOW_RESISTANCES"),
+        None,
+    ),
+    (
+        "RepChanges",
+        "fctRepChanges",
+        "0",
+        Some("COMBAT_TEXT_SHOW_REPUTATION"),
+        None,
+    ),
+    (
+        "ReactiveAbilities",
+        "fctReactives",
+        "0",
+        Some("COMBAT_TEXT_SHOW_REACTIVES"),
+        None,
+    ),
+    (
+        "FriendlyHealerNames",
+        "fctFriendlyHealers",
+        "0",
+        Some("COMBAT_TEXT_SHOW_FRIENDLY_NAMES"),
+        None,
+    ),
+    (
+        "CombatState",
+        "fctCombatState",
+        "0",
+        Some("COMBAT_TEXT_SHOW_COMBAT_STATE"),
+        None,
+    ),
+    (
+        "LowManaHealth",
+        "fctLowManaHealth",
+        "1",
+        Some("COMBAT_TEXT_SHOW_LOW_HEALTH_MANA"),
+        None,
+    ),
+    (
+        "EnergyGains",
+        "fctEnergyGains",
+        "0",
+        Some("COMBAT_TEXT_SHOW_ENERGIZE"),
+        None,
+    ),
+    (
+        "PeriodicEnergyGains",
+        "fctPeriodicEnergyGains",
+        "0",
+        Some("COMBAT_TEXT_SHOW_PERIODIC_ENERGIZE"),
+        None,
+    ),
+    (
+        "HonorGains",
+        "fctHonorGains",
+        "0",
+        Some("COMBAT_TEXT_SHOW_HONOR_GAINED"),
+        None,
+    ),
+    (
+        "Auras",
+        "fctAuras",
+        "0",
+        Some("COMBAT_TEXT_SHOW_AURAS"),
+        None,
+    ),
+    (
+        "EnableFCT",
+        "enableCombatText",
+        "1",
+        Some("SHOW_COMBAT_TEXT"),
+        None,
+    ),
+];
+
+/// Each Combat Text checkbox boots at its CVar's 12340 default, a click and Okay writes the flip
+/// and its uvar, a click and Cancel writes nothing, and Defaults puts the registered value back.
+/// Pet Damage writes `PetSpellDamage` beside its own row; Other Targets' Effects is greyed until
+/// its parent row is on; Combo Points, enabled only for a rogue or druid, boots at "0".
+#[test]
+fn every_combat_text_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-combattext");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    assert_eq!(s.cvar("fctComboPoints").as_deref(), Some("0"));
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsCombatTextPanel)";
+    for (suffix, cvar, default, uvar, parent) in COMBAT_TEXT_CHECKBOXES {
+        let button = format!("InterfaceOptionsCombatTextPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        if let Some(parent) = parent {
+            s.run(open).unwrap();
+            assert!(
+                !s.eval::<bool>(&format!("return {button}:IsEnabled() == 1"))
+                    .unwrap(),
+                "{button} is greyed with {parent} off"
+            );
+            s.run(&format!(
+                "InterfaceOptionsCombatTextPanel{parent}:Click() InterfaceOptionsFrameOkay:Click()"
+            ))
+            .unwrap();
+        }
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        if let Some(uvar) = uvar {
+            assert_eq!(
+                s.eval::<String>(&format!("return tostring({uvar})"))
+                    .unwrap(),
+                flip(default),
+                "{uvar} follows"
+            );
+        }
+        if cvar == "PetMeleeDamage" {
+            assert_eq!(
+                s.cvar("PetSpellDamage").as_deref(),
+                Some(flip(default)),
+                "the row writes PetSpellDamage too"
+            );
+        }
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Combat panel's checkboxes, `(button path, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const COMBAT_CHECKBOXES: [(&str, &str, &str); 8] = [
     ("AttackOnAssist", "assistAttack", "0"),
     ("AutoRange", "autoRangedCombat", "1"),
@@ -808,8 +1740,79 @@ fn the_combat_panel_reaches_the_target_frame() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Status Text panel's rows, `(button suffix, CVar, a bar that row locks)`
+/// (`InterfaceOptionsPanels.xml`); every row registers "0" (the game CVar registrar `0x51d9b0`).
+const STATUS_TEXT_ROWS: [(&str, &str, &str); 5] = [
+    ("Player", "playerStatusText", "PlayerFrameHealthBar"),
+    ("Pet", "petStatusText", "PetFrameHealthBar"),
+    ("Party", "partyStatusText", "PartyMemberFrame1HealthBar"),
+    ("Target", "targetStatusText", "TargetFrameHealthBar"),
+    ("XP", "xpBarText", "MainMenuExpBar"),
+];
+
+/// Each Status Text row boots "0", a click and Okay writes "1" and its `CVAR_UPDATE` token shows
+/// the locked text on its bar as `value / max`, Percentages turns it to `n%`, and Defaults puts
+/// every row back to "0" and hides the text again.
+#[test]
+fn every_status_text_row_locks_its_bars_text() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-statustext");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsStatusTextPanel)";
+    assert_eq!(s.cvar("statusTextPercentage").as_deref(), Some("0"));
+    for (suffix, cvar, bar) in STATUS_TEXT_ROWS {
+        let button = format!("InterfaceOptionsStatusTextPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some("0"), "{cvar} boots");
+        s.run(&format!(
+            "{bar}:SetMinMaxValues(0, 100) {bar}:SetValue(42) TextStatusBar_UpdateTextString({bar})"
+        ))
+        .unwrap();
+        let text = |s: &UiScript| -> (bool, String) {
+            s.eval(&format!(
+                "local t = {bar}.TextString return t:IsShown() == 1, t:GetText() or ''"
+            ))
+            .unwrap()
+        };
+        assert!(!text(&s).0, "{bar}'s text hides with {cvar} off");
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(s.cvar(cvar).as_deref(), Some("1"), "Okay writes {cvar}");
+        let (shown, value) = text(&s);
+        assert!(shown, "{bar}'s text locks on");
+        assert!(
+            value.contains("42") && value.contains("100"),
+            "{bar}: {value:?}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsStatusTextPanelPercentages:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        // The experience bar keeps its `XP` prefix (`alwaysPrefix`).
+        let percent = text(&s).1;
+        assert!(
+            percent == "42%" || percent == "XP 42%",
+            "{bar} in percent: {percent:?}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(s.cvar(cvar).as_deref(), Some("0"), "Defaults resets {cvar}");
+        assert_eq!(s.cvar("statusTextPercentage").as_deref(), Some("0"));
+        assert!(!text(&s).0, "{bar}'s text hides again");
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Display panel's CVar checkboxes, `(button suffix, CVar, registered default)`
-/// (`InterfaceOptionsPanels.xml`, `CGGameUI::RegisterGameCVars 0x51d9b0`).
+/// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const DISPLAY_CHECKBOXES: [(&str, &str, &str); 10] = [
     ("RotateMinimap", "rotateMinimap", "0"),
     ("ScreenEdgeFlash", "screenEdgeFlash", "1"),

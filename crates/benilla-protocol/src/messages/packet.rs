@@ -323,6 +323,10 @@ pub enum ServerPacket {
     GroupJoinedBattleground(crate::messages::GroupJoinedBattleground),
     /// `SMSG_BATTLEFIELD_PORT_DENIED`: the port was refused, the player being dead.
     BattlefieldPortDenied,
+    /// `SMSG_ENABLE_BARBER_SHOP`: the barber chair opens the barber shop; no body.
+    EnableBarberShop,
+    /// `SMSG_BARBER_SHOP_RESULT`: the paid change's result word.
+    BarberShopResult(u32),
     /// `SMSG_ARENA_UNIT_DESTROYED`: an arena opponent's unit left the world.
     ArenaUnitDestroyed(u64),
     /// The Wintergrasp battle manager's notices.
@@ -1522,6 +1526,8 @@ impl ServerPacket {
             ServerPacket::GroupJoinedBattleground(_) => "SMSG_GROUP_JOINED_BATTLEGROUND".into(),
             ServerPacket::InspectArenaTeam(_) => "MSG_INSPECT_ARENA_TEAMS".into(),
             ServerPacket::BattlefieldPortDenied => "SMSG_BATTLEFIELD_PORT_DENIED".into(),
+            ServerPacket::EnableBarberShop => "SMSG_ENABLE_BARBER_SHOP".into(),
+            ServerPacket::BarberShopResult(_) => "SMSG_BARBER_SHOP_RESULT".into(),
             ServerPacket::ArenaUnitDestroyed(_) => "SMSG_ARENA_UNIT_DESTROYED".into(),
             ServerPacket::BattlefieldMgr(_) => "SMSG_BATTLEFIELD_MGR".into(),
             ServerPacket::ArenaTeamQueryResponse(_) => "SMSG_ARENA_TEAM_QUERY_RESPONSE".into(),

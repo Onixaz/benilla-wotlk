@@ -21,12 +21,14 @@ pub struct GlueCustomizeGrid {
 
 /// `ComponentFlagsMatch` (`0x4f39a0`) at the create screen's selections, 0 and, for class 6, 1
 /// (`0x4f3a40` with context 0): a creatable row, and for a Death Knight one flagged `0x4` or
-/// `0x10`; never an NPC's (`0x8`), and `0x4` only for a Death Knight.
-fn flags_match(flags: u32, death_knight: bool) -> bool {
+/// `0x10`; never an NPC's (`0x8`), and `0x4` only for a Death Knight. The barber shop's context
+/// selects 2 and 3, which admit a barber-only row (`0x2`) beside a creatable one.
+fn flags_match(flags: u32, death_knight: bool, barber: bool) -> bool {
+    let offered = if barber { 0x3 } else { 0x1 };
     if death_knight {
-        flags & 0x1 != 0 && flags & 0x14 != 0 && flags & 0x8 == 0
+        flags & offered != 0 && flags & 0x14 != 0 && flags & 0x8 == 0
     } else {
-        flags & 0x1 != 0 && flags & 0xC == 0
+        flags & offered != 0 && flags & 0xC == 0
     }
 }
 
@@ -67,6 +69,7 @@ impl Prefs {
 pub(super) struct Customizer<'a> {
     grid: &'a GlueCustomizeGrid,
     death_knight: bool,
+    barber: bool,
     p: Prefs,
 }
 
@@ -75,7 +78,16 @@ impl<'a> Customizer<'a> {
         Customizer {
             grid,
             death_knight: class == 6,
+            barber: false,
             p: Prefs::from_dials(dials),
+        }
+    }
+
+    /// The barber shop's walker, context 1 (`0x52fc80`).
+    pub(super) fn barber(grid: &'a GlueCustomizeGrid, class: u8, dials: [u8; 5]) -> Self {
+        Customizer {
+            barber: true,
+            ..Self::new(grid, class, dials)
         }
     }
 
@@ -111,7 +123,7 @@ impl<'a> Customizer<'a> {
 
     fn admits(&self, ty: usize, var: i32, color: i32) -> bool {
         self.row(ty, var, color)
-            .is_some_and(|f| flags_match(f, self.death_knight))
+            .is_some_and(|f| flags_match(f, self.death_knight, self.barber))
     }
 
     /// The skin, face and underwear rows a (face, skin) pair needs, as the skin and face walkers

@@ -155,6 +155,7 @@ pub(in crate::entities) fn resolve_equipment(
     // Mutable because a miss sends the `CMSG_GUILD_QUERY` whose answer paints the tabard.
     mut guilds: Option<ResMut<crate::ui_guild::GuildState>>,
     tabard_design: Option<Res<crate::ui_tabard::TabardDesign>>,
+    barber: Option<Res<crate::ui_barber::BarberBody>>,
 ) {
     let Some(mut held) = held else {
         return;
@@ -171,7 +172,10 @@ pub(in crate::entities) fn resolve_equipment(
         || items_moved
         || creatures.as_ref().is_some_and(|c| c.is_changed())
         || enchants.as_ref().is_some_and(|e| e.is_changed())
-        || tabard_design.as_ref().is_some_and(|d| d.is_changed());
+        || tabard_design.as_ref().is_some_and(|d| d.is_changed())
+        || barber.as_ref().is_some_and(|b| b.is_changed());
+    // Our own body in the barber chair: helm, shoulders and a shield off, the cape on.
+    let barber = barber.as_deref().filter(|b| b.open);
     let mut glows = glows;
     let enchant_rows = enchants.as_deref().map(|e| &e.0);
     for (
@@ -259,6 +263,24 @@ pub(in crate::entities) fn resolve_equipment(
                 if let Some(design) = tabard_design.as_deref().and_then(|d| d.preview()) {
                     eq.emblem = Some(design);
                     eq.tabard_preview = true;
+                }
+            }
+            eq.look = Some([
+                s.player_skin().unwrap_or(0),
+                s.player_face().unwrap_or(0),
+                s.player_hair_style().unwrap_or(0),
+                s.player_hair_color().unwrap_or(0),
+                s.player_facial_hair().unwrap_or(0),
+            ]);
+            // The chair's dress (`0x52f9b0`): the helm off, the barber's cape in the tabard
+            // slot, and the preview look.
+            if let Some(b) = barber.filter(|_| is_self) {
+                eq.helm = 0;
+                eq.bodyslots[7] = crate::ui_barber::BARBER_CAPE_DISPLAY;
+                eq.emblem = None;
+                eq.tabard_preview = false;
+                if b.preview.is_some() {
+                    eq.look = b.preview;
                 }
             }
             if current_equipment != Some(&eq) {
@@ -362,6 +384,10 @@ pub(in crate::entities) fn resolve_equipment(
                 continue;
             };
             if !char_component {
+                continue;
+            }
+            // The chair takes a shield off our own arm (`0x52fa5d`).
+            if inv_type == 14 && is_self && barber.is_some() {
                 continue;
             }
             let kind = if inv_type == 14 {
@@ -500,9 +526,11 @@ pub(in crate::entities) fn resolve_equipment(
                         .filter(|d| *d != 0)
                         .unwrap_or(0)
                 };
-                // Zero when hidden, the id the geoset half got, so the two cannot disagree.
-                let helm = if hide_helm { 0 } else { resolve(0) };
-                let shoulder = resolve(2);
+                // Zero when hidden, the id the geoset half got, so the two cannot disagree; the
+                // barber chair takes both off our own body.
+                let stripped = is_self && barber.is_some();
+                let helm = if hide_helm || stripped { 0 } else { resolve(0) };
+                let shoulder = if stripped { 0 } else { resolve(2) };
                 Some((helm, shoulder, race, sex))
             }
             EntityKind::Unit => match mirror {

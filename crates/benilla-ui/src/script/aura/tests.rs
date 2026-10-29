@@ -509,3 +509,32 @@ fn the_time_remaining_line_picks_its_plural_form() {
         );
     }
 }
+
+/// `RAID` walks the finder's second list (`0x72c9b0`): only the auras it holds, in the main list's
+/// order, under either sign.
+#[test]
+fn the_raid_filter_keeps_the_second_lists_auras() {
+    let mut s = script();
+    let mut fort = aura(48161, "Power Word: Fortitude", true, true);
+    fort.raid = true;
+    let shout = aura(47436, "Battle Shout", true, true);
+    let mut intellect = aura(42995, "Arcane Intellect", true, true);
+    intellect.raid = true;
+    s.set_player_auras(vec![fort, shout, intellect]);
+    let names: Vec<String> = (1..=3)
+        .filter_map(|i| {
+            s.eval::<Option<String>>(&format!(
+                r#"return (UnitAura("player", {i}, "HELPFUL|RAID"))"#
+            ))
+            .unwrap()
+        })
+        .collect();
+    assert_eq!(names, ["Power Word: Fortitude", "Arcane Intellect"]);
+    assert_eq!(
+        s.eval::<Option<String>>(r#"return (UnitAura("player", 2))"#)
+            .unwrap()
+            .as_deref(),
+        Some("Battle Shout"),
+        "without RAID every aura lists"
+    );
+}

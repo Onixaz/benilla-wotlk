@@ -3,16 +3,18 @@
 //! `0x76c040`), is [`crate::script::cursor`]'s.
 //!
 //! The flags are bits of `[frame+0xb4]`, set by `0x76a3c0`: movable `0x100`, resizable `0x200`,
-//! userPlaced `0x1000`. A drag (`0x7652b0`) re-anchors the frame to one TOPLEFT against the screen
-//! root at its current rect (`0x768430`), raises it, sets userPlaced and takes the one drag slot
-//! (`root+0xcfc`). The pump (`0x7655b0`) adds each cursor delta, over the frame's scale, straight
-//! into that anchor's offsets (`0x768710` case 4), so stopping (`0x765640`) writes nothing.
-//!
-//! Here nothing re-anchors: a move translates every authored anchor, and a resize keeps the set.
+//! userPlaced `0x1000`. A drag (`CSimpleTop::StartMoveOrResizeFrame` `0x494060`) flattens the frame
+//! to one TOPLEFT against the screen at its current rect with an explicit size
+//! (`CLayoutFrame::FlattenFrame` `0x48a5f0`), so a frame a clamp holds off its anchors moves from
+//! where it is drawn; it then raises it, sets userPlaced and takes the one drag slot. The pump
+//! (`MoveOrResizeFrame` `0x493ce0` → `DragBy` `0x48abd0`) adds each cursor delta, over the frame's
+//! scale, into that anchor's offsets; stopping (`StopMoveOrResizeFrame` `0x493a10`) unflattens it to
+//! the nearest of the screen's nine points (`UnflattenFrame` `0x48a840`).
 
 use mlua::{Lua, MultiValue, Table, Value};
 
-use crate::script::Model;
+use crate::layout::{Anchor, Point};
+use crate::script::{Model, SCREEN};
 use crate::widget::FrameHandle;
 
 use super::frame_handle_of;
@@ -191,6 +193,7 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let (left, right) = (p.contains("LEFT"), p.contains("RIGHT"));
             let (top, bottom) = (p.contains("TOP"), p.contains("BOTTOM"));
             // The raise and userPlaced belong to the drag entry `0x7652b0`, whatever the grip.
+            flatten(&mut model, h);
             super::toplevel::raise(&mut model, h);
             set_user_placed(&mut model, h);
             let sample = model.cursor_pos;
@@ -225,9 +228,11 @@ pub(super) fn install(lua: &Lua, m: &Table) -> mlua::Result<()> {
             let mut model = crate::script::model_mut_of(lua);
             if model.sizing.is_some_and(|sz| sz.frame == h) {
                 model.sizing = None;
+                unflatten(&mut model, h);
             }
             if model.moving.is_some_and(|mv| mv.frame == h) {
                 model.moving = None;
+                unflatten(&mut model, h);
             }
             Ok(())
         })?,
@@ -296,6 +301,7 @@ fn start_moving(model: &mut Model, h: FrameHandle) -> mlua::Result<()> {
     if model.moving.is_some() {
         return Ok(());
     }
+    flatten(model, h);
     // The drag-start raise (`0x7652d7`); the worker applies the toplevel gate.
     super::toplevel::raise(model, h);
     set_user_placed(model, h);
@@ -314,6 +320,7 @@ pub(crate) fn start_title_move(model: &mut Model, h: FrameHandle) -> bool {
     if model.moving.is_some() {
         return false;
     }
+    flatten(model, h);
     super::toplevel::raise(model, h);
     set_user_placed(model, h);
     model.moving = Some(FrameMove {
@@ -322,6 +329,88 @@ pub(crate) fn start_title_move(model: &mut Model, h: FrameHandle) -> bool {
         auto_stop: true,
     });
     true
+}
+
+/// End a move the mouse-up ends (drag modes 1 and 2), unflattening the frame as every stop does.
+pub(crate) fn stop_auto_move(model: &mut Model) {
+    if let Some(mv) = model.moving.take() {
+        unflatten(model, mv.frame);
+    }
+}
+
+/// `FlattenFrame` (`0x48a5f0`) against the screen: one TOPLEFT at the frame's current rect, clamp
+/// included, and that rect's size made explicit, in the frame's own units.
+fn flatten(model: &mut Model, h: FrameHandle) {
+    crate::script::UiScript::resolve_layout(model);
+    let Some(rect) = model.resolved.get(&h).copied() else {
+        return;
+    };
+    let screen = model.screen;
+    let inv = 1.0 / eff_scale(model, h);
+    let anchor = Anchor::new(
+        Point::TopLeft,
+        SCREEN,
+        Point::TopLeft,
+        (rect.left - screen.left) * inv,
+        (rect.top - screen.top) * inv,
+    );
+    let size = (
+        (rect.right - rect.left) * inv,
+        (rect.top - rect.bottom) * inv,
+    );
+    set_single_anchor(model, h, anchor, Some(size));
+}
+
+/// `UnflattenFrame` (`0x48a840`): re-anchor to whichever of the screen's nine points lies nearest
+/// its counterpart on the frame, keeping the size, so a later screen change carries it along.
+fn unflatten(model: &mut Model, h: FrameHandle) {
+    crate::script::UiScript::resolve_layout(model);
+    let Some(rect) = model.resolved.get(&h).copied() else {
+        return;
+    };
+    let screen = model.screen;
+    // `Point`'s order, row by row from the top-left, as `GetRectFramePoints` lays them out.
+    let at = |r: &crate::layout::Rect, i: usize| {
+        let x = [r.left, (r.left + r.right) * 0.5, r.right][i % 3];
+        let y = [r.top, (r.top + r.bottom) * 0.5, r.bottom][i / 3];
+        (x, y)
+    };
+    let mut best = (0usize, f32::MAX, 0.0f32, 0.0f32);
+    for i in 0..9 {
+        let ((fx, fy), (sx, sy)) = (at(&rect, i), at(&screen, i));
+        let (dx, dy) = (sx - fx, sy - fy);
+        let distance = dx * dx + dy * dy;
+        if distance < best.1 {
+            best = (i, distance, fx - sx, fy - sy);
+        }
+    }
+    const POINTS: [Point; 9] = [
+        Point::TopLeft,
+        Point::Top,
+        Point::TopRight,
+        Point::Left,
+        Point::Center,
+        Point::Right,
+        Point::BottomLeft,
+        Point::Bottom,
+        Point::BottomRight,
+    ];
+    let point = POINTS[best.0];
+    let inv = 1.0 / eff_scale(model, h);
+    let anchor = Anchor::new(point, SCREEN, point, best.2 * inv, best.3 * inv);
+    set_single_anchor(model, h, anchor, None);
+}
+
+/// Replace the frame's anchors with `anchor`, and its size with `size` when given.
+fn set_single_anchor(model: &mut Model, h: FrameHandle, anchor: Anchor, size: Option<(f32, f32)>) {
+    let input = model.layout_inputs.entry(h).or_default();
+    let old: Vec<u32> = input.anchors.iter().map(|a| a.relative_to).collect();
+    input.anchors = vec![anchor];
+    if let Some((w, hgt)) = size {
+        input.width = w;
+        input.height = hgt;
+    }
+    model.touch_layout_retarget_frame(h, &old, &[SCREEN]);
 }
 
 /// Set userPlaced as the drag entry `0x7652b0` does.
@@ -408,19 +497,18 @@ pub(crate) fn advance_size(model: &mut Model, pos: (f32, f32)) {
     input.width = new_w;
     input.height = new_h;
     let mut moved = input.width.to_bits() != w0.to_bits() || input.height.to_bits() != h0.to_bits();
-    // A LEFT or BOTTOM grip also shifts the anchors on its axis, so a frame anchored by that side
-    // keeps its opposite edge. The reference instead re-anchors the frame to one TOPLEFT point at
-    // `StartSizing` (`0x768430`).
-    if !input.anchors.is_empty() && (sz.left || sz.bottom) {
+    // The flattened frame hangs from its TOPLEFT, so a LEFT or TOP grip moves that point with its
+    // edge and the opposite edges stay (`DragBy` `0x48abd0`); RIGHT and BOTTOM change the size alone.
+    if !input.anchors.is_empty() && (sz.left || sz.top) {
         for a in &mut input.anchors {
             if sz.left {
                 a.x_off += dx;
             }
-            if sz.bottom {
+            if sz.top {
                 a.y_off += dy;
             }
         }
-        moved |= (sz.left && dx != 0.0) || (sz.bottom && dy != 0.0);
+        moved |= (sz.left && dx != 0.0) || (sz.top && dy != 0.0);
     }
     // A nonzero cursor delta can still move nothing (a grip dragged across its axis, or held at a
     // bound), so the layout is touched only on a real change.

@@ -988,6 +988,8 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
         ServerPacket::SaveGuildEmblemResult(r) => vec![SessionEvent::SaveGuildEmblemResult(r)],
         ServerPacket::GroupJoinedBattleground(j) => vec![SessionEvent::GroupJoinedBattleground(j)],
         ServerPacket::BattlefieldPortDenied => vec![SessionEvent::BattlefieldPortDenied],
+        ServerPacket::EnableBarberShop => vec![SessionEvent::EnableBarberShop],
+        ServerPacket::BarberShopResult(r) => vec![SessionEvent::BarberShopResult(r)],
         ServerPacket::ArenaUnitDestroyed(g) => vec![SessionEvent::ArenaUnitDestroyed(g)],
         ServerPacket::BattlefieldMgr(n) => vec![SessionEvent::BattlefieldMgr(n)],
         ServerPacket::ArenaTeamQueryResponse(t) => vec![SessionEvent::ArenaTeamQueryResponse(t)],
