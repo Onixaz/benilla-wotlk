@@ -858,7 +858,15 @@ pub(crate) mod schedule_tests {
     ///   against the `TutorialEvent` writers `tutorial::watch_self`, `watch_windows`,
     ///   `ui_battlefield::feed_battlefield` and `ui_dialog_verbs::feed_meeting_stone` and the
     ///   drain `tutorial::feed_tutorials`: it only appends one fire-once ask.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_905;
+    /// - The vehicle seats (#632) add 15: `vehicle::ride::ride_seats` re-roots a passenger's rig in
+    ///   the entity-visuals chain right after `reseat_mounts`, as a mount re-seat does, and shares
+    ///   its unordered `RigPose` readers (the nameplate, overhead mark, combat-text and anim-event
+    ///   sound readers), which see the seat a frame late at worst; it reads `NetEntity` for the
+    ///   ground frame against `refresh_live_display`, later in the same chain, which only swaps a
+    ///   display; and it and `sweep_seat_anchors` spawn and despawn their anchors through
+    ///   `Commands` against `finish_colliders` and read `GlobalTransform` scales against
+    ///   `publish_camera_pose`, as the other such spawners pair.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_920;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
