@@ -655,6 +655,38 @@ fn raising_a_bottom_bar_moves_the_managed_bottom_stack() {
     );
 }
 
+/// On a widescreen mode, the issue's case, `UpdateMenuBarTop` lifts `menuBarTop` to 75
+/// (`UIParent.lua:1170-1173`), so the cast bar sits at 75 + 40 above the main bar, and 45 higher
+/// with a bottom bar up.
+#[test]
+fn a_widescreen_mode_seats_the_cast_bar_above_the_bars() {
+    benilla_formats::wow_data_or_skip!();
+    let mut s = UiScript::new().unwrap();
+    s.set_screen_size(1365.0, 768.0);
+    load_action_bar(&mut s);
+    let wide = benilla_ui::script::ScreenResolution {
+        width: 1920,
+        height: 1080,
+    };
+    s.set_screen_resolutions(vec![wide], Some(wide));
+
+    let cast_y = |s: &UiScript| {
+        s.eval::<f64>("local _, _, _, _, y = CastingBarFrame:GetPoint() return y")
+            .unwrap()
+    };
+    show_bars(&s, &[]);
+    assert_eq!(s.eval::<f64>("return menuBarTop").unwrap(), 75.0);
+    assert_eq!(cast_y(&s), 115.0, "CastingBarFrame: menuBarTop 75 + its 40");
+    show_bars(&s, &[1]);
+    assert_eq!(cast_y(&s), 160.0, "bottom-left up: 115 + bottomEither 45");
+    show_bars(&s, &[]);
+    assert!(
+        super::test_ui::errors_but_unported(&s).is_empty(),
+        "script errors: {:?}",
+        super::test_ui::errors_but_unported(&s)
+    );
+}
+
 /// A raised bar takes its page out of the main bar's cycle and a lowered one gives it back:
 /// ActionButton.lua:13 declares all six viewable, and `MultiActionBar_Update` blanks the raised
 /// bars' pages (MultiActionBars.lua:49-80).

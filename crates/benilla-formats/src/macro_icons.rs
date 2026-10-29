@@ -1,6 +1,6 @@
-//! The macro icon chooser's catalog, the list `GetNumMacroIcons`/`GetMacroIconInfo` serve. The
-//! reference's `BuildMacroIconList` (`0x4f0090`) enumerates the files under `Interface\Icons\`; it
-//! does not read `SpellIcon.dbc`.
+//! The macro icon chooser's catalog, the list `GetNumMacroIcons`/`GetMacroIconInfo` serve. 12340's
+//! `CGUIMacros::LoadIcons` (`0x565840`) enumerates the files under `Interface\Icons\`; it does not
+//! read `SpellIcon.dbc`.
 
 use anyhow::Result;
 
@@ -10,17 +10,20 @@ use crate::Chain;
 /// (`0x84c988`, at `0x4f1a8d`); the reference strips its 16 characters from each stored entry.
 const ICON_DIR: &str = "Interface\\Icons\\";
 
-/// The chooser's list: every `Interface\Icons\` file whose name begins `Spell_` or `Ability_`,
-/// sorted and deduplicated without case, each as the full path `GetMacroIconInfo` returns.
+/// The chooser's list: `INV_Misc_QuestionMark`, which `LoadIcons` seeds and its comparator
+/// (`0x564a20`) pins first, then every `Interface\Icons\` file whose name begins `Spell_` or
+/// `Ability_` (`IconListArchiveCallback` `0x565630`), sorted and deduplicated without case, each as
+/// the full path `GetMacroIconInfo` returns.
 ///
-/// The reference unions the `(listfile)` of every open `patch*.MPQ` and `interface.MPQ` (name table
-/// index 6, `0x82e12c`, read via `0x648fb0`) with two loose-file scans of `Interface\Icons\`; only
-/// the archive half is built, as a stock install has no loose icons. Per entry it keeps the name
-/// after the prefix without a last-dot `.blp` or `.tga`, skipping directories, then `qsort`s with
-/// `SStrCmpI` (`0x4f0128`, comparator `0x4f05e0`) and drops adjacent duplicates
-/// (`0x4f0140`-`0x4f01a4`): the order is alphabetical, and a stock 5875 install yields 517 icons.
+/// The reference unions the archives' listfiles with two loose-file scans of `Interface\Icons\`;
+/// only the archive half is built, as a stock install has no loose icons. Per entry it keeps the
+/// name after the prefix without a last-dot `.blp` or `.tga` (`AddMacroIcon` `0x565550`), skipping
+/// directories, then `qsort`s and drops adjacent duplicates.
 pub fn load_macro_icons(chain: &mut Chain) -> Result<Vec<String>> {
-    Ok(icon_stems(chain, &["Spell_", "Ability_"])?
+    const SEED: &str = "INV_Misc_QuestionMark";
+    let mut names = icon_stems(chain, &["Spell_", "Ability_"])?;
+    names.insert(0, SEED.to_string());
+    Ok(names
         .into_iter()
         .map(|n| format!("{ICON_DIR}{n}"))
         .collect())
