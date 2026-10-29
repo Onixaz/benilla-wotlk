@@ -620,6 +620,12 @@ impl ObjectFields {
         self.get_u32(FIELD_PLAYER_FIELD_BYTES2)
             .map(|b| (b & 0xff) as u8)
     }
+    /// `PLAYER_FIELD_BYTES2`'s low `i16` (private): the `OverrideSpellData` row the bar's
+    /// override spells come from (`0x5abb40`).
+    pub fn player_override_spells_id(&self) -> Option<i16> {
+        self.get_u32(FIELD_PLAYER_OVERRIDE_SPELLS_ID)
+            .map(|v| v as u16 as i16)
+    }
     /// `PLAYER_FIELD_BYTES2` byte 3 (private): the aura vision, `0x20` stealth and `0x40`
     /// invisibility detection, which 12340 reads at `+0x10e7` to show or hide the detection
     /// auras' state kits on every unit (`0x724979`, `0x727b4e`).

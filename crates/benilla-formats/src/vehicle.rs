@@ -15,6 +15,18 @@ const VEHICLE: &str = "DBFilesClient\\Vehicle.dbc";
 const VEHICLE_SEAT: &str = "DBFilesClient\\VehicleSeat.dbc";
 const VEHICLE_UI_INDICATOR: &str = "DBFilesClient\\VehicleUIIndicator.dbc";
 const VEHICLE_UI_IND_SEAT: &str = "DBFilesClient\\VehicleUIIndSeat.dbc";
+const OVERRIDE_SPELL_DATA: &str = "DBFilesClient\\OverrideSpellData.dbc";
+
+/// An `OverrideSpellData.dbc` row's spell slots.
+pub const OVERRIDE_SPELLS: usize = 10;
+
+/// One `OverrideSpellData.dbc` row: the ten spells an override bar shows (`0x5abb40`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OverrideSpellsRec {
+    pub id: u32,
+    pub spells: [u32; OVERRIDE_SPELLS],
+    pub flags: u32,
+}
 
 /// A vehicle's seat slots (`Vehicle.dbc` columns 6-13).
 pub const VEHICLE_SEATS: usize = 8;
@@ -125,6 +137,7 @@ pub struct VehicleCatalog {
     pub vehicles: HashMap<u32, VehicleRec>,
     pub seats: HashMap<u32, VehicleSeatRec>,
     pub indicators: HashMap<u32, VehicleUiIndicator>,
+    pub override_spells: HashMap<u32, OverrideSpellsRec>,
 }
 
 impl VehicleCatalog {
@@ -275,6 +288,14 @@ pub(crate) fn vehicle_ui_indicator_schema() -> Schema {
             ("BackgroundTexture", FieldType::String),
         ],
     )
+}
+
+pub(crate) fn override_spell_data_schema() -> Schema {
+    use FieldType::UInt32 as U;
+    let mut f: Vec<(&str, FieldType)> = vec![("ID", U)];
+    f.extend(std::iter::repeat_n(("Spells", U), OVERRIDE_SPELLS));
+    f.push(("Flags", U));
+    schema("OverrideSpellData", &f)
 }
 
 pub(crate) fn vehicle_ui_ind_seat_schema() -> Schema {
@@ -449,10 +470,27 @@ pub fn load_vehicles(chain: &mut Chain) -> Result<VehicleCatalog> {
             });
         }
     }
+    let override_spells = read(
+        OVERRIDE_SPELL_DATA,
+        override_spell_data_schema(),
+        "OverrideSpellData",
+    )?
+    .records()
+    .iter()
+    .filter_map(|r| {
+        let rec = OverrideSpellsRec {
+            id: u32_at(r, 0)?,
+            spells: std::array::from_fn(|i| u32_at(r, 1 + i).unwrap_or(0)),
+            flags: u32_at(r, 1 + OVERRIDE_SPELLS).unwrap_or(0),
+        };
+        Some((rec.id, rec))
+    })
+    .collect();
     Ok(VehicleCatalog {
         vehicles,
         seats,
         indicators,
+        override_spells,
     })
 }
 
@@ -468,6 +506,7 @@ mod tests {
             (vehicle_seat_schema(), 58, 232),
             (vehicle_ui_indicator_schema(), 2, 8),
             (vehicle_ui_ind_seat_schema(), 5, 20),
+            (override_spell_data_schema(), 12, 48),
         ] {
             assert_eq!(
                 (schema.expanded_len(), schema.record_width()),

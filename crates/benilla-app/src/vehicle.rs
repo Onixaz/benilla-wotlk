@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 mod control;
+mod override_bar;
 mod passenger;
 mod ride;
 mod seats;
@@ -135,6 +136,12 @@ impl Plugin for VehiclePlugin {
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(feed_vehicle_signals)
                         .before(send_vehicle_requests),
+                    // Before the slot feed, which shows the slots it writes.
+                    override_bar::update_override_bar
+                        .in_set(crate::ui_unit::UnitFeed)
+                        .after(crate::ui_action::ActionRanks)
+                        .after(crate::ui_pet::PetTempBar)
+                        .before(crate::ui_action::SlotIdentityFeed),
                     // With the entity visuals, after the rigs are built and any mount re-seat.
                     (ride::ride_seats, ride::sweep_seat_anchors)
                         .chain()

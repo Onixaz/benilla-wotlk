@@ -63,10 +63,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("ObjectEffectPackage", "#243 object effects"),
     ("ObjectEffectPackageElem", "#243 object effects"),
     (
-        "OverrideSpellData",
-        "#235 the vehicle and override action bar",
-    ),
-    (
         "PaperDollItemFrame",
         "#239 equipment slot names: GetInventorySlotInfo",
     ),

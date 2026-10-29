@@ -112,8 +112,11 @@ impl ObjectFields {
                 put(Field::PlayerRafGrantableLevel, 0, (value >> 8) & 0xff);
             }
             // Byte 3 is the aura vision; bytes 0-2 are the override-spells id and the regen
-            // prediction mask, where 1.12.1 keeps the honor rank bar.
-            Field::PlayerFieldBytes2 => put(field, element, value & 0xff00_0000),
+            // prediction mask, where 1.12.1 keeps the honor rank bar. The id rides its own field.
+            Field::PlayerFieldBytes2 => {
+                put(field, element, value & 0xff00_0000);
+                put(Field::PlayerOverrideSpellsId, 0, value & 0xffff);
+            }
             // The permanent and temporary enchant as two `u16`, which 1.12.1 sends as the first
             // two of seven dwords (AzerothCore `Player::SetVisibleItemSlot`).
             Field::PlayerVisibleItemEnchants => {
@@ -326,6 +329,7 @@ mod tests {
         let f = ObjectFields::from_wotlk(wire(&[(1229, 0x6056_1234)]), ObjectType::Player);
         assert_eq!(f.player_aura_vision(), Some(0x60));
         assert_eq!(f.player_honor_rank_bar(), Some(0));
+        assert_eq!(f.player_override_spells_id(), Some(0x1234));
     }
 
     #[test]

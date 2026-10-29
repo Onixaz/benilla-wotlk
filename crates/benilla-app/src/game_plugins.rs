@@ -872,7 +872,9 @@ pub(crate) mod schedule_tests {
     ///   language, requirement, menu-gate and tooltip feeds), which see a new pet slot a frame late
     ///   at worst; ordering `pet_stop_on_old_target_clear` before the identity feed takes back the
     ///   rest.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_927;
+    /// - The override bar (#632) adds 10: `vehicle::override_bar::update_override_bar` writes the
+    ///   same slots after the pet's, against the same ten readers, on the same frame-late terms.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_937;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

@@ -185,6 +185,8 @@ pub enum Field {
     PlayerPetSpellPower,
     /// 3.3.5a's Refer-a-Friend levels left to grant, `PLAYER_FIELD_BYTES` byte 1.
     PlayerRafGrantableLevel,
+    /// 3.3.5a's `OverrideSpellData` id, `PLAYER_FIELD_BYTES2` bytes 0-1.
+    PlayerOverrideSpellsId,
     /// 3.3.5a's honorable kills, today's in the low half and yesterday's in the high.
     PlayerKills,
     /// 3.3.5a's honor earned today.
@@ -347,7 +349,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         item: 48,
         container: 122,
         unit: 188,
-        player: 1659,
+        player: 1660,
         gameobject: 26,
         dynamicobject: 16,
         corpse: 38,
@@ -487,6 +489,7 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         run(F::PlayerKnownTitles, Player, 1587, 6),
         run(F::PlayerKnownCurrencies, Player, 1593, 2),
         run(F::PlayerCurrencyTokenSlots, Player, 1595, 64),
+        one(F::PlayerOverrideSpellsId, Player, 1659),
         // 19 slots of 12: creator guid, entry, 7 enchants, properties, pad.
         strided(F::PlayerVisibleItemEntry, Player, 260, 19, 12),
         strided(F::PlayerVisibleItemEnchants, Player, 261, 19, 12),

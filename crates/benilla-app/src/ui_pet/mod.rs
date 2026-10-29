@@ -44,6 +44,10 @@ mod tests;
 #[cfg(test)]
 mod usable_tests;
 
+/// The pet's temporary-bar writer, which the override bar's follows.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct PetTempBar;
+
 /// The pet action bar's state. A zero `spells.pet_guid` means no bar: the teardown packet carries
 /// only that guid.
 #[derive(Resource, Default)]
@@ -125,6 +129,7 @@ impl Plugin for UiPetPlugin {
                 // Before the slot feed, which shows the slots it writes.
                 temp_bar::update_pet_temp_bar
                     .in_set(UnitFeed)
+                    .in_set(PetTempBar)
                     .after(crate::ui_action::ActionRanks)
                     .after(pet_stop_on_old_target_clear)
                     .before(crate::ui_action::SlotIdentityFeed),

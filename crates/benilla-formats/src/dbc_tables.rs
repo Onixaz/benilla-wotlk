@@ -189,6 +189,7 @@ tables! {
         "VehicleSeat" => vehicle::vehicle_seat_schema(),
         "VehicleUIIndicator" => vehicle::vehicle_ui_indicator_schema(),
         "VehicleUIIndSeat" => vehicle::vehicle_ui_ind_seat_schema(),
+        "OverrideSpellData" => vehicle::override_spell_data_schema(),
         "Talent" => talents::talent_schema(),
         "TalentTab" => talents::talent_tab_schema(),
         "TaxiNodes" => taxi_nodes::taxi_nodes_schema(),
