@@ -790,6 +790,115 @@ fn every_actionbars_checkbox_writes_its_cvar_or_its_toggle_bit() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Unit Frames panel's checkboxes, `(button suffix, CVar, registered default, what its
+/// write reaches)` (`InterfaceOptionsPanels.xml`; the game CVar registrar `0x51d9b0`): a uvar, or
+/// the Lua expression its `setFunc` moves.
+const UNIT_FRAME_CHECKBOXES: [(&str, &str, &str, &str); 8] = [
+    (
+        "PartyBackground",
+        "showPartyBackground",
+        "0",
+        "SHOW_PARTY_BACKGROUND",
+    ),
+    (
+        "PartyInRaid",
+        "hidePartyInRaid",
+        "0",
+        "HIDE_PARTY_INTERFACE",
+    ),
+    ("PartyPets", "showPartyPets", "1", "SHOW_PARTY_PETS"),
+    (
+        "RaidRange",
+        "showRaidRange",
+        "0",
+        "RaidFrame.showRange and '1' or '0'",
+    ),
+    (
+        "ArenaEnemyFrames",
+        "showArenaEnemyFrames",
+        "1",
+        "SHOW_ARENA_ENEMY_FRAMES",
+    ),
+    (
+        "ArenaEnemyCastBar",
+        "showArenaEnemyCastbar",
+        "1",
+        "SHOW_ARENA_ENEMY_CASTINGBAR",
+    ),
+    (
+        "ArenaEnemyPets",
+        "showArenaEnemyPets",
+        "1",
+        "SHOW_ARENA_ENEMY_PETS",
+    ),
+    (
+        "FullSizeFocusFrame",
+        "fullSizeFocusFrame",
+        "0",
+        "FocusFrame.smallSize and '0' or '1'",
+    ),
+];
+
+/// Each Unit Frames checkbox boots at its CVar's 12340 default, a click and Okay writes the flip
+/// and reaches its uvar or `setFunc` target, a click and Cancel writes nothing, and Defaults puts
+/// the registered value back.
+#[test]
+fn every_unit_frame_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-unitframes");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsUnitFramePanel)";
+    for (suffix, cvar, default, reader) in UNIT_FRAME_CHECKBOXES {
+        let button = format!("InterfaceOptionsUnitFramePanel{suffix}");
+        let read = |s: &UiScript| {
+            s.eval::<String>(&format!("return tostring({reader})"))
+                .unwrap()
+        };
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        assert_eq!(read(&s), flip(default), "{cvar} reaches {reader}");
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+        assert_eq!(read(&s), default, "{reader} is back");
+    }
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Names panel's checkboxes, `(button path, CVar, registered default, parent)`
 /// (`InterfaceOptionsPanels.xml`; the registrars `0x7e6150` and `0x51d9b0`). A plate sub-row is
 /// a dependent control of its side's row.
