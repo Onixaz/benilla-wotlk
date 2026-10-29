@@ -106,17 +106,7 @@ impl ScrollingMessageState {
     /// `AddMessage(text, r, g, b, id)` (`0x792900`, `0x788150`): push the line and drop the oldest
     /// past `max_lines`; a scrolled-up view stays on the same lines.
     pub fn add_with_id(&mut self, text: String, r: f32, g: f32, b: f32, id: u32) {
-        self.lines_gen = self.lines_gen.wrapping_add(1);
-        let line = MessageLine {
-            text,
-            id,
-            color: [quantize_u8(r), quantize_u8(g), quantize_u8(b)],
-            time_left: self.time_visible,
-            fade_left: self.fade_duration,
-            alpha: 1.0,
-            rows: 1,
-            rows_key: 0,
-        };
+        let line = self.new_line(text, r, g, b, id);
         self.lines.push_back(line);
         // Scrolled up: keep the same lines in view as the ring grows below them.
         if self.scroll_offset > 0 {
@@ -128,6 +118,35 @@ impl ScrollingMessageState {
             self.scroll_offset = self.scroll_offset.saturating_sub(1);
         }
         self.clamp_scroll();
+    }
+
+    /// `AddMessage` with `backFill` (`0x96a9f0`): the line goes into the ring slot before the
+    /// oldest line and the head stays, so the view does not move; on a full ring that slot is the
+    /// oldest line's, which the new line overwrites.
+    pub fn add_back_fill(&mut self, text: String, r: f32, g: f32, b: f32, id: u32) {
+        let line = self.new_line(text, r, g, b, id);
+        if self.lines.len() >= self.max_lines {
+            if let Some(oldest) = self.lines.front_mut() {
+                *oldest = line;
+            }
+        } else {
+            self.lines.push_front(line);
+        }
+    }
+
+    /// A fresh line at full alpha with the frame's fade snapshot, counted as a lines change.
+    fn new_line(&mut self, text: String, r: f32, g: f32, b: f32, id: u32) -> MessageLine {
+        self.lines_gen = self.lines_gen.wrapping_add(1);
+        MessageLine {
+            text,
+            id,
+            color: [quantize_u8(r), quantize_u8(g), quantize_u8(b)],
+            time_left: self.time_visible,
+            fade_left: self.fade_duration,
+            alpha: 1.0,
+            rows: 1,
+            rows_key: 0,
+        }
     }
 
     /// `SetMaxLines(n)` (`0x787dd0`): free every line and reset the scroll, then set the capacity.

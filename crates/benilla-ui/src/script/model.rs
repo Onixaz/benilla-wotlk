@@ -1109,7 +1109,7 @@ impl Model {
     }
 
     /// Records a caught script error for the host, the retained log and the Lua error handler; an
-    /// error raised by the handler itself goes to `errors` directly, which stops the recursion.
+    /// error raised by the handler itself goes back to the handler alone, never through here.
     pub(crate) fn record_script_error(&mut self, msg: String) {
         self.diagnostics
             .record(super::diagnostics::DiagnosticKind::Error, &msg);

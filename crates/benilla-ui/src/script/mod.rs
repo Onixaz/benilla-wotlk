@@ -1793,11 +1793,13 @@ impl UiScript {
     /// (`0x703b40`) calls the one `seterrorhandler` (`0x702900`) holds, read from its slot and not
     /// through the `geterrorhandler` global; FrameXML installs `_ERRORMESSAGE`, the ScriptErrors
     /// dialog (`BasicControls.xml:16`). With none installed the error stays on the host channel,
-    /// [`UiScript::errors`], alone; a handler that raises is recorded there only, never re-queued,
-    /// and costs only its own error: the reference calls the handler once per caught error, so
-    /// the next one still reaches it. The call is [`stdlib::protected_call`]'s, so a raising
-    /// handler costs no `_G` search. `debuglocals` answers only inside it, as `s_inErrorHandler`
-    /// (`0x819730`) gates it.
+    /// [`UiScript::errors`], alone. A handler that raises is handed its own error, as the
+    /// reference's trampoline (`0x819730`) still sits in the pcall's error slot when it raises and
+    /// Lua 5.1 calls that slot again (`0x850830`); a chain that never settles ends at
+    /// [`ERROR_HANDLER_NESTING`] and is dropped unreported, as the reference's pcall pops its
+    /// `LUA_ERRERR`. Each caught error starts its own chain, so the next one still reaches the
+    /// handler. The call is [`stdlib::protected_call`]'s, so a raising handler costs no `_G`
+    /// search. `debuglocals` answers only inside it, as `s_inErrorHandler` (`0x819730`) gates it.
     pub fn dispatch_script_errors_to_handler(&mut self) {
         if self.model_ref().pending_error_dispatch.is_empty() {
             return;
@@ -1821,13 +1823,16 @@ impl UiScript {
                 self.lua
                     .set_named_registry_value(stdlib::REG_IN_ERROR_HANDLER, on)
             };
-            let called =
-                in_handler(true).and_then(|()| stdlib::protected_call(&self.lua, &handler, arg));
-            let _ = in_handler(false);
-            if let Err(e) = called {
-                self.model_mut()
-                    .errors
-                    .push(format!("error handler itself failed: {e}"));
+            let mut arg = arg;
+            for _ in 0..ERROR_HANDLER_NESTING {
+                let called = in_handler(true)
+                    .and_then(|()| stdlib::protected_call(&self.lua, &handler, arg));
+                let _ = in_handler(false);
+                let Err(e) = called else { break };
+                arg = match self.lua.create_string(e.to_string()) {
+                    Ok(s) => mlua::MultiValue::from_vec(vec![mlua::Value::String(s)]),
+                    Err(_) => break,
+                };
             }
         }
     }
@@ -1894,6 +1899,11 @@ impl UiScript {
         self.model_mut().record_script_error(e.to_string());
     }
 }
+
+/// How many times one caught error reaches a handler that keeps raising. In the reference each
+/// nesting costs two C calls, the errfunc call (`0x850830`) and the trampoline's `lua_call`
+/// (`0x819730`), against Lua 5.1's `LUAI_MAXCCALLS` (200), so about a hundred.
+const ERROR_HANDLER_NESTING: usize = 100;
 
 #[cfg(test)]
 mod tests;
