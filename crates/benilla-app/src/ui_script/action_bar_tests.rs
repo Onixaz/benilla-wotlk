@@ -60,6 +60,7 @@ fn shipped_action_bar_drives_end_to_end() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.set_action(
@@ -71,6 +72,7 @@ fn shipped_action_bar_drives_end_to_end() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -194,6 +196,7 @@ fn state_feedback_drives_cooldown_checked_and_usable_through_the_xml() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -317,6 +320,7 @@ fn a_start_behind_the_clocks_epoch_hides_the_stock_sweep() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -384,6 +388,7 @@ fn the_cooldown_sweep_paints_over_the_buttons_icon_and_ring() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -448,6 +453,7 @@ fn a_cooldown_count_addons_hook_leaves_the_sweep_running() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -576,6 +582,7 @@ fn every_mouse_button_uses_the_action() {
             count: 5,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -623,6 +630,7 @@ fn a_shift_click_uses_and_a_held_payload_places() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -680,6 +688,7 @@ fn the_action_bar_lock_stops_a_plain_drag_and_yields_to_the_pickup_modifier() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -749,6 +758,7 @@ fn drag_drop_onto_another_button_hops_the_displaced_action() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.set_action(
@@ -760,6 +770,7 @@ fn drag_drop_onto_another_button_hops_the_displaced_action() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -817,6 +828,7 @@ fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
             count: 42, // the app never sets this for a spell; the XML must ignore it
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.set_action(
@@ -828,6 +840,7 @@ fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
             count: 15,
             consumable: true,
             stackable: false,
+            pet_spell: None,
         }),
     );
     // A mount: an ITEM held eleven times that is not consumable.
@@ -840,6 +853,7 @@ fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
             count: 11,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -882,6 +896,7 @@ fn count_fontstring_follows_is_consumable_action_not_the_bag_count() {
             count: 0,
             consumable: true,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("ACTIONBAR_SLOT_CHANGED", vec![ScriptValue::Int(2)]);
@@ -925,6 +940,7 @@ fn macro_name_line_follows_get_action_text_through_the_xml() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.set_action(
@@ -936,6 +952,7 @@ fn macro_name_line_follows_get_action_text_through_the_xml() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", vec![]);
@@ -1156,6 +1173,7 @@ fn state_events_leave_empty_wells_untinted() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.set_action_state(
@@ -1224,6 +1242,7 @@ fn an_occupied_slot_going_empty_leaves_no_white_plate() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.set_action_state(
@@ -1318,6 +1337,7 @@ fn the_bonus_action_bar_exists_hidden_and_takes_layout_calls() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("ACTIONBAR_SLOT_CHANGED", vec![ScriptValue::Int(1)]);

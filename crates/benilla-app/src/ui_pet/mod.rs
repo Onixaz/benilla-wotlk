@@ -20,6 +20,7 @@ mod drain;
 mod menu;
 mod net;
 mod possess;
+mod temp_bar;
 mod unit;
 mod usable;
 
@@ -29,6 +30,7 @@ use drain::drain_pet_actions;
 pub(crate) use drain::pet_stop_on_old_target_clear;
 pub(crate) use drain::{PetCast, PetPress};
 use menu::{drain_pet_menu, feed_pet_menu};
+pub(crate) use temp_bar::temp_slot_texture;
 use unit::feed_pet_unit;
 
 #[cfg(test)]
@@ -102,7 +104,8 @@ impl Plugin for UiPetPlugin {
                 // goes dark the frame the selection moves.
                 pet_stop_on_old_target_clear
                     .in_set(UnitFeed)
-                    .before(feed_pet_bar),
+                    .before(feed_pet_bar)
+                    .before(crate::ui_action::SlotIdentityFeed),
                 // After the pet snapshot: these feeds' events reach Lua at once, and their
                 // handlers read `HasPetUI()`, which `crate::ui_pet_stats` pushes. The bar pushes
                 // its cooldown triples before the cooldown events and the pet's flush fires after
@@ -119,6 +122,12 @@ impl Plugin for UiPetPlugin {
                     .after(crate::ui_pet_stats::PetSnapshot),
                 feed_pet_menu.in_set(UnitFeed),
                 possess::feed_possess_spell.in_set(UnitFeed),
+                // Before the slot feed, which shows the slots it writes.
+                temp_bar::update_pet_temp_bar
+                    .in_set(UnitFeed)
+                    .after(crate::ui_action::ActionRanks)
+                    .after(pet_stop_on_old_target_clear)
+                    .before(crate::ui_action::SlotIdentityFeed),
                 // After this frame's presses, as the one drain before it ran them ahead of the
                 // toggles, stops and writes.
                 drain_pet_actions

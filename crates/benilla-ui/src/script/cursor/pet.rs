@@ -535,6 +535,7 @@ mod tests {
                 count: 0,
                 consumable: false,
                 stackable: false,
+                pet_spell: None,
             }),
         );
 

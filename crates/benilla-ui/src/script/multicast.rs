@@ -128,6 +128,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                             count: 0,
                             consumable: false,
                             stackable: false,
+                            pet_spell: None,
                         },
                     );
                     let packed = (u32::from(ACTION_KIND_SPELL) << 24) | (spell & 0x00FF_FFFF);

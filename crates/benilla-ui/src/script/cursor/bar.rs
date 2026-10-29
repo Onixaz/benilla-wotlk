@@ -110,6 +110,7 @@ pub(crate) fn place_action(model: &mut Model, id: u32) -> bool {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         },
     );
     model.action_sets.push((id, pack(kind, action)));
@@ -181,6 +182,7 @@ mod tests {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }
     }
 

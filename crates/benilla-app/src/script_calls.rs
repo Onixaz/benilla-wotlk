@@ -63,9 +63,15 @@ pub(crate) fn apply_script_calls(
                 crate::ui_shapeshift::cast_form(&mut appliers.p3(), spell_id);
             }
             ScriptCall::UseAction(press) => {
-                let used = crate::ui_action::use_action(&mut appliers.p4(), script, press);
-                if used == crate::ui_action::UseOutcome::Attack {
-                    appliers.p7().attack_target();
+                match crate::ui_action::use_action(&mut appliers.p4(), script, press) {
+                    crate::ui_action::UseOutcome::Done => {}
+                    crate::ui_action::UseOutcome::Attack => appliers.p7().attack_target(),
+                    // A pet-action slot sends the pet bar's action, at no unit (`0x5ac000` →
+                    // `0x5d4210`).
+                    crate::ui_action::UseOutcome::PetAction(index) => {
+                        let out = appliers.p6().press_slot(index + 1);
+                        cast_as_pet(&mut appliers.p3(), out);
+                    }
                 }
             }
             ScriptCall::UseItem { bag, slot } => appliers.p5().use_item(script, bag, slot),

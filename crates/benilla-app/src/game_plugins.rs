@@ -866,7 +866,13 @@ pub(crate) mod schedule_tests {
     ///   display; and it and `sweep_seat_anchors` spawn and despawn their anchors through
     ///   `Commands` against `finish_colliders` and read `GlobalTransform` scales against
     ///   `publish_camera_pose`, as the other such spawners pair.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_920;
+    /// - The pet's temporary bar (#632) adds 7 net: `ui_pet::temp_bar::update_pet_temp_bar` writes
+    ///   the local slots 121-132 in `PlayerActions` before the identity feed, against the
+    ///   `UnitFeed` readers of the bar (the cast bar, shapeshift, spellbook, talent, trade-skill,
+    ///   language, requirement, menu-gate and tooltip feeds), which see a new pet slot a frame late
+    ///   at worst; ordering `pet_stop_on_old_target_clear` before the identity feed takes back the
+    ///   rest.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_927;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

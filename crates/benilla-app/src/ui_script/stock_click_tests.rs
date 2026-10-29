@@ -40,6 +40,7 @@ fn a_mouse_click_on_a_stock_action_button_uses_its_action() {
             count: 0,
             consumable: false,
             stackable: false,
+            pet_spell: None,
         }),
     );
     s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());

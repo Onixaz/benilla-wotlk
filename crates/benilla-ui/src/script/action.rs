@@ -12,6 +12,8 @@ use super::binding_abi::flag;
 /// The kind byte, bits 24-31 of the packed slot word (vmangos `Player.h:133`). Must match
 /// `benilla_protocol`'s `ACTION_KIND_*`; this crate has no protocol dependency.
 pub(crate) const ACTION_KIND_SPELL: u8 = 0x00;
+/// A pet-action slot, `0x10000000 | index` (`0x5a78c0`), which the temporary bar writes.
+pub(crate) const ACTION_KIND_PET: u8 = 0x10;
 pub(crate) const ACTION_KIND_EQUIPMENT_SET: u8 = 0x20;
 pub(crate) const ACTION_KIND_MACRO: u8 = 0x40;
 pub(crate) const ACTION_KIND_ITEM: u8 = 0x80;
@@ -33,6 +35,8 @@ pub struct ActionSlot {
     /// `IsStackableAction`: an item slot whose template stacks past one (`0x5a8470`, record
     /// `+0x5c`); it rides the icon's push as [`Self::consumable`] does.
     pub stackable: bool,
+    /// A pet-action slot's spell (`0x5a80e0`), `None` for an order, a mode or an empty action.
+    pub pet_spell: Option<u32>,
 }
 
 /// One action's per-frame state, read by `IsUsableAction`, `IsActionInRange`, `GetActionCooldown`
@@ -120,6 +124,12 @@ impl super::UiScript {
                 model.action_states.remove(&action);
             }
         }
+    }
+
+    /// Whether the temporary bar has an owner (`CGActionBar::m_tempPageActiveFlags`), which pins
+    /// `GetActionBarPage` to 1 (`0x5a7fd0`).
+    pub fn set_temp_action_bar(&mut self, active: bool) {
+        set_field!(self, temp_action_bar, active);
     }
 
     /// Push the current bonus-bar page offset (0 = the plain main bar; warrior stances 1..3).
@@ -288,6 +298,25 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                     Some(name) => vec![str("equipmentset")?, str(name)?],
                     None => Vec::new(),
                 },
+                // A pet-action slot names the pet bar's spell (`0x5a8f10`'s pet leg): "spell", its
+                // pet book index, "pet", the id; nothing for an order or mode.
+                ACTION_KIND_PET => match a.pet_spell {
+                    Some(spell) => {
+                        let index = model
+                            .pet_book
+                            .slots
+                            .iter()
+                            .position(|s| s.spell_id == spell)
+                            .map_or(0, |i| i as i64 + 1);
+                        vec![
+                            str("spell")?,
+                            Value::Integer(index),
+                            str("pet")?,
+                            Value::Integer(i64::from(spell)),
+                        ]
+                    }
+                    None => Vec::new(),
+                },
                 0x00 if model.companions.find(a.action).is_some() => {
                     let (ty, at) = model.companions.find(a.action).expect("guarded");
                     vec![
@@ -381,14 +410,17 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
 
-    // GetActionBarPage() (`0x5a7fd0`): the main bar's page, 1..6. A vehicle or possess bar pins it
-    // to 1 (`[0xc1e5a0]`), which benilla never raises.
+    // GetActionBarPage() (`0x5a7fd0`): the main bar's page, 1..6, pinned to 1 while the temporary
+    // bar has an owner (`[0xc1e5a0]`).
     g.set(
         "GetActionBarPage",
         lua.create_function(|lua, ()| {
             let model = lua
                 .app_data_ref::<crate::script::ModelCell>()
                 .expect("model app_data");
+            if model.temp_action_bar {
+                return Ok(1);
+            }
             Ok(i64::from(model.action_bar_page) + 1)
         })?,
     )?;
@@ -736,6 +768,7 @@ mod tests {
                 count: 0,
                 consumable: false,
                 stackable: false,
+                pet_spell: None,
             }),
         );
         s.set_bonus_bar_offset(1);
@@ -772,6 +805,7 @@ mod tests {
                 count: 4,
                 consumable: false,
                 stackable: false,
+                pet_spell: None,
             }),
         );
         assert_eq!(s.eval::<i64>("return GetActionCount(5)").unwrap(), 4);
@@ -940,6 +974,7 @@ mod tests {
                 count: 0,
                 consumable: false,
                 stackable: false,
+                pet_spell: None,
             })
         };
         s.set_action(1, slot(0x40, 1)); // macro "Pull"

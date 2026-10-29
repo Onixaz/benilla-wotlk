@@ -12,6 +12,7 @@ fn spell(texture: &str, action: u32) -> ActionSlot {
         count: 0,
         consumable: false,
         stackable: false,
+        pet_spell: None,
     }
 }
 

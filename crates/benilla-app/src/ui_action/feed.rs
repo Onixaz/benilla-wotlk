@@ -97,7 +97,12 @@ pub(super) fn feed_actions(
     objects: crate::net::Objects,
     items: Res<Items>,
     icons: Option<Res<ItemDisplays>>,
-    sub_classes: Option<Res<crate::ui_items::ItemSubClasses>>,
+    // With the temporary bar's owners and the pet bar its pet-action slots show.
+    bars: (
+        Option<Res<crate::ui_items::ItemSubClasses>>,
+        Option<Res<super::TempActionBar>>,
+        Option<Res<crate::ui_pet::PetBar>>,
+    ),
     name_tables: FailNameTables,
     commands: Res<NetCommands>,
     mut memory: Local<crate::ui_script::VmMemo<FeedMemory>>,
@@ -107,6 +112,8 @@ pub(super) fn feed_actions(
         return;
     };
     let (mut ui_error_keys, mut ui_error_texts, mut cast_fail_log) = ui_errors;
+    let (sub_classes, temp_bar, pet_bar) = bars;
+    let temp_flags = temp_bar.map_or(0, |t| t.flags);
     let memory = memory.get(&script);
 
     // Cast failures become error lines through [`cast_fail`], all resolved before any event
@@ -369,17 +376,28 @@ pub(super) fn feed_actions(
         .next()
         .map_or((None, None), |(s, a)| (Some(s), a));
 
-    // Stance page: our form's bonus bar offset, with `UPDATE_BONUS_ACTIONBAR` on change.
+    // Stance page: the temporary bar's 5 while it has an owner, else our form's bonus bar offset,
+    // with `UPDATE_BONUS_ACTIONBAR` on change and `ACTIONBAR_PAGE_CHANGED` first when leaving 5
+    // (`0x5a83c0`).
     let form = store.map(|s| s.0.unit_shapeshift_form()).unwrap_or(0);
-    let offset = spells
-        .as_ref()
-        .and_then(|s| s.forms.get(&u32::from(form)))
-        .map(|f| f.bonus_bar)
-        .unwrap_or(0) as u8;
+    let offset = if temp_flags != 0 {
+        5
+    } else {
+        spells
+            .as_ref()
+            .and_then(|s| s.forms.get(&u32::from(form)))
+            .map(|f| f.bonus_bar)
+            .unwrap_or(0) as u8
+    };
+    script.set_temp_action_bar(temp_flags != 0);
     if offset != memory.bonus_offset {
         debug!("ui_action: bonus bar offset {} (form {form})", offset);
+        let left_temp = memory.bonus_offset == 5;
         memory.bonus_offset = offset;
         script.set_bonus_bar_offset(offset);
+        if left_temp {
+            script.fire_event("ACTIONBAR_PAGE_CHANGED", vec![]);
+        }
         script.fire_event("UPDATE_BONUS_ACTIONBAR", vec![]);
     }
 
@@ -467,6 +485,21 @@ pub(super) fn feed_actions(
                     false,
                     false,
                 ),
+                // The pet bar's action at the slot's index (`0x5a97f0`): a spell's icon, or a mode
+                // or order's `PET_%s_TEXTURE` global.
+                super::ACTION_KIND_PET => (
+                    pet_bar.as_deref().and_then(|bar| {
+                        crate::ui_pet::temp_slot_texture(
+                            bar,
+                            button.action,
+                            spells.as_ref().map(|s| &s.catalog),
+                            &|key| script.lua().globals().get::<String>(key).ok(),
+                        )
+                    }),
+                    0,
+                    false,
+                    false,
+                ),
                 _ => (None, 0, false, false),
             };
             fresh.insert(
@@ -478,6 +511,14 @@ pub(super) fn feed_actions(
                     count,
                     consumable,
                     stackable,
+                    // `0x5a80e0`: the pet bar's spell at the slot's index.
+                    pet_spell: (button.kind == super::ACTION_KIND_PET)
+                        .then(|| {
+                            let entry =
+                                *pet_bar.as_deref()?.spells.bar.get(button.action as usize)?;
+                            (entry.is_spell() && !entry.is_empty()).then(|| entry.action())
+                        })
+                        .flatten(),
                 },
             );
         }
