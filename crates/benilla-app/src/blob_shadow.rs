@@ -35,6 +35,7 @@ use benilla_assets::ModelAnimations;
 use benilla_protocol::EntityKind;
 use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
+use bevy::tasks::ParallelSliceMut;
 
 use crate::creature_anim::AnimData;
 use crate::net::{Embodied, NetEntity};
@@ -58,7 +59,7 @@ struct BlobShadow {
 
 /// Last frame's rebuild inputs. `surfaces` counts the decal receivers, so a tile streaming in
 /// under a standing unit still re-arms the rebuild.
-#[derive(Component, Default)]
+#[derive(Component, Default, Clone, Copy)]
 struct ShadowKey {
     feet: Vec3,
     rotation: Quat,
@@ -191,6 +192,7 @@ fn update_shadows(
     // Apart from `n_no_owner`: an undrawn body still has an owner.
     let mut n_undrawn = 0u32;
     let surface_count = decals.receiver_count();
+    let mut jobs: Vec<ShadowJob> = Vec::new();
     for (shadow, mut key, mut verts) in &mut shadows {
         n_total += 1;
         let Ok((unit, anims, is_self, mount_child, drawn)) = owners.get(shadow.owner) else {
@@ -295,28 +297,53 @@ fn update_shadows(
             min_y: -half_v * (5.0 / 3.0),
             max_y: half_v,
         };
-        let span_v = frame.max_y - frame.min_y;
-        verts.0.clear();
-        let projected = span_v > 0.0
-            && decals.project(
-                &mut verts.0,
-                &frame,
-                |p| {
-                    // The reference's second-stage ramp (`0x6d81a0`), run vertically: inferred
-                    // from the asymmetric vertical reach, its combine being untraced.
-                    alpha * shadow_ramp((p.y - frame.min_y) / span_v)
-                },
-                |x, z| frame.rect_uv(x, z),
-            );
-        *key = next;
-        key.shown = projected;
-        if projected {
+        jobs.push(ShadowJob {
+            key,
+            verts,
+            next,
+            frame,
+            box_min: bmin,
+            box_max: bmax,
+            rotation: unit.rotation,
+            debug_self: census && is_self,
+        });
+    }
+    // The projections, the pass's whole cost, are independent: each reads the shared surfaces and
+    // writes only its own record, so the few that moved this frame spread over the pool.
+    jobs.par_chunk_map_mut(bevy::tasks::ComputeTaskPool::get(), 1, |_, chunk| {
+        for job in chunk {
+            let frame = &job.frame;
+            let span_v = frame.max_y - frame.min_y;
+            let alpha = job.next.alpha;
+            job.verts.0.clear();
+            let projected = span_v > 0.0
+                && decals.project(
+                    &mut job.verts.0,
+                    frame,
+                    |p| {
+                        // The reference's second-stage ramp (`0x6d81a0`), run vertically: inferred
+                        // from the asymmetric vertical reach, its combine being untraced.
+                        alpha * shadow_ramp((p.y - frame.min_y) / span_v)
+                    },
+                    |x, z| frame.rect_uv(x, z),
+                );
+            *job.key = job.next;
+            job.key.shown = projected;
+            if !projected {
+                job.verts.0.clear();
+            }
+        }
+    });
+    for job in &jobs {
+        if job.key.shown {
             n_shown += 1;
         } else {
-            verts.0.clear();
             n_no_ground += 1;
         }
-        if census && is_self {
+        if job.debug_self {
+            let (verts, frame, bmin, bmax) = (&job.verts, &job.frame, job.box_min, job.box_max);
+            let (min_x, max_x, min_z, max_z) = (frame.min_x, frame.max_x, frame.min_z, frame.max_z);
+            let unit = Transform::from_translation(job.next.feet).with_rotation(job.rotation);
             // Where the own shadow's projection went: vertex y against feet y tells the surface
             // stood on from a receiver below.
             let (mut y_min, mut y_max) = (f32::MAX, f32::MIN);
@@ -444,6 +471,19 @@ fn push_shadows(
         batch.vertices(&verts.0);
         batch.tris();
     }
+}
+
+/// One shadow to re-project this frame, with what its record becomes.
+struct ShadowJob<'a> {
+    key: Mut<'a, ShadowKey>,
+    verts: Mut<'a, ShadowVerts>,
+    next: ShadowKey,
+    frame: DecalFrame,
+    box_min: Vec3,
+    box_max: Vec3,
+    rotation: Quat,
+    /// The once-a-second own-shadow census lines.
+    debug_self: bool,
 }
 
 /// Clear the record so the next eligible frame rebuilds.
