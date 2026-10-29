@@ -70,6 +70,17 @@ pub(crate) struct Vehicle {
     pub(crate) raw_facing: f32,
 }
 
+/// Our seat's stopped movement (`m_flags & 0x8`), set ahead of a local seat change or dismiss
+/// (`0x747fa0`): the frame-time it was set, cleared by `SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA`
+/// (`0x747900`), any state change, or 2 s after (`0x74af70`).
+#[derive(Resource, Default, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SeatStop {
+    pub(crate) at: Option<f64>,
+}
+
+/// How long a seat's stop holds (`0x74af70`).
+pub(crate) const SEAT_STOP_SECS: f64 = 2.0;
+
 /// What the frame owes the VM.
 #[derive(Resource, Default)]
 pub(crate) struct VehicleSignals {
@@ -89,11 +100,16 @@ impl Plugin for VehiclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VehicleTables>()
             .init_resource::<control::VehicleAim>()
+            .init_resource::<SeatStop>()
             .init_resource::<VehicleSignals>()
             .add_message::<EnteredWorldMessage>()
             // After the object handlers, whose commands spawn the unit this reads.
             .net_handler(SessionEventKind::ObjectCreate, on_object_create)
             .net_handler(SessionEventKind::PlayerVehicleData, on_player_vehicle_data)
+            .net_handler(
+                SessionEventKind::CancelExpectedRideVehicleAura,
+                on_cancel_expected_ride,
+            )
             .add_systems(Startup, load_vehicle_tables.after(AssetSet::Open))
             .add_systems(
                 Update,
@@ -248,6 +264,11 @@ fn on_player_vehicle_data(
 
 /// World entry (`0x528010` → `0x757180`): the sliders hide, then a player already holding a
 /// vehicle gains it again.
+/// `SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA` (`0x800510`): our seat's stop ends (`0x747900`).
+fn on_cancel_expected_ride(In(_): In<SessionEvent>, mut stop: ResMut<SeatStop>) {
+    stop.at = None;
+}
+
 fn on_world_enter(
     mut entered: MessageReader<EnteredWorldMessage>,
     self_guid: Res<SelfGuid>,
@@ -389,14 +410,20 @@ fn feed_vehicle_view(
     }
 }
 
-/// Send the vehicle verbs' requests. A seat switch while the player's transport is the mover is
-/// the controlled vehicle's change, with the mover's pose (`0x74ca90`); else the plain request.
+/// Send the vehicle verbs' requests. With the player's transport the mover, a request is the
+/// controlled vehicle's own, sent with the mover's pose after stopping our seat (`0x747fa0`): a
+/// seat switch or step (`0x74ca90`, `0x74c8b0`, `0x74c9a0`), or the dismiss, which the seat must
+/// allow (`0x5d46f0`, flag `0x2000000`). Otherwise the plain request.
+#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn send_vehicle_requests(
     script: Option<NonSendMut<UiScript>>,
     net: Option<Res<crate::net::NetCommands>>,
     me: Query<Option<&Passenger>, With<crate::net::SelfPlayer>>,
-    mover: Query<&crate::net::Guid, With<crate::net::ActiveMover>>,
+    mover: Query<(&crate::net::Guid, Option<&Vehicle>), With<crate::net::ActiveMover>>,
     player: Option<Res<crate::player::Player>>,
+    tables: Res<VehicleTables>,
+    time: Res<Time<Real>>,
+    mut stop: ResMut<SeatStop>,
 ) {
     let (Some(mut script), Some(net)) = (script, net) else {
         return;
@@ -405,29 +432,58 @@ fn send_vehicle_requests(
     if requests.is_empty() {
         return;
     }
-    let mover = mover.single().map_or(0, |g| g.0);
-    let transport = me.single().ok().flatten().map_or(0, |p| p.vehicle);
+    let (mover, mover_vehicle) = mover.single().map_or((0, None), |(g, v)| (g.0, v.copied()));
+    let seated = me.single().ok().flatten().copied();
+    let controlled = mover != 0 && seated.is_some_and(|p| p.vehicle == mover);
+    // The controlled vehicle's report: the mover's pose, our seat stopped first.
+    let mut controlled_cmd = |seat: Option<(u64, u8)>| {
+        let p = player.as_deref()?;
+        if seated.is_some_and(|s| s.state == SEATED) {
+            stop.at = Some(time.elapsed_secs_f64());
+        }
+        Some(VehicleCommand::Controlled {
+            mover,
+            flags: p.move_flags(),
+            pos: benilla_assets::coords::bevy_to_wow(p.pos),
+            orientation: p.facing().rem_euclid(std::f32::consts::TAU),
+            seat,
+        })
+    };
     for r in requests {
         let cmd = match r {
-            VehicleRequest::Eject(guid) => VehicleCommand::ByGuid {
+            VehicleRequest::Eject(guid) => Some(VehicleCommand::ByGuid {
                 opcode: opcode::CMSG_EJECT_PASSENGER,
                 guid,
-            },
-            VehicleRequest::SwitchSeat { vehicle, seat } if transport == mover && mover != 0 => {
-                let Some(p) = player.as_deref() else { continue };
-                VehicleCommand::Controlled {
-                    mover,
-                    flags: p.move_flags(),
-                    pos: benilla_assets::coords::bevy_to_wow(p.pos),
-                    orientation: p.facing().rem_euclid(std::f32::consts::TAU),
-                    seat: Some((vehicle, seat)),
-                }
+            }),
+            VehicleRequest::SwitchSeat { vehicle, seat } if controlled => {
+                controlled_cmd(Some((vehicle, seat)))
             }
             VehicleRequest::SwitchSeat { vehicle, seat } => {
-                VehicleCommand::SwitchSeat { vehicle, seat }
+                Some(VehicleCommand::SwitchSeat { vehicle, seat })
             }
+            // A zero guid with seat `0xff` or 1 steps back or on (`0x71f0c0`).
+            VehicleRequest::PrevSeat if controlled => controlled_cmd(Some((0, 0xff))),
+            VehicleRequest::NextSeat if controlled => controlled_cmd(Some((0, 1))),
+            VehicleRequest::PrevSeat => Some(VehicleCommand::Empty(
+                opcode::CMSG_REQUEST_VEHICLE_PREV_SEAT,
+            )),
+            VehicleRequest::NextSeat => Some(VehicleCommand::Empty(
+                opcode::CMSG_REQUEST_VEHICLE_NEXT_SEAT,
+            )),
+            VehicleRequest::Exit if controlled => {
+                let our_seat =
+                    seated.and_then(|p| tables.seat(mover_vehicle?.id, usize::from(p.seat)));
+                if our_seat.is_some_and(|s| s.flags & 0x200_0000 != 0) {
+                    controlled_cmd(None)
+                } else {
+                    None
+                }
+            }
+            VehicleRequest::Exit => Some(VehicleCommand::Empty(opcode::CMSG_REQUEST_VEHICLE_EXIT)),
         };
-        let _ = net.0.send(ClientCommand::Vehicle(cmd));
+        if let Some(cmd) = cmd {
+            let _ = net.0.send(ClientCommand::Vehicle(cmd));
+        }
     }
 }
 
@@ -629,7 +685,6 @@ mod tests {
                 vehicle: CART,
                 seat: 0,
                 state: SEATED,
-                stopped: false,
             },
             TransportRider {
                 transport_guid: CART,

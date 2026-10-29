@@ -995,6 +995,8 @@ pub(crate) enum ArenaTeamCommand {
 /// A vehicle request (`0x74c7f0`-`0x74ca90`, `0x757200`, `0x6d27c0`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) enum VehicleCommand {
+    /// `CMSG_REQUEST_VEHICLE_EXIT`, `_PREV_SEAT` or `_NEXT_SEAT`, empty, by opcode.
+    Empty(u16),
     /// `CMSG_REQUEST_VEHICLE_SWITCH_SEAT`: `vehicle`'s `seat`.
     SwitchSeat { vehicle: u64, seat: u8 },
     /// `CMSG_EJECT_PASSENGER` or `CMSG_PLAYER_VEHICLE_ENTER`, a bare guid, by opcode.

@@ -178,7 +178,6 @@ mod tests {
     use crate::script::{UiScript, UnitState};
 
     const ME: u64 = 0x10;
-    const CART: u64 = 0xF150_0000_0000_0001;
     const P1: u64 = 0x21;
 
     fn script() -> UiScript {

@@ -1370,6 +1370,7 @@ pub(super) fn writer_loop(
                         transport,
                     ),
                     ClientCommand::Vehicle(v) => match v {
+                        super::VehicleCommand::Empty(opcode) => w.request_vehicle(opcode),
                         super::VehicleCommand::SwitchSeat { vehicle, seat } => {
                             w.request_vehicle_switch_seat(vehicle, seat)
                         }

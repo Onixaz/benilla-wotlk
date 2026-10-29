@@ -44,7 +44,17 @@ pub enum VehicleRequest {
     Eject(u64),
     /// A seat change to `seat` of `vehicle` (`0x74ca90`): `CMSG_REQUEST_VEHICLE_SWITCH_SEAT`, or the
     /// controlled vehicle's change while the player's transport is the mover.
-    SwitchSeat { vehicle: u64, seat: u8 },
+    SwitchSeat {
+        vehicle: u64,
+        seat: u8,
+    },
+    /// Leave the mover's vehicle (`0x74c7f0`): the controlled vehicle's dismiss, else
+    /// `CMSG_REQUEST_VEHICLE_EXIT`.
+    Exit,
+    /// The previous or next seat (`0x74c8b0`, `0x74c9a0`): the controlled vehicle's seat change,
+    /// else `CMSG_REQUEST_VEHICLE_PREV_SEAT` or `_NEXT_SEAT`.
+    PrevSeat,
+    NextSeat,
 }
 
 /// A seat indicator (`VehicleUIIndicator.dbc`): its background and its seats in id order, each
@@ -181,6 +191,60 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(())
         })?,
     )?;
+    // `CanExitVehicle`, `CanSwitchVehicleSeats` and `IsUsingVehicleControls` (`0x5fb9c0`,
+    // `0x5fba10`, `0x5fb970`): 1 or nil, the player's seat flags `0x2000000`, `0x4000000`,
+    // `0x800000`.
+    for (name, bit) in [
+        ("CanExitVehicle", 0x200_0000),
+        ("CanSwitchVehicleSeats", 0x400_0000),
+        ("IsUsingVehicleControls", 0x80_0000),
+    ] {
+        g.set(
+            name,
+            lua.create_function(move |lua, ()| {
+                Ok(super::super::binding_abi::flag(seat_flag_set(
+                    &model_of(lua),
+                    bit,
+                )))
+            })?,
+        )?;
+    }
+    // `VehicleExit` (`0x5fb660`): with a mover, an exit when the seat allows it, else the
+    // refusal `SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW`.
+    g.set(
+        "VehicleExit",
+        lua.create_function(move |lua, ()| {
+            let refusal =
+                super::super::get_text::global_text(lua, "SPELL_FAILED_CANT_DO_THAT_RIGHT_NOW");
+            let mut model = super::super::model_mut_of(lua);
+            if model.vehicles.mover == 0 {
+                return Ok(());
+            }
+            if seat_flag_set(&model, 0x200_0000) {
+                model.vehicle_requests.push(VehicleRequest::Exit);
+            } else {
+                model.ui_errors_s.push(("ERR_SPELL_FAILED_S", refusal));
+            }
+            Ok(())
+        })?,
+    )?;
+    // `VehiclePrevSeat` and `VehicleNextSeat` (`0x5fb6d0`, `0x5fb720`): with a mover, when the
+    // seat allows switches.
+    for (name, request) in [
+        ("VehiclePrevSeat", VehicleRequest::PrevSeat),
+        ("VehicleNextSeat", VehicleRequest::NextSeat),
+    ] {
+        g.set(
+            name,
+            lua.create_function(move |lua, ()| {
+                let mut model = super::super::model_mut_of(lua);
+                if model.vehicles.mover != 0 && seat_flag_set(&model, 0x400_0000) {
+                    model.vehicle_requests.push(request);
+                }
+                Ok(())
+            })?,
+        )?;
+    }
     // `CanSwitchVehicleSeat`: the player's seat allows switches.
     g.set(
         "CanSwitchVehicleSeat",
@@ -395,6 +459,33 @@ mod tests {
         s.run("EjectPassengerFromSeat(3); EjectPassengerFromSeat(2)")
             .unwrap();
         assert_eq!(s.take_vehicle_requests(), [VehicleRequest::Eject(P2)]);
+    }
+
+    /// The seat flags answer the input verbs; exit asks, and a seat that forbids it refuses.
+    #[test]
+    fn the_input_verbs_read_the_player_s_seat() {
+        let mut s = script();
+        assert_eq!(
+            s.eval::<Option<i64>>("return CanSwitchVehicleSeats()")
+                .unwrap(),
+            Some(1)
+        );
+        assert_eq!(
+            s.eval::<Option<i64>>("return CanExitVehicle()").unwrap(),
+            None
+        );
+        assert_eq!(
+            s.eval::<Option<i64>>("return IsUsingVehicleControls()")
+                .unwrap(),
+            None
+        );
+        s.run("VehicleNextSeat(); VehicleExit()").unwrap();
+        assert_eq!(s.take_vehicle_requests(), [VehicleRequest::NextSeat]);
+        assert_eq!(
+            s.model_ref().ui_errors_s,
+            [("ERR_SPELL_FAILED_S", String::new())],
+            "no GlobalStrings loaded: the empty text"
+        );
     }
 
     #[test]

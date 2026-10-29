@@ -25,13 +25,15 @@ fn movement_prevented(
     store: &ObjectStore,
     passenger_of: impl Fn(u64) -> Option<Passenger>,
     me: u64,
+    stopped: bool,
 ) -> bool {
     if passenger_of(mover).is_some_and(|p| p.state != 0 && p.state != SEATED) {
         return true;
     }
     if let Some(charmer) = store.0.unit_charmed_by() {
-        // A charmer seated in a vehicle that stopped its movement (`m_flags & 0x8`).
-        return passenger_of(charmer).is_some_and(|p| p.state == SEATED && p.stopped);
+        // A charmer seated in a vehicle that stopped its movement (`m_flags & 0x8`); only our own
+        // seat stops (`0x747fa0`).
+        return charmer == me && stopped && passenger_of(me).is_some_and(|p| p.state == SEATED);
     }
     // `UNIT_FLAG_POSSESSED` (`0x1000000`) or our own body.
     store.0.unit_flags() & 0x100_0000 == 0 && mover != me
@@ -64,6 +66,7 @@ pub(super) fn on_mover_change(
     self_guid: Res<SelfGuid>,
     tables: Res<VehicleTables>,
     aim: Res<VehicleAim>,
+    stop: Res<super::SeatStop>,
     mut last: Local<u64>,
 ) {
     let Some(mut script) = script else {
@@ -83,7 +86,13 @@ pub(super) fn on_mover_change(
     };
     let rec = now.and_then(|(_, _, v)| tables.vehicle(v?.id));
     let enable = now.is_some_and(|(g, store, _)| {
-        !movement_prevented(g.0, store, passenger_of, self_guid.0.unwrap_or(0))
+        !movement_prevented(
+            g.0,
+            store,
+            passenger_of,
+            self_guid.0.unwrap_or(0),
+            stop.at.is_some(),
+        )
     });
     if now.is_some() {
         script.fire_event("VEHICLE_UPDATE", vec![]);
@@ -137,26 +146,26 @@ mod tests {
             benilla_protocol::ObjectFields::from_pairs(&[(2, 0x9), (10, ME as u32), (11, 0)])
                 .into_created(benilla_protocol::messages::ObjectType::Unit),
         );
-        let seated = |stopped| {
-            move |g: u64| {
-                (g == ME).then_some(Passenger {
-                    vehicle: CART,
-                    seat: 0,
-                    state: SEATED,
-                    stopped,
-                })
-            }
+        let seated = |g: u64| {
+            (g == ME).then_some(Passenger {
+                vehicle: CART,
+                seat: 0,
+                state: SEATED,
+            })
         };
-        assert!(!movement_prevented(CART, &charmed, seated(false), ME));
-        assert!(movement_prevented(CART, &charmed, seated(true), ME));
+        assert!(!movement_prevented(CART, &charmed, seated, ME, false));
+        assert!(movement_prevented(CART, &charmed, seated, ME, true));
         let free = ObjectStore(
             benilla_protocol::ObjectFields::from_pairs(&[(2, 0x9)])
                 .into_created(benilla_protocol::messages::ObjectType::Unit),
         );
         assert!(
-            movement_prevented(CART, &free, |_| None, ME),
+            movement_prevented(CART, &free, |_| None, ME, false),
             "not ours to move"
         );
-        assert!(!movement_prevented(ME, &free, |_| None, ME), "our own body");
+        assert!(
+            !movement_prevented(ME, &free, |_| None, ME, false),
+            "our own body"
+        );
     }
 }
