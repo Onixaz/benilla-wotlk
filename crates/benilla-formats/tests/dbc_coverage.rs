@@ -95,10 +95,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("StringLookups", "#245 string lookups"),
     ("TransportPhysics", "#243 transport rocking"),
     ("TransportRotation", "#243 transport rotation"),
-    ("Vehicle", "#235 vehicles"),
-    ("VehicleSeat", "#235 vehicles"),
-    ("VehicleUIIndicator", "#235 the vehicle seat indicator"),
-    ("VehicleUIIndSeat", "#235 the vehicle seat indicator"),
     ("VideoHardware", "#245 graphics defaults by video card"),
     ("WorldChunkSounds", "#244 per-chunk zone sounds"),
     (
