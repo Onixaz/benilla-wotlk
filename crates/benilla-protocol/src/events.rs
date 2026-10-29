@@ -820,6 +820,13 @@ pub enum SessionEvent {
     PetComboPoints { pet: u64, target: u64, points: u8 },
     /// Drop the target when it is `guid` (`SMSG_CLEAR_TARGET`).
     ClearTarget { guid: u64 },
+    /// Entries of `unit`'s threat list, with its new highest for `SMSG_HIGHEST_THREAT_UPDATE`
+    /// (`SMSG_THREAT_UPDATE`).
+    ThreatUpdate(crate::messages::ThreatUpdate),
+    /// `victim` leaves `unit`'s threat list (`SMSG_THREAT_REMOVE`).
+    ThreatRemove { unit: u64, victim: u64 },
+    /// `unit`'s threat list is dropped (`SMSG_THREAT_CLEAR`).
+    ThreatClear { unit: u64 },
     /// The unit dismounts now, ahead of its descriptor (`SMSG_DISMOUNT`).
     Dismount { guid: u64 },
     /// A clone's caster look (`SMSG_MIRRORIMAGE_DATA`).

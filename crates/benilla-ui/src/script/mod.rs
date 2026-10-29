@@ -240,6 +240,7 @@ mod stdlib;
 mod summon;
 mod talent;
 mod taxi;
+mod threat;
 mod tick;
 mod title;
 mod tooltip;
@@ -439,6 +440,7 @@ pub use talent::{
     TalentGroupView, TalentPrereqView, TalentRankView, TalentTabView, TalentUiState, TalentView,
 };
 pub use taxi::{TaxiNodeType, TaxiUiNode, TaxiUiState};
+pub use threat::{ThreatEntry, ThreatList, ThreatReading, ThreatView};
 pub use title::{chosen_title_name, title_row, PlayerTitles, TitleRow};
 pub use tooltip_spell::SpellTooltipView;
 pub use totem::{TotemSlots, TotemView, MAX_TOTEM_SLOTS};

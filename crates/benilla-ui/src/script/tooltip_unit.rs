@@ -7,7 +7,9 @@
 use mlua::{Lua, Table};
 
 use super::object::frame_handle_of;
-use super::tooltip::{append_line, clear_content, fire_cleared, show_or_hide_empty, tip_mut};
+use super::tooltip::{
+    add_texture, append_line, clear_content, fire_cleared, show_or_hide_empty, tip_mut,
+};
 use super::unit::{is_civilian_kill, level_reads_unknown, unknownobject};
 use super::{KindState, UnitState};
 use crate::layout::{Anchor, Point};
@@ -29,6 +31,9 @@ const SKILL_RAMP: [[f32; 4]; 5] = [
 ];
 /// `0xffffd200`, the unit name's colour until FrameXML recolours it by reaction.
 const GOLD: [f32; 4] = [1.0, 210.0 / 255.0, 0.0, 1.0];
+/// The threat line's mark and its tints by status (`0xad2d70`), as RGB.
+const THREAT_MARK: &str = "Interface\\RaidFrame\\UI-RaidFrame-Threat";
+const THREAT_STATUS_COLORS: [u32; 5] = [0xffffff, 0xb0b0b0, 0xffff77, 0xff9900, 0xff0000];
 
 /// A GameObject tooltip line's colour, as `CGTooltip::SetObject` (`0x626720`) picks it; the app
 /// picks the tint for each line.
@@ -178,6 +183,29 @@ fn render_unit(lua: &Lua, this: &Table, token: &str) -> mlua::Result<bool> {
     // "Leader" (`0x6125c0`): PvP-flagged and a racial leader, no other gate.
     if u.racial_leader && u.pvp {
         append_line(lua, this, ("Leader".into(), WHITE), None, false)?;
+    }
+    // The threat line: the player's percent to pull on this unit, then the raid frame's threat
+    // mark tinted by status from the table `GetThreatStatusColor` reads (`0xad2d70`).
+    let threat = super::threat::tooltip_line(&crate::script::model_mut_of(lua), u.guid);
+    if let Some((percent, status)) = threat {
+        if let Some(template) = crate::strings::global(lua, "THREAT_TOOLTIP") {
+            append_line(
+                lua,
+                this,
+                (fill(&template, &[Arg::D(percent)]), WHITE),
+                None,
+                false,
+            )?;
+            let rgb = THREAT_STATUS_COLORS[usize::from(status)];
+            let channel = |shift: u32| ((rgb >> shift) & 0xff) as f32 / 255.0;
+            add_texture(
+                lua,
+                this,
+                Some(THREAT_MARK.to_string()),
+                None,
+                [channel(16), channel(8), channel(0), 1.0],
+            )?;
+        }
     }
     // An unresolved guid (0) is no subject: nothing can push for it.
     set_subject(lua, h, Some(u.guid).filter(|&g| g != 0));
@@ -343,6 +371,51 @@ impl super::UiScript {
             self.fire_event("UPDATE_MOUSEOVER_UNIT", vec![]);
         }
         shown
+    }
+
+    /// Rebuild a shown `GameTooltip` that holds `guid` and is not fading, as a threat change does
+    /// (`0x512ab0`), through a token naming the unit; a world hover keeps its ownership.
+    pub fn refresh_unit_tooltip(&mut self, guid: u64) {
+        let found = {
+            let model = self.model_ref();
+            let Some(h) = model.arena.lookup("GameTooltip") else {
+                return;
+            };
+            let Some(f) = model.arena.frame(h).filter(|f| f.shown) else {
+                return;
+            };
+            let KindState::Tooltip(t) = &f.kind_state else {
+                return;
+            };
+            if t.unit_guid != Some(guid) || t.fade_start.is_some() {
+                return;
+            }
+            let world_owned = t.world_owned;
+            let token = std::iter::once("mouseover".to_string())
+                .chain(model.unit_guids.tokens_naming(guid))
+                .find(|token| {
+                    model
+                        .unit(token)
+                        .is_some_and(|u| u.exists && u.guid == guid)
+                });
+            token.map(|token| (h, model.frame_to_id.get(&h).copied(), world_owned, token))
+        };
+        let Some((h, Some(id), world_owned, token)) = found else {
+            return;
+        };
+        let wrapper = match super::object::frame_wrapper(&self.lua, id) {
+            Ok(w) => w,
+            Err(e) => {
+                self.push_error(e);
+                return;
+            }
+        };
+        if let Err(e) = render_unit(&self.lua, &wrapper, &token) {
+            self.push_error(e);
+        }
+        if world_owned {
+            set_world_owned(&self.lua, h);
+        }
     }
 
     /// Show the world-mouseover GameObject tooltip (builder `0x52aa20`): the name in gold, then

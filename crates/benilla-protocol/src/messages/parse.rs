@@ -13,9 +13,9 @@ use super::{
     equipment_set, gameobject, gm_ticket, gossip, group, guild, guild_bank, instance, items, lfg,
     loot, mail, meeting_stone, mirror_timer, monster_move, movement, opcode, page_text, pet,
     petition, pose, progression, pvp, quest, rune, social, spellbook, spells, stable, summon,
-    tabard, talents, taxi, totem, trade, trainer, tutorial, unit_state, update_object, vendor,
-    world_state, AttackSwingError, CalendarPacket, Character, CreatureQueryInfo, DifficultySet,
-    JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
+    tabard, talents, taxi, threat, totem, trade, trainer, tutorial, unit_state, update_object,
+    vendor, world_state, AttackSwingError, CalendarPacket, Character, CreatureQueryInfo,
+    DifficultySet, JumpInfo, LfgPacket, MoveMode, ServerPacket, SpeedKind, SplineMode,
 };
 
 /// Read a `SMSG_FORCE_*_SPEED_CHANGE` body: `[packed guid][u32 counter][f32 speed]`, with a `u8`
@@ -1108,6 +1108,19 @@ fn parse_server_body(
         }
         opcode::SMSG_CLEAR_TARGET => ServerPacket::ClearTarget {
             guid: read_u64_le(&mut r)?,
+        },
+        opcode::SMSG_HIGHEST_THREAT_UPDATE => {
+            ServerPacket::ThreatUpdate(threat::read_threat_update(&mut r, true)?)
+        }
+        opcode::SMSG_THREAT_UPDATE => {
+            ServerPacket::ThreatUpdate(threat::read_threat_update(&mut r, false)?)
+        }
+        opcode::SMSG_THREAT_REMOVE => {
+            let (unit, victim) = threat::read_threat_remove(&mut r)?;
+            ServerPacket::ThreatRemove { unit, victim }
+        }
+        opcode::SMSG_THREAT_CLEAR => ServerPacket::ThreatClear {
+            unit: read_packed_guid(&mut r)?,
         },
         opcode::SMSG_DISMOUNT => ServerPacket::Dismount {
             guid: read_packed_guid(&mut r)?,

@@ -302,12 +302,13 @@ fn texture_room(model: &Model, slot: crate::widget::RegionHandle) -> f32 {
 /// `CGTooltip::AddTexture` (`0x61c8b0`): the next free slot goes on the last line, TOPRIGHT to its
 /// TOPLEFT less the gap, the line indents by the slot's room, or by none under a slot on the line
 /// above, and the line after it is pulled back by the same room. Nothing with no slot left or
-/// fewer than 2 lines.
+/// fewer than 2 lines. `tint` is the slot's vertex colour, white from Lua.
 pub(super) fn add_texture(
     lua: &Lua,
     this: &Table,
     texture: Option<String>,
     coords: Option<super::TexCoords>,
+    tint: [f32; 4],
 ) -> mlua::Result<()> {
     let h = frame_handle_of(lua, this)?;
     let (index, lines) = with_tip(lua, this, |t| (t.texture_lines.len(), t.num_lines))?;
@@ -348,7 +349,7 @@ pub(super) fn add_texture(
     d.texture = texture;
     d.fill = None;
     d.tex_coords = coords;
-    d.vertex_color = Some([1.0, 1.0, 1.0, 1.0]);
+    d.vertex_color = Some(tint);
     let shown = std::mem::replace(&mut d.hidden, false);
     if shown {
         model.arena.note_visibility_change();

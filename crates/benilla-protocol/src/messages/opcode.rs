@@ -1297,6 +1297,14 @@ pub const SMSG_PET_UPDATE_COMBO_POINTS: u16 = 0x0492; // 1170
 pub const SMSG_MODIFY_COOLDOWN: u16 = 0x0491; // 1169
 /// Drop the named target (`0x756800`'s `0x3bf` arm).
 pub const SMSG_CLEAR_TARGET: u16 = 0x03BF; // 959
+/// A unit's threat list and its new highest (`0x741c90`).
+pub const SMSG_HIGHEST_THREAT_UPDATE: u16 = 0x0482; // 1154
+/// A unit's threat list (`0x741c90`).
+pub const SMSG_THREAT_UPDATE: u16 = 0x0483; // 1155
+/// One unit off a unit's threat list (`0x737b20`).
+pub const SMSG_THREAT_REMOVE: u16 = 0x0484; // 1156
+/// A unit's whole threat list dropped (`0x734b00`).
+pub const SMSG_THREAT_CLEAR: u16 = 0x0485; // 1157
 /// A unit dismounts now, ahead of its descriptor (`Packet_SMSG_DISMOUNT` `0x741a40`).
 pub const SMSG_DISMOUNT: u16 = 0x03AC; // 940
 /// Ask for a clone's caster look (`CGUnit_C::RequestMirrorImageData` `0x716f10`).

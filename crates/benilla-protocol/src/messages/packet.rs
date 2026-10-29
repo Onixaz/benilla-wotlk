@@ -1426,6 +1426,17 @@ pub enum ServerPacket {
     ClearTarget {
         guid: u64,
     },
+    /// `SMSG_HIGHEST_THREAT_UPDATE` or `SMSG_THREAT_UPDATE`: entries of a unit's threat list.
+    ThreatUpdate(super::ThreatUpdate),
+    /// `SMSG_THREAT_REMOVE`: `victim` leaves `unit`'s threat list.
+    ThreatRemove {
+        unit: u64,
+        victim: u64,
+    },
+    /// `SMSG_THREAT_CLEAR`: `unit`'s threat list is dropped.
+    ThreatClear {
+        unit: u64,
+    },
     /// `SMSG_DISMOUNT`: the unit dismounts now.
     Dismount {
         guid: u64,
@@ -1636,6 +1647,12 @@ impl ServerPacket {
             ServerPacket::PetComboPoints { .. } => "SMSG_PET_UPDATE_COMBO_POINTS".into(),
             ServerPacket::ModifyCooldown { .. } => "SMSG_MODIFY_COOLDOWN".into(),
             ServerPacket::ClearTarget { .. } => "SMSG_CLEAR_TARGET".into(),
+            ServerPacket::ThreatUpdate(u) if u.highest.is_some() => {
+                "SMSG_HIGHEST_THREAT_UPDATE".into()
+            }
+            ServerPacket::ThreatUpdate(_) => "SMSG_THREAT_UPDATE".into(),
+            ServerPacket::ThreatRemove { .. } => "SMSG_THREAT_REMOVE".into(),
+            ServerPacket::ThreatClear { .. } => "SMSG_THREAT_CLEAR".into(),
             ServerPacket::Dismount { .. } => "SMSG_DISMOUNT".into(),
             ServerPacket::MirrorImageData { .. } => "SMSG_MIRRORIMAGE_DATA".into(),
             ServerPacket::ForcedReactions { .. } => "SMSG_SET_FORCED_REACTIONS".into(),
