@@ -432,6 +432,103 @@ fn escape_on_an_options_window_returns_to_the_menu() {
         .unwrap());
 }
 
+/// The Mouse panel's checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`).
+const MOUSE_CHECKBOXES: [(&str, &str, &str); 3] = [
+    ("InvertMouse", "mouseInvertPitch", "0"),
+    ("ClickToMove", "autointeract", "0"),
+    ("WoWMouse", "enableWoWMouse", "0"),
+];
+
+/// The Mouse panel: each checkbox boots at its 12340 default, Okay writes the flip, Cancel keeps
+/// it and Defaults restores it; the sensitivity slider writes `mouseSpeed`, the look-speed slider
+/// `cameraYawMoveSpeed` and half of it to `cameraPitchMoveSpeed`; the click-to-move camera
+/// dropdown is greyed until Click to Move is on, then writes `cameraSmoothTrackingStyle`.
+#[test]
+fn every_mouse_control_writes_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-mouse");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsMousePanel)";
+    for (suffix, cvar, default) in MOUSE_CHECKBOXES {
+        let button = format!("InterfaceOptionsMousePanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let number = |s: &UiScript, cvar: &str| -> f64 {
+        s.eval::<f64>(&format!("return tonumber(GetCVar('{cvar}'))"))
+            .unwrap()
+    };
+    assert_eq!(number(&s, "mouseSpeed"), 1.0);
+    assert_eq!(number(&s, "cameraYawMoveSpeed"), 180.0);
+    s.run(&format!(
+        "{open} InterfaceOptionsMousePanelMouseSensitivitySlider:SetValue(1.25) \
+         InterfaceOptionsMousePanelMouseLookSpeedSlider:SetValue(240) InterfaceOptionsFrameOkay:Click()"
+    ))
+    .unwrap();
+    assert_eq!(number(&s, "mouseSpeed"), 1.25);
+    assert_eq!(number(&s, "cameraYawMoveSpeed"), 240.0);
+    assert_eq!(
+        number(&s, "cameraPitchMoveSpeed"),
+        120.0,
+        "half the yaw speed"
+    );
+    s.run(open).unwrap();
+    assert!(
+        s.eval::<bool>(
+            "return InterfaceOptionsMousePanelClickMoveStyleDropDownButton:IsEnabled() ~= 1"
+        )
+        .unwrap(),
+        "the camera style waits for Click to Move"
+    );
+    s.run(
+        "InterfaceOptionsMousePanelClickToMove:Click() \
+         InterfaceOptionsMousePanelClickMoveStyleDropDown_OnClick({ value = '2' }) \
+         InterfaceOptionsFrameOkay:Click()",
+    )
+    .unwrap();
+    assert_eq!(s.cvar("autointeract").as_deref(), Some("1"));
+    assert_eq!(s.cvar("cameraSmoothTrackingStyle").as_deref(), Some("2"));
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Objectives panel's checkboxes, `(button suffix, CVar, registered default)`
 /// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`).
 const OBJECTIVES_CHECKBOXES: [(&str, &str, &str); 6] = [

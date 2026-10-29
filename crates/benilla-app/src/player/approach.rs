@@ -508,6 +508,7 @@ pub(super) fn steer_approach(
 fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut approach: ResMut<Approach>) {
     if ev.is("AutoInteract") {
         approach.enabled = ev.flag();
+        debug!("approach: Click to Move {}", approach.enabled);
     }
 }
 
