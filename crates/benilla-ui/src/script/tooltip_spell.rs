@@ -58,6 +58,8 @@ pub struct SpellTooltipView {
     /// "Reagents: Light Feather" (`SPELL_REAGENTS 0x854e54` and the eight reagent slots); the app
     /// writes a missing reagent's inline `|cffff2020` escape.
     pub reagents: Option<String>,
+    /// Every reagent is carried, so the brief tooltip leaves the line out (`0x6238a0`).
+    pub reagents_met: bool,
     /// "2.62% chance to dodge" (`CHANCE_TO_DODGE 0x854e44` and its siblings, by `Effect[0]`),
     /// from the player's live stat, which the app re-pushes as it moves.
     pub chance: Option<String>,
@@ -324,6 +326,20 @@ pub(super) struct SpellRenderOpts {
     /// lines drop (`0x52ed43`, `0x52f393`). `SetPetAction` sets it (`0x532888`), `SetSpell` on the
     /// pet book (`0x532e23`) and `SetTrainerService` for a `LEARN_PET_SPELL` service (`0x533a7f`).
     pub(super) alt_caster: bool,
+    /// `SetSpell`'s `brief` (`0x6238a0`), which `SetAction`, `SetShapeshift` and `SetPossession`
+    /// pass while `UberTooltips` is off: the name and rank, the cooldown and only the unmet
+    /// requirements, with no cost, range, cast time, chance or description.
+    pub(super) brief: bool,
+}
+
+/// The action, stance and possess bars' `brief` (`0x6312fd`, `0x6256ce`, `0x625855`):
+/// `UberTooltips` off.
+fn brief_tooltips(lua: &Lua) -> bool {
+    let model = crate::script::model_mut_of(lua);
+    model
+        .cvars
+        .get("ubertooltips")
+        .is_some_and(|c| crate::script::cvars::sstr_to_int(&c.value) == 0)
 }
 
 fn render_spell(
@@ -338,13 +354,17 @@ fn render_spell(
         aura,
         show_rank,
         alt_caster,
+        brief,
     } = opts;
     // The spell builder writes the name white (`0x530270`), the aura builder gold (`0x530380`).
     let name_color = if aura { GOLD } else { WHITE };
     let right = if aura {
         v.dispel_type.clone().map(|t| (t, GOLD))
     } else {
-        v.rank.clone().filter(|_| show_rank).map(|t| (t, GRAY))
+        v.rank
+            .clone()
+            .filter(|_| show_rank || brief)
+            .map(|t| (t, GRAY))
     };
     append_line(lua, this, (v.name.clone(), name_color), right, false)?;
     let talent_builder = talent.is_some_and(|t| !t.exceptional);
@@ -357,7 +377,7 @@ fn render_spell(
             append_line(lua, this, (req.clone(), RED), None, true)?;
         }
     }
-    if !aura && !talent_builder {
+    if !aura && !talent_builder && !brief {
         match (&v.cost, &v.range) {
             (Some(c), Some(r)) => append_line(
                 lua,
@@ -382,21 +402,28 @@ fn render_spell(
                 None => append_line(lua, this, (ct.clone(), WHITE), None, false)?,
             }
         }
-        if let Some(req) = &v.requires_item {
+    }
+    // The requirement lines; the brief tooltip keeps only an unmet one.
+    if !aura && !talent_builder {
+        if let Some(req) = v.requires_item.as_ref().filter(|_| !brief || !v.item_met) {
             let color = if v.item_met { WHITE } else { RED };
             append_line(lua, this, (req.clone(), color), None, false)?;
         }
-        if let Some(req) = &v.requires_form {
+        if let Some(req) = v.requires_form.as_ref().filter(|_| !brief || !v.form_met) {
             let color = if v.form_met { WHITE } else { RED };
             append_line(lua, this, (req.clone(), color), None, false)?;
         }
         // Reagents, white and wrapped, unless altCaster drops them; the totem line it also drops
         // is not built.
-        if let Some(reagents) = v.reagents.as_ref().filter(|_| !alt_caster) {
+        if let Some(reagents) = v
+            .reagents
+            .as_ref()
+            .filter(|_| !alt_caster && (!brief || !v.reagents_met))
+        {
             append_line(lua, this, (reagents.clone(), WHITE), None, true)?;
         }
         // The chance line, white and unwrapped, between the reagents and the description.
-        if let Some(chance) = &v.chance {
+        if let Some(chance) = v.chance.as_ref().filter(|_| !brief) {
             append_line(lua, this, (chance.clone(), WHITE), None, false)?;
         }
     }
@@ -405,7 +432,7 @@ fn render_spell(
     } else {
         &v.description
     };
-    if !desc.is_empty() {
+    if !desc.is_empty() && !brief {
         let color = if aura { WHITE } else { GOLD };
         append_line(lua, this, (desc.clone(), color), None, true)?;
     }
@@ -597,7 +624,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     None => return Ok(()),
                 }
             };
-            set_spell_by_id(lua, &this, spell_id, name, SpellRenderOpts::default(), None)
+            let opts = SpellRenderOpts {
+                brief: brief_tooltips(lua),
+                ..Default::default()
+            };
+            set_spell_by_id(lua, &this, spell_id, name, opts, None)
         })?,
     )?;
     // GameTooltip:SetPetAction(index): the pet-bar hover for a spell slot, built against the pet
@@ -660,7 +691,11 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
             };
             match held {
                 Some((spell_id, name)) if slot.round() == 1.0 => {
-                    set_spell_by_id(lua, &this, spell_id, name, SpellRenderOpts::default(), None)
+                    let opts = SpellRenderOpts {
+                        brief: brief_tooltips(lua),
+                        ..Default::default()
+                    };
+                    set_spell_by_id(lua, &this, spell_id, name, opts, None)
                 }
                 _ => Ok(()),
             }
@@ -890,6 +925,7 @@ pub(super) fn install_methods(lua: &Lua, m: &Table) -> mlua::Result<()> {
                     None,
                     SpellRenderOpts {
                         show_rank: true,
+                        brief: brief_tooltips(lua),
                         ..Default::default()
                     },
                     None,
