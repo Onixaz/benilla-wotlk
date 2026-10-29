@@ -48,6 +48,8 @@ struct WhoNames<'a> {
 pub(crate) struct FedSocial {
     /// Whether the VM has had a snapshot; the first push fires the list events regardless.
     seeded: bool,
+    /// The name cache's generation: an ask through `ResMut` marks the cache every frame.
+    names: crate::ui_script::gate::Watch,
 }
 
 /// Push the display snapshot to the VM, fire the list events, and print the owed result lines.
@@ -65,6 +67,21 @@ pub(crate) fn feed_social(
         return;
     };
     let fed = fed.get(&script);
+    // The snapshot reads these alone: the store (written by the wire and the VM's drains), the
+    // names and the three tables.
+    let names_moved = fed.names.moved(names.generation());
+    let inputs = [
+        ("first", !fed.seeded),
+        ("social", social.is_changed()),
+        ("names", names_moved),
+        ("areas", areas.as_ref().is_some_and(|a| a.is_changed())),
+        ("classes", classes.as_ref().is_some_and(|c| c.is_changed())),
+        ("races", races.as_ref().is_some_and(|r| r.is_changed())),
+    ];
+    crate::ui_script::gate::trace("feed_social", &inputs);
+    if crate::ui_script::gate::Gate::new(inputs.iter().any(|&(_, open)| open)).skip() {
+        return;
+    }
     let areas = areas.as_deref().map(|a| &a.0);
     let who_names = WhoNames {
         areas,
@@ -464,6 +481,39 @@ pub(super) fn drain_social(
 mod tests {
     use super::*;
     use benilla_protocol::messages::WhoResults;
+
+    /// The snapshot rebuilds only when an input moves: a list edit that marks nothing is not read
+    /// (the gate holds), and the same edit marked is.
+    #[test]
+    fn a_quiet_frame_rebuilds_no_social_snapshot() {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.insert_non_send_resource(UiScript::new().unwrap())
+            .insert_resource(NetCommands(tx))
+            .init_resource::<SocialState>()
+            .init_resource::<NameCache>()
+            .init_resource::<crate::ui_chat::ChatLog>()
+            .init_resource::<crate::sound::MessageSounds>()
+            .add_systems(Update, feed_social);
+        let ignores = |app: &App| {
+            app.world()
+                .non_send_resource::<UiScript>()
+                .eval::<i64>("return GetNumIgnores()")
+                .unwrap()
+        };
+        app.update();
+        assert_eq!(ignores(&app), 0);
+        app.world_mut()
+            .resource_mut::<SocialState>()
+            .bypass_change_detection()
+            .ignores
+            .push(7);
+        app.update();
+        assert_eq!(ignores(&app), 0, "an unmarked edit is not read");
+        app.world_mut().resource_mut::<SocialState>().set_changed();
+        app.update();
+        assert_eq!(ignores(&app), 1, "a marked edit is");
+    }
 
     fn entry(name: &str, level: u32, guild: &str) -> WhoEntry {
         WhoEntry {

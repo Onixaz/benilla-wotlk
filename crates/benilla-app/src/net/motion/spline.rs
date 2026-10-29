@@ -6,8 +6,8 @@ use std::time::{Duration, Instant};
 
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_protocol::{CreateSpline, EntityKind};
-use bevy::ecs::batching::BatchingStrategy;
 use bevy::prelude::*;
+use bevy::tasks::{ComputeTaskPool, ParallelSliceMut};
 use bevy::utils::Parallel;
 
 use crate::entities::CollisionHeight;
@@ -16,8 +16,10 @@ use crate::player::swim_enter_depth;
 use super::super::{NetEntity, ObjectStore};
 
 /// A server-dictated path (`SMSG_MONSTER_MOVE`) in raw WoW coordinates, walked at constant speed
-/// over `duration` from `start`; present only while the unit is on it.
+/// over `duration` from `start`; present only while the unit is on it. Sparse, as it comes and
+/// goes with every path.
 #[derive(Component, Debug, Clone)]
+#[component(storage = "SparseSet")]
 pub(crate) struct Spline {
     pub(crate) points: Vec<[f32; 3]>,
     pub(crate) start: Instant,
@@ -572,17 +574,30 @@ pub(in crate::net) fn ground_clamp_creatures(
     let t0 = cost.then(std::time::Instant::now);
     let epoch = epoch.get();
 
-    // Each unit's probe reads only the world and writes only its own row, so units run in
-    // parallel; a cast is ~20 µs, so small batches spread a few dozen walkers over the pool.
-    q.par_iter_mut()
-        .batching_strategy(BatchingStrategy::fixed(CLAMP_BATCH))
-        .for_each(|row| {
-            let mut s = stats.borrow_local_mut();
+    // The gate runs serially over every row: most units are skipped or held, and fanning those
+    // out cost more in dispatch than the gate itself. Only the casts go to the pool, where each
+    // unit's probe reads only the world and writes only its own row; a cast is ~20 µs, so small
+    // batches spread a few dozen walkers over the pool.
+    let mut gated = stats.borrow_local_mut();
+    let mut casts: Vec<ClampRow> = Vec::new();
+    for row in &mut q {
+        gated.visited += 1;
+        match clamp_gate(&row, epoch, legacy) {
+            ClampGate::Skip => gated.skipped += 1,
+            ClampGate::Hold => gated.held += 1,
+            ClampGate::Cast => casts.push(row),
+        }
+    }
+    drop(gated);
+    casts.par_chunk_map_mut(ComputeTaskPool::get(), CLAMP_BATCH, |_, chunk| {
+        let mut s = stats.borrow_local_mut();
+        for row in chunk.iter_mut() {
             if let Some(first) = clamp_unit(&world, &points, &capsule.0, epoch, legacy, row, &mut s)
             {
                 inserts.borrow_local_mut().push(first);
             }
-        });
+        }
+    });
 
     for (entity, state) in inserts.drain() {
         commands.entity(entity).insert(state);
@@ -629,8 +644,54 @@ type ClampRow<'a> = (
     bool,
 );
 
-/// One unit's clamp for [`ground_clamp_creatures`]: writes the unit's Y and its memo, and
-/// returns the memo to insert on a unit's first clamp.
+/// What [`clamp_gate`] decides for a row before any probe.
+enum ClampGate {
+    /// Somebody else owns this body's Z.
+    Skip,
+    /// The last answer stands: the ray cannot answer differently.
+    Hold,
+    Cast,
+}
+
+/// The cheap half of one unit's clamp: whether its Z is ours to derive, and whether the last
+/// answer still stands.
+fn clamp_gate(row: &ClampRow, epoch: u64, legacy: bool) -> ClampGate {
+    let (_, net, spline, t, clamped, swimming, modes, embodied, relayed) = row;
+    if !ground_derived(
+        net.kind,
+        spline.is_some(),
+        clamped.is_some(),
+        *embodied,
+        *relayed,
+    ) {
+        return ClampGate::Skip;
+    }
+    // A flying path is authoritative on Z; a deck path has no terrain under the deck and a
+    // deck-local wire Z; in liquid the wire Z is the creature's swim depth.
+    if spline.is_some_and(|s| !s.grounded || s.deck.is_some()) || *swimming {
+        return ClampGate::Skip;
+    }
+    // The cast gate: same XZ, same collider epoch, same modes, and our own answer still the Y
+    // standing here, so the ray cannot answer differently. Testing the standing Y rather than
+    // the seat also re-grounds a re-sent identical wire pose. A miss holds too, as every collider
+    // attach moves the epoch; the epoch-blind legacy gate holds only a hit.
+    if let Some(c) = clamped.as_deref() {
+        let xz = [t.translation.x, t.translation.z];
+        let granted = modes.copied().unwrap_or_default();
+        let same_question = if legacy {
+            c.y_written == t.translation.y
+        } else {
+            c.y_written == t.translation.y && c.epoch == epoch && c.modes == granted
+        };
+        if (c.hit || !legacy) && c.xz == xz && same_question {
+            return ClampGate::Hold;
+        }
+    }
+    ClampGate::Cast
+}
+
+/// One unit's clamp for [`ground_clamp_creatures`], for a row [`clamp_gate`] passed: writes the
+/// unit's Y and its memo, and returns the memo to insert on a unit's first clamp.
 #[allow(clippy::too_many_arguments)]
 fn clamp_unit(
     world: &benilla_world::collision::WorldCollision,
@@ -638,36 +699,14 @@ fn clamp_unit(
     capsule: &avian3d::prelude::Collider,
     epoch: u64,
     legacy: bool,
-    row: ClampRow,
+    row: &mut ClampRow,
     s: &mut ClampStats,
 ) -> Option<(Entity, GroundClamped)> {
-    let (entity, net, spline, mut t, mut clamped, swimming, modes, embodied, relayed) = row;
+    let (entity, net, spline, t, clamped, _, modes, _, _) = row;
+    let (entity, net, spline, modes) = (*entity, *net, *spline, *modes);
     let cost = clamp_cost_enabled();
-    s.visited += 1;
-    if !ground_derived(
-        net.kind,
-        spline.is_some(),
-        clamped.is_some(),
-        embodied,
-        relayed,
-    ) {
-        s.skipped += 1;
-        return None; // somebody else owns this body's Z
-    }
-    if spline.is_some_and(|s| !s.grounded) {
-        s.skipped += 1;
-        return None; // a flying path is authoritative on Z
-    }
-    if spline.is_some_and(|s| s.deck.is_some()) {
-        s.skipped += 1;
-        return None; // a deck path: no terrain under a deck, and the wire Z is deck-local
-    }
-    if swimming {
-        s.skipped += 1;
-        return None; // in-liquid: the wire Z is the creature's swim depth
-    }
     let xz = [t.translation.x, t.translation.z];
-    // The granted modes change the ray's answer, so they join the cache gate below.
+    // The granted modes change the ray's answer, so they join the cache gate.
     let granted = modes.copied().unwrap_or_default();
     // A Y other than the one our last clamp left was written by the unit's position owner and
     // is the new seat; with no memo, the spawn pose is the seat.
@@ -676,20 +715,7 @@ fn clamp_unit(
         Some(c) if c.y_written == t.translation.y => c.seat_y,
         _ => t.translation.y,
     };
-    // The cast gate: same XZ, same collider epoch, same modes, and our own answer still the Y
-    // standing here, so the ray cannot answer differently. Testing the standing Y rather than
-    // the seat also re-grounds a re-sent identical wire pose. A miss holds too, as every collider
-    // attach moves the epoch; the epoch-blind legacy gate holds only a hit.
     if let Some(c) = clamped.as_deref() {
-        let same_question = if legacy {
-            c.y_written == t.translation.y
-        } else {
-            c.y_written == t.translation.y && c.epoch == epoch && c.modes == granted
-        };
-        if (c.hit || !legacy) && c.xz == xz && same_question {
-            s.held += 1;
-            return None;
-        }
         if cost && !legacy {
             if c.xz == xz && c.seat_y == seat_y {
                 s.armed += 1; // the world changed under a unit that didn't move

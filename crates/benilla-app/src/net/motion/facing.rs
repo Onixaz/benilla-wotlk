@@ -40,7 +40,9 @@ const EMOTE_PERMITS_FACING: u32 = benilla_formats::EMOTE_FLAG_INTERACTION;
 
 /// A stationary unit's display-facing state, the client's `CGUnit+0xc98` goal and
 /// `+0xc9c..+0xca8` delta ring; present only while [`drive_display_facing`] governs the unit.
+/// Sparse, as it comes and goes.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(crate) struct DisplayFacing {
     /// The raw wire yaw (`CMovement+0x1c`), never written client-side.
     wire: f32,
@@ -290,6 +292,16 @@ fn trace_face(e: Entity, source: GoalSource, goal: f32, cur: f32, new: f32) {
 mod tests {
     use super::*;
     use benilla_assets::coords::wow_to_bevy;
+
+    /// It comes and goes with the driver's grip: a table column would split the unit tables.
+    #[test]
+    fn display_facing_is_a_sparse_set() {
+        use bevy::ecs::component::StorageType;
+        assert_eq!(
+            <DisplayFacing as Component>::STORAGE_TYPE,
+            StorageType::SparseSet
+        );
+    }
     use std::f32::consts::{FRAC_PI_2, PI, TAU};
 
     /// The dead-band is inclusive.

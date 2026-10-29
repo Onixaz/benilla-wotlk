@@ -300,6 +300,14 @@ pub fn move_time_skipped(guid: u64, lag_ms: u32) -> Vec<u8> {
     body
 }
 
+/// `CMSG_TIME_SYNC_RESP` body: the echoed counter, then the client's movement clock when the
+/// request was handled (`0x6e9bb0`).
+pub fn time_sync_resp(counter: u32, client_ms: u32) -> Vec<u8> {
+    let mut body = counter.to_le_bytes().to_vec();
+    body.extend_from_slice(&client_ms.to_le_bytes());
+    body
+}
+
 /// `CMSG_MOVE_SPLINE_DONE` body: the mover's packed guid and `MovementInfo` at the ride's end,
 /// then the acked spline id (`HandleMoveSplineDoneOpcode`).
 pub fn move_spline_done(mover: u64, info: &MovementInfo, spline_id: u32) -> Vec<u8> {
@@ -347,6 +355,14 @@ pub fn move_flag_ack(guid: u64, counter: u32, info: &MovementInfo, apply: Option
         let value: f32 = if apply { 1.0 } else { 0.0 };
         body.extend_from_slice(&value.to_le_bytes());
     }
+    body
+}
+
+/// `CMSG_MOVE_SET_COLLISION_HGT_ACK` body: the movement-mode ack with the granted height as its
+/// value (`0x7151f0`, written by `0x71ef80`).
+pub fn collision_height_ack(guid: u64, counter: u32, info: &MovementInfo, height: f32) -> Vec<u8> {
+    let mut body = move_flag_ack(guid, counter, info, None);
+    body.extend_from_slice(&height.to_le_bytes());
     body
 }
 

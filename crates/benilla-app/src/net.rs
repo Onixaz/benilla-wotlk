@@ -1078,6 +1078,11 @@ pub(crate) enum ClientCommand {
     },
     /// A vehicle request.
     Vehicle(VehicleCommand),
+    /// `CMSG_TIME_SYNC_RESP`: the request's counter and our movement clock when it was handled.
+    TimeSyncResp {
+        counter: u32,
+        client_ms: u32,
+    },
     /// `CMSG_SET_ACTIVE_MOVER`: at our own player's create and on possession; the server drops
     /// `MSG_MOVE_*` for an unconfirmed mover.
     SetActiveMover {
@@ -2050,6 +2055,15 @@ pub(crate) enum ClientCommand {
         counter: u32,
         mode: MoveMode,
         apply: bool,
+        flags: u32,
+        pos: [f32; 3],
+        orientation: f32,
+    },
+    /// `CMSG_MOVE_SET_COLLISION_HGT_ACK`: the granted `height` echoed after our live pose.
+    CollisionHeightAck {
+        guid: u64,
+        counter: u32,
+        height: f32,
         flags: u32,
         pos: [f32; 3],
         orientation: f32,

@@ -20,6 +20,8 @@ pub const CLASSIC_ASCENDING: u32 = 0x200;
 pub const CLASSIC_DESCENDING: u32 = 0x80_0000;
 /// 3.3.5a's `CAN_FLY` (`0x100_0000`) in the 1.12.1 word, a bit 1.12.1 never defines.
 pub const CLASSIC_CAN_FLY: u32 = 0x800_0000;
+/// 3.3.5a's `DISABLE_GRAVITY` (`0x400`) in the 1.12.1 word: the same bit, 1.12.1's levitating.
+pub const CLASSIC_DISABLE_GRAVITY: u32 = 0x400;
 
 /// `MSG_MOVE_TIME_SKIPPED` inbound: a packed guid and the ms that mover's client skipped
 /// (reference handler `0x603b40`). Our own `CMSG_MOVE_TIME_SKIPPED` has the same shape.
@@ -232,6 +234,9 @@ pub enum MoveMode {
     /// 3.3.5a's `CAN_FLY`: the mover may take flight, and `SMSG_MOVE_UNSET_CAN_FLY` ends a flight
     /// in progress (`0x6ef860` event 48 calls StopFlying `0x98c240`).
     CanFly,
+    /// 3.3.5a's `DISABLE_GRAVITY`, 1.12.1's levitating bit once mapped: `apply` turns gravity off
+    /// (`SMSG_MOVE_GRAVITY_DISABLE`), and the two directions ack on their own opcodes.
+    DisableGravity,
 }
 
 impl MoveMode {
@@ -243,6 +248,7 @@ impl MoveMode {
             MoveMode::FeatherFall => 0x2000_0000,
             MoveMode::Hover => 0x4000_0000,
             MoveMode::CanFly => CLASSIC_CAN_FLY,
+            MoveMode::DisableGravity => CLASSIC_DISABLE_GRAVITY,
         }
     }
 
@@ -257,13 +263,15 @@ impl MoveMode {
             (MoveMode::FeatherFall, _) => opcode::CMSG_MOVE_FEATHER_FALL_ACK,
             (MoveMode::Hover, _) => opcode::CMSG_MOVE_HOVER_ACK,
             (MoveMode::CanFly, _) => opcode::CMSG_MOVE_SET_CAN_FLY_ACK,
+            (MoveMode::DisableGravity, true) => opcode::CMSG_MOVE_GRAVITY_DISABLE_ACK,
+            (MoveMode::DisableGravity, false) => opcode::CMSG_MOVE_GRAVITY_ENABLE_ACK,
         }
     }
 
-    /// Whether the ack ends in the `f32` apply value, 1.0 or 0.0: not root's (`AckMessageHasValue`
-    /// `0x7151f0`, written after the info by `0x71ef80`).
+    /// Whether the ack ends in the `f32` apply value, 1.0 or 0.0: not root's or gravity's
+    /// (`AckMessageHasValue` `0x7151f0`, written after the info by `0x71ef80`).
     pub fn ack_carries_apply(self) -> bool {
-        !matches!(self, MoveMode::Root)
+        !matches!(self, MoveMode::Root | MoveMode::DisableGravity)
     }
 }
 
@@ -282,6 +290,11 @@ pub enum SplineMode {
     /// `MOVEFLAG_SWIMMING` (`0x20_0000`), by `START_SWIM`/`STOP_SWIM`. The reference handles them
     /// (`0x61a130`, `0x61a160`); vmangos never sends them (`Opcodes.cpp:888`).
     Swimming,
+    /// 3.3.5a's `FLYING`, by `SMSG_SPLINE_MOVE_SET_FLYING`/`UNSET_FLYING` (`0x740ba0`): the set
+    /// takes only on a unit already `CAN_FLY` (`0x989890`); the receiver applies it.
+    Flying,
+    /// 3.3.5a's `DISABLE_GRAVITY`, by `SMSG_SPLINE_MOVE_GRAVITY_DISABLE`/`ENABLE` (`0x740ba0`).
+    DisableGravity,
 }
 
 impl SplineMode {
@@ -294,6 +307,8 @@ impl SplineMode {
             SplineMode::Hover => 0x4000_0000,
             SplineMode::WalkMode => 0x0000_0100,
             SplineMode::Swimming => 0x0020_0000,
+            SplineMode::Flying => CLASSIC_FLYING,
+            SplineMode::DisableGravity => CLASSIC_DISABLE_GRAVITY,
         }
     }
 }

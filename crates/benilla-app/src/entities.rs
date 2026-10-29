@@ -434,7 +434,9 @@ fn stamp_arrivals(
 }
 
 /// Marks a net entity whose visual is attached; the `waterfx` rig pre-marks its dummy unit.
+/// Sparse, as it lands frames after the unit's other parts.
 #[derive(Component)]
+#[component(storage = "SparseSet")]
 pub(crate) struct VisualAttached;
 
 /// The per-frame entity-visuals chain as one set; [`crate::creature_anim::VisualSheath`] must land
@@ -1280,6 +1282,27 @@ fn apply_unit_mat_alpha(
 mod world_unit_tests {
     use super::*;
     use bevy::ecs::system::RunSystemOnce;
+
+    /// The unit parts that come and go, or land frames after the rest: a table column would split
+    /// the unit tables every query walks, once per order they arrive in (`DisplayFacing` is held
+    /// to the same in its own module).
+    #[test]
+    fn late_unit_parts_are_sparse_sets() {
+        use bevy::ecs::component::StorageType;
+        for (name, storage) in [
+            ("Spline", <crate::net::Spline as Component>::STORAGE_TYPE),
+            (
+                "VisualAttached",
+                <VisualAttached as Component>::STORAGE_TYPE,
+            ),
+            (
+                "WmoPropsResolved",
+                <wmo_props::WmoPropsResolved as Component>::STORAGE_TYPE,
+            ),
+        ] {
+            assert_eq!(storage, StorageType::SparseSet, "{name}");
+        }
+    }
 
     fn net(kind: EntityKind, scale: f32) -> NetEntity {
         NetEntity {

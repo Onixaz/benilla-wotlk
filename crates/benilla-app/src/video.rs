@@ -686,8 +686,13 @@ fn current_mode(cfg: &VideoConfig, window: &Window) -> Option<ScreenResolution> 
     .filter(|r| r.width > 0 && r.height > 0)
 }
 
-/// The list [`publish_display_modes`] last pushed and the current entry.
-type PublishedModes = Option<(Vec<ScreenMode>, Option<ScreenResolution>)>;
+/// What [`publish_display_modes`] last pushed, and the watches on the inputs it reads.
+#[derive(Default)]
+struct PublishedModes {
+    pushed: Option<(Vec<ScreenMode>, Option<ScreenResolution>)>,
+    window_px: crate::ui_script::gate::Watch,
+    monitor: crate::ui_script::gate::Watch,
+}
 
 /// The host half of `GetScreenResolutions`, `GetCurrentResolution` and `GetRefreshRates`,
 /// recomputed on change; the reference builds its list once and never invalidates it.
@@ -695,26 +700,50 @@ fn publish_display_modes(
     script: Option<NonSendMut<benilla_ui::script::UiScript>>,
     cfg: Res<VideoConfig>,
     windows: Query<&Window, With<PrimaryWindow>>,
-    monitors: Query<&bevy::window::Monitor, With<PrimaryMonitor>>,
+    monitors: Query<(Entity, Ref<bevy::window::Monitor>), With<PrimaryMonitor>>,
     mut last: Local<crate::ui_script::VmMemo<PublishedModes>>,
 ) {
+    use crate::ui_script::gate;
     let Some(mut script) = script else {
         return;
     };
     let Ok(window) = windows.single() else {
         return;
     };
-    let (offered, current) = (
-        offered_modes(monitors.iter().next()),
-        current_mode(&cfg, window),
-    );
+    let monitor = monitors.iter().next();
     // Keyed by VM: a `ReloadUI` VM has been pushed nothing, so a plain `Local` would skip it.
-    let memo = last.get(&script);
-    if memo.as_ref() == Some(&(offered.clone(), current)) {
+    let (memo, vm_reset) = last.get_reset(&script);
+    // The window's physical size, not its change mark, which moves every frame.
+    let px = window.resolution.physical_size();
+    let window_moved = memo
+        .window_px
+        .moved(u64::from(px.x) << 32 | u64::from(px.y));
+    let monitor_moved = memo
+        .monitor
+        .moved(monitor.as_ref().map_or(u64::MAX, |(e, _)| e.to_bits()));
+    let inputs = [
+        ("vm_reset", vm_reset),
+        ("config", cfg.is_changed()),
+        ("window", window_moved),
+        (
+            "monitor",
+            monitor_moved || monitor.as_ref().is_some_and(|(_, m)| m.is_changed()),
+        ),
+    ];
+    gate::trace("publish_display_modes", &inputs);
+    let gate = gate::Gate::new(inputs.iter().any(|&(_, open)| open));
+    if gate.skip() {
         return;
     }
-    *memo = Some((offered.clone(), current));
-    script.set_screen_modes(offered, current);
+    let fresh = (
+        offered_modes(monitor.as_ref().map(|(_, m)| &**m)),
+        current_mode(&cfg, window),
+    );
+    if memo.pushed.as_ref() != Some(&fresh) {
+        gate.audit("publish_display_modes", "the modes");
+        script.set_screen_modes(fresh.0.clone(), fresh.1);
+        memo.pushed = Some(fresh);
+    }
 }
 
 /// What `GetVideoCaps` (`0x54ee60`) answers. Shaders, trilinear, anisotropy and the hardware
@@ -1155,6 +1184,59 @@ fn fix_input_lag(fix_lag: Res<FixLag>, device: Res<bevy::render::renderer::Rende
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The list rebuilds only when an input moves: a monitor edit that marks nothing is not read
+    /// (the gate holds), and the same edit marked is.
+    #[test]
+    fn a_quiet_frame_rebuilds_no_display_mode_list() {
+        let mode = |w, h| VideoMode {
+            physical_size: UVec2::new(w, h),
+            bit_depth: 32,
+            refresh_rate_millihertz: 60_000,
+        };
+        let mut app = App::new();
+        app.insert_non_send_resource(benilla_ui::script::UiScript::new().unwrap())
+            .insert_resource(VideoConfig::default())
+            .add_systems(Update, publish_display_modes);
+        app.world_mut().spawn((Window::default(), PrimaryWindow));
+        let monitor = app
+            .world_mut()
+            .spawn((
+                bevy::window::Monitor {
+                    name: None,
+                    physical_height: 1080,
+                    physical_width: 1920,
+                    physical_position: IVec2::ZERO,
+                    refresh_rate_millihertz: Some(60_000),
+                    scale_factor: 1.0,
+                    video_modes: vec![mode(1920, 1080)],
+                },
+                PrimaryMonitor,
+            ))
+            .id();
+        let offered = |app: &App| {
+            app.world()
+                .non_send_resource::<benilla_ui::script::UiScript>()
+                .eval::<i64>("return select('#', GetScreenResolutions())")
+                .unwrap()
+        };
+        app.update();
+        let base = offered(&app);
+        let mut entity = app.world_mut().entity_mut(monitor);
+        let mut m = entity.get_mut::<bevy::window::Monitor>().unwrap();
+        m.bypass_change_detection()
+            .video_modes
+            .push(mode(2560, 1440));
+        app.update();
+        assert_eq!(offered(&app), base, "an unmarked edit is not read");
+        app.world_mut()
+            .entity_mut(monitor)
+            .get_mut::<bevy::window::Monitor>()
+            .unwrap()
+            .set_changed();
+        app.update();
+        assert_eq!(offered(&app), base + 1, "a marked edit is");
+    }
 
     /// Synced is `Fifo`, not `AutoVsync` (`FifoRelaxed`, which tears on a late frame).
     #[test]

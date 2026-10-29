@@ -552,6 +552,8 @@ pub enum SessionEvent {
     /// `SMSG_OPEN_CONTAINER`: the reference fires `BAG_OPEN` with 0 for our own guid (the
     /// backpack), 1..10 for a bag-cache slot, and nothing for a miss.
     OpenContainer { item: u64 },
+    /// The server asks for our movement clock under `counter` (`SMSG_TIME_SYNC_REQ`).
+    TimeSyncReq { counter: u32 },
     /// Our own stand state (`SMSG_STANDSTATE_UPDATE`), applied ungated through the setter a
     /// volunteered change uses (reference: `0x603e50` → `0x6127b0`).
     StandStateUpdate { state: u8 },
@@ -1100,15 +1102,22 @@ pub enum SessionEvent {
     /// The spirit healer's `CONFIRM_XP_LOSS` popup (`SMSG_SPIRIT_HEALER_CONFIRM`); accepting sends
     /// `CMSG_SPIRIT_HEALER_ACTIVATE` with `npc`.
     SpiritHealerConfirm { npc: u64 },
-    /// Our root, water-walk, feather-fall or hover changed. Ack with `counter` and our
-    /// `MovementInfo`, or the server never applies it and observers never see it.
+    /// Our collision height (`SMSG_MOVE_SET_COLLISION_HGT`). Ack with `counter`, our
+    /// `MovementInfo` and the height.
+    MoveSetCollisionHeight {
+        guid: u64,
+        counter: u32,
+        height: f32,
+    },
+    /// Our root, water-walk, feather-fall, hover, can-fly or gravity changed. Ack with `counter`
+    /// and our `MovementInfo`, or the server never applies it and observers never see it.
     MoveMode {
         guid: u64,
         counter: u32,
         mode: crate::messages::MoveMode,
         apply: bool,
     },
-    /// Any unit's movement mode (the twelve `SMSG_SPLINE_MOVE_*`), no ack; on vmangos, a unit the
+    /// Any unit's movement mode (the sixteen `SMSG_SPLINE_MOVE_*`), no ack; on vmangos, a unit the
     /// server drives. `apply` sets the mode's `MOVEMENTFLAGS` bit, and the reference then re-runs
     /// the unit's gait selector (`0x6014ec`).
     SplineMoveMode {

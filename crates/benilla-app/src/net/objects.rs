@@ -1001,6 +1001,11 @@ fn modes_of(guid: u64, index: &GuidIndex, modes: &Query<&mut UnitMoveModes>) -> 
         .unwrap_or_default()
 }
 
+/// `MOVEFLAG_PITCH_UP | PITCH_DOWN`, which StopFlying clears with the flight bits.
+const PITCH_BITS: u32 = 0xc0;
+/// `MOVEFLAG_SPLINE_ELEVATION`, which StartFlight clears.
+const SPLINE_ELEVATION: u32 = 0x400_0000;
+
 /// `SMSG_SPLINE_MOVE_*`: a mode on a unit we do not control, with no ack. An unknown guid is
 /// dropped, as the reference's handler (`0x603c80`) does; our own guid is not special-cased, as
 /// vmangos never sends it for a player's mover.
@@ -1016,12 +1021,40 @@ fn spline_move_mode(
     let Some(&e) = index.0.get(&guid) else {
         return; // the reference drops it too
     };
+    // Flight and gravity write the one flags word (`0x740ba0`), which for a unit we do not
+    // control is the pose's: StartFlight takes only on a unit that may fly (`0x989890`).
+    if mode == SplineMode::Flying {
+        if let Ok(mut rm) = remote.get_mut(e) {
+            use crate::creature_anim::move_flags as f;
+            let granted = modes_of(guid, index, modes).0;
+            if apply && (rm.flags | granted) & f::CAN_FLY != 0 {
+                rm.flags &= !(f::FALLING | f::FALLING_FAR | f::SWIMMING | SPLINE_ELEVATION);
+                rm.flags |= f::FLYING;
+                rm.vertical_velocity = 0.0;
+                rm.fall_start_z = None;
+            } else if !apply {
+                // StopFlying (`0x98c240`): the pitch and the flight bits go.
+                rm.flags &= !(PITCH_BITS | f::ASCENDING | f::DESCENDING | f::FLYING);
+            }
+        }
+        return;
+    }
     let mut word = modes_of(guid, index, modes);
     word.set(mode, apply);
     if let Ok(mut live) = modes.get_mut(e) {
         *live = word;
     } else {
         commands.entity(e).insert(word);
+    }
+
+    // Gravity off stops a fall where it is (`0x6eba60`).
+    if mode == SplineMode::DisableGravity && apply {
+        if let Ok(mut rm) = remote.get_mut(e) {
+            use crate::creature_anim::move_flags;
+            rm.flags &= !(move_flags::FALLING | move_flags::FALLING_FAR);
+            rm.vertical_velocity = 0.0;
+            rm.fall_start_z = None;
+        }
     }
 
     // `SetRoot`'s one-shot wipe (`0x7c7340`): it clears `0xffe07f00`'s complement and stops the
@@ -1312,7 +1345,52 @@ mod tests {
             .unwrap();
         }
 
-        /// Every one of the twelve opcodes sets or clears one bit.
+        /// `SET_FLYING` takes only on a unit that may fly (`0x989890`), ending its fall;
+        /// `UNSET_FLYING` drops flight and pitch whatever it held; gravity off stops a fall.
+        #[test]
+        fn flight_needs_can_fly_and_gravity_off_stops_the_fall() {
+            use crate::creature_anim::move_flags as f;
+            let falling = RemoteMotion {
+                flags: f::FALLING | f::FORWARD,
+                vertical_velocity: -5.0,
+                ..remote_walking_forward()
+            };
+            let (mut w, e) = world_with_unit(Some(falling.clone()));
+            grant(&mut w, SplineMode::Flying, true);
+            let rm = w.entity(e).get::<RemoteMotion>().unwrap();
+            assert_eq!(rm.flags & f::FLYING, 0, "no CAN_FLY, no flight");
+
+            let (mut w, e) = world_with_unit(Some(RemoteMotion {
+                flags: falling.flags | f::CAN_FLY,
+                ..falling.clone()
+            }));
+            grant(&mut w, SplineMode::Flying, true);
+            let rm = w.entity(e).get::<RemoteMotion>().unwrap();
+            assert_eq!(
+                rm.flags & (f::FLYING | f::FALLING),
+                f::FLYING,
+                "flying, not falling"
+            );
+            assert_eq!(rm.vertical_velocity, 0.0);
+            w.entity_mut(e).get_mut::<RemoteMotion>().unwrap().flags |= 0x40 | f::ASCENDING;
+            grant(&mut w, SplineMode::Flying, false);
+            let rm = w.entity(e).get::<RemoteMotion>().unwrap();
+            assert_eq!(rm.flags & (f::FLYING | f::ASCENDING | 0x40), 0);
+            assert_ne!(rm.flags & f::CAN_FLY, 0, "it may still fly");
+
+            let (mut w, e) = world_with_unit(Some(falling));
+            grant(&mut w, SplineMode::DisableGravity, true);
+            let rm = w.entity(e).get::<RemoteMotion>().unwrap();
+            assert_eq!(rm.flags & f::FALLING, 0, "the fall stops");
+            assert_eq!(rm.vertical_velocity, 0.0);
+            assert_ne!(
+                w.entity(e).get::<UnitMoveModes>().unwrap().0 & f::LEVITATING,
+                0,
+                "and the unit keeps gravity off"
+            );
+        }
+
+        /// Every one of the twelve 1.12.1-shaped opcodes sets or clears one bit.
         #[test]
         fn a_grant_sets_the_bit_and_its_pair_clears_it() {
             use crate::creature_anim::move_flags;

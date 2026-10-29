@@ -636,3 +636,127 @@ fn pet_feedback_family_parses_and_decodes() {
         }]
     ));
 }
+
+#[test]
+fn time_sync_request_decodes_and_its_answer_is_counter_then_clock() {
+    let req = messages::parse_server(messages::opcode::SMSG_TIME_SYNC_REQ, &hx("07000000"))
+        .expect("time sync request parses");
+    assert!(matches!(req, ServerPacket::TimeSyncReq { counter: 7 }));
+    assert!(matches!(
+        decode(req).as_slice(),
+        [SessionEvent::TimeSyncReq { counter: 7 }]
+    ));
+    assert_eq!(
+        messages::time_sync_resp(7, 0x0102_0304),
+        hx("0700000004030201")
+    );
+}
+
+/// 3.3.5a's gravity and collision-height grants on our mover, their acks, and the observer
+/// flight and gravity modes (`0x732450`, `0x741c30`).
+#[test]
+fn gravity_collision_height_and_spline_flight_parse_and_ack() {
+    use benilla_protocol::messages::{collision_height_ack, opcode, MovementInfo, SplineMode};
+    use benilla_protocol::wire::Vector3d;
+
+    for (op, apply, ack) in [
+        (
+            opcode::SMSG_MOVE_GRAVITY_DISABLE,
+            true,
+            opcode::CMSG_MOVE_GRAVITY_DISABLE_ACK,
+        ),
+        (
+            opcode::SMSG_MOVE_GRAVITY_ENABLE,
+            false,
+            opcode::CMSG_MOVE_GRAVITY_ENABLE_ACK,
+        ),
+    ] {
+        let p = messages::parse_server(op, &hx("012a07000000")).expect("gravity parses");
+        assert!(matches!(
+            p,
+            ServerPacket::MoveMode {
+                guid: 0x2A,
+                counter: 7,
+                mode: MoveMode::DisableGravity,
+                apply: a,
+            } if a == apply
+        ));
+        assert_eq!(MoveMode::DisableGravity.ack_opcode(apply), ack);
+    }
+    assert!(!MoveMode::DisableGravity.ack_carries_apply(), "no value");
+
+    let mut body = hx("012a07000000");
+    body.extend_from_slice(&1.5f32.to_le_bytes());
+    let p = messages::parse_server(opcode::SMSG_MOVE_SET_COLLISION_HGT, &body).unwrap();
+    assert!(matches!(
+        decode(p).as_slice(),
+        [SessionEvent::MoveSetCollisionHeight {
+            guid: 0x2A,
+            counter: 7,
+            height
+        }] if *height == 1.5
+    ));
+    let info = MovementInfo {
+        flags: 0,
+        timestamp: 1,
+        position: Vector3d {
+            x: 0.0,
+            y: 0.0,
+            z: 0.0,
+        },
+        orientation: 0.0,
+        transport: None,
+        pitch: 0.0,
+        fall_time: 0,
+        jump: None,
+    };
+    let bare = messages::move_flag_ack(0x2A, 7, &info, None);
+    let ack = collision_height_ack(0x2A, 7, &info, 1.5);
+    assert_eq!(&ack[..bare.len()], bare.as_slice());
+    assert_eq!(
+        &ack[bare.len()..],
+        1.5f32.to_le_bytes(),
+        "the height is the value"
+    );
+
+    for (op, mode, apply) in [
+        (
+            opcode::SMSG_SPLINE_MOVE_SET_FLYING,
+            SplineMode::Flying,
+            true,
+        ),
+        (
+            opcode::SMSG_SPLINE_MOVE_UNSET_FLYING,
+            SplineMode::Flying,
+            false,
+        ),
+        (
+            opcode::SMSG_SPLINE_MOVE_GRAVITY_DISABLE,
+            SplineMode::DisableGravity,
+            true,
+        ),
+        (
+            opcode::SMSG_SPLINE_MOVE_GRAVITY_ENABLE,
+            SplineMode::DisableGravity,
+            false,
+        ),
+    ] {
+        let p = messages::parse_server(op, &hx("012a")).expect("spline mode parses");
+        assert!(
+            matches!(p, ServerPacket::SplineMoveMode { guid: 0x2A, mode: m, apply: a } if m == mode && a == apply),
+            "{op:#x}"
+        );
+    }
+    // The relay: a packed guid and a `MovementInfo` with `DISABLE_GRAVITY` (0x400), which maps
+    // onto the same 1.12.1 bit. Flags, flags2, time, x/y/z, facing, fall time.
+    let mut relay = hx("012a");
+    relay.extend_from_slice(&0x400u32.to_le_bytes());
+    relay.extend_from_slice(&0u16.to_le_bytes());
+    relay.extend_from_slice(&[0u8; 4 + 12 + 4 + 4]);
+    let p = messages::parse_server(opcode::MSG_MOVE_GRAVITY_CHNG, &relay).expect("relay");
+    assert!(matches!(
+        p,
+        ServerPacket::PlayerMove { guid: 0x2A, flags, .. }
+            if flags & messages::CLASSIC_DISABLE_GRAVITY != 0
+    ));
+}

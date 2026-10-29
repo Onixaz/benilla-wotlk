@@ -405,7 +405,7 @@ fn the_scroll_range_is_the_childs_whole_subtree() {
     );
 }
 
-/// The reference reports an empty `<ScrollChild>` as an error (`0x786bc0`) and keeps the frame.
+/// An empty `<ScrollChild>` warns, in the reference's words, and keeps the frame (`0x96b920`).
 #[test]
 fn an_empty_scroll_child_is_reported() {
     let s = script();
@@ -414,13 +414,130 @@ fn an_empty_scroll_child_is_reported() {
     )
     .expect("valid FrameXML");
     let report = crate::loader::load(&s, &doc, &|_| None);
+    assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
     assert!(
         report
-            .errors
+            .warnings
             .iter()
-            .any(|e| e.contains("<ScrollChild> is empty")),
-        "errors: {:?}",
-        report.errors
+            .any(|w| w == "Frame Hollow: Scroll frame created without scroll child"),
+        "warnings: {:?}",
+        report.warnings
     );
     assert!(s.eval::<bool>("return Hollow ~= nil").unwrap());
+}
+
+/// The ScrollFrame's `LoadXML` (`0x96b920`) builds the `<ScrollChild>`, its `OnLoad` included,
+/// before the post-load pass builds `<Frames>` (`0x48f400`) and fires the frame's own `OnLoad`
+/// (`0x490410`): a nested scrollbar's `OnLoad` already sees the scroll child.
+#[test]
+fn a_scroll_child_loads_before_nested_frames_and_the_onload() {
+    let s = script();
+    s.run("order = {}").unwrap();
+    let doc = crate::framexml::parse(
+        r#"<Ui>
+            <ScrollFrame name="Direct">
+              <Frames>
+                <Slider name="$parentBar">
+                  <Scripts><OnLoad>
+                    table.insert(order, "bar:" .. tostring(self:GetParent():GetScrollChild() and self:GetParent():GetScrollChild():GetName()))
+                  </OnLoad></Scripts>
+                </Slider>
+              </Frames>
+              <ScrollChild>
+                <Frame name="$parentChild">
+                  <Scripts><OnLoad>table.insert(order, "child")</OnLoad></Scripts>
+                </Frame>
+              </ScrollChild>
+              <Scripts><OnLoad>
+                table.insert(order, "frame:" .. self:GetScrollChild():GetName())
+              </OnLoad></Scripts>
+            </ScrollFrame>
+          </Ui>"#,
+    )
+    .expect("valid FrameXML");
+    let report = crate::loader::load(&s, &doc, &|_| None);
+    assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+    let order: Vec<String> = s.eval("return order").unwrap();
+    assert_eq!(
+        order,
+        ["child", "bar:DirectChild", "frame:DirectChild"],
+        "scroll child, then nested frames, then the frame's own OnLoad"
+    );
+}
+
+/// A template's `<ScrollChild>` and `<Frames>` follow the same order on an instance: the
+/// template's scroll child is built by the template's `LoadXML` pass, before any `<Frames>`.
+#[test]
+fn an_inherited_scroll_child_loads_before_the_templates_frames() {
+    let s = script();
+    s.run("order = {}").unwrap();
+    let doc = crate::framexml::parse(
+        r#"<Ui>
+            <ScrollFrame name="ListTemplate" virtual="true">
+              <Frames>
+                <Slider name="$parentBar">
+                  <Scripts><OnLoad>
+                    table.insert(order, "bar:" .. self:GetParent():GetScrollChild():GetName())
+                  </OnLoad></Scripts>
+                </Slider>
+              </Frames>
+              <ScrollChild>
+                <Frame name="$parentChild">
+                  <Scripts><OnLoad>table.insert(order, "child")</OnLoad></Scripts>
+                </Frame>
+              </ScrollChild>
+            </ScrollFrame>
+            <ScrollFrame name="Inherited" inherits="ListTemplate"/>
+          </Ui>"#,
+    )
+    .expect("valid FrameXML");
+    let report = crate::loader::load(&s, &doc, &|_| None);
+    assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+    let order: Vec<String> = s.eval("return order").unwrap();
+    assert_eq!(order, ["child", "bar:InheritedChild"]);
+}
+
+/// With a scroll child in both the template and the instance, the template's is built first and
+/// the instance's last, so the instance's is the scroll child; both load before the template's
+/// `<Frames>`.
+#[test]
+fn an_instance_scroll_child_wins_over_the_templates() {
+    let s = script();
+    s.run("order = {}").unwrap();
+    let doc = crate::framexml::parse(
+        r#"<Ui>
+            <ScrollFrame name="PaneTemplate" virtual="true">
+              <Frames>
+                <Slider name="$parentBar">
+                  <Scripts><OnLoad>
+                    table.insert(order, "bar:" .. self:GetParent():GetScrollChild():GetName())
+                  </OnLoad></Scripts>
+                </Slider>
+              </Frames>
+              <ScrollChild>
+                <Frame name="$parentShared">
+                  <Scripts><OnLoad>table.insert(order, "shared")</OnLoad></Scripts>
+                </Frame>
+              </ScrollChild>
+            </ScrollFrame>
+            <ScrollFrame name="Pane" inherits="PaneTemplate">
+              <ScrollChild>
+                <Frame name="$parentOwn">
+                  <Scripts><OnLoad>table.insert(order, "own")</OnLoad></Scripts>
+                </Frame>
+              </ScrollChild>
+            </ScrollFrame>
+          </Ui>"#,
+    )
+    .expect("valid FrameXML");
+    let report = crate::loader::load(&s, &doc, &|_| None);
+    assert!(report.errors.is_empty(), "errors: {:?}", report.errors);
+    let order: Vec<String> = s.eval("return order").unwrap();
+    assert_eq!(order, ["shared", "own", "bar:PaneOwn"]);
+    assert_eq!(
+        s.eval::<String>("return Pane:GetScrollChild():GetName()")
+            .unwrap(),
+        "PaneOwn"
+    );
+    assert!(s.eval::<bool>("return PaneShared ~= nil").unwrap());
 }

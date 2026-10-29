@@ -180,6 +180,11 @@ pub const CMSG_MOVE_SPLINE_DONE: u16 = 0x02C9; // 713
 /// Our movement clock skipped (a stall, a long frame): the mover and the missing milliseconds.
 /// vmangos shifts its clock, and re-creates a just-boarded transport (`MovementHandler.cpp:989`).
 pub const CMSG_MOVE_TIME_SKIPPED: u16 = 0x02CE; // 718
+/// The server asks for our movement clock, `u32 counter` (`0x6dc010`).
+pub const SMSG_TIME_SYNC_REQ: u16 = 0x0390; // 912
+/// The answer: the echoed counter, then our movement clock when the request was handled
+/// (`0x6e9bb0`).
+pub const CMSG_TIME_SYNC_RESP: u16 = 0x0391; // 913
 /// Another mover's clock skip, relayed: packed guid, `u32` lag (`MovementHandler.cpp:1005-1011`).
 /// The reference (`0x603b40`) adds it to that unit's last wire timestamp (`CMovement+0xac`); if
 /// dropped, the unit's next packet lands `lag` ms late.
@@ -524,6 +529,12 @@ pub const SMSG_SPLINE_MOVE_STOP_SWIM: u16 = 0x030C; // 780
 pub const SMSG_SPLINE_MOVE_SET_RUN_MODE: u16 = 0x030D; // 781
 pub const SMSG_SPLINE_MOVE_SET_WALK_MODE: u16 = 0x030E; // 782
 pub const SMSG_SPLINE_MOVE_ROOT: u16 = 0x031A; // 794
+/// 3.3.5a only: flight started or ended on a unit we do not control (`0x741c30`).
+pub const SMSG_SPLINE_MOVE_SET_FLYING: u16 = 0x0422; // 1058
+pub const SMSG_SPLINE_MOVE_UNSET_FLYING: u16 = 0x0423; // 1059
+/// 3.3.5a only: gravity off or on for a unit we do not control (`0x741c30`).
+pub const SMSG_SPLINE_MOVE_GRAVITY_DISABLE: u16 = 0x04D3; // 1235
+pub const SMSG_SPLINE_MOVE_GRAVITY_ENABLE: u16 = 0x04D4; // 1236
 pub const MSG_MOVE_SET_RUN_SPEED: u16 = 0x00CD; // 205
 pub const MSG_MOVE_SET_RUN_BACK_SPEED: u16 = 0x00CF; // 207
 pub const MSG_MOVE_SET_WALK_SPEED: u16 = 0x00D1; // 209
@@ -955,6 +966,16 @@ pub const CMSG_MOVE_FEATHER_FALL_ACK: u16 = 0x02CF; // 719
 pub const SMSG_MOVE_SET_CAN_FLY: u16 = 0x0343; // 835
 pub const SMSG_MOVE_UNSET_CAN_FLY: u16 = 0x0344; // 836
 pub const CMSG_MOVE_SET_CAN_FLY_ACK: u16 = 0x0345; // 837
+/// 3.3.5a only: `MOVEFLAG_DISABLE_GRAVITY` set and cleared on our mover (handler `0x732450`), each
+/// with its own ack.
+pub const SMSG_MOVE_GRAVITY_DISABLE: u16 = 0x04CE; // 1230
+pub const CMSG_MOVE_GRAVITY_DISABLE_ACK: u16 = 0x04CF; // 1231
+pub const SMSG_MOVE_GRAVITY_ENABLE: u16 = 0x04D0; // 1232
+pub const CMSG_MOVE_GRAVITY_ENABLE_ACK: u16 = 0x04D1; // 1233
+/// 3.3.5a only: our mover's collision height, `u32 counter`, `f32 height` (handler `0x732450`).
+pub const SMSG_MOVE_SET_COLLISION_HGT: u16 = 0x0516; // 1302
+/// The ack: the mode-ack body with the height as its value (`0x7151f0`).
+pub const CMSG_MOVE_SET_COLLISION_HGT_ACK: u16 = 0x0517; // 1303
 /// 3.3.5a only: our mover's flight start or stop, a plain `MovementInfo` report (`0x6ef860`).
 pub const CMSG_MOVE_SET_FLY: u16 = 0x0346; // 838
 
@@ -970,6 +991,8 @@ pub const MSG_MOVE_FEATHER_FALL: u16 = 0x02B0; // 688
 pub const MSG_MOVE_WATER_WALK: u16 = 0x02B1; // 689
 /// 3.3.5a only: another unit's can-fly change, the relay shape (`0x741b60`).
 pub const MSG_MOVE_UPDATE_CAN_FLY: u16 = 0x03AD; // 941
+/// 3.3.5a only: another unit's gravity change, the relay shape (`0x741b60`).
+pub const MSG_MOVE_GRAVITY_CHNG: u16 = 0x04D2; // 1234
 
 // Knockback. `SMSG_MOVE_KNOCK_BACK` to the mover: packed guid, `u32 counter`, `f32` vcos, vsin,
 // speedXY, speedZ, with speedZ down-positive like the jump tail. The mandatory ack is full u64

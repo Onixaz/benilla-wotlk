@@ -31,7 +31,7 @@ use crate::names::{NameCache, NameKey};
 use crate::net::{ClientCommand, NetCommands, ObjectStore, SelfPlayer};
 use crate::spell::{CompanionEdges, Cooldowns, SummonSlots};
 use crate::ui_action::{PlayerActions, Spells, UiError, UiErrorKeys};
-use crate::ui_script::UiInput;
+use crate::ui_script::{gate, UiInput};
 use crate::ui_unit::UnitFeed;
 use crate::unit_auras::UnitAuras;
 
@@ -71,6 +71,11 @@ pub(crate) struct CompanionMemory {
     /// The critter guid and the `MOUNTED` auras' spells, for the typed updates.
     critter: Option<u64>,
     mount_auras: Vec<u32>,
+    /// The gate's watches, and whether the last build waits on a name not yet answered.
+    cooldown_epoch: gate::Watch,
+    self_present: gate::Watch,
+    names: gate::Watch,
+    pending: bool,
 }
 
 /// A critter guid's entry bits, as `0x802dd8` takes them: bits 24..51, whatever the high word.
@@ -181,7 +186,7 @@ fn identity(state: &CompanionState) -> Vec<(u32, u32, Option<&str>)> {
         .collect()
 }
 
-#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system's full input set
 fn feed_companions(
     script: Option<NonSendMut<UiScript>>,
     actions: Res<PlayerActions>,
@@ -192,7 +197,7 @@ fn feed_companions(
     cooldowns: Res<Cooldowns>,
     clock: Res<crate::ui_script::UiClock>,
     skill_lines: Option<Res<crate::ui_spellbook::SkillLines>>,
-    self_q: Query<(&ObjectStore, Option<&UnitAuras>), With<SelfPlayer>>,
+    self_q: Query<(Ref<ObjectStore>, Option<Ref<UnitAuras>>), With<SelfPlayer>>,
     mut edges: ResMut<CompanionEdges>,
     mut errors: ResMut<UiErrorKeys>,
     mut memory: Local<crate::ui_script::VmMemo<CompanionMemory>>,
@@ -200,11 +205,50 @@ fn feed_companions(
     let Some(mut script) = script else {
         return;
     };
-    let memory = memory.get(&script);
-    let Some(spells) = spells.as_deref() else {
+    let (memory, vm_reset) = memory.get_reset(&script);
+    let Some(spells) = spells else {
         return;
     };
-    let me = self_q.iter().next();
+    let me_ref = self_q.iter().next();
+    // The lists depend on these alone; `UiClock` is not one, as `ui_triple` is frame-stable per
+    // arm and an expiry moves the store's `feed_epoch`.
+    let cooldowns_moved = memory.cooldown_epoch.moved(cooldowns.feed_epoch());
+    let presence_moved = memory.self_present.moved(u64::from(me_ref.is_some()));
+    // The generation, not the change mark: an ask through `ResMut` marks the cache every frame.
+    let names_moved = memory.names.moved(names.generation());
+    // The frame a timer crosses zero, before the prune moves the epoch.
+    let sweep = cooldowns.sweep_pending(clock.anchor);
+    let self_changed = me_ref.as_ref().is_some_and(|(store, auras)| {
+        store.is_changed() || auras.as_ref().is_some_and(|a| a.is_changed())
+    });
+    let inputs = [
+        ("vm_reset", vm_reset),
+        ("cooldowns", cooldowns_moved),
+        ("presence", presence_moved),
+        ("sweep", sweep),
+        ("self", self_changed),
+        ("actions", actions.is_changed()),
+        ("spells", spells.is_changed()),
+        ("summons", summons.is_changed()),
+        ("names", names_moved),
+        (
+            "skill_lines",
+            skill_lines.as_ref().is_some_and(|s| s.is_changed()),
+        ),
+        // A name still unanswered, and a learn or unlearn not yet spoken.
+        ("pending", memory.pending),
+        (
+            "edges",
+            !edges.learned.is_empty() || !edges.unlearned.is_empty(),
+        ),
+    ];
+    gate::trace("feed_companions", &inputs);
+    let gate = gate::Gate::new(inputs.iter().any(|&(_, open)| open));
+    if gate.skip() {
+        return;
+    }
+    let spells = &*spells;
+    let me = me_ref.as_ref().map(|(s, a)| (&**s, a.as_deref()));
     let facts = SelfFacts {
         critter: me.and_then(|(s, _)| s.0.unit_critter()),
         auras: me.and_then(|(_, a)| a),
@@ -242,6 +286,7 @@ fn feed_companions(
         })
         .collect();
 
+    memory.pending = pending;
     // A live learn speaks once its record lands; a refused query drops it (`0x53ebc0`).
     let mut learned = 0;
     edges.learned.retain(|&spell_id| {
@@ -264,6 +309,7 @@ fn feed_companions(
         && (!fresh.critters.is_empty() || !fresh.mounts.is_empty())
         && identity(&fresh) != identity(&memory.pushed);
     if fresh != memory.pushed {
+        gate.audit("feed_companions", "the lists");
         script.set_companions(fresh.clone());
         memory.pushed = fresh;
     }
@@ -285,6 +331,7 @@ fn feed_companions(
     }
 
     if memory.critter != facts.critter {
+        gate.audit("feed_companions", "the critter update");
         memory.critter = facts.critter;
         script.fire_event("COMPANION_UPDATE", vec![ScriptValue::Str("CRITTER".into())]);
     }
@@ -304,6 +351,7 @@ fn feed_companions(
         })
         .unwrap_or_default();
     if memory.mount_auras != mount_auras {
+        gate.audit("feed_companions", "the mount update");
         memory.mount_auras = mount_auras;
         script.fire_event("COMPANION_UPDATE", vec![ScriptValue::Str("MOUNT".into())]);
     }

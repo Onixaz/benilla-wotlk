@@ -488,11 +488,27 @@ fn feed_battlemaster_rows(
     maps: Option<Res<MapCatalogRes>>,
     states: Res<WorldStates>,
     self_q: Query<&ObjectStore, With<SelfPlayer>>,
+    mut player: Local<crate::ui_script::VmMemo<crate::ui_script::gate::Watch>>,
 ) {
     let (Some(mut script), Some(table), Some(store)) = (script, table, self_q.iter().next()) else {
         return;
     };
     let level = store.0.unit_level().unwrap_or(0);
+    // The rows read the table, the maps, the world states, the level and the side.
+    let (player, vm_reset) = player.get_reset(&script);
+    let side_bits = side(store).map_or(0, |s| s as u64 + 1);
+    let player_moved = player.moved(u64::from(level) << 8 | side_bits);
+    let inputs = [
+        ("vm_reset", vm_reset),
+        ("player", player_moved),
+        ("table", table.is_changed()),
+        ("maps", maps.as_ref().is_some_and(|m| m.is_changed())),
+        ("states", states.is_changed()),
+    ];
+    crate::ui_script::gate::trace("feed_battlemaster_rows", &inputs);
+    if crate::ui_script::gate::Gate::new(inputs.iter().any(|&(_, open)| open)).skip() {
+        return;
+    }
     let maps = maps.as_deref().map(|m| &m.0);
     script.set_battlemaster_rows(battlemaster_rows(
         &table.0,

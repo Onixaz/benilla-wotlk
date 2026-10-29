@@ -240,7 +240,18 @@ fn feed_multicast(
     let Some(mut script) = script else {
         return;
     };
-    let memo = memo.get(&script);
+    let (memo, vm_reset) = memo.get_reset(&script);
+    let inputs = [
+        ("vm_reset", vm_reset),
+        ("lists", lists.is_changed()),
+        ("categories", categories.is_changed()),
+        ("spells", spells.as_ref().is_some_and(|s| s.is_changed())),
+    ];
+    crate::ui_script::gate::trace("feed_multicast", &inputs);
+    let gate = crate::ui_script::gate::Gate::new(inputs.iter().any(|&(_, open)| open));
+    if gate.skip() {
+        return;
+    }
     let spell_categories = memo
         .spell_categories
         .get_or_insert_with(|| {
@@ -262,10 +273,47 @@ fn feed_multicast(
             .collect(),
     };
     if memo.pushed.as_ref() != Some(&view) {
+        gate.audit("feed_multicast", "the view");
         script.set_multicast(view.clone());
         memo.pushed = Some(view);
     }
     if std::mem::take(&mut lists.announce) {
         script.fire_event("UPDATE_MULTI_CAST_ACTIONBAR", vec![]);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The view rebuilds only when an input moves: a list edit that marks nothing is not read
+    /// (the gate holds), and the same edit marked is.
+    #[test]
+    fn a_quiet_frame_rebuilds_no_multicast_view() {
+        let mut app = App::new();
+        app.insert_non_send_resource(UiScript::new().unwrap())
+            .init_resource::<crate::spell::multicast::MultiCastLists>()
+            .init_resource::<TotemCategories>()
+            .add_systems(Update, feed_multicast);
+        let fire_spells = |app: &App| {
+            app.world()
+                .non_send_resource::<UiScript>()
+                .eval::<i64>("return select('#', GetMultiCastTotemSpells(1))")
+                .unwrap()
+        };
+        app.update();
+        assert_eq!(fire_spells(&app), 0);
+        app.world_mut()
+            .resource_mut::<crate::spell::multicast::MultiCastLists>()
+            .bypass_change_detection()
+            .lists[0]
+            .push(3599);
+        app.update();
+        assert_eq!(fire_spells(&app), 0, "an unmarked edit is not read");
+        app.world_mut()
+            .resource_mut::<crate::spell::multicast::MultiCastLists>()
+            .set_changed();
+        app.update();
+        assert_eq!(fire_spells(&app), 1, "a marked edit is");
     }
 }

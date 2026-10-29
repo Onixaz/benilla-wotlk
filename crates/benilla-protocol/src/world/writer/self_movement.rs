@@ -156,6 +156,14 @@ impl WorldWriter {
         }
     }
 
+    /// `CMSG_TIME_SYNC_RESP`: answer a time-sync request with our movement clock at `client_ms`.
+    pub fn time_sync_resp(&mut self, counter: u32, client_ms: u32) -> Result<()> {
+        self.send(
+            opcode::CMSG_TIME_SYNC_RESP,
+            &messages::time_sync_resp(counter, client_ms),
+        )
+    }
+
     /// `CMSG_MOVE_SPLINE_DONE`: owed, at rest, when an `SMSG_MONSTER_MOVE` on our own guid ends.
     /// The server checks `spline_id` against its newest, then relocates us and tells observers.
     pub fn move_spline_done(
@@ -210,6 +218,22 @@ impl WorldWriter {
         self.send(
             opcode::MSG_MOVE_TELEPORT_ACK,
             &messages::teleport_ack(guid, counter, client_uptime_ms()),
+        )
+    }
+
+    /// `CMSG_MOVE_SET_COLLISION_HGT_ACK`: the grant's counter, our pose and the height it set.
+    pub fn collision_height_ack(
+        &mut self,
+        guid: u64,
+        counter: u32,
+        height: f32,
+        flags: u32,
+        pose: ([f32; 3], f32),
+    ) -> Result<()> {
+        let info = movement_info(pose.0, pose.1, flags);
+        self.send(
+            opcode::CMSG_MOVE_SET_COLLISION_HGT_ACK,
+            &messages::collision_height_ack(guid, counter, &info, height),
         )
     }
 

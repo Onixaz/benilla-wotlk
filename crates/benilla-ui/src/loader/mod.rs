@@ -720,33 +720,39 @@ impl Loader<'_> {
         // 6 · <Scripts> handlers (`0x769ef0`); OnLoad is captured to fire bottom-up below.
         let onload = self.apply_scripts(el, wrapper, dbg_name);
 
-        // 7 · nested <Frames>, whose OnLoads fire before ours (`0x76a060`).
+        // 7 · <ScrollChild>, read by the ScrollFrame's own `LoadXML` (`0x96b920`) for each
+        //     template and then the instance, so it is whole, its `OnLoad` included, before the
+        //     `<Frames>` the post-load pass builds (`0x48f400`) and before this frame's `OnLoad`.
+        //     Its first child is built like a `<Frames>` child and becomes the scroll child; the
+        //     last one built wins. An empty one only warns.
+        if el.tag.eq_ignore_ascii_case("ScrollFrame") {
+            for sc in children_named(el, "ScrollChild") {
+                let Some(child) = sc.children.first() else {
+                    // The reference's wording.
+                    self.report.warnings.push(format!(
+                        "Frame {dbg_name}: Scroll frame created without scroll child"
+                    ));
+                    continue;
+                };
+                let expanded = self.expand(child);
+                let Some(child_wrapper) = self.materialize(&expanded, Some(wrapper), self_name)
+                else {
+                    continue; // materialize already reported why
+                };
+                if let Err(e) = wrapper.call_method::<()>("SetScrollChild", child_wrapper) {
+                    self.report
+                        .errors
+                        .push(format!("{dbg_name}: <ScrollChild>: {e}"));
+                }
+            }
+        }
+
+        // 7b · nested <Frames>, template's then instance's, whose OnLoads fire before ours
+        //      (`0x48f400`, then `0x490410`).
         for frames_el in children_named(el, "Frames") {
             for child in &frames_el.children {
                 let expanded = self.expand(child);
                 self.materialize(&expanded, Some(wrapper), self_name);
-            }
-        }
-
-        // 7b · <ScrollChild>: its one child is built through `Instantiate 0x6ee280` like
-        //      `<Frames>`, then stored at `+0x318` with `+0x314 = 1`, which is `SetScrollChild`
-        //      and gives the ScrollFrame its scroll range. An empty one errors in the reference.
-        for sc in children_named(el, "ScrollChild") {
-            let Some(child) = sc.children.first() else {
-                self.report.errors.push(format!(
-                    "{dbg_name}: <ScrollChild> is empty — the reference errors here, and a \
-                     ScrollFrame with no child has no scroll range at all"
-                ));
-                continue;
-            };
-            let expanded = self.expand(child);
-            let Some(child_wrapper) = self.materialize(&expanded, Some(wrapper), self_name) else {
-                continue; // materialize already reported why
-            };
-            if let Err(e) = wrapper.call_method::<()>("SetScrollChild", child_wrapper) {
-                self.report
-                    .errors
-                    .push(format!("{dbg_name}: <ScrollChild>: {e}"));
             }
         }
 
