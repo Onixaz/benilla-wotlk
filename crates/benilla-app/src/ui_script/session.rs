@@ -172,6 +172,8 @@ mod tests {
         ("ui_script/extract/mod.rs", "last_dpi"),
         // Pushed unconditionally every frame; there is nothing remembered to go stale.
         ("ui_script/mod.rs", "smoothed"),
+        // The containment verdict's world inputs, not memory about the VM.
+        ("minimap/mod.rs", "probed"),
         // The PvP toggle stamp, a fact about our PLAYER_FLAGS pushed every frame.
         ("ui_honor.rs", "timer"),
         // The cursor systems on both platforms track OS cursor state, which outlives the VM.
