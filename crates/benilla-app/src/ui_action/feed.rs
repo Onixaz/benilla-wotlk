@@ -78,6 +78,7 @@ impl FailNameTables<'_> {
     }
 }
 
+#[allow(clippy::type_complexity)] // a Bevy system's full input set
 pub(super) fn feed_actions(
     script: Option<NonSendMut<UiScript>>,
     mut actions: ResMut<PlayerActions>,

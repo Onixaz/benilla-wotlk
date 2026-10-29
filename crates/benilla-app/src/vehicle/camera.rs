@@ -22,12 +22,15 @@ use crate::player::{head_height, CameraPivot, RemoteView, VehicleFocus};
 
 use super::{Passenger, Vehicle, VehicleTables};
 
-/// The seat's zoom range, each bound `None` for the default, and its zoom ask (`0x74c0e0`);
-/// `None` for a seat that leaves the zoom alone.
+/// A seat's zoom range, `(min, max)`, each bound `None` for the default.
+type ZoomRange = (Option<f32>, Option<f32>);
+
+/// The seat's zoom range and its zoom ask (`0x74c0e0`); `None` for a seat that leaves the zoom
+/// alone.
 pub(super) fn seat_zoom(
     seat: &VehicleSeatRec,
     default_max: f32,
-) -> Option<((Option<f32>, Option<f32>), VehicleZoom)> {
+) -> Option<(ZoomRange, VehicleZoom)> {
     let b = seat.flags_b;
     if b & 0x400 == 0 {
         return None;

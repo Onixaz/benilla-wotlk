@@ -390,6 +390,7 @@ struct AuraUnits<'w> {
     interact: Option<Res<'w, crate::ui_session::InteractNpc>>,
 }
 
+#[allow(clippy::type_complexity)] // a Bevy system's full input set
 fn feed_auras(
     script: Option<NonSendMut<UiScript>>,
     self_q: Query<

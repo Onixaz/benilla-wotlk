@@ -298,8 +298,10 @@ fn on_player_vehicle_data(
 /// World entry (`0x528010` → `0x757180`): the sliders hide, then a player already holding a
 /// vehicle gains it again.
 /// `SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA` (`0x800510`): our seat's stop ends (`0x747900`).
-fn on_cancel_expected_ride(In(_): In<SessionEvent>, mut stop: ResMut<SeatStop>) {
-    stop.at = None;
+fn on_cancel_expected_ride(In(ev): In<SessionEvent>, mut stop: ResMut<SeatStop>) {
+    if let SessionEvent::CancelExpectedRideVehicleAura = ev {
+        stop.at = None;
+    }
 }
 
 fn on_world_enter(
@@ -486,7 +488,7 @@ fn feed_vehicle_view(
 /// controlled vehicle's own, sent with the mover's pose after stopping our seat (`0x747fa0`): a
 /// seat switch or step (`0x74ca90`, `0x74c8b0`, `0x74c9a0`), or the dismiss, which the seat must
 /// allow (`0x5d46f0`, flag `0x2000000`). Otherwise the plain request.
-#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
+#[allow(clippy::too_many_arguments, clippy::type_complexity)] // a Bevy system's full input set
 fn send_vehicle_requests(
     script: Option<NonSendMut<UiScript>>,
     net: Option<Res<crate::net::NetCommands>>,
