@@ -4,7 +4,7 @@
 use benilla_ui::script::{CursorPayload, UiScript};
 
 /// Click the first macro: `MacroFrame_OnShow` only highlights a selection and never makes one
-/// (`Blizzard_MacroUI.lua:19-22`, `:75`).
+/// (`Blizzard_MacroUI.lua`).
 fn select_first(s: &UiScript) {
     s.run("MacroButton1:Click()").unwrap();
 }
@@ -21,67 +21,35 @@ fn harness() -> UiScript {
 fn harness_with(player: &str) -> UiScript {
     let mut s = UiScript::new().unwrap();
     s.set_screen_size(1024.0, 768.0);
-    // The global strings this window formats.
-    s.run(
-        r#"
-        CREATE_MACROS = "Create Macros"
-        GENERAL_MACROS = "General Macros"
-        CHARACTER_SPECIFIC_MACROS = "%s Specific Macros"
-        ENTER_MACRO_LABEL = "Enter Macro Commands:"
-        MACROFRAME_CHAR_LIMIT = "%d/255 Characters Used"
-        MACRO_POPUP_TEXT = "Enter Macro Name (Max 16 Characters):"
-        MACRO_POPUP_CHOOSE_ICON = "Choose an Icon:"
-        CHANGE_MACRO_NAME_ICON = "Change Name/Icon"
-        DELETE = "Delete"
-        NEW = "New"
-        EXIT = "Exit"
-        CANCEL = "Cancel"
-        OKAY = "Okay"
-        MACROS = "Macros"
-        -- The tooltip plate colours the body's backdrop reads (the app gets these from
-        -- UIParent.lua's own globals; the window only needs them to exist).
-        TOOLTIP_DEFAULT_COLOR = { r = 1.0, g = 1.0, b = 1.0 }
-        TOOLTIP_DEFAULT_BACKGROUND_COLOR = { r = 0.09, g = 0.09, b = 0.19 }
-        "#,
-    )
-    .unwrap();
-    // Synchronous, like the app's `AtlasMeasurer`: `PanelTemplates_TabResize` measures the label
-    // once, in the tab's OnLoad, and a pending measure would size the tab off a width of 0.
-    s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
-
     // Before the load: tab 2's OnLoad formats `UnitName("player")` into its label
-    // (`Blizzard_MacroUI.xml:509`).
+    // (`Blizzard_MacroUI.xml`).
+    s.set_player_record(benilla_ui::script::PlayerRecord {
+        name: player.into(),
+        race: Some(("Human".into(), "Human".into())),
+        class: Some(("Warrior".into(), "WARRIOR".into())),
+        sex: 2,
+    });
     s.set_unit(
         "player",
         Some(benilla_ui::script::UnitState {
             exists: true,
             name: Some(player.into()),
             level: 60,
+            race: Some("Human".into()),
+            race_file: Some("Human".into()),
+            class: Some("Warrior".into()),
+            class_file: Some("WARRIOR".into()),
+            faction_group: Some("Alliance".into()),
+            faction_group_localized: Some("Alliance".into()),
             ..Default::default()
         }),
     );
-    for file in [
-        r"Interface\FrameXML\GlobalStrings.lua",
-        "Interface\\FrameXML\\Fonts.xml",
-        "Interface\\FrameXML\\BasicControls.xml", // `TEXT`
-        "Interface\\FrameXML\\LocaleProperties.lua",
-        r"Interface\FrameXML\UIParent.xml",
-        r"Interface\FrameXML\MoneyFrame.lua",
-        r"Interface\FrameXML\MoneyFrame.xml",
-        // `PanelTemplates_SelectTab` reads `GameTooltip` unguarded (`UIPanelTemplates.lua:130`).
-        "Interface\\FrameXML\\GameTooltip.xml",
-        r"Interface\FrameXML\UIPanelTemplates.lua",
-        r"Interface\FrameXML\UIPanelTemplates.xml",
-        "Interface\\FrameXML\\StaticPopup.xml",
-        r"Interface\FrameXML\MainMenuBarMicroButtons.xml", // the window's OnShow/OnHide call it
-        // `ClassTrainerListScrollFrameTemplate`, which the icon chooser's scroll frame inherits.
-        r"Interface\FrameXML\ClassTrainerFrameTemplates.xml",
-        "ScrollTemplates.xml",
-    ] {
-        super::test_ui::load_ui(&s, file);
-    }
+    super::test_ui::load_stock_ui(&mut s);
+    // Synchronous, like the app's `AtlasMeasurer`: `PanelTemplates_TabResize` measures the label
+    // once, in the tab's OnLoad, and a pending measure would size the tab off a width of 0.
+    s.set_text_measurer(Box::new(super::FixedWidthFont(6.0)));
     // A LoadOnDemand addon, seated off the chain and loaded by stock `MacroFrame_LoadUI`
-    // (`UIParent.lua:178`), as the app reaches it.
+    // (`UIParent.lua`), as the app reaches it.
     super::test_ui::seat_chain_addon(&mut s, "Blizzard_MacroUI");
     s.run("MacroFrame_LoadUI()").unwrap();
     assert!(s.errors().is_empty(), "script errors: {:?}", s.errors());
@@ -99,7 +67,6 @@ fn no_errors(s: &UiScript, step: &str) {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn new_then_pick_an_icon_then_okay_creates_the_macro() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -153,7 +120,6 @@ fn new_then_pick_an_icon_then_okay_creates_the_macro() {
 
 /// `MacroFrame_SaveMacro` commits the body from the tab switch, the list click and the OnHide.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn typing_a_body_and_closing_the_window_commits_it() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -186,10 +152,9 @@ fn typing_a_body_and_closing_the_window_commits_it() {
     );
 }
 
-/// `MacroFrame.macroBase` is 0 or `MAX_MACROS` (18) and every binding takes `macroBase + i`, so the
-/// character tab starts at 19 (`Blizzard_MacroUI.lua:1`, `:42`).
+/// `MacroFrame.macroBase` is 0 or `MAX_ACCOUNT_MACROS` (36) and every binding takes
+/// `macroBase + i`, so the character tab starts at 37 (`Blizzard_MacroUI.lua`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_character_tab_creates_in_the_second_index_range_and_switching_saves() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -208,7 +173,7 @@ fn the_character_tab_creates_in_the_second_index_range_and_switching_saves() {
         "/say account",
         "the tab switch saved the body first"
     );
-    assert_eq!(s.eval::<i64>("return MacroFrame.macroBase").unwrap(), 18);
+    assert_eq!(s.eval::<i64>("return MacroFrame.macroBase").unwrap(), 36);
 
     s.run("MacroNewButton:Click()").unwrap();
     s.run(r#"MacroPopupEditBox:SetText("Char")"#).unwrap();
@@ -221,9 +186,9 @@ fn the_character_tab_creates_in_the_second_index_range_and_switching_saves() {
         (1, 1)
     );
     assert_eq!(
-        s.eval::<String>("return GetMacroInfo(19)").unwrap(),
+        s.eval::<String>("return GetMacroInfo(37)").unwrap(),
         "Char",
-        "the character tab's first slot is index 19"
+        "the character tab's first slot is index 37"
     );
 
     s.run("MacroFrameTab1:Click()").unwrap();
@@ -236,9 +201,8 @@ fn the_character_tab_creates_in_the_second_index_range_and_switching_saves() {
 }
 
 /// DELETE re-runs `MacroFrame_OnLoad`, which selects the first macro or, with none left, nothing
-/// (`Blizzard_MacroUI.xml:551-553`).
+/// (`Blizzard_MacroUI.xml`).
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn delete_removes_the_macro_and_re_selects() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -276,7 +240,6 @@ fn delete_removes_the_macro_and_re_selects() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn dragging_a_macro_button_loads_the_cursor_with_the_macro_payload() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -305,7 +268,6 @@ fn dragging_a_macro_button_loads_the_cursor_with_the_macro_payload() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_icon_chooser_shows_the_pushed_list_and_hides_its_tail() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();
@@ -344,14 +306,13 @@ fn the_icon_chooser_shows_the_pushed_list_and_hides_its_tail() {
 /// Both tabs pass `PanelTemplates_TabResize` a -15 padding and tab 2, whose label carries the
 /// player name, a 150 cap; a short and a long name run both arms of the cap.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_two_tabs_fit_inside_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
-    /// `sideWidths`: twice `TabButtonTemplate`'s 16-unit end slice (`UIPanelTemplates.lua:41`).
+    /// `sideWidths`: twice `TabButtonTemplate`'s 16-unit end slice (`UIPanelTemplates.lua`).
     const SIDES: f64 = 32.0;
-    /// The stock padding on both tabs (`Blizzard_MacroUI.xml:488`, `:511`).
+    /// The stock padding on both tabs (`Blizzard_MacroUI.xml`).
     const PAD: f64 = -15.0;
-    /// The stock cap on tab 2 (`Blizzard_MacroUI.xml:511`).
+    /// The stock cap on tab 2 (`Blizzard_MacroUI.xml`).
     const CAP: f64 = 150.0;
 
     for (name, cap_should_bind) in [("Probe", false), ("Bartholomewthelongnamed", true)] {
@@ -410,7 +371,6 @@ fn the_two_tabs_fit_inside_the_window() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_icon_choosers_scroll_bar_sits_on_the_popup_plate() {
     let _data = benilla_formats::wow_data_or_skip!();
     let mut s = harness();
@@ -427,7 +387,7 @@ fn the_icon_choosers_scroll_bar_sits_on_the_popup_plate() {
         "scroll bar {bar_left}..{bar_right} is outside the popup plate {plate_left}..{plate_right}"
     );
     // The stock seat: 6 right of a scroll frame whose right edge is 39 in from the 297-wide popup's
-    // (`UIPanelTemplates.xml:172`, `Blizzard_MacroUI.xml:766`), so 264..280.
+    // (`UIPanelTemplates.xml`, `Blizzard_MacroUI.xml`), so 264..280.
     assert_eq!(
         (bar_left - plate_left, bar_right - plate_left),
         (264.0, 280.0)
@@ -436,7 +396,6 @@ fn the_icon_choosers_scroll_bar_sits_on_the_popup_plate() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_tab_row_settles_and_stays_inside_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     // The widths must hold across frames, not just on the first.
@@ -473,9 +432,8 @@ fn the_tab_row_settles_and_stays_inside_the_window() {
     no_errors(&s, "tab settle");
 }
 
-/// Tab 2's `150` cap (`Blizzard_MacroUI.xml:511`) holds the row inside the drawn edge for any name.
+/// Tab 2's `150` cap (`Blizzard_MacroUI.xml`) holds the row inside the drawn edge for any name.
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn no_character_name_can_push_the_tab_row_off_the_window() {
     let _data = benilla_formats::wow_data_or_skip!();
     for name in ["Ai", "Onehunter", "Bartholomewthethird", &"W".repeat(64)] {
@@ -500,7 +458,6 @@ fn no_character_name_can_push_the_tab_row_off_the_window() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_tab_highlight_is_exactly_its_tab() {
     let _data = benilla_formats::wow_data_or_skip!();
     // A name under the stock cap, one over it, and a 40-character one, checked on every frame.
@@ -523,7 +480,7 @@ fn the_tab_highlight_is_exactly_its_tab() {
                 // since `SetScript` releases the slot's one ref before reading the new body
                 // (`0x7025ec`). Tab 2's ends in `PanelTemplates_TabResize`, which sets the
                 // highlight to the tab width; tab 1's then sets it to `GetTextWidth() + 31`, 14
-                // wider than the tab (`Blizzard_MacroUI.xml:488-489`, `:510-511`).
+                // wider than the tab (`Blizzard_MacroUI.xml`, `:510-511`).
                 let label: f64 = s
                     .eval(&format!("return {tab}Text:GetStringWidth()"))
                     .unwrap();
@@ -540,7 +497,7 @@ fn the_tab_highlight_is_exactly_its_tab() {
                     tr - tl
                 );
                 // `TabButtonTemplate` anchors the highlight `BOTTOM` at `(2, -8)`: centred on the
-                // tab, 2 right (`UIPanelTemplates.xml:395-397`).
+                // tab, 2 right (`UIPanelTemplates.xml`).
                 assert_eq!(
                     (hl + hr) / 2.0,
                     (tl + tr) / 2.0 + 2.0,
@@ -553,7 +510,6 @@ fn the_tab_highlight_is_exactly_its_tab() {
 }
 
 #[test]
-#[ignore = "reads 1.12.1 data; port to the 3.3.5a install (#51)"]
 fn the_icon_picker_opens_without_raising() {
     let _data = benilla_formats::wow_data_or_skip!();
     let s = harness();

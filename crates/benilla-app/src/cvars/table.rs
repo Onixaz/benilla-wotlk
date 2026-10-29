@@ -720,18 +720,11 @@ pub(crate) const REGISTERED: &[Registered] = &[
     same("mouseInvertPitch", "0").per_account(),
     // `autoLootDefault` (`0x51db43`, "0"): a loot opens without the auto-loot modifier's sweep.
     same("autoLootDefault", "0").per_account(),
-    // The overhead-name gates, registered at `0x6c7470` into mask `0xce8720`: `UnitNamePlayer`
-    // (`0x86c694`) "1" (`0x82e748`), `UnitNameNPC` (`0x86c6a4`) and `UnitNameOwn` (`0x86c6b0`) "0"
-    // (`0x82e570`).
-    same("UnitNamePlayer", "1"),
+    // The overhead-name rows' first four (registered at `0x7e6150`); the guild and
+    // title rows gate lines of the name, not the name.
     same("UnitNameNPC", "0").per_account(),
     same("UnitNameOwn", "0").per_account(),
-    // `UnitNamePlayerGuild` (`0x86c680`, "1", mask bit `0x10`) is not a show gate: `ShouldShowName`
-    // (`0x6070a0`) reads bits `0x1/0x2/0x4`, and this gates the `"\n<%s>"` guild line at
-    // `0x609085`.
     same("UnitNamePlayerGuild", "1").per_account(),
-    // `UnitNamePlayerPVPTitle` (`0x86c668`, "1", mask bit `0x20`): the a4 rank prefix on the main
-    // name line (`0x609370`), `PVP_RANK_%d_%d` through `0x5efe60`.
     same("UnitNamePlayerPVPTitle", "1").per_account(),
     // ── Floating combat text ─────────────────────────────────────────────────────────────────────
     //

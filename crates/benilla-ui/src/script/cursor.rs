@@ -177,7 +177,7 @@ pub struct CursorEquipmentSet {
 /// `PlaceAction` accepts (`0x4e62e0`). It has no source slot, so a refused place leaves it held.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CursorMacro {
-    /// The 1-based macro index: 1..=18 account, 19..=36 character.
+    /// The 1-based macro index: 1..=36 account, 37..=54 character.
     pub index: u32,
     pub texture: Option<String>,
 }
