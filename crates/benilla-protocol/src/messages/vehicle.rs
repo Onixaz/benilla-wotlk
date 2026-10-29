@@ -119,6 +119,7 @@ mod tests {
             pitch: 0.0,
             fall_time: 0,
             jump: None,
+            flags2: 0,
         };
         let dismiss = dismiss_controlled_vehicle(0x2a, &info);
         let change = change_seats_on_controlled_vehicle(0x2a, &info, 0, 0xff);

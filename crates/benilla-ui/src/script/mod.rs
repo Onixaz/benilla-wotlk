@@ -464,8 +464,8 @@ pub use unit::{
     SelectionRequest, UnitBase, UnitGuids, UnitState, UnitTokenParse,
 };
 pub use vehicle::{
-    VehicleIndicatorView, VehicleRequest, VehicleSeatView, VehicleTree, VehicleUnitView,
-    VehicleView, VirtualSeat,
+    AimRec, AimUnit, VehicleIndicatorView, VehicleRequest, VehicleSeatView, VehicleTree,
+    VehicleUnitView, VehicleView, VirtualSeat,
 };
 pub use weapon_enchant::WeaponEnchant;
 pub use who_sort::{WhoSortChain, WhoSortKey};

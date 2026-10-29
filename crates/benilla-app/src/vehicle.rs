@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+mod aim;
 mod control;
 mod override_bar;
 mod passenger;
@@ -27,8 +28,8 @@ use benilla_formats::{VehicleCatalog, VehicleRec, VehicleSeatRec};
 use benilla_protocol::messages::{opcode, ObjectType};
 use benilla_protocol::{SessionEvent, SessionEventKind};
 use benilla_ui::script::{
-    ScriptValue, UiScript, VehicleIndicatorView, VehicleRequest, VehicleSeatView, VehicleUnitView,
-    VehicleView,
+    AimRec, AimUnit, ScriptValue, UiScript, VehicleIndicatorView, VehicleRequest, VehicleSeatView,
+    VehicleUnitView, VehicleView,
 };
 
 use crate::net::{
@@ -100,7 +101,7 @@ pub(crate) struct VehiclePlugin;
 impl Plugin for VehiclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<VehicleTables>()
-            .init_resource::<control::VehicleAim>()
+            .init_resource::<aim::VehicleAim>()
             .init_resource::<SeatStop>()
             .init_resource::<VehicleSignals>()
             .add_message::<EnteredWorldMessage>()
@@ -131,6 +132,9 @@ impl Plugin for VehiclePlugin {
                     send_vehicle_requests
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(feed_vehicle_signals),
+                    drive_vehicle_aim
+                        .in_set(crate::ui_unit::UnitFeed)
+                        .after(send_vehicle_requests),
                     // After the passenger events, as the mover's claim follows the seat.
                     control::on_mover_change
                         .in_set(crate::ui_unit::UnitFeed)
@@ -207,18 +211,27 @@ fn load_vehicle_tables(mut commands: Commands, assets: Option<Res<WorldAssets>>)
     });
 }
 
-/// The create block's vehicle (`0x73c260`), built before post-init, so it fires nothing.
+/// The create block's vehicle (`0x73c260`), built before post-init, so it fires nothing, and the
+/// unit's extra movement flags.
 fn on_object_create(In(ev): In<SessionEvent>, index: Res<GuidIndex>, mut commands: Commands) {
     let SessionEvent::ObjectCreate {
         guid,
-        vehicle: Some((id, raw_facing)),
+        vehicle,
+        mover,
         ..
     } = ev
     else {
         return;
     };
-    if let Some(&e) = index.0.get(&guid) {
+    let Some(&e) = index.0.get(&guid) else {
+        return;
+    };
+    if let Some((id, raw_facing)) = vehicle {
         commands.entity(e).insert(Vehicle { id, raw_facing });
+    }
+    // The extra flags a vehicle's aim reads and reports (`CMovement+0x44`).
+    if let Some(m) = mover.filter(|m| m.flags2 != 0) {
+        commands.entity(e).insert(aim::MoveFlags2(m.flags2));
     }
 }
 
@@ -332,11 +345,13 @@ fn feed_vehicle_view(
     group: Option<Res<crate::ui_party::GroupState>>,
     names: Option<Res<crate::names::NameCache>>,
     tables: Res<VehicleTables>,
+    aim: (Res<aim::VehicleAim>, Query<&crate::net::RemoteMotion>),
     mut pushed: Local<crate::ui_script::VmMemo<Option<VehicleView>>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
+    let (aim, remote) = aim;
     let me = self_guid.0.unwrap_or(0);
     let mut view = VehicleView {
         mover: mover.single().map_or(0, |g| g.0),
@@ -389,6 +404,43 @@ fn feed_vehicle_view(
         );
     }
     (view.roots, view.trees) = seats::build(&facts, &tables, view.mover);
+    // The aim verbs' units: the mover at our aim, and `0x5f9d20`'s, the vehicle the mover sits
+    // in a control seat of, at its reported pitch.
+    let aim_unit = |guid: u64, pitch: f32| {
+        let rec = vehicle_of(guid)
+            .and_then(|v| tables.vehicle(v.id))
+            .map(|r| AimRec {
+                flags: r.flags,
+                pitch_min: r.pitch_min,
+                pitch_max: r.pitch_max,
+            });
+        AimUnit { guid, pitch, rec }
+    };
+    if view.mover != 0 {
+        view.mover_aim = Some(aim_unit(view.mover, aim.pitch));
+        let mover_passenger = index
+            .0
+            .get(&view.mover)
+            .and_then(|&e| units.get(e).ok())
+            .and_then(|(_, _, _, p, _)| p.copied())
+            .filter(|p| p.state == SEATED);
+        let control_vehicle = mover_passenger.filter(|p| {
+            vehicle_of(p.vehicle)
+                .and_then(|v| tables.seat(v.id, usize::from(p.seat)))
+                .is_some_and(|s| s.flags & 0x800 != 0)
+        });
+        view.aim = Some(match control_vehicle {
+            Some(p) => {
+                let pitch = index
+                    .0
+                    .get(&p.vehicle)
+                    .and_then(|&e| remote.get(e).ok())
+                    .map_or(0.0, |r| r.pitch);
+                aim_unit(p.vehicle, pitch)
+            }
+            None => aim_unit(view.mover, aim.pitch),
+        });
+    }
     for (&guid, stats) in group.iter().flat_map(|g| g.stats.iter()) {
         if index.0.contains_key(&guid) {
             continue;
@@ -426,11 +478,19 @@ fn send_vehicle_requests(
     script: Option<NonSendMut<UiScript>>,
     net: Option<Res<crate::net::NetCommands>>,
     me: Query<Option<&Passenger>, With<crate::net::SelfPlayer>>,
-    mover: Query<(&crate::net::Guid, Option<&Vehicle>), With<crate::net::ActiveMover>>,
+    mover: Query<
+        (
+            &crate::net::Guid,
+            Option<&Vehicle>,
+            Option<&aim::MoveFlags2>,
+        ),
+        With<crate::net::ActiveMover>,
+    >,
     player: Option<Res<crate::player::Player>>,
     tables: Res<VehicleTables>,
     time: Res<Time<Real>>,
     mut stop: ResMut<SeatStop>,
+    mut aim: ResMut<aim::VehicleAim>,
 ) {
     let (Some(mut script), Some(net)) = (script, net) else {
         return;
@@ -439,7 +499,18 @@ fn send_vehicle_requests(
     if requests.is_empty() {
         return;
     }
-    let (mover, mover_vehicle) = mover.single().map_or((0, None), |(g, v)| (g.0, v.copied()));
+    let net = net.into_inner();
+    let (mover, mover_vehicle, flags2) = mover.single().map_or((0, None, 0), |(g, v, f)| {
+        (g.0, v.copied(), f.map_or(0, |f| f.0))
+    });
+    let mover_rec = mover_vehicle.and_then(|v| tables.vehicle(v.id)).cloned();
+    let pose = player.as_deref().map(|p| aim::MoverPose {
+        guid: mover,
+        flags: p.move_flags(),
+        flags2,
+        pos: benilla_assets::coords::bevy_to_wow(p.pos),
+        orientation: p.facing().rem_euclid(std::f32::consts::TAU),
+    });
     let seated = me.single().ok().flatten().copied();
     let controlled = mover != 0 && seated.is_some_and(|p| p.vehicle == mover);
     // The controlled vehicle's report: the mover's pose, our seat stopped first.
@@ -487,11 +558,81 @@ fn send_vehicle_requests(
                 }
             }
             VehicleRequest::Exit => Some(VehicleCommand::Empty(opcode::CMSG_REQUEST_VEHICLE_EXIT)),
+            // The aim moves only the mover we drive.
+            VehicleRequest::Pitch { unit, pitch } => {
+                if let Some(pose) = pose.as_ref().filter(|_| unit == mover && mover != 0) {
+                    let rec = mover_rec.as_ref();
+                    aim::set_pitch(&mut aim, pose, rec, pitch, net, Some(&mut script));
+                }
+                None
+            }
+            // `0x5fb4b0`: the held aim, else the mover's pitch, plus the step.
+            VehicleRequest::AimChange(delta) => {
+                if let Some(pose) = pose.as_ref().filter(|_| mover != 0) {
+                    let from = aim.held.unwrap_or(aim.pitch);
+                    let rec = mover_rec.as_ref();
+                    aim::set_pitch(&mut aim, pose, rec, from + delta, net, Some(&mut script));
+                }
+                None
+            }
+            VehicleRequest::PitchKey { up, held } => {
+                aim.keys[usize::from(!up)] = held;
+                None
+            }
         };
         if let Some(cmd) = cmd {
             let _ = net.0.send(ClientCommand::Vehicle(cmd));
         }
     }
+}
+
+/// Turn the mover's pitch under its keys or toward its target, at its pitch rate.
+#[allow(clippy::type_complexity)] // the mover's facts, one query
+fn drive_vehicle_aim(
+    script: Option<NonSendMut<UiScript>>,
+    net: Option<Res<crate::net::NetCommands>>,
+    mover: Query<
+        (
+            &crate::net::Guid,
+            Option<&Vehicle>,
+            Option<&aim::MoveFlags2>,
+            Option<&crate::net::UnitSpeeds>,
+        ),
+        With<crate::net::ActiveMover>,
+    >,
+    player: Option<Res<crate::player::Player>>,
+    tables: Res<VehicleTables>,
+    time: Res<Time>,
+    mut aim: ResMut<aim::VehicleAim>,
+) {
+    let (Some(net), Some(player)) = (net, player) else {
+        return;
+    };
+    let Ok((guid, vehicle, flags2, speeds)) = mover.single() else {
+        return;
+    };
+    if aim.target.is_none() && aim.keys == [false, false] && aim.turning == 0 {
+        return;
+    }
+    let pose = aim::MoverPose {
+        guid: guid.0,
+        flags: player.move_flags(),
+        flags2: flags2.map_or(0, |f| f.0),
+        pos: benilla_assets::coords::bevy_to_wow(player.pos),
+        orientation: player.facing().rem_euclid(std::f32::consts::TAU),
+    };
+    let rec = vehicle.and_then(|v| tables.vehicle(v.id));
+    let rate = speeds.map_or(std::f32::consts::PI, |s| s.0.pitch_rate);
+    let mut script = script;
+    aim::drive(
+        &mut aim,
+        &pose,
+        rec,
+        rate,
+        time.delta_secs(),
+        &net,
+        script.as_deref_mut(),
+    );
 }
 
 /// Fire what the frame owes, each once per token naming the unit (`0x60bb70`).
@@ -593,6 +734,7 @@ mod tests {
             ..Default::default()
         });
         w.init_resource::<VehicleSignals>();
+        w.init_resource::<aim::VehicleAim>();
         (w, me, cart)
     }
 

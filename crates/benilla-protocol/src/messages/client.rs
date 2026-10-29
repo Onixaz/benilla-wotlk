@@ -377,6 +377,7 @@ mod tests {
             pitch: 0.0,
             fall_time: 0x5566_7788,
             jump: None,
+            flags2: 0,
         };
         let body = move_spline_done(0x3e9, &info, 0xAABB_CCDD);
         #[rustfmt::skip]
@@ -411,6 +412,7 @@ mod tests {
             pitch: 0.0,
             fall_time: 0,
             jump: None,
+            flags2: 0,
         };
         let ack = move_flag_ack(0x3e9, 7, &info, Some(true));
         assert_eq!(&ack[..7], &[0x03, 0xE9, 0x03, 7, 0, 0, 0]);

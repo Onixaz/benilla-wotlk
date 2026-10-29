@@ -290,11 +290,6 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
             Ok(Value::Nil)
         })?,
     )?;
-    // CanExitVehicle() (`0x5fb9c0`): the vehicle seat's exit flag; benilla seats no vehicle (#235).
-    g.set(
-        "CanExitVehicle",
-        lua.create_function(|_, ()| Ok(Value::Nil))?,
-    )?;
     // GetPartyAssignment("assignment" [, member [, exact]]) (`0x52cf60`): with a member, 1 or nil
     // for them (a member outside the group prints `ERR_TARGET_NOT_IN_GROUP_S` and answers
     // nothing); without, every raid row (or party slot) holding the assignment.

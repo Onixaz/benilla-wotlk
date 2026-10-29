@@ -10,8 +10,10 @@ use mlua::{Lua, Value};
 
 use super::binding_abi::{flag, optional_string, string_arg};
 
+mod aim;
 mod seats;
 
+pub use aim::{AimRec, AimUnit};
 pub use seats::{VehicleIndicatorView, VehicleRequest, VehicleTree, VirtualSeat};
 
 /// The `VehicleSeat.dbc` facts the verbs read off a seat.
@@ -54,6 +56,10 @@ pub struct VehicleView {
     /// The player's seat flags while `0x5fb560` reads them: the player seated, and its transport
     /// or itself the mover.
     pub input_seat_flags: Option<u32>,
+    /// The aim verbs' unit (`0x5f9d20`): the mover, or the vehicle it sits in a control seat of.
+    pub aim: Option<AimUnit>,
+    /// The mover's own aim, which `VehicleAimRequestAngle` asks.
+    pub mover_aim: Option<AimUnit>,
 }
 
 impl super::UiScript {
@@ -139,6 +145,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
         })?,
     )?;
     seats::install(lua)?;
+    aim::install(lua)?;
     seat_flag(lua, "UnitInVehicleControlSeat", |s| s.flags & 0x800 != 0)?;
     seat_flag(lua, "UnitHasVehicleUI", |s| s.flags & 0x2000_0000 != 0)?;
     seat_flag(lua, "UnitTargetsVehicleInRaidUI", |s| s.flags_b & 0x8 != 0)?;

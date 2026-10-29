@@ -874,7 +874,11 @@ pub(crate) mod schedule_tests {
     ///   rest.
     /// - The override bar (#632) adds 10: `vehicle::override_bar::update_override_bar` writes the
     ///   same slots after the pet's, against the same ten readers, on the same frame-late terms.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_937;
+    /// - The vehicle aim (#632) adds 2: `vehicle::feed_vehicle_view` reads a control-seat
+    ///   vehicle's reported pitch from `RemoteMotion` against `transport::compose_riders` and
+    ///   `ground_deck_riders`, which move only its pose; in `UnitFeed` it cannot follow them, and
+    ///   the pitch it reads is the packet's.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_939;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

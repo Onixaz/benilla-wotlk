@@ -10,13 +10,8 @@ use benilla_ui::script::{ScriptValue, UiScript};
 
 use crate::net::{ActiveMover, Guid, GuidIndex, ObjectStore, SelfGuid};
 
+use super::aim::VehicleAim;
 use super::{Passenger, Vehicle, VehicleTables, SEATED};
-
-/// The mover's aim pitch, which the aim verbs move.
-#[derive(Resource, Default, Clone, Copy, Debug, PartialEq)]
-pub(crate) struct VehicleAim {
-    pub(crate) pitch: f32,
-}
 
 /// `0x74ba40`, for the mover: a transition holds it, or its charmer's seat stops it, or nobody
 /// it may move holds it.
@@ -65,7 +60,7 @@ pub(super) fn on_mover_change(
     index: Res<GuidIndex>,
     self_guid: Res<SelfGuid>,
     tables: Res<VehicleTables>,
-    aim: Res<VehicleAim>,
+    mut aim: ResMut<VehicleAim>,
     stop: Res<super::SeatStop>,
     mut last: Local<crate::ui_script::VmMemo<u64>>,
 ) {
@@ -79,6 +74,8 @@ pub(super) fn on_mover_change(
     if std::mem::replace(last, guid) == guid {
         return;
     }
+    // A new mover starts unaimed, its keys let go.
+    *aim = VehicleAim::default();
     let passenger_of = |g: u64| {
         index
             .0

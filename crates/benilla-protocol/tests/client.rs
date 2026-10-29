@@ -181,6 +181,7 @@ fn client_bodies_golden() {
         pitch: 0.0,
         fall_time: 0,
         jump: None,
+        flags2: 0,
     };
     assert_eq!(
         messages::movement(0x3e9, &mi),

@@ -120,7 +120,7 @@ pub(crate) fn wotlk_flags_from_classic(classic: u32) -> u32 {
 /// `u32` transport time, the `i8` seat, and a second time under `INTERPOLATED_MOVEMENT`; pitch when
 /// swimming, flying or `ALWAYS_ALLOW_PITCHING`; fall time; the jump under `FALLING` as `zspeed,
 /// sin, cos, xyspeed`; the spline elevation. The flags come back in 1.12.1's bits
-/// ([`classic_flags_from_wotlk`]); the extra flags and transport time are read and dropped.
+/// ([`classic_flags_from_wotlk`]), the extra flags raw; the transport time is read and dropped.
 pub(crate) fn read_movement_info_wotlk(r: &mut impl Read) -> io::Result<MovementInfo> {
     use crate::wire::{read_packed_guid, read_u16_le, read_u8};
     let flags = read_u32_le(r)?;
@@ -172,6 +172,7 @@ pub(crate) fn read_movement_info_wotlk(r: &mut impl Read) -> io::Result<Movement
     }
     Ok(MovementInfo {
         flags: classic_flags_from_wotlk(flags),
+        flags2,
         timestamp,
         position,
         orientation,
@@ -363,6 +364,9 @@ pub struct TransportPose {
 /// The body of every `MSG_MOVE_*`, in both directions, and of the teleport ack.
 pub struct MovementInfo {
     pub flags: u32,
+    /// 3.3.5a's extra flags, raw: `ALWAYS_ALLOW_PITCHING` (`0x20`) carries the pitch outside a
+    /// swim or a flight, as a vehicle aims.
+    pub flags2: u16,
     pub timestamp: u32,
     pub position: Vector3d,
     pub orientation: f32,
@@ -380,8 +384,8 @@ impl MovementInfo {
     /// `[packed mover guid][MovementInfo]` in 3.3.5a's layout, the shape every client movement
     /// packet opens with and [`read_movement_info_wotlk`] reads back after the guid. AzerothCore
     /// drops a packet whose guid is not the mover (`MovementHandler.cpp`, `HandleMovementOpcodes`).
-    /// The flags go out in 3.3.5a's bits ([`wotlk_flags_from_classic`]) with no extra flags; the
-    /// transport time is the move's own, and the seat is `-1`, no vehicle seat.
+    /// The flags go out in 3.3.5a's bits ([`wotlk_flags_from_classic`]) with the extra flags as
+    /// held; the transport time is the move's own, and the seat is `-1`, no vehicle seat.
     pub(super) fn write(&self, mover: u64, w: &mut Vec<u8>) {
         crate::wire::write_packed_guid(mover, w).expect("a Vec write cannot fail");
         self.write_body(w);
@@ -391,7 +395,7 @@ impl MovementInfo {
     pub(super) fn write_body(&self, w: &mut Vec<u8>) {
         let flags = wotlk_flags_from_classic(self.flags);
         w.extend_from_slice(&flags.to_le_bytes());
-        w.extend_from_slice(&0u16.to_le_bytes());
+        w.extend_from_slice(&self.flags2.to_le_bytes());
         w.extend_from_slice(&self.timestamp.to_le_bytes());
         w.extend_from_slice(&self.position.x.to_le_bytes());
         w.extend_from_slice(&self.position.y.to_le_bytes());
@@ -417,7 +421,9 @@ impl MovementInfo {
             w.extend_from_slice(&self.timestamp.to_le_bytes());
             w.push(t.seat as u8);
         }
-        if flags & (wotlk_flag::SWIMMING | wotlk_flag::FLYING) != 0 {
+        if flags & (wotlk_flag::SWIMMING | wotlk_flag::FLYING) != 0
+            || self.flags2 & wotlk_flag::FLAG2_ALWAYS_ALLOW_PITCHING != 0
+        {
             w.extend_from_slice(&self.pitch.to_le_bytes());
         }
         w.extend_from_slice(&self.fall_time.to_le_bytes());
@@ -455,6 +461,7 @@ mod tests {
             pitch: -0.7,
             fall_time: 42,
             jump: None,
+            flags2: 0,
         }
     }
 

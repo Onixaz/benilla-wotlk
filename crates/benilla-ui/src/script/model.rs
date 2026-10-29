@@ -632,6 +632,8 @@ pub(crate) struct Model {
         std::sync::Arc<HashMap<u32, super::vehicle::VehicleIndicatorView>>,
     /// The vehicle verbs' requests, for the app to send.
     pub(crate) vehicle_requests: Vec<super::vehicle::VehicleRequest>,
+    /// `s_vehicleAimNormPower`, 0..1.
+    pub(crate) vehicle_aim_power: f32,
     /// The four totem slots and their tools.
     pub(crate) totems: super::totem::TotemSlots,
     /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
@@ -1467,6 +1469,7 @@ impl Model {
             vehicles: Default::default(),
             vehicle_indicators: Default::default(),
             vehicle_requests: Vec::new(),
+            vehicle_aim_power: 0.0,
             totems: Default::default(),
             totem_destroys: Vec::new(),
             multicast: Default::default(),

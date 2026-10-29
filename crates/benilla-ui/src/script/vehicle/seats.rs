@@ -38,7 +38,7 @@ pub struct VehicleTree {
 }
 
 /// A request a verb makes, for the app to send.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum VehicleRequest {
     /// `CMSG_EJECT_PASSENGER` for the passenger (`0x757200`).
     Eject(u64),
@@ -55,6 +55,18 @@ pub enum VehicleRequest {
     /// else `CMSG_REQUEST_VEHICLE_PREV_SEAT` or `_NEXT_SEAT`.
     PrevSeat,
     NextSeat,
+    /// `SetPlayerPitch` on `unit` (`0x5fb3a0`), clamped by its record there.
+    Pitch {
+        unit: u64,
+        pitch: f32,
+    },
+    /// `VehicleAimChange` (`0x5fb4b0`): the held aim, else the mover's pitch, plus `delta`.
+    AimChange(f32),
+    /// A pitch key pressed or let go (`INPUT_PITCH_PLAYER_UP_KEY`, `_DOWN_KEY`).
+    PitchKey {
+        up: bool,
+        held: bool,
+    },
 }
 
 /// A seat indicator (`VehicleUIIndicator.dbc`): its background and its seats in id order, each
@@ -486,6 +498,16 @@ mod tests {
             [("ERR_SPELL_FAILED_S", String::new())],
             "no GlobalStrings loaded: the empty text"
         );
+        // A seat that allows the exit answers 1 and asks.
+        let mut view = s.model_ref().vehicles.clone();
+        view.input_seat_flags = Some(0x200_0000);
+        s.set_vehicles(view);
+        assert_eq!(
+            s.eval::<Option<i64>>("return CanExitVehicle()").unwrap(),
+            Some(1)
+        );
+        s.run("VehicleExit()").unwrap();
+        assert_eq!(s.take_vehicle_requests(), [VehicleRequest::Exit]);
     }
 
     #[test]

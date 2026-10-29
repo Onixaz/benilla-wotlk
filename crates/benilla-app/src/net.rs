@@ -1001,6 +1001,16 @@ pub(crate) enum VehicleCommand {
     SwitchSeat { vehicle: u64, seat: u8 },
     /// `CMSG_EJECT_PASSENGER` or `CMSG_PLAYER_VEHICLE_ENTER`, a bare guid, by opcode.
     ByGuid { opcode: u16, guid: u64 },
+    /// A pitch report (`MSG_MOVE_SET_PITCH` and the pitch starts and stop), by opcode.
+    Pitch {
+        opcode: u16,
+        mover: u64,
+        flags: u32,
+        flags2: u16,
+        pos: [f32; 3],
+        orientation: f32,
+        pitch: f32,
+    },
     /// `CMSG_DISMISS_CONTROLLED_VEHICLE` with the mover's pose, or with `seat`
     /// `CMSG_CHANGE_SEATS_ON_CONTROLLED_VEHICLE`.
     Controlled {

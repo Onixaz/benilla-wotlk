@@ -74,6 +74,26 @@ impl WorldWriter {
         )
     }
 
+    /// `MSG_MOVE_SET_PITCH`, `_START_PITCH_UP`, `_START_PITCH_DOWN` or `_STOP_PITCH`: the mover's
+    /// pose with its extra flags and pitch, which an aiming vehicle's `ALWAYS_ALLOW_PITCHING`
+    /// carries (`0x6ee460`'s move event).
+    #[allow(clippy::too_many_arguments)] // the movement report's fields, one each
+    pub fn move_pitch(
+        &mut self,
+        opcode: u16,
+        mover: u64,
+        flags: u32,
+        flags2: u16,
+        pos: [f32; 3],
+        orientation: f32,
+        pitch: f32,
+    ) -> Result<()> {
+        let mut info = movement_info(pos, orientation, flags);
+        info.flags2 = flags2;
+        info.pitch = pitch;
+        self.send(opcode, &messages::movement(mover, &info))
+    }
+
     /// `CMSG_REQUEST_VEHICLE_EXIT`, `_PREV_SEAT` or `_NEXT_SEAT`: one of the three empty seat
     /// requests for a vehicle we ride and do not control.
     pub fn request_vehicle(&mut self, opcode: u16) -> Result<()> {

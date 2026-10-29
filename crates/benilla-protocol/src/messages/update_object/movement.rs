@@ -57,6 +57,8 @@ pub struct MoverState {
     pub flags: u32,
     /// Swim pitch in radians, +up; on the wire only with `MOVEFLAG_SWIMMING`, else `0.0`.
     pub pitch: f32,
+    /// 3.3.5a's extra movement flags, raw (`CMovement+0x44`).
+    pub flags2: u16,
 }
 
 /// The decoded fields of a movement block; the rest is read and discarded to stay aligned.

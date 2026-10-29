@@ -150,6 +150,7 @@ fn read_movement_block(r: &mut impl Read) -> io::Result<WotlkMovement> {
         mover = Some(MoverState {
             flags: info.flags,
             pitch: info.pitch,
+            flags2: info.flags2,
         });
         // Walk, run, run back, swim, swim back, flight, flight back, turn rate, pitch rate.
         let mut s = [0.0f32; 9];

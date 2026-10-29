@@ -77,6 +77,7 @@ fn force_speed_change_parses_and_ack_body_golden() {
         pitch: 0.0,
         fall_time: 42,
         jump: None,
+        flags2: 0,
     };
     assert_eq!(
         messages::force_speed_ack(8, 7, &info, 14.0),
@@ -139,6 +140,7 @@ fn knock_back_parses_and_ack_body_golden() {
         pitch: 0.0,
         fall_time: 0,
         jump: Some(launch),
+        flags2: 0,
     };
     assert_eq!(
         messages::knock_back_ack(8, 7, &info),
