@@ -105,6 +105,8 @@ pub(crate) struct CameraViews {
     views: [ViewPose; VIEW_COUNT],
     /// The live view, persisted as [`CVAR_ACTIVE_VIEW`].
     current: usize,
+    /// The view the barber chair left, restored by its close (`[0xacc784]`).
+    barber_left: Option<usize>,
 }
 
 impl Default for CameraViews {
@@ -114,6 +116,7 @@ impl Default for CameraViews {
             current: ACTIVE_VIEW_DEFAULT
                 .parse::<usize>()
                 .expect("the registrar default is an index"),
+            barber_left: None,
         }
     }
 }
@@ -206,7 +209,6 @@ fn drain_view_requests(
     mut cvars: ResMut<crate::cvars::Cvars>,
     mut targets: ViewTargets,
     mut barber: MessageReader<BarberView>,
-    mut barber_left: Local<Option<usize>>,
 ) {
     for request in barber.read() {
         let Ok(mut cam) = targets.cam.single_mut() else {
@@ -215,13 +217,14 @@ fn drain_view_requests(
         let face_yaw = targets.player.facing();
         match *request {
             BarberView::Enter { distance } => {
-                barber_left.get_or_insert(targets.views.current);
+                let current = targets.views.current;
+                targets.views.barber_left.get_or_insert(current);
                 targets.rig.target_distance = distance.clamp(CAM_DIST_MIN, CAM_DIST_MAX);
                 cam.pitch = 0.0;
                 cam.yaw = wrap_pi(face_yaw + std::f32::consts::PI);
             }
             BarberView::Leave => {
-                if let Some(view) = barber_left.take() {
+                if let Some(view) = targets.views.barber_left.take() {
                     apply(
                         &mut targets.views,
                         &mut targets.rig,
