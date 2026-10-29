@@ -165,6 +165,7 @@ tables! {
         "SoundProviderPreferences" => sound_provider::schema(),
         "SpamMessages" => text_filter_lists::spam_messages_schema(),
         "Spell" => spells::spell_schema(),
+        "SpellMissile" => spell_visual::missiles::spell_missile_schema(),
         "SpellCastTimes" => spells::cast_times::schema(),
         "SpellCategory" => spells::spell_category_schema(),
         "SpellChainEffects" => spell_visual::chain_effects::chain_effects_schema(),

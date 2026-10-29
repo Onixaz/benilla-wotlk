@@ -13,8 +13,10 @@ use crate::dbc::{f32_at, i32_at, parse, str_at, u32_at};
 use crate::Chain;
 
 pub mod chain_effects;
+pub mod missiles;
 
 pub use chain_effects::{ChainEffect, ChainProc};
+pub use missiles::{SpellMissileRec, DEFAULT_MISSILE_GRAVITY};
 
 const SPELL_VISUAL: &str = "DBFilesClient\\SpellVisual.dbc";
 const SPELL_VISUAL_KIT: &str = "DBFilesClient\\SpellVisualKit.dbc";
@@ -335,6 +337,8 @@ pub struct SpellVisualCatalog {
     /// client resolves by name at boot against 14 baked strings (`0x61f5b0`).
     hardcoded: HashMap<String, (u32, String)>,
     chain_effects: HashMap<u32, ChainEffect>,
+    /// `SpellMissile.dbc`, by `Spell.dbc` column 163.
+    missiles: HashMap<u32, SpellMissileRec>,
 }
 
 impl SpellVisualCatalog {
@@ -354,7 +358,20 @@ impl SpellVisualCatalog {
             effect_paths,
             hardcoded: HashMap::new(),
             chain_effects: HashMap::new(),
+            missiles: HashMap::new(),
         }
+    }
+
+    /// Seed one `SpellMissile` row, for tests.
+    #[must_use]
+    pub fn with_missile(mut self, id: u32, missile: SpellMissileRec) -> Self {
+        self.missiles.insert(id, missile);
+        self
+    }
+
+    /// A `SpellMissile.dbc` row by id.
+    pub fn missile(&self, id: u32) -> Option<&SpellMissileRec> {
+        self.missiles.get(&id)
     }
 
     /// Seed one `SpellChainEffects` row, for tests.
@@ -589,7 +606,7 @@ fn parse_kits(bytes: &[u8]) -> Result<HashMap<u32, VisualKit>> {
     Ok(kits)
 }
 
-/// Read the four spell visual tables off the patch chain.
+/// Read the spell visual tables and `SpellMissile.dbc` off the patch chain.
 pub fn load_spell_visual_catalog(chain: &mut Chain) -> Result<SpellVisualCatalog> {
     let visuals = parse_visuals(
         &chain
@@ -624,6 +641,11 @@ pub fn load_spell_visual_catalog(chain: &mut Chain) -> Result<SpellVisualCatalog
     }
 
     let chain_effects = chain_effects::load(chain).context("reading SpellChainEffects.dbc")?;
+    let missiles = missiles::parse_missiles(
+        &chain
+            .read_file(missiles::SPELL_MISSILE)
+            .context("reading SpellMissile.dbc")?,
+    )?;
 
     Ok(SpellVisualCatalog {
         visuals,
@@ -631,6 +653,7 @@ pub fn load_spell_visual_catalog(chain: &mut Chain) -> Result<SpellVisualCatalog
         effect_paths,
         hardcoded,
         chain_effects,
+        missiles,
     })
 }
 

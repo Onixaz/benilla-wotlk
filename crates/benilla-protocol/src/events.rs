@@ -749,6 +749,8 @@ pub enum SessionEvent {
         ammo_display_id: Option<u32>,
         /// The cast item when the first guid is not the caster; the item cooldown keys on it.
         item_caster: Option<u64>,
+        /// A trajectory missile's `(elevation, delay ms)` (`CAST_FLAG_ADJUST_MISSILE`).
+        trajectory: Option<(f32, u32)>,
     },
     /// A channeled beam's hops (`SMSG_SPELL_UPDATE_CHAIN_TARGETS`), consumed once by the next chain
     /// `CharProc`; the reference fills that `unit+0xd44` array from spell-go hits too (`0x6e800d`).

@@ -108,6 +108,27 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_UPDATE_PROJECTILE_POSITION`: where `caster`'s trajectory missile `cast_id` hit, raw
+    /// WoW coordinates.
+    pub fn update_projectile_position(
+        &mut self,
+        caster: u64,
+        spell: u32,
+        cast_id: u8,
+        at: [f32; 3],
+    ) -> Result<()> {
+        let [x, y, z] = at;
+        self.send(
+            opcode::CMSG_UPDATE_PROJECTILE_POSITION,
+            &messages::update_projectile_position(
+                caster,
+                spell,
+                cast_id,
+                crate::wire::Vector3d { x, y, z },
+            ),
+        )
+    }
+
     /// `CMSG_EJECT_PASSENGER` or `CMSG_PLAYER_VEHICLE_ENTER`, each a bare guid.
     pub fn vehicle_guid(&mut self, opcode: u16, guid: u64) -> Result<()> {
         self.send(opcode, &messages::vehicle_guid(guid))

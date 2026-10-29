@@ -467,6 +467,9 @@ pub struct SpellGo {
     pub ammo_display_id: Option<u32>,
     /// The `CAST_FLAG_RUNE_LIST` block.
     pub runes: Option<CastRunes>,
+    /// The `CAST_FLAG_ADJUST_MISSILE` pair, `(elevation, delay ms)`: a trajectory missile's launch
+    /// pitch and its flight time, as the GO handler (`0x80e1b0`) reads them.
+    pub trajectory: Option<(f32, u32)>,
 }
 
 /// Read `SMSG_SPELL_GO`: the shared head, `u32` timestamp, the hit and miss lists, the targets,
@@ -507,10 +510,11 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
     } else {
         None
     };
-    if cast_flags & CAST_FLAG_ADJUST_MISSILE != 0 {
-        let _elevation = read_u32_le(r)?;
-        let _delay_ms = read_u32_le(r)?;
-    }
+    let trajectory = if cast_flags & CAST_FLAG_ADJUST_MISSILE != 0 {
+        Some((f32::from_bits(read_u32_le(r)?), read_u32_le(r)?))
+    } else {
+        None
+    };
     let ammo_display_id = if cast_flags & CAST_FLAG_AMMO != 0 {
         Some(read_ammo(r)?)
     } else {
@@ -542,6 +546,7 @@ pub(super) fn read_spell_go(r: &mut impl Read) -> io::Result<SpellGo> {
         targets,
         ammo_display_id,
         runes,
+        trajectory,
     })
 }
 
