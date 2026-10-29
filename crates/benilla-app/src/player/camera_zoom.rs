@@ -69,6 +69,7 @@ impl ZoomLimit {
     pub(crate) fn set_factor(&mut self, factor: f32) {
         self.factor = factor;
         self.max = orbit_limit(self.distance_max, self.factor);
+        bevy::log::debug!("camera: zoom limit {} at factor {factor}", self.max);
     }
 
     #[cfg(test)]

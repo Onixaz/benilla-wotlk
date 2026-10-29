@@ -525,6 +525,107 @@ fn every_objectives_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Camera panel's checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`; the camera CVar registrar's rows).
+const CAMERA_CHECKBOXES: [(&str, &str, &str); 4] = [
+    ("FollowTerrain", "cameraTerrainTilt", "0"),
+    ("HeadBob", "cameraBobbing", "0"),
+    ("WaterCollision", "cameraWaterCollision", "1"),
+    ("SmartPivot", "cameraPivot", "1"),
+];
+
+/// The Camera panel: each checkbox boots at its 12340 default, Okay writes the flip, Cancel keeps
+/// it and Defaults restores it; the follow-speed slider writes `cameraYawSmoothSpeed` and a
+/// quarter of it to `cameraPitchSmoothSpeed`, the distance slider `cameraDistanceMaxFactor`; the
+/// style dropdown writes `cameraSmoothStyle`, its "never" value ("0") greys Follow Terrain and the
+/// speed slider, and Cancel puts the old style back.
+#[test]
+fn every_camera_control_writes_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-camera");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsCameraPanel)";
+    for (suffix, cvar, default) in CAMERA_CHECKBOXES {
+        let button = format!("InterfaceOptionsCameraPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    let number = |s: &UiScript, cvar: &str| -> f64 {
+        s.eval::<f64>(&format!("return tonumber(GetCVar('{cvar}'))"))
+            .unwrap()
+    };
+    assert_eq!(number(&s, "cameraYawSmoothSpeed"), 180.0);
+    s.run(&format!(
+        "{open} InterfaceOptionsCameraPanelFollowSpeedSlider:SetValue(240) \
+         InterfaceOptionsCameraPanelMaxDistanceSlider:SetValue(1.5) InterfaceOptionsFrameOkay:Click()"
+    ))
+    .unwrap();
+    assert_eq!(number(&s, "cameraYawSmoothSpeed"), 240.0);
+    assert_eq!(
+        number(&s, "cameraPitchSmoothSpeed"),
+        60.0,
+        "a quarter of the yaw speed"
+    );
+    assert_eq!(number(&s, "cameraDistanceMaxFactor"), 1.5);
+    assert_eq!(s.cvar("cameraSmoothStyle").as_deref(), Some("1"));
+    s.run(&format!(
+        "{open} InterfaceOptionsCameraPanelStyleDropDown_OnClick({{ value = '0' }})"
+    ))
+    .unwrap();
+    assert_eq!(s.cvar("cameraSmoothStyle").as_deref(), Some("0"));
+    let greyed: (bool, bool) = s
+        .eval(
+            "return InterfaceOptionsCameraPanelFollowTerrain:IsEnabled() ~= 1, \
+             InterfaceOptionsCameraPanelFollowSpeedSlider:IsEnabled() ~= 1",
+        )
+        .unwrap();
+    assert_eq!(greyed, (true, true), "the never style greys its dependents");
+    s.run("InterfaceOptionsFrameCancel:Click()").unwrap();
+    assert_eq!(
+        s.cvar("cameraSmoothStyle").as_deref(),
+        Some("1"),
+        "Cancel puts the old style back"
+    );
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Social panel's checkboxes, `(button suffix, CVar, registered default)`
 /// (`InterfaceOptionsPanels.xml`, the game CVar registrar `0x51d9b0`). `showChatIcons`, in
 /// `SocialPanelOptions`, has no checkbox and no registration in 12340.
