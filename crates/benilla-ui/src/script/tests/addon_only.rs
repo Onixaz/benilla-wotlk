@@ -195,7 +195,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "TogglePortals",
     "ToggleTris",
     "UnSilenceMember",
-    "UnitInVehicleControlSeat",
     "UnitIsFeignDeath",
     "UnitIsPVPSanctuary",
     "UnitIsTrivial",

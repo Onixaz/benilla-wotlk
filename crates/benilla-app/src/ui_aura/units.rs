@@ -93,6 +93,8 @@ pub(super) struct Inputs<'g, 'a, H, T, V> {
     pub(super) mouseover: u64,
     pub(super) npc: u64,
     pub(super) focus: u64,
+    /// `vehicle`'s guid, 0 when the player is not seated.
+    pub(super) vehicle: u64,
     /// The object manager's lookup (`0x468460`).
     pub(super) held: H,
     /// A held unit's aura table, by guid.
@@ -159,6 +161,7 @@ impl UnitAuras {
             mouseover,
             npc,
             focus,
+            vehicle,
             held,
             table_of,
             buffs_visible,
@@ -181,12 +184,19 @@ impl UnitAuras {
         // its roster record while out of view; any other lists only while held.
         let mut g = std::mem::take(&mut self.guids);
         let mut walk = std::mem::take(&mut self.walk);
-        (g.player, g.pet, g.target, g.mouseover, g.npc, g.focus) =
-            (me, pet, target, mouseover, npc, focus);
+        (
+            g.player,
+            g.pet,
+            g.vehicle,
+            g.target,
+            g.mouseover,
+            g.npc,
+            g.focus,
+        ) = (me, pet, vehicle, target, mouseover, npc, focus);
         fill_group(&mut g, group, me, &held);
         g.held.clear();
         walk.clear();
-        walk.extend([me, pet, target, mouseover, npc, focus].map(|g| (g, false)));
+        walk.extend([me, pet, vehicle, target, mouseover, npc, focus].map(|g| (g, false)));
         walk.extend(g.party.iter().chain(&g.party_pets).map(|&g| (g, true)));
         walk.extend(g.raid.iter().chain(&g.raid_pets).map(|&g| (g, true)));
         while let Some((guid, record_ok)) = walk.pop() {

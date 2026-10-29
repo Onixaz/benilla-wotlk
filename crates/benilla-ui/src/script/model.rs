@@ -623,6 +623,8 @@ pub(crate) struct Model {
     pub(crate) spell_info: Option<std::rc::Rc<dyn super::spell_info::SpellInfoSource>>,
     /// Each held unit's threat list.
     pub(crate) threat: super::threat::ThreatView,
+    /// Each unit's passenger state and seat.
+    pub(crate) vehicles: super::vehicle::VehicleView,
     /// The four totem slots and their tools.
     pub(crate) totems: super::totem::TotemSlots,
     /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
@@ -1136,6 +1138,9 @@ impl Model {
         if token.eq_ignore_ascii_case("focus") {
             return self.focus_unit();
         }
+        if token.eq_ignore_ascii_case("vehicle") {
+            return self.vehicle_unit();
+        }
         self.pushed_unit(token).or_else(|| self.chained_unit(token))
     }
 
@@ -1156,6 +1161,20 @@ impl Model {
                     .values()
                     .find(|u| u.exists && u.guid == guid)
             })
+    }
+
+    /// The seated player's vehicle by guid, as the getters look its object up (`0x468460`):
+    /// whichever snapshot holds it, the per-guid feed's ([`super::UnitGuids::chain_ends`]) first.
+    fn vehicle_unit(&self) -> Option<&UnitState> {
+        let guid = self.unit_guids.vehicle;
+        if guid == 0 {
+            return None;
+        }
+        self.units_by_guid.get(&guid).or_else(|| {
+            self.units_by_lower
+                .values()
+                .find(|u| u.exists && u.guid == guid)
+        })
     }
 
     /// The snapshot pushed under `token` itself, folded as 1.12's resolver `0x515970` folds
@@ -1437,6 +1456,7 @@ impl Model {
             title_throttle: Default::default(),
             spell_info: None,
             threat: Default::default(),
+            vehicles: Default::default(),
             totems: Default::default(),
             totem_destroys: Vec::new(),
             multicast: Default::default(),

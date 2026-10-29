@@ -13,12 +13,14 @@ use std::sync::Arc;
 
 mod passenger;
 
+pub(crate) use passenger::{Passenger, SEATED};
+
 use bevy::prelude::*;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_formats::{VehicleCatalog, VehicleRec, VehicleSeatRec};
 use benilla_protocol::{SessionEvent, SessionEventKind};
-use benilla_ui::script::{ScriptValue, UiScript};
+use benilla_ui::script::{ScriptValue, UiScript, VehicleSeatView, VehicleUnitView, VehicleView};
 
 use crate::net::{EnteredWorldMessage, GuidIndex, NetHandlerApp, ObjectStore, SelfGuid};
 
@@ -83,8 +85,12 @@ impl Plugin for VehiclePlugin {
                 (
                     on_world_enter.after(benilla_world::schedule::WorldStage::Net),
                     passenger::track_passengers.after(benilla_world::schedule::WorldStage::Net),
+                    feed_vehicle_view
+                        .in_set(crate::ui_unit::UnitFeed)
+                        .after(passenger::track_passengers),
                     feed_vehicle_signals
                         .in_set(crate::ui_unit::UnitFeed)
+                        .after(feed_vehicle_view)
                         .after(crate::ui_unit::EnterWorldFeed)
                         .after(on_world_enter)
                         .after(passenger::track_passengers),
@@ -210,6 +216,69 @@ fn on_world_enter(
     };
     let indicator = tables.vehicle(v.id).map_or(0, |r| r.ui_indicator_id);
     signals.data.push((me, Some(indicator)));
+}
+
+/// The seat facts the verbs read.
+fn seat_view(s: &VehicleSeatRec) -> VehicleSeatView {
+    VehicleSeatView {
+        flags: s.flags,
+        flags_b: s.flags_b,
+        skin: s.ui_skin,
+    }
+}
+
+/// Push each unit's vehicle facts (`0x613600`): a held passenger's seat on its vehicle and its
+/// state, controlling when the vehicle is its own `UNIT_FIELD_CHARM`; an unheld group member's
+/// seat by the party record's seat id.
+fn feed_vehicle_view(
+    script: Option<NonSendMut<UiScript>>,
+    passengers: Query<(&crate::net::Guid, &ObjectStore, &Passenger)>,
+    vehicles: Query<&Vehicle>,
+    index: Res<GuidIndex>,
+    group: Option<Res<crate::ui_party::GroupState>>,
+    tables: Res<VehicleTables>,
+    mut pushed: Local<crate::ui_script::VmMemo<Option<VehicleView>>>,
+) {
+    let Some(mut script) = script else {
+        return;
+    };
+    let mut view = VehicleView::default();
+    for (guid, store, p) in &passengers {
+        let vehicle = index.0.get(&p.vehicle).and_then(|&e| vehicles.get(e).ok());
+        view.units.insert(
+            guid.0,
+            VehicleUnitView {
+                state: p.state,
+                seat: vehicle
+                    .and_then(|v| tables.seat(v.id, usize::from(p.seat)))
+                    .map(seat_view),
+                controlling: p.state == SEATED && store.0.unit_charm() == Some(p.vehicle),
+            },
+        );
+    }
+    for (&guid, stats) in group.iter().flat_map(|g| g.stats.iter()) {
+        if index.0.contains_key(&guid) {
+            continue;
+        }
+        let seat = stats
+            .vehicle_seat
+            .filter(|&id| id > 0)
+            .and_then(|id| tables.catalog.seats.get(&id));
+        if let Some(seat) = seat {
+            view.units.insert(
+                guid,
+                VehicleUnitView {
+                    seat: Some(seat_view(seat)),
+                    ..Default::default()
+                },
+            );
+        }
+    }
+    let last = pushed.get(&script);
+    if last.as_ref() != Some(&view) {
+        script.set_vehicles(view.clone());
+        *last = Some(view);
+    }
 }
 
 /// Fire what the frame owes, each once per token naming the unit (`0x60bb70`).
@@ -374,5 +443,83 @@ mod tests {
         let s = w.resource::<VehicleSignals>();
         assert!(s.sliders_hidden);
         assert_eq!(s.data, [(ME, Some(5))]);
+    }
+
+    /// A held passenger reads its seat on the vehicle and controls the vehicle it charms; an
+    /// unheld group member reads the party record's seat id.
+    #[test]
+    fn the_view_carries_seats_to_the_verbs() {
+        let (mut w, me, cart) = world();
+        let mut cat = (*w.resource::<VehicleTables>().catalog).clone();
+        cat.vehicles.get_mut(&36).unwrap().seat_ids[0] = 7;
+        for (id, skin) in [(7, 1), (8, 0)] {
+            cat.seats.insert(
+                id,
+                VehicleSeatRec {
+                    id,
+                    flags: 0x2000_0800,
+                    ui_skin: skin,
+                    ..Default::default()
+                },
+            );
+        }
+        w.resource_mut::<VehicleTables>().catalog = Arc::new(cat);
+        w.entity_mut(cart).insert(Vehicle {
+            id: 36,
+            raw_facing: 0.0,
+        });
+        // `UNIT_FIELD_CHARM` (6-7) on the cart.
+        let charm =
+            ObjectFields::from_pairs(&[(2, 0x19), (6, CART as u32), (7, (CART >> 32) as u32)])
+                .into_created(ObjectType::Player);
+        w.entity_mut(me).insert((
+            crate::net::Guid(ME),
+            ObjectStore(charm),
+            Passenger {
+                vehicle: CART,
+                seat: 0,
+                state: SEATED,
+            },
+        ));
+        const FAR: u64 = 0x21;
+        let mut group = crate::ui_party::GroupState::default();
+        group.stats.insert(
+            FAR,
+            benilla_protocol::messages::PartyMemberStatsInfo {
+                vehicle_seat: Some(8),
+                ..Default::default()
+            },
+        );
+        w.insert_resource(group);
+        let mut script = UiScript::new().unwrap();
+        script.set_unit(
+            "player",
+            Some(benilla_ui::script::UnitState {
+                exists: true,
+                has_object: true,
+                guid: ME,
+                ..Default::default()
+            }),
+        );
+        script.set_unit(
+            "party1",
+            Some(benilla_ui::script::UnitState {
+                exists: true,
+                guid: FAR,
+                ..Default::default()
+            }),
+        );
+        w.insert_non_send_resource(script);
+        w.run_system_once(feed_vehicle_view).unwrap();
+        let script = w.non_send_resource::<UiScript>();
+        let eval = |code: &str| {
+            script
+                .eval::<String>(&format!("return tostring({code})"))
+                .unwrap()
+        };
+        assert_eq!(eval("UnitControllingVehicle('player')"), "true");
+        assert_eq!(eval("UnitVehicleSkin('player')"), "Mechanical");
+        assert_eq!(eval("UnitInVehicleControlSeat('party1')"), "true");
+        assert_eq!(eval("UnitVehicleSkin('party1')"), "Natural");
     }
 }

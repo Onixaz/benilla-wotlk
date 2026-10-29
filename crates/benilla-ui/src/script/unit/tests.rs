@@ -2521,7 +2521,7 @@ fn unit_is_possessed_reads_the_flag_and_issecure_is_set() {
 }
 
 /// `UnitHasVehicleUI` (`0x613740`) pushes a Lua boolean through a resolver that never raises, so
-/// any argument answers false while benilla tracks no vehicle seat.
+/// any argument answers false with no seat fed.
 #[test]
 fn unit_has_vehicle_ui_answers_a_boolean_false_for_any_argument() {
     let mut s = UiScript::new().unwrap();
