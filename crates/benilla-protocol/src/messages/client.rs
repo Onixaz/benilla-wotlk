@@ -286,7 +286,7 @@ pub fn movement(mover: u64, info: &MovementInfo) -> Vec<u8> {
 }
 
 /// The mover's packed guid, as the 3.3.5a acks open (AzerothCore `MovementHandler.cpp`).
-fn packed(guid: u64) -> Vec<u8> {
+pub(super) fn packed(guid: u64) -> Vec<u8> {
     let mut body = Vec::with_capacity(9);
     crate::wire::write_packed_guid(guid, &mut body).expect("a Vec write cannot fail");
     body

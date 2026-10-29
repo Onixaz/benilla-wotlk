@@ -74,6 +74,47 @@ impl WorldWriter {
         )
     }
 
+    /// `CMSG_REQUEST_VEHICLE_EXIT`, `_PREV_SEAT` or `_NEXT_SEAT`: one of the three empty seat
+    /// requests for a vehicle we ride and do not control.
+    pub fn request_vehicle(&mut self, opcode: u16) -> Result<()> {
+        self.send(opcode, &[])
+    }
+
+    /// `CMSG_REQUEST_VEHICLE_SWITCH_SEAT`: `vehicle`'s `seat`.
+    pub fn request_vehicle_switch_seat(&mut self, vehicle: u64, seat: u8) -> Result<()> {
+        self.send(
+            opcode::CMSG_REQUEST_VEHICLE_SWITCH_SEAT,
+            &messages::request_vehicle_switch_seat(vehicle, seat),
+        )
+    }
+
+    /// `CMSG_EJECT_PASSENGER` or `CMSG_PLAYER_VEHICLE_ENTER`, each a bare guid.
+    pub fn vehicle_guid(&mut self, opcode: u16, guid: u64) -> Result<()> {
+        self.send(opcode, &messages::vehicle_guid(guid))
+    }
+
+    /// `CMSG_DISMISS_CONTROLLED_VEHICLE` with our pose, or with `seat`
+    /// `CMSG_CHANGE_SEATS_ON_CONTROLLED_VEHICLE`.
+    pub fn controlled_vehicle(
+        &mut self,
+        mover: u64,
+        flags: u32,
+        pose: ([f32; 3], f32),
+        seat: Option<(u64, u8)>,
+    ) -> Result<()> {
+        let info = movement_info(pose.0, pose.1, flags);
+        match seat {
+            None => self.send(
+                opcode::CMSG_DISMISS_CONTROLLED_VEHICLE,
+                &messages::dismiss_controlled_vehicle(mover, &info),
+            ),
+            Some((vehicle, seat)) => self.send(
+                opcode::CMSG_CHANGE_SEATS_ON_CONTROLLED_VEHICLE,
+                &messages::change_seats_on_controlled_vehicle(mover, &info, vehicle, seat),
+            ),
+        }
+    }
+
     /// `CMSG_MOVE_SPLINE_DONE`: owed, at rest, when an `SMSG_MONSTER_MOVE` on our own guid ends.
     /// The server checks `spline_id` against its newest, then relocates us and tells observers.
     pub fn move_spline_done(

@@ -1433,6 +1433,19 @@ pub enum ServerPacket {
         unit: u64,
         victim: u64,
     },
+    /// `SMSG_PLAYER_VEHICLE_DATA`: `guid`'s vehicle id, 0 to take its vehicle away.
+    PlayerVehicleData {
+        guid: u64,
+        vehicle_id: u32,
+    },
+    /// `SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA`: the seat change our passenger waits on is off.
+    CancelExpectedRideVehicleAura,
+    /// `SMSG_SET_PROJECTILE_POSITION`: where `caster`'s missile `cast_id` hit.
+    SetProjectilePosition {
+        caster: u64,
+        cast_id: u8,
+        position: crate::wire::Vector3d,
+    },
     /// `SMSG_THREAT_CLEAR`: `unit`'s threat list is dropped.
     ThreatClear {
         unit: u64,
@@ -1653,6 +1666,11 @@ impl ServerPacket {
             ServerPacket::ThreatUpdate(_) => "SMSG_THREAT_UPDATE".into(),
             ServerPacket::ThreatRemove { .. } => "SMSG_THREAT_REMOVE".into(),
             ServerPacket::ThreatClear { .. } => "SMSG_THREAT_CLEAR".into(),
+            ServerPacket::PlayerVehicleData { .. } => "SMSG_PLAYER_VEHICLE_DATA".into(),
+            ServerPacket::CancelExpectedRideVehicleAura => {
+                "SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA".into()
+            }
+            ServerPacket::SetProjectilePosition { .. } => "SMSG_SET_PROJECTILE_POSITION".into(),
             ServerPacket::Dismount { .. } => "SMSG_DISMOUNT".into(),
             ServerPacket::MirrorImageData { .. } => "SMSG_MIRRORIMAGE_DATA".into(),
             ServerPacket::ForcedReactions { .. } => "SMSG_SET_FORCED_REACTIONS".into(),

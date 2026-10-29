@@ -827,6 +827,16 @@ pub enum SessionEvent {
     ThreatUpdate(crate::messages::ThreatUpdate),
     /// `victim` leaves `unit`'s threat list (`SMSG_THREAT_REMOVE`).
     ThreatRemove { unit: u64, victim: u64 },
+    /// `guid`'s vehicle id, 0 to take its vehicle away (`SMSG_PLAYER_VEHICLE_DATA`).
+    PlayerVehicleData { guid: u64, vehicle_id: u32 },
+    /// The seat change our passenger waits on is off (`SMSG_ON_CANCEL_EXPECTED_RIDE_VEHICLE_AURA`).
+    CancelExpectedRideVehicleAura,
+    /// Where `caster`'s trajectory missile `cast_id` hit (`SMSG_SET_PROJECTILE_POSITION`).
+    SetProjectilePosition {
+        caster: u64,
+        cast_id: u8,
+        position: [f32; 3],
+    },
     /// `unit`'s threat list is dropped (`SMSG_THREAT_CLEAR`).
     ThreatClear { unit: u64 },
     /// The unit dismounts now, ahead of its descriptor (`SMSG_DISMOUNT`).

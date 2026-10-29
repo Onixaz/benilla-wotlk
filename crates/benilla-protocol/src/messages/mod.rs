@@ -68,6 +68,7 @@ mod trainer;
 mod tutorial;
 mod unit_state;
 mod update_object;
+mod vehicle;
 mod vendor;
 mod world_state;
 pub use account_data::{
@@ -334,6 +335,10 @@ pub use update_object::{
     FIELD_PLAYER_SKILL_INFO_1_1, PLAYER_COMBAT_RATINGS, PLAYER_EXPLORED_ZONES_SLOTS,
     PLAYER_GLYPH_SOCKETS, PLAYER_KNOWN_TITLE_BITS, PLAYER_QUEST_LOG_SLOTS, PLAYER_SKILL_SLOTS,
     QUEST_LOG_SLOT_FIELDS, UNIT_AURA_POSITIVE_SLOTS, UNIT_AURA_SLOTS,
+};
+pub use vehicle::{
+    change_seats_on_controlled_vehicle, dismiss_controlled_vehicle, request_vehicle_switch_seat,
+    update_projectile_position, vehicle_guid,
 };
 pub use vendor::{
     buy_item, buy_item_in_slot, buy_result, buyback_item, list_inventory, repair_item, sell_item,

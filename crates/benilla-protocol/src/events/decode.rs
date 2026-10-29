@@ -380,6 +380,21 @@ pub fn decode(packet: ServerPacket) -> Vec<SessionEvent> {
             vec![SessionEvent::ThreatRemove { unit, victim }]
         }
         ServerPacket::ThreatClear { unit } => vec![SessionEvent::ThreatClear { unit }],
+        ServerPacket::PlayerVehicleData { guid, vehicle_id } => {
+            vec![SessionEvent::PlayerVehicleData { guid, vehicle_id }]
+        }
+        ServerPacket::CancelExpectedRideVehicleAura => {
+            vec![SessionEvent::CancelExpectedRideVehicleAura]
+        }
+        ServerPacket::SetProjectilePosition {
+            caster,
+            cast_id,
+            position,
+        } => vec![SessionEvent::SetProjectilePosition {
+            caster,
+            cast_id,
+            position: [position.x, position.y, position.z],
+        }],
         ServerPacket::Dismount { guid } => vec![SessionEvent::Dismount { guid }],
         ServerPacket::MirrorImageData { guid, image } => {
             vec![SessionEvent::MirrorImageData { guid, image }]
