@@ -942,8 +942,12 @@ pub(crate) fn setup_entities(
         }
         Err(e) => warn!(
             "gt tables unavailable, the sheet's rating bonuses, crit from stats and spirit \
-             regen read 0: {e:#}"
+             regen and the barber's prices read 0: {e:#}"
         ),
+    }
+    match benilla_formats::load_barber_shop_styles(&mut chain) {
+        Ok(styles) => commands.insert_resource(crate::ui_barber::BarberStyles(styles)),
+        Err(e) => warn!("barber shop styles unavailable, the barber shop offers none: {e:#}"),
     }
     match benilla_formats::load_durability_tables(&mut chain) {
         Ok(tables) => commands.insert_resource(crate::ui_merchant::RepairTables(tables)),

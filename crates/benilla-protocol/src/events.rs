@@ -454,6 +454,10 @@ pub enum SessionEvent {
     GroupJoinedBattleground(crate::messages::GroupJoinedBattleground),
     /// `SMSG_BATTLEFIELD_PORT_DENIED`: `ERR_PLAYER_DEAD` with a player (`0x54d4b0`).
     BattlefieldPortDenied,
+    /// `SMSG_ENABLE_BARBER_SHOP`: the barber shop opens.
+    EnableBarberShop,
+    /// `SMSG_BARBER_SHOP_RESULT`: the paid change's result word.
+    BarberShopResult(u32),
     /// `SMSG_ARENA_UNIT_DESTROYED`: an arena opponent's unit left the world.
     ArenaUnitDestroyed(u64),
     /// The Wintergrasp battle manager's notices, one script event each.

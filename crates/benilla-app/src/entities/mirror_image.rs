@@ -125,6 +125,7 @@ pub(super) fn mirror_equipment(look: &MirrorLook) -> super::Equipment {
         helm: i[0],
         emblem: None,
         tabard_preview: false,
+        look: None,
         settled: true,
     }
 }

@@ -10,7 +10,6 @@ use super::reference_surface::engine_globals;
 /// interface. Byte-sorted.
 const ADDON_ONLY_UNBUILT: &[&str] = &[
     "AppendToFile",
-    "ApplyBarberShopStyle",
     "BNIsBlocked",
     "BNReportFriendInvite",
     "BNSetFocus",
@@ -73,7 +72,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "GetCurrentKeyBoardFocus",
     "GetEventCPUUsage",
     "GetExtendedItemInfo",
-    "GetFacialHairCustomization",
     "GetFrameCPUUsage",
     "GetFramesRegisteredForEvent",
     "GetFunctionCPUUsage",

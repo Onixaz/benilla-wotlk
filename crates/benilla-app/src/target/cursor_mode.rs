@@ -353,13 +353,16 @@ pub(crate) const GO_TYPE_FISHINGNODE: i32 = 17;
 /// `GAMEOBJECT_TYPE_CHAIR` (7): its own range predicate `0x5f5670` accepts within 3.0 yd
 /// (`[0xc4d808]`, written only by `0x5f98b0` as 3.0 squared).
 pub(crate) const GO_TYPE_CHAIR: i32 = 7;
+/// `GAMEOBJECT_TYPE_BARBER_CHAIR` (32): a chair (`0x70c7f0` builds on the chair's `0x70c6a0`), so
+/// its reach is the chair's 3.0 yd.
+pub(crate) const GO_TYPE_BARBER_CHAIR: i32 = 32;
 pub(super) fn go_interact_range_sq(type_id: i32) -> f32 {
     match type_id {
         GO_TYPE_FISHINGNODE => 100.0 * 100.0,
         // Measured to the object; the reference (seats from `0x5f5760`) and vmangos
         // (`GameObject.cpp:2231-2236`) measure to the nearest seat, so only a multi-seat bench
         // differs, by up to half its span.
-        GO_TYPE_CHAIR => 9.0,
+        GO_TYPE_CHAIR | GO_TYPE_BARBER_CHAIR => 9.0,
         _ => GO_INTERACT_RANGE_SQ,
     }
 }
@@ -1518,6 +1521,7 @@ mod tests {
         assert_eq!(go_interact_range_sq(GO_TYPE_FISHINGNODE), 100.0 * 100.0);
         assert_eq!(go_interact_range_sq(0), GO_INTERACT_RANGE_SQ);
         assert_eq!(go_interact_range_sq(GO_TYPE_CHAIR), 9.0);
+        assert_eq!(go_interact_range_sq(GO_TYPE_BARBER_CHAIR), 9.0);
         assert!(
             go_interact_range_sq(GO_TYPE_CHAIR) < GO_INTERACT_RANGE_SQ,
             "a chair's reach is shorter than the default GameObject reach"

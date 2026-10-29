@@ -1303,5 +1303,11 @@ pub const SMSG_DISMOUNT: u16 = 0x03AC; // 940
 pub const CMSG_GET_MIRRORIMAGE_DATA: u16 = 0x0401; // 1025
 /// A clone's caster look, the answer to [`CMSG_GET_MIRRORIMAGE_DATA`] (`0x7324b0`).
 pub const SMSG_MIRRORIMAGE_DATA: u16 = 0x0402; // 1026
+/// Pay for a new look in the barber chair (`0x52eda0`).
+pub const CMSG_ALTER_APPEARANCE: u16 = 0x0426; // 1062
+/// The barber chair opens the barber shop (`0x52f9b0`).
+pub const SMSG_ENABLE_BARBER_SHOP: u16 = 0x0427; // 1063
+/// The answer to [`CMSG_ALTER_APPEARANCE`] (`0x52e5b0`).
+pub const SMSG_BARBER_SHOP_RESULT: u16 = 0x0428; // 1064
 /// The faction reactions the server forces (`Packet_SMSG_SET_FORCED_REACTIONS` `0x5d15d0`).
 pub const SMSG_SET_FORCED_REACTIONS: u16 = 0x02A5; // 677

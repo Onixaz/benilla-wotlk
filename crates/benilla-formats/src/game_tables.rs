@@ -1,9 +1,10 @@
-//! The gt tables behind the character sheet's ratings, crit chances and spirit regeneration, read
-//! as 12340 reads them: `GameTable_Lookup(slot, row, col)` (`0x7f6990`) fetches the record whose id
-//! is `col × rows + row` (`0x7f69b0`), `rows` being the table's `GameTables.dbc` row count
-//! (`GameTable_Bind` `0x7f6a10`). A one-column table's record id is its index (`0x65c330`);
-//! `gtOCTClassCombatRatingScalar` keeps its id in column 0 and its value in column 1 (`0x660f80`,
-//! `0x7f69e0`). An id outside the table reads 0, where `GetRecord` (`0x65c290`) finds none.
+//! The gt tables behind the barber shop's prices and the character sheet's ratings, crit chances
+//! and spirit regeneration, read as 12340 reads them: `GameTable_Lookup(slot, row, col)`
+//! (`0x7f6990`) fetches the record whose id is `col × rows + row` (`0x7f69b0`), `rows` being the
+//! table's `GameTables.dbc` row count (`GameTable_Bind` `0x7f6a10`). A one-column table's record
+//! id is its index (`0x65c330`); `gtOCTClassCombatRatingScalar` keeps its id in column 0 and its
+//! value in column 1 (`0x660f80`, `0x7f69e0`). An id outside the table reads 0, where `GetRecord`
+//! (`0x65c290`) finds none.
 
 use std::collections::HashMap;
 
@@ -13,10 +14,12 @@ use benilla_dbc::{FieldType, Schema, SchemaField};
 use crate::chain::Chain;
 use crate::dbc::{f32_at, parse, str_at, u32_at};
 
-/// The gt tables the character sheet reads, by their lookup slot in 12340's adapter table
-/// (`g_gameTableAdapters` `0xaf4f90`).
+/// The gt tables the barber shop and the character sheet read, by their lookup slot in 12340's
+/// adapter table (`g_gameTableAdapters` `0xaf4f90`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GameTableId {
+    /// Slot 0: the barber shop's base price in copper by level (`0x52e850`, `0x52eba0`).
+    BarberShopCostBase,
     /// Slot 1: rating points per 1% by level (row) and rating (column).
     CombatRatings,
     /// Slot 2: melee crit per agility by level and class.
@@ -38,7 +41,8 @@ pub enum GameTableId {
 }
 
 impl GameTableId {
-    const ALL: [GameTableId; 9] = [
+    const ALL: [GameTableId; 10] = [
+        GameTableId::BarberShopCostBase,
         GameTableId::CombatRatings,
         GameTableId::ChanceToMeleeCrit,
         GameTableId::ChanceToMeleeCritBase,
@@ -53,6 +57,7 @@ impl GameTableId {
     /// The adapter's name, matched against `GameTables.dbc` column 0, and the file stem.
     fn name(self) -> &'static str {
         match self {
+            GameTableId::BarberShopCostBase => "BarberShopCostBase",
             GameTableId::CombatRatings => "CombatRatings",
             GameTableId::ChanceToMeleeCrit => "ChanceToMeleeCrit",
             GameTableId::ChanceToMeleeCritBase => "ChanceToMeleeCritBase",
@@ -225,5 +230,8 @@ mod tests {
         // A mage (class 8) has a base spell crit and gains crit from intellect at 80.
         assert!(t.lookup(GameTableId::ChanceToSpellCritBase, 0, 7) > 0.0);
         assert!(t.lookup(GameTableId::ChanceToSpellCrit, 79, 7) > 0.0);
+        // The barber's base price climbs with level.
+        let base = |level: i32| t.lookup(GameTableId::BarberShopCostBase, level - 1, 0);
+        assert!(base(10) > 0.0 && base(80) > base(10));
     }
 }

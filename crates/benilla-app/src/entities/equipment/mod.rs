@@ -89,6 +89,10 @@ pub(crate) struct Equipment {
     pub(crate) emblem: Option<benilla_formats::GuildEmblem>,
     /// The tabard designer's preview on our own body (`[cc+0xc]`, `0x5e07d0`).
     pub(crate) tabard_preview: bool,
+    /// A player's look in dial order (skin, face, hair style, hair colour, facial hair): the
+    /// `PLAYER_BYTES` fields, or on our own body the barber shop's preview. A change re-dresses the
+    /// body in place, as each field's update handler resets the component (`0x6df530`).
+    pub(crate) look: Option<[u8; 5]>,
     pub(crate) settled: bool,
 }
 

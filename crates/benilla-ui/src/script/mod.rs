@@ -77,6 +77,7 @@ mod aura;
 mod autocomplete;
 mod backdrop;
 mod bank;
+mod barber;
 mod battle_net;
 mod battlefield_positions;
 mod battlefield_queue;
@@ -278,6 +279,7 @@ pub use auction::{
 pub use aura::AuraState;
 pub use backdrop::{inset_atlas_bleed, pieces, Backdrop, BackdropPiece, Insets};
 pub use bank::BankState;
+pub use barber::{BarberHost, BarberIntent, BarberStyle};
 pub use battlefield_positions::{BattlefieldFlagView, BattlefieldPositionView};
 pub use battlefield_queue::{
     BattlefieldFrame, BattlefieldJoin, BattlefieldListPush, BattlefieldMgrRequest,
@@ -1058,6 +1060,7 @@ fn install_in_game(lua: &Lua) -> mlua::Result<()> {
     inspect::install(lua)?;
     dressup::install(lua)?;
     tabard::install(lua)?;
+    barber::install(lua)?;
     tradeskill::install(lua)?;
     lfg::install(lua)?;
     calendar::install(lua)?;

@@ -11,6 +11,7 @@ mod attack;
 mod auction;
 mod aura;
 mod bank;
+mod barber;
 mod battlefield;
 mod binder;
 mod broadcast;
@@ -105,6 +106,7 @@ pub use aura::{
 pub use bank::{
     autobank_item, autostore_bank_item, bank_slot_result, banker_activate, buy_bank_slot,
 };
+pub use barber::alter_appearance;
 pub use battlefield::{
     battlefield_list, battlefield_port, battlemaster_join, battlemaster_join_arena,
     bf_mgr_response, leave_battlefield, queue_bg_type, queue_team_size, BattlefieldActive,

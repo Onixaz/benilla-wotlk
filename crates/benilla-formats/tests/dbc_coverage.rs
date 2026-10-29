@@ -22,7 +22,6 @@ use benilla_formats::{dbc_width, READ_TABLES};
 const NOT_READ: &[(&str, &str)] = &[
     ("AreaGroup", "#240 GetTradeSkillTools' area requirement"),
     ("BannedAddOns", "#245 the addon ban list"),
-    ("BarberShopStyle", "#234 the barber shop"),
     (
         "Cfg_Configs",
         "#245 realm type rules: GetRealmInfo; realm_select hardcodes its rows",
@@ -40,10 +39,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("GMSurveyCurrentSurvey", "#245 GM surveys"),
     ("GMSurveyQuestions", "#245 GM surveys"),
     ("GMSurveySurveys", "#245 GM surveys"),
-    (
-        "gtBarberShopCostBase",
-        "#234 barber shop prices: GetBarberShopStyleInfo",
-    ),
     ("gtNPCManaCostScaler", "#233 NPC spell costs"),
     (
         "Item",
