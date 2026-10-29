@@ -9,9 +9,8 @@
 //!   reference does.
 //! - Seat: the top line's baseline is at `anchor.z + lineCount*scale` and the block hangs down one
 //!   pitch per line (`0x5cdc20`'s rotated branch).
-//! - Show gate (`ShouldShowName`, `0x6070a0`): the own unit by `UnitNameOwn`, before the target
-//!   rescue; the current target (`[0xb4e2d8]`, the selection) regardless of CVars; a dead creature
-//!   only through that rescue; others by `UnitNamePlayer` or `UnitNameNPC`.
+//! - Show gate (`0x729c70`): [`name_shown`] over the thirteen
+//!   `UnitName*` bits of [`NameConfig`].
 //! - Lines (`0x608f50`): an NPC's name and `<Subname>`; a player's `<AFK>`/`<DND>`/`<GM>`
 //!   prefixes, the a4 title slot (`UnitNamePlayerPVPTitle`, bit `0x20`) and name, and `<Guild>`.
 //!   The guild (a5) and subname (a6) slots share the format `"\n<%s>"` (`0x860f9c`) and are never
@@ -20,8 +19,7 @@
 //!   row from `CharTitles.dbc` with the name in its `%s`, gendered, and the `PVP_MEDAL<n>` line
 //!   under it for a set `PLAYER_BYTES_3` byte 2; never a creature's.
 //!
-//! Not built: 12340's own name CVars and gates (`PlayerNameRegisterCVars` `0x7e6150`, thirteen
-//! `UnitName*` bits); a7 and a8 have no cross-realm wire here.
+//! Not built: a7 and a8 have no cross-realm wire here.
 
 use std::collections::HashMap;
 
@@ -43,31 +41,135 @@ const SCALE_FLOOR: f32 = 0.2; // [0x80679c]
 const SCALE_KNEE: f32 = 4.0; // [0x8112a8]
 const SCALE_RATE: f32 = 1.5; // [0x8112ac]
 
-/// The `UnitNamePlayer`/`UnitNameNPC`/`UnitNameOwn` CVars (the reference's `0xce8720` mask), with
-/// the reference's defaults `"1"`, `"0"`, `"0"` (`0x6c7470`).
-#[derive(Resource, Clone, Copy)]
-pub(crate) struct NameConfig {
-    pub(crate) player: bool,
-    pub(crate) npc: bool,
-    pub(crate) own: bool,
-    /// `UnitNamePlayerGuild`, mask bit `0x10`, registered `"1"`: gates the a5 guild line
-    /// (`0x609085`), not a whole name.
-    pub(crate) player_guild: bool,
-    /// `UnitNamePlayerPVPTitle` (registered `"1"`, `0x7e6150`), mask bit `0x20`: gates the a4
-    /// title slot on the main name line.
-    pub(crate) player_pvp_title: bool,
+/// The `UnitName*` CVars' bits in the name mask (`[0xd380a0]`): the registrar (`0x7e6150`) hands
+/// each row its bit and the rows' change callback (`0x7e60e0`) sets or clears it.
+pub(crate) mod name_bit {
+    pub(crate) const OWN: u32 = 0x1;
+    pub(crate) const NPC: u32 = 0x2;
+    /// The guild line (`0x72d789`), not a whole name.
+    pub(crate) const PLAYER_GUILD: u32 = 0x4;
+    /// The a4 title slot (`0x72d749`), not a whole name.
+    pub(crate) const PLAYER_PVP_TITLE: u32 = 0x8;
+    pub(crate) const ENEMY_PLAYER: u32 = 0x10;
+    pub(crate) const ENEMY_PET: u32 = 0x20;
+    pub(crate) const ENEMY_TOTEM: u32 = 0x40;
+    pub(crate) const FRIENDLY_PLAYER: u32 = 0x80;
+    pub(crate) const FRIENDLY_PET: u32 = 0x100;
+    pub(crate) const FRIENDLY_TOTEM: u32 = 0x200;
+    pub(crate) const NON_COMBAT: u32 = 0x400;
+    pub(crate) const ENEMY_GUARDIAN: u32 = 0x1000;
+    /// Set and cleared by its row, but no reader tests it: a guardian on either side reads
+    /// [`ENEMY_GUARDIAN`] (`0x729e54`).
+    pub(crate) const FRIENDLY_GUARDIAN: u32 = 0x2000;
+}
+
+/// Each `UnitName*` row, lowercased, with its bit.
+pub(crate) const NAME_CVARS: [(&str, u32); 13] = [
+    ("unitnameown", name_bit::OWN),
+    ("unitnamenpc", name_bit::NPC),
+    ("unitnameplayerguild", name_bit::PLAYER_GUILD),
+    ("unitnameplayerpvptitle", name_bit::PLAYER_PVP_TITLE),
+    ("unitnameenemyplayername", name_bit::ENEMY_PLAYER),
+    ("unitnameenemypetname", name_bit::ENEMY_PET),
+    ("unitnameenemyguardianname", name_bit::ENEMY_GUARDIAN),
+    ("unitnameenemytotemname", name_bit::ENEMY_TOTEM),
+    ("unitnamefriendlyplayername", name_bit::FRIENDLY_PLAYER),
+    ("unitnamefriendlypetname", name_bit::FRIENDLY_PET),
+    ("unitnamefriendlyguardianname", name_bit::FRIENDLY_GUARDIAN),
+    ("unitnamefriendlytotemname", name_bit::FRIENDLY_TOTEM),
+    ("unitnamenoncombatcreaturename", name_bit::NON_COMBAT),
+];
+
+/// The name mask (`[0xd380a0]`), the `UnitName*` CVars as one word.
+#[derive(Resource, Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct NameConfig(pub(crate) u32);
+
+impl NameConfig {
+    pub(crate) fn has(self, bit: u32) -> bool {
+        self.0 & bit != 0
+    }
 }
 
 impl Default for NameConfig {
+    /// The registered defaults: guild, title, enemy and friendly players and pets "1".
     fn default() -> Self {
-        Self {
-            player: true,
-            npc: false,
-            own: false,
-            player_guild: true,
-            player_pvp_title: true,
-        }
+        use name_bit::*;
+        Self(
+            PLAYER_GUILD
+                | PLAYER_PVP_TITLE
+                | ENEMY_PLAYER
+                | ENEMY_PET
+                | FRIENDLY_PLAYER
+                | FRIENDLY_PET,
+        )
     }
+}
+
+/// What the name gate (`0x729c70`) reads off a unit the viewer does not control.
+#[derive(Clone, Copy, Default, Debug)]
+pub(crate) struct NameSubject {
+    pub(crate) is_player: bool,
+    /// The current target (`[0xbd07b0]`), named whatever the CVars.
+    pub(crate) is_target: bool,
+    /// The player can cooperate with it (`0x729b30`).
+    pub(crate) cooperates: bool,
+    /// The player can attack it (`0x729740`).
+    pub(crate) attackable: bool,
+    /// `UNIT_FIELD_BYTES_1` byte 2 bit `0x2`.
+    pub(crate) stealthed: bool,
+    /// The controller, `CHARMEDBY` else `CREATEDBY`, is a player in view.
+    pub(crate) player_controlled: bool,
+    /// `CREATEDBY` set, `SUMMONEDBY` clear and flags bit `0x200` (`0x729dc9`).
+    pub(crate) created_marker: bool,
+    pub(crate) creature_type: u32,
+    /// The creator read (`0x71b600`) answers: `CREATEDBY` with neither `CHARMEDBY` nor
+    /// `SUMMONEDBY`.
+    pub(crate) guardian: bool,
+}
+
+/// The name gate's answer for a unit past its targetable, plate/bubble and own-unit
+/// legs. Not applied: the vehicle-charmer leg (`0x729e96`-`0x729ec2`), which names a vehicle a
+/// cooperating driver rides by the friendly-pet bit.
+pub(crate) fn name_shown(cfg: NameConfig, s: &NameSubject) -> bool {
+    use name_bit::*;
+    if s.is_target {
+        return true;
+    }
+    let side = |friendly: bool, friend_bit: u32, enemy_bit: u32| {
+        cfg.has(if friendly { friend_bit } else { enemy_bit })
+    };
+    // Critters (8) and non-combat pets (12).
+    let critter = matches!(s.creature_type, 8 | 12);
+    if s.is_player {
+        return if s.cooperates {
+            cfg.has(FRIENDLY_PLAYER)
+        } else {
+            cfg.has(ENEMY_PLAYER) && !s.stealthed
+        };
+    }
+    if s.player_controlled {
+        let friendly = !s.attackable;
+        if !friendly && s.stealthed {
+            return false;
+        }
+        if s.created_marker || critter {
+            return cfg.has(NON_COMBAT);
+        }
+        if s.creature_type == 11 {
+            return side(friendly, FRIENDLY_TOTEM, ENEMY_TOTEM);
+        }
+        if s.guardian {
+            return cfg.has(ENEMY_GUARDIAN);
+        }
+        return side(s.cooperates, FRIENDLY_PET, ENEMY_PET);
+    }
+    if s.stealthed && s.attackable {
+        return false;
+    }
+    if critter {
+        return cfg.has(NON_COMBAT);
+    }
+    cfg.has(NPC)
 }
 
 /// The a1-a3 prefix slots of the line stack (`0x608f50`), CGPlayer vtable `+0x7c/+0x80/+0x84`
@@ -171,7 +273,7 @@ fn title_key(
         chosen: store.0.player_chosen_title(),
         female: store.0.unit_gender() == Some(1),
         medal: store.0.player_pvp_medal().unwrap_or(0),
-        on: cfg.player_pvp_title,
+        on: cfg.has(name_bit::PLAYER_PVP_TITLE),
         strings: strings.generation,
     })
 }
@@ -362,11 +464,12 @@ pub(crate) fn drive_nameplates(
         &Guid,
         &Transform,
         Option<&ObjectStore>,
-        Has<SelfPlayer>,
+        // The viewer's own units (`0x71ffc0`): the active player or the unit it moves.
+        (Has<SelfPlayer>, Has<crate::net::ActiveMover>),
         // Whether the body is drawn: a unit outside the scene has nothing to float a name over.
         Option<&InheritedVisibility>,
     )>,
-    self_store: Query<&ObjectStore, With<SelfPlayer>>,
+    self_store: Query<(&Guid, &ObjectStore), With<SelfPlayer>>,
     // The optimistic AFK mirror (`[0xb6e5cc]`), the own player's `<AFK>` override.
     mirror: Res<crate::ui_chat::AfkMirror>,
     // The show-gate inputs, one tuple param for Bevy's 16-param ceiling.
@@ -384,6 +487,8 @@ pub(crate) fn drive_nameplates(
         Res<NameConfig>,
         // The title rows and medal strings ([`PvpNameStrings`]).
         Res<PvpNameStrings>,
+        // A controller guid to its unit, for the player-controlled arm.
+        Res<crate::net::GuidIndex>,
     ),
     names: Res<NameCache>,
     // The guild cache, the a5 line's text; `ResMut` because a miss sends `CMSG_GUILD_QUERY`.
@@ -405,7 +510,11 @@ pub(crate) fn drive_nameplates(
         Query<(), With<crate::entities::mount::MountChild>>,
     ),
 ) {
-    let (selection, flash, rig, vplates, bubbles, group, social, name_cfg, pvp_strings) = gates;
+    let (selection, flash, rig, vplates, bubbles, group, social, name_cfg, pvp_strings, index) =
+        gates;
+    let (self_guid, own_store) = self_store
+        .single()
+        .map_or((None, None), |(g, s)| (Some(g.0), Some(s)));
     let (Ok(cam_tf), Some(atlas)) = (camera.single(), atlas.as_mut()) else {
         return;
     };
@@ -449,40 +558,76 @@ pub(crate) fn drive_nameplates(
     // The billboard facing: screen-aligned (the camera's own rotation), this frame's camera.
     let facing = cam_tf.rotation;
     let mut seen = bevy::ecs::entity::EntityHashSet::default();
-    for (entity, net, guid, tf, store, is_self, drawn) in &units {
+    for (entity, net, guid, tf, store, (is_self, moved), drawn) in &units {
         // A name needs a drawn body; this precedes the ShouldShowName ladder.
         if !drawn.is_none_or(|v| v.get()) {
             continue;
         }
-        // No distance cull: the name's update, cull and build (`0x6c6d40`, `0x6c6e00`,
-        // `0x6c6e90`) compare none; the 20-yard cap (`0x60f600`) is the V-key frame's.
-        // ShouldShowName's order: own unit by its CVar, the target (`[0xb4e2d8]`), the kind CVar.
-        // A V-key plate or chat bubble (`+0xe64`) suppresses the name (`0x6070a0`). A dead
-        // creature shows only as the target, as in the reference; that gate leg is untraced.
-        let show = if vplates.0.contains(&entity) || bubbles.0.contains(&entity) {
+        if !matches!(net.kind, EntityKind::Player | EntityKind::Unit) {
+            continue;
+        }
+        // No distance cull: the name's update, cull and build compare none.
+        // The targetable test (`0x71a390`): a `NOT_SELECTABLE` unit is named only as our own pet.
+        let untargetable = store.is_some_and(|s| {
+            s.0.unit_flags() & 0x0200_0000 != 0
+                && !(s.0.unit_created_by() == self_guid
+                    && own_store.and_then(|o| o.0.unit_pet_guid()) == Some(guid.0))
+        });
+        // A V-key plate or chat bubble suppresses the name (`0x729cea`).
+        let show = if untargetable || vplates.0.contains(&entity) || bubbles.0.contains(&entity) {
             false
-        } else if store.is_some_and(|s| s.0.unit_is_ghost_visual()) {
-            // The ghost vis-flag suppresses the name, target rescue included: `0x607101` and
-            // `0x60f62e` both test `bytes_1` byte 3 `& 3`.
-            false
-        } else if is_self {
-            // The own CVar, before the rescue; no name over a fully faded first-person avatar
-            // (our reading of `ShouldShowName`'s untraced `vtable+0x58` leg).
-            name_cfg.own
-                && rig
-                    .as_deref()
-                    .map_or(1.0, crate::player::CameraControl::self_fade)
-                    > 0.0
-        } else if selection.target == Some(entity) {
-            true
-        } else if net.kind == EntityKind::Unit && store.is_some_and(|s| s.0.unit_is_dead()) {
-            false
+        } else if is_self || moved {
+            // The own bit, before the target rescue; no name over a fully faded first-person
+            // avatar.
+            name_cfg.has(name_bit::OWN)
+                && (!is_self
+                    || rig
+                        .as_deref()
+                        .map_or(1.0, crate::player::CameraControl::self_fade)
+                        > 0.0)
         } else {
-            match net.kind {
-                EntityKind::Player => name_cfg.player,
-                EntityKind::Unit => name_cfg.npc,
-                _ => false,
-            }
+            let is_player = net.kind == EntityKind::Player;
+            let fields = store.map(|s| &s.0);
+            let controller =
+                fields.and_then(|f| f.unit_charmed_by().or_else(|| f.unit_created_by()));
+            let player_controlled = controller
+                .and_then(|g| index.0.get(&g))
+                .and_then(|&e| units.get(e).ok())
+                .is_some_and(|u| u.1.kind == EntityKind::Player);
+            let subject = NameSubject {
+                is_player,
+                is_target: selection.target == Some(entity),
+                cooperates: crate::target::ring::can_cooperate_with_player(
+                    factions.as_deref(),
+                    store,
+                    own_store,
+                ),
+                attackable: crate::target::ring::can_attack_from_player(
+                    factions.as_deref(),
+                    &reputations,
+                    &*group,
+                    store,
+                    own_store,
+                    is_player,
+                ),
+                stealthed: fields.is_some_and(|f| f.unit_is_stealthed()),
+                player_controlled,
+                created_marker: fields.is_some_and(|f| {
+                    f.unit_created_by().is_some()
+                        && f.unit_summoned_by().is_none()
+                        && f.unit_flags() & 0x200 != 0
+                }),
+                creature_type: fields
+                    .and_then(|f| f.object_entry())
+                    .and_then(|e| names.creature_type(e))
+                    .unwrap_or(0),
+                guardian: fields.is_some_and(|f| {
+                    f.unit_created_by().is_some()
+                        && f.unit_charmed_by().is_none()
+                        && f.unit_summoned_by().is_none()
+                }),
+            };
+            name_shown(*name_cfg, &subject)
         };
         if !show {
             continue;
@@ -514,7 +659,7 @@ pub(crate) fn drive_nameplates(
                 .and_then(|e| names.creature_subname(e))
                 // vmangos sends "" for most templates: an empty subname is no line.
                 .filter(|s| !s.trim().is_empty()),
-            EntityKind::Player if name_cfg.player_guild => store
+            EntityKind::Player if name_cfg.has(name_bit::PLAYER_GUILD) => store
                 .and_then(|s| crate::ui_guild::unit_guild_name(&s.0, &mut guilds, &net_commands)),
             _ => None,
         };
@@ -529,7 +674,7 @@ pub(crate) fn drive_nameplates(
                     factions.as_deref(),
                     &reputations,
                     &group,
-                    self_store.single().ok(),
+                    own_store,
                     |g| social.is_friend(g),
                 )
             }))
@@ -603,6 +748,7 @@ pub(crate) fn drive_nameplates(
         if seen.contains(unit) {
             true
         } else {
+            debug!("nameplates: drop {unit} {:?}", live.lines);
             if let Ok(mut e) = commands.get_entity(live.plate) {
                 e.despawn();
             }
@@ -702,16 +848,18 @@ pub(crate) struct NameplatesPlugin;
 #[derive(Resource)]
 struct NameAnchorTrace(bool);
 
-/// The overhead-name rows' change callback: the name trio, the guild line and the rank prefix.
+/// The rows' change callback (`0x7e60e0`): a `UnitName*` row sets or clears its bit.
 pub(crate) fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut names: ResMut<NameConfig>) {
-    match ev.key().as_str() {
-        "unitnameplayer" => names.player = ev.flag(),
-        "unitnamenpc" => names.npc = ev.flag(),
-        "unitnameown" => names.own = ev.flag(),
-        "unitnameplayerguild" => names.player_guild = ev.flag(),
-        "unitnameplayerpvptitle" => names.player_pvp_title = ev.flag(),
-        _ => {}
-    }
+    let key = ev.key();
+    let Some(&(_, bit)) = NAME_CVARS.iter().find(|(name, _)| *name == key.as_str()) else {
+        return;
+    };
+    let mask = if ev.flag() {
+        names.0 | bit
+    } else {
+        names.0 & !bit
+    };
+    names.set_if_neq(NameConfig(mask));
 }
 
 impl Plugin for NameplatesPlugin {
@@ -862,10 +1010,7 @@ mod tests {
         );
         let (_, orc) = unit(EntityKind::Player, &[(36, 0x010102), EXPLORER]);
         assert!(title_key(&cfg, &strings, &net, Some(&orc)).unwrap().female);
-        let off = NameConfig {
-            player_pvp_title: false,
-            ..cfg
-        };
+        let off = NameConfig(cfg.0 & !name_bit::PLAYER_PVP_TITLE);
         assert!(!title_key(&off, &strings, &net, Some(&human)).unwrap().on);
         let (creature, _) = unit(EntityKind::Unit, &[]);
         assert!(
@@ -891,10 +1036,7 @@ mod tests {
         let cfg = NameConfig::default();
         let explorer = unit(EntityKind::Player, &[HUMAN_MALE, EXPLORER]);
         assert_eq!(line(&cfg, &explorer, AFK, "Bob"), "<AFK>Bob the Explorer");
-        let off = NameConfig {
-            player_pvp_title: false,
-            ..cfg
-        };
+        let off = NameConfig(cfg.0 & !name_bit::PLAYER_PVP_TITLE);
         assert_eq!(
             line(&off, &explorer, AFK, "Bob"),
             "<AFK>Bob",
@@ -1096,5 +1238,86 @@ mod tests {
         assert_eq!(plates.materials.len(), 1);
         assert_eq!(plates.live.len(), 1);
         assert!(world.get_entity(plate).is_ok());
+    }
+
+    /// The name gate's arms, each by its own bit: players by side and stealth, the
+    /// player-owned totem, guardian and pet arms, critters, plain NPCs and the target rescue.
+    #[test]
+    fn each_unit_category_reads_its_own_name_bit() {
+        use name_bit::*;
+        let only = |bit: u32| NameConfig(bit);
+        let friendly_player = NameSubject {
+            is_player: true,
+            cooperates: true,
+            ..Default::default()
+        };
+        assert!(name_shown(only(FRIENDLY_PLAYER), &friendly_player));
+        assert!(!name_shown(only(ENEMY_PLAYER), &friendly_player));
+        let enemy_player = NameSubject {
+            is_player: true,
+            attackable: true,
+            ..Default::default()
+        };
+        assert!(name_shown(only(ENEMY_PLAYER), &enemy_player));
+        let stealthed = NameSubject {
+            stealthed: true,
+            ..enemy_player
+        };
+        assert!(
+            !name_shown(only(ENEMY_PLAYER), &stealthed),
+            "a stealthed enemy"
+        );
+        assert!(name_shown(
+            only(0),
+            &NameSubject {
+                is_target: true,
+                ..stealthed
+            }
+        ));
+        let owned = |creature_type, guardian, attackable, cooperates| NameSubject {
+            player_controlled: true,
+            creature_type,
+            guardian,
+            attackable,
+            cooperates,
+            ..Default::default()
+        };
+        assert!(name_shown(
+            only(FRIENDLY_TOTEM),
+            &owned(11, false, false, false)
+        ));
+        assert!(name_shown(
+            only(ENEMY_TOTEM),
+            &owned(11, false, true, false)
+        ));
+        assert!(name_shown(
+            only(FRIENDLY_PET),
+            &owned(1, false, false, true)
+        ));
+        assert!(name_shown(only(ENEMY_PET), &owned(1, false, true, false)));
+        assert!(
+            name_shown(only(ENEMY_GUARDIAN), &owned(1, true, false, true)),
+            "a friendly guardian reads the enemy-guardian bit"
+        );
+        assert!(!name_shown(
+            only(FRIENDLY_GUARDIAN),
+            &owned(1, true, false, true)
+        ));
+        assert!(name_shown(only(NON_COMBAT), &owned(12, false, false, true)));
+        let critter = NameSubject {
+            creature_type: 8,
+            ..Default::default()
+        };
+        assert!(name_shown(only(NON_COMBAT), &critter));
+        assert!(!name_shown(only(NPC), &critter));
+        let npc = NameSubject {
+            creature_type: 7,
+            ..Default::default()
+        };
+        assert!(name_shown(only(NPC), &npc));
+        assert!(
+            !name_shown(NameConfig::default(), &npc),
+            "UnitNameNPC boots off"
+        );
     }
 }
