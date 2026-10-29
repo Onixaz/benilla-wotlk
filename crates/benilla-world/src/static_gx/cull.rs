@@ -64,6 +64,18 @@ fn fade_step(size: f32, d: f32, current: FadeClass) -> FadeClass {
     }
 }
 
+/// How far a fader `d` yd away may move before [`fade_step`] can answer differently: its
+/// distance to the nearer alpha threshold of its band (`doodad_fade_alpha_at`'s 0.99 and 0.01),
+/// less the hysteresis either exit shifts it by. A fader with no band never changes.
+fn class_slack(near: f32, far: f32, d: f32) -> f32 {
+    if near == f32::MAX {
+        return f32::MAX;
+    }
+    let span = far - near;
+    let (steady_edge, gone_edge) = (near + 0.01 * span, far - 0.01 * span);
+    ((d - steady_edge).abs().min((d - gone_edge).abs()) - FADE_HYST).max(0.0)
+}
+
 /// A referrer set's PVS verdict, `WmoGroupVis::drawn_by`'s rule: any named room visible, a missing
 /// bit fail-open. An empty set, an unnamed prop, is never portal-culled.
 fn set_admitted(visible: &[bool], rooms: &[u16]) -> bool {
@@ -181,8 +193,18 @@ fn scan_faders(
     if verdict.is_some() && verdict == cell.settled && !cell.bits_stale {
         return false;
     }
+    // A fader changes class only when its distance crosses a band edge, and the distance moves no
+    // more than the camera does: until the camera has travelled the cell's slack, nothing can.
+    if !cell.bits_stale
+        && cell
+            .slack
+            .is_some_and(|(at, margin)| cam_pos.distance(at) < margin)
+    {
+        return false;
+    }
     let mut bits_changed = cell.bits_stale;
     let mut unarmed_left = false;
+    let mut slack = f32::MAX;
     for f in cell.faders.values_mut() {
         // Last frame's exile spawns draw from this frame: arm their kill bits now.
         if let FaderState::Exiled { armed, .. } = &mut f.state {
@@ -192,6 +214,7 @@ fn scan_faders(
             }
         }
         let d = f.center.distance(cam_pos);
+        slack = slack.min(class_slack(f.near, f.far, d));
         let old = f.class();
         let new = fade_step(f.size, d, old);
         if new == old {
@@ -244,6 +267,7 @@ fn scan_faders(
     }
     // An unarmed exile must be revisited next frame whatever the ring says.
     cell.settled = if unarmed_left { None } else { verdict };
+    cell.slack = (!unarmed_left).then_some((cam_pos, slack));
     if bits_changed {
         if let Some(draw) = draw {
             // Copy-on-write: the region is shared with the render world's extracted clone.
@@ -673,6 +697,33 @@ pub(super) fn cull_cells(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// No camera move shorter than a fader's slack changes what `fade_step` answers, from any
+    /// class, so a cell can skip its walk until the camera has travelled the cell's minimum.
+    #[test]
+    fn a_move_inside_the_slack_never_changes_a_class() {
+        for size in [0.5f32, 2.0, 6.0, 15.0, 40.0, 120.0] {
+            let Some((near, far)) = crate::model_fade::fade_band(size) else {
+                continue;
+            };
+            let mut d = 0.0f32;
+            while d < far + 40.0 {
+                let slack = class_slack(near, far, d);
+                for class in [FadeClass::Steady, FadeClass::Feather, FadeClass::Gone] {
+                    let here = fade_step(size, d, class);
+                    for frac in [-0.999f32, -0.5, 0.5, 0.999] {
+                        let moved = (d + slack.min(500.0) * frac).max(0.0);
+                        assert_eq!(
+                            fade_step(size, moved, class),
+                            here,
+                            "size {size} d {d} moved {moved} slack {slack} from {class:?}"
+                        );
+                    }
+                }
+                d += 0.37;
+            }
+        }
+    }
 
     /// A still frame reuses the last full cull only over the same draw set and fade bands, and
     /// never while an exile waits to be armed.
