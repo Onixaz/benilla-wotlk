@@ -878,7 +878,11 @@ pub(crate) mod schedule_tests {
     ///   vehicle's reported pitch from `RemoteMotion` against `transport::compose_riders` and
     ///   `ground_deck_riders`, which move only its pose; in `UnitFeed` it cannot follow them, and
     ///   the pitch it reads is the packet's.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_939;
+    /// - The vehicle transitions (#632) add 15: `vehicle::transit::ride_transits` carries an
+    ///   entering or exiting passenger's rig on a free anchor just before `ride_seats`, and shares
+    ///   the same unordered `RigPose`, `NetEntity`, `GlobalTransform` and `Commands` pairs on the
+    ///   same frame-late terms.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_954;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {

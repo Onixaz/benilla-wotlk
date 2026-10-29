@@ -907,6 +907,8 @@ fn monster_move(
                         .map(|(world, yaw)| world - yaw)
                 }
             };
+            // A monster move's transport change animates a vehicle seat's enter (`0x73c8e0`).
+            commands.entity(e).insert(crate::vehicle::TransitionCue);
             match riders.get_mut(e) {
                 Ok(mut rider) => {
                     rider.transport_guid = t;
@@ -928,7 +930,8 @@ fn monster_move(
         } else if riders.get(e).is_ok() {
             commands
                 .entity(e)
-                .remove::<crate::transport::TransportRider>();
+                .remove::<crate::transport::TransportRider>()
+                .insert(crate::vehicle::TransitionCue);
         }
         // The final facing (moveType 2/3/4) snaps the raw facing (`0x7c6f30`) and resets the
         // display smoother. A following path overrides it with the tangent each frame (`0x7c5490`),

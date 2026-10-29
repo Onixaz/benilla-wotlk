@@ -17,6 +17,7 @@ use crate::entities::BoneAttach;
 use crate::net::{GuidIndex, NetEntity};
 use crate::transport::TransportRider;
 
+use super::transit::TransitAnchor;
 use super::{Passenger, Vehicle, VehicleTables, SEATED};
 
 /// The seat attachment table, by `VehicleSeat.attachmentID` (`0xa2d3f0`).
@@ -32,7 +33,7 @@ const NO_ANIM: i32 = 506;
 pub(crate) struct SeatRide {
     vehicle: Entity,
     seat: u8,
-    anchor: Entity,
+    pub(super) anchor: Entity,
     /// The anchor's local transform as last written.
     local: Transform,
 }
@@ -83,7 +84,10 @@ pub(super) fn seat_transform(
 }
 
 /// The vehicle model's seat attachment: its bone and its offset from that bone.
-fn seat_point(seat: &VehicleSeatRec, points: Option<&BoneAttach>) -> Option<(u16, Vec3)> {
+pub(super) fn seat_point(
+    seat: &VehicleSeatRec,
+    points: Option<&BoneAttach>,
+) -> Option<(u16, Vec3)> {
     let id = SEAT_ATTACHMENTS.get(usize::try_from(seat.attachment_id).ok()?)?;
     points?.points.get(id).copied()
 }
@@ -107,6 +111,7 @@ pub(super) fn ride_seats(
             Option<&SeatRide>,
             Option<&BoneAttach>,
             &GlobalTransform,
+            Has<TransitAnchor>,
         ),
         Or<(With<Passenger>, With<SeatRide>)>,
     >,
@@ -116,9 +121,10 @@ pub(super) fn ride_seats(
     tables: Res<VehicleTables>,
     creatures: Option<Res<crate::entities::Creatures>>,
 ) {
-    for (entity, net, passenger, rider, ride, own_points, own_tf) in &passengers {
+    for (entity, net, passenger, rider, ride, own_points, own_tf, in_transit) in &passengers {
+        // Seated, or in the exit's pre-delay, which holds the seat (`0x74a7f0`).
         let seated = passenger
-            .filter(|p| p.state == SEATED)
+            .filter(|p| p.state == SEATED || p.state == 4)
             .and_then(|p| Some((p, *index.0.get(&p.vehicle)?)));
         let wanted = seated.and_then(|(p, v)| {
             let (vehicle, vehicle_tf, points) = vehicles.get(v).ok()?;
@@ -129,14 +135,17 @@ pub(super) fn ride_seats(
         if let Some(r) = ride {
             let kept = wanted.is_some_and(|(p, v, ..)| v == r.vehicle && p.seat == r.seat);
             if !kept {
-                let ground = crate::entities::mount::ground_frame(
-                    &mut commands,
-                    entity,
-                    net,
-                    creatures.as_deref(),
-                );
-                if let Ok(mut rig) = poses.get_mut(entity) {
-                    crate::entities::mount::reseat_rig(&mut commands, &mut rig, ground, false);
+                // A rig an exit's motion already carries stays on it.
+                if !in_transit {
+                    let ground = crate::entities::mount::ground_frame(
+                        &mut commands,
+                        entity,
+                        net,
+                        creatures.as_deref(),
+                    );
+                    if let Ok(mut rig) = poses.get_mut(entity) {
+                        crate::entities::mount::reseat_rig(&mut commands, &mut rig, ground, false);
+                    }
                 }
                 if let Ok(mut ec) = commands.get_entity(r.anchor) {
                     ec.despawn();
@@ -189,16 +198,7 @@ pub(super) fn ride_seats(
                 Some((joint, offset))
             });
         // Under the attachment, or at the vehicle's own frame without one (`0x7490f0`'s tail).
-        let (parent, local) = match joint {
-            Some((joint, offset)) => (
-                joint,
-                Transform {
-                    translation: local.translation + offset,
-                    ..local
-                },
-            ),
-            None => (vehicle, local),
-        };
+        let parent = joint.map_or(vehicle, |(joint, _)| joint);
         let anchor = commands
             .spawn((
                 local,

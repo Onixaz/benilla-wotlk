@@ -17,8 +17,9 @@ mod override_bar;
 mod passenger;
 mod ride;
 mod seats;
+mod transit;
 
-pub(crate) use passenger::{Passenger, SEATED};
+pub(crate) use passenger::{Passenger, TransitionCue, SEATED};
 pub(crate) use ride::SeatPose;
 
 use bevy::prelude::*;
@@ -117,18 +118,19 @@ impl Plugin for VehiclePlugin {
                 Update,
                 (
                     on_world_enter.after(benilla_world::schedule::WorldStage::Net),
-                    passenger::track_passengers
+                    (passenger::track_passengers, passenger::advance_transits)
+                        .chain()
                         .after(benilla_world::schedule::WorldStage::Net)
                         .after(on_world_enter),
                     feed_vehicle_view
                         .in_set(crate::ui_unit::UnitFeed)
-                        .after(passenger::track_passengers),
+                        .after(passenger::advance_transits),
                     feed_vehicle_signals
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(feed_vehicle_view)
                         .after(crate::ui_unit::EnterWorldFeed)
                         .after(on_world_enter)
-                        .after(passenger::track_passengers),
+                        .after(passenger::advance_transits),
                     send_vehicle_requests
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(feed_vehicle_signals),
@@ -147,11 +149,16 @@ impl Plugin for VehiclePlugin {
                         .after(crate::ui_pet::PetTempBar)
                         .before(crate::ui_action::SlotIdentityFeed),
                     // With the entity visuals, after the rigs are built and any mount re-seat.
-                    (ride::ride_seats, ride::sweep_seat_anchors)
+                    (
+                        transit::ride_transits,
+                        ride::ride_seats,
+                        ride::sweep_seat_anchors,
+                        transit::sweep_transit_anchors,
+                    )
                         .chain()
                         .in_set(crate::entities::EntityVisualsSet)
                         .after(crate::entities::MountReseatSet)
-                        .after(passenger::track_passengers),
+                        .after(passenger::advance_transits),
                 ),
             );
     }
