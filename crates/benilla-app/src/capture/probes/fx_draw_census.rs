@@ -16,7 +16,8 @@ pub(crate) fn plugin(app: &mut App) {
     if std::env::var("WOW_FX_CENSUS").as_deref() != Ok("1") {
         return;
     }
-    app.add_systems(Update, census);
+    // `Last`: the whole frame's stream, before extraction takes it.
+    app.add_systems(Last, census);
 }
 
 fn census(
