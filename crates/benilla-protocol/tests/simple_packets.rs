@@ -227,7 +227,7 @@ fn set_faction_standing_parses_and_decodes() {
 /// An opcode with no parse arm decodes to `PacketDropped`, not silence, so the app can tally it.
 #[test]
 fn unknown_opcode_decodes_to_packet_dropped() {
-    // Sentinel: SMSG_SET_REST_START (0x021E) has no parse arm; swap in another if it gains one.
+    // Sentinel: SMSG_QUEST_FORCE_REMOVE (0x021E) has no parse arm; swap in another if it gains one.
     let packet = messages::parse_server(0x021E, &hx("0102030405")).unwrap();
     assert!(matches!(packet, ServerPacket::Other { opcode: 0x021E }));
     match decode(packet).as_slice() {
@@ -237,11 +237,22 @@ fn unknown_opcode_decodes_to_packet_dropped() {
         }] => {}
         other => panic!("expected one PacketDropped event, got {other:?}"),
     }
-    assert_eq!(messages::opcode_name(0x021E), Some("SMSG_SET_REST_START"));
+    assert_eq!(
+        messages::opcode_name(0x021E),
+        Some("SMSG_QUEST_FORCE_REMOVE")
+    );
+    // Past 1.12.1's last opcode 0x033B: 3.3.5a-only.
+    assert_eq!(
+        messages::opcode_name(0x0427),
+        Some("SMSG_ENABLE_BARBER_SHOP")
+    );
+    assert_eq!(messages::opcode_name(0x051E), Some("SMSG_MULTIPLE_MOVES"));
     assert_eq!(
         messages::opcode_name(messages::opcode::SMSG_UPDATE_OBJECT),
         Some("SMSG_UPDATE_OBJECT")
     );
+    // 12340 dispatches ids below 0x51F only.
+    assert_eq!(messages::opcode_name(0x051F), None);
     assert_eq!(messages::opcode_name(0xFFFF), None);
 }
 
