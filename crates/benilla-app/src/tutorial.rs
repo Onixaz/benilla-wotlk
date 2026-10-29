@@ -132,6 +132,8 @@ pub(crate) struct Tutorials {
     sends: Vec<TutorialSend>,
     /// Item pushes for us since the last feed (`0x491a60`'s sites): `(entry, bag, slot)`.
     pushes: Vec<(u32, u8, u32)>,
+    /// `showTutorials` off: a trigger flags its tutorial seen, with no popup (`0x530871`).
+    muted: bool,
 }
 
 impl Tutorials {
@@ -166,10 +168,20 @@ impl Tutorials {
             _ => return, // already set, or past the bank (the reference would overrun)
         }
         if delay_ms == 0 {
-            self.fired.push(id + 1);
+            self.publish(id);
         } else {
             self.timers
                 .push((id, now + Duration::from_millis(u64::from(delay_ms))));
+        }
+    }
+
+    /// The trigger's tail (`0x530871`): with `showTutorials` on the cue and the event are owed;
+    /// off, the tutorial is flagged seen as [`Self::acknowledge`] does, and sent.
+    fn publish(&mut self, id: u32) {
+        if self.muted {
+            self.acknowledge(id);
+        } else {
+            self.fired.push(id + 1);
         }
     }
 
@@ -214,18 +226,20 @@ impl Tutorials {
         self.sends.push(TutorialSend::Reset);
     }
 
-    /// `ProcessTutorialTimers`: every due node fires the same cue and event.
+    /// `ProcessTutorialTimers`: every due node publishes as an immediate trigger does.
     fn tick(&mut self, now: Instant) {
         let mut due = Vec::new();
         self.timers.retain(|&(id, at)| {
             if at <= now {
-                due.push(id + 1);
+                due.push(id);
                 false
             } else {
                 true
             }
         });
-        self.fired.extend(due);
+        for id in due {
+            self.publish(id);
+        }
     }
 
     /// `SMSG_ITEM_PUSH_RESULT` for one of ours: the item-received handler's five sites, resolved
@@ -554,6 +568,7 @@ pub(crate) struct TutorialPlugin;
 impl Plugin for TutorialPlugin {
     fn build(&self, app: &mut App) {
         net::register(app);
+        app.add_observer(on_cvar);
         app.init_resource::<Tutorials>()
             .init_resource::<WorldEnterCascade>()
             .add_message::<TutorialEvent>()
@@ -575,6 +590,13 @@ impl Plugin for TutorialPlugin {
                 ),
             )
             .add_systems(OnExit(ClientState::InWorld), on_world_leave);
+    }
+}
+
+/// `showTutorials`' change callback.
+fn on_cvar(ev: On<crate::cvars::CvarChanged>, mut tutorials: ResMut<Tutorials>) {
+    if ev.is("showTutorials") {
+        tutorials.muted = !ev.flag();
     }
 }
 
@@ -629,6 +651,24 @@ mod tests {
         assert!(t.sends.is_empty(), "the trigger sends nothing");
         t.trigger(300, 0, now);
         assert_eq!(t.fired.len(), 1, "past the bank: a no-op");
+    }
+
+    /// `showTutorials` off (`0x530871`): a trigger shows nothing and flags the tutorial seen, sent
+    /// once, so turning the option back on does not replay it.
+    #[test]
+    fn a_muted_trigger_flags_its_tutorial_instead_of_showing_it() {
+        let now = Instant::now();
+        let mut t = banked();
+        t.muted = true;
+        t.trigger(id::WELCOME, 0, now);
+        assert!(t.fired.is_empty(), "no popup");
+        assert_eq!(t.sends, vec![TutorialSend::Flag(id::WELCOME)]);
+        let (a, b) = t.bits();
+        assert_eq!(bank_bit(a.unwrap(), id::WELCOME), Some(true));
+        assert_eq!(bank_bit(b.unwrap(), id::WELCOME), Some(true));
+        t.muted = false;
+        t.trigger(id::WELCOME, 0, now);
+        assert!(t.fired.is_empty(), "already seen");
     }
 
     /// The delayed leg holds the id until due; an acknowledge cancels it.

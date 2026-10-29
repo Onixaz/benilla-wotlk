@@ -440,6 +440,102 @@ fn loot_under_mouse_opens_the_loot_window_at_the_cursor() {
     assert!(errors.is_empty(), "errors: {errors:#?}");
 }
 
+/// The Help panel's checkboxes, `(button suffix, CVar, registered default)`
+/// (`InterfaceOptionsPanels.xml`).
+const HELP_CHECKBOXES: [(&str, &str, &str); 5] = [
+    ("ShowTutorials", "showTutorials", "1"),
+    ("LoadingScreenTips", "showGameTips", "1"),
+    ("EnhancedTooltips", "UberTooltips", "1"),
+    ("BeginnerTooltips", "showNewbieTips", "1"),
+    ("ShowLuaErrors", "scriptErrors", "0"),
+];
+
+/// Each Help checkbox boots at its CVar's 12340 default, a click and Okay writes the flip (Beginner
+/// Tooltips its `SHOW_NEWBIE_TIPS` uvar too), a click and Cancel writes nothing, and Defaults puts
+/// the registered value back; Reset Tutorials, enabled once a tutorial has been seen, calls
+/// `ResetTutorials`.
+#[test]
+fn every_help_checkbox_shows_writes_cancels_and_defaults_its_cvar() {
+    benilla_formats::wow_data_or_skip!();
+    let _l = ENV_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let (mut s, _) = loaded("opt-help");
+    s.fire_event("VARIABLES_LOADED", Vec::<ScriptValue>::new());
+    s.fire_event("PLAYER_ENTERING_WORLD", Vec::<ScriptValue>::new());
+    let flip = |v: &str| if v == "1" { "0" } else { "1" };
+    let open = "InterfaceOptionsFrame_OpenToCategory(InterfaceOptionsHelpPanel)";
+    for (suffix, cvar, default) in HELP_CHECKBOXES {
+        let button = format!("InterfaceOptionsHelpPanel{suffix}");
+        assert_eq!(s.cvar(cvar).as_deref(), Some(default), "{cvar} boots");
+        s.run(open).unwrap();
+        let checked = s
+            .eval::<bool>(&format!("return {button}:GetChecked() == 1"))
+            .unwrap();
+        assert_eq!(checked, default == "1", "{button} shows {cvar}={default}");
+        s.run(&format!(
+            "{button}:Click() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Okay writes {cvar}"
+        );
+        if cvar == "showNewbieTips" {
+            assert_eq!(
+                s.eval::<String>("return tostring(SHOW_NEWBIE_TIPS)")
+                    .unwrap(),
+                flip(default),
+                "the uvar follows"
+            );
+        }
+        s.run(&format!(
+            "{open} {button}:Click() InterfaceOptionsFrameCancel:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(flip(default)),
+            "Cancel keeps {cvar}"
+        );
+        s.run(&format!(
+            "{open} InterfaceOptionsFrame_SetAllToDefaults() InterfaceOptionsFrameOkay:Click()"
+        ))
+        .unwrap();
+        assert_eq!(
+            s.cvar(cvar).as_deref(),
+            Some(default),
+            "Defaults resets {cvar}"
+        );
+    }
+    // `CanResetTutorials` (`0x530700`) greys the button until a tutorial has been seen.
+    let _ = s.take_tutorial_resets();
+    s.run(&format!(
+        "{open} InterfaceOptionsHelpPanelResetTutorials:Click()"
+    ))
+    .unwrap();
+    assert_eq!(
+        s.take_tutorial_resets(),
+        0,
+        "nothing seen: the button is greyed"
+    );
+    let mut bank = vec![0u8; 32];
+    bank[0] = 1;
+    s.set_tutorial_bank(Some(bank));
+    s.run(&format!(
+        "InterfaceOptionsFrameCancel:Click() {open} InterfaceOptionsHelpPanelResetTutorials:Click()"
+    ))
+    .unwrap();
+    assert_eq!(
+        s.take_tutorial_resets(),
+        1,
+        "the button resets the tutorials"
+    );
+    let errors = options_errors(s.take_errors());
+    assert!(errors.is_empty(), "errors: {errors:#?}");
+}
+
 /// The Sound panel's device dropdown lists "System Default" and the engine's devices; a pick writes
 /// `Sound_OutputDriverIndex` and restarts the sound system at once, and Cancel puts the old index
 /// back with another restart (`AudioOptionsPanels.lua`, `AudioOptionsFrame_AudioRestart`).
