@@ -463,7 +463,10 @@ pub use unit::{
     grey_band, level_reads_unknown, parse_unit_token, power_token, unit_is_grey, PlayerRecord,
     SelectionRequest, UnitBase, UnitGuids, UnitState, UnitTokenParse,
 };
-pub use vehicle::{VehicleSeatView, VehicleUnitView, VehicleView};
+pub use vehicle::{
+    VehicleIndicatorView, VehicleRequest, VehicleSeatView, VehicleTree, VehicleUnitView,
+    VehicleView, VirtualSeat,
+};
 pub use weapon_enchant::WeaponEnchant;
 pub use who_sort::{WhoSortChain, WhoSortKey};
 pub use worldmap::{

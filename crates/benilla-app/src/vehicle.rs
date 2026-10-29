@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 mod passenger;
+mod seats;
 
 pub(crate) use passenger::{Passenger, SEATED};
 
@@ -19,10 +20,18 @@ use bevy::prelude::*;
 
 use benilla_assets::{AssetSet, LockRecover, WorldAssets};
 use benilla_formats::{VehicleCatalog, VehicleRec, VehicleSeatRec};
+use benilla_protocol::messages::{opcode, ObjectType};
 use benilla_protocol::{SessionEvent, SessionEventKind};
-use benilla_ui::script::{ScriptValue, UiScript, VehicleSeatView, VehicleUnitView, VehicleView};
+use benilla_ui::script::{
+    ScriptValue, UiScript, VehicleIndicatorView, VehicleRequest, VehicleSeatView, VehicleUnitView,
+    VehicleView,
+};
 
-use crate::net::{EnteredWorldMessage, GuidIndex, NetHandlerApp, ObjectStore, SelfGuid};
+use crate::net::{
+    ClientCommand, EnteredWorldMessage, GuidIndex, NetHandlerApp, ObjectStore, SelfGuid,
+    VehicleCommand,
+};
+use crate::transport::TransportRider;
 
 /// The vehicle tables, and the `SoundEntries` names the seats' enter and exit sounds have;
 /// empty without client data.
@@ -30,6 +39,8 @@ use crate::net::{EnteredWorldMessage, GuidIndex, NetHandlerApp, ObjectStore, Sel
 pub(crate) struct VehicleTables {
     pub(crate) catalog: Arc<VehicleCatalog>,
     sound_names: Arc<HashMap<u32, String>>,
+    /// The seat indicators as the VM reads them.
+    indicators: Arc<HashMap<u32, VehicleIndicatorView>>,
 }
 
 impl VehicleTables {
@@ -84,7 +95,9 @@ impl Plugin for VehiclePlugin {
                 Update,
                 (
                     on_world_enter.after(benilla_world::schedule::WorldStage::Net),
-                    passenger::track_passengers.after(benilla_world::schedule::WorldStage::Net),
+                    passenger::track_passengers
+                        .after(benilla_world::schedule::WorldStage::Net)
+                        .after(on_world_enter),
                     feed_vehicle_view
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(passenger::track_passengers),
@@ -94,6 +107,9 @@ impl Plugin for VehiclePlugin {
                         .after(crate::ui_unit::EnterWorldFeed)
                         .after(on_world_enter)
                         .after(passenger::track_passengers),
+                    send_vehicle_requests
+                        .in_set(crate::ui_unit::UnitFeed)
+                        .after(feed_vehicle_signals),
                 ),
             );
     }
@@ -128,9 +144,28 @@ fn load_vehicle_tables(mut commands: Commands, assets: Option<Res<WorldAssets>>)
             HashMap::new()
         }
     };
+    let indicators = catalog
+        .indicators
+        .iter()
+        .map(|(&id, ind)| {
+            let seats = ind
+                .seats
+                .iter()
+                .map(|s| (s.virtual_seat_index, s.x, s.y))
+                .collect();
+            (
+                id,
+                VehicleIndicatorView {
+                    texture: ind.background_texture.clone(),
+                    seats,
+                },
+            )
+        })
+        .collect();
     commands.insert_resource(VehicleTables {
         catalog: Arc::new(catalog),
         sound_names: Arc::new(sound_names),
+        indicators: Arc::new(indicators),
     });
 }
 
@@ -227,35 +262,90 @@ fn seat_view(s: &VehicleSeatRec) -> VehicleSeatView {
     }
 }
 
+/// The units the vehicle walks read: every vehicle and every rider.
+type VehicleUnits<'w, 's> = Query<
+    'w,
+    's,
+    (
+        &'static crate::net::Guid,
+        &'static ObjectStore,
+        Option<&'static TransportRider>,
+        Option<&'static Passenger>,
+        Option<&'static Vehicle>,
+    ),
+    Or<(With<Vehicle>, With<TransportRider>)>,
+>;
+
 /// Push each unit's vehicle facts (`0x613600`): a held passenger's seat on its vehicle and its
 /// state, controlling when the vehicle is its own `UNIT_FIELD_CHARM`; an unheld group member's
-/// seat by the party record's seat id.
+/// seat by the party record's seat id; the seat trees, the mover and the player's seat flags.
+#[allow(clippy::too_many_arguments)] // a Bevy system's full input set
 fn feed_vehicle_view(
     script: Option<NonSendMut<UiScript>>,
-    passengers: Query<(&crate::net::Guid, &ObjectStore, &Passenger)>,
-    vehicles: Query<&Vehicle>,
+    units: VehicleUnits,
+    mover: Query<&crate::net::Guid, With<crate::net::ActiveMover>>,
     index: Res<GuidIndex>,
+    self_guid: Res<SelfGuid>,
     group: Option<Res<crate::ui_party::GroupState>>,
+    names: Option<Res<crate::names::NameCache>>,
     tables: Res<VehicleTables>,
     mut pushed: Local<crate::ui_script::VmMemo<Option<VehicleView>>>,
 ) {
     let Some(mut script) = script else {
         return;
     };
-    let mut view = VehicleView::default();
-    for (guid, store, p) in &passengers {
-        let vehicle = index.0.get(&p.vehicle).and_then(|&e| vehicles.get(e).ok());
-        view.units.insert(
-            guid.0,
-            VehicleUnitView {
-                state: p.state,
-                seat: vehicle
-                    .and_then(|v| tables.seat(v.id, usize::from(p.seat)))
-                    .map(seat_view),
-                controlling: p.state == SEATED && store.0.unit_charm() == Some(p.vehicle),
+    let me = self_guid.0.unwrap_or(0);
+    let mut view = VehicleView {
+        mover: mover.single().map_or(0, |g| g.0),
+        ..Default::default()
+    };
+    let vehicle_of = |guid: u64| {
+        index
+            .0
+            .get(&guid)
+            .and_then(|&e| units.get(e).ok())
+            .and_then(|(.., v)| v)
+    };
+    let mut facts = HashMap::new();
+    for (guid, store, rider, p, v) in &units {
+        let guid = guid.0;
+        if let Some(p) = p {
+            let seat = vehicle_of(p.vehicle).and_then(|v| tables.seat(v.id, usize::from(p.seat)));
+            view.units.insert(
+                guid,
+                VehicleUnitView {
+                    state: p.state,
+                    seat: seat.map(seat_view),
+                    controlling: p.state == SEATED && store.0.unit_charm() == Some(p.vehicle),
+                },
+            );
+            if guid == me {
+                view.player_vehicle = Some(p.vehicle);
+                // `0x5fb560`: seated, with the vehicle or ourselves the mover.
+                if p.state == SEATED
+                    && view.mover != 0
+                    && (p.vehicle == view.mover || me == view.mover)
+                {
+                    view.input_seat_flags = seat.map(|s| s.flags);
+                }
+            }
+        }
+        facts.insert(
+            guid,
+            seats::UnitFacts {
+                transport: rider.map_or(0, |r| r.transport_guid),
+                seat: rider.map_or(-1, |r| r.seat),
+                passenger: p.is_some(),
+                vehicle: v.map(|v| v.id).filter(|&id| tables.vehicle(id).is_some()),
+                is_player: matches!(store.0.object_type(), Some(ObjectType::Player)),
+                name: names
+                    .as_deref()
+                    .and_then(|n| n.peek_unit(guid, Some(store)))
+                    .map(str::to_string),
             },
         );
     }
+    (view.roots, view.trees) = seats::build(&facts, &tables, view.mover);
     for (&guid, stats) in group.iter().flat_map(|g| g.stats.iter()) {
         if index.0.contains_key(&guid) {
             continue;
@@ -275,9 +365,54 @@ fn feed_vehicle_view(
         }
     }
     let last = pushed.get(&script);
+    if last.is_none() {
+        script.set_vehicle_indicators(tables.indicators.clone());
+    }
     if last.as_ref() != Some(&view) {
         script.set_vehicles(view.clone());
         *last = Some(view);
+    }
+}
+
+/// Send the vehicle verbs' requests. A seat switch while the player's transport is the mover is
+/// the controlled vehicle's change, with the mover's pose (`0x74ca90`); else the plain request.
+fn send_vehicle_requests(
+    script: Option<NonSendMut<UiScript>>,
+    net: Option<Res<crate::net::NetCommands>>,
+    me: Query<Option<&Passenger>, With<crate::net::SelfPlayer>>,
+    mover: Query<&crate::net::Guid, With<crate::net::ActiveMover>>,
+    player: Option<Res<crate::player::Player>>,
+) {
+    let (Some(mut script), Some(net)) = (script, net) else {
+        return;
+    };
+    let requests = script.take_vehicle_requests();
+    if requests.is_empty() {
+        return;
+    }
+    let mover = mover.single().map_or(0, |g| g.0);
+    let transport = me.single().ok().flatten().map_or(0, |p| p.vehicle);
+    for r in requests {
+        let cmd = match r {
+            VehicleRequest::Eject(guid) => VehicleCommand::ByGuid {
+                opcode: opcode::CMSG_EJECT_PASSENGER,
+                guid,
+            },
+            VehicleRequest::SwitchSeat { vehicle, seat } if transport == mover && mover != 0 => {
+                let Some(p) = player.as_deref() else { continue };
+                VehicleCommand::Controlled {
+                    mover,
+                    flags: p.move_flags(),
+                    pos: benilla_assets::coords::bevy_to_wow(p.pos),
+                    orientation: p.facing().rem_euclid(std::f32::consts::TAU),
+                    seat: Some((vehicle, seat)),
+                }
+            }
+            VehicleRequest::SwitchSeat { vehicle, seat } => {
+                VehicleCommand::SwitchSeat { vehicle, seat }
+            }
+        };
+        let _ = net.0.send(ClientCommand::Vehicle(cmd));
     }
 }
 
@@ -480,7 +615,14 @@ mod tests {
                 seat: 0,
                 state: SEATED,
             },
+            TransportRider {
+                transport_guid: CART,
+                local_pos: [0.0; 3],
+                local_orientation: 0.0,
+                seat: 0,
+            },
         ));
+        w.entity_mut(cart).insert(crate::net::Guid(CART));
         const FAR: u64 = 0x21;
         let mut group = crate::ui_party::GroupState::default();
         group.stats.insert(
@@ -521,5 +663,8 @@ mod tests {
         assert_eq!(eval("UnitVehicleSkin('player')"), "Mechanical");
         assert_eq!(eval("UnitInVehicleControlSeat('party1')"), "true");
         assert_eq!(eval("UnitVehicleSkin('party1')"), "Natural");
+        // The cart is our root, its one slot ours; with no mover the seat flags stay unread.
+        assert_eq!(eval("UnitVehicleSeatCount('player')"), "1");
+        assert_eq!(eval("CanSwitchVehicleSeat()"), "false");
     }
 }

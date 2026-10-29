@@ -112,7 +112,7 @@ pub struct IndicatorSeat {
     pub y: f32,
 }
 
-/// A seat indicator: its background and its seats in row order.
+/// A seat indicator: its background and its seats in id order.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct VehicleUiIndicator {
     pub background_texture: String,
@@ -423,14 +423,19 @@ pub fn load_vehicles(chain: &mut Chain) -> Result<VehicleCatalog> {
             ))
         })
         .collect();
-    // `0x614d90` scans every seat row for the indicator's id, in row order.
-    for r in read(
+    // `0x614d90` scans the seat rows by id, from 1 up, for the indicator's id.
+    let ind_seats = read(
         VEHICLE_UI_IND_SEAT,
         vehicle_ui_ind_seat_schema(),
         "VehicleUIIndSeat",
-    )?
-    .records()
-    {
+    )?;
+    let mut rows: Vec<_> = ind_seats
+        .records()
+        .iter()
+        .filter_map(|r| Some((u32_at(r, 0)?, r)))
+        .collect();
+    rows.sort_by_key(|&(id, _)| id);
+    for (_, r) in rows {
         let (Some(owner), Some(index), Some(x), Some(y)) =
             (u32_at(r, 1), u32_at(r, 2), f32_at(r, 3), f32_at(r, 4))
         else {

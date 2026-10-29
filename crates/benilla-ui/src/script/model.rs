@@ -625,6 +625,11 @@ pub(crate) struct Model {
     pub(crate) threat: super::threat::ThreatView,
     /// Each unit's passenger state and seat.
     pub(crate) vehicles: super::vehicle::VehicleView,
+    /// The seat indicators by id.
+    pub(crate) vehicle_indicators:
+        std::sync::Arc<HashMap<u32, super::vehicle::VehicleIndicatorView>>,
+    /// The vehicle verbs' requests, for the app to send.
+    pub(crate) vehicle_requests: Vec<super::vehicle::VehicleRequest>,
     /// The four totem slots and their tools.
     pub(crate) totems: super::totem::TotemSlots,
     /// `DestroyTotem` calls on live slots, 0-based, for the app to send.
@@ -1457,6 +1462,8 @@ impl Model {
             spell_info: None,
             threat: Default::default(),
             vehicles: Default::default(),
+            vehicle_indicators: Default::default(),
+            vehicle_requests: Vec::new(),
             totems: Default::default(),
             totem_destroys: Vec::new(),
             multicast: Default::default(),

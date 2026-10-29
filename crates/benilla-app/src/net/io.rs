@@ -1369,6 +1369,21 @@ pub(super) fn writer_loop(
                         jump,
                         transport,
                     ),
+                    ClientCommand::Vehicle(v) => match v {
+                        super::VehicleCommand::SwitchSeat { vehicle, seat } => {
+                            w.request_vehicle_switch_seat(vehicle, seat)
+                        }
+                        super::VehicleCommand::ByGuid { opcode, guid } => {
+                            w.vehicle_guid(opcode, guid)
+                        }
+                        super::VehicleCommand::Controlled {
+                            mover,
+                            flags,
+                            pos,
+                            orientation,
+                            seat,
+                        } => w.controlled_vehicle(mover, flags, (pos, orientation), seat),
+                    },
                     ClientCommand::SetActiveMover { guid } => w.set_active_mover(guid),
                     ClientCommand::NotActiveMover {
                         guid,

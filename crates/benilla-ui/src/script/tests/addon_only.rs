@@ -198,7 +198,6 @@ const ADDON_ONLY_UNBUILT: &[&str] = &[
     "UnitIsFeignDeath",
     "UnitIsPVPSanctuary",
     "UnitIsTrivial",
-    "UnitVehicleSeatCount",
     "UpdateAddOnCPUUsage",
     "UploadSettings",
     "VehicleAimDecrement",

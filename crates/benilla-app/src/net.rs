@@ -992,6 +992,24 @@ pub(crate) enum ArenaTeamCommand {
     Decline,
 }
 
+/// A vehicle request (`0x74c7f0`-`0x74ca90`, `0x757200`, `0x6d27c0`).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum VehicleCommand {
+    /// `CMSG_REQUEST_VEHICLE_SWITCH_SEAT`: `vehicle`'s `seat`.
+    SwitchSeat { vehicle: u64, seat: u8 },
+    /// `CMSG_EJECT_PASSENGER` or `CMSG_PLAYER_VEHICLE_ENTER`, a bare guid, by opcode.
+    ByGuid { opcode: u16, guid: u64 },
+    /// `CMSG_DISMISS_CONTROLLED_VEHICLE` with the mover's pose, or with `seat`
+    /// `CMSG_CHANGE_SEATS_ON_CONTROLLED_VEHICLE`.
+    Controlled {
+        mover: u64,
+        flags: u32,
+        pos: [f32; 3],
+        orientation: f32,
+        seat: Option<(u64, u8)>,
+    },
+}
+
 /// A message to the server through the write thread, carrying any pose it needs.
 #[derive(Debug)]
 pub(crate) enum ClientCommand {
@@ -1039,6 +1057,8 @@ pub(crate) enum ClientCommand {
         guid: u64,
         lag_ms: u32,
     },
+    /// A vehicle request.
+    Vehicle(VehicleCommand),
     /// `CMSG_SET_ACTIVE_MOVER`: at our own player's create and on possession; the server drops
     /// `MSG_MOVE_*` for an unconfirmed mover.
     SetActiveMover {

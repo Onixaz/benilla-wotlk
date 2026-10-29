@@ -10,6 +10,10 @@ use mlua::{Lua, Value};
 
 use super::binding_abi::{flag, optional_string, string_arg};
 
+mod seats;
+
+pub use seats::{VehicleIndicatorView, VehicleRequest, VehicleTree, VirtualSeat};
+
 /// The `VehicleSeat.dbc` facts the verbs read off a seat.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct VehicleSeatView {
@@ -33,10 +37,23 @@ pub struct VehicleUnitView {
     pub controlling: bool,
 }
 
-/// Every unit with vehicle facts, by guid; a guid missing here rides nothing.
+/// The vehicle facts the verbs read.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct VehicleView {
+    /// Every unit with vehicle facts, by guid; a guid missing here rides nothing.
     pub units: HashMap<u64, VehicleUnitView>,
+    /// Each held unit's root vehicle (`0x74c650` with no stop): the top of its vehicle chain, or
+    /// itself when it rides none and has a vehicle.
+    pub roots: HashMap<u64, u64>,
+    /// Each root with a vehicle record, and its seats.
+    pub trees: HashMap<u64, VehicleTree>,
+    /// The active mover (`s_activeMover`), 0 for none.
+    pub mover: u64,
+    /// The vehicle the player is a passenger of, its transport (`GetVehicleUnit`).
+    pub player_vehicle: Option<u64>,
+    /// The player's seat flags while `0x5fb560` reads them: the player seated, and its transport
+    /// or itself the mover.
+    pub input_seat_flags: Option<u32>,
 }
 
 impl super::UiScript {
@@ -121,6 +138,7 @@ pub(super) fn install(lua: &Lua) -> mlua::Result<()> {
                 .is_some_and(|(has_object, _, f)| has_object && f.controlling))
         })?,
     )?;
+    seats::install(lua)?;
     seat_flag(lua, "UnitInVehicleControlSeat", |s| s.flags & 0x800 != 0)?;
     seat_flag(lua, "UnitHasVehicleUI", |s| s.flags & 0x2000_0000 != 0)?;
     seat_flag(lua, "UnitTargetsVehicleInRaidUI", |s| s.flags_b & 0x8 != 0)?;
@@ -210,6 +228,7 @@ mod tests {
                     },
                 ),
             ]),
+            ..Default::default()
         });
         s
     }
