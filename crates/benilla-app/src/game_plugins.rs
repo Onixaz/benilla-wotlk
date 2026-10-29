@@ -842,11 +842,9 @@ pub(crate) mod schedule_tests {
     ///   `drain_social` and `drain_chat_input`. They only read membership, so a frame on either
     ///   side of a roster change gives the same colour a frame late, and nothing else they touch is
     ///   written by those drains.
-    /// - The zone PvP line (#689) adds 6: `area::feed_zone_events` reads the character roster's realm
-    ///   type (`GetZonePVPInfo`'s PvP-realm gate) against the roster's writers
-    ///   `apply_roster_policy`, `back_on_disconnect`, `back_on_login_refused`, `back_on_logout`,
-    ///   `debug_logout_smoke` and `drive_glue_mgr`. The realm type is fixed for the session and
-    ///   those write the roster at character select, so either order reads the same type.
+    /// - The zone PvP answer (#689) adds 6: `area::feed_zone_events` reads the character
+    ///   `Roster` for the realm's PvP type against its six writers in `char_select` and
+    ///   `drive_glue_mgr`, which change it only at character select, where no zone feeds.
     const UPDATE_ACTIONABLE_CEILING: usize = 3_895;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 

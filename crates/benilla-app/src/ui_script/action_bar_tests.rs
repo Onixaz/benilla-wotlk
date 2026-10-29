@@ -913,7 +913,6 @@ fn macro_name_line_follows_get_action_text_through_the_xml() {
             name: "spawn".into(),
             texture: Some("Interface\\Icons\\Ability_Racial_Cannibalize".into()),
             body: ".spawn 16032".into(),
-            local_only: false,
         }],
         character: Vec::new(),
     });
