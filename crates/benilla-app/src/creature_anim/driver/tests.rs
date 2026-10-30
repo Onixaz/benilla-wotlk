@@ -76,6 +76,9 @@ fn catalog() -> AnimData {
             AnimEntry {
                 weapon_flags: 0,
                 fallback: 0,
+                flags: 0,
+                behavior: 0,
+                tier: 0,
             },
         ),
         (
@@ -83,6 +86,9 @@ fn catalog() -> AnimData {
             AnimEntry {
                 weapon_flags: 0x20,
                 fallback: 0,
+                flags: 0,
+                behavior: 0,
+                tier: 0,
             },
         ),
         (
@@ -90,6 +96,9 @@ fn catalog() -> AnimData {
             AnimEntry {
                 weapon_flags: 0x20,
                 fallback: 0,
+                flags: 0,
+                behavior: 0,
+                tier: 0,
             },
         ),
         (
@@ -97,6 +106,9 @@ fn catalog() -> AnimData {
             AnimEntry {
                 weapon_flags: 4,
                 fallback: 52,
+                flags: 0,
+                behavior: 0,
+                tier: 0,
             },
         ),
     ]))
@@ -142,7 +154,8 @@ fn app() -> App {
         .add_message::<super::super::BaseAnimRecompute>()
         .add_message::<WoundAnim>()
         .add_message::<SheathRequest>()
-        .add_message::<SheathSwapMessage>();
+        .add_message::<SheathSwapMessage>()
+        .add_message::<super::super::KitPush>();
     // A dead-letter net channel; the driver tolerates the dropped receiver.
     let (tx, _rx) = crossbeam_channel::unbounded();
     app.insert_resource(NetCommands(tx));
@@ -4788,4 +4801,143 @@ fn a_units_variation_rolls_are_independent_of_the_unit_order() {
         x_both, x_alone,
         "the first unit's rolls ignore the other's draws"
     );
+}
+
+/// An eater: Stand, the EmoteEat loop (61) and a one-shot EmoteTalk (60), both with a torso
+/// variant, as a standing unit plays them masked.
+fn eater(app: &mut App) -> Entity {
+    let mut eat = clip(61, 2, true);
+    eat.upper_node = Some(AnimationNodeIndex::new(12));
+    let mut talk = clip(60, 3, false);
+    talk.upper_node = Some(AnimationNodeIndex::new(13));
+    let model = ModelAnimations {
+        graph: Handle::default(),
+        clips: vec![clip(0, 1, true), eat, talk],
+        hand_close: [None, None],
+        playable_animation_lookup: Vec::new(),
+        animation_lookup: Vec::new(),
+        global_bones: Vec::new(),
+        first_seq: None,
+        pose: Default::default(),
+    };
+    // Kit 900 plays EmoteEat, as a food aura's periodic visual does.
+    app.insert_resource(super::super::spell_visual::SpellVisuals(
+        benilla_formats::SpellVisualCatalog::from_tables(
+            Default::default(),
+            [(
+                900,
+                benilla_formats::VisualKit {
+                    anim_id: Some(61),
+                    ..Default::default()
+                },
+            )]
+            .into(),
+        ),
+    ));
+    app.world_mut()
+        .spawn((
+            model,
+            AnimationPlayer::default(),
+            AnimationTransitions::new(),
+            AnimDriver::default(),
+        ))
+        .id()
+}
+
+/// The kit push and the anim play `route_cast_visuals` makes of it, in one frame.
+fn push_kit(app: &mut App, unit: Entity, stage: u8) {
+    app.world_mut().write_message(super::super::KitPush {
+        entity: unit,
+        kit_id: 900,
+        seq: 1,
+        stage,
+    });
+    app.world_mut().write_message(EmoteAnim {
+        entity: unit,
+        anim_id: 61,
+        seq: 1,
+        via_player: false,
+    });
+}
+
+/// `0x73b38e`: a stage-0 kit holds its anim as the special idle while either bone plays it, and
+/// it goes once neither does (`0x73bc81`): a full-body EmoteTalk leaves the torso eating, the eat
+/// loop's release on movement ends it.
+#[test]
+fn a_stage_0_kit_latches_its_anim_until_the_body_plays_another() {
+    let mut app = app();
+    let unit = eater(&mut app);
+    app.update();
+    assert_eq!(drv_of(&app, unit).special_idle(), None);
+    push_kit(&mut app, unit, 0);
+    app.update();
+    assert_eq!(drv_of(&app, unit).special_idle(), Some(61));
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(
+        drv_of(&app, unit).special_idle(),
+        Some(61),
+        "the loop still plays"
+    );
+    app.world_mut().write_message(EmoteAnim {
+        entity: unit,
+        anim_id: 60,
+        seq: 2,
+        via_player: false,
+    });
+    app.update();
+    assert_eq!(
+        drv_of(&app, unit).special_idle(),
+        Some(61),
+        "the torso still eats"
+    );
+    app.world_mut().entity_mut(unit).insert(MovementState {
+        speed: 2.5,
+        flags: move_flags::FORWARD,
+        ..Default::default()
+    });
+    for _ in 0..3 {
+        app.update();
+    }
+    assert_eq!(drv_of(&app, unit).special_idle(), None, "neither bone eats");
+}
+
+/// Stage 1, a trainer's learn salute, never latches.
+#[test]
+fn a_stage_1_kit_never_latches() {
+    let mut app = app();
+    let unit = eater(&mut app);
+    app.update();
+    push_kit(&mut app, unit, 1);
+    app.update();
+    assert_eq!(drv_of(&app, unit).special_idle(), None);
+}
+
+/// `0x7224dc`: while the latch holds, the base recompute is offered no cast or channel kit anim:
+/// under a stage-0 eat the stationary caster's base falls to Stand, under stage 1 it keeps the
+/// cast's hold (51).
+#[test]
+fn a_cast_during_the_latch_does_not_pick_its_kit_anim() {
+    let pick = |stage: u8| {
+        let mut app = app();
+        let unit = eater(&mut app);
+        app.world_mut().entity_mut(unit).insert(CastHold {
+            ranged: false,
+            anim_id: 51,
+            spell_id: 20793,
+        });
+        app.update();
+        assert_eq!(
+            drv_of(&app, unit).gait,
+            Some(51),
+            "the cast pin holds the base"
+        );
+        push_kit(&mut app, unit, stage);
+        app.update(); // EmoteEat takes the key bone
+        app.update();
+        drv_of(&app, unit).gait
+    };
+    assert_eq!(pick(0), Some(0));
+    assert_eq!(pick(1), Some(51));
 }

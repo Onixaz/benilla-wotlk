@@ -157,6 +157,29 @@ pub struct M2Sequence {
     pub alias_next: u16,
 }
 
+/// The slot of `anim_id`'s head sequence (`0x8260c0`, `0x825e00`): with an empty lookup a scan
+/// of the records, else a hash probed from `id % count`, probe `j` adding `j * j` to the last slot
+/// (`0x826132`), until `0xffff` or a record of that id. The reference probes unbounded; a lookup
+/// with no free slot is cut off after `count` probes.
+pub fn find_sequence_slot(lookup: &[u16], sequences: &[M2Sequence], anim_id: u16) -> Option<usize> {
+    if lookup.is_empty() {
+        return sequences.iter().position(|s| s.id == anim_id);
+    }
+    let count = lookup.len();
+    let mut idx = usize::from(anim_id) % count;
+    for j in 1..=count {
+        let slot = usize::from(lookup[idx]);
+        if slot == 0xffff {
+            return None;
+        }
+        if sequences.get(slot)?.id == anim_id {
+            return Some(slot);
+        }
+        idx = (idx + j * j) % count;
+    }
+    None
+}
+
 /// One animation event (`M2Event`, `0x24` bytes): a 4CC, its data, a bone-relative point and its
 /// times on the timeline.
 #[derive(Clone, Debug)]
@@ -318,8 +341,8 @@ pub struct M2Model {
     pub events: Vec<M2Event>,
     /// The events a bone poses, in file order; a query takes the first ident match.
     pub event_markers: Vec<M2EventMarker>,
-    /// AnimationLookup (header `0x24`): row `i` is the first sequence slot for
-    /// `AnimationData.dbc` id `i`, `0xffff` for none; it ends past the highest authored id.
+    /// AnimationLookup (header `0x24`): a hash of `AnimationData.dbc` ids to head sequence slots,
+    /// `0xffff` for a free slot, often empty; read it through [`Self::sequence_slot`], never by id.
     pub animation_lookup: Vec<u16>,
     /// The header's global flags (`+0x10`); `0x8` makes the batch shader word a
     /// [`Self::texture_combiner_combos`] index (the shared model's shader substitution,
@@ -345,18 +368,26 @@ impl M2Model {
         self.texture_unit_lookup.get(idx).is_none_or(|&v| v > 2)
     }
 
-    /// Whether the model authors `AnimationData.dbc` id `anim_id`: a bounds-checked
-    /// [`Self::animation_lookup`] read, so an id past the end is not owned.
+    /// Whether the model authors `AnimationData.dbc` id `anim_id` (`0x825e00`).
     pub fn owns_animation(&self, anim_id: u16) -> bool {
-        self.animation_lookup
-            .get(anim_id as usize)
-            .is_some_and(|&slot| slot != 0xffff)
+        self.sequence_slot(anim_id).is_some()
     }
 
-    /// The sequence slot `anim_id` resolves to through [`Self::animation_lookup`].
+    /// The sequence slot of `anim_id`'s head variation, through the lookup's hash
+    /// ([`find_sequence_slot`]).
     pub fn sequence_slot(&self, anim_id: u16) -> Option<usize> {
-        let slot = usize::from(*self.animation_lookup.get(usize::from(anim_id))?);
-        (slot < self.sequences.len()).then_some(slot)
+        find_sequence_slot(&self.animation_lookup, &self.sequences, anim_id)
+    }
+
+    /// [`Self::sequence_slot`] for every id up to the highest authored one, `0xffff` for none: a
+    /// table read directly by id that answers as the hash does.
+    pub fn sequence_slots_by_id(&self) -> Vec<u16> {
+        let Some(top) = self.sequences.iter().map(|s| s.id).max() else {
+            return Vec::new();
+        };
+        (0..=top)
+            .map(|id| self.sequence_slot(id).map_or(0xffff, |slot| slot as u16))
+            .collect()
     }
 
     /// The record attach id `id` resolves to through [`Self::attach_lookup`]. An unresolved id

@@ -341,16 +341,44 @@ pub(super) fn base_candidates(
     }
 }
 
-/// The idle fallback, the chain's last resolver: the swim idle on `SWIMMING` or `FLYING`
-/// (`0x71e340`), else the prowl idle, else Stand. The hover idle (193) is not modelled.
+/// The idle fallback, the chain's last resolver (`0x71e340`): the swim idle on `SWIMMING` or
+/// `FLYING`, else the prowl idle, else Hover (193) for a hovering body ([`hovering`]), else Stand.
 fn idle_fallback(state: &MovementState) -> &'static [u16] {
     if state.flags & (move_flags::SWIMMING | move_flags::FLYING) != 0 {
         &[41, 0]
     } else if state.stealthed {
         &[STEALTH_STAND, STAND]
+    } else if hovering(state) {
+        &[HOVER, STAND]
     } else {
         &[STAND]
     }
+}
+
+/// `0x71dcc0`: whether a latched special idle holds a caster's missiles: a spell-cast behavior
+/// (Spell, SpellCast, SpellCastArea, SpellCastDirected, SpellCastOmni, `0x71d380`) or a ranged
+/// attack's (AttackBow, AttackRifle, AttackThrown), read off the row's BehaviorID.
+pub(crate) fn is_special_idle_anim(
+    id: u16,
+    catalog: Option<&benilla_formats::AnimDataCatalog>,
+) -> bool {
+    let behavior = catalog.and_then(|c| c.behavior(id)).unwrap_or(id);
+    matches!(behavior, 2 | 32 | 33 | 53 | 54 | 46 | 49 | 107)
+}
+
+/// Hover (193), the idle of a body held off the ground.
+pub(crate) const HOVER: u16 = 193;
+
+/// `0x71c6c0`: on a flying spline only `MOVEFLAG_HOVER` counts; otherwise gravity off
+/// ([`move_flags::LEVITATING`]) or `MOVEFLAG_HOVER` does. The spline's `0x2000` and the second flags
+/// word's `0x4` legs are not read here.
+fn hovering(state: &MovementState) -> bool {
+    let mask = if state.flying {
+        move_flags::HOVER
+    } else {
+        move_flags::LEVITATING | move_flags::HOVER
+    };
+    state.flags & mask != 0
 }
 
 /// The resolvers ahead of the state-emote resolver, `None` where none claims the base. The

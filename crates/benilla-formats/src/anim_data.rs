@@ -21,6 +21,14 @@ pub struct AnimEntry {
     /// The substitute animation id when a model lacks this clip (`0` = Stand), col 5; col 6,
     /// `BehaviorID`, is mostly the row's own id.
     pub fallback: u16,
+    /// The row's Flags (col 4): `0x10` reverses and `0x20` holds a clip the fallback walk passes
+    /// through (`0x826429`).
+    pub flags: u32,
+    /// The BehaviorID (col 6): the base animation a tiered row stands in for, the row's own id on
+    /// the ground tier.
+    pub behavior: u16,
+    /// The BehaviorTier (col 7): 0 ground, 3 fly; the unit's anim tier picks the row (`0x717540`).
+    pub tier: u8,
 }
 
 /// `AnimationData.dbc` id → its policy row.
@@ -29,14 +37,28 @@ pub struct AnimDataCatalog {
     /// The Name column (col 1, `"Attack1H"`) for debug readouts, kept apart so [`AnimEntry`]
     /// stays `Copy`.
     names: HashMap<u16, String>,
+    /// `(behavior, tier)` → the lowest id carrying them, the tier scan's first hit (`0x7175c1`).
+    by_behavior: HashMap<(u16, u8), u16>,
 }
 
 impl AnimDataCatalog {
     /// A catalog of synthetic rows with no names, for tests without an `AnimationData.dbc`.
     pub fn from_rows(rows: impl IntoIterator<Item = (u16, AnimEntry)>) -> Self {
+        Self::new(rows.into_iter().collect(), HashMap::new())
+    }
+
+    fn new(rows: HashMap<u16, AnimEntry>, names: HashMap<u16, String>) -> Self {
+        let mut by_behavior: HashMap<(u16, u8), u16> = HashMap::new();
+        for (&id, r) in &rows {
+            by_behavior
+                .entry((r.behavior, r.tier))
+                .and_modify(|e| *e = (*e).min(id))
+                .or_insert(id);
+        }
         Self {
-            rows: rows.into_iter().collect(),
-            names: HashMap::new(),
+            rows,
+            names,
+            by_behavior,
         }
     }
 
@@ -48,6 +70,26 @@ impl AnimDataCatalog {
     /// The `Fallback` column as stored, Stand and a self-fallback included; `None` for no row.
     pub fn fallback(&self, id: u16) -> Option<u16> {
         self.rows.get(&id).map(|r| r.fallback)
+    }
+
+    /// The row's `Fallback` and Flags together, the fallback walk's step; `None` for no row.
+    pub fn fallback_step(&self, id: u16) -> Option<(u16, u32)> {
+        self.rows.get(&id).map(|r| (r.fallback, r.flags))
+    }
+
+    /// The row's BehaviorID; `None` for no row.
+    pub fn behavior(&self, id: u16) -> Option<u16> {
+        self.rows.get(&id).map(|r| r.behavior)
+    }
+
+    /// The row's BehaviorTier; `None` for no row.
+    pub fn tier(&self, id: u16) -> Option<u8> {
+        self.rows.get(&id).map(|r| r.tier)
+    }
+
+    /// The first row, in id order, standing in for `behavior` on `tier` (`0x7175c1`).
+    pub fn find_by_behavior_and_tier(&self, behavior: u16, tier: u8) -> Option<u16> {
+        self.by_behavior.get(&(behavior, tier)).copied()
     }
 
     /// The row's Name (`"Run"`); a [`Self::from_rows`] catalog has none.
@@ -92,13 +134,16 @@ pub fn load_anim_data_catalog(chain: &mut Chain) -> Result<AnimDataCatalog> {
             AnimEntry {
                 weapon_flags: u32_at(r, 2).unwrap_or(0),
                 fallback: u32_at(r, 5).unwrap_or(0) as u16,
+                flags: u32_at(r, 4).unwrap_or(0),
+                behavior: u32_at(r, 6).unwrap_or(0) as u16,
+                tier: u32_at(r, 7).unwrap_or(0) as u8,
             },
         );
         if let Some(name) = str_at(&rs, r, 1).filter(|n| !n.is_empty()) {
             names.insert(id as u16, name);
         }
     }
-    Ok(AnimDataCatalog { rows, names })
+    Ok(AnimDataCatalog::new(rows, names))
 }
 
 #[cfg(test)]
@@ -135,6 +180,29 @@ mod tests {
         assert_eq!(cat.weapon_flags(26), 0x20, "Ready1H force-draws");
         assert_eq!(cat.weapon_flags(133), 0x20, "FishingCast force-draws");
         assert_eq!(cat.weapon_flags(0), 0, "Stand carries no policy");
+
+        // The fallback walk's direction bits and the tier index.
+        assert_eq!(
+            cat.fallback_step(13),
+            Some((4, 0x11)),
+            "Walkbackwards reverses Walk"
+        );
+        assert_eq!(
+            cat.fallback_step(97).map(|s| s.1 & 0x30),
+            Some(0x20),
+            "SitGround holds"
+        );
+        assert_eq!(
+            cat.find_by_behavior_and_tier(0, 0),
+            Some(0),
+            "Stand on the ground"
+        );
+        assert_eq!(
+            cat.find_by_behavior_and_tier(0, 3),
+            Some(229),
+            "FlyStand on the fly tier"
+        );
+        assert_eq!((cat.behavior(229), cat.tier(229)), (Some(0), Some(3)));
 
         // The ranged-handling trio the reconcile exempts.
         for id in [105, 106, 112] {

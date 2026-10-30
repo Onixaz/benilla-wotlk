@@ -10,8 +10,10 @@ use crate::net::ObjectStore;
 use crate::sound::EmoteSounds;
 
 use super::super::select::{self, base_candidates, playback_rate, ready_anim, Mode, DEATH, STAND};
-use super::super::{find_resolved, move_flags, AnimDriver, CastHold, MovementState, Wielded};
-use super::play::{enter_special, leave_special, oneshot_finished, play, play_clip, roll_loop};
+use super::super::{move_flags, resolved, AnimDriver, CastHold, MovementState, Wielded};
+use super::play::{
+    apply_direction, enter_special, leave_special, oneshot_finished, play, play_clip, roll_loop,
+};
 use super::transplant_up;
 
 /// The per-frame facts the mode machine reads, computed by [`super::drive_animations`] first.
@@ -374,6 +376,20 @@ pub(super) fn run(
                     }
                     None => cands,
                 };
+                // A unit on an anim tier asks for that tier's rows (`0x7176f0`): a fly-tier
+                // drake's Stand is FlyStand (229).
+                let tier = store.map_or(0, |s| s.0.unit_anim_tier());
+                let mut tier_cands = [0u16; 8];
+                let cands: &[u16] = match catalog.filter(|_| tier != 0) {
+                    Some(cat) => {
+                        let n = cands.len().min(tier_cands.len());
+                        for (dst, &id) in tier_cands.iter_mut().zip(&cands[..n]) {
+                            *dst = anims.resolve_tier(id, tier, cat);
+                        }
+                        &tier_cands[..n]
+                    }
+                    None => cands,
+                };
                 let target = cands[0];
                 // A turn shuffle ends at its own clip window, not with the turn: the reference's
                 // per-frame tail can start one but not stop it (stopping needs a turn bit), and the
@@ -389,14 +405,15 @@ pub(super) fn run(
                     _ => target,
                 };
                 // Each candidate in priority order, through the model's baked fallback first.
-                let clip = cands
-                    .iter()
-                    .find_map(|&id| find_resolved(anims, id, catalog));
+                let clip = cands.iter().find_map(|&id| {
+                    let dir = resolved(anims, id, catalog);
+                    anims.find(dir.id).map(|c| (c, dir))
+                });
                 // Whether the base took a clip; only the lock refuses, skipping the bookkeeping.
                 let mut armed = true;
                 if drv.gait == Some(target) {
                     // Already armed; the per-frame rate write keeps its rate.
-                } else if let Some(c) = clip {
+                } else if let Some((c, dir)) = clip {
                     // The death pose and the mount attach arm past the lock in the reference; here
                     // they are gait targets, so they drop it first.
                     if target == DEATH || target == select::MOUNT {
@@ -435,6 +452,7 @@ pub(super) fn run(
                         let rate = drv.gait_rate;
                         armed = play_clip(&mut drv.base_lock, tr, player, c, repeat, rate);
                         if armed {
+                            apply_direction(player, c, dir, rate);
                             drv.gait = Some(target);
                         } else {
                             drv.loop_window = None;

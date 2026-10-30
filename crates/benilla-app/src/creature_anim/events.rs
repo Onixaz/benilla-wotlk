@@ -148,11 +148,20 @@ pub(super) fn fire_anim_events(
                 .clips
                 .iter()
                 .filter(|c| c.anim_id == id)
-                .filter_map(|c| player.animation(c.node).map(|a| (c, a.seek_time())))
+                .filter_map(|c| {
+                    player
+                        .animation(c.node)
+                        .map(|a| (c, a.seek_time(), a.speed()))
+                })
                 .min_by(|a, b| a.1.total_cmp(&b.1));
-            if let Some((clip, cur)) = playing {
+            if let Some((clip, cur, speed)) = playing {
                 if let Some(prev) = advance_track(&mut last, entity, clip.node, cur) {
-                    scan_events(clip, entity, prev, cur, &frame, &mut out);
+                    // A fallback played reversed (`0x826b00` mode 1) sweeps `(cur, prev]`.
+                    if speed < 0.0 {
+                        scan_events(clip, entity, cur, prev, &frame, &mut out);
+                    } else {
+                        scan_events(clip, entity, prev, cur, &frame, &mut out);
+                    }
                 }
             }
         }

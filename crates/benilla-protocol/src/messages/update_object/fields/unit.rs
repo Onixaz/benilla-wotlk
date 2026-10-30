@@ -240,6 +240,11 @@ impl ObjectFields {
         let packed = self.get_u32(FIELD_UNIT_TRAINING_POINTS).unwrap_or(0);
         ((packed >> 16) as u16, (packed & 0xffff) as u16)
     }
+    /// 3.3.5a's `UNIT_FIELD_BYTES_1` byte 3, the anim tier (0 ground, 2 hover, 3 fly), kept in
+    /// byte 2: a unit on a tier plays that tier's rows (`0x7167e9`, read at `0x717708`).
+    pub fn unit_anim_tier(&self) -> u8 {
+        ((self.get_u32(FIELD_UNIT_BYTES_1).unwrap_or(0) >> 16) & 0xff) as u8
+    }
     /// `UNIT_FIELD_BYTES_1` byte 3 bit `0x2`, `UNIT_VIS_FLAGS_CREEP` (`SpellAuras.cpp:3610`):
     /// stealthed; read by the usable check (`[+0x110]+0x213 & 2`) and the tracker.
     pub fn unit_is_stealthed(&self) -> bool {

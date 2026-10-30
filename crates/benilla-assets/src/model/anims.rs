@@ -78,7 +78,8 @@ pub struct ModelAnimations {
     /// The header's PlayableAnimationLookup (`+0x2c/+0x30`): row `i` substitutes for requested id
     /// `i`. Empty on a 3.3.5a model, which [`Self::resolve`] walks through the fallback column.
     pub playable_animation_lookup: Vec<PlayableAnim>,
-    /// The header's AnimationLookup (`+0x24/+0x28`): each id's first slot, `0xffff` for none.
+    /// Each id's head sequence slot, `0xffff` for none, read directly by id: the header's
+    /// AnimationLookup (`+0x24/+0x28`) resolved through its hash at load (`0x8260c0`).
     pub animation_lookup: Vec<u16>,
     /// The global-sequence bone channels (an eyelid's blink), free-running over the sequence pose.
     pub global_bones: Vec<super::GlobalBone>,
@@ -95,10 +96,45 @@ pub struct ModelAnimations {
 pub struct ResolvedAnim {
     /// The id to look up with [`ModelAnimations::find`].
     pub id: u16,
-    /// PATH 1's high-16 direction code, else 0. Carried, not applied: the reference's arm negates
-    /// the play rate for code 1 and zeroes it for 2 and 3.
+    /// The direction mode (`0x826b00`): 0 forward, 1 reversed from the clip's end, 2 held on its
+    /// first frame, 3 held on its last; PATH 1's high-16 code, else the fallback walk's.
     pub dir_flags: u16,
 }
+
+impl ResolvedAnim {
+    /// The play rate under [`Self::dir_flags`] (`0x826b59`): modes 1 and 3 negate it, 2 and 3 then
+    /// zero it.
+    pub fn rate(self, rate: f32) -> f32 {
+        match self.dir_flags {
+            1 => -rate,
+            2 | 3 => 0.0,
+            _ => rate,
+        }
+    }
+
+    /// Whether the arm starts at the clip's end: a negated rate does (`0x826b7a`).
+    pub fn starts_at_end(self) -> bool {
+        matches!(self.dir_flags, 1 | 3)
+    }
+
+    /// Applies the mode to a freshly armed clip of `duration` seconds at `rate`: its speed, and
+    /// its start at the end for modes 1 and 3.
+    pub fn apply(self, active: &mut bevy::animation::ActiveAnimation, rate: f32, duration: f32) {
+        active.set_speed(self.rate(rate));
+        if self.starts_at_end() {
+            // A held clip sits a hair inside its end: a still clock at the end wraps to frame 0.
+            let end = if self.dir_flags == 3 {
+                (duration - HELD_END_INSET).max(0.0)
+            } else {
+                duration
+            };
+            active.seek_to(end);
+        }
+    }
+}
+
+/// How far inside its end a clip held on its last frame sits, in seconds: under a key's spacing.
+const HELD_END_INSET: f32 = 1e-3;
 
 impl ModelAnimations {
     /// The id's head variation; a one-shot that alternates uses [`Self::pick_variation`].
@@ -106,9 +142,9 @@ impl ModelAnimations {
         self.clips.iter().find(|c| c.anim_id == anim_id)
     }
 
-    /// Whether the model authors `anim_id`, which the GameObject arm's remap branches on. Not
-    /// `find(..).is_some()`: `clips` lacks the zero-length sequences the parse skips, which the
-    /// reference still counts.
+    /// Whether the model authors `anim_id` (`0x825e00`), which the GameObject arm's remap branches
+    /// on. Not `find(..).is_some()`: `clips` lacks the zero-length sequences the parse skips, which
+    /// the reference still counts.
     pub fn owns(&self, anim_id: u16) -> bool {
         self.animation_lookup
             .get(anim_id as usize)
@@ -177,40 +213,144 @@ impl ModelAnimations {
     /// `0x826350`: follow the `Fallback` column until the model has a clip for the id, guarded
     /// against cycles over the table's 506 ids (`0x1fa`). A missing row, a self-fallback, a
     /// revisit or an id past the table exhausts to Stand if authored, else Closed (147), else the
-    /// first sequence's id. The row flags' direction mode is not derived: nothing applies it.
+    /// first sequence's id, played forward. Each row passed adds its Flags to the direction mode.
     fn resolve_fallback(&self, requested: u16, catalog: &AnimDataCatalog) -> ResolvedAnim {
-        // The model authoring the id itself, the common case, needs no walk and no visited set.
-        if self.find(requested).is_some() {
-            return ResolvedAnim {
-                id: requested,
-                dir_flags: 0,
-            };
-        }
-        const ANIM_COUNT: usize = 506;
         const CLOSED: u16 = 147;
-        let exhausted = || {
+        self.walk_fallback(requested, catalog).unwrap_or_else(|| {
             let id = [0, CLOSED]
                 .into_iter()
                 .find(|&id| self.find(id).is_some())
                 .or_else(|| self.clips.first().map(|c| c.anim_id))
                 .unwrap_or(0);
             ResolvedAnim { id, dir_flags: 0 }
-        };
+        })
+    }
+
+    /// The fallback walk itself, `None` where it exhausts (`0x825f40`'s `-1`).
+    fn walk_fallback(&self, requested: u16, catalog: &AnimDataCatalog) -> Option<ResolvedAnim> {
+        // The model authoring the id itself, the common case, needs no walk and no visited set.
+        if self.find(requested).is_some() {
+            return Some(ResolvedAnim {
+                id: requested,
+                dir_flags: 0,
+            });
+        }
         let mut visited = [false; ANIM_COUNT];
         let mut id = requested;
+        let mut walk = DirectionWalk::default();
         while self.find(id).is_none() {
-            let Some(seen) = visited.get_mut(id as usize).filter(|seen| !**seen) else {
-                return exhausted();
-            };
-            match catalog.fallback(id) {
-                Some(next) if next != id => {
+            let seen = visited.get_mut(id as usize).filter(|seen| !**seen)?;
+            match catalog.fallback_step(id) {
+                Some((next, flags)) if next != id => {
                     *seen = true;
+                    walk.pass(flags);
                     id = next;
                 }
-                _ => return exhausted(),
+                _ => return None,
             }
         }
-        ResolvedAnim { id, dir_flags: 0 }
+        Some(ResolvedAnim {
+            id,
+            dir_flags: walk.mode(),
+        })
+    }
+
+    /// `0x7176f0`: the id a unit on anim tier `tier` asks for in place of `requested`. Each id
+    /// down the request's fallback chain is looked up on the tier (`0x717540`) until one resolves
+    /// on this model, then the tier's own Stand (`0x717600`), then the tier falls back (`0xa349b4`:
+    /// hover to fly, the rest to the ground). The ground tier asks for the request itself.
+    pub fn resolve_tier(&self, requested: u16, tier: u8, catalog: &AnimDataCatalog) -> u16 {
+        let mut tier = tier;
+        // Every chain ends on the ground tier in two steps; the bound only guards a cycle.
+        for _ in 0..3 {
+            if tier == 0 {
+                return requested;
+            }
+            let mut visited = [false; ANIM_COUNT];
+            let mut id = requested;
+            loop {
+                let on_tier = tier_row(id, tier, catalog);
+                if let Some(found) = on_tier.filter(|&f| self.walk_fallback(f, catalog).is_some()) {
+                    return found;
+                }
+                let Some(seen) = visited.get_mut(id as usize).filter(|seen| !**seen) else {
+                    break;
+                };
+                match catalog.fallback(id) {
+                    Some(next) if next != id => {
+                        *seen = true;
+                        id = next;
+                    }
+                    _ => break,
+                }
+            }
+            if let Some(stand) = catalog
+                .find_by_behavior_and_tier(0, tier)
+                .filter(|&s| self.find(s).is_some())
+            {
+                return stand;
+            }
+            tier = match tier {
+                2 => 3,
+                _ => 0,
+            };
+        }
+        requested
+    }
+}
+
+/// The ids `AnimationData.dbc` carries, the fallback walks' visited-set bound (`0x1fa`).
+const ANIM_COUNT: usize = 506;
+
+/// `0x717540` off the ground tier: an id whose own row is already tiered stands for itself,
+/// otherwise the row standing in for that id's behavior on `tier`.
+fn tier_row(id: u16, tier: u8, catalog: &AnimDataCatalog) -> Option<u16> {
+    if usize::from(id) >= ANIM_COUNT {
+        return None;
+    }
+    if catalog.tier(id).is_some_and(|t| t != 0) {
+        return Some(id);
+    }
+    catalog.find_by_behavior_and_tier(id, tier)
+}
+
+/// The fallback walk's direction (`0x826429`-`0x826441`): `0x10` flips it, `0x20` stops it, and
+/// each adds the direction it met to the reversal count.
+#[derive(Clone, Copy)]
+struct DirectionWalk {
+    direction: i32,
+    reversals: i32,
+}
+
+impl Default for DirectionWalk {
+    fn default() -> Self {
+        Self {
+            direction: 1,
+            reversals: 0,
+        }
+    }
+}
+
+impl DirectionWalk {
+    /// One passed row's Flags, `0x10` first, then `0x20`.
+    fn pass(&mut self, flags: u32) {
+        if flags & 0x10 != 0 {
+            self.reversals += self.direction;
+            self.direction = -self.direction;
+        }
+        if flags & 0x20 != 0 {
+            self.reversals += self.direction;
+            self.direction = 0;
+        }
+    }
+
+    /// The mode (`0x826453`): forward 0, backward 1, stopped `2 + (reversals > 0)`.
+    fn mode(self) -> u16 {
+        match self.direction {
+            d if d > 0 => 0,
+            d if d < 0 => 1,
+            _ => 2 + u16::from(self.reversals > 0),
+        }
     }
 }
 
@@ -308,6 +448,9 @@ mod tests {
                 benilla_formats::AnimEntry {
                     weapon_flags: 0,
                     fallback: 4,
+                    flags: 0,
+                    behavior: 0,
+                    tier: 0,
                 },
             ),
             (
@@ -315,6 +458,9 @@ mod tests {
                 benilla_formats::AnimEntry {
                     weapon_flags: 0,
                     fallback: 3,
+                    flags: 0,
+                    behavior: 0,
+                    tier: 0,
                 },
             ),
         ]);
@@ -337,6 +483,9 @@ mod tests {
                 benilla_formats::AnimEntry {
                     weapon_flags: 0,
                     fallback: 6,
+                    flags: 0,
+                    behavior: 0,
+                    tier: 0,
                 },
             ),
             (
@@ -344,6 +493,9 @@ mod tests {
                 benilla_formats::AnimEntry {
                     weapon_flags: 0,
                     fallback: 5,
+                    flags: 0,
+                    behavior: 0,
+                    tier: 0,
                 },
             ),
         ]);
@@ -380,6 +532,9 @@ mod tests {
             benilla_formats::AnimEntry {
                 weapon_flags: 0,
                 fallback: 3,
+                flags: 0,
+                behavior: 0,
+                tier: 0,
             },
         )]);
         let anims = test_anims(&[0, 3], vec![playable(0, 0); 3]);
@@ -395,6 +550,9 @@ mod tests {
             benilla_formats::AnimEntry {
                 weapon_flags: 0,
                 fallback: 1,
+                flags: 0,
+                behavior: 0,
+                tier: 0,
             },
         )]);
         let anims = test_anims(&[0, 1], Vec::new());
@@ -417,6 +575,149 @@ mod tests {
         assert_eq!(pick(&[158, 147, 0]), 0);
         assert_eq!(pick(&[158, 147]), 147);
         assert_eq!(pick(&[158, 159]), 158);
+    }
+
+    // ── The fallback walk's direction mode ─────────────────────────────────────────────────────
+
+    fn row(fallback: u16, flags: u32) -> benilla_formats::AnimEntry {
+        benilla_formats::AnimEntry {
+            weapon_flags: 0,
+            fallback,
+            flags,
+            behavior: 0,
+            tier: 0,
+        }
+    }
+
+    /// Walkbackwards (13, flagged `0x10`) on a model with only Walk (4) plays Walk reversed.
+    #[test]
+    fn walkbackwards_to_walk_is_mode_1() {
+        let cat = AnimDataCatalog::from_rows([(13, row(4, 0x10))]);
+        let anims = test_anims(&[0, 4], Vec::new());
+        assert_eq!(
+            anims.resolve(13, &cat),
+            ResolvedAnim {
+                id: 4,
+                dir_flags: 1
+            }
+        );
+    }
+
+    /// SitGround (97, flagged `0x20`) on a model with only SitGroundDown (96) holds its end.
+    #[test]
+    fn sitground_to_sitgrounddown_is_mode_3() {
+        let cat = AnimDataCatalog::from_rows([(97, row(96, 0x20))]);
+        let anims = test_anims(&[0, 96], Vec::new());
+        assert_eq!(
+            anims.resolve(97, &cat),
+            ResolvedAnim {
+                id: 96,
+                dir_flags: 3
+            }
+        );
+    }
+
+    /// A reverse then a hold cancels the reversal count: held on the first frame.
+    #[test]
+    fn a_reverse_then_a_hold_is_mode_2() {
+        let cat = AnimDataCatalog::from_rows([(10, row(11, 0x10)), (11, row(12, 0x20))]);
+        let anims = test_anims(&[0, 12], Vec::new());
+        assert_eq!(anims.resolve(10, &cat).dir_flags, 2);
+        // Both bits on one row: the flip, then the stop on the flipped direction.
+        let cat = AnimDataCatalog::from_rows([(10, row(12, 0x30))]);
+        assert_eq!(anims.resolve(10, &cat).dir_flags, 2);
+        // Two reversals walk forward again.
+        let cat = AnimDataCatalog::from_rows([(10, row(11, 0x10)), (11, row(12, 0x10))]);
+        assert_eq!(anims.resolve(10, &cat).dir_flags, 0);
+    }
+
+    /// An authored id, and an exhausted walk, play forward whatever the rows passed say.
+    #[test]
+    fn an_authored_or_exhausted_id_is_mode_0() {
+        let cat = AnimDataCatalog::from_rows([(13, row(14, 0x10)), (14, row(14, 0x20))]);
+        let anims = test_anims(&[0, 13], Vec::new());
+        assert_eq!(anims.resolve(13, &cat).dir_flags, 0);
+        let anims = test_anims(&[0], Vec::new());
+        assert_eq!(
+            anims.resolve(13, &cat),
+            ResolvedAnim {
+                id: 0,
+                dir_flags: 0
+            }
+        );
+    }
+
+    // ── The anim tier (`0x7176f0`) ──────────────────────────────────────────────────────────────
+
+    fn tiered(fallback: u16, behavior: u16, tier: u8) -> benilla_formats::AnimEntry {
+        benilla_formats::AnimEntry {
+            weapon_flags: 0,
+            fallback,
+            flags: 0,
+            behavior,
+            tier,
+        }
+    }
+
+    /// Stand 0, Walk 4 and their fly-tier rows FlyStand 229 and FlyWalk 233, shaped as shipped.
+    fn tier_catalog() -> AnimDataCatalog {
+        AnimDataCatalog::from_rows([
+            (0, tiered(147, 0, 0)),
+            (4, tiered(0, 4, 0)),
+            (229, tiered(376, 0, 3)),
+            (233, tiered(229, 4, 3)),
+        ])
+    }
+
+    /// A fly-tier unit asks for the tier's row; one that resolves through the tier's own
+    /// fallback counts, so FlyWalk is asked for and plays FlyStand's clip.
+    #[test]
+    fn a_fly_tier_unit_asks_for_the_tier_row() {
+        let cat = tier_catalog();
+        let drake = test_anims(&[0, 4, 229], Vec::new());
+        assert_eq!(drake.resolve_tier(0, 3, &cat), 229);
+        assert_eq!(drake.resolve_tier(4, 3, &cat), 233);
+        assert_eq!(drake.resolve(233, &cat).id, 229);
+        assert_eq!(
+            drake.resolve_tier(229, 3, &cat),
+            229,
+            "a tiered id stands for itself"
+        );
+        // Hover falls back to fly (`0xa349b4`), and the ground tier asks for the request.
+        assert_eq!(drake.resolve_tier(0, 2, &cat), 229);
+        assert_eq!(drake.resolve_tier(4, 0, &cat), 4);
+    }
+
+    /// A model with no tier rows falls to the ground tier: the request itself.
+    #[test]
+    fn a_model_without_tier_rows_plays_the_ground_request() {
+        let cat = tier_catalog();
+        let wolf = test_anims(&[0, 4], Vec::new());
+        assert_eq!(wolf.resolve_tier(4, 3, &cat), 4);
+        assert_eq!(wolf.resolve_tier(0, 3, &cat), 0);
+    }
+
+    /// The arm (`0x826b00`): mode 1 negates the rate and starts at the end, 2 holds frame 0, 3
+    /// holds the end.
+    #[test]
+    fn the_mode_sets_the_rate_and_the_start() {
+        let r = |dir_flags| ResolvedAnim { id: 4, dir_flags };
+        assert_eq!(r(0).rate(1.5), 1.5);
+        assert_eq!(r(1).rate(1.5), -1.5);
+        assert_eq!(r(2).rate(1.5), 0.0);
+        assert_eq!(r(3).rate(1.5), 0.0);
+        assert!(!r(0).starts_at_end() && !r(2).starts_at_end());
+        assert!(r(1).starts_at_end() && r(3).starts_at_end());
+        let mut active = bevy::animation::ActiveAnimation::default();
+        r(1).apply(&mut active, 2.0, 1.25);
+        assert_eq!((active.speed(), active.seek_time()), (-2.0, 1.25));
+        let mut active = bevy::animation::ActiveAnimation::default();
+        r(3).apply(&mut active, 2.0, 1.25);
+        assert_eq!(active.speed(), 0.0);
+        assert!(active.seek_time() < 1.25 && active.seek_time() > 1.2);
+        let mut active = bevy::animation::ActiveAnimation::default();
+        r(2).apply(&mut active, 2.0, 1.25);
+        assert_eq!((active.speed(), active.seek_time()), (0.0, 0.0));
     }
 
     // ── preferred_clip: the model-load bootstrap ─────────────────────
