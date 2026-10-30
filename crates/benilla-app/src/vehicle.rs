@@ -18,7 +18,10 @@ mod override_bar;
 mod passenger;
 mod ride;
 mod seats;
+mod shot;
 mod transit;
+
+pub(crate) use shot::{TrajectoryCast, TrajectoryCasts};
 
 pub(crate) use passenger::{Passenger, TransitionCue, SEATED};
 pub(crate) use ride::SeatPose;
@@ -105,6 +108,7 @@ impl Plugin for VehiclePlugin {
         app.init_resource::<VehicleTables>()
             .init_resource::<aim::VehicleAim>()
             .init_resource::<SeatStop>()
+            .init_resource::<shot::TrajectoryCasts>()
             .init_resource::<VehicleSignals>()
             .add_message::<EnteredWorldMessage>()
             // After the object handlers, whose commands spawn the unit this reads.
@@ -138,6 +142,8 @@ impl Plugin for VehiclePlugin {
                     drive_vehicle_aim
                         .in_set(crate::ui_unit::UnitFeed)
                         .after(send_vehicle_requests),
+                    // After the aim's power is read.
+                    shot::send_trajectory_casts.after(drive_vehicle_aim),
                     // Before the camera reads its subject and zoom.
                     camera::feed_vehicle_camera
                         .after(passenger::advance_transits)
@@ -620,6 +626,11 @@ fn drive_vehicle_aim(
     time: Res<Time>,
     mut aim: ResMut<aim::VehicleAim>,
 ) {
+    if let Some(power) = script.as_deref().map(UiScript::vehicle_aim_norm_power) {
+        if aim.power != power {
+            aim.power = power;
+        }
+    }
     let (Some(net), Some(player)) = (net, player) else {
         return;
     };

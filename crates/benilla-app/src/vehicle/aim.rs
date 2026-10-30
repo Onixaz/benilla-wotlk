@@ -36,6 +36,8 @@ pub(crate) struct VehicleAim {
     pub(crate) keys: [bool; 2],
     /// The turn sent: 1 up, -1 down, 0 none.
     pub(crate) turning: i8,
+    /// `VehicleAimGetNormPower`, the launch power a trajectory cast reads.
+    pub(crate) power: f32,
 }
 
 /// The pitch limits a record sets: its own under `flags & 0x40`, else ±π/2.

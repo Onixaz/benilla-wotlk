@@ -1283,6 +1283,17 @@ pub(crate) enum ClientCommand {
         spell_id: u32,
         target: benilla_protocol::messages::UseItemTarget,
     },
+    /// `CMSG_PET_CAST_SPELL` for a trajectory missile: the flown shot and the mover's pose for its
+    /// stop report.
+    PetCastTrajectory {
+        pet_guid: u64,
+        spell_id: u32,
+        shot: benilla_protocol::messages::TrajectoryShot,
+        flags: u32,
+        flags2: u16,
+        pos: [f32; 3],
+        orientation: f32,
+    },
     /// `CMSG_PET_SET_ACTION`: one or two `(position, word)` pairs. The bar's autocast toggle is
     /// one entry with bit 30 flipped.
     PetSetAction {

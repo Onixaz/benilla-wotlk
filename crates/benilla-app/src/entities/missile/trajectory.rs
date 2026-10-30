@@ -8,7 +8,7 @@
 //! `0x703640`).
 //!
 //! Bevy's Y is the reference's Z: the arc's math reads only the horizontal length and the rise.
-//! Not built: the cast-time aim preview (`0x6fcd60`) and the pending trajectory cast it sends.
+//! The cast that flies the aim is `crate::vehicle`'s; not built: its preview (`0x6fda20`).
 
 use std::f32::consts::FRAC_PI_2;
 

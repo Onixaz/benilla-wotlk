@@ -56,8 +56,11 @@ pub struct SpellDisplay {
     pub visual_low_violence: u32,
     /// Projectile speed (column 47) in world units per second; 0 is an instant impact.
     pub speed: f32,
-    /// `SpellMissile.dbc` id (column 163), a trajectory missile's flight; 0 for none.
+    /// `SpellMissile.dbc` id (column 227), a trajectory missile's flight; 0 for none.
     pub missile: u32,
+    /// The missile row's flag `0x1`: the client flies the aim and sends it with the cast
+    /// (`0x80b39d`), and implicit target 89 then asks for no location (`0x80c790`).
+    pub flies_aim: bool,
     /// `Attributes` (column 4).
     pub attributes: u32,
     /// `SchoolMask` (column 225): one bit per school, Fireball `0x4`; immunity tests it against a
@@ -280,6 +283,7 @@ impl Default for SpellDisplay {
             visual_low_violence: 0,
             speed: 0.0,
             missile: 0,
+            flies_aim: false,
             attributes: 0,
             school_mask: 0,
             mechanic: 0,

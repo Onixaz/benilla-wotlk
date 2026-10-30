@@ -1575,6 +1575,23 @@ pub(super) fn writer_loop(
                         spell_id,
                         target,
                     } => w.pet_cast_spell(pet_guid, spell_id, target),
+                    ClientCommand::PetCastTrajectory {
+                        pet_guid,
+                        spell_id,
+                        shot,
+                        flags,
+                        flags2,
+                        pos,
+                        orientation,
+                    } => w.pet_cast_trajectory(
+                        pet_guid,
+                        spell_id,
+                        &shot,
+                        flags,
+                        flags2,
+                        pos,
+                        orientation,
+                    ),
                     ClientCommand::PetSetAction { pet_guid, entries } => {
                         w.pet_set_action(pet_guid, &entries)
                     }

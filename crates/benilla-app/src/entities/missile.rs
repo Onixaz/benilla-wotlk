@@ -173,7 +173,7 @@ enum Collider {
 
 /// The unit-side inputs of an attachment or marker position read: the base frame, the tables and
 /// the pose, read through `RigPose::posed_point` without an anchor entity.
-pub(super) type AttachPosQuery<'w, 's> = Query<
+pub(crate) type AttachPosQuery<'w, 's> = Query<
     'w,
     's,
     (
@@ -233,6 +233,16 @@ fn launch_world_pos(
         p.posed_point(joints.get(p.joints_root).ok()?, bone, offset)
     });
     Some(point.unwrap_or_else(|| base.translation()))
+}
+
+/// Where an aim launches from (`0x6fcd60`): the model's `$AIM` event, else the cast markers and
+/// the unit's base (`0x71a720`).
+pub(crate) fn aim_launch_pos(
+    caster: Entity,
+    units: &AttachPosQuery,
+    joints: &Query<&GlobalTransform>,
+) -> Option<Vec3> {
+    launch_world_pos(caster, Some(*b"$AIM"), units, joints)
 }
 
 /// One GO's projectiles parked on the caster until the release keyframe, a node of the reference's
