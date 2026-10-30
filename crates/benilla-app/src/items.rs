@@ -44,9 +44,9 @@ pub(crate) fn spawn_item(
     e
 }
 
-/// `ITEM_FIELD_ENCHANTMENT`'s 21 dwords, three per slot; the reference's seven deadline cells at
-/// `obj + 0x324 + slot*4` end where the next member begins, at `+0x340`.
-pub(crate) const ENCHANT_SLOTS: usize = 7;
+/// `ITEM_FIELD_ENCHANTMENT`'s 36 dwords, three per slot; the reference's twelve deadline cells at
+/// `obj + 0x3a4 + slot*4` (`0x707120`).
+pub(crate) const ENCHANT_SLOTS: usize = 12;
 
 /// An item's countdowns, the reference's deadline cells on the item object: its lifetime at
 /// `+0x320` (fed only by `SMSG_ITEM_TIME_UPDATE`) and one temporary-enchant deadline per slot at
@@ -77,7 +77,7 @@ fn remaining_ms(cell: Option<Instant>) -> Option<u64> {
 }
 
 impl Countdowns {
-    /// `SMSG_ITEM_ENCHANT_TIME_UPDATE`'s setter. A slot past the seventh is refused (`false`),
+    /// `SMSG_ITEM_ENCHANT_TIME_UPDATE`'s setter. A slot past the twelfth is refused (`false`),
     /// where the reference indexes unchecked and overruns into the next member.
     pub(crate) fn set_enchant(&mut self, slot: u32, seconds: u32) -> bool {
         let Some(cell) = self.enchants.get_mut(slot as usize) else {
@@ -195,9 +195,13 @@ pub(crate) struct HeldTemplate {
 }
 
 /// `SpellItemEnchantment.dbc`, for the weapon glow ([`crate::entities::item_glow`]) and the
-/// tooltip enchant line ([`crate::ui_items`]). Optional: absent, neither draws.
+/// tooltip enchant line ([`crate::ui_items`]), with `GemProperties.dbc` for a socketed gem's
+/// colour. Optional: absent, neither draws.
 #[derive(Resource)]
-pub(crate) struct Enchants(pub(crate) benilla_formats::EnchantCatalog);
+pub(crate) struct Enchants(
+    pub(crate) benilla_formats::EnchantCatalog,
+    pub(crate) benilla_formats::GemPropertiesCatalog,
+);
 
 /// One enchant slot: `(slot index, id, charges, remaining ms)`. The id is signed: the sign picks
 /// the line's colour only, and `abs(id)` names the DBC row.
@@ -205,8 +209,8 @@ pub(crate) type EnchantSlot = (u8, i32, u32, Option<u64>);
 
 /// The tooltip lines an item's enchant slots contribute; every tooltip surface feeds through here.
 /// The reference's per-slot gate: `id != 0` and `abs(id)` names a `SpellItemEnchantment` row, else
-/// nothing. Our own items carry all seven slots; another player's descriptor carries only the
-/// permanent and temporary ones (vmangos).
+/// nothing. Our own items carry all twelve slots; another player's visible item carries only the
+/// permanent and temporary ones.
 pub(crate) fn enchant_lines(
     slots: impl IntoIterator<Item = EnchantSlot>,
     enchants: Option<&Enchants>,
@@ -227,7 +231,8 @@ pub(crate) fn enchant_lines(
 /// bind and print no line.
 pub(crate) fn already_bound(fields: &ObjectFields, cat: Option<&Enchants>) -> bool {
     fields.item_flags().is_some_and(|f| f & 0x1 != 0)
-        || (0..7).any(|slot| live_enchant(fields, slot, cat).is_some_and(|id| binds(id, cat)))
+        || (0..ENCHANT_SLOTS as u8)
+            .any(|slot| live_enchant(fields, slot, cat).is_some_and(|id| binds(id, cat)))
 }
 
 /// The gem item in each socket enchant slot, 2..4, 0 for none (`GetInventoryItemGems`
@@ -272,6 +277,8 @@ fn enchant_lines_quiet(
             let name = enchants.0.name(id.unsigned_abs())?.to_string();
             Some(benilla_ui::script::EnchantView {
                 slot,
+                id: id.unsigned_abs(),
+                gem_type: enchants.1.gem_type(id.unsigned_abs()),
                 name,
                 negative: id < 0,
                 charges,
@@ -283,7 +290,7 @@ fn enchant_lines_quiet(
 }
 
 /// `ItemRandomProperties.dbc`, the random-suffix roll: a name suffix and tooltip enchant slots
-/// 2..6. Optional: absent, names stay unsuffixed.
+/// 7..11. Optional: absent, names stay unsuffixed.
 #[derive(Resource)]
 pub(crate) struct RandomProperties(pub(crate) benilla_formats::RandomPropertyCatalog);
 
@@ -302,7 +309,7 @@ pub(crate) fn item_display_name(
 }
 
 /// The tooltip lines of a roll, for a source with no item object: the reference copies the row's
-/// five enchant ids into slots 2..6 and prints them as its own.
+/// five enchant ids into slots 7..11 and prints them as its own.
 pub(crate) fn random_property_lines(
     row: &benilla_formats::RandomProperty,
     enchants: Option<&Enchants>,
@@ -689,6 +696,9 @@ pub(crate) fn test_template(name: &str) -> ItemInfo {
         map: 0,
         bag_family: 0,
         totem_category: 0,
+        socket_colors: [0; 3],
+        socket_bonus: 0,
+        gem_properties: 0,
     }
 }
 
@@ -803,14 +813,14 @@ mod tests {
             "the enchant setter's test is the same signed `jle`"
         );
 
-        assert!(c.set_enchant(6, 30), "the seventh slot is the last cell");
+        assert!(c.set_enchant(11, 30), "the twelfth slot is the last cell");
         let before = c.clone();
-        assert!(!c.set_enchant(7, 30), "the eighth is past the array");
+        assert!(!c.set_enchant(12, 30), "the thirteenth is past the array");
         assert!(!c.set_enchant(u32::MAX, 30));
         assert_eq!(c, before, "a refused slot writes nothing");
 
         assert_eq!(c.enchant_deadline_ms(0), None, "never set");
-        assert!(c.enchant_deadline_ms(6).is_some_and(|ms| ms <= 30_000));
+        assert!(c.enchant_deadline_ms(11).is_some_and(|ms| ms <= 30_000));
     }
 
     #[test]
@@ -978,16 +988,19 @@ mod tests {
     /// `abs(id)` names the row and the sign only travels.
     #[test]
     fn enchant_lines_join_named_ids_in_slot_order() {
-        let cat = Enchants(benilla_formats::EnchantCatalog::from_rows(
+        let cat = Enchants(
+            benilla_formats::EnchantCatalog::from_rows(
+                Default::default(),
+                [
+                    (2564, "Agility +15".to_string()),
+                    (1900, "Crusader".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                Default::default(),
+            ),
             Default::default(),
-            [
-                (2564, "Agility +15".to_string()),
-                (1900, "Crusader".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            Default::default(),
-        ));
+        );
         let named = |v: Vec<benilla_ui::script::EnchantView>| -> Vec<String> {
             v.into_iter().map(|e| e.name).collect()
         };
@@ -1015,11 +1028,14 @@ mod tests {
     /// `SpellItemEnchantment.Flags` for three synthetic rows: one that binds, one that binds AND
     /// hides its tooltip line (the Firestone shape), one that does neither.
     fn catalog() -> Enchants {
-        Enchants(benilla_formats::EnchantCatalog::from_rows(
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::from([(11, 0x1), (12, 0x1 | 0x2), (13, 0x0)]),
-        ))
+        Enchants(
+            benilla_formats::EnchantCatalog::from_rows(
+                HashMap::new(),
+                HashMap::new(),
+                HashMap::from([(11, 0x1), (12, 0x1 | 0x2), (13, 0x0)]),
+            ),
+            Default::default(),
+        )
     }
 
     /// One item object with the given `ITEM_FIELD_FLAGS` and enchant slot 0.

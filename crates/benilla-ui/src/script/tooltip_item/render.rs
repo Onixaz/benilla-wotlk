@@ -12,6 +12,8 @@ use crate::script::ItemTemplateView;
 use crate::strings::{fill, Arg};
 
 use super::names::*;
+use super::set_count::{count_set, WornPiece};
+use super::sockets::{empty_socket, socket_lines};
 
 /// What a source knows beyond the template: an item object's fields, or a block source's name and
 /// roll. A template source passes `None`.
@@ -124,7 +126,7 @@ pub(super) fn render_view(
     // `None`: a template source, with no item object and no instance block.
     inst: Option<&ItemInstance>,
 ) -> mlua::Result<()> {
-    let (req, known_spell, taught_known, set_view, equipped, show_item_level) = {
+    let (req, known_spell, taught_known, set_view, worn, show_item_level) = {
         let mut model = crate::script::model_mut_of(lua);
         let show_item_level = model
             .cvars
@@ -149,18 +151,42 @@ pub(super) fn render_view(
                 view
             })
             .flatten();
-        let equipped: std::collections::HashSet<u32> = model
-            .inventory_slots
-            .iter()
-            .flatten()
-            .map(|s| s.item_id)
-            .collect();
+        // The worn items' templates (slots 0..=18), which the set block counts by their own set id;
+        // one still in flight is asked for and counts once it lands.
+        let worn: Vec<WornPiece> = match &set_view {
+            Some(_) => {
+                let ids: Vec<u32> = model
+                    .inventory_slots
+                    .iter()
+                    .take(19)
+                    .flatten()
+                    .map(|s| s.item_id)
+                    .filter(|&id| id != 0)
+                    .collect();
+                ids.into_iter()
+                    .filter_map(|id| match model.item_templates.get(&id) {
+                        Some(t) => Some(WornPiece {
+                            id,
+                            name: t.name.clone(),
+                            item_set: t.item_set,
+                            inventory_type: t.inventory_type,
+                        }),
+                        None => {
+                            model.item_stat_asks.insert(id);
+                            super::note_item_miss(&mut model, id);
+                            None
+                        }
+                    })
+                    .collect()
+            }
+            None => Vec::new(),
+        };
         (
             model.player_req.clone(),
             known,
             taught,
             set_view,
-            equipped,
+            worn,
             show_item_level,
         )
     };
@@ -304,6 +330,7 @@ pub(super) fn render_view(
     }
     // p4's second cut: damage through the enchant family. The slot/type cell between the two cuts
     // always prints.
+    let mut feral_ap: Option<i64> = None;
     if !flags.name_only {
         // The damage block: per slot, a key picked by school (non-zero), ammo (`ItemClass == 6`
         // alone) and, on the no-school non-ammo leaf only, single (`floor(min) == ceil(max)`);
@@ -438,44 +465,37 @@ pub(super) fn render_view(
                 )?;
             }
         }
-        // The enchant family: the slot loop, or with no id source at all the `ITEM_RANDOM_ENCHANT`
-        // placeholder. Slots 0 and 1 are green for a positive id and red for a negative one; the
-        // suffix slots 2..6 are always white. A signable item (`0x2000`) zeroes every id and shows
-        // no enchant line.
-        let signable = v.flags & 0x2000 != 0;
-        let enchant_slots = match signable {
-            true => &[][..],
-            false => inst.map(|i| i.enchants.as_slice()).unwrap_or_default(),
-        };
-        // No id source: a wrapped gift, or no item object and no instance block (`+0x440 == 0`),
-        // here a hover passing no [`ItemInstance`]. The fork tests the block's presence, not its
-        // contents, so a block source never shows the placeholder.
-        let no_id_source = inst.is_none_or(|i| i.flags & 0x8 != 0);
-        if no_id_source && !signable && v.random_property != 0 {
-            keyed("ITEM_RANDOM_ENCHANT", &[], GREEN, false)?;
-        }
-        for e in enchant_slots {
-            let color = match (e.slot < 2, e.negative) {
-                (true, false) => GREEN,
-                (true, true) => ENCHANT_RED,
-                (false, _) => WHITE,
-            };
-            // A temporary enchant's countdown replaces its name, in the same line and colour; the
-            // time is `SMSG_ITEM_ENCHANT_TIME_UPDATE`'s.
-            let mut text = match e.remaining_ms {
-                // A missing template skips the slot, not falling back to the bare name: the
-                // reference formats an empty string, which `AddLine` drops.
-                Some(ms) => match enchant_time_left(&e.name, ms, &get) {
-                    Some(t) => t,
-                    None => continue,
-                },
-                None => e.name.clone(),
-            };
-            // The slot's charges: ITEM_SPELL_CHARGES inside the literal `" (%s)"`.
-            if let Some(charges) = charges_phrase(e.charges, &get) {
-                text.push_str(&format!(" ({charges})"));
+        // The socket walk (`0x6277f0`): an item object or a link block walks its twelve enchant
+        // slots, a bare template prints its sockets, then the placeholder for a random roll; a
+        // wrapped gift shows neither.
+        match inst {
+            Some(i) if i.flags & 0x8 == 0 => socket_lines(lua, this, v, i, &get)?,
+            Some(_) => {}
+            None => {
+                for &color in &v.socket_colors {
+                    if let Some(name) = socket_color_name(color) {
+                        empty_socket(lua, this, Some(name), GRAY, &get)?;
+                    }
+                }
+                if let Some(bonus) = &v.socket_bonus_name {
+                    keyed("ITEM_SOCKET_BONUS", &[Arg::S(bonus)], GRAY, false)?;
+                }
+                if v.random_property != 0 {
+                    keyed("ITEM_RANDOM_ENCHANT", &[], GREEN, false)?;
+                }
             }
-            add((text, color))?;
+        }
+        // The druid's feral attack power off a main-hand weapon's DPS above 54.81 (`0x61a8f0`).
+        if req.class_id == 11
+            && v.class == 2
+            && matches!(v.inventory_type, 13 | 17 | 21 | 22)
+            && v.delay_ms != 0
+        {
+            let dps = f64::from(dps_acc) / (f64::from(v.delay_ms) * f64::from(0.001_f32));
+            let cut = f64::from(54.81_f32);
+            if dps > cut {
+                feral_ap = Some(((dps - cut) * 14.0 + 0.5).floor() as i64);
+            }
         }
     }
     if let Some((cur, max)) = inst.and_then(|i| i.durability).filter(|&(_, max)| max > 0) {
@@ -592,6 +612,29 @@ pub(super) fn render_view(
     if taught_known {
         keyed("ITEM_SPELL_KNOWN", &[], RED, false)?;
     }
+    // The green stat lines (`0x6277f0`): the feral line, then each rating stat in wire order as the
+    // ON_EQUIP prefix and its `ITEM_MOD_*` text, joined by the literal `"%s %s"`.
+    if let (Some(ap), Some(t)) = (feral_ap, get("FERAL_DRUID_ITEM_AP")) {
+        addw((fill(&t, &[Arg::D(ap)]), GREEN))?;
+    }
+    if let Some(prefix) = get("ITEM_SPELL_TRIGGER_ONEQUIP") {
+        for &(t, val) in &v.stats {
+            let Some(template) = rating_key(t).and_then(&get) else {
+                continue;
+            };
+            if val == 0 {
+                continue;
+            }
+            // A `%c` template takes the sign; the rest take the value alone.
+            let text = if template.contains("%c") {
+                let sign = if val > 0 { "+" } else { "-" };
+                fill(&template, &[Arg::S(sign), Arg::D(val.abs().into())])
+            } else {
+                fill(&template, &[Arg::D(val.into())])
+            };
+            add((format!("{prefix} {text}"), GREEN))?;
+        }
+    }
     // Green, wrapped trigger lines: the prefix key and the app-resolved text joined by the literal
     // `"%s %s"`.
     for &(trigger, _, ref text) in &v.spell_triggers {
@@ -607,24 +650,20 @@ pub(super) fn render_view(
     if let Some(charges) = charges_phrase(v.charges.max(0) as u32, &get) {
         add((charges, WHITE))?;
     }
-    // The set block, above p4's cut: a blank gold line, the gold "name (owned/total)" header, the
-    // set's skill line, the members (else gray; one still in flight waits), a second blank, then
-    // the bonuses sorted by threshold, green when the skill is met and enough are owned. "Owned"
-    // counts equipped members on both builder paths. A met bonus is ITEM_SET_BONUS, the text alone;
-    // only an unmet one is ITEM_SET_BONUS_GRAY, with its count.
+    // The set block, above p4's cut: a blank gold line, the gold "name (worn/total)" header, the
+    // set's skill line, the members (a worn one cream under its own name, else gray; one still in
+    // flight waits), a second blank, then the bonuses sorted by threshold, green when the skill is
+    // met and enough are worn. A met bonus is ITEM_SET_BONUS, the text alone; only an unmet one is
+    // ITEM_SET_BONUS_GRAY, with its count.
     if let Some(set) = &set_view {
-        let owned = set
-            .members
-            .iter()
-            .filter(|(id, _)| equipped.contains(id))
-            .count();
+        let count = count_set(v.item_set, &set.members, &worn);
         addw((SET_SPACER.into(), GOLD))?;
         keyed(
             "ITEM_SET_NAME",
             &[
                 Arg::S(&set.name),
-                Arg::D(owned as i64),
-                Arg::D(set.members.len() as i64),
+                Arg::D(count.worn as i64),
+                Arg::D(count.total as i64),
             ],
             GOLD,
             false,
@@ -643,16 +682,20 @@ pub(super) fn render_view(
             }
         }
         // The two-space indent is the literal `"  %s"`, not a key.
-        for (id, name) in &set.members {
-            let Some(name) = name else { continue };
-            let color = if equipped.contains(id) { CREAM } else { GRAY };
-            add((format!("  {name}"), color))?;
+        for (member, piece) in set.members.iter().zip(&count.members) {
+            match piece {
+                Some(name) => add((format!("  {name}"), CREAM))?,
+                None => {
+                    let Some(name) = &member.name else { continue };
+                    add((format!("  {name}"), GRAY))?;
+                }
+            }
         }
         addw((SET_SPACER.into(), GOLD))?;
         let mut bonuses: Vec<&(u32, String)> = set.bonuses.iter().collect();
         bonuses.sort_by_key(|&&(threshold, _)| threshold);
         for &(threshold, ref text) in bonuses {
-            if skill_met && owned as u32 >= threshold {
+            if skill_met && count.worn as u32 >= threshold {
                 keyed("ITEM_SET_BONUS", &[Arg::S(text)], GREEN, true)?;
             } else {
                 let args = [Arg::D(threshold.into()), Arg::S(text)];
@@ -773,7 +816,11 @@ fn add_sell_price(lua: &Lua, this: &Table, v: &ItemTemplateView, sell: Sell) -> 
 /// A temporary enchant's name with its countdown: `ITEM_ENCHANT_TIME_LEFT_<unit>`, its `_P1` twin
 /// picked by [`plural_template`]. Two holes, the name then the count, so not `duration_text`;
 /// `None` when the install lacks the family, and the caller draws no line.
-fn enchant_time_left(name: &str, ms: u64, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+pub(super) fn enchant_time_left(
+    name: &str,
+    ms: u64,
+    get: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
     let (suffix, n) = time_bucket(ms);
     let template = plural_template(&format!("ITEM_ENCHANT_TIME_LEFT_{suffix}"), n, get)?;
     Some(fill(&template, &[Arg::S(name), Arg::D(i64::from(n))]))
@@ -798,7 +845,7 @@ fn time_bucket(ms: u64) -> (&'static str, u32) {
 
 /// `ITEM_SPELL_CHARGES` or its `_P1` twin, pushed for the enchant suffix and for the charges line;
 /// zero charges have no phrase.
-fn charges_phrase(n: u32, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
+pub(super) fn charges_phrase(n: u32, get: &dyn Fn(&str) -> Option<String>) -> Option<String> {
     if n == 0 {
         return None;
     }

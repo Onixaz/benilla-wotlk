@@ -117,6 +117,12 @@ pub struct ItemInfo {
     pub bag_family: u32,
     /// The `TotemCategory.dbc` row this item is a tool for, 0 none (`ItemRec+0x1bc`).
     pub totem_category: u32,
+    /// `SocketColor` per socket, a mask (1 meta, 2 red, 4 yellow, 8 blue); 0 for no socket.
+    pub socket_colors: [u32; 3],
+    /// The `SpellItemEnchantment.dbc` row a full match of gems grants; 0 for none.
+    pub socket_bonus: u32,
+    /// A gem's `GemProperties.dbc` row; 0 for anything else.
+    pub gem_properties: u32,
 }
 
 impl ItemInfo {
@@ -380,8 +386,15 @@ pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, 
     let bag_family = read_u32_le(r)?;
 
     let totem_category = read_u32_le(r)?;
-    // Sockets, socket bonus, gem properties, disenchant skill, armor modifier, duration, limits.
-    for _ in 0..13 {
+    let mut socket_colors = [0u32; 3];
+    for color in &mut socket_colors {
+        *color = read_u32_le(r)?;
+        let _content = read_u32_le(r)?;
+    }
+    let socket_bonus = read_u32_le(r)?;
+    let gem_properties = read_u32_le(r)?;
+    // Disenchant skill, armor modifier, duration, limit category, holiday.
+    for _ in 0..5 {
         let _ = read_u32_le(r)?;
     }
 
@@ -441,6 +454,9 @@ pub(super) fn read_item_query_response_wotlk(r: &mut &[u8]) -> io::Result<(u32, 
             map,
             bag_family,
             totem_category,
+            socket_colors,
+            socket_bonus,
+            gem_properties,
         }),
     ))
 }

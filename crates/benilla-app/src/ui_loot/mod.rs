@@ -2245,30 +2245,33 @@ mod tests {
             .into_iter()
             .collect(),
         ));
-        let enchants = crate::items::Enchants(benilla_formats::EnchantCatalog::from_rows(
-            std::collections::HashMap::new(),
-            [
-                (74, "Agility +7".to_string()),
-                (71, "Stamina +7".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            [(74, 0), (71, 0)].into_iter().collect(),
-        ));
+        let enchants = crate::items::Enchants(
+            benilla_formats::EnchantCatalog::from_rows(
+                std::collections::HashMap::new(),
+                [
+                    (74, "Agility +7".to_string()),
+                    (71, "Stamina +7".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                [(74, 0), (71, 0)].into_iter().collect(),
+            ),
+            Default::default(),
+        );
         let rolls = RollCatalogs {
             props: Some(&props),
             enchants: Some(&enchants),
         };
         assert_eq!(rolls.name("Bloodrazor", 584), "Bloodrazor of the Monkey");
         assert_eq!(rolls.name("Bloodrazor", 0), "Bloodrazor");
-        // The roll's lines land in slots 2..6, the suffix band the renderer draws white.
+        // The roll's lines land in slots 7..11, the property band the renderer draws white.
         let lines = rolls.lines(584);
         assert_eq!(
             lines
                 .iter()
                 .map(|l| (l.slot, l.name.as_str()))
                 .collect::<Vec<_>>(),
-            vec![(2, "Agility +7"), (3, "Stamina +7")],
+            vec![(7, "Agility +7"), (8, "Stamina +7")],
         );
         assert!(rolls.lines(0).is_empty(), "no roll, no lines");
     }

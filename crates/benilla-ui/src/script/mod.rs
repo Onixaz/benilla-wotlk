@@ -380,7 +380,7 @@ pub use glyph::{
     GLYPH_FAILED_INVALID, GLYPH_FAILED_LOCKED, GLYPH_FAILED_UNIQUE, NUM_GLYPH_SOCKETS,
 };
 pub use inspect::{InspectView, UnitReach};
-pub use item_stats::{item_usable, ItemSetView, ItemTemplateView, PlayerReqState};
+pub use item_stats::{item_usable, ItemSetMember, ItemSetView, ItemTemplateView, PlayerReqState};
 pub use item_text::ItemTextState;
 pub use layout_cache::PlacedFrame;
 pub use lfg::{

@@ -37,7 +37,9 @@ pub enum Field {
     ItemFlags,
     /// The permanent and temporary enchant triples (id, duration, charges).
     ItemEnchantPermTemp,
-    /// The random-property enchant triples.
+    /// The socket, socket-bonus and prismatic enchant triples (slots 2..=6).
+    ItemEnchantSockets,
+    /// The random-property enchant triples (slots 7..=11).
     ItemEnchantProps,
     ItemPropertySeed,
     ItemRandomPropertiesId,
@@ -346,8 +348,8 @@ use Field as F;
 pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
     ends: DescriptorEnds {
         object: 6,
-        item: 48,
-        container: 122,
+        item: 78,
+        container: 152,
         unit: 188,
         player: 1660,
         gameobject: 26,
@@ -367,16 +369,17 @@ pub(crate) static SHARED: UpdateFieldLayout = UpdateFieldLayout {
         one(F::ItemDuration, Item, 15),
         run(F::ItemSpellCharges, Item, 16, 5),
         one(F::ItemFlags, Item, 21),
-        // `ITEM_FIELD_ENCHANTMENT`, 7 triples: slots 0 and 1, then the props at 3..=6.
+        // `ITEM_FIELD_ENCHANTMENT`: slots 0 and 1 in 1.12.1's place, slots 2..=11 past its item end.
         run(F::ItemEnchantPermTemp, Item, 22, 6),
-        run(F::ItemEnchantProps, Item, 31, 12),
         one(F::ItemPropertySeed, Item, 43),
         one(F::ItemRandomPropertiesId, Item, 44),
         one(F::ItemTextId, Item, 45),
         one(F::ItemDurability, Item, 46),
         one(F::ItemMaxDurability, Item, 47),
-        one(F::ContainerNumSlots, Container, 48),
-        run(F::ContainerSlots, Container, 50, 72),
+        run(F::ItemEnchantSockets, Item, 48, 15),
+        run(F::ItemEnchantProps, Item, 63, 15),
+        one(F::ContainerNumSlots, Container, 78),
+        run(F::ContainerSlots, Container, 80, 72),
         run(F::UnitCharm, Unit, 6, 2),
         run(F::UnitSummon, Unit, 8, 2),
         run(F::UnitCharmedBy, Unit, 10, 2),
@@ -596,9 +599,10 @@ pub(crate) static WIRE: UpdateFieldLayout = UpdateFieldLayout {
         run(F::ItemSpellCharges, Item, 16, 5),
         one(F::ItemFlags, Item, 21),
         // `ITEM_FIELD_ENCHANTMENT`, 12 triples: permanent and temporary, three sockets, bonus,
-        // prismatic, then five props at 7..=11 (`EnchantmentSlot`), the first four read.
+        // prismatic, then five props at 7..=11 (`EnchantmentSlot`).
         run(F::ItemEnchantPermTemp, Item, 22, 6),
-        run(F::ItemEnchantProps, Item, 43, 12),
+        run(F::ItemEnchantSockets, Item, 28, 15),
+        run(F::ItemEnchantProps, Item, 43, 15),
         one(F::ItemPropertySeed, Item, 58),
         one(F::ItemRandomPropertiesId, Item, 59),
         one(F::ItemDurability, Item, 60),

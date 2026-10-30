@@ -506,7 +506,7 @@ fn an_enchanted_instance_renders_its_enchant_line_before_durability() {
 }
 
 /// Enchant colour goes by slot: slots 0 and 1 are green for a positive id and pure red (`ffff0000`,
-/// not the requirement `ffff2020`) for a negative one; 2..6 are white.
+/// not the requirement `ffff2020`) for a negative one; the property slots 7..11 are white.
 #[test]
 fn enchant_line_colour_is_per_slot_and_sign() {
     let mut s = script();
@@ -530,12 +530,12 @@ fn enchant_line_colour_is_per_slot_and_sign() {
                     ..Default::default()
                 },
                 EnchantView {
-                    slot: 3,
+                    slot: 7,
                     name: "Stamina +7".into(),
                     ..Default::default()
                 },
                 EnchantView {
-                    slot: 4,
+                    slot: 8,
                     name: "Spirit +3".into(),
                     negative: true,
                     ..Default::default()
@@ -588,7 +588,7 @@ fn enchant_line_colour_is_per_slot_and_sign() {
     assert_eq!(
         color_of("Stamina +7"),
         [1.0, 1.0, 1.0, 1.0],
-        "a suffix slot is white"
+        "a property slot is white"
     );
     assert_eq!(
         color_of("Spirit +3"),
@@ -667,7 +667,7 @@ fn temporary_enchant_line_carries_its_countdown_and_charges() {
 
 /// A loot hover shows the roll, never the placeholder: `SetLootItem` builds an instance block
 /// (p6 = 1) with the roll at `+0x424`, zeroed enchant slots and no object, so the builder copies the
-/// suffix row into slots 2..6 and never reaches `ITEM_RANDOM_ENCHANT`. The name is the suffixed one
+/// suffix row into slots 7..11 and never reaches `ITEM_RANDOM_ENCHANT`. The name is the suffixed one
 /// `GetLootSlotInfo` returns.
 #[test]
 fn a_looted_roll_shows_its_lines_and_never_the_placeholder() {

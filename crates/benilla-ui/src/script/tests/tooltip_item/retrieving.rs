@@ -117,7 +117,7 @@ fn an_item_set_landing_repaints() {
         161,
         ItemSetView {
             name: "Defias Leather".into(),
-            members: vec![(6303, Some("Defias Mark".into()))],
+            members: vec![ItemSetMember::new(6303, "Defias Mark", 5)],
             ..Default::default()
         },
     );

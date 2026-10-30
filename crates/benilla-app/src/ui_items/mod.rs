@@ -1331,8 +1331,8 @@ mod find_item_tests {
     // Descriptor field indices, raw.
     const ENTRY: u16 = 3; // OBJECT_FIELD_ENTRY
     const CHARGES: u16 = 16; // ITEM_FIELD_SPELL_CHARGES[0]
-    const NUM_SLOTS: u16 = 48; // CONTAINER_FIELD_NUM_SLOTS
-    const SLOT_1: u16 = 50; // CONTAINER_FIELD_SLOT_1 (2 fields per guid)
+    const NUM_SLOTS: u16 = 78; // CONTAINER_FIELD_NUM_SLOTS
+    const SLOT_1: u16 = 80; // CONTAINER_FIELD_SLOT_1 (2 fields per guid)
     const INV_SLOT_HEAD: u16 = 486; // PLAYER_FIELD_INV_SLOT_HEAD (2 per guid, 23 slots)
     const PACK_SLOT_1: u16 = 532; // PLAYER_FIELD_PACK_SLOT_1 (2 per guid, 16 slots)
     const KEYRING_SLOT_1: u16 = 648; // PLAYER_FIELD_KEYRING_SLOT_1 (2 per guid, player slots 86..)
@@ -1565,8 +1565,8 @@ mod count_of_tests {
     // Descriptor field indices, raw.
     const ENTRY: u16 = 3; // OBJECT_FIELD_ENTRY
     const STACK: u16 = 14; // ITEM_FIELD_STACK_COUNT
-    const NUM_SLOTS: u16 = 48; // CONTAINER_FIELD_NUM_SLOTS
-    const SLOT_1: u16 = 50; // CONTAINER_FIELD_SLOT_1 (2 fields per guid)
+    const NUM_SLOTS: u16 = 78; // CONTAINER_FIELD_NUM_SLOTS
+    const SLOT_1: u16 = 80; // CONTAINER_FIELD_SLOT_1 (2 fields per guid)
     const INV_SLOT_HEAD: u16 = 486; // player slots 0..22
     const PACK_SLOT_1: u16 = 532; // player slots 23..38
     const BANK_SLOT_1: u16 = 1516; // player slots 39..66

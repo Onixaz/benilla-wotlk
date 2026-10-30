@@ -18,12 +18,12 @@ use crate::dbc::{parse, str_at, u32_at};
 
 const ITEM_RANDOM_PROPERTIES: &str = "DBFilesClient\\ItemRandomProperties.dbc";
 
-/// The enchant slots a row grants, the item's enchant slots 2..6 (0 permanent, 1 temporary).
+/// The enchant slots a row grants, the item's enchant slots 7..11 (`0x6277f0`).
 pub const RANDOM_PROPERTY_SLOTS: usize = 5;
 
 /// The item-enchant slot the first random-property enchant lands in: the reference copies the row's
-/// five dwords to the tooltip session's `+0x3d8..+0x3e8`, slots 2..6.
-pub const RANDOM_PROPERTY_FIRST_SLOT: u8 = 2;
+/// five dwords to its link block's slots 7..11.
+pub const RANDOM_PROPERTY_FIRST_SLOT: u8 = 7;
 
 /// One `ItemRandomProperties` row: the suffix the name takes, and the enchants the roll grants.
 #[derive(Clone, Debug, Default)]
@@ -31,7 +31,7 @@ pub struct RandomProperty {
     /// The enUS suffix (`"of the Bear"`), never empty: a suffix-less row is the formatter's
     /// plain-name exit and is not loaded.
     pub suffix: String,
-    /// The five `SpellItemEnchantment` ids for enchant slots 2..6, `0` where the row grants none.
+    /// The five `SpellItemEnchantment` ids for enchant slots 7..11, `0` where the row grants none.
     pub enchants: [u32; RANDOM_PROPERTY_SLOTS],
 }
 

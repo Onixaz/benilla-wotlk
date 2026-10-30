@@ -937,19 +937,25 @@ pub(crate) fn setup_entities(
         }
         Err(e) => warn!("item visuals unavailable, weapons never glow: {e:#}"),
     }
-    // `SpellItemEnchantment`: the enchant glow and the tooltip's enchant line.
+    // `SpellItemEnchantment`: the enchant glow and the tooltip's enchant line; `GemProperties`:
+    // the socketed gems' colours.
     match benilla_formats::load_enchant_catalog(&mut chain) {
         Ok(enchants) => {
+            let gems = benilla_formats::load_gem_properties(&mut chain).unwrap_or_else(|e| {
+                warn!("gem properties unavailable: no socket bonus matches: {e:#}");
+                Default::default()
+            });
             info!(
-                "enchant catalog: {} named, {} carrying a glow",
+                "enchant catalog: {} named, {} carrying a glow, {} gems",
                 enchants.name_count(),
-                enchants.visual_count()
+                enchants.visual_count(),
+                gems.len()
             );
-            commands.insert_resource(crate::items::Enchants(enchants));
+            commands.insert_resource(crate::items::Enchants(enchants, gems));
         }
         Err(e) => warn!("enchants unavailable: no enchant glow, no enchant line: {e:#}"),
     }
-    // `ItemRandomProperties`: a random suffix's name and its enchant slots 2..6.
+    // `ItemRandomProperties`: a random suffix's name and its enchant slots 7..11.
     match benilla_formats::load_random_property_catalog(&mut chain) {
         Ok(props) => {
             info!("random-property catalog: {} suffix rows", props.len());

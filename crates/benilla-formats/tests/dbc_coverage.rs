@@ -34,7 +34,6 @@ const NOT_READ: &[(&str, &str)] = &[
     ("DungeonMapChunk", "#238 dungeon map levels"),
     ("FileData", "#245 the movie file table"),
     ("GameObjectArtKit", "#243 game object art kits"),
-    ("GemProperties", "#202 gems and sockets"),
     ("GMSurveyAnswers", "#245 GM surveys"),
     ("GMSurveyCurrentSurvey", "#245 GM surveys"),
     ("GMSurveyQuestions", "#245 GM surveys"),

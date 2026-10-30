@@ -254,10 +254,11 @@ impl BankCatalogs<'_> {
                 ..Default::default()
             });
         };
-        // The permanent enchant in slot 0, then the roll's lines, as the block source's tooltip
-        // takes them (`0x6304a0`); benilla's tooltips draw no socket lines, so the gems wait.
+        // The permanent enchant in slot 0, the gems in 2..=4, then the roll's lines, as the block
+        // source's tooltip takes them (`0x6304a0`).
+        let gems = (0..3u8).map(|i| (2 + i, s.gems[usize::from(i)] as i32, 0u32, None));
         let mut enchants = crate::items::enchant_lines(
-            [(0u8, s.enchant as i32, 0u32, None)],
+            std::iter::once((0u8, s.enchant as i32, 0u32, None)).chain(gems),
             self.enchants.as_deref(),
         );
         if let Some(row) = self
