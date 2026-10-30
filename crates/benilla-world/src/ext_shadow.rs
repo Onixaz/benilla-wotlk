@@ -164,7 +164,7 @@ pub(crate) fn plugin(app: &mut App) {
                 aim_shadow_light.run_if(light_exists),
             )
                 .chain()
-                .before(SimulationLightSystems::UpdateDirectionalLightCascades),
+                .before(bevy::transform::TransformSystems::Propagate),
         )
         .add_systems(
             PostUpdate,

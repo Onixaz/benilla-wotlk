@@ -754,8 +754,11 @@ pub(crate) mod schedule_tests {
     }
 
     /// `PostUpdate`'s undeclared-order pairs on the declared graph; `GlobalTransform` and the
-    /// particle `EffectQuads` are most of it.
-    const POST_UPDATE_CEILING: usize = 377;
+    /// particle `EffectQuads` are most of it. The exterior shadow maps (#563) add 7:
+    /// `place_cascades` reads the world camera's `GlobalTransform` after propagation against the
+    /// nameplate, raid-mark and model-particle writers of other entities', and
+    /// `mute_world_casters` reads new `Mesh3d`s against their writers, muting one a frame late.
+    const POST_UPDATE_CEILING: usize = 384;
     const POST_UPDATE_SLACK: usize = 20;
     /// The actionable pairs in `Update`: conflicting access, no declared order, and nothing
     /// [`Classes`] explains, so the executor orders them however the graph falls. The count may
