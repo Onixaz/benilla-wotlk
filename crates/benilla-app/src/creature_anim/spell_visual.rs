@@ -56,6 +56,7 @@ pub(crate) fn meeting_stone_join_fx(visuals: &SpellVisuals, entity: Entity) -> O
             tag: HARDCODED_FX_ATTACH,
             effect,
             path: path.to_string(),
+            scale: 1.0,
         }],
     })
 }
@@ -117,7 +118,7 @@ pub(crate) enum FxStage {
 /// One effect model a play hangs on a unit. Record id and tag are the reference's same-slot replace
 /// key: the effect add first destroys the owner's nodes with the same record at the same tag, while
 /// two rows naming one `.mdx` coexist.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FxSlot {
     /// The M2 attachment, or [`benilla_formats::WORLD_EFFECT_TAG`] for the field-12 world plant,
     /// which the replace walk skips.
@@ -126,6 +127,9 @@ pub(crate) struct FxSlot {
     pub(crate) effect: u32,
     /// The model-cache key.
     pub(crate) path: String,
+    /// The model's uniform local scale, 1 for a kit slot; a GameObject's loot sparkle sizes to its
+    /// object (`0x70d0f1`).
+    pub(crate) scale: f32,
 }
 
 /// A kit's attach-point effect models (kit fields 3 to 11 → `SpellVisualEffectName`), consumed by
@@ -376,6 +380,7 @@ fn resolve_kit_effects(visuals: &SpellVisualCatalog, kit: &VisualKit) -> Vec<FxS
                 tag,
                 effect,
                 path: path.to_string(),
+                scale: 1.0,
             })
         })
         .collect()
@@ -389,6 +394,9 @@ pub(crate) struct KitPush {
     pub(crate) kit_id: u32,
     /// [`super::PlaySeq`] stamp at the wire drain, in packet order.
     pub(crate) seq: u64,
+    /// The kit play's stage: 0 for the visual (`0x800610`) and the environmental damage kit
+    /// (`0x755365`), 1 for the impact (`0x8006c0`); stage 0 latches the special idle (`0x73b38e`).
+    pub(crate) stage: u8,
 }
 
 /// The kit lanes [`route_cast_visuals`] writes but does not own, bundled into one param because
@@ -400,6 +408,7 @@ type KitSpawnWriters<'w> = (
     MessageWriter<'w, SpellKitShake>,
     MessageWriter<'w, crate::weapon_trail::TrailArm>,
     MessageWriter<'w, BaseAnimRecompute>,
+    MessageWriter<'w, DelayedAreaKit>,
 );
 
 /// The writers one kit play fans out to.
@@ -515,7 +524,8 @@ fn play_kit_at(
     kit: &VisualKit,
     pos: Vec3,
     visuals: &SpellVisualCatalog,
-    out: &mut KitOut,
+    sounds: &mut MessageWriter<SpellKitSound>,
+    shakes: &mut MessageWriter<SpellKitShake>,
     bursts: &mut MessageWriter<crate::entities::dest_fx::GroundBurst>,
 ) {
     for (_, effect) in kit.effects() {
@@ -527,11 +537,70 @@ fn play_kit_at(
         }
     }
     if let Some(kit_sound) = kit.sound {
-        out.sounds.write(SpellKitSound::PlayAt { pos, kit_sound });
+        sounds.write(SpellKitSound::PlayAt { pos, kit_sound });
     }
     if let Some(group) = kit.shake {
-        out.shakes.write(SpellKitShake::PlayAt { pos, group });
+        shakes.write(SpellKitShake::PlayAt { pos, group });
     }
+}
+
+/// `SpellVisual` column 24 at a GO's dest point, deferred to when a missile of the spell's speed
+/// would land there: the reference queues it on the caster stamped `now + distance / speed`
+/// (`0x80efb6`, `0x80e7f3`).
+#[derive(Message, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct DelayedAreaKit {
+    pub(crate) caster: Entity,
+    pub(crate) kit_id: u32,
+    pub(crate) pos: Vec3,
+    /// `Spell.dbc` Speed, yards per second, above 0.
+    pub(crate) speed: f32,
+}
+
+/// How long a [`DelayedAreaKit`] waits: the caster-to-point distance over the speed, at once
+/// with no caster position.
+fn area_kit_delay(caster: Option<Vec3>, pos: Vec3, speed: f32) -> f32 {
+    caster.map_or(0.0, |c| c.distance(pos) / speed)
+}
+
+/// Queue each [`DelayedAreaKit`] and play the due ones at their point ([`play_kit_at`]).
+pub(super) fn play_delayed_area_kits(
+    mut queued: MessageReader<DelayedAreaKit>,
+    casters: Query<&GlobalTransform>,
+    visuals: Option<Res<SpellVisuals>>,
+    time: Res<Time>,
+    mut sounds: MessageWriter<SpellKitSound>,
+    mut shakes: MessageWriter<SpellKitShake>,
+    mut bursts: MessageWriter<crate::entities::dest_fx::GroundBurst>,
+    mut pending: Local<Vec<(f32, u32, Vec3)>>,
+) {
+    let now = time.elapsed_secs();
+    for q in queued.read() {
+        let from = casters.get(q.caster).ok().map(|g| g.translation());
+        pending.push((now + area_kit_delay(from, q.pos, q.speed), q.kit_id, q.pos));
+    }
+    if pending.is_empty() {
+        return;
+    }
+    let Some(visuals) = visuals.as_deref() else {
+        pending.clear();
+        return; // no client data
+    };
+    pending.retain(|&(due, kit_id, pos)| {
+        if now < due {
+            return true;
+        }
+        if let Some(kit) = visuals.0.kit(kit_id) {
+            play_kit_at(kit, pos, &visuals.0, &mut sounds, &mut shakes, &mut bursts);
+        }
+        false
+    });
+}
+
+/// Whether `SMSG_SPELL_GO` plays column 24 itself (`0x80ef23`): not when a missile carries it to
+/// the landing (`HasMissile` and Speed > 0, `0x80ef53`), nor for a row that draws a beam
+/// (`0x80ef71`).
+fn go_plays_impact_area(visuals: &SpellVisualCatalog, stages: &VisualStages, speed: f32) -> bool {
+    !(stages.missile_gate != 0 && speed > 0.0) && !visuals.has_chain_effect(stages)
 }
 
 /// One spell landing on one unit.
@@ -616,13 +685,14 @@ pub(super) fn route_cast_visuals(
         return; // no client data
     };
     // Disjoint borrows: the beam writer rides `out` while the missile and burst writers stay free.
-    let (missiles, bursts, chains, shakes, trails, recomputes) = (
+    let (missiles, bursts, chains, shakes, trails, recomputes, delayed) = (
         &mut spawns.0,
         &mut spawns.1,
         &mut spawns.2,
         &mut spawns.3,
         &mut spawns.4,
         &mut spawns.5,
+        &mut spawns.6,
     );
     let mut out = KitOut {
         oneshots: &mut oneshots,
@@ -827,7 +897,7 @@ pub(super) fn route_cast_visuals(
                     || None,
                 );
                 if let Some(kit) = area {
-                    play_kit_at(&kit, pos, &visuals.0, &mut out, bursts);
+                    play_kit_at(&kit, pos, &visuals.0, out.sounds, out.shakes, bursts);
                 }
             }
             CastEventKind::Fail => {
@@ -859,7 +929,23 @@ pub(super) fn route_cast_visuals(
         // carry one, fired at GO whatever the hit list.
         if let Some(dest) = go.dest {
             if let Some(kit) = stages.and_then(|s| visuals.0.kit(s.instant_area_kit)) {
-                play_kit_at(kit, dest, &visuals.0, &mut out, bursts);
+                play_kit_at(kit, dest, &visuals.0, out.sounds, out.shakes, bursts);
+            }
+            // Then column 24 when no missile carries it: now at Speed 0, else at the would-be
+            // landing (`0x80efc8`, `0x80efb6`).
+            if let Some(s) = stages.filter(|s| go_plays_impact_area(&visuals.0, s, display.speed)) {
+                if let Some(kit) = visuals.0.kit(s.impact_area_kit) {
+                    if display.speed > 0.0 {
+                        delayed.write(DelayedAreaKit {
+                            caster: go.caster,
+                            kit_id: s.impact_area_kit,
+                            pos: dest,
+                            speed: display.speed,
+                        });
+                    } else {
+                        play_kit_at(kit, dest, &visuals.0, out.sounds, out.shakes, bursts);
+                    }
+                }
             }
         }
         if display.speed <= 0.0 {
@@ -1195,11 +1281,14 @@ pub(super) fn arm_loot_fx(
         due.into_iter().filter_map(|e| units.get(e).ok()).collect()
     };
     for (entity, store, net) in scan {
-        // A corpse object's sparkle: bit 0 rising spawns the same row at the same tag.
-        let lootable = if net.kind == benilla_protocol::EntityKind::Corpse {
-            store.0.corpse_lootable()
-        } else {
-            store.0.unit_is_dead() && store.0.unit_lootable()
+        // A corpse object's sparkle: bit 0 rising spawns the same row at the same tag. A
+        // GameObject's is [`arm_go_loot_fx`]'s, and its store's indices are not unit fields.
+        let lootable = match net.kind {
+            benilla_protocol::EntityKind::Corpse => store.0.corpse_lootable(),
+            benilla_protocol::EntityKind::Unit | benilla_protocol::EntityKind::Player => {
+                store.0.unit_is_dead() && store.0.unit_lootable()
+            }
+            _ => continue,
         };
         if lootable && armed.insert(entity) {
             // The Looting tutorial on the rise.
@@ -1225,6 +1314,7 @@ pub(super) fn arm_loot_fx(
                     tag: HARDCODED_FX_ATTACH,
                     effect,
                     path: path.to_string(),
+                    scale: 1.0,
                 }],
             });
         } else if !lootable && armed.remove(&entity) {
@@ -1237,6 +1327,155 @@ pub(super) fn arm_loot_fx(
     }
     // Streamed units despawn on range-out; drop their rows.
     armed.retain(|e| units.contains(*e));
+}
+
+/// `GAMEOBJECT_DYNAMIC` bit `0x08`, the loot sparkle a quest object wears (`0x71121c`).
+const GO_DYNFLAG_SPARKLE: u32 = 0x08;
+
+/// The GameObject loot sparkle's uniform local scale (`0x70d0f1`): the object's scale × its model's
+/// bounding-box Z extent (stored at model load, `0x713f7a`) × 1.15, clamped to 1..5.
+fn go_loot_fx_scale(object_scale: f32, height: f32) -> f32 {
+    let s = object_scale * height * 1.15;
+    if s.is_nan() {
+        1.0
+    } else {
+        s.clamp(1.0, 5.0)
+    }
+}
+
+/// Whether a `GAMEOBJECT_DYNAMIC` edge re-runs the sparkle check: only a flip of bit `0x08`
+/// (`0x712b68`).
+fn go_sparkle_edge(old: u32, new: u32) -> bool {
+    (old ^ new) & GO_DYNFLAG_SPARKLE != 0
+}
+
+/// The resource-tracking inputs of the object tracking check, the sparkle's second leg.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct GoTrackSrc<'w> {
+    templates: Option<Res<'w, crate::go_templates::GameObjectTemplates>>,
+    locks: Option<Res<'w, crate::go_templates::Locks>>,
+    factions: Option<Res<'w, crate::target::Factions>>,
+}
+
+/// Arm and reap a GameObject's loot sparkle (`0x711210`): the `"HARDCODED Loot Art"` row at `0x13`
+/// while `GAMEOBJECT_DYNAMIC` carries bit `0x08` or our resource tracking finds the object
+/// (`0x6dca90`), sized by [`go_loot_fx_scale`]; the model's local matrix is what its flag `0x8000`
+/// enables (`0x70d144`). It runs when the bit flips, when the model loads (`0x71403a`), and for every
+/// object when our tracking mask or death changes (`0x6d5290`); a model not yet loaded arms nothing
+/// (`0x70d0a8`). Losing both legs releases it with no fade (`0x711286`).
+#[allow(clippy::type_complexity)] // one Bevy system's full input set
+pub(super) fn arm_go_loot_fx(
+    objects: Query<(
+        Entity,
+        &ObjectStore,
+        &crate::net::NetEntity,
+        &crate::net::Guid,
+        Option<&crate::entities::OverheadFallback>,
+    )>,
+    loaded: Query<Entity, Changed<crate::entities::OverheadFallback>>,
+    mut edges: MessageReader<FieldChanged>,
+    self_store: Query<&ObjectStore, With<crate::net::SelfPlayer>>,
+    track: GoTrackSrc,
+    visuals: Option<Res<SpellVisuals>>,
+    mut fx: MessageWriter<SpellKitFx>,
+    mut armed: Local<EntityHashSet>,
+    mut seen_self: Local<(u32, bool)>,
+) {
+    use benilla_protocol::field::FIELD_GAMEOBJECT_DYN_FLAGS;
+    let me = self_store.iter().next();
+    let mask = me.map_or(0, |m| m.0.player_track_resources());
+    // `PLAYER_FLAGS` ghost bit or no health: the tracking check's dead gate.
+    let self_dead =
+        me.is_some_and(|m| m.0.unit_health().unwrap_or(1) == 0 || m.0.player_flags() & 0x10 != 0);
+    let self_moved = std::mem::replace(&mut *seen_self, (mask, self_dead)) != (mask, self_dead);
+    // A template or lock arriving matters only while something is tracked.
+    let tables_moved = mask != 0
+        && (track.templates.as_ref().is_some_and(|t| t.is_changed())
+            || track.locks.as_ref().is_some_and(|l| l.is_changed()));
+    let full_sweep = self_moved || tables_moved || visuals.as_ref().is_some_and(|v| v.is_changed());
+    let Some((effect, path)) = visuals.as_ref().and_then(|v| v.0.loot_art_effect()) else {
+        edges.clear();
+        return; // no client data or no such row
+    };
+    let scan: Vec<_> = if full_sweep {
+        edges.clear();
+        objects.iter().collect()
+    } else {
+        let mut due: EntityHashSet = loaded.iter().collect();
+        due.extend(
+            edges
+                .read()
+                .filter(|e| {
+                    e.kind == benilla_protocol::messages::ObjectType::GameObject
+                        && e.index == FIELD_GAMEOBJECT_DYN_FLAGS
+                        && go_sparkle_edge(e.old, e.new)
+                })
+                .map(|e| e.entity),
+        );
+        due.into_iter()
+            .filter_map(|e| objects.get(e).ok())
+            .collect()
+    };
+    for (entity, store, net, guid, height) in scan {
+        if net.kind != benilla_protocol::EntityKind::GameObject {
+            continue;
+        }
+        let f = &store.0;
+        let wanted = f.gameobject_dynamic_flags() & GO_DYNFLAG_SPARKLE != 0
+            || crate::go_templates::can_track_object(
+                self_dead,
+                f.gameobject_type_id(),
+                || {
+                    let reaction = crate::target::cursor_mode::go_reaction(
+                        track.factions.as_deref(),
+                        f.gameobject_faction(),
+                        me,
+                    );
+                    crate::target::cursor_mode::go_can_use(
+                        f.gameobject_flags(),
+                        f.gameobject_dynamic_flags(),
+                        reaction,
+                    )
+                },
+                mask,
+                track
+                    .templates
+                    .as_deref()
+                    .and_then(|t| t.get(guid.0))
+                    .map_or(0, |t| t.lock_id),
+                track.locks.as_deref().map(|l| &l.0),
+            );
+        if wanted {
+            // No-op while the effect stands or the model is not loaded (`0x70d089`, `0x70d0af`).
+            let Some(height) = height else { continue };
+            if !armed.insert(entity) {
+                continue;
+            }
+            let scale = go_loot_fx_scale(net.scale, height.0);
+            fx.write(SpellKitFx::Begin {
+                entity,
+                spell_id: LOOT_FX_KEY,
+                persistent: true,
+                class: FxClass::Hold,
+                // A bare model with no sequence armed, as the corpse's.
+                stage: FxStage::OneShot,
+                effects: vec![FxSlot {
+                    tag: HARDCODED_FX_ATTACH,
+                    effect,
+                    path: path.to_string(),
+                    scale,
+                }],
+            });
+        } else if armed.remove(&entity) {
+            fx.write(SpellKitFx::Reap {
+                entity,
+                spell_id: LOOT_FX_KEY,
+                class: FxClass::Hold,
+            });
+        }
+    }
+    // A despawned object takes its effect with it; drop its row.
+    armed.retain(|e| objects.contains(*e));
 }
 
 /// The level-up ding: any streamed unit's `UNIT_FIELD_LEVEL` change spawns [`LEVEL_UP_EFFECT`],
@@ -1272,6 +1511,7 @@ pub(super) fn arm_level_up_fx(
                 tag: HARDCODED_FX_ATTACH,
                 effect,
                 path: path.to_string(),
+                scale: 1.0,
             }],
         });
     }
@@ -1311,6 +1551,7 @@ pub(super) fn arm_mount_poof_fx(
                 tag: HARDCODED_FX_ATTACH,
                 effect,
                 path: path.to_string(),
+                scale: 1.0,
             }],
         });
     }
@@ -1346,6 +1587,7 @@ pub(crate) fn achievement_earn_fx(visuals: &SpellVisuals, entity: Entity) -> Opt
             tag: HARDCODED_FX_ATTACH,
             effect,
             path: path.to_string(),
+            scale: 1.0,
         }],
     })
 }

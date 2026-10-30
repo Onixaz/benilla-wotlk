@@ -729,8 +729,8 @@ impl ObjectFields {
     pub fn gameobject_faction(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_FACTION).unwrap_or(0)
     }
-    /// `GAMEOBJECT_DYN_FLAGS` (per player): `0x1` `GO_DYNFLAG_LO_ACTIVATE`, the sparkle, set by
-    /// `GameObject::ActivateToQuest` and read only under flag `0x4`.
+    /// `GAMEOBJECT_DYNAMIC`'s low half (per player): `0x1` activate, read only under flag `0x4`;
+    /// `0x8` the loot sparkle (`0x71121c`).
     pub fn gameobject_dynamic_flags(&self) -> u32 {
         self.get_u32(FIELD_GAMEOBJECT_DYN_FLAGS).unwrap_or(0)
     }

@@ -25,9 +25,9 @@ pub use install::{
 mod characters;
 pub use characters::{
     equip_blits, equip_column, equip_region_candidates, equip_tex_dir, equip_tile, forearm_dressed,
-    BlitSource, CharCreateCatalog, CharSectionGrid, CharSections, CharacterGeosets, CompositePlan,
-    CreateRaceRow, EmblemLayer, EquipBlit, EquipGeosets, GuildEmblem, NameGenRow, StartOutfitItem,
-    VisibleGeosets,
+    BlitSource, CharCreateCatalog, CharSectionGrid, CharSections, CharacterGeosets,
+    ComponentContext, ComponentLook, CompositePlan, CreateRaceRow, EmblemLayer, EquipBlit,
+    EquipGeosets, GuildEmblem, NameGenRow, StartOutfitItem, VisibleGeosets,
 };
 mod camera_shakes;
 mod cinematics;
@@ -45,8 +45,8 @@ pub use cinematics::{
     CinematicSequence, CinematicView, SEQUENCE_CAMERAS,
 };
 pub use creatures::{
-    load_creature_catalog, CreatureCatalog, CreatureModel, FootprintParams, MissileCollision,
-    NpcAppearance,
+    compose_unit_model_scale, load_creature_catalog, CreatureCatalog, CreatureModel,
+    FootprintParams, MissileCollision, NpcAppearance,
 };
 pub use macro_icons::{load_macro_icons, load_macro_item_icons};
 mod macro_icons;
@@ -298,25 +298,25 @@ pub use models::{
     parse_wmo_portals, parse_wmo_root, read_m2, rotation_2x2, shipped_glue_art_extent, skin_path,
     uv_transform, wmo_group_doodad_refs, wmo_group_fixed_colors, wmo_group_footprint_tris,
     wmo_group_has_liquid_grid, wmo_group_header, wmo_group_light_refs, wmo_group_liquid_mesh,
-    wmo_group_raw_colors, wmo_group_submeshes, wmo_root_id, AlphaAnim, AlphaMap, AlphaSeq,
-    AnimEvent, AnimFiles, ArtExtent, BatchFootprint, BatchSort, Billboard, BillboardKind, BoneKeys,
-    BoneScaleAnim, BoneSpin, CharSkinSlot, CollisionMesh, Combiner, CombinerOp, CombinerShader,
-    Coverage, CoverageReader, EmitterBoneLink, EventMarker, FogPolicy, FootprintTris,
-    GlobalSeqBone, GlobalSeqChannel, GroundQuad, KeyAnim, M2AnimSummary, M2Attachment, M2Bounds,
-    M2CameraTracks, M2Light, M2Model, M2PaneCamera, M2PortraitCamera, ModelAnimation, ModelBlend,
-    ParentArm, ParentBasis, PlayableAnim, RenderSubmesh, RgbAnim, ScalarAnim, SeqLoops,
-    ShippedGlueScene, Skeleton, SkeletonBone, StageUv, StringAnchors, UvAnim, UvRotAnim,
-    WmoBatchClass, WmoDoodad, WmoDoodadSet, WmoFog, WmoGroupHeader, WmoGroupInfo, WmoLight,
-    WmoLightLaw, WmoLiquidRule, WmoPortalInfo, WmoPortalRef, WmoPortals, WmoRoot, ALPHA_KEY_REF,
-    DEGENERATE_RING_FOOTPRINT, GLUE_AUTHORED_ASPECT, NO_GROUP_LIQUID, OWNER_RUNG_BUCKETS,
-    SHIPPED_GLUE_SCENES, VERSION_264,
+    wmo_group_raw_colors, wmo_group_submeshes, wmo_root_bbox, wmo_root_id, AlphaAnim, AlphaMap,
+    AlphaSeq, AnimEvent, AnimFiles, ArtExtent, BatchFootprint, BatchSort, Billboard, BillboardKind,
+    BoneKeys, BoneScaleAnim, BoneSpin, CharSkinSlot, CollisionMesh, Combiner, CombinerOp,
+    CombinerShader, Coverage, CoverageReader, EmitterBoneLink, EventMarker, FogPolicy,
+    FootprintTris, GlobalSeqBone, GlobalSeqChannel, GroundQuad, KeyAnim, M2AnimSummary,
+    M2Attachment, M2Bounds, M2CameraTracks, M2Light, M2Model, M2PaneCamera, M2PortraitCamera,
+    ModelAnimation, ModelBlend, ParentArm, ParentBasis, PlayableAnim, RenderSubmesh, RgbAnim,
+    ScalarAnim, SeqLoops, ShippedGlueScene, Skeleton, SkeletonBone, StageUv, StringAnchors, UvAnim,
+    UvRotAnim, WmoBatchClass, WmoDoodad, WmoDoodadSet, WmoFog, WmoGroupHeader, WmoGroupInfo,
+    WmoLight, WmoLightLaw, WmoLiquidRule, WmoPortalInfo, WmoPortalRef, WmoPortals, WmoRoot,
+    ALPHA_KEY_REF, DEGENERATE_RING_FOOTPRINT, GLUE_AUTHORED_ASPECT, NO_GROUP_LIQUID,
+    OWNER_RUNG_BUCKETS, SHIPPED_GLUE_SCENES, VERSION_264,
 };
 mod terrain;
 pub use terrain::{
     adt_to_tile_mesh, area_id_at, find_tile_near, ground_effect_at, impassable_at, load_tile_mesh,
     load_tile_mesh_with, load_tiles_around, mcsh_shadowed_at, terrain_height_at, triangle_z_at,
     ChunkMesh, Doodad, MapTiles, TerrainLiquid, TileMesh, WmoInstance, ALPHA_MAP_SIZE, CHUNK_SIZE,
-    SHADOW_MAP_SIZE, STORMWIND_XY, TERRAIN_LAYER_TILES, TILE_SIZE,
+    MCCV_NEUTRAL, SHADOW_MAP_SIZE, STORMWIND_XY, TERRAIN_LAYER_TILES, TILE_SIZE,
 };
 mod wdl;
 /// World (x, y) to ADT tile `(col, row)`; minimap `map<X>_<Y>.blp` names use the same order.
@@ -554,6 +554,22 @@ impl BlpMipChain {
         !self.texels.is_block_compressed()
     }
 
+    /// Every `Rgba8Unorm` level encoded to BC1 blocks, opaque; a block chain is returned as is.
+    pub fn into_bc1_opaque(mut self) -> Self {
+        if !self.is_rgba8() {
+            return self;
+        }
+        for (i, level) in self.mips.iter_mut().enumerate() {
+            let (w, h) = ((self.width >> i).max(1), (self.height >> i).max(1));
+            for a in level.iter_mut().skip(3).step_by(4) {
+                *a = 0xFF;
+            }
+            *level = benilla_blp::encode_bc1_level(w, h, level);
+        }
+        self.texels = BlpTexels::Bc1;
+        self
+    }
+
     /// Every level decoded to `Rgba8Unorm` without rereading the file; a no-op if already so.
     pub fn into_rgba8(self) -> Self {
         if self.is_rgba8() {
@@ -682,6 +698,25 @@ pub fn dbc_to_csv(dbc_bytes: &[u8], dbc_name: &str, out: &Path) -> Result<(u32, 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A decoded chain encodes to BC1 level by level, opaque whatever its alpha, and decodes back.
+    #[test]
+    fn a_decoded_chain_encodes_to_opaque_bc1() {
+        let red = [255, 0, 0, 0];
+        let chain = BlpMipChain {
+            width: 8,
+            height: 4,
+            texels: BlpTexels::Rgba8Unorm,
+            mips: vec![red.repeat(32), red.repeat(8), red.repeat(2), red.to_vec()],
+        };
+        let bc1 = chain.into_bc1_opaque();
+        assert_eq!(bc1.texels, BlpTexels::Bc1);
+        let sizes: Vec<usize> = bc1.mips.iter().map(Vec::len).collect();
+        assert_eq!(sizes, [16, 8, 8, 8], "one 8-byte block per started 4x4");
+        let back = bc1.into_rgba8();
+        assert_eq!(&back.mips[0][..4], &[255, 0, 0, 255]);
+        assert_eq!(&back.mips[3][..4], &[255, 0, 0, 255]);
+    }
 
     /// A complete 148-byte BLP2 header, magic through `mip_sizes[16]`.
     fn blp2_header(

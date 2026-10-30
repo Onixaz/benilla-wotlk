@@ -1,6 +1,7 @@
 use super::*;
+use crate::go_templates::tracked_resource;
 
-use benilla_formats::{LockSlot, LOCK_KEY_ITEM, MAX_LOCK_SLOTS};
+use benilla_formats::{LockSlot, LOCK_KEY_ITEM, LOCK_KEY_SKILL, MAX_LOCK_SLOTS};
 use benilla_protocol::field::{
     FIELD_UNIT_BYTES_1, FIELD_UNIT_DYNAMIC_FLAGS, FIELD_UNIT_HEALTH, FIELD_UNIT_NPC_FLAGS,
 };
@@ -288,10 +289,30 @@ fn tracking_predicates_follow_the_mask_bit_law() {
 }
 
 #[test]
-fn a_party_dot_is_its_class_cell() {
-    assert_eq!(party_cell(1), Some([0.0, 0.125, 0.0, 0.25]), "warrior");
-    assert_eq!(party_cell(11), Some([0.25, 0.375, 0.25, 0.5]), "druid");
-    assert_eq!(party_cell(0), None);
+fn a_group_dot_is_its_class_cell() {
+    assert_eq!(
+        group_cell(1, false),
+        Some([0.0, 0.125, 0.0, 0.25]),
+        "warrior"
+    );
+    assert_eq!(
+        group_cell(11, false),
+        Some([0.25, 0.375, 0.25, 0.5]),
+        "druid"
+    );
+    assert_eq!(group_cell(0, false), None);
+    // The raid's list: the same class 16 cells on, the atlas's bottom half.
+    assert_eq!(
+        group_cell(1, true),
+        Some([0.0, 0.125, 0.5, 0.75]),
+        "raid warrior"
+    );
+    assert_eq!(
+        group_cell(11, true),
+        Some([0.25, 0.375, 0.75, 1.0]),
+        "raid druid"
+    );
+    assert_eq!(group_cell(0, true), None);
 }
 
 /// Find Minerals' aura sets the Mining bit, which lights a Copper Vein's lock and not an herb's.

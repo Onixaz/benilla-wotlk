@@ -38,6 +38,7 @@ use super::{
 mod grip;
 mod mode;
 pub(super) mod play;
+mod special_idle;
 #[cfg(test)]
 mod tests;
 mod wound;
@@ -328,13 +329,27 @@ pub(super) fn drive_animations(
         Option<Res<crate::ui_session::InteractNpc>>,
         // The units' sheath-swap messages, written after the parallel pass.
         Local<bevy::utils::Parallel<Vec<SheathSwapMessage>>>,
+        // Server-pushed kits and their anims, for the stage-0 special idle latch.
+        MessageReader<super::KitPush>,
+        Option<Res<super::spell_visual::SpellVisuals>>,
     ),
     // The session seed each unit's own variation stream is cut from.
     session_rng: Res<benilla_assets::AnimRng>,
     // The last anim trace line per traced unit; the trace writes only on change.
     anim_trace_last: Local<Mutex<HashMap<Entity, String>>>,
 ) {
-    let (emote_sounds, loot_kneel, time, names, mut recomputes, riders, interact, mut swaps) = aux;
+    let (
+        emote_sounds,
+        loot_kneel,
+        time,
+        names,
+        mut recomputes,
+        riders,
+        interact,
+        mut swaps,
+        mut kit_pushes,
+        visuals,
+    ) = aux;
     let dt = time.delta_secs();
     // This frame's one-shot plays per unit, replayed in the reference's call order (`PlaySeq`
     // stamps): a later call overwrites an earlier, and the combat fast path keys on what is playing
@@ -424,6 +439,18 @@ pub(super) fn drive_animations(
     for r in recomputes.read() {
         pending_recompute.insert(r.entity, r.anim_id);
     }
+    // A stage-0 kit with an anim latches it as the special idle after its play (`0x73b38e`, flag
+    // `0x80`); stage 1 never does. The last push of the frame wins.
+    let mut pending_latch: bevy::ecs::entity::EntityHashMap<u16> = default();
+    for p in kit_pushes.read().filter(|p| p.stage == 0) {
+        if let Some(anim) = visuals
+            .as_deref()
+            .and_then(|v| v.0.kit(p.kit_id))
+            .and_then(|k| k.anim_id)
+        {
+            pending_latch.insert(p.entity, anim);
+        }
+    }
     // Sheath requests by unit; the last sheath-state set wins.
     let mut pending_sheath: bevy::ecs::entity::EntityHashMap<SheathRequest> = default();
     for r in sheath_requests.read() {
@@ -443,6 +470,7 @@ pub(super) fn drive_animations(
         pending_slow: &pending_slow,
         pending_recompute: &pending_recompute,
         pending_sheath: &pending_sheath,
+        pending_latch: &pending_latch,
         catalog,
         net: &net,
         emote_sounds: emote_sounds.as_deref(),
@@ -481,6 +509,7 @@ struct UnitCx<'a, 'w, 's> {
     pending_slow: &'a EntityHashSet,
     pending_recompute: &'a EntityHashMap<u16>,
     pending_sheath: &'a EntityHashMap<SheathRequest>,
+    pending_latch: &'a EntityHashMap<u16>,
     catalog: Option<&'a AnimDataCatalog>,
     net: &'a NetCommands,
     emote_sounds: Option<&'a EmoteSounds>,
@@ -510,6 +539,7 @@ fn drive_unit(
         pending_slow,
         pending_recompute,
         pending_sheath,
+        pending_latch,
         catalog,
         net,
         emote_sounds,
@@ -1061,6 +1091,12 @@ fn drive_unit(
         }
     }
 
+    if let Some(&anim) = pending_latch.get(&entity) {
+        drv.special_idle = Some(anim);
+    }
+    // While the latch holds, the cast and channel kit anim is not offered (`0x7224dc`).
+    let kit_hold = cast_hold.filter(|_| drv.special_idle.is_none());
+
     // The whiff slow-down: a miss, dodge or evade plays the rest of the swing at 0.5. Deviation:
     // the reference writes bone 0's rate blindly; we scope it to the swing's own node, because a
     // moving attacker's gait would otherwise slow too. The id is re-checked, as `Mode::Swing` also
@@ -1180,7 +1216,7 @@ fn drive_unit(
             engaged,
             airborne_frozen,
             auto_repeat,
-            cast_hold,
+            cast_hold: kit_hold,
             wielded,
             store,
             emote_sounds,
@@ -1199,7 +1235,33 @@ fn drive_unit(
     // ── The base slot's playback rate, written over whatever the mode machine settled on: the rate
     // write sits outside the selector. JumpLandRun 187 resolves to Run 5 on creature models, so a
     // mount's landing is rate-scaled like any locomotion.
-    play::sync_base_rate(&mut drv, &tr, &mut player, anims, mv.speed, model_scale);
+    play::sync_base_rate(
+        &mut drv,
+        &tr,
+        &mut player,
+        anims,
+        catalog,
+        mv.speed,
+        model_scale,
+    );
+
+    // The special idle's release (`0x73bc81`), polled where the reference waits for an animation
+    // end: kept while the key bone or bone 0 still plays the latched anim.
+    if let Some(latched) = drv.special_idle {
+        let id = super::resolved_id(anims, latched, catalog);
+        let key_bone = drv.overlay.map(|ov| {
+            let live = player.animation(ov.node).is_some_and(|a| !a.is_finished());
+            (super::resolved_id(anims, ov.id, catalog), live)
+        });
+        let base = tr.get_main_animation().and_then(|node| {
+            let clip = anims.clips.iter().find(|c| c.node == node)?;
+            let live = player.animation(node).is_some_and(|a| !a.is_finished());
+            Some((clip.anim_id, live))
+        });
+        if !special_idle::holds(id, key_bone, base) {
+            drv.special_idle = None;
+        }
+    }
 
     // ── Masked one-shot completion: a finished overlay is not stopped but faded to rest, its held
     // final frame cross-fading onto the base over 150 ms.
@@ -1228,7 +1290,7 @@ fn drive_unit(
     // wins while it plays. A jump does not cancel it: the reference's transplant sends locomotion
     // to bone 0 while the key bone is armed.
     let mut hold_played: Option<u16> = None;
-    let masked_hold = cast_hold
+    let masked_hold = kit_hold
         .filter(|_| mv.flags & move_flags::CAST_PIN_MOVE != 0)
         .and_then(|h| {
             find_resolved(anims, h.anim_id, catalog).and_then(|c| {

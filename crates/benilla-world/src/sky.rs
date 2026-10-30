@@ -67,6 +67,11 @@ impl MaterialExtension for SkyExt {
         "embedded://benilla_world/shaders/sky.wgsl".into()
     }
 
+    /// The sky casts no shadow-map shadow (`ext_shadow`): it is no caster of the reference's.
+    fn enable_shadows() -> bool {
+        false
+    }
+
     /// No depth write, as every sky element inherits from the sky render; the depth test stays on.
     /// The glare quads are then occluded by world geometry only, never the dome.
     fn specialize(

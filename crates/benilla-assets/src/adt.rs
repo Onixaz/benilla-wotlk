@@ -48,6 +48,15 @@ pub struct AdtTile {
     pub big_alpha: bool,
 }
 
+/// A terrain vertex's MCCV colour, normalized, on a vertex-colour map alone (`0x7bfcb2` picks the
+/// `PNC` format there); `TerrainExtension::specialize` seats it at shader location 14.
+pub const ATTRIBUTE_TERRAIN_MCCV: bevy::mesh::MeshVertexAttribute =
+    bevy::mesh::MeshVertexAttribute::new(
+        "Terrain_Mccv",
+        988_540_921,
+        bevy::render::render_resource::VertexFormat::Unorm8x4,
+    );
+
 /// One drawn chunk's array indices, uniform over its vertices.
 #[derive(Clone, Copy)]
 pub struct ChunkShading {
@@ -96,6 +105,9 @@ pub fn chunks_to_mesh(parts: &[(&ChunkMesh, &ChunkShading)]) -> Option<Mesh> {
     let mut uvs: Vec<[f32; 2]> = Vec::with_capacity(total);
     let mut uv1: Vec<[f32; 2]> = Vec::with_capacity(total);
     let mut colors: Vec<[f32; 4]> = Vec::with_capacity(total);
+    // A cell's chunks share one map, so all carry MCCV or none does.
+    let tinted = live.iter().any(|(c, _)| !c.vertex_colors.is_empty());
+    let mut mccv: Vec<[u8; 4]> = Vec::with_capacity(if tinted { total } else { 0 });
     let mut indices: Vec<u32> = Vec::with_capacity(live.iter().map(|(c, _)| c.indices.len()).sum());
     for (chunk, shading) in live {
         let base = u32::try_from(positions.len()).expect("a cell's vertex count fits u32");
@@ -118,6 +130,13 @@ pub fn chunks_to_mesh(parts: &[(&ChunkMesh, &ChunkShading)]) -> Option<Mesh> {
             n,
         ));
         colors.extend(std::iter::repeat_n(col, n));
+        if tinted {
+            if chunk.vertex_colors.len() == n {
+                mccv.extend_from_slice(&chunk.vertex_colors);
+            } else {
+                mccv.extend(std::iter::repeat_n(benilla_formats::MCCV_NEUTRAL, n));
+            }
+        }
         uvs.extend_from_slice(&chunk.uvs);
         indices.extend(chunk.indices.iter().map(|i| i + base));
         positions.extend(chunk_positions);
@@ -131,6 +150,12 @@ pub fn chunks_to_mesh(parts: &[(&ChunkMesh, &ChunkShading)]) -> Option<Mesh> {
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
     mesh.insert_attribute(Mesh::ATTRIBUTE_UV_1, uv1);
     mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+    if tinted {
+        mesh.insert_attribute(
+            ATTRIBUTE_TERRAIN_MCCV,
+            bevy::mesh::VertexAttributeValues::Unorm8x4(mccv),
+        );
+    }
     mesh.insert_indices(Indices::U32(indices));
     Some(mesh)
 }
@@ -139,32 +164,33 @@ pub fn chunks_to_mesh(parts: &[(&ChunkMesh, &ChunkShading)]) -> Option<Mesh> {
 #[derive(Default, TypePath)]
 pub struct AdtLoader {
     liquid: Arc<TerrainLiquid>,
-    /// Each map's WDT big-alpha bit, read once per map.
-    big_alpha: std::sync::Mutex<HashMap<String, bool>>,
+    /// Each map's WDT big-alpha and vertex-colour bits, read once per map.
+    wdt_flags: std::sync::Mutex<HashMap<String, (bool, bool)>>,
 }
 
 impl AdtLoader {
     pub fn new(liquid: Arc<TerrainLiquid>) -> Self {
         AdtLoader {
             liquid,
-            big_alpha: Default::default(),
+            wdt_flags: Default::default(),
         }
     }
 
-    /// The map's WDT big-alpha bit; a WDT that cannot be read leaves the 4-bit decode.
-    async fn big_alpha(&self, ctx: &mut LoadContext<'_>, map: &str) -> bool {
-        if let Some(&b) = self.big_alpha.lock().unwrap().get(map) {
-            return b;
+    /// The map's WDT `(big alpha, vertex colours)` bits; a WDT that cannot be read leaves the
+    /// 4-bit decode and no colours.
+    async fn wdt_flags(&self, ctx: &mut LoadContext<'_>, map: &str) -> (bool, bool) {
+        if let Some(&f) = self.wdt_flags.lock().unwrap().get(map) {
+            return f;
         }
         let url = format!("mpq://World/Maps/{map}/{map}.wdt");
-        let b = match ctx.read_asset_bytes(url).await {
+        let f = match ctx.read_asset_bytes(url).await {
             Ok(bytes) => WdtReader::new(std::io::Cursor::new(bytes), WowVersion::Classic)
                 .read()
-                .is_ok_and(|w| w.big_alpha()),
-            Err(_) => false,
+                .map_or((false, false), |w| (w.big_alpha(), w.vertex_colors())),
+            Err(_) => (false, false),
         };
-        self.big_alpha.lock().unwrap().insert(map.to_owned(), b);
-        b
+        self.wdt_flags.lock().unwrap().insert(map.to_owned(), f);
+        f
     }
 }
 
@@ -191,9 +217,15 @@ impl AssetLoader for AdtLoader {
             .and_then(|s| s.to_str())
             .unwrap_or_default()
             .to_owned();
-        let big_alpha = self.big_alpha(ctx, &map).await;
-        let tile = adt_to_tile_mesh(&bytes, &self.liquid, self.liquid.map_id(&map), big_alpha)
-            .map_err(to_io)?;
+        let (big_alpha, vertex_colors) = self.wdt_flags(ctx, &map).await;
+        let tile = adt_to_tile_mesh(
+            &bytes,
+            &self.liquid,
+            self.liquid.map_id(&map),
+            big_alpha,
+            vertex_colors,
+        )
+        .map_err(to_io)?;
 
         // Layer array: a solid-green fallback at index 0, then each unique layer texture, packed
         // once the whole tile is read.

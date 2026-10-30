@@ -77,8 +77,8 @@ pub(crate) struct MountChild(pub(crate) Entity);
 pub(super) struct AppliedMount(pub(super) u32);
 
 /// Spawn a unit's mount child, built as an ordinary creature. `scale` is the
-/// `CreatureDisplayInfo.creatureModelScale` column alone, as the unit's `SCALE_X` composes through
-/// the hierarchy. `fade_skip` drops the streaming fade, so a cast mount is there at once: our
+/// `CreatureDisplayInfo.creatureModelScale` column alone (`0x73d5d0`), as the rider's model scale
+/// and `SCALE_X` compose through the hierarchy into the mounted true scale (`0x71c0fb`). `fade_skip` drops the streaming fade, so a cast mount is there at once: our
 /// choice, as whether the reference fades a new mount in is untraced.
 pub(super) fn spawn_mount_child(
     commands: &mut Commands,
@@ -169,7 +169,7 @@ pub(super) fn seat_or_spawn_mount(
     fade_skip: bool,
     arrival: Option<super::Arrival>,
 ) -> Seat {
-    // `SCALE_X` × `creatureModelScale` alone, without `CreatureModelData.modelScale`.
+    // The mount display's `creatureModelScale` alone, without its `modelScale` (`0x73d5d0`).
     let mount_scale = creatures
         .and_then(|c| c.catalog.display_scale(mount_display))
         .unwrap_or(1.0);

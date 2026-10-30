@@ -1,6 +1,6 @@
 //! Live appearance changes: a values delta that moves `UNIT_FIELD_DISPLAYID` or
 //! `GAMEOBJECT_DISPLAYID` swaps the entity's model in place, and one that moves
-//! `OBJECT_FIELD_SCALE_X` eases its render scale.
+//! `OBJECT_FIELD_SCALE_X` or the unit's model scale eases its render scale.
 //!
 //! The reference's display handler rebuilds the model when the display record changed (against
 //! `[unit+0xb34]`), re-resolving its model facts and the stand or ride animation: an instant swap,
@@ -32,8 +32,8 @@ pub(crate) struct DisplaySwapped {
     pub(crate) entity: Entity,
 }
 
-/// A render-scale ease toward [`NetEntity::scale`], written absolutely each tick so a mid-ease
-/// rebuild's snap is overwritten.
+/// A render-scale ease toward the true scale ([`super::model_scale::true_scale`]), written
+/// absolutely each tick so a mid-ease rebuild's snap is overwritten.
 #[derive(Component)]
 pub(super) struct ScaleEase {
     from: f32,
@@ -64,8 +64,8 @@ fn live_display_id(kind: EntityKind, store: &ObjectStore) -> Option<u32> {
 }
 
 /// Diff each attached entity's live appearance against what its visual was built with: a display
-/// move swaps the model, a scale move arms the 2 s ease, and a change of the native display or
-/// `SCALE_X` restamps [`CollisionHeight`]. Mount children carry no [`ObjectStore`]: their display
+/// move swaps the model, a `SCALE_X` or model-scale move arms the 2 s ease (a model-scale move
+/// eases from the old true scale, `0x72cbea`), and a change of either restamps [`CollisionHeight`]. Mount children carry no [`ObjectStore`]: their display
 /// is the host's field, diffed by `mount::reseat_mounts`.
 #[allow(clippy::type_complexity)]
 pub(super) fn refresh_live_display(
@@ -80,6 +80,7 @@ pub(super) fn refresh_live_display(
             Ref<AppliedDisplay>,
             Option<Ref<CollisionHeight>>,
             &Transform,
+            Option<Ref<super::model_scale::ModelScale>>,
         ),
         // A torn-down unit is freed, not rebuilt.
         (
@@ -91,7 +92,7 @@ pub(super) fn refresh_live_display(
 ) {
     // The prism reads only the static catalog of `Creatures`, whose model cache changes often.
     let catalog_new = creatures.as_ref().is_some_and(|c| c.is_added());
-    for (entity, guid, mut net, store, applied, height, tf) in &mut entities {
+    for (entity, guid, mut net, store, applied, height, tf, model) in &mut entities {
         // Every answer below is a function of these rows and the catalog: with none changed since
         // the last pass, each diff would find what it found then.
         if !catalog_new
@@ -99,10 +100,13 @@ pub(super) fn refresh_live_display(
             && !applied.is_changed()
             && !net.is_changed()
             && !height.as_ref().is_some_and(|h| h.is_changed())
+            && !model.as_ref().is_some_and(|m| m.is_changed())
         {
             continue;
         }
-        let (store, applied, height) = (&*store, &*applied, height.as_deref());
+        let model_moved = model.as_ref().is_some_and(|m| m.is_changed());
+        let (store, applied, height, model) =
+            (&*store, &*applied, height.as_deref(), model.as_deref());
         // ── The display-id swap ──────────────────────────────────────────────────────────────
         let live = live_display_id(net.kind, store);
         if let Some(live) = live {
@@ -124,6 +128,7 @@ pub(super) fn refresh_live_display(
             net.kind,
             EntityKind::Unit | EntityKind::Player | EntityKind::GameObject | EntityKind::Corpse
         );
+        let mut scale_moved = false;
         if let Some(live) = store.0.object_scale_x().filter(|s| *s > 0.0 && scaled_kind) {
             if live != net.scale {
                 info!(
@@ -131,20 +136,24 @@ pub(super) fn refresh_live_display(
                     guid.0, net.scale, live
                 );
                 net.scale = live;
-                commands.entity(entity).insert(ScaleEase {
-                    from: tf.scale.x,
-                    to: live,
-                    elapsed: 0.0,
-                });
+                scale_moved = true;
             }
+        }
+        let target = super::model_scale::true_scale(&net, model);
+        if (scale_moved || model_moved) && tf.scale.x != target {
+            commands.entity(entity).insert(ScaleEase {
+                from: tf.scale.x,
+                to: target,
+                elapsed: 0.0,
+            });
         }
 
         // ── The collision prism ──────────────────────────────────────────────────────────────
-        // From the native display (`[unit+0x110]+0x1f8`) and `SCALE_X`, not the rendered swap
-        // above; recomputed and diffed on any input's change, the gate at the top. It snaps to the
-        // target scale: easing it would drag the depth lines through two seconds of depths.
+        // From the native display and `SCALE_X`, not the rendered swap above; recomputed and
+        // diffed on any input's change, the gate at the top. It snaps to the target scale: easing
+        // it would drag the depth lines through two seconds of depths.
         let prism = super::collision_height::prism_display_id(Some(store), net.display_id);
-        let h = collision_height_for(creatures.as_deref(), prism, net.scale);
+        let h = collision_height_for(creatures.as_deref(), prism, net.scale, model);
         if height != Some(&h) {
             debug!(
                 "collision height restamp: guid {:016x} {:?} -> {:.3} (native display {:?}, \

@@ -183,9 +183,10 @@ pub mod char_proc_type {
 }
 
 /// One `SpellVisual.dbc` row: the kit ids for the stages (0 for none), then the missile and
-/// dest-anchored columns. Columns 14-15 (caster and target impact kits), 16-22 (the missile's
-/// source attachment, ground following, motion and targeting kit) and 26-31 (the missile's cast
-/// and impact offsets) are not read.
+/// dest-anchored columns. Columns 14-15 are read only for the beam test
+/// ([`SpellVisualCatalog::has_chain_effect`]); 16-22 (the missile's source attachment, ground
+/// following, motion and targeting kit) and 26-31 (the missile's cast and impact offsets) are not
+/// read.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct VisualStages {
     /// Column 1.
@@ -218,6 +219,10 @@ pub struct VisualStages {
     pub missile_gate: u32,
     /// Column 13, the row's flags; [`FLAG_DEST_ATTACH_IS_ID`] is the one read.
     pub flags: u32,
+    /// Column 14, the caster impact kit the ranged merge fills (`0x720f80`).
+    pub caster_impact: u32,
+    /// Column 15, the target impact kit.
+    pub target_impact: u32,
     /// Column 23: the kit `SMSG_SPELL_GO` plays at the packet's dest point when the targets carry
     /// one (`0x80ee85`).
     pub instant_area_kit: u32,
@@ -243,6 +248,8 @@ impl VisualStages {
         out.precast = fill(self.precast, weapon.precast); // 7210c3
         out.cast = fill(self.cast, weapon.cast); // 7210cf
         out.impact = fill(self.impact, weapon.impact); // 7210db
+        out.caster_impact = fill(self.caster_impact, weapon.caster_impact); // 7210e7
+        out.target_impact = fill(self.target_impact, weapon.target_impact); // 7210f3
         if self.missile_gate == 0 && weapon.missile_gate != 0 {
             out.missile_gate = 1; // 72110b: the literal, not the weapon's value
             out.missile_model = weapon.missile_model; // 721112
@@ -311,6 +318,12 @@ impl VisualKit {
     /// The first slot that decodes as a beam.
     pub fn chain_proc(&self) -> Option<ChainProc> {
         self.char_procs().find_map(|p| p.as_chain())
+    }
+
+    /// Whether any `CharProc` slot keys the beam case (type 0 or 12), whatever its params
+    /// (`0x7fe470`).
+    pub fn has_chain_slot(&self) -> bool {
+        self.char_procs().any(|p| char_proc_type::is_chain(p.ty))
     }
 
     /// `(attachment id, effect id)` for each populated slot in slot order, then the world effect
@@ -456,6 +469,23 @@ impl SpellVisualCatalog {
             .and_then(|id| Some((id, self.effect_path(id)?)))
     }
 
+    /// Whether the row draws a beam (`0x800bf0`): any of its cast, impact, state, channel, caster
+    /// impact or target impact kits has a chain slot ([`VisualKit::has_chain_slot`]). Precast and
+    /// state-done are not asked.
+    pub fn has_chain_effect(&self, stages: &VisualStages) -> bool {
+        [
+            stages.cast,
+            stages.impact,
+            stages.state,
+            stages.channel,
+            stages.caster_impact,
+            stages.target_impact,
+        ]
+        .into_iter()
+        .filter_map(|id| self.kit(id))
+        .any(VisualKit::has_chain_slot)
+    }
+
     /// A `SpellChainEffects` row by id; `None` is the client's null-row no-op.
     pub fn chain_effect(&self, id: u32) -> Option<&ChainEffect> {
         self.chain_effects.get(&id)
@@ -563,6 +593,8 @@ fn parse_visuals(bytes: &[u8]) -> Result<HashMap<u32, VisualStages>> {
                 strike_sound: u32_at(r, 12).and_then(some_unless_none),
                 missile_gate: g(7),
                 flags: g(13),
+                caster_impact: g(14),
+                target_impact: g(15),
                 instant_area_kit: g(23),
                 impact_area_kit: g(24),
                 persistent_area_kit: g(25),

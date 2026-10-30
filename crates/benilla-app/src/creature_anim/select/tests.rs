@@ -1122,3 +1122,65 @@ fn the_prowl_creep_is_not_rate_scaled() {
     assert_eq!(playback_rate(&clip(STEALTH_WALK, 2.5), 7.0, 1.0), 1.0);
     assert_ne!(playback_rate(&clip(4, 2.5), 7.0, 1.0), 1.0);
 }
+
+/// `0x71e340`'s last legs: a body with gravity off or `MOVEFLAG_HOVER` idles in Hover (193); on a
+/// flying spline only the hover bit counts, and the swim idle and the prowl idle outrank it.
+#[test]
+fn a_hovering_body_idles_in_hover() {
+    let st = |flags, flying, stealthed| MovementState {
+        flags,
+        flying,
+        stealthed,
+        ..Default::default()
+    };
+    let idle = |s: MovementState| {
+        base_candidates(&s, 2.5, None, None, None)
+            .as_slice()
+            .to_vec()
+    };
+    assert_eq!(
+        idle(st(move_flags::LEVITATING, false, false)),
+        [HOVER, STAND]
+    );
+    assert_eq!(idle(st(move_flags::HOVER, false, false)), [HOVER, STAND]);
+    // A flying spline claims the base ahead of the idles; its hover test reads the bit alone.
+    assert!(!hovering(&st(move_flags::LEVITATING, true, false)));
+    assert!(hovering(&st(move_flags::HOVER, true, false)));
+    assert_eq!(
+        idle(st(move_flags::HOVER, false, true)),
+        [STEALTH_STAND, STAND]
+    );
+    assert_eq!(
+        idle(st(move_flags::HOVER | move_flags::SWIMMING, false, false)),
+        [41, 0]
+    );
+    assert_eq!(idle(st(0, false, false)), [STAND]);
+}
+
+/// `0x71dcc0`: the cast and ranged-attack behaviors hold missiles; a fly-tier row counts by its
+/// behavior, and an eat loop does not.
+#[test]
+fn special_idle_anims_are_the_cast_and_ranged_attack_behaviors() {
+    let row = |behavior, tier| benilla_formats::AnimEntry {
+        weapon_flags: 0,
+        fallback: 0,
+        flags: 0,
+        behavior,
+        tier,
+    };
+    let cat = benilla_formats::AnimDataCatalog::from_rows([
+        (32, row(32, 0)),
+        (61, row(61, 0)),
+        (261, row(32, 3)),
+    ]);
+    assert!(is_special_idle_anim(32, Some(&cat)));
+    assert!(
+        is_special_idle_anim(261, Some(&cat)),
+        "FlySpellCast is a SpellCast"
+    );
+    assert!(!is_special_idle_anim(61, Some(&cat)), "EmoteEat");
+    for id in [2, 33, 46, 49, 53, 54, 107] {
+        assert!(is_special_idle_anim(id, None), "{id}");
+    }
+    assert!(!is_special_idle_anim(0, None));
+}

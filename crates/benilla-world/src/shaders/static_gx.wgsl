@@ -4,9 +4,10 @@
 // env map and no depth flags. The light prefix, helpers and lighting lanes copy `wow_model.wgsl`'s
 // and must stay in sync: naga_oil cannot import functions that use another module's bindings.
 
-#import bevy_render::view::View
-
-@group(0) @binding(0) var<uniform> view: View;
+// Group 0 follows bevy's mesh view numbering for what it shares (the view at 0, the lights at 1,
+// the directional shadow maps at 5 and 6), so the shadow-map receive imports as on the entity path.
+#import bevy_pbr::mesh_view_bindings::view
+#import benilla_assets::wow_shadow
 
 // Prefix of lighting::global_light's buffer; field order in sync with it and wow_model.wgsl.
 struct WowLight {
@@ -32,7 +33,7 @@ struct WowLight {
     // lighting::prop_probes: 8192 slots of 7 rows; the buffer's later regions are not mirrored.
     prop_probes: array<vec4<f32>, 57344>,
 }
-@group(0) @binding(1) var<storage, read> wow_light: WowLight;
+@group(0) @binding(32) var<storage, read> wow_light: WowLight;
 
 // Per-cell state (static_gx/render.rs `cell_layout`).
 struct GxCell {
@@ -399,6 +400,16 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
         }
         rgb = clamp(2.0 * base.rgb * v, vec3<f32>(0.0), vec3<f32>(1.0));
     }
+    // The shadow maps on a lit item, wow_model.wgsl's receive (`benilla_world::ext_shadow`).
+    if ((in.word & WORD_UNLIT) == 0u) {
+        let shadow = wow_shadow::shadow_term(
+            in.world_position.xyz,
+            (in.word & WORD_INTERIOR) != 0u,
+        );
+        if (shadow < 1.0) {
+            rgb = rgb * wow_shadow::shadow_scale(wow_shadow::grazing_fade(shadow, n_lit));
+        }
+    }
     // Planar eye-Z fog; other fog modes belong to blends never admitted here. The interior triple
     // keys on the per-frame record bit, not `WORD_INTERIOR`: the client sets it per group under
     //.
@@ -415,4 +426,39 @@ fn fragment(in: GxVsOut) -> @location(0) vec4<f32> {
     }
     // Gamma-space output; alpha pinned 1.0, every draw here is opaque.
     return vec4<f32>(rgb, 1.0);
+}
+
+// ---- the shadow-map caster pass (`benilla_world::ext_shadow`, `ShadowMapSL.bls`) ----
+// Every admitted static is an opaque or alpha-key batch, all casters of the reference's
+// (`0x834660`); depth only, into each cascade the node binds as the view.
+
+struct GxShadowOut {
+    @builtin(position) position: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+    @location(1) @interpolate(flat) word: u32,
+}
+
+@vertex
+fn vertex_shadow(v: GxVertex) -> GxShadowOut {
+    var out: GxShadowOut;
+    out.uv = v.uv;
+    out.word = v.word;
+    if ((recs[v.word & 0xffffu].w & 1u) != 0u) {
+        out.position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+        return out;
+    }
+    out.position = view.clip_from_world * vec4<f32>(v.position + cell.origin.xyz, 1.0);
+    return out;
+}
+
+// The alpha-key test of a cutout batch, the main pass's own.
+@fragment
+fn fragment_shadow(in: GxShadowOut) {
+    if ((in.word & WORD_TEXTURED) != 0u) {
+        let layer = i32(recs[in.word & 0xffffu].x & 0xffffu);
+        let a = textureSampleLevel(tex_array, samp_repeat, in.uv, layer, 0.0).a;
+        if (a < VANILLA_ALPHA_KEY) {
+            discard;
+        }
+    }
 }

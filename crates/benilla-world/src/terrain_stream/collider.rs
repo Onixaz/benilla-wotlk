@@ -293,6 +293,7 @@ mod tests {
             positions,
             normals: Vec::new(),
             uvs: Vec::new(),
+            vertex_colors: Vec::new(),
             indices: Vec::new(),
             holes: 0,
             base_texture: None,

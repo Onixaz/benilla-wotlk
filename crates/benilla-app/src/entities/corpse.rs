@@ -139,14 +139,21 @@ pub(super) fn pose_corpses(
         // The `AnimationData.dbc` fallback (`0x826350`): a character body authors `Drowned` but not
         // `Dead`, which walks to `Death` (1).
         let catalog = anim_data.as_deref().map(|a| &a.0);
-        let resolved = catalog.map_or(want, |cat| anims.resolve(want, cat).id);
+        let dir = catalog.map_or(
+            benilla_assets::ResolvedAnim {
+                id: want,
+                dir_flags: 0,
+            },
+            |cat| anims.resolve(want, cat),
+        );
+        let resolved = dir.id;
         let Some(clip) = anims.find(resolved) else {
             // No clip (a static bone pile): posed anyway, so it is not retried every frame.
             debug!("corpse pose: {entity} has no clip for {want} -> {resolved}, left at rest");
             commands.entity(entity).insert(CorpsePosed);
             continue;
         };
-        arm_settled(&mut player, &mut transitions, clip);
+        arm_settled(&mut player, &mut transitions, clip, dir);
         debug!(
             "corpse pose: {entity} arms {} ({want} -> {resolved}) held at {:.3}s",
             if submerged { "Drowned" } else { "Dead" },
@@ -156,14 +163,18 @@ pub(super) fn pose_corpses(
     }
 }
 
-/// Play `clip` held at its end pose: the settled corpse, never the collapse.
+/// Play `clip` held at its end pose: the settled corpse, never the collapse. A fallback's direction
+/// mode arms as `0x826b00` does: Dead's row holds Death on its last frame.
 fn arm_settled(
     player: &mut AnimationPlayer,
     transitions: &mut bevy::animation::transition::AnimationTransitions,
     clip: &AnimClip,
+    dir: benilla_assets::ResolvedAnim,
 ) {
     let active = transitions.play(player, clip.node, std::time::Duration::ZERO);
-    if clip.looping {
+    if dir.dir_flags != 0 {
+        dir.apply(active, 1.0, clip.duration);
+    } else if clip.looping {
         active.repeat();
     } else {
         active.seek_to(clip.duration);

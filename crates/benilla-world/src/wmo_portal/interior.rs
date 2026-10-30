@@ -693,6 +693,7 @@ mod tests {
     /// A model with nothing but footprint groups, all the sample reads.
     fn bare_model() -> WmoModel {
         WmoModel {
+            root_bbox: None,
             wmo_id: 0,
             submeshes: Vec::new(),
             submesh_group: Vec::new(),

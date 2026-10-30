@@ -109,6 +109,8 @@ pub struct CharSections {
     sections: HashMap<(u8, u8, u8, u8, u8), [String; 3]>,
     /// (race, sex, face, skinColor) of the face rows flagged [`FACE_EYE_GLOW`].
     glowing_faces: HashSet<(u8, u8, u8, u8)>,
+    /// Every row's flags, the component check's grid ([`CharSections::validate_look`]).
+    pub(super) components: super::components::ComponentGrid,
 }
 
 impl CharSections {
@@ -186,7 +188,7 @@ impl CharSections {
         ) else {
             return Ok(None);
         };
-        plan.run(|path| read_texture_mip_chain(chain, path))
+        plan.run(u32::MAX, |path| read_texture_mip_chain(chain, path))
             .map(Some)
     }
 
@@ -252,6 +254,7 @@ impl CharSections {
         let rs = parse(&bytes, char_sections_schema(l), "CharSections")?;
         let mut sections = HashMap::with_capacity(rs.records().len());
         let mut glowing_faces = HashSet::new();
+        let mut components = super::components::ComponentGrid::default();
         for r in rs.records() {
             if let (Some(race), Some(sex), Some(ty), Some(var), Some(color)) = (
                 u32_at(r, 1),
@@ -266,6 +269,7 @@ impl CharSections {
                 // An extra row can share its key with a standard one (1.12.1's Human male skin 0
                 // has `…Skin00_00` and `…_100`); the standard row wins in either order.
                 let flags = u32_at(r, l.flags).unwrap_or(0);
+                components.insert(key.0, key.1, ty, key.3, key.4, flags);
                 if ty as u8 == SECTION_FACE && flags & FACE_EYE_GLOW != 0 {
                     glowing_faces.insert((key.0, key.1, key.3, key.4));
                 }
@@ -280,6 +284,7 @@ impl CharSections {
         Ok(Self {
             sections,
             glowing_faces,
+            components,
         })
     }
 }
@@ -293,26 +298,34 @@ pub struct CompositePlan {
 }
 
 impl CompositePlan {
-    /// Read, decode and blit: each overlay at its tile per authored mip level. An overlay that
-    /// reads nowhere is skipped; a base skin that does not read fails.
-    ///
-    /// Deviation: blends in 8-bit RGBA, not the client's RGB565 with 2-bit coverage, because that
-    /// format only saves texture memory and loses precision.
-    pub fn run(&self, mut read: impl FnMut(&str) -> Result<BlpMipChain>) -> Result<BlpMipChain> {
+    /// Read, decode and blit at `side`, the bake's `1 << componentTextureLevel` (`0x4f1a20`): the
+    /// base skin's levels above it drop, every section rect scales to it as the reference shifts
+    /// its 512²-authored rects right by `9 - level`, and each overlay pastes at every level left
+    /// ([`blit_over`]). An overlay that reads nowhere is skipped; a base skin that does not read
+    /// fails. `u32::MAX` keeps the base skin's own size.
+    pub fn run(
+        &self,
+        side: u32,
+        mut read: impl FnMut(&str) -> Result<BlpMipChain>,
+    ) -> Result<BlpMipChain> {
         let mut atlas =
             read(&self.base).with_context(|| format!("reading base skin '{}'", self.base))?;
-        // The tiles are 1.12.1's 256² partition; 3.3.5a's base skins are 512² with the same
-        // partition doubled, so the base skin's width scales every tile.
-        let scale = (atlas.width / ATLAS_SIDE).max(1);
+        atlas.trim_to(side);
+        let width = atlas.width;
         for (candidates, tile) in &self.layers {
             if let Some(overlay) = candidates.iter().find_map(|path| read(path).ok()) {
-                let (x, y, w, h) = *tile;
-                let tile = (x * scale, y * scale, w * scale, h * scale);
-                blit_over(&mut atlas, &overlay, tile, scale);
+                blit_over(&mut atlas, &overlay, scale_tile(*tile, width));
             }
         }
         Ok(atlas)
     }
+}
+
+/// A section rect laid out on the [`ATLAS_SIDE`] partition, on an atlas `side` wide.
+fn scale_tile(tile: Tile, side: u32) -> Tile {
+    let (x, y, w, h) = tile;
+    let at = |v: u32| v * side / ATLAS_SIDE;
+    (at(x), at(y), at(w), at(h))
 }
 
 /// One step of the equipment plan [`CharSections::composite_body`] runs, public so
@@ -550,60 +563,114 @@ pub fn equip_region_candidates(layer: usize, name: &str, sex: u8) -> [String; 2]
     ['U', letter].map(|c| format!("Item\\TextureComponents\\{dir}\\{name}_{c}.blp"))
 }
 
-/// Source-over blit of an overlay's mip pyramid at `tile`, level by level, from the overlay's own
-/// origin (src `(0,0)`, extent the tile); an opaque texel copies, the client's REPLACE.
-fn blit_over(dst: &mut BlpMipChain, src: &BlpMipChain, tile: Tile, scale: u32) {
+/// Paste an overlay's mip pyramid at `tile`, level by level, from the overlay's origin. Each level
+/// copies the overlay's own level whose width matches the section's there (`0x4f0939` halves the
+/// width to find it, `0x4ec550` copies it); a level the overlay is narrower than takes its level 0
+/// upscaled by averaging ([`upscale_texel`], `0x4ef9d0`). An opaque texel replaces, a transparent
+/// one blends.
+fn blit_over(dst: &mut BlpMipChain, src: &BlpMipChain, tile: Tile) {
     // Both chains must be decoded RGBA: DXT blocks would blend into garbage without failing.
     debug_assert!(
         dst.is_rgba8() && src.is_rgba8(),
         "character-skin compositing needs decoded chains on both sides"
     );
     let (tx, ty, tw, th) = tile;
-    // On an atlas `scale` times 1.12.1's, an overlay narrower than its tile (a 3.3.5a 128×64 item
-    // texture on a 512² atlas's 256×128 tile) is `shift` levels down: its level j fills the tile's
-    // level j + shift, and the levels above `shift` are drawn from its level 0, stretched. At
-    // scale 1 nothing stretches: 1.12.1 copies from the overlay's origin, extent the tile.
-    let shift = (tw / src.width.max(1)).clamp(1, scale.max(1)).ilog2() as usize;
+    let sw0 = src.width.max(1);
+    // The overlay level matching the section at level 0, negative when the overlay is narrower.
+    let offset = if sw0 >= tw {
+        (sw0 / tw.max(1)).ilog2() as i32
+    } else {
+        -((tw / sw0).ilog2() as i32)
+    };
     for i in 0..dst.mips.len() {
         let dw = (dst.width >> i).max(1) as usize;
         let dh = (dst.height >> i).max(1) as usize;
         let (ox, oy) = ((tx >> i) as usize, (ty >> i) as usize);
         let (tw_i, th_i) = ((tw >> i).max(1) as usize, (th >> i).max(1) as usize);
-        let j = i.saturating_sub(shift);
+        let k = i as i32 + offset;
+        // Below the overlay's own levels: its level 0, upscaled by `1 << up`.
+        let (j, up) = if k >= 0 {
+            (k as usize, 0)
+        } else {
+            (0, (-k) as u32)
+        };
         let Some(s) = src.mips.get(j) else { break };
         let sw = (src.width >> j).max(1) as usize;
         let sh = (src.height >> j).max(1) as usize;
-        // At or past `shift` the source level is the tile's size and copies texel for texel, as
-        // every 1.12.1 overlay does; above it the source is stretched by nearest texel.
-        let stretch = i < shift;
-        let cw = if stretch { tw_i } else { tw_i.min(sw) }.min(dw.saturating_sub(ox));
-        let ch = if stretch { th_i } else { th_i.min(sh) }.min(dh.saturating_sub(oy));
+        let (cw, ch) = if up > 0 {
+            (tw_i, th_i)
+        } else {
+            (tw_i.min(sw), th_i.min(sh))
+        };
+        let (cw, ch) = (cw.min(dw.saturating_sub(ox)), ch.min(dh.saturating_sub(oy)));
         let d = &mut dst.mips[i];
         for row in 0..ch {
-            let sr = if stretch { row * sh / th_i } else { row };
             for col in 0..cw {
-                let sc = if stretch { col * sw / tw_i } else { col };
-                let si = (sr * sw + sc) * 4;
+                let texel = if up > 0 {
+                    upscale_texel(s, (sw, sh), (tw_i, th_i), up, col, row)
+                } else {
+                    let si = (row * sw + col) * 4;
+                    let Some(t) = s.get(si..si + 4) else { continue };
+                    [t[0], t[1], t[2], t[3]]
+                };
                 let di = ((oy + row) * dw + (ox + col)) * 4;
-                if si + 4 > s.len() || di + 4 > d.len() {
-                    continue;
+                if let Some(px) = d.get_mut(di..di + 4) {
+                    blend_texel(px, texel);
                 }
-                let a = s[si + 3] as u32;
-                if a == 0 {
-                    continue;
-                }
-                if a == 255 {
-                    d[di..di + 4].copy_from_slice(&s[si..si + 4]);
-                    continue;
-                }
-                let ia = 255 - a;
-                for c in 0..3 {
-                    d[di + c] = ((s[si + c] as u32 * a + d[di + c] as u32 * ia + 127) / 255) as u8;
-                }
-                d[di + 3] = (a + (d[di + 3] as u32 * ia + 127) / 255).min(255) as u8;
             }
         }
     }
+}
+
+/// Source-over one texel: opaque replaces, transparent leaves, between blends.
+fn blend_texel(d: &mut [u8], s: [u8; 4]) {
+    let a = s[3] as u32;
+    if a == 0 {
+        return;
+    }
+    if a == 255 {
+        d.copy_from_slice(&s);
+        return;
+    }
+    let ia = 255 - a;
+    for c in 0..3 {
+        d[c] = ((s[c] as u32 * a + d[c] as u32 * ia + 127) / 255) as u8;
+    }
+    d[3] = (a + (d[3] as u32 * ia + 127) / 255).min(255) as u8;
+}
+
+/// One texel of an overlay `1 << up` times smaller than its `section`, as the reference's 2x
+/// paste reads it (`0x4e89f0`, and its 1/4/8-bit alpha twins): an even column and row copy the
+/// source texel, an odd one averages it with its right and lower neighbours, two or four, every
+/// channel alpha included, truncating; the neighbour clamps to the section's last source column.
+/// Past 2x, which the reference reads beyond its row, the same rule runs at the larger ratio.
+fn upscale_texel(
+    src: &[u8],
+    (sw, sh): (usize, usize),
+    (section_w, section_h): (usize, usize),
+    up: u32,
+    col: usize,
+    row: usize,
+) -> [u8; 4] {
+    let odd = |v: usize| v & ((1 << up) - 1) != 0;
+    let pair = |v: usize, extent: usize, src_extent: usize| {
+        let v0 = (v >> up).min(src_extent - 1);
+        let last = ((extent >> up).max(1) - 1).min(src_extent - 1);
+        (v0, (v0 + 1).min(last))
+    };
+    let (x0, x1) = pair(col, section_w, sw);
+    let (y0, y1) = pair(row, section_h, sh);
+    let at =
+        |x: usize, y: usize, c: usize| src.get((y * sw + x) * 4 + c).copied().unwrap_or(0) as u32;
+    std::array::from_fn(|c| {
+        let v = match (odd(col), odd(row)) {
+            (false, false) => at(x0, y0, c),
+            (true, false) => (at(x0, y0, c) + at(x1, y0, c)) >> 1,
+            (false, true) => (at(x0, y0, c) + at(x0, y1, c)) >> 1,
+            (true, true) => (at(x0, y0, c) + at(x1, y0, c) + at(x0, y1, c) + at(x1, y1, c)) >> 2,
+        };
+        v as u8
+    })
 }
 
 /// CharSections.dbc: 10 fields, three of them texture names.
@@ -654,6 +721,7 @@ mod tests {
         let cs = CharSections {
             sections,
             glowing_faces: HashSet::new(),
+            components: Default::default(),
         };
         assert_eq!(
             cs.skin_texture(1, 0, 3),
@@ -1238,12 +1306,7 @@ mod tests {
     fn blit_over_replaces_blends_and_clamps() {
         let mut dst = chain(2, 2, [128, 128, 128, 255].repeat(4));
 
-        blit_over(
-            &mut dst,
-            &chain(1, 1, vec![255, 0, 0, 255]),
-            (0, 0, 1, 1),
-            1,
-        );
+        blit_over(&mut dst, &chain(1, 1, vec![255, 0, 0, 255]), (0, 0, 1, 1));
         assert_eq!(
             &dst.mips[0][0..4],
             &[255, 0, 0, 255],
@@ -1256,12 +1319,7 @@ mod tests {
         );
 
         // Half-alpha blue over grey: R≈64, B≈191.
-        blit_over(
-            &mut dst,
-            &chain(1, 1, vec![0, 0, 255, 128]),
-            (1, 1, 1, 1),
-            1,
-        );
+        blit_over(&mut dst, &chain(1, 1, vec![0, 0, 255, 128]), (1, 1, 1, 1));
         let px = &dst.mips[0][12..16];
         assert!((px[0] as i32 - 64).abs() <= 1, "blended R ≈ 128·(1−a)");
         assert!(
@@ -1271,53 +1329,128 @@ mod tests {
         assert_eq!(px[3], 255, "over an opaque base the result stays opaque");
 
         let before = dst.mips[0].clone();
-        blit_over(&mut dst, &chain(1, 1, vec![1, 2, 3, 0]), (0, 0, 1, 1), 1);
+        blit_over(&mut dst, &chain(1, 1, vec![1, 2, 3, 0]), (0, 0, 1, 1));
         assert_eq!(dst.mips[0], before, "transparent texel is a no-op");
     }
 
-    /// On a doubled atlas a half-size overlay fills its doubled tile: stretched at level 0, texel
-    /// for texel from its level 0 at level 1. On a 1.12.1 atlas it covers only its own extent.
+    /// A half-size overlay fills its tile by the 2x averaging paste (`0x4e89f0`) at level 0 and
+    /// copies its own level 0 into the tile's level 1.
     #[test]
-    fn a_half_size_overlay_fills_a_doubled_tile_only_on_a_doubled_atlas() {
+    fn a_half_size_overlay_takes_the_averaging_upscale() {
         let grey = [9, 9, 9, 255];
-        let atlas = |side: u32| BlpMipChain {
-            width: side,
-            height: side,
+        let mut atlas = BlpMipChain {
+            width: 4,
+            height: 4,
             texels: crate::BlpTexels::Rgba8Unorm,
-            mips: vec![
-                grey.repeat((side * side) as usize),
-                grey.repeat((side * side / 4) as usize),
-            ],
+            mips: vec![grey.repeat(16), grey.repeat(4)],
         };
-        // A 2×1 overlay: red, then green.
-        let overlay = chain(2, 1, [[255, 0, 0, 255], [0, 255, 0, 255]].concat());
-        let px = |c: &BlpMipChain, level: usize, w: u32, x: u32, y: u32| {
-            let i = ((y * w + x) * 4) as usize;
-            c.mips[level][i..i + 4].to_vec()
-        };
-
-        let mut wotlk = atlas(4);
-        blit_over(&mut wotlk, &overlay, (0, 0, 4, 2), 2);
-        for (x, want) in [
-            (0, [255, 0, 0, 255]),
-            (1, [255, 0, 0, 255]),
-            (2, [0, 255, 0, 255]),
-            (3, [0, 255, 0, 255]),
-        ] {
-            assert_eq!(px(&wotlk, 0, 4, x, 0), want, "level 0, x {x}");
-            assert_eq!(px(&wotlk, 0, 4, x, 1), want, "level 0, x {x}, row 1");
-        }
-        assert_eq!(px(&wotlk, 1, 2, 0, 0), [255, 0, 0, 255]);
-        assert_eq!(px(&wotlk, 1, 2, 1, 0), [0, 255, 0, 255]);
-
-        let mut classic = atlas(4);
-        blit_over(&mut classic, &overlay, (0, 0, 4, 2), 1);
-        assert_eq!(
-            px(&classic, 0, 4, 1, 0),
-            [0, 255, 0, 255],
-            "copied, not stretched"
+        // A 2x2 overlay, hand-computed below.
+        let (a, b, c, d) = (
+            [100, 0, 40, 255],
+            [201, 10, 0, 255],
+            [0, 50, 101, 255],
+            [3, 255, 7, 255],
         );
-        assert_eq!(px(&classic, 0, 4, 2, 0), grey, "past the overlay's extent");
+        let overlay = chain(2, 2, [a, b, c, d].concat());
+        blit_over(&mut atlas, &overlay, (0, 0, 4, 4));
+        let px = |level: usize, w: usize, x: usize, y: usize| {
+            let i = (y * w + x) * 4;
+            atlas.mips[level][i..i + 4].to_vec()
+        };
+        // Row 0: a, (a+b)>>1, b, b (the neighbour clamps to the last source column).
+        assert_eq!(px(0, 4, 0, 0), a);
+        assert_eq!(px(0, 4, 1, 0), [150, 5, 20, 255]);
+        assert_eq!(px(0, 4, 2, 0), b);
+        assert_eq!(px(0, 4, 3, 0), b);
+        // Row 1 averages rows 0 and 1: (a+c)>>1, (a+b+c+d)>>2, (b+d)>>1.
+        assert_eq!(px(0, 4, 0, 1), [50, 25, 70, 255]);
+        assert_eq!(px(0, 4, 1, 1), [76, 78, 37, 255]);
+        assert_eq!(px(0, 4, 2, 1), [102, 132, 3, 255]);
+        // Row 2 is source row 1; row 3 clamps to it.
+        assert_eq!(px(0, 4, 0, 2), c);
+        assert_eq!(px(0, 4, 3, 3), d);
+        // Level 1's tile is the overlay's size: copied texel for texel.
+        assert_eq!(px(1, 2, 0, 0), a);
+        assert_eq!(px(1, 2, 1, 1), d);
+    }
+
+    /// An overlay wider than its section pastes from its level whose width matches (`0x4f0939`).
+    #[test]
+    fn a_wide_overlay_pastes_its_matching_level() {
+        let grey = [9, 9, 9, 255];
+        let mut atlas = BlpMipChain {
+            width: 2,
+            height: 2,
+            texels: crate::BlpTexels::Rgba8Unorm,
+            mips: vec![grey.repeat(4), grey.to_vec()],
+        };
+        let red = [255, 0, 0, 255];
+        let blue = [0, 0, 255, 255];
+        // Level 0 red at 4x4, level 1 blue at 2x2.
+        let overlay = BlpMipChain {
+            width: 4,
+            height: 4,
+            texels: crate::BlpTexels::Rgba8Unorm,
+            mips: vec![red.repeat(16), blue.repeat(4)],
+        };
+        blit_over(&mut atlas, &overlay, (0, 0, 2, 2));
+        assert_eq!(
+            atlas.mips[0],
+            blue.repeat(4),
+            "level 1 matches the 2-wide section"
+        );
+        assert_eq!(
+            atlas.mips[1],
+            grey.to_vec(),
+            "the overlay has no level 2 to paste"
+        );
+    }
+
+    /// The bake's side drops the base skin's levels above it and scales every section rect: the
+    /// reference's 512² layout shifted by `9 - level` (`0x4f1a20`).
+    #[test]
+    fn the_bake_side_trims_the_base_and_scales_the_sections() {
+        assert_eq!(scale_tile(TILE_G3, 512), (256, 0, 256, 128));
+        assert_eq!(scale_tile(TILE_G3, 256), TILE_G3);
+        assert_eq!(scale_tile(TILE_G3, 128), (64, 0, 64, 32));
+        let base = BlpMipChain {
+            width: 512,
+            height: 512,
+            texels: crate::BlpTexels::Rgba8Unorm,
+            mips: [512usize, 256, 128, 64]
+                .iter()
+                .map(|s| [9, 9, 9, 255].repeat(s * s))
+                .collect(),
+        };
+        let red = [255, 0, 0, 255];
+        let plan = CompositePlan {
+            base: "base".into(),
+            layers: vec![(vec!["torso".into()], TILE_G3)],
+        };
+        for side in [128, 256, 512] {
+            let atlas = plan
+                .run(side, |p| {
+                    Ok(if p == "base" {
+                        base.clone()
+                    } else {
+                        // A 128x64 torso, the 256² layout's own section size, with its levels.
+                        BlpMipChain {
+                            mips: [8192, 2048, 512].map(|n| red.repeat(n)).into(),
+                            ..chain(128, 64, Vec::new())
+                        }
+                    })
+                })
+                .expect("composite");
+            assert_eq!((atlas.width, atlas.height), (side, side));
+            let (x, y, w, h) = scale_tile(TILE_G3, side);
+            let at = |px: u32, py: u32| {
+                let i = ((py * side + px) * 4) as usize;
+                atlas.mips[0][i..i + 4].to_vec()
+            };
+            assert_eq!(at(x, y), red, "the section's corner at {side}");
+            assert_eq!(at(x + w - 1, y + h - 1), red, "its far corner at {side}");
+            assert_eq!(at(x - 1, y), [9, 9, 9, 255], "left of it at {side}");
+        }
     }
 
     /// A Death Knight's eyes glow whatever its face, and a face row flagged `0x4` lights any

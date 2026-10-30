@@ -83,6 +83,26 @@ impl CreatureFamily {
         let t = over as f32 / range as f32;
         Some(self.min_scale + (self.max_scale - self.min_scale) * t)
     }
+
+    /// A unit's family scale at `level`, the in-world law (`0x71c110`): the same ramp in signed
+    /// integers, where a zero range takes `minScale` (the fraction stays 0, no divide).
+    pub fn unit_scale_at(&self, level: u32) -> f32 {
+        let min_level = self.min_scale_level as i32;
+        let range = (self.max_scale_level as i32).wrapping_sub(min_level);
+        let level = level as i32;
+        let over = if level >= min_level {
+            level.wrapping_sub(min_level)
+        } else {
+            0
+        }
+        .min(range);
+        let t = if range != 0 {
+            over as f32 / range as f32
+        } else {
+            0.0
+        };
+        self.min_scale + (self.max_scale - self.min_scale) * t
+    }
 }
 
 /// `CreatureFamily.dbc`, by id.
@@ -106,6 +126,12 @@ impl CreatureFamilies {
 
     pub fn name(&self, id: u32) -> Option<&str> {
         self.get(id).map(|f| f.name.as_str())
+    }
+
+    /// [`CreatureFamily::unit_scale_at`] by family id, the in-world unit's family term; `None` for
+    /// family 0 or a missing row, where the reference skips the term.
+    pub fn unit_scale(&self, family: u32, level: u32) -> Option<f32> {
+        Some(self.get(family)?.unit_scale_at(level))
     }
 
     /// [`CreatureFamily::scale_at`] by family id; on `None` the caller takes the display's scale
@@ -427,5 +453,40 @@ mod tests {
         assert_eq!(n.for_mask(0b111), ["Meat", "Cheese"]);
         // Bit 31 is past `MAX_FOOD_BITS` entirely.
         assert_eq!(n.for_mask(0x8000_0001), ["Meat"]);
+    }
+
+    fn ramp(min_scale: f32, min_level: u32, max_scale: f32, max_level: u32) -> CreatureFamily {
+        CreatureFamily {
+            name: String::new(),
+            icon: String::new(),
+            pet_food_mask: 0,
+            pet_talent_type: -1,
+            category: -1,
+            min_scale,
+            min_scale_level: min_level,
+            max_scale,
+            max_scale_level: max_level,
+        }
+    }
+
+    /// `0x71c110`'s ramp: linear between the levels, clamped at both ends.
+    #[test]
+    fn the_unit_family_ramp_is_linear_and_clamped() {
+        let f = ramp(0.5, 10, 1.5, 20);
+        assert_eq!(f.unit_scale_at(1), 0.5, "below the ramp");
+        assert_eq!(f.unit_scale_at(10), 0.5);
+        assert!((f.unit_scale_at(15) - 1.0).abs() < 1e-6);
+        assert_eq!(f.unit_scale_at(20), 1.5);
+        assert_eq!(f.unit_scale_at(80), 1.5, "above the ramp");
+    }
+
+    /// A zero range keeps the fraction at 0, so the scale is `minScale`, never a divide.
+    #[test]
+    fn a_zero_unit_family_range_takes_the_min_scale() {
+        let f = ramp(0.8, 1, 2.0, 1);
+        assert_eq!(f.unit_scale_at(1), 0.8);
+        assert_eq!(f.unit_scale_at(60), 0.8);
+        let none = ramp(0.6, 0, 0.6, 0);
+        assert_eq!(none.unit_scale_at(0), 0.6);
     }
 }

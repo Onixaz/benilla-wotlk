@@ -44,6 +44,7 @@ fn app() -> App {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
         .add_message::<SheathRequest>();
@@ -203,6 +204,7 @@ fn precast_kit_sound_rings_once_at_start() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
         .add_message::<SheathRequest>();
@@ -556,6 +558,7 @@ fn aura_state_kit_arms_persistent_and_reaps_on_aura_end() {
                 tag: 0x16,
                 effect: BREAD_FX,
                 path: "Spells\\Item_Bread.mdx".to_string(),
+                scale: 1.0,
             }],
             "bread at the spell hand"
         );
@@ -739,6 +742,7 @@ fn a_harmful_go_wounds_each_hit_once_and_a_missile_arrival_always() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
         .add_message::<SheathRequest>();
@@ -851,6 +855,7 @@ fn missile_spawn_defers_iff_the_cast_kit_animates() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
         .add_message::<SheathRequest>();
@@ -963,6 +968,7 @@ fn ground_app(
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
         .add_message::<SheathRequest>();
@@ -1274,6 +1280,7 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
             tag: BASE_ATTACH,
             effect: POOF_FX,
             path: POOF.to_string(),
+            scale: 1.0,
         }],
         "the build leg puffs the druid-morph cloud at the base attach"
     );
@@ -1291,6 +1298,7 @@ fn the_mount_poof_puffs_on_the_build_leg_only() {
             tag: BASE_ATTACH,
             effect: POOF_FX,
             path: POOF.to_string(),
+            scale: 1.0,
         }]
     );
 }
@@ -1506,6 +1514,7 @@ fn real_shooter(weapon: &RealRanged) -> Option<(App, Entity)> {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
         .add_message::<SheathRequest>();
@@ -1713,6 +1722,7 @@ fn a_state_kits_anim_is_a_recompute_and_never_a_second_play() {
         .add_message::<StateDoneKit>()
         .add_message::<crate::net::FieldChanged>()
         .add_message::<MissileSpawn>()
+        .add_message::<super::DelayedAreaKit>()
         .add_message::<crate::entities::dest_fx::GroundBurst>()
         .add_message::<super::ChainProcPlay>()
         .add_message::<SheathRequest>();
@@ -2039,4 +2049,240 @@ fn an_earn_arms_the_achievement_base_on_the_earning_player() {
     assert_eq!(begins[0].0, unit);
     assert_eq!(begins[0].1[0].tag, 0x13);
     assert_eq!(begins[0].1[0].effect, FX);
+}
+
+/// Column 24 at `SMSG_SPELL_GO` (`0x80ef23`): played at the dest point at Speed 0, deferred to the
+/// would-be landing at Speed > 0 with no `HasMissile`, left to the landing with one, and never for
+/// a row whose kits draw a beam.
+#[test]
+fn a_dest_go_plays_the_impact_area_kit_unless_a_missile_or_a_beam_carries_it() {
+    const AREA_KIT: u32 = 3270;
+    const BEAM_KIT: u32 = 3271;
+    const BOOM: u32 = 4100;
+    let at = Vec3::new(3.0, 0.0, 4.0);
+    let kits = || {
+        HashMap::from([
+            (
+                AREA_KIT,
+                VisualKit {
+                    sound: Some(BOOM),
+                    ..Default::default()
+                },
+            ),
+            (
+                BEAM_KIT,
+                VisualKit {
+                    char_proc_slots: [
+                        Some(benilla_formats::CharProc {
+                            ty: benilla_formats::char_proc_type::CHAIN_CAST,
+                            params: [743.0, 0.0, 0.0, 0.0],
+                        }),
+                        None,
+                        None,
+                        None,
+                    ],
+                    ..Default::default()
+                },
+            ),
+        ])
+    };
+    let go = |app: &mut App| {
+        let caster = app.world_mut().spawn(GlobalTransform::default()).id();
+        app.world_mut().write_message(SpellGoTargets {
+            caster,
+            spell_id: 1,
+            hits: Vec::new(),
+            misses: Vec::new(),
+            dest: Some(at),
+            ammo_display_id: None,
+            seq: 1,
+            trajectory: None,
+        });
+        app.update();
+        caster
+    };
+    let booms = |app: &mut App| -> usize {
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitSound>>()
+            .drain()
+            .filter(|s| {
+                matches!(s, SpellKitSound::PlayAt { pos, kit_sound } if *pos == at && *kit_sound == BOOM)
+            })
+            .count()
+    };
+    let delayed = |app: &mut App| -> Vec<super::DelayedAreaKit> {
+        app.world_mut()
+            .resource_mut::<Messages<super::DelayedAreaKit>>()
+            .drain()
+            .collect()
+    };
+    let area = VisualStages {
+        impact_area_kit: AREA_KIT,
+        ..Default::default()
+    };
+
+    let mut app = ground_app(1, 0.0, area, kits(), HashMap::new());
+    go(&mut app);
+    assert_eq!(booms(&mut app), 1, "Speed 0 plays it at GO");
+
+    let beam_row = VisualStages {
+        cast: BEAM_KIT,
+        ..area
+    };
+    let mut app = ground_app(1, 0.0, beam_row, kits(), HashMap::new());
+    go(&mut app);
+    assert_eq!(booms(&mut app), 0, "a beam row skips it (0x800bf0)");
+
+    let mut app = ground_app(1, 8.0, area, kits(), HashMap::new());
+    let caster = go(&mut app);
+    assert_eq!(booms(&mut app), 0, "Speed > 0 defers it");
+    assert_eq!(
+        delayed(&mut app),
+        [super::DelayedAreaKit {
+            caster,
+            kit_id: AREA_KIT,
+            pos: at,
+            speed: 8.0
+        }]
+    );
+
+    let missile_row = VisualStages {
+        missile_gate: 1,
+        ..area
+    };
+    let mut app = ground_app(1, 8.0, missile_row, kits(), HashMap::new());
+    go(&mut app);
+    assert_eq!(booms(&mut app), 0, "HasMissile leaves it to the landing");
+    assert!(delayed(&mut app).is_empty());
+}
+
+/// The deferred area kit waits distance / speed from the caster, and plays at once without one.
+#[test]
+fn a_delayed_area_kit_waits_the_missile_flight() {
+    assert_eq!(
+        super::area_kit_delay(Some(Vec3::ZERO), Vec3::new(3.0, 0.0, 4.0), 10.0),
+        0.5
+    );
+    assert_eq!(super::area_kit_delay(None, Vec3::ONE, 10.0), 0.0);
+}
+
+/// The beam test reads the cast, impact, state, channel and the two impact-kit columns, never
+/// precast or state-done, and keys on a type-0 or type-12 slot whatever its params (`0x7fe470`).
+#[test]
+fn has_chain_effect_asks_six_stage_kits() {
+    let beam = VisualKit {
+        char_proc_slots: [
+            None,
+            Some(benilla_formats::CharProc {
+                ty: benilla_formats::char_proc_type::CHAIN_CHANNEL,
+                params: [0.0; 4],
+            }),
+            None,
+            None,
+        ],
+        ..Default::default()
+    };
+    let cat = SpellVisualCatalog::from_tables(HashMap::new(), HashMap::from([(7, beam)]));
+    let row = |f: fn(&mut VisualStages)| {
+        let mut s = VisualStages::default();
+        f(&mut s);
+        cat.has_chain_effect(&s)
+    };
+    assert!(row(|s| s.cast = 7));
+    assert!(row(|s| s.impact = 7));
+    assert!(row(|s| s.state = 7));
+    assert!(row(|s| s.channel = 7));
+    assert!(row(|s| s.caster_impact = 7));
+    assert!(row(|s| s.target_impact = 7));
+    assert!(!row(|s| s.precast = 7));
+    assert!(!row(|s| s.state_done = 7));
+}
+
+/// `0x70d0f1`: object scale times model height times 1.15, clamped to 1..5.
+#[test]
+fn the_go_loot_sparkle_scales_to_its_object() {
+    assert!((super::go_loot_fx_scale(1.0, 2.0) - 2.3).abs() < 1e-6);
+    assert_eq!(super::go_loot_fx_scale(1.0, 0.2), 1.0, "floor 1");
+    assert_eq!(super::go_loot_fx_scale(2.0, 10.0), 5.0, "ceiling 5");
+    assert_eq!(super::go_loot_fx_scale(1.0, f32::NAN), 1.0);
+}
+
+/// The GameObject sparkle arms on a flip of `GAMEOBJECT_DYNAMIC` bit `0x08` once the model has
+/// loaded, re-arms at model load, ignores other bits and reaps with the bit.
+#[test]
+fn a_go_loot_sparkle_follows_dynamic_bit_8_and_the_model_load() {
+    use benilla_protocol::field::FIELD_GAMEOBJECT_DYN_FLAGS;
+    use benilla_protocol::messages::ObjectType;
+    use benilla_protocol::ObjectFields;
+    const LOOT_FX: u32 = 14;
+    const LOOT: &str = "Particles\\LootFX.mdl";
+    assert!(super::go_sparkle_edge(0, 0x8));
+    assert!(!super::go_sparkle_edge(0x8, 0x9));
+
+    let mut app = App::new();
+    app.add_plugins(MinimalPlugins);
+    app.add_message::<SpellKitFx>()
+        .add_message::<crate::net::FieldChanged>();
+    app.insert_resource(SpellVisuals(
+        SpellVisualCatalog::from_tables(HashMap::new(), HashMap::new()).with_hardcoded(
+            "HARDCODED Loot Art",
+            LOOT_FX,
+            LOOT,
+        ),
+    ));
+    app.add_systems(Update, super::arm_go_loot_fx);
+    let dyn_flags = |v: u32| ObjectFields::from_pairs(&[(FIELD_GAMEOBJECT_DYN_FLAGS, v)]);
+    let go = app
+        .world_mut()
+        .spawn((
+            crate::net::ObjectStore(dyn_flags(0).into_created(ObjectType::GameObject)),
+            crate::net::NetEntity {
+                kind: benilla_protocol::EntityKind::GameObject,
+                display_id: Some(1),
+                scale: 1.0,
+            },
+            crate::net::Guid(0xF110_0000_0000_0001),
+        ))
+        .id();
+    app.update();
+    let drain = |app: &mut App| -> Vec<SpellKitFx> {
+        app.world_mut()
+            .resource_mut::<Messages<SpellKitFx>>()
+            .drain()
+            .collect()
+    };
+    drain(&mut app);
+
+    crate::net::apply_fields_for_test(app.world_mut(), go, dyn_flags(0x8));
+    app.update();
+    assert!(drain(&mut app).is_empty(), "no model yet (0x70d0af)");
+
+    // The model loads: its bbox Z extent of 2 yards sizes the sparkle.
+    app.world_mut()
+        .entity_mut(go)
+        .insert(crate::entities::OverheadFallback(2.0));
+    app.update();
+    let armed = drain(&mut app);
+    match &armed[..] {
+        [SpellKitFx::Begin {
+            entity, effects, ..
+        }] => {
+            assert_eq!(*entity, go);
+            assert_eq!(effects.len(), 1);
+            assert_eq!((effects[0].tag, effects[0].effect), (0x13, LOOT_FX));
+            assert!((effects[0].scale - 2.3).abs() < 1e-6);
+        }
+        other => panic!("one sparkle arms at model load, got {}", other.len()),
+    }
+
+    crate::net::apply_fields_for_test(app.world_mut(), go, dyn_flags(0x9));
+    app.update();
+    assert!(drain(&mut app).is_empty(), "bit 0x08 did not flip");
+
+    crate::net::apply_fields_for_test(app.world_mut(), go, dyn_flags(0x1));
+    app.update();
+    assert!(
+        matches!(drain(&mut app)[..], [SpellKitFx::Reap { entity, .. }] if entity == go),
+        "the falling edge reaps"
+    );
 }

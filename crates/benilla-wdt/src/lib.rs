@@ -110,6 +110,12 @@ impl WdtFile {
         self.flags & 0x4 != 0
     }
 
+    /// `MPHD` bit 1: the map's terrain carries MCCV vertex colours, so 12340 picks the `PNC`
+    /// vertex format and the shader's colour permutation (`0x7bfcb2`).
+    pub fn vertex_colors(&self) -> bool {
+        self.flags & 0x2 != 0
+    }
+
     /// The map's one building, on a WMO-only map (`MPHD` bit 0).
     pub fn global_wmo(&self) -> Option<&GlobalWmo> {
         self.global_wmo.as_ref()
@@ -295,6 +301,15 @@ mod tests {
             chunk(b"FOOB", &[0xAB; 16], &mut out);
         }
         out
+    }
+
+    #[test]
+    fn mphd_bit_1_is_vertex_colors() {
+        let mut bytes = synth_wdt(&[], false);
+        assert!(!parse(bytes.clone()).unwrap().vertex_colors());
+        bytes[20] = 0x2 | 0x4; // Northrend's pair
+        let wdt = parse(bytes).unwrap();
+        assert!(wdt.vertex_colors() && wdt.big_alpha());
     }
 
     #[test]

@@ -8,7 +8,7 @@ use bevy::animation::transition::AnimationTransitions;
 use bevy::animation::RepeatAnimation;
 use bevy::prelude::*;
 
-use super::super::{find_resolved, AnimDriver};
+use super::super::{find_resolved, resolved, AnimDriver};
 use super::select::{self, jump_land_pick, Mode, Special};
 
 /// The base-animation lock, the reference's `[unit+0xd58] & 0xc0000`: while it is held, the unit's
@@ -99,13 +99,30 @@ pub(super) fn cut_loop(
     rng: &mut benilla_assets::AnimRng,
     window: &mut Option<(bevy::animation::graph::AnimationNodeIndex, u32)>,
 ) {
-    let Some(head) = find_resolved(anims, id, catalog) else {
+    let dir = resolved(anims, id, catalog);
+    let Some(head) = anims.find(dir.id) else {
         return;
     };
     // op4's arg3 is a literal `-1` here: the variation always rolls.
     let (c, r) = roll_loop(anims, head, true, rng);
     *window = Some((c.node, r));
     arm(tr, player, c, RepeatAnimation::Forever, 1.0, Duration::ZERO);
+    apply_direction(player, c, dir, 1.0);
+}
+
+/// Applies a fallback's direction mode to the clip just armed (`0x826b00`): reversed from its end,
+/// or held on its first or last frame.
+pub(super) fn apply_direction(
+    player: &mut AnimationPlayer,
+    c: &AnimClip,
+    dir: benilla_assets::ResolvedAnim,
+    rate: f32,
+) {
+    if dir.dir_flags != 0 {
+        if let Some(active) = player.animation_mut(c.node) {
+            dir.apply(active, rate, c.duration);
+        }
+    }
 }
 
 fn arm(
@@ -188,7 +205,8 @@ pub(super) fn play(
     if lock.refuses() {
         return;
     }
-    if let Some(c) = find_resolved(anims, id, catalog) {
+    let dir = resolved(anims, id, catalog);
+    if let Some(c) = anims.find(dir.id) {
         let (c, repeat) = if looping {
             let (c, r) = roll_loop(anims, c, relaxed, rng);
             *window = Some((c.node, r));
@@ -197,7 +215,9 @@ pub(super) fn play(
             *window = None;
             roll_oneshot(anims, c, rng)
         };
-        play_clip(lock, tr, player, c, repeat, rate);
+        if play_clip(lock, tr, player, c, repeat, rate) {
+            apply_direction(player, c, dir, rate);
+        }
     }
 }
 
@@ -205,12 +225,15 @@ pub(super) fn play(
 /// write over the armed clip sits outside the selector, and a creature's JumpLandRun (187) resolves
 /// to its Run (5) through the model's lookup, a gait cycle that needs the rate. Only a clip the
 /// scaler covers is written, so the fast path's 2× and the whiff's 0.5× survive; the frozen node is
-/// skipped even so. [`AnimDriver::gait_rate`] gets the rate read back off the node.
+/// skipped even so. The rate keeps the direction mode the requested id's fallback gave the clip
+/// (`0x826b00`), so a reversed Walk stays reversed at its gait rate. [`AnimDriver::gait_rate`] gets
+/// the rate read back off the node.
 pub(super) fn sync_base_rate(
     drv: &mut AnimDriver,
     tr: &AnimationTransitions,
     player: &mut AnimationPlayer,
     anims: &ModelAnimations,
+    catalog: Option<&AnimDataCatalog>,
     speed: f32,
     model_scale: f32,
 ) {
@@ -230,10 +253,28 @@ pub(super) fn sync_base_rate(
                 i
             }
         };
-        if let Some(rate) = index
+        if let Some((clip, rate)) = index
             .map(|i| &anims.clips[i])
-            .and_then(|c| select::scaled_rate(c, speed, model_scale))
+            .and_then(|c| select::scaled_rate(c, speed, model_scale).map(|r| (c, r)))
         {
+            let requested = drv.playing().0;
+            let dir = match drv.base_dir {
+                Some((n, req, dir)) if n == node && Some(req) == requested => dir,
+                _ => {
+                    // Re-resolved only when the clip or the request changes.
+                    let dir = requested
+                        .map(|req| resolved(anims, req, catalog))
+                        .filter(|r| r.id == clip.anim_id)
+                        .map_or(0, |r| r.dir_flags);
+                    drv.base_dir = requested.map(|req| (node, req, dir));
+                    dir
+                }
+            };
+            let rate = benilla_assets::ResolvedAnim {
+                id: clip.anim_id,
+                dir_flags: dir,
+            }
+            .rate(rate);
             if let Some(active) = player.animation_mut(node) {
                 active.set_speed(rate);
             }

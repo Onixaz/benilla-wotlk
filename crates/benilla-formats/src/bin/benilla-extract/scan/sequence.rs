@@ -70,10 +70,11 @@ fn go_remap(m: &benilla_m2::M2Model, id: u16) -> (u16, bool) {
     }
 }
 
-/// op4's id resolve: `animationLookup` to a file slot. With no slot the reference arms nothing.
+/// op4's id resolve: the lookup's hash to a file slot (`0x8260c0`). With no slot the reference
+/// arms nothing.
 fn go_resolve_slot(m: &benilla_m2::M2Model, id: u16) -> Option<(u16, u16)> {
-    let slot = *m.animation_lookup.get(id as usize)?;
-    (slot != 0xffff).then_some((id, slot))
+    let slot = m.sequence_slot(id)?;
+    Some((id, slot as u16))
 }
 
 /// The loader seed: id 0 when the model owns what id 0 resolves to, else the file-order-first

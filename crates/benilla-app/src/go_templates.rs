@@ -202,6 +202,40 @@ fn go_lock_slot(type_id: u32) -> Option<usize> {
     }
 }
 
+/// `GAMEOBJECT_TYPE_FISHINGHOLE`, which the object tracking check admits without the use check.
+const GO_TYPE_FISHINGHOLE: i32 = 25;
+
+/// The object tracking check (`0x6dca90`): never while we are dead, a fishing hole or a usable
+/// object, then [`tracked_resource`] on its lock. The minimap's tracked dot and a GameObject's loot
+/// sparkle (`0x711210`) both ask it.
+pub(crate) fn can_track_object(
+    self_dead: bool,
+    type_id: i32,
+    usable: impl FnOnce() -> bool,
+    mask: u32,
+    lock_id: u32,
+    locks: Option<&LockCatalog>,
+) -> bool {
+    !self_dead
+        && (type_id == GO_TYPE_FISHINGHOLE || usable())
+        && locks.is_some_and(|l| tracked_resource(mask, lock_id, l))
+}
+
+/// Resource tracking: any skill-keyed `Lock.dbc` slot whose `LockType` `n` has bit `1 << (n − 1)`
+/// set in `PLAYER_TRACK_RESOURCES`.
+pub(crate) fn tracked_resource(mask: u32, lock_id: u32, locks: &LockCatalog) -> bool {
+    if mask == 0 || lock_id == 0 {
+        return false;
+    }
+    locks.slots(lock_id).is_some_and(|slots| {
+        slots.iter().any(|s| {
+            s.key_type == benilla_formats::LOCK_KEY_SKILL
+                && (1..=32).contains(&s.index)
+                && mask & (1u32 << (s.index - 1)) != 0
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

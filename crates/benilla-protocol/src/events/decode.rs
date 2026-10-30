@@ -1416,11 +1416,10 @@ fn display_id(t: ObjectType, mask: &ObjectFields) -> Option<u32> {
     }
 }
 
-/// `OBJECT_FIELD_SCALE_X`, the complete render scale: the reference sizes by it alone, and vmangos
-/// already folds the display scale in (`Unit::GetScaleForDisplayId`).
+/// `OBJECT_FIELD_SCALE_X`, the wire's factor of the true scale: a game object renders at it alone
+/// (`0x4d5f90`), a unit and a corpse multiply their display's model scale in (`0x71c0e0`, `0x706570`).
 fn object_scale(t: ObjectType, mask: &ObjectFields) -> f32 {
     let raw = match t {
-        // vmangos sets a corpse's scale too (`Corpse::Create` → `SetObjectScale`).
         ObjectType::Unit | ObjectType::Player | ObjectType::GameObject | ObjectType::Corpse => {
             mask.object_scale_x()
         }

@@ -567,3 +567,62 @@ fn the_skin_sits_beside_the_model() {
     );
     assert_eq!(skin_path("A\\B.M2"), "A\\B00.skin");
 }
+
+/// Sequence records carrying only their ids, for the lookup's hash.
+fn seqs(ids: &[u16]) -> Vec<M2Sequence> {
+    ids.iter()
+        .map(|&id| M2Sequence {
+            id,
+            sub: 0,
+            start: 0,
+            end: 0,
+            move_speed: 0.0,
+            flags: 0,
+            frequency: 0,
+            min_replay: 0,
+            max_replay: 0,
+            blend_time: 0,
+            bounds_min: [0.0; 3],
+            bounds_max: [0.0; 3],
+            bounds_radius: 0.0,
+            variation_next: -1,
+            alias_next: 0,
+        })
+        .collect()
+}
+
+/// An empty lookup scans the records: the WSG portcullis shape, door ids past any table.
+#[test]
+fn an_empty_sequence_lookup_scans_the_records() {
+    let s = seqs(&[0, 147, 148, 146, 149]);
+    assert_eq!(find_sequence_slot(&[], &s, 149), Some(4));
+    assert_eq!(find_sequence_slot(&[], &s, 0), Some(0));
+    assert_eq!(find_sequence_slot(&[], &s, 151), None);
+}
+
+/// A colliding id walks on from its home slot by `1`, then `4`, adding to the last slot each time.
+#[test]
+fn a_sequence_lookup_probes_quadratically_from_the_last_slot() {
+    // Count 7: ids 3 and 10 both home on slot 3; 10 probes 3+1=4, 17 probes 3, 4, then 4+4=8%7=1.
+    let s = seqs(&[3, 10, 17]);
+    let mut lookup = [0xffffu16; 7];
+    lookup[3] = 0;
+    lookup[4] = 1;
+    lookup[1] = 2;
+    assert_eq!(find_sequence_slot(&lookup, &s, 3), Some(0));
+    assert_eq!(find_sequence_slot(&lookup, &s, 10), Some(1));
+    assert_eq!(find_sequence_slot(&lookup, &s, 17), Some(2));
+    assert_eq!(
+        find_sequence_slot(&lookup, &s, 24),
+        None,
+        "slots 3, 4, 1, 3, then free 5"
+    );
+    assert_eq!(
+        find_sequence_slot(&lookup, &s, 5),
+        None,
+        "home slot 5 is free"
+    );
+    // A full table without the id ends instead of spinning.
+    let full = [0u16; 7];
+    assert_eq!(find_sequence_slot(&full, &s, 10), None);
+}

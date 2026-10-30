@@ -159,13 +159,16 @@ fn on_play_spell_visual(
     mut out: MessageWriter<KitPush>,
 ) {
     // `SMSG_PLAY_SPELL_IMPACT` plays at stage 1 (`0x8006c0`), the visual's at stage 0 (`0x800610`).
-    // Both are the same discrete play, so they share one push. The one difference is stage 0's flag
-    // `0x80`, which latches the kit's anim as the unit's special idle (`0x73b140`). Nothing here
-    // models that latch yet; the push that does takes a stage field.
-    if let SessionEvent::PlaySpellVisual { unit, kit_id }
-    | SessionEvent::PlaySpellImpact { unit, kit_id } = ev
-    {
-        play_spell_visual(unit, kit_id, &index, &mut play_seq, &mut out);
+    // Both are the same discrete play; stage 0 adds flag `0x80`, which latches the kit's anim as the
+    // unit's special idle (`0x73b38e`).
+    match ev {
+        SessionEvent::PlaySpellVisual { unit, kit_id } => {
+            play_spell_visual(unit, kit_id, 0, &index, &mut play_seq, &mut out);
+        }
+        SessionEvent::PlaySpellImpact { unit, kit_id } => {
+            play_spell_visual(unit, kit_id, 1, &index, &mut play_seq, &mut out);
+        }
+        _ => {}
     }
 }
 
@@ -342,6 +345,7 @@ fn emote(guid: u64, emote_id: u32, index: &GuidIndex, out: &mut MessageWriter<Em
 fn play_spell_visual(
     unit: u64,
     kit_id: u32,
+    stage: u8,
     index: &GuidIndex,
     play_seq: &mut PlaySeq,
     out: &mut MessageWriter<KitPush>,
@@ -351,6 +355,7 @@ fn play_spell_visual(
             entity: e,
             kit_id,
             seq: play_seq.next(),
+            stage,
         });
     }
 }
@@ -371,10 +376,12 @@ fn environmental_damage_log(
                 "net: environmental damage on {:#x} (type {}, {} dmg) → kit {kit_id}",
                 e.victim, e.damage_type, e.damage
             );
+            // The damage handler plays its kit at stage 0 (`0x755365`).
             out.write(KitPush {
                 entity: ent,
                 kit_id,
                 seq: play_seq.next(),
+                stage: 0,
             });
         }
     }
@@ -460,14 +467,14 @@ mod tests {
                 .expect("the handler runs as a one-shot system");
         }
         let pushes = world.resource::<Messages<KitPush>>();
-        let got: Vec<(Entity, u32)> = pushes
+        let got: Vec<(Entity, u32, u8)> = pushes
             .iter_current_update_messages()
-            .map(|p| (p.entity, p.kit_id))
+            .map(|p| (p.entity, p.kit_id, p.stage))
             .collect();
         assert_eq!(
             got,
-            [(e, 362), (e, 179)],
-            "an unstreamed unit plays nothing"
+            [(e, 362, 1), (e, 179, 0)],
+            "the impact is stage 1, the visual stage 0, and an unstreamed unit plays nothing"
         );
     }
 }

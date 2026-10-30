@@ -153,14 +153,14 @@ pub fn parse_m2_cch_marker(model: &M2Model) -> Option<(u16, [f32; 3])> {
 pub struct PlayableAnim {
     /// The `AnimationData.dbc` id this model plays for the row's requested id.
     pub resolved_id: u16,
-    /// Direction/variant playback code; carried, not applied.
+    /// The direction mode the arm applies (`0x826b00`): 1 reversed, 2 and 3 held.
     pub dir_flags: u16,
 }
 
-/// The AnimationLookup (header `0x24`): `AnimationData.dbc` id to first sequence slot, `0xffff`
-/// for none, as the ownership test reads it (`M2Model::owns_animation`).
+/// Each `AnimationData.dbc` id's head sequence slot, `0xffff` for none, indexed directly by id:
+/// the AnimationLookup (header `0x24`) resolved through its hash (`M2Model::sequence_slot`).
 pub fn parse_m2_animation_lookup(model: &M2Model) -> Vec<u16> {
-    model.animation_lookup.clone()
+    model.sequence_slots_by_id()
 }
 
 /// The bones that spin rigidly ([`BoneSpin`]) in anim 0, which the load arms play. How a WMO

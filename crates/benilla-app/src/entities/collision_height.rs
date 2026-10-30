@@ -5,19 +5,17 @@ use bevy::prelude::*;
 
 use crate::net::{NetEntity, ObjectStore};
 
+use super::model_scale::ModelScale;
 use super::Creatures;
 
 /// A unit's collision height in yards, the movement object's `+0xb4`: the `h` whose fractions
 /// are the depth lines (swim `0.75·h`, splash `0.4·h`, foam gate `max(2·h, 1.0)`). It is
-/// `CreatureModelData.collisionHeight`, the MD20 collision box's Z extent in model units, times
-/// `k = max(SCALE_X, CreatureDisplayInfo.creatureModelScale)`: the reference passes the larger to
-/// the setter that stores the product, and the unit model build runs it for every unit.
+/// `CreatureModelData.collisionHeight`, the MD20 collision box's Z extent in model units, times the
+/// native display's model scale and `max(SCALE_X, 1)` (`0x726061`, a player's `0x6cf350`). An NPC
+/// whose template lacks the model-collision type flag takes the default box (`0x725fb8`).
 ///
-/// The `max` is a floor, not a second multiplier: `SCALE_X` already folds the DBC scales in
-/// (vmangos `Unit.cpp:9579`) and is the whole render scale; it bites only where a shrink aura or a
-/// `display_scale` override sinks `SCALE_X` under the display's column. The display is the native
-/// one (`UNIT_FIELD_NATIVEDISPLAYID`), so a transform keeps the unit's own depth lines. Not the
-/// movement capsule, [`crate::player::CAPSULE_HEIGHT`].
+/// The display is the native one (`UNIT_FIELD_NATIVEDISPLAYID`), so a transform keeps the unit's
+/// own depth lines. Not the movement capsule, [`crate::player::CAPSULE_HEIGHT`].
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct CollisionHeight(pub(crate) f32);
 
@@ -41,40 +39,51 @@ pub(crate) fn prism_display_id(store: Option<&ObjectStore>, rendered: Option<u32
 
 /// [`CollisionHeight`]'s one derivation, shared by the first stamp and the live restamp
 /// ([`super::live_display::refresh_live_display`]) so the two cannot disagree.
+/// An unstamped entity (a mount child, which has no descriptor) keeps the model box at scale 1.
 pub(crate) fn collision_height_for(
     creatures: Option<&Creatures>,
     display_id: Option<u32>,
     scale: f32,
+    model: Option<&ModelScale>,
 ) -> CollisionHeight {
-    let row = creatures.zip(display_id);
-    let raw = row
+    let Some(model_scale) = model.map_or(Some(1.0), |m| m.collision) else {
+        return CollisionHeight::default();
+    };
+    let raw = creatures
+        .zip(display_id)
         .and_then(|(c, id)| c.collision_height(id))
         // A zero column (67 rows: invisible triggers and the like) means no authored box, so it
         // falls back like a missing row.
         .filter(|h| *h > 0.0)
         .unwrap_or(crate::player::DEFAULT_COLLISION_HEIGHT);
-    let k = prism_scale(scale, row.and_then(|(c, id)| c.catalog.display_scale(id)));
-    CollisionHeight(raw * k)
+    CollisionHeight(raw * prism_scale(scale, model_scale))
 }
 
-/// `k = max(SCALE_X, CreatureDisplayInfo.creatureModelScale)`; an unresolved display or a `0`
-/// column (3 shipped rows) leaves `SCALE_X` alone. Never 0, at which every depth line collapses.
-fn prism_scale(scale: f32, display_scale: Option<f32>) -> f32 {
-    display_scale
-        .map_or(scale, |s| scale.max(s))
-        .max(f32::MIN_POSITIVE)
+/// `model scale × max(SCALE_X, 1)`, the box's scale (`0x726030`). Never 0, at which every depth
+/// line collapses.
+fn prism_scale(scale: f32, model_scale: f32) -> f32 {
+    (model_scale * scale.max(1.0)).max(f32::MIN_POSITIVE)
 }
 
 /// Stamp each streamed unit's first [`CollisionHeight`], at the ctor default when its display
 /// misses the DBCs; only the unstamped are queried, so it heals if `Creatures` loads late.
+#[allow(clippy::type_complexity)] // one query: the unstamped units and their two optional inputs
 pub(super) fn stamp_collision_heights(
     mut commands: Commands,
     creatures: Option<Res<Creatures>>,
-    units: Query<(Entity, &NetEntity, Option<&ObjectStore>), Without<CollisionHeight>>,
+    units: Query<
+        (
+            Entity,
+            &NetEntity,
+            Option<&ObjectStore>,
+            Option<&ModelScale>,
+        ),
+        Without<CollisionHeight>,
+    >,
 ) {
-    for (entity, net, store) in &units {
+    for (entity, net, store, model) in &units {
         let display = prism_display_id(store, net.display_id);
-        let h = collision_height_for(creatures.as_deref(), display, net.scale);
+        let h = collision_height_for(creatures.as_deref(), display, net.scale, model);
         commands.entity(entity).insert(h);
     }
 }
@@ -120,26 +129,32 @@ mod native_display {
 mod prism {
     use super::prism_scale;
 
+    /// `0x726030`: the model scale times `SCALE_X` floored at 1.
     #[test]
-    fn the_display_column_is_a_floor_never_a_multiplier() {
-        // The Shore Strider (display 4945): `modelScale` 1.0 × `CDI.scale` 1.75, folded to 1.75.
-        assert_eq!(prism_scale(1.75, Some(1.75)), 1.75);
-        // Under the column (a `display_scale` override, a shrink aura): held at the display size.
-        assert_eq!(prism_scale(1.0, Some(6.0)), 6.0);
-        // A growth aura above the column grows it.
-        assert_eq!(prism_scale(3.5, Some(1.75)), 3.5);
-        // Never a product: 1.75 × 1.75 would apply the display scale twice.
-        assert_ne!(prism_scale(1.75, Some(1.75)), 1.75 * 1.75);
+    fn the_box_scale_is_the_model_scale_times_scale_x_floored_at_one() {
+        // The Shore Strider (display 4945): model scale 1.75 at `SCALE_X` 1.
+        assert_eq!(prism_scale(1.0, 1.75), 1.75);
+        // A shrink under 1 is floored: the box keeps the model's size.
+        assert_eq!(prism_scale(0.5, 1.75), 1.75);
+        // A growth above 1 multiplies.
+        assert_eq!(prism_scale(2.0, 1.75), 3.5);
+        assert!(prism_scale(0.0, 0.0) > 0.0, "never collapses");
     }
 
+    /// An NPC without the model-collision flag takes the default box whatever its model.
     #[test]
-    fn an_unresolved_or_zero_column_leaves_scale_x_alone_and_never_collapses() {
-        assert_eq!(prism_scale(1.75, None), 1.75);
-        assert_eq!(prism_scale(1.75, Some(0.0)), 1.75, "3 shipped rows carry 0");
-        assert!(
-            prism_scale(0.0, Some(0.0)) > 0.0,
-            "a 0 scale is briefly real"
-        );
-        assert!(prism_scale(0.0, None) > 0.0);
+    fn an_npc_without_the_model_box_takes_the_default() {
+        let npc = super::ModelScale {
+            render: 3.0,
+            collision: None,
+        };
+        let h = super::collision_height_for(None, Some(4945), 2.0, Some(&npc));
+        assert_eq!(h, super::CollisionHeight::default());
+        let player = super::ModelScale {
+            render: 1.0,
+            collision: Some(1.0),
+        };
+        let h = super::collision_height_for(None, None, 1.0, Some(&player));
+        assert_eq!(h.0, crate::player::DEFAULT_COLLISION_HEIGHT);
     }
 }

@@ -43,12 +43,15 @@ pub const CHARACTER_FLAG_HIDE_CLOAK: u32 = 0x0800;
 pub const CHARACTER_FLAG_GHOST: u32 = 0x2000;
 pub const CHARACTER_FLAG_RENAME: u32 = 0x4000;
 
-/// One visible-equipment slot: an `ItemDisplayInfo.dbc` id (not an item id, 0 for empty) and the
-/// item's `InventoryType`.
+/// One visible-equipment slot: an `ItemDisplayInfo.dbc` id (not an item id, 0 for empty), the
+/// item's `InventoryType` and its permanent enchant's `ItemVisuals` id.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct CharEnumItem {
     pub display_id: u32,
     pub inventory_type: u8,
+    /// The enchant's `ItemVisuals` id, 0 for none; the select model glows with it where the
+    /// display's own visual names no row (`0x4e3fa6`).
+    pub enchant_visual: u32,
 }
 
 /// One `SMSG_CHAR_ENUM` roster entry.
@@ -115,18 +118,13 @@ impl Character {
         let pet_level = read_u32_le(r)?;
         let pet_family = read_u32_le(r)?;
         let mut equipment = [CharEnumItem::default(); 19];
+        let mut bags = [CharEnumItem::default(); 4];
         // 19 equipment slots then the four bags, each `(u32 display, u8 inventoryType,
-        // u32 enchantVisual)`; the select preview does not draw the enchant visual.
-        for slot in &mut equipment {
+        // u32 enchantVisual)` (`0x464def`, 23 slots).
+        for slot in equipment.iter_mut().chain(&mut bags) {
             slot.display_id = read_u32_le(r)?;
             slot.inventory_type = read_u8(r)?;
-            let _enchant_visual = read_u32_le(r)?;
-        }
-        let mut bags = [CharEnumItem::default(); 4];
-        for bag in &mut bags {
-            bag.display_id = read_u32_le(r)?;
-            bag.inventory_type = read_u8(r)?;
-            let _enchant_visual = read_u32_le(r)?;
+            slot.enchant_visual = read_u32_le(r)?;
         }
         Ok(Self {
             guid,
@@ -151,5 +149,37 @@ impl Character {
             pet_level,
             pet_family,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A roster entry's 23 slots each read `(u32 display, u8 inventoryType, u32 enchantVisual)`
+    /// (`0x464def`), the bags after the 19 equipment slots.
+    #[test]
+    fn each_enum_slot_carries_its_enchant_visual() {
+        let mut b = Vec::new();
+        b.extend_from_slice(&7u64.to_le_bytes());
+        b.extend_from_slice(b"Name\0");
+        b.extend_from_slice(&[1, 1, 0, 2, 3, 4, 5, 6, 80]);
+        b.extend_from_slice(&12u32.to_le_bytes()); // zone
+        b.extend_from_slice(&0u32.to_le_bytes()); // map
+        b.extend_from_slice(&[0; 12]); // position
+        b.extend_from_slice(&[0; 12]); // guild, flags, customize flags
+        b.push(0); // first login
+        b.extend_from_slice(&[0; 12]); // pet display, level, family
+        for slot in 0..23u32 {
+            b.extend_from_slice(&(100 + slot).to_le_bytes());
+            b.push(slot as u8);
+            b.extend_from_slice(&(slot * 10).to_le_bytes());
+        }
+        let c = Character::read(&mut b.as_slice()).expect("one entry");
+        assert_eq!(c.equipment[15].display_id, 115, "main hand");
+        assert_eq!(c.equipment[15].enchant_visual, 150);
+        assert_eq!(c.equipment[18].inventory_type, 18);
+        assert_eq!(c.bags[0].display_id, 119);
+        assert_eq!(c.bags[3].enchant_visual, 220);
     }
 }

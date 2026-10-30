@@ -17,6 +17,7 @@
     mesh_view_bindings::view,
     mesh_functions,
 }
+#import benilla_assets::wow_shadow
 
 // bevy_pbr 0.18.1's `forward_io::FragmentOutput`. No depth output: a fragment depth write costs
 // the pipeline early-Z, so the sky lane pins its depth in the vertex stage.
@@ -931,6 +932,14 @@ fn fragment(in: WowVsOut, @builtin(front_facing) is_front: bool) -> WowFragOut {
             v = select(v_lit, v_unlit, is_emissive);
         }
         rgb = clamp(2.0 * tex_u * v, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    // The shadow maps on a lit, non-additive batch (the model and map-object pixel programs): the
+    // diffuse colour scaled by 0.7 + 0.3·shadow, the shadow eased off edge-on to the sun.
+    if (!is_emissive && (u32(m.clutter_fade.z) & 4u) == 0u) {
+        let shadow = wow_shadow::shadow_term(in.world_position.xyz, is_interior);
+        if (shadow < 1.0) {
+            rgb = rgb * wow_shadow::shadow_scale(wow_shadow::grazing_fade(shadow, n_lit));
+        }
     }
     // An M2 Mod or Mod2x batch draws the bare texel: the reference zeroes its tint·M2Color term and
     // forces the primary colour to the blend identity, so neither the

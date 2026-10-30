@@ -131,15 +131,12 @@ pub(super) fn install_cvar_ranges(lua: &Lua) -> mlua::Result<()> {
                     .ok_or_else(|| no_such_cvar(&cvar))?;
                 let key = slot.name.to_ascii_lowercase();
                 // `GetCVarMax` walks the shadow cache's mode check up from 0 and answers the last
-                // mode the device takes (`0x514e30`): benilla draws no shadow maps, so that is the
-                // blob mode. `GetCVarAbsoluteMax` answers the highest shadow mode, the mode count
-                // less one (`0x515010`).
-                const SHADOW_DEVICE_MAX: f64 = 0.0;
-                const SHADOW_ABSOLUTE_MAX: f64 = 5.0;
+                // mode the device takes (`0x514e30`); `GetCVarAbsoluteMax` answers the highest
+                // shadow mode, the mode count less one (`0x515010`).
                 let n = match (key.as_str(), which) {
                     ("extshadowquality", 0 | 2) => Some(0.0),
-                    ("extshadowquality", 1) => Some(SHADOW_DEVICE_MAX),
-                    ("extshadowquality", 3) => Some(SHADOW_ABSOLUTE_MAX),
+                    ("extshadowquality", 1) => Some(f64::from(super::cvars::shadow_device_max())),
+                    ("extshadowquality", 3) => Some(f64::from(super::cvars::SHADOW_MODE_MAX)),
                     ("farclip", 0) => Some(177.0),
                     ("farclip", 1) => Some(1277.0),
                     _ => None,

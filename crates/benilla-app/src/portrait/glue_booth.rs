@@ -101,6 +101,8 @@ impl From<&benilla_protocol::Character> for SelectLook {
 
 /// What stands on the glue stage: the create screen's dial tuple, or a select roster entry.
 #[derive(Clone, Copy, PartialEq)]
+// A `Copy` look diffed by value on change; boxing the roster entry would cost that.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum GlueLook {
     Create(CreateLook),
     Select(SelectLook),

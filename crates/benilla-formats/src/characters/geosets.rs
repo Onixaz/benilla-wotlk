@@ -69,6 +69,15 @@ pub struct EquipGeosets {
 }
 
 impl CharacterGeosets {
+    /// The race and sex's `CharacterFacialHairStyles` row count (`0x4f41b0`), the component
+    /// check's facial-hair range.
+    pub fn facial_hair_styles(&self, race: u8, sex: u8) -> u32 {
+        self.facial
+            .keys()
+            .filter(|&&(r, s, _)| (r, s) == (race, sex))
+            .count() as u32
+    }
+
     /// The geosets (`skinSectionId`s) this appearance draws, sorted and deduplicated: the naked
     /// set, then the eight equipment branches B1–B8. `eye_glow` is
     /// [`CharSections::eye_glow`](crate::CharSections::eye_glow). Use [`VisibleGeosets::contains`]

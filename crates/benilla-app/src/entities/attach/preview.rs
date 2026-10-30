@@ -96,6 +96,7 @@ fn create_outfit(
             equipment[slot] = CharEnumItem {
                 display_id: item.display_id,
                 inventory_type: item.inv_type,
+                enchant_visual: 0,
             };
         }
     }
@@ -635,14 +636,12 @@ fn assemble(spec: &PreviewSpec, ctx: &mut PreviewCtx<'_, '_>) -> Option<Assemble
         for w in &held {
             ensure_item_model(d, w.display, w.kind, ctx.asset_server);
         }
-        // Glows for held weapons and shields only: the helm and shoulder attaches pass a literal
-        // 0 visual (`crate::entities::item_glow`).
+        // Each want's glow off its enum enchant visual and its display's own ([`select_glow`]).
         if let Some(g) = ctx.glows.as_deref_mut() {
-            for w in held
-                .iter_mut()
-                .filter(|w| matches!(w.kind, ItemModelKind::Weapon | ItemModelKind::Shield))
-            {
-                w.visual = d.catalog.get(w.display).map_or(0, |c| c.item_visual);
+            for w in held.iter_mut() {
+                let base = d.catalog.get(w.display).map_or(0, |c| c.item_visual);
+                let in_hand = matches!(w.kind, ItemModelKind::Weapon | ItemModelKind::Shield);
+                w.visual = select_glow(g.effects(base).is_some(), base, w.visual, in_hand);
                 item_glow::ensure_glow_models(g, w.visual, ctx.asset_server);
             }
         }
@@ -741,9 +740,7 @@ fn assemble(spec: &PreviewSpec, ctx: &mut PreviewCtx<'_, '_>) -> Option<Assemble
         .collect();
 
     // Each want seats at the body's attach point: its meshes, billboard batches and emitters, and
-    // for a held weapon the same off each glow model its `ItemVisuals` id names, reached as in the
-    // world (through `ItemDisplayInfo+0x58`). The enum has no enchant ids (vmangos
-    // `Player.cpp:1724`), so no enchant glow shows here.
+    // the same off each glow model its `ItemVisuals` id names ([`select_glow`]).
     let attach_point = |id: u16| dm.attachments.iter().find(|a| a.id == id);
     let mut riders = Vec::new();
     let mut preview_effects = Vec::new();
@@ -867,7 +864,19 @@ struct HeldWant {
     display: u32,
     kind: ItemModelKind,
     attach: u16,
+    /// The enum slot's enchant visual from [`held_wants`], then the glow [`select_glow`] resolves.
     visual: i32,
+}
+
+/// A glue want's `ItemVisuals` id: the select build passes 0 where the display's own id names a
+/// row, else the enum's enchant visual (`0x4e3fa6`); a held item falls back to its display's id
+/// (`0x4eacd0`), while a helm, shoulder or quiver takes what it is passed.
+fn select_glow(display_has_row: bool, base: i32, enum_visual: i32, in_hand: bool) -> i32 {
+    let passed = if display_has_row { 0 } else { enum_visual };
+    match (passed, in_hand) {
+        (0, true) => base,
+        (v, _) => v,
+    }
 }
 
 /// A preview's helm, shoulder pair and held weapons. The glue builds pass SheatheType 0
@@ -887,7 +896,7 @@ fn held_wants(
             display: helm,
             kind: ItemModelKind::Helm { race, sex },
             attach: attach_id::HELM,
-            visual: 0, // a helm never glows: its attach site passes a literal 0
+            visual: equipment[ENUM_HELM].enchant_visual as i32,
         });
     }
     let shoulder = equipment[ENUM_SHOULDER].display_id;
@@ -900,7 +909,7 @@ fn held_wants(
                 display: shoulder,
                 kind,
                 attach,
-                visual: 0, // nor do shoulders
+                visual: equipment[ENUM_SHOULDER].enchant_visual as i32,
             });
         }
     }
@@ -928,7 +937,7 @@ fn held_wants(
             display: item.display_id,
             kind,
             attach,
-            visual: 0, // filled by the caller, which holds the display catalog
+            visual: item.enchant_visual as i32,
         });
     }
     wants
@@ -1279,6 +1288,7 @@ mod tests {
             e[ENUM_HELD[2]] = CharEnumItem {
                 display_id: 8500,
                 inventory_type: inv,
+                enchant_visual: 0,
             };
             e
         };
@@ -1350,10 +1360,12 @@ mod tests {
         e[ENUM_HELD[0]] = CharEnumItem {
             display_id: 700,
             inventory_type: 17,
+            enchant_visual: 0,
         };
         e[ENUM_HELD[2]] = CharEnumItem {
             display_id: 703,
             inventory_type: 26,
+            enchant_visual: 0,
         };
         let mut hunter = e;
         let hold = select_hold(&mut hunter, CLASS_HUNTER);
@@ -1381,10 +1393,12 @@ mod tests {
         e[ENUM_HELD[0]] = CharEnumItem {
             display_id: 5500,
             inventory_type: 21, // WEAPONMAINHAND
+            enchant_visual: 0,
         };
         e[ENUM_HELD[1]] = CharEnumItem {
             display_id: 5600,
             inventory_type: 14, // SHIELD
+            enchant_visual: 0,
         };
         for ranged in [RangedHold::Skip, RangedHold::Drawn, RangedHold::LeftHand] {
             let wants = held_wants(&e, 0, 1, 0, ranged);
@@ -1397,5 +1411,29 @@ mod tests {
             assert_eq!(at(5500), Some(attach_id::HAND_RIGHT));
             assert_eq!(at(5600), Some(attach_id::SHIELD));
         }
+    }
+
+    /// `0x4e3fa6`: a display whose own visual names a row keeps it on a held item and suppresses
+    /// the enum's enchant visual; without one the enchant visual glows, on a helm too.
+    #[test]
+    fn the_select_glow_prefers_the_displays_row_then_the_enchant() {
+        assert_eq!(
+            select_glow(true, 25, 61, true),
+            25,
+            "the display's row wins"
+        );
+        assert_eq!(select_glow(true, 25, 61, false), 0, "a helm is passed 0");
+        assert_eq!(select_glow(false, 0, 61, true), 61, "the enchant glows");
+        assert_eq!(
+            select_glow(false, 0, 61, false),
+            61,
+            "on a shoulder as well"
+        );
+        assert_eq!(
+            select_glow(false, -1, 0, true),
+            -1,
+            "no enchant: the rowless base"
+        );
+        assert_eq!(select_glow(false, 7, 0, false), 0);
     }
 }

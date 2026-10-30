@@ -37,6 +37,20 @@ pub struct McnrChunk {
     pub normals: Vec<VertexNormal>,
 }
 
+/// MCCV: one vertex colour per MCVT vertex, 4 bytes each in `D3DCOLOR` memory order (B, G, R, A),
+/// which 12340 hands to a `PNC` map's terrain vertices (`0x7c4620`).
+#[derive(Debug, Clone)]
+pub struct MccvChunk {
+    pub colors: Vec<[u8; 4]>,
+}
+
+impl MccvChunk {
+    /// Vertex `i`'s colour as `[r, g, b, a]`.
+    pub fn rgba(&self, i: usize) -> Option<[u8; 4]> {
+        self.colors.get(i).map(|&[b, g, r, a]| [r, g, b, a])
+    }
+}
+
 /// MCLY per-layer flags.
 #[derive(Debug, Clone, Copy)]
 pub struct MclyFlags {
@@ -235,6 +249,7 @@ pub struct McnkChunk {
     pub layers: Option<MclyChunk>,
     pub alpha: Option<McalChunk>,
     pub shadow: Option<McshChunk>,
+    pub vertex_colors: Option<MccvChunk>,
     /// The MCLQ liquid blocks in disk order: none on a dry chunk, two at a river mouth.
     pub liquids: Vec<MclqChunk>,
 }
@@ -531,6 +546,7 @@ fn read_mcnk(data: &[u8]) -> Result<McnkChunk> {
         layers: None,
         alpha: None,
         shadow: None,
+        vertex_colors: None,
         liquids: Vec::new(),
     };
 
@@ -625,6 +641,17 @@ fn read_mcnk(data: &[u8]) -> Result<McnkChunk> {
         shadow_map[..k].copy_from_slice(&sub[..k]);
         chunk.shadow = Some(McshChunk { shadow_map });
     }
+    // MCCV at the header's `0x74`, 145 colours (`0x7c3a10` keeps its payload).
+    if let Some((p, n)) = locate(
+        h.u32_at(0x74).ok_or(Error::Truncated("MCNK header"))?,
+        b"VCCM",
+    )
+    .filter(|&(_, n)| n > 0)
+    {
+        let sub = slice(p, n);
+        let colors = sub.as_chunks::<4>().0.iter().take(145).copied().collect();
+        chunk.vertex_colors = Some(MccvChunk { colors });
+    }
     // MCLQ's length is the header's `size_liquid` too: its own declared size is always 0. The
     // reference takes the blocks only past 8 bytes (`0x7c3a10`).
     let size_liquid = h.u32_at(0x64).ok_or(Error::Truncated("MCNK header"))? as usize;
@@ -712,6 +739,29 @@ mod tests {
 
     fn parse(bytes: &[u8]) -> Result<ParsedAdt> {
         parse_adt(&mut Cursor::new(bytes))
+    }
+
+    /// MCCV at the header's `0x74`: 145 colours, D3DCOLOR bytes turned to RGBA.
+    #[test]
+    fn mccv_parses_from_its_header_offset_as_bgra() {
+        let mut data = mcnk_with_mcvt();
+        let at = data.len() as u32;
+        data[0x74..0x78].copy_from_slice(&at.to_le_bytes());
+        let colors: Vec<u8> = (0..145u8).flat_map(|i| [i, 1, 2, 0xff]).collect();
+        data.extend(chunk(b"VCCM", &colors));
+        let b = chunk(b"KNCM", &data);
+        let ParsedAdt::Root(root) = parse(&b).expect("parses");
+        let mccv = root.mcnk_chunks[0]
+            .vertex_colors
+            .as_ref()
+            .expect("MCCV parsed");
+        assert_eq!(mccv.colors.len(), 145);
+        assert_eq!(mccv.rgba(7), Some([2, 1, 7, 0xff]), "B, G, R, A on disk");
+        assert_eq!(mccv.rgba(145), None);
+
+        // No offset: no MCCV, as on a chunk of a map without vertex colours.
+        let ParsedAdt::Root(root) = parse(&chunk(b"KNCM", &mcnk_with_mcvt())).expect("parses");
+        assert!(root.mcnk_chunks[0].vertex_colors.is_none());
     }
 
     #[test]

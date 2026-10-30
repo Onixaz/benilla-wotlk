@@ -16,9 +16,9 @@ pub mod fixture;
 
 pub use error::Error;
 pub use model::{
-    M2ArrayString, M2Attachment, M2BlendMode, M2Bone, M2BoneFlags, M2Camera, M2Event,
-    M2EventMarker, M2Header, M2LightDef, M2Material, M2Model, M2RawData, M2RenderFlags, M2Sequence,
-    M2Texture, M2TextureTransform, M2TextureType, M2Vertex, C2, C3,
+    find_sequence_slot, M2ArrayString, M2Attachment, M2BlendMode, M2Bone, M2BoneFlags, M2Camera,
+    M2Event, M2EventMarker, M2Header, M2LightDef, M2Material, M2Model, M2RawData, M2RenderFlags,
+    M2Sequence, M2Texture, M2TextureTransform, M2TextureType, M2Vertex, C2, C3,
 };
 pub use skin::{Skin, SkinBatch, SkinSection};
 pub use timeline::{anim_paths, md20_version, skin_path, AnimFiles, Tracks264, VERSION_264};

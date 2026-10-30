@@ -466,7 +466,9 @@ fn drive_go_anim(
     mut dispatch: MessageWriter<GoStateDispatch>,
     // The client's single `_rand` stream; op4's variation roll draws from it.
     mut rng: ResMut<benilla_assets::AnimRng>,
+    anim_data: Option<Res<crate::creature_anim::AnimData>>,
 ) {
+    let catalog = anim_data.as_deref().map(|a| &a.0);
     for (entity, mut go, mut player, mut tr, anims) in &mut gos {
         // ── The state arm ──────────────────────────────────────────────────────────────────────
         if let Some(state) = go.state {
@@ -494,10 +496,19 @@ fn drive_go_anim(
                     if skip {
                         continue;
                     }
+                    // op4 walks the `AnimationData.dbc` fallback (`0x832bb7`): a kept Closed (147)
+                    // on a model with only Close (146) holds Close's end.
+                    let dir = catalog.map_or(
+                        benilla_assets::ResolvedAnim {
+                            id: want,
+                            dir_flags: 0,
+                        },
+                        |cat| anims.resolve(want, cat),
+                    );
                     // The arm rolls a variation; the loader seed takes 0.
                     let roll = rng.draw();
-                    if let Some(clip) = anims.pick_variation(want, roll) {
-                        trace_arm(entity, "state", play.anim_id(), want, frozen, roll, clip);
+                    if let Some(clip) = anims.pick_variation(dir.id, roll) {
+                        trace_arm(entity, "state", play.anim_id(), dir.id, frozen, roll, clip);
                         go.armed_id = Some(want);
                         // Snap a rest pose; ease a motion over its authored blend.
                         let blend = match play {
@@ -519,6 +530,10 @@ fn drive_go_anim(
                             // period, with `R = 1` from a `(0,0)` replay pair. Which per-frame
                             // advance list a GameObject's model rides is untraced.
                             active.set_repeat(RepeatAnimation::Never);
+                            // The fallback's direction mode (`0x826b00`): reversed, or held.
+                            if dir.dir_flags != 0 {
+                                dir.apply(active, 1.0, clip.duration);
+                            }
                             match play {
                                 Play::Motion(_) => {
                                     go.transient = Some(Transient { id: want, node });

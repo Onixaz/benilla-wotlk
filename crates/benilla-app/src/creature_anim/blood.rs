@@ -142,6 +142,7 @@ pub(super) fn blood_spurts(
                 tag: if front { ATTACH_FRONT } else { ATTACH_BACK },
                 effect,
                 path: path.to_string(),
+                scale: 1.0,
             }],
         });
     }

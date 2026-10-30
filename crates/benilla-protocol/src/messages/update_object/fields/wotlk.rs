@@ -93,12 +93,13 @@ impl ObjectFields {
         };
         match field {
             // Stand state stays in byte 0; 3.3.5a's visibility flags (ghost, creep, untrackable,
-            // AzerothCore `UnitStandFlags`) move from byte 2 to 1.12.1's byte 3. Pet talents in
-            // byte 1 and the anim tier in byte 3 have no 1.12.1 place.
+            // AzerothCore `UnitStandFlags`) move from byte 2 to 1.12.1's byte 3, and its anim tier
+            // from byte 3 to byte 2, where 1.12.1 keeps the form 3.3.5a carries elsewhere. Pet
+            // talents in byte 1 have no 1.12.1 place.
             Field::UnitBytes1 => put(
                 field,
                 element,
-                (value & 0xff) | ((value >> 16) & 0xff) << 24,
+                (value & 0xff) | ((value >> 16) & 0xff) << 24 | ((value >> 24) & 0xff) << 16,
             ),
             // Sheath byte 0, flags byte 1 (`+0x1d1`), pet flags byte 2 (`+0x1d2`) and form byte 3
             // (`+0x1d3`, `0x71af70`).
@@ -304,6 +305,7 @@ mod tests {
         assert_eq!(f.unit_stand_state(), 1);
         assert_eq!(f.unit_loyalty_level(), 0);
         assert!(f.unit_is_stealthed());
+        assert_eq!(f.unit_anim_tier(), 1);
         assert!(!f.unit_is_ghost_visual());
         assert_eq!(f.unit_npc_flags(), 0x80 | 0x1000 | 0x2000 | 0x1);
         // Sheathed melee, PvP and sanctuary flags, pet flags 0x3, form 0x10.

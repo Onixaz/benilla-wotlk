@@ -656,15 +656,26 @@ pub(super) fn spawn_booth_model(
     // The player is configured before insertion, so the pose lands with the first animation pass;
     // `ModelAnimations` goes beside it because the rig evaluator reads the player through it.
     if let Some(anims) = anims {
-        let stand = catalog.map_or(0, |c| anims.resolve(0, c).id);
-        if let Some(clip) = anims.find(stand) {
+        let stand = catalog.map_or(
+            benilla_assets::ResolvedAnim {
+                id: 0,
+                dir_flags: 0,
+            },
+            |c| anims.resolve(0, c),
+        );
+        if let Some(clip) = anims.find(stand.id) {
             let mut player = AnimationPlayer::default();
+            let active = player.play(clip.node);
+            // A Stand reached through a held fallback holds as `0x826b00` arms it.
+            if stand.dir_flags != 0 {
+                stand.apply(active, 1.0, clip.duration);
+            }
             match motion {
                 BoothMotion::Frozen => {
-                    player.play(clip.node).pause();
+                    active.pause();
                 }
                 BoothMotion::Loop => {
-                    player.play(clip.node).repeat();
+                    active.repeat();
                 }
             }
             // A weapon hand plays its `HandsClosed` finger overlay over Stand, repeated because it

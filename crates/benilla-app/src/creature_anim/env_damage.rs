@@ -58,10 +58,12 @@ pub(super) fn hard_landing_dust(
                 "anim: hard landing ({:.1} yd) → predicted dust kit {kit_id}",
                 l.descent
             );
+            // The damage handler's kit play, stage 0 (`0x755365`).
             pushes.write(super::KitPush {
                 entity: l.entity,
                 kit_id,
                 seq: seq.next(),
+                stage: 0,
             });
         }
     }

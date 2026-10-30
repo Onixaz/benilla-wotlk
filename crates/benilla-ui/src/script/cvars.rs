@@ -404,6 +404,26 @@ pub(super) fn format_f(v: f64) -> String {
     written
 }
 
+/// The highest exterior shadow mode, `GetCVarAbsoluteMax("extShadowQuality")`: the mode count less
+/// one (`0x873f50`, `0x515010`).
+pub const SHADOW_MODE_MAX: i32 = 5;
+
+/// Whether benilla runs exterior shadow mode `mode`, the shadow cache's device check (`0x8740d0`):
+/// the blob mode and every shadow-map mode, which need only depth render targets, on any GPU.
+pub fn shadow_mode_runs(mode: i32) -> bool {
+    (0..=SHADOW_MODE_MAX).contains(&mode)
+}
+
+/// `GetCVarMax("extShadowQuality")` (`0x514e30`): the modes walked up from 0 until the device
+/// refuses one or the highest is passed, less one.
+pub fn shadow_device_max() -> i32 {
+    let mut mode = 0;
+    while mode <= SHADOW_MODE_MAX && shadow_mode_runs(mode) {
+        mode += 1;
+    }
+    mode - 1
+}
+
 /// The reference's string-to-int, how a CVar record's integer (`rec+0x28`) is parsed from its value
 /// and how a change callback reads it: an optional `-`, then decimal digits up to the first other
 /// byte, with no whitespace skip, no `+` and no overflow check (`10·n + d` wraps); no digit is 0.
@@ -979,6 +999,14 @@ const USAGE_SET_GAMMA: &str = "Usage: SetGamma(value)";
 mod tests {
     use super::{MultisampleFormat, SeededCvar};
     use crate::script::UiScript;
+
+    /// The `0x514e30` walk stops at the highest mode when the device takes every one.
+    #[test]
+    fn the_shadow_walk_reaches_every_built_mode() {
+        assert!((0..=super::SHADOW_MODE_MAX).all(super::shadow_mode_runs));
+        assert!(!super::shadow_mode_runs(-1) && !super::shadow_mode_runs(6));
+        assert_eq!(super::shadow_device_max(), super::SHADOW_MODE_MAX);
+    }
 
     fn script_with_volume() -> UiScript {
         let s = UiScript::new().unwrap();

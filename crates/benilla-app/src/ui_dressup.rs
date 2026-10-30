@@ -142,6 +142,7 @@ impl DressUpRoom {
                 self.worn[slot] = Some(CharEnumItem {
                     display_id,
                     inventory_type,
+                    enchant_visual: 0,
                 });
                 // Held slots record their order, which eviction reads.
                 if HELD_SLOTS.contains(&slot) {
@@ -246,6 +247,7 @@ fn player_look(
             equipment[idx] = CharEnumItem {
                 display_id: t.display_info_id,
                 inventory_type: t.inventory_type as u8,
+                enchant_visual: 0,
             };
         }
     }

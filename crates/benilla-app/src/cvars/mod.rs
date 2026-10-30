@@ -672,6 +672,10 @@ fn session_values(world: &World) -> Vec<(&'static str, Option<String>)> {
         let v = world.get_resource::<crate::video::VideoConfig>();
         out.push(("gxVSync", v.map(|c| flag(c.vsync))));
     }
+    if set("WOW_EXT_SHADOW") {
+        let v = world.get_resource::<benilla_world::ext_shadow::ExtShadowQuality>();
+        out.push(("extShadowQuality", v.map(|q| q.0.to_string())));
+    }
     if set("WOW_TEXTURE_FILTERING") {
         let v = world.get_resource::<benilla_assets::TexFilterSetting>();
         out.push(("textureFilteringMode", v.map(|t| t.mode.to_string())));
@@ -1289,7 +1293,7 @@ mod tests {
         );
         assert_eq!(
             d["componentTextureLevel"],
-            f32::from(crate::video::ComponentTextureLevel::default().0)
+            crate::video::ComponentTextureLevel::default().level as f32
         );
         assert_eq!(
             d["projectedTextures"] != 0.0,
@@ -1567,9 +1571,9 @@ mod tests {
         apply(&mut app, "projectedTextures", "0");
         assert!(!res::<benilla_world::view::ProjectedTextures>(&app).0);
         apply(&mut app, "componentTextureLevel", "9");
-        assert_eq!(res::<crate::video::ComponentTextureLevel>(&app).0, 9);
-        apply(&mut app, "componentTextureLevel", "4");
-        assert_eq!(res::<crate::video::ComponentTextureLevel>(&app).0, 7);
+        assert_eq!(res::<crate::video::ComponentTextureLevel>(&app).level, 9);
+        apply(&mut app, "componentCompress", "0");
+        assert!(!res::<crate::video::ComponentTextureLevel>(&app).compress);
         // `spellEffectLevel` has no callback: the record's integer, read by the shard emitter.
         apply(&mut app, "spellEffectLevel", "3");
         assert_eq!(res::<crate::video::SpellEffectLevel>(&app).0, 3);

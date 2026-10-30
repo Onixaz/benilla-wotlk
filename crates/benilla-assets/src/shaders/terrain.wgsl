@@ -11,9 +11,23 @@
 
 #import bevy_pbr::{
     mesh_functions,
-    forward_io::Vertex,
     view_transformations::position_world_to_clip,
     mesh_view_bindings::view,
+}
+#import benilla_assets::wow_shadow
+
+// Bevy's `forward_io::Vertex` at Bevy's locations, the attributes every terrain cell carries, plus
+// a vertex-colour map's MCCV at 14 (appended by `TerrainExtension::specialize`).
+struct TerrainVertex {
+    @builtin(instance_index) instance_index: u32,
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(3) uv_b: vec2<f32>,
+    @location(5) color: vec4<f32>,
+#ifdef TERRAIN_MCCV
+    @location(14) mccv: vec4<f32>,
+#endif
 }
 
 @group(#{MATERIAL_BIND_GROUP}) @binding(100) var layer_array: texture_2d_array<f32>;
@@ -181,7 +195,7 @@ fn env_cube_dir(world: vec3<f32>, normal: vec3<f32>, uv: vec2<f32>) -> vec3<f32>
 }
 
 @vertex
-fn vertex(in: Vertex) -> TerrainVsOut {
+fn vertex(in: TerrainVertex) -> TerrainVsOut {
     var out: TerrainVsOut;
     let world_from_local = mesh_functions::get_world_from_local(in.instance_index);
     out.world_position =
@@ -211,6 +225,11 @@ fn vertex(in: Vertex) -> TerrainVsOut {
         vec3<f32>(0.0),
         vec3<f32>(1.0),
     );
+#ifdef TERRAIN_MCCV
+    // `Terrain.bls` permutation 4 scales the clamped sum by the MCCV colour where permutation 0
+    // takes 0.5, and the fragment doubles both: 127 is neutral, below darkens, above brightens.
+    out.primary *= in.mccv.rgb * 2.0;
+#endif
     return out;
 }
 
@@ -287,6 +306,9 @@ fn fragment(in: TerrainVsOut) -> @location(0) vec4<f32> {
         }
         shadow_lit = 1.0 - mcsh;
     }
+    // The shadow maps (`Terrain2_pcf.bls`, `Terrain3_pcf.bls`): their term joins the MCSH bit by
+    // `min`, without the model programs' grazing fade.
+    shadow_lit = min(shadow_lit, wow_shadow::shadow_term(in.world_position.xyz, false));
 
     // The `terrainp_s.bls` combine, then an LDR clamp:
     //   diffuse  = tex · primary · (0.3·shadow + 0.7)   (a flat −30% in shadow, no tint)

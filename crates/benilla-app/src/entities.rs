@@ -65,6 +65,10 @@ use live_display::{refresh_live_display, tick_scale_ease};
 /// Terrain conform: a model flagged `GlobalModelFlags & 3 ∈ {1,3}` tilts to the ground.
 mod conform;
 
+/// A unit's model scale, the DBC factor of its true scale.
+pub(crate) mod model_scale;
+use model_scale::stamp_model_scales;
+
 /// The per-unit collision height, the `h` the swim, wade, splash and foam depths are fractions of.
 mod collision_height;
 use collision_height::stamp_collision_heights;
@@ -312,8 +316,8 @@ impl Creatures {
         self.catalog.size_class(display_id)
     }
 
-    /// A display's `modelScale × creatureModelScale`; only the glue screens' pet reads it, as the
-    /// server folds it into a spawned unit's `OBJECT_FIELD_SCALE_X`.
+    /// A display's `modelScale × creatureModelScale`, the select screen pet's product; a world
+    /// unit's is [`model_scale::ModelScale`].
     pub(crate) fn model_scale(&self, display_id: u32) -> Option<f32> {
         self.catalog.model_scale(display_id)
     }
@@ -663,7 +667,14 @@ impl Plugin for EntitiesPlugin {
         )
         // After the net stage, whose Commands create the entity; until then its readers take the
         // constructor default.
-        .add_systems(Update, stamp_collision_heights.after(WorldStage::Net))
+        // Before attach scales a new visual by it; the collision stamp reads its native leg.
+        .add_systems(
+            Update,
+            (stamp_model_scales, stamp_collision_heights)
+                .chain()
+                .after(WorldStage::Net)
+                .before(EntityVisualsSet),
+        )
         // Reads the `Equipment` this frame's resolve wrote.
         .add_systems(Update, warn_unsettled_equipment.after(resolve_equipment))
         // Display models resolve and build before attach, all after `WorldStage::Net` spawns the

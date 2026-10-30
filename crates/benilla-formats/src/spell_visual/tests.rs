@@ -223,6 +223,8 @@ fn real_spell_visual_chain_resolves_fireball() {
             // Set: the missile owns the landing.
             missile_gate: 1,
             flags: 1,
+            caster_impact: 0,
+            target_impact: 0,
             instant_area_kit: 0,
             impact_area_kit: 0,
             persistent_area_kit: 0,
@@ -620,6 +622,8 @@ fn the_weapon_merge_fills_only_the_empty_slots() {
         missile_sound: Some(4222),
         strike_sound: Some(1143),
         flags: 0x200,
+        caster_impact: 11,
+        target_impact: 12,
         instant_area_kit: 5,
         impact_area_kit: 7,
         persistent_area_kit: 9,
@@ -627,6 +631,7 @@ fn the_weapon_merge_fills_only_the_empty_slots() {
     // Multi-Shot's real shape: its own impact + missile, both body kits empty.
     let own = VisualStages {
         impact: 658,
+        caster_impact: 21,
         missile_gate: 1,
         missile_model: 528,
         missile_attach: 1,
@@ -636,6 +641,11 @@ fn the_weapon_merge_fills_only_the_empty_slots() {
     let merged = own.merged_over_weapon(&weapon);
     assert_eq!((merged.precast, merged.cast), (7, 164), "empty slots fill");
     assert_eq!(merged.impact, 658, "a populated slot is kept");
+    assert_eq!(
+        (merged.caster_impact, merged.target_impact),
+        (21, 12),
+        "the impact-kit columns fill the same way (`0x7210e7`, `0x7210f3`)"
+    );
     assert_eq!(
         (merged.missile_model, merged.missile_attach),
         (528, 1),
