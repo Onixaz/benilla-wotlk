@@ -85,7 +85,7 @@ impl super::super::UiScript {
 
     /// Drain the verbs' requests.
     pub fn take_vehicle_requests(&mut self) -> Vec<VehicleRequest> {
-        std::mem::take(&mut self.model_mut().vehicle_requests)
+        drain_field!(self, vehicle_requests)
     }
 }
 
@@ -455,6 +455,18 @@ mod tests {
                 seat: 0
             }]
         );
+    }
+
+    /// The host drains the requests every frame: an empty drain is no extract input, so the
+    /// mutation count stands; a queued request still comes out.
+    #[test]
+    fn an_empty_drain_leaves_the_mutation_count_standing() {
+        let mut s = script();
+        let before = s.visual_epoch();
+        assert!(s.take_vehicle_requests().is_empty());
+        assert_eq!(s.visual_epoch(), before, "an empty drain moved the count");
+        s.run("UnitSwitchToVehicleSeat('player', 2)").unwrap();
+        assert_eq!(s.take_vehicle_requests().len(), 1);
     }
 
     /// Eject reads the mover's root: the seat's own bit gates the ask, not the send.
