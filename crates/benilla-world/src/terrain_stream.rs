@@ -194,6 +194,9 @@ struct Placement {
     owner: (i32, i32),
     /// An M2 doodad's wake record when it can sleep ([`spawn::Sleeper`]).
     sleeper: Option<spawn::Sleeper>,
+    /// Probe slots of WMO props with no part to own one (merged or sleepy), released with the
+    /// placement's entities.
+    probe_slots: Vec<u16>,
 }
 
 /// How much of the world wanted around the view focus is there, read by the loading bar and by
@@ -972,6 +975,7 @@ fn register_doodad<'a>(
             refs: 1,
             owner: tile,
             sleeper: None,
+            probe_slots: Vec::new(),
         },
     );
     placements.pending_spawns += 1;
@@ -1002,6 +1006,7 @@ fn register_wmo(placements: &mut Placements, asset_server: &AssetServer, w: &Wmo
             refs: 1,
             owner: (0, 0), // unread for WMOs: their prop hulls weld per placement
             sleeper: None,
+            probe_slots: Vec::new(),
         },
     );
     placements.pending_spawns += 1;
@@ -1254,6 +1259,7 @@ fn handoff_straddlers(
             for e in p.entities.drain(..) {
                 commands.entity(e).try_despawn();
             }
+            release_probe_slots(commands, std::mem::take(&mut p.probe_slots));
             // The respawn under the new owner records its own.
             p.sleeper = None;
             p.spawned = false;
@@ -1295,8 +1301,22 @@ fn release_placement(
             for e in p.entities {
                 commands.entity(e).try_despawn();
             }
+            release_probe_slots(commands, p.probe_slots);
         }
     }
+}
+
+/// Free a placement's carrier-less probe slots, queued behind its despawns as their hooks are.
+fn release_probe_slots(commands: &mut Commands, slots: Vec<u16>) {
+    if slots.is_empty() {
+        return;
+    }
+    commands.queue(move |world: &mut World| {
+        let mut probes = world.resource_mut::<crate::lighting::PropProbes>();
+        for slot in slots {
+            probes.release(slot);
+        }
+    });
 }
 
 /// The terrain base material, backface-culled so the ground is see-through from below, as in the
@@ -1429,6 +1449,7 @@ mod straddler_tests {
             refs: 1,
             owner,
             sleeper: None,
+            probe_slots: Vec::new(),
         }
     }
 
@@ -1449,6 +1470,75 @@ mod straddler_tests {
                 },
             )
             .unwrap();
+    }
+
+    /// A placement holding `n` probe slots, with the live table.
+    fn slotted(world: &mut World, n: usize) -> (Placement, Vec<u16>) {
+        let mut probes = crate::lighting::PropProbes::default();
+        let slots: Vec<u16> = (0..n)
+            .map(|i| {
+                probes
+                    .alloc([Vec4::splat(i as f32 + 1.0); 7])
+                    .expect("room in the table")
+            })
+            .collect();
+        world.insert_resource(probes);
+        let mut p = straddler((3, 4), Vec::new());
+        p.probe_slots = slots.clone();
+        (p, slots)
+    }
+
+    fn live_probes(world: &World) -> usize {
+        world
+            .resource::<crate::lighting::PropProbes>()
+            .occupancy()
+            .0
+    }
+
+    #[test]
+    fn a_handed_off_placement_returns_its_probe_slots() {
+        let mut world = World::new();
+        let (p, _) = slotted(&mut world, 3);
+        let mut streamer = TerrainStreamer::default();
+        streamer.tiles.insert((3, 5), tile_listing(&[7]));
+        let mut placements = Placements::default();
+        placements.by_id.insert(7, p);
+        world.insert_resource(streamer);
+        world.insert_resource(placements);
+        assert_eq!(live_probes(&world), 3);
+        run_handoff(&mut world, (3, 4), vec![7], true);
+        assert_eq!(live_probes(&world), 0, "the respawn allocates its own");
+        assert!(world.resource::<Placements>().by_id[&7]
+            .probe_slots
+            .is_empty());
+    }
+
+    #[test]
+    fn a_released_placement_returns_its_probe_slots() {
+        let mut world = World::new();
+        let (mut p, _) = slotted(&mut world, 2);
+        p.refs = 2;
+        let mut placements = Placements::default();
+        placements.by_id.insert(7, p);
+        world.insert_resource(placements);
+        let release = |world: &mut World| {
+            world
+                .run_system_once(
+                    |mut commands: Commands, mut placements: ResMut<Placements>| {
+                        let mut activity = StreamActivity::default();
+                        release_placement(&mut commands, &mut placements, 7, &mut activity);
+                    },
+                )
+                .unwrap();
+        };
+        release(&mut world);
+        assert_eq!(
+            live_probes(&world),
+            2,
+            "a referenced placement keeps its slots"
+        );
+        release(&mut world);
+        assert_eq!(live_probes(&world), 0);
     }
 
     #[test]

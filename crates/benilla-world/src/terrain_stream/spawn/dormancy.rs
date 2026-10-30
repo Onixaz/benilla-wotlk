@@ -149,7 +149,7 @@ mod tests {
         }
     }
 
-    /// Sleep despawns the entity phase and leaves the hull, lights and carrier in the list.
+    /// Sleep despawns the entity phase and leaves the hull and lights in the list.
     #[test]
     fn sleep_despawns_the_awake_and_keeps_the_rest() {
         let mut world = World::new();
