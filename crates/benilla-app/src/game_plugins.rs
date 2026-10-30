@@ -899,7 +899,11 @@ pub(crate) mod schedule_tests {
     ///   world stages and the entity visuals, but reads `Player` against
     ///   `release_post_snap_hold`, which writes only the snap hold, and `RigPose` against
     ///   `quest_markers::build_markers`; the pose it aims from is a frame late at worst.
-    const UPDATE_ACTIONABLE_CEILING: usize = 3_971;
+    /// - The GameObject sparkle (#330), the delayed area kit (#110) and the unit model scale (#326)
+    ///   add 3 net: `arm_go_loot_fx`, `play_delayed_area_kits` and `stamp_model_scales` write
+    ///   messages or `Commands` against `finish_colliders`, and the area kit reads the caster's
+    ///   `GlobalTransform` against `publish_camera_pose`, as the other such spawners pair.
+    const UPDATE_ACTIONABLE_CEILING: usize = 3_974;
     const UPDATE_ACTIONABLE_SLACK: usize = 40;
 
     fn ratchet(what: &str, n: usize, ceiling: usize, slack: usize) {
