@@ -92,6 +92,7 @@ const PUBLISHED: &[(&str, &str)] = &[
     ("collision::ColliderEpoch", "record"),
     ("collision::MoverTraceExclusions", "record"),
     ("collision::WorldCollision", "record"),
+    ("collision::refit_changed_collider_aabbs", "record"),
     ("decal::WorldDecal", "record"),
     ("dev_state::STILL_INPUTS_CHANGED", "record"),
     ("ext_shadow::ExtShadowQuality", "record"),
