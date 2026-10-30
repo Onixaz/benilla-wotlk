@@ -477,6 +477,8 @@ struct FxInstance {
     /// The `SpellVisualEffectName` id; with `tag`, the same-slot replace key.
     effect: u32,
     path: String,
+    /// The root's uniform local scale ([`FxSlot::scale`]).
+    scale: f32,
     root: Option<Entity>,
     /// The self-termination deadline on `time.elapsed_secs()`, or a reaped instance's `Decay` end.
     expires: Option<f32>,
@@ -607,7 +609,13 @@ pub(super) fn resolve_spell_fx(
                             &mut emitters,
                         );
                     }
-                    for FxSlot { tag, effect, path } in effects {
+                    for FxSlot {
+                        tag,
+                        effect,
+                        path,
+                        scale,
+                    } in effects
+                    {
                         // Per slot, as the reference's effect add opens with the same-slot replace.
                         replace_same_slot(
                             &mut instances,
@@ -625,6 +633,7 @@ pub(super) fn resolve_spell_fx(
                             tag: *tag,
                             effect: *effect,
                             path: path.clone(),
+                            scale: *scale,
                             root: None,
                             expires: None,
                             decaying: false,
@@ -863,7 +872,10 @@ pub(super) fn attach_spell_fx(
                 let ground_anchor = point.is_none_or(|(tag, ..)| tag == 0x13);
                 let (parent, offset) = point.map_or((unit, Vec3::ZERO), |(_, j, o)| (j, o));
                 let root = commands
-                    .spawn((Transform::from_translation(offset), Visibility::default()))
+                    .spawn((
+                        Transform::from_translation(offset).with_scale(Vec3::splat(inst.scale)),
+                        Visibility::default(),
+                    ))
                     // Chain-only, as above.
                     .vis_chain_only()
                     .id();
@@ -998,6 +1010,7 @@ mod tests {
             tag: 0x13,
             effect: 1499, // Ice Barrier's state model
             path: "Spells\\IceShield_State.mdx".into(),
+            scale: 1.0,
             root: Some(root),
             expires: None,
             decaying: false,
@@ -1147,6 +1160,7 @@ mod tests {
                 tag,
                 effect,
                 path: path.into(),
+                scale: 1.0,
             }],
         }
     }
@@ -1260,6 +1274,7 @@ mod tests {
                         tag: 0x14,
                         effect: 50,
                         path: PATH.to_string(),
+                        scale: 1.0,
                         root: None,
                         expires: None,
                         decaying: false,

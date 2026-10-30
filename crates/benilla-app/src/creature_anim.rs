@@ -564,9 +564,9 @@ use blood::{blood_spurts, load_blood_tables};
 use env_damage::{hard_landing_dust, load_env_damage_table};
 pub(crate) use env_damage::{EnvDamageTable, HardLanding, HARD_LANDING_DESCENT};
 use spell_visual::{
-    arm_aura_state_fx, arm_level_up_fx, arm_loot_fx, arm_morph_latch, arm_mount_poof_fx,
-    load_spell_visuals, play_state_done_kits, replay_morph_kit, route_cast_visuals,
-    track_violence_level, MorphLatch, StateDoneKit,
+    arm_aura_state_fx, arm_go_loot_fx, arm_level_up_fx, arm_loot_fx, arm_morph_latch,
+    arm_mount_poof_fx, load_spell_visuals, play_delayed_area_kits, play_state_done_kits,
+    replay_morph_kit, route_cast_visuals, track_violence_level, MorphLatch, StateDoneKit,
 };
 // `crate::aura_visual`'s tests drive the aura-slot watcher directly.
 #[cfg(test)]
@@ -667,6 +667,13 @@ pub(crate) struct AnimDriver {
     /// The main node's clip index, so the per-frame rate sync skips the clip search; checked
     /// against the clip's own node before use, as each node belongs to one clip.
     rate_clip: Option<(bevy::animation::graph::AnimationNodeIndex, usize)>,
+    /// The main node, the base id requested for it and the direction mode its fallback gave it
+    /// (`0x826350`), so the per-frame rate write re-resolves only on a change.
+    base_dir: Option<(bevy::animation::graph::AnimationNodeIndex, u16, u16)>,
+    /// The special idle (`[unit+0xfa4]`): a stage-0 kit's anim, latched after its play
+    /// (`0x73b38e`) until neither the key bone nor bone 0 plays it (`0x73bc81`). A model rebuild
+    /// drops it with the driver, as the display reset does (`0x73e702`).
+    special_idle: Option<u16>,
 }
 
 impl AnimDriver {
@@ -686,6 +693,11 @@ impl AnimDriver {
     /// The base slot's playback rate, for the inspector.
     pub(crate) fn rate(&self) -> f32 {
         self.gait_rate
+    }
+
+    /// The latched special idle, which holds a caster's missiles (`0x73442f`).
+    pub(crate) fn special_idle(&self) -> Option<u16> {
+        self.special_idle
     }
 }
 
@@ -745,6 +757,8 @@ impl Default for AnimDriver {
             last_special: None,
             frozen: None,
             rate_clip: None,
+            base_dir: None,
+            special_idle: None,
         }
     }
 }
@@ -830,6 +844,7 @@ impl Plugin for CreatureAnimPlugin {
             .add_message::<SpellKitFx>()
             .add_message::<StateDoneKit>()
             .add_message::<MissileSpawn>()
+            .add_message::<spell_visual::DelayedAreaKit>()
             .add_message::<ChainProcPlay>()
             .add_message::<KitPush>()
             // The aura CharProc edges, drained by `crate::aura_visual`.
@@ -853,9 +868,14 @@ impl Plugin for CreatureAnimPlugin {
                 Update,
                 (
                     route_cast_visuals,
-                    arm_loot_fx,
-                    arm_level_up_fx,
-                    arm_mount_poof_fx,
+                    (
+                        arm_loot_fx,
+                        arm_go_loot_fx,
+                        play_delayed_area_kits,
+                        arm_level_up_fx,
+                        arm_mount_poof_fx,
+                    )
+                        .chain(),
                     // The removal core reaps the state kit, then plays the state-done kit.
                     (arm_aura_state_fx, play_state_done_kits)
                         .chain()
@@ -915,7 +935,19 @@ impl Plugin for CreatureAnimPlugin {
 
 /// The id this model plays for `id` (`0x826350`); identity until `AnimationData.dbc` loads.
 fn resolved_id(anims: &ModelAnimations, id: u16, catalog: Option<&AnimDataCatalog>) -> u16 {
-    catalog.map_or(id, |cat| anims.resolve(id, cat).id)
+    resolved(anims, id, catalog).id
+}
+
+/// The id and direction mode this model plays for `id` (`0x826350`); forward identity until
+/// `AnimationData.dbc` loads.
+fn resolved(
+    anims: &ModelAnimations,
+    id: u16,
+    catalog: Option<&AnimDataCatalog>,
+) -> benilla_assets::ResolvedAnim {
+    catalog.map_or(benilla_assets::ResolvedAnim { id, dir_flags: 0 }, |cat| {
+        anims.resolve(id, cat)
+    })
 }
 
 /// The clip for a requested id, through the `AnimationData.dbc` fallback.

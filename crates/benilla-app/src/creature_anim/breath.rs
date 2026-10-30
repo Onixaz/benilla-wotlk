@@ -177,6 +177,7 @@ pub(super) fn fire_breath(
                 tag: BREATH_ATTACH,
                 effect,
                 path: path.clone(),
+                scale: 1.0,
             }],
         });
     }
