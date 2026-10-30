@@ -242,6 +242,9 @@ struct GxCell {
     ring: (f32, f32),
     /// The scan's last wholesale verdict (all steady or all gone); `None` walks every frame.
     settled: Option<bool>,
+    /// Where the camera stood at the last walk and how far it may move before any fader can
+    /// change class: the nearest band edge over the cell's faders. `None` walks.
+    slack: Option<(Vec3, f32)>,
     /// A prop region's distinct referrer sets, indexed by [`GxItemProp::set`].
     sets: Vec<Arc<[u16]>>,
 }
@@ -254,6 +257,7 @@ impl GxCell {
             .values()
             .fold((f32::MAX, 0.0), |(n, x), f| (n.min(f.near), x.max(f.far)));
         self.settled = None;
+        self.slack = None;
     }
 
     /// Hand every exile's entities to `pending`: the region is going, and they are its own.
@@ -584,6 +588,7 @@ impl StaticGx {
                     (entry.ring.0.min(near), entry.ring.1.max(far))
                 };
                 entry.settled = None;
+                entry.slack = None;
             }
         }
         entry.items.push(GxItem {
