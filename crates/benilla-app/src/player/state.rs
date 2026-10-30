@@ -162,6 +162,17 @@ pub(crate) struct MoveModes {
 }
 
 impl MoveModes {
+    /// A unit's own modes when we take it over (`UnitMoveModes`): its movement state is per unit,
+    /// so a root it took while observed holds once it is ours.
+    pub(crate) fn of_unit(word: u32) -> Self {
+        let mut modes = Self {
+            rooted: word & crate::creature_anim::move_flags::ROOT != 0,
+            ..Self::default()
+        };
+        modes.merge_from_wire(word);
+        modes
+    }
+
     /// Grant or revoke one acked mode; `levitating` also arrives by the wire merge.
     pub(crate) fn set(&mut self, mode: MoveMode, apply: bool) {
         match mode {
@@ -326,6 +337,10 @@ pub(crate) struct Player {
     /// `pos` and the facing still describe the last one. Set when the mover guid changes, cleared
     /// at the take-control edge.
     pub(crate) reseat: bool,
+    /// Mode grants and forced speeds for the mover, held until the driven body is that unit: their
+    /// acks carry its pose, which is still the last body's across a hand-over.
+    pub(super) held_modes: Vec<crate::net::MoveModeMessage>,
+    pub(super) held_speeds: Vec<crate::net::SpeedChangeMessage>,
     /// Feet position in Bevy coords, converted to WoW coords only for the wire.
     pub(crate) pos: Vec3,
     /// Vertical velocity (yd/s, Bevy +Y up), zeroed while grounded.

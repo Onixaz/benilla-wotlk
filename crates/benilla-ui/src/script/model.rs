@@ -488,8 +488,8 @@ pub(crate) struct Model {
     /// Per action, its usable, range, current and cooldown state; an absent one reads cold.
     pub(crate) action_states: HashMap<u32, super::action::StoredActionState>,
     pub(crate) bonus_bar_offset: u8,
-    /// The temporary bar has an owner (`CGActionBar::m_tempPageActiveFlags`).
-    pub(crate) temp_action_bar: bool,
+    /// The temporary bar's owners (`CGActionBar::m_tempPageActiveFlags`).
+    pub(crate) temp_action_bar: u32,
     /// The main bar's page, 0-based (`[0xc1e598]`): `GetActionBarPage` answers it plus one.
     pub(crate) action_bar_page: u8,
     /// `(action id, packed)` per slot `PickupAction`/`PlaceAction` changed, 0 clearing it: one
@@ -1396,7 +1396,7 @@ impl Model {
             equipment_set_requests: Vec::new(),
             action_states: HashMap::new(),
             bonus_bar_offset: 0,
-            temp_action_bar: false,
+            temp_action_bar: 0,
             action_bar_page: 0,
             action_sets: Vec::new(),
             ui_errors: Vec::new(),

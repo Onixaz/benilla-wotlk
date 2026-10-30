@@ -1135,9 +1135,8 @@ fn set_speed(
     true
 }
 
-/// `SMSG_FORCE_*_SPEED_CHANGE`: applied to the mover's speeds, and for our own guid forwarded to
-/// the controller, which owes the ack. A foreign mover is never acked, which the server treats as
-/// an error.
+/// `SMSG_FORCE_*_SPEED_CHANGE`: applied to the unit's speeds (`0x741b00` resolves any unit) and
+/// forwarded to the controller, which acks the one it moves: our own body or a possessed unit.
 fn force_speed_change(
     guid: u64,
     kind: SpeedKind,
@@ -1158,15 +1157,15 @@ fn force_speed_change(
                  (no live speed set) — we still ack, so the server and we now disagree"
             );
         }
-        speed_changes.write(SpeedChangeMessage {
-            guid,
-            kind,
-            counter,
-            speed,
-        });
     } else {
-        debug!("net: force speed change for foreign mover {guid:#x} — applied {applied}, no ack");
+        debug!("net: force {kind:?} speed change for {guid:#x} -> {speed} — applied {applied}");
     }
+    speed_changes.write(SpeedChangeMessage {
+        guid,
+        kind,
+        counter,
+        speed,
+    });
 }
 
 /// The SPLINE_SET and MOVE_SET families: an observed unit's speed, no ack. MOVE_SET's pose

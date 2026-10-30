@@ -87,9 +87,10 @@ fn control_verdict(mover: u64, allow_move: bool, self_guid: Option<u64>) -> Cont
 
 /// Apply this frame's server-authored movement and send each ack. Returns the forced-speed changes
 /// for the movement stream to ack, except pre-control or detached, where they are acked here.
-/// `self_pose` is the streamed self entity's translation and yaw, the take-control target.
+/// `self_pose` is the streamed self entity's translation and yaw, the take-control target, and
+/// `driven` that body's guid and its own modes word ([`crate::net::UnitMoveModes`]).
 // `control`'s own transports query, passed through.
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub(super) fn apply_server_moves(
     time: &Time,
     commands: &mut Commands,
@@ -110,6 +111,7 @@ pub(super) fn apply_server_moves(
         (With<Transport>, Without<Embodied>, Without<FlyCam>),
     >,
     self_pose: Option<(Vec3, f32)>,
+    driven: Option<(u64, u32)>,
 ) -> Vec<SpeedChangeMessage> {
     // World entry hands control back before this frame's control packets, so a later revoke wins;
     // AzerothCore never lifts a battleground's end freeze by packet.
@@ -253,6 +255,96 @@ pub(super) fn apply_server_moves(
         }
     }
 
+    // Mode grants and forced speeds wait for the take-over below: either may name the unit we were
+    // just handed, whose pose we have not adopted yet.
+    player.held_modes.extend(mode_msgs.read().copied());
+    player.held_speeds.extend(speed_msgs.read().copied());
+
+    // A knockback is only latched here; the mover launches it and acks. The reference enqueues it,
+    // and its frame update applies it and then acks, so the wire carries the post-launch
+    // `MovementInfo`.
+    //
+    // Two in one frame collapse to the last, where the reference queues both: the motion is the
+    // same, as the reference replaces the velocity, but the first ack is lost (the reference's
+    // failed-ack path).
+    for k in knock_msgs.read() {
+        player.knockback = Some(super::state::PendingKnockback {
+            guid: k.guid,
+            counter: k.counter,
+            launch: k.launch,
+        });
+    }
+
+    // Take control when the server first reports our position, and again on a mover change; only
+    // the login (`first`) settles, flags a stale world and seats the camera.
+    let seizing = !player.active || player.reseat;
+    if seizing {
+        if let Some((pos, yaw)) = self_pose {
+            let first = !player.active;
+            player.reseat = false;
+            // A mover change tears down the outgoing mover's state, as the reference's
+            // `SetActiveMover` resets its flags and click-to-move. A login needs none:
+            // `release_on_session_end` already reset the whole resource.
+            if !first {
+                player.vel_y = 0.0;
+                player.horiz_vel = Vec3::ZERO;
+                player.move_flags = 0;
+                player.autorun = false;
+                player.airborne_since = None;
+                player.fall_far = false;
+                player.fall_start_y = pos.y;
+                player.ride = None;
+                // The modes are the unit's own: a possessed unit keeps the root it took while we
+                // only watched it (the Eye of Acherus is rooted before it is handed over).
+                player.modes = super::state::MoveModes::of_unit(driven.map_or(0, |(_, w)| w));
+            }
+            player.pos = pos;
+            player.active = true;
+            if first {
+                player.settling = true; // settle once the initial ground loads
+                player.settle_since = time.elapsed_secs();
+                player.settle_deadline = time.elapsed_secs() + SETTLE_TIMEOUT;
+                player.world_stale = true;
+                // The spawn pose carries the server's facing (the logout orientation): adopt it,
+                // camera behind, as the reference does.
+                cam.yaw = yaw;
+                cam.pitch = player.login_pitch.unwrap_or(LOGIN_PITCH);
+            }
+            // No camera re-seat on a mover change: Mind Control's far sight already moved it.
+            player.face_yaw = yaw;
+            player.model_yaw = yaw;
+            // The first frame owes no `SET_FACING`: the reference sends none until a turn.
+            player.last_facing = yaw.rem_euclid(std::f32::consts::TAU);
+            // `MovementState` comes with the `SelfPlayer` tag, not here: a worldport re-streams
+            // the entity while `player.active` stays true.
+            info!(
+                "took control of {} @ {:?} facing {:.3}{}",
+                match player.foreign_mover {
+                    Some(guid) => format!("possessed unit {guid:#x}"),
+                    None => "player".to_string(),
+                },
+                player.pos,
+                yaw.rem_euclid(std::f32::consts::TAU),
+                crate::run_mode::free_fly_hint()
+            );
+        }
+    }
+
+    // The held grants are released once the driven body is the mover (our own before login, when
+    // nothing is driven yet). Those naming another unit are not ours to apply or ack; that unit's
+    // own word has them ([`crate::net::UnitMoveModes`]).
+    let mover = player.foreign_mover.or(self_guid);
+    let seated = !player.reseat && (!player.active || driven.map(|(g, _)| g) == mover);
+    let (modes, speeds) = if seated {
+        (
+            std::mem::take(&mut player.held_modes),
+            std::mem::take(&mut player.held_speeds),
+        )
+    } else {
+        Default::default()
+    };
+    let ours = |guid: u64| mover.is_none() || Some(guid) == mover;
+
     // The acked modes: apply to our state first, then ack with the flags it rebuilds to, as the
     // reference does. vmangos kicks a root apply-ack without `MOVEFLAG_ROOT`, or defers the root to
     // landing when the ack carries `JUMPING` or `FALLINGFAR` (`MovementHandler.cpp:715-729`).
@@ -260,7 +352,7 @@ pub(super) fn apply_server_moves(
     // Root also parks the walk stream and ends the arc, as the reference's root clears the
     // direction bits and stops the fall; moving bits beside ROOT freeze the reference and raise
     // vmangos's `CHEAT_TYPE_ROOT_MOVE`. Turn bits are not moving bits.
-    for m in mode_msgs.read() {
+    for m in modes.iter().filter(|m| ours(m.guid)) {
         player.modes.set(m.mode, m.apply);
         if m.mode == MoveMode::Root && m.apply {
             movement_net::park_mover(&net_cmds.0, player);
@@ -297,85 +389,17 @@ pub(super) fn apply_server_moves(
             orientation: facing,
         });
         info!(
-            "mover mode {:?} {} (acked)",
+            "mover mode {:?} {} on {:#x} (acked)",
             m.mode,
-            if m.apply { "granted" } else { "revoked" }
+            if m.apply { "granted" } else { "revoked" },
+            m.guid
         );
-    }
-
-    // A knockback is only latched here; the mover launches it and acks. The reference enqueues it,
-    // and its frame update applies it and then acks, so the wire carries the post-launch
-    // `MovementInfo`.
-    //
-    // Two in one frame collapse to the last, where the reference queues both: the motion is the
-    // same, as the reference replaces the velocity, but the first ack is lost (the reference's
-    // failed-ack path).
-    for k in knock_msgs.read() {
-        player.knockback = Some(super::state::PendingKnockback {
-            guid: k.guid,
-            counter: k.counter,
-            launch: k.launch,
-        });
-    }
-
-    // Take control when the server first reports our position, and again on a mover change; only
-    // the login (`first`) settles, flags a stale world and seats the camera.
-    let seizing = !player.active || player.reseat;
-    if seizing {
-        if let Some((pos, yaw)) = self_pose {
-            let first = !player.active;
-            player.reseat = false;
-            // A mover change tears down the outgoing mover's state, as the reference's
-            // `SetActiveMover` resets its flags and click-to-move. A login needs none:
-            // `release_on_session_end` already reset the whole resource.
-            if !first {
-                player.vel_y = 0.0;
-                player.horiz_vel = Vec3::ZERO;
-                player.move_flags = 0;
-                player.autorun = false;
-                player.airborne_since = None;
-                player.fall_far = false;
-                player.fall_start_y = pos.y;
-                player.ride = None;
-                // The new mover's modes arrive in their own packets.
-                player.modes = Default::default();
-            }
-            player.pos = pos;
-            player.active = true;
-            if first {
-                player.settling = true; // settle once the initial ground loads
-                player.settle_since = time.elapsed_secs();
-                player.settle_deadline = time.elapsed_secs() + SETTLE_TIMEOUT;
-                player.world_stale = true;
-                // The spawn pose carries the server's facing (the logout orientation): adopt it,
-                // camera behind, as the reference does.
-                cam.yaw = yaw;
-                cam.pitch = player.login_pitch.unwrap_or(LOGIN_PITCH);
-            }
-            // No camera re-seat on a mover change: Mind Control's far sight already moved it.
-            player.face_yaw = yaw;
-            player.model_yaw = yaw;
-            // The first frame owes no `SET_FACING`: the reference sends none until a turn.
-            player.last_facing = yaw.rem_euclid(std::f32::consts::TAU);
-            // `MovementState` comes with the `SelfPlayer` tag, not here: a worldport re-streams
-            // the entity while `player.active` stays true.
-            info!(
-                "took control of {} @ {:?} facing {:.3}{}",
-                match player.foreign_mover {
-                    Some(guid) => format!("possessed unit {guid:#x}"),
-                    None => "player".to_string(),
-                },
-                player.pos,
-                yaw.rem_euclid(std::f32::consts::TAU),
-                crate::run_mode::free_fly_hint()
-            );
-        }
     }
 
     // Forced speed changes: the bridge applied the speed; the ack carries our wire state, which the
     // server relocates us to. Controlled, the movement stream acks; otherwise our state is the
     // parked pose, so ack here.
-    let speed_acks: Vec<SpeedChangeMessage> = speed_msgs.read().copied().collect();
+    let speed_acks: Vec<SpeedChangeMessage> = speeds.into_iter().filter(|s| ours(s.guid)).collect();
     if !player.active || player.detached {
         for ack in &speed_acks {
             let _ = net_cmds.0.send(ClientCommand::ForceSpeedAck {
@@ -865,5 +889,208 @@ mod teleport_tests {
         assert_eq!(player.pos, wow_to_bevy(t.position));
         assert_eq!((player.face_yaw, cam_yaw), (1.25, 1.25));
         assert!(player.settling && player.ride_abort && player.world_stale);
+    }
+}
+
+/// The hand-over to a possessed unit: its acked modes and forced speeds wait until we drive it,
+/// then apply and ack under its guid with its pose, over the root it took while observed.
+#[cfg(test)]
+mod handover_tests {
+    use super::*;
+    use crate::creature_anim::move_flags;
+    use crate::net::{GuidIndex, UnitMoveModes};
+    use benilla_protocol::SpeedKind;
+    use crossbeam_channel::Receiver;
+
+    const ME: u64 = 0x45;
+    const EYE: u64 = 0xF130_006F_5F29_221A;
+
+    #[derive(Resource, Default)]
+    struct Returned(Vec<SpeedChangeMessage>);
+
+    #[allow(clippy::type_complexity)]
+    fn step(
+        time: Res<Time>,
+        mut commands: Commands,
+        mut player: ResMut<Player>,
+        net: Res<NetCommands>,
+        mut r: (
+            MessageReader<TeleportMessage>,
+            MessageReader<WorldportMessage>,
+            MessageReader<SpeedChangeMessage>,
+            MessageReader<MoveModeMessage>,
+            MessageReader<KnockBackMessage>,
+            MessageReader<SelfMoveMessage>,
+            MessageReader<ClientControlMessage>,
+            MessageReader<SelfCreateMover>,
+        ),
+        transports: Query<
+            (&Transform, &Guid, Option<&avian3d::prelude::ColliderAabb>),
+            (With<Transport>, Without<Embodied>, Without<FlyCam>),
+        >,
+        body: Query<(&Transform, &Guid, Option<&UnitMoveModes>), With<Embodied>>,
+        mut out: ResMut<Returned>,
+    ) {
+        let mut cam = FlyCam {
+            yaw: 0.0,
+            pitch: 0.0,
+            speed: 0.0,
+        };
+        let driven = body.single().ok();
+        out.0 = apply_server_moves(
+            &time,
+            &mut commands,
+            &mut player,
+            &mut cam,
+            &net,
+            &mut r.0,
+            &mut r.1,
+            &mut r.2,
+            &mut r.3,
+            &mut r.4,
+            &mut r.5,
+            &mut r.6,
+            &mut r.7,
+            Some(ME),
+            &transports,
+            driven.map(|(t, ..)| (t.translation, 0.0)),
+            driven.map(|(_, g, m)| (g.0, m.map_or(0, |m| m.0))),
+        );
+    }
+
+    fn harness() -> (App, Entity, Entity, Receiver<ClientCommand>) {
+        let (tx, rx) = crossbeam_channel::unbounded();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(NetCommands(tx))
+            .init_resource::<Player>()
+            .init_resource::<Returned>()
+            .init_resource::<GuidIndex>()
+            .add_message::<TeleportMessage>()
+            .add_message::<WorldportMessage>()
+            .add_message::<SpeedChangeMessage>()
+            .add_message::<MoveModeMessage>()
+            .add_message::<KnockBackMessage>()
+            .add_message::<SelfMoveMessage>()
+            .add_message::<ClientControlMessage>()
+            .add_message::<SelfCreateMover>()
+            .add_systems(Update, step);
+        let me = app
+            .world_mut()
+            .spawn((Guid(ME), Transform::from_xyz(1.0, 2.0, 3.0), Embodied))
+            .id();
+        // Rooted by `SMSG_SPLINE_MOVE_ROOT` while we only watched it.
+        let eye = app
+            .world_mut()
+            .spawn((
+                Guid(EYE),
+                Transform::from_xyz(10.0, 503.8, 20.0),
+                UnitMoveModes(move_flags::ROOT),
+            ))
+            .id();
+        app.update(); // our own body taken at login
+        rx.try_iter().count();
+        (app, me, eye, rx)
+    }
+
+    fn root(apply: bool) -> MoveModeMessage {
+        MoveModeMessage {
+            guid: EYE,
+            counter: 7,
+            mode: MoveMode::Root,
+            apply,
+        }
+    }
+
+    fn mode_acks(rx: &Receiver<ClientCommand>) -> Vec<(u64, MoveMode, bool, u32, [f32; 3])> {
+        rx.try_iter()
+            .filter_map(|c| match c {
+                ClientCommand::MoveModeAck {
+                    guid,
+                    mode,
+                    apply,
+                    flags,
+                    pos,
+                    ..
+                } => Some((guid, mode, apply, flags, pos)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_possessed_unit_s_grants_wait_for_its_body_then_ack_under_its_guid_and_pose() {
+        let (mut app, me, eye, rx) = harness();
+        let w = app.world_mut();
+        w.write_message(ClientControlMessage {
+            mover: EYE,
+            allow_move: true,
+        });
+        w.write_message(root(false));
+        w.write_message(SpeedChangeMessage {
+            guid: EYE,
+            kind: SpeedKind::Flight,
+            counter: 3,
+            speed: 7.5,
+        });
+        app.update();
+        assert!(
+            mode_acks(&rx).is_empty(),
+            "the grant frame still drives our own body: an ack now would put our pose on the eye"
+        );
+        assert!(app.world().resource::<Returned>().0.is_empty());
+
+        // `maintain_embodiment` moves the body over and asks for a re-seat.
+        app.world_mut().entity_mut(me).remove::<Embodied>();
+        app.world_mut().entity_mut(eye).insert(Embodied);
+        app.world_mut().resource_mut::<Player>().reseat = true;
+        app.update();
+
+        let acks = mode_acks(&rx);
+        let eye_pos = bevy_to_wow(Vec3::new(10.0, 503.8, 20.0));
+        assert_eq!(acks.len(), 1);
+        let (guid, mode, apply, flags, pos) = acks[0];
+        assert_eq!((guid, mode, apply), (EYE, MoveMode::Root, false));
+        assert_eq!(pos, eye_pos, "the eye's own pose");
+        assert_eq!(flags & move_flags::ROOT, 0, "the unroot rebuilds the word");
+        let speeds = &app.world().resource::<Returned>().0;
+        assert_eq!(
+            speeds.len(),
+            1,
+            "the eye's forced speed goes to the stream's ack"
+        );
+        assert_eq!(speeds[0].guid, EYE);
+    }
+
+    #[test]
+    fn a_unit_taken_over_keeps_the_root_it_took_while_watched() {
+        let (mut app, me, eye, rx) = harness();
+        app.world_mut().write_message(ClientControlMessage {
+            mover: EYE,
+            allow_move: true,
+        });
+        app.update();
+        app.world_mut().entity_mut(me).remove::<Embodied>();
+        app.world_mut().entity_mut(eye).insert(Embodied);
+        app.world_mut().resource_mut::<Player>().reseat = true;
+        app.update();
+        assert!(
+            app.world().resource::<Player>().modes.rooted,
+            "the Eye of Acherus is rooted before the hand-over and must hang where it is"
+        );
+
+        // A grant for our own body while we drive the eye is not the eye's.
+        app.world_mut().write_message(MoveModeMessage {
+            guid: ME,
+            ..root(false)
+        });
+        app.update();
+        assert!(mode_acks(&rx).is_empty());
+        assert!(app.world().resource::<Player>().modes.rooted);
+
+        app.world_mut().write_message(root(false));
+        app.update();
+        assert_eq!(mode_acks(&rx).len(), 1);
+        assert!(!app.world().resource::<Player>().modes.rooted);
     }
 }
