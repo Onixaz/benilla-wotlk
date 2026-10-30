@@ -110,6 +110,11 @@ const CURSOR_STEMS: &[&str] = &[
     "UnableTaxi",
     "Skin",
     "UnableSkin",
+    // The insignia pair by the player's side: SkinHorde(20) and SkinAlliance(21).
+    "SkinHorde",
+    "UnableSkinHorde",
+    "SkinAlliance",
+    "UnableSkinAlliance",
     "Repair", // the repair-mode base, never grayed: the shipped UnableRepair is unreachable
     // The data-driven GameObject cursors; PickLock is never grayed.
     "Mail",
@@ -140,6 +145,12 @@ const CURSOR_STEMS: &[&str] = &[
 /// A cursor stem's archive path.
 fn cursor_path(stem: &str) -> String {
     format!("Interface\\Cursor\\{stem}.blp")
+}
+
+/// A creature cursor name outside the mode table, which the platform caches decode from its own
+/// file on first show (`0x715f20` formats the path, `0x616830` loads it).
+fn named_stem(cursor: &DisplayedCursor) -> bool {
+    matches!(cursor.0.kind, crate::target::CursorKind::Named(_))
 }
 
 /// The displayed cursor, the client's one sticky mode cell; [`crate::target::WorldCursor`] is one
@@ -350,9 +361,9 @@ mod other {
         video: Res<crate::video::VideoConfig>,
         mut sprite: Query<(&SoftwareCursor, &mut ImageNode)>,
         cursor: Res<super::DisplayedCursor>,
-        cursors: Option<Res<CursorImages>>,
+        cursors: Option<ResMut<CursorImages>>,
         script: Option<NonSend<benilla_ui::script::UiScript>>,
-        world_assets: Option<ResMut<WorldAssets>>,
+        mut world_assets: Option<ResMut<WorldAssets>>,
         mut images: ResMut<Assets<Image>>,
         mut payload_cursors: ResMut<PayloadCursorImages>,
         screen: Res<crate::loading_screen::LoadingScreen>,
@@ -383,8 +394,8 @@ mod other {
                 return; // already showing this icon
             }
             if !payload_cursors.0.contains_key(&icon) && !decode_failed.contains(&icon) {
-                let built = world_assets.and_then(|mut a| {
-                    let rgba = super::decode_payload_cursor_rgba(&mut a, &icon)?;
+                let built = world_assets.as_mut().and_then(|a| {
+                    let rgba = super::decode_payload_cursor_rgba(a, &icon)?;
                     Some(images.add(cursor_texture(32, 32, rgba)))
                 });
                 match built {
@@ -405,13 +416,25 @@ mod other {
             // Decode failed: fall through to the mode cursor.
         }
 
-        let Some(cursors) = cursors else {
+        let Some(mut cursors) = cursors else {
             return;
         };
         let stem = cursor.0.stem();
         let key = format!("{mode}:{stem}");
         if last_set.as_deref() == Some(key.as_str()) {
             return;
+        }
+        if super::named_stem(&cursor) && !cursors.0.contains_key(&stem) {
+            let decoded = world_assets
+                .as_mut()
+                .and_then(|a| a.decode_cursor(&cursor_path(&stem), &mut images));
+            // 0x6168c8: a named file that does not load zeroes the cursor image, so the cursor
+            // shows nothing; cached, so the miss is tried once.
+            let handle = decoded.unwrap_or_else(|| {
+                warn!("cursor {stem}.blp missing/undecodable — the cursor is blank");
+                images.add(cursor_texture(1, 1, vec![0; 4]))
+            });
+            cursors.0.insert(stem.clone(), handle);
         }
         let handle = cursors
             .0
@@ -494,8 +517,9 @@ mod macos {
 
     use super::{cursor_path, payload_icon, CURSOR_STEMS};
 
-    /// The built `NSCursor` per mode stem; non-send, as AppKit types are main-thread only.
-    pub(super) struct NativeCursors(HashMap<&'static str, Retained<NSCursor>>);
+    /// The built `NSCursor` per mode stem, and each named stem once shown; non-send, as AppKit
+    /// types are main-thread only.
+    pub(super) struct NativeCursors(HashMap<String, Retained<NSCursor>>);
 
     /// Held-payload icon path → its 32×32 `NSCursor`, built on first use and cached.
     pub(super) struct PayloadCursors(HashMap<String, Retained<NSCursor>>);
@@ -519,7 +543,7 @@ mod macos {
             };
             match build_cursor(w, h, &rgba) {
                 Some(cursor) => {
-                    cursors.insert(*stem, cursor);
+                    cursors.insert(stem.to_string(), cursor);
                 }
                 None => warn!("failed to build NSCursor for {stem}.blp — mode falls back"),
             }
@@ -534,10 +558,10 @@ mod macos {
     /// Disable the window's cursor rects once, set the payload or mode cursor while not looking,
     /// and hide or unhide it across mouselook.
     pub(super) fn drive(
-        cursors: Option<NonSend<NativeCursors>>,
+        cursors: Option<NonSendMut<NativeCursors>>,
         mut payload_cursors: NonSendMut<PayloadCursors>,
         script: Option<NonSend<benilla_ui::script::UiScript>>,
-        world_assets: Option<ResMut<WorldAssets>>,
+        mut world_assets: Option<ResMut<WorldAssets>>,
         mode: Res<super::DisplayedCursor>,
         screen: Res<crate::loading_screen::LoadingScreen>,
         rig: Res<CameraControl>,
@@ -552,7 +576,7 @@ mod macos {
         // The last `set` cursor's pointer, the drift baseline; only compared, never dereferenced.
         mut last_ptr: Local<usize>,
     ) {
-        let Some(cursors) = cursors else {
+        let Some(mut cursors) = cursors else {
             return;
         };
         // macOS resets the cursor to the arrow on every activation: re-assert on focus gain.
@@ -566,8 +590,8 @@ mod macos {
             .and_then(|s| payload_icon(s, screen.covering()));
         if let Some(icon) = &held_icon {
             if !payload_cursors.0.contains_key(icon) && !decode_failed.contains(icon) {
-                let built = world_assets.and_then(|mut a| {
-                    let rgba = super::decode_payload_cursor_rgba(&mut a, icon)?;
+                let built = world_assets.as_mut().and_then(|a| {
+                    let rgba = super::decode_payload_cursor_rgba(a, icon)?;
                     build_cursor(32, 32, &rgba)
                 });
                 match built {
@@ -585,6 +609,22 @@ mod macos {
         // look's hide/unhide pair, keeping AppKit's hide counter balanced.
         let looking = rig.holds_cursor() || cinematic.is_some_and(|c| c.is_playing());
         let stem = mode.0.stem();
+        if super::named_stem(&mode) && !cursors.0.contains_key(&stem) {
+            let decoded = world_assets.as_mut().and_then(|wa| {
+                let (w, h, rgba) =
+                    read_texture_rgba(&mut wa.chain.lock_recover(), &cursor_path(&stem)).ok()?;
+                build_cursor(w, h, &rgba)
+            });
+            // 0x6168c8: a named file that does not load zeroes the cursor image, so the cursor
+            // shows nothing; cached, so the miss is tried once.
+            let built = decoded.or_else(|| {
+                warn!("cursor {stem}.blp missing/undecodable — the cursor is blank");
+                build_cursor(32, 32, &[0; 32 * 32 * 4])
+            });
+            if let Some(cursor) = built {
+                cursors.0.insert(stem.clone(), cursor);
+            }
+        }
         // The key names the chosen cursor, so `NSCursor::set`, a WindowServer round-trip that can
         // stall the main thread for milliseconds, fires only on a change or a drift.
         let key = held_icon
@@ -725,6 +765,29 @@ mod tests {
             .run_system_once(drive_displayed_cursor)
             .expect("the displayed cursor drives");
         app.world().resource::<DisplayedCursor>().0
+    }
+
+    /// The insignia kinds draw from the preloaded table; a creature's own cursor name is the one
+    /// stem decoded on demand (`0x715f20`).
+    #[test]
+    fn only_a_named_creature_cursor_decodes_on_demand() {
+        for kind in [CursorKind::SkinHorde, CursorKind::SkinAlliance] {
+            for unable in [false, true] {
+                let stem = WorldCursor { kind, unable }.stem();
+                assert!(CURSOR_STEMS.contains(&stem.as_str()), "{stem} preloads");
+                assert!(!named_stem(&DisplayedCursor(WorldCursor { kind, unable })));
+            }
+        }
+        let directions = WorldCursor {
+            kind: CursorKind::Named("Directions"),
+            unable: true,
+        };
+        assert_eq!(directions.stem(), "UnableDirections");
+        assert!(named_stem(&DisplayedCursor(directions)));
+        assert_eq!(
+            cursor_path("Directions"),
+            r"Interface\Cursor\Directions.blp"
+        );
     }
 
     /// The reference parks cursor index 1 before the loading screen goes up.

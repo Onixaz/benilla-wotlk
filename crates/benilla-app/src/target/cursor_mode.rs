@@ -31,6 +31,10 @@ pub(crate) enum CursorKind {
     Trainer,
     Taxi,
     Skin,
+    /// SkinHorde(20) and SkinAlliance(21): the enemy faction's insignia over a player's body, picked
+    /// by the player's own side ([`insignia_cursor`]).
+    SkinHorde,
+    SkinAlliance,
     /// Repair(17): never set by the world classifier; the UI's repair-mode base cursor
     /// (`ShowRepairCursor`).
     Repair,
@@ -84,8 +88,8 @@ const CURSOR_TABLE: [(&str, CursorKind); 26] = [
     ("RepairNPC", CursorKind::RepairNpc),
     // Item(19), the use-item cursor; no world unit names it.
     ("Item", CursorKind::Interact),
-    ("SkinHorde", CursorKind::Skin),
-    ("SkinAlliance", CursorKind::Skin),
+    ("SkinHorde", CursorKind::SkinHorde),
+    ("SkinAlliance", CursorKind::SkinAlliance),
     ("Innkeeper", CursorKind::Innkeeper),
     ("Quest", CursorKind::Quest),
     ("QuestRepeatable", CursorKind::QuestRepeatable),
@@ -134,6 +138,8 @@ impl CursorKind {
             CursorKind::Trainer => "Trainer",
             CursorKind::Taxi => "Taxi",
             CursorKind::Skin => "Skin",
+            CursorKind::SkinHorde => "SkinHorde",
+            CursorKind::SkinAlliance => "SkinAlliance",
             CursorKind::Repair => "Repair",
             CursorKind::Mail => "Mail",
             CursorKind::Mine => "Mine",
@@ -240,14 +246,54 @@ fn skin_leg_spell(
     (subject != crate::ui_action::SkinSubject::PlayerOrCorpse || !can_assist()).then_some(spell)
 }
 
-/// The skin leg's cursor by the skinning type (`0x715e50`, `0x4f7ece`): Skin(12) for leather,
-/// GatherHerbs(13) for herb, Mine(11) for rock and bolts.
-fn skin_cursor(store: &ObjectStore, names: Option<&crate::names::NameCache>) -> CursorKind {
+/// The skin leg's cursor: a player's body takes the insignia by the player's side (`0x4f7e6f`), a
+/// creature its skinning type (`0x715e50`, `0x4f7ece`): Skin(12) for leather, GatherHerbs(13) for
+/// herb, Mine(11) for rock and bolts.
+fn skin_cursor(
+    store: &ObjectStore,
+    names: Option<&crate::names::NameCache>,
+    side: Option<u8>,
+) -> CursorKind {
     use crate::ui_action::SkinSubject;
     match SkinSubject::of(store, names) {
-        SkinSubject::PlayerOrCorpse => CursorKind::Skin,
+        SkinSubject::PlayerOrCorpse => insignia_cursor(side),
         SkinSubject::Creature { type_flags } => skin_cursor_kind(type_flags),
     }
+}
+
+/// The player's own PvP side (`0x6d6e90`): his race's template group `& 4` is 0 (Horde), else
+/// `& 2` is 1 (Alliance), else none.
+fn pvp_faction_index(self_store: &ObjectStore, factions: Option<&Factions>) -> Option<u8> {
+    let template = factions?
+        .catalog()
+        .race_template(self_store.0.unit_race()?)?;
+    if template.group_mask & 4 != 0 {
+        Some(0)
+    } else if template.group_mask & 2 != 0 {
+        Some(1)
+    } else {
+        None
+    }
+}
+
+/// The insignia cursor, the enemy side's emblem by the player's own (`0x9f9864`, its `Unable`
+/// twins at `0x9f986c`): Horde (0) sees SkinAlliance(21), Alliance (1) SkinHorde(20). The
+/// reference indexes the tables at -1 for no side; that reads Point here.
+fn insignia_cursor(side: Option<u8>) -> CursorKind {
+    match side {
+        Some(0) => CursorKind::SkinAlliance,
+        Some(1) => CursorKind::SkinHorde,
+        _ => CursorKind::Point,
+    }
+}
+
+/// The skin legs' reach: the skinning spell's max range squared against the centre distance
+/// squared, unable only when strictly beyond it, so a NaN passes (`0x4f7e78`, `0x4f812e`).
+fn in_skin_reach(max_range: f32, dist_sq: f32) -> bool {
+    !matches!(
+        (max_range * max_range).partial_cmp(&dist_sq),
+        Some(std::cmp::Ordering::Less)
+    )
 }
 
 fn skin_cursor_kind(type_flags: u32) -> CursorKind {
@@ -665,8 +711,11 @@ struct CorpseFacts {
     lootable: bool,
     /// `CORPSE_FIELD_FLAGS` bit 5, `CORPSE_FLAG_LOOTABLE`: the PvP insignia.
     insignia: bool,
-    /// Latched by learning a `SPELL_EFFECT_SKIN_PLAYER_CORPSE` spell.
-    skin_latch: bool,
+    /// The insignia leg's skinning spell slot (`0x53bce0`) as its max range (`0x802c30`); `None`
+    /// with no slot learned or when the corpse assist check (`0x71f890`) passes.
+    insignia_range: Option<f32>,
+    /// The player's own PvP side ([`pvp_faction_index`]).
+    side: Option<u8>,
     /// `d2`, centre to centre.
     dist_sq: f32,
     /// The already-looting override: `[player+0x1d28/2c] == corpse GUID`.
@@ -678,6 +727,7 @@ struct CorpseFacts {
     shift_held: bool,
 }
 
+/// The corpse classifier (`0x4f8000`).
 fn corpse_cursor(f: CorpseFacts) -> Option<(CursorKind, bool)> {
     // Leg 1, lootable: able within the loot check's reach or while this corpse's loot window is
     // open; Pickup or LootAll by key 0, grayed.
@@ -685,11 +735,13 @@ fn corpse_cursor(f: CorpseFacts) -> Option<(CursorKind, bool)> {
         let able = f.can_auto_interact || f.dist_sq <= CORPSE_INTERACT_RANGE_SQ || f.looting_this;
         return Some((loot_cursor(f.auto_loot, f.shift_held), !able));
     }
-    // Leg 2, the PvP insignia, inert in 1.12.1 as no player holds a latching spell. Not applied:
-    // its third term `!(player, corpse)`, and the faction's SkinAlliance(20) or SkinHorde(19)
-    // cursor, shown here as Skin.
-    if f.insignia && f.skin_latch {
-        return Some((CursorKind::Skin, f.dist_sq > CORPSE_INTERACT_RANGE_SQ));
+    // Leg 2, the PvP insignia (`0x4f80dd`): the flag, a skinning slot and a body the player cannot
+    // assist, then the side's insignia, grayed beyond the spell's range.
+    if let Some(max_range) = f.insignia_range.filter(|_| f.insignia) {
+        return Some((
+            insignia_cursor(f.side),
+            !in_skin_reach(max_range, f.dist_sq),
+        ));
     }
     None // the reference's "else clear": Point
 }
@@ -732,8 +784,12 @@ pub(super) struct CursorInputs<'w, 's> {
     self_q: Query<'w, 's, (&'static Transform, &'static ObjectStore), With<SelfPlayer>>,
     go_inputs: super::lock::GoLockInputs<'w, 's>,
     player_actions: Res<'w, crate::ui_action::PlayerActions>,
-    // The skin legs' learned-spell latches.
+    // The skin legs' learned-spell slots.
     learned: Res<'w, crate::ui_action::LearnedAbilities>,
+    // The skin legs' range lookup (`0x802c30`): the spell rows, their modifiers and the units.
+    spells: Option<Res<'w, crate::ui_action::Spells>>,
+    spell_mods: Option<Res<'w, crate::spell::SpellModifiers>>,
+    range_units: crate::spell::RangeUnits<'w, 's>,
     quest: Res<'w, crate::ui_quest::QuestGiver>,
     loot_cfg: Res<'w, crate::ui_loot::LootConfig>,
     keys: Res<'w, ButtonInput<KeyCode>>,
@@ -768,8 +824,30 @@ pub(super) fn classify(
         loot_latch,
         stone,
         names,
+        spells,
+        spell_mods,
+        range_units,
     } = inputs;
     let party = super::party_of(group.as_deref());
+    // The skinning spell's max range from the player toward `target` (`0x802c30`); a spell with no
+    // row reads 0, as the lookup zeroes both bounds.
+    let skin_max_range = |spell_id: u32, target: Option<benilla_formats::RangeUnit>| -> f32 {
+        let range = (|| {
+            let spells = spells.as_deref()?;
+            let d = spells.catalog.get(spell_id)?;
+            let row = spells.ranges.get(d.range_index);
+            let caster = range_units.caster();
+            let targets = benilla_formats::RangeTargets {
+                target,
+                attack_target: range_units.caster_attack_target(),
+            };
+            match spell_mods.as_deref() {
+                Some(mods) => mods.min_max_range(d, row, caster, targets),
+                None => benilla_formats::min_max_range(d, row, caster, targets),
+            }
+        })();
+        range.map_or(0.0, |(_, max)| max)
+    };
     let can_auto_interact = crate::player::can_auto_interact(
         approach.enabled,
         self_q.single().ok().map(|(_, s)| s),
@@ -854,10 +932,10 @@ pub(super) fn classify(
                 ));
             }
             // Skin also needs the corpse's learned slot ([`unit_skin_spell`]): a miner over a
-            // beast, or anyone over a friendly player's body, sees Point. Not applied: a player's
-            // SkinHorde/SkinAlliance (shown as Skin) and the gray at the spell's range.
-            if store.0.unit_flags() & UNIT_FLAG_SKINNABLE != 0
-                && unit_skin_spell(
+            // beast, or anyone over a friendly player's body, sees Point. Grayed beyond the
+            // spell's own range (`0x4f7e5b`).
+            if store.0.unit_flags() & UNIT_FLAG_SKINNABLE != 0 {
+                if let Some(spell) = unit_skin_spell(
                     learned,
                     store,
                     Some(self_store),
@@ -865,10 +943,15 @@ pub(super) fn classify(
                     reputations,
                     party,
                     names.as_deref(),
-                )
-                .is_some()
-            {
-                return Some((skin_cursor(store, names.as_deref()), !in_melee));
+                ) {
+                    let max_range =
+                        skin_max_range(spell, hovered.target.and_then(|e| range_units.unit(e)));
+                    let side = pvp_faction_index(self_store, factions.as_deref());
+                    return Some((
+                        skin_cursor(store, names.as_deref(), side),
+                        !in_skin_reach(max_range, dist_sq),
+                    ));
+                }
             }
             return None; // a plain corpse: Point
         }
@@ -912,12 +995,20 @@ pub(super) fn classify(
     let resolve_corpse = || {
         let (corpse_tf, store, _) = units.get(hovered.corpse?).ok()?;
         let store = store?;
-        let (self_tf, _) = self_q.single().ok()?;
+        let (self_tf, self_store) = self_q.single().ok()?;
         let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+        let insignia = store.0.corpse_pvp_insignia();
+        // The corpse leg passes no target to the range lookup (`0x4f810a`).
+        let insignia_range = learned
+            .skin_player_corpse
+            .filter(|_| insignia)
+            .filter(|_| !super::corpse_friendly(store, factions.as_deref(), Some(self_store)))
+            .map(|spell| skin_max_range(spell, None));
         corpse_cursor(CorpseFacts {
             lootable: store.0.corpse_lootable(),
-            insignia: store.0.corpse_pvp_insignia(),
-            skin_latch: learned.skin_player_corpse.is_some(),
+            insignia,
+            insignia_range,
+            side: pvp_faction_index(self_store, factions.as_deref()),
             dist_sq: corpse_tf.translation.distance_squared(self_tf.translation),
             looting_this: loot_latch.0.is_some() && loot_latch.0 == hovered.corpse_guid,
             can_auto_interact,
@@ -1045,33 +1136,20 @@ mod tests {
             }),
             Some((CursorKind::Pickup, false))
         );
-        let insignia = |skin_latch, dist_sq| CorpseFacts {
-            insignia: true,
-            skin_latch,
-            dist_sq,
-            ..CorpseFacts::default()
-        };
-        assert_eq!(corpse_cursor(insignia(false, near)), None);
-        assert_eq!(
-            corpse_cursor(insignia(true, near)),
-            Some((CursorKind::Skin, false))
-        );
-        assert_eq!(
-            corpse_cursor(insignia(true, far)),
-            Some((CursorKind::Skin, true))
-        );
         // The reference tests lootable first.
         assert_eq!(
             corpse_cursor(CorpseFacts {
                 insignia: true,
-                skin_latch: true,
+                insignia_range: Some(5.0),
+                side: Some(0),
                 ..bones(near)
             }),
             Some((CursorKind::Pickup, false))
         );
         // Your own corpse sets neither flag.
         let mine = |dist_sq| CorpseFacts {
-            skin_latch: true,
+            insignia_range: Some(5.0),
+            side: Some(0),
             dist_sq,
             ..CorpseFacts::default()
         };
@@ -1084,6 +1162,103 @@ mod tests {
             }),
             None
         );
+    }
+
+    /// The insignia leg (`0x4f80dd`): the enemy side's emblem by the player's own side through
+    /// `0x9f9864`, its `Unable` twin beyond the spell's range squared (`0x9f986c`).
+    #[test]
+    fn the_insignia_corpse_shows_the_enemy_sides_emblem() {
+        const HORDE: Option<u8> = Some(0);
+        const ALLIANCE: Option<u8> = Some(1);
+        let insignia = |side, dist_sq| CorpseFacts {
+            insignia: true,
+            insignia_range: Some(5.0),
+            side,
+            dist_sq,
+            ..CorpseFacts::default()
+        };
+        assert_eq!(
+            corpse_cursor(insignia(HORDE, 25.0)),
+            Some((CursorKind::SkinAlliance, false)),
+            "a Horde player in reach, the boundary inclusive"
+        );
+        assert_eq!(
+            corpse_cursor(insignia(ALLIANCE, 4.0)),
+            Some((CursorKind::SkinHorde, false))
+        );
+        let far = corpse_cursor(insignia(HORDE, 25.01)).unwrap();
+        assert_eq!(far, (CursorKind::SkinAlliance, true));
+        assert_eq!(
+            WorldCursor {
+                kind: far.0,
+                unable: far.1
+            }
+            .stem(),
+            "UnableSkinAlliance"
+        );
+        let far = corpse_cursor(insignia(ALLIANCE, 30.0)).unwrap();
+        assert_eq!(
+            WorldCursor {
+                kind: far.0,
+                unable: far.1
+            }
+            .stem(),
+            "UnableSkinHorde"
+        );
+        // No slot learned, or a friendly body (the assist check passes): Point.
+        assert_eq!(
+            corpse_cursor(CorpseFacts {
+                insignia_range: None,
+                ..insignia(HORDE, 1.0)
+            }),
+            None
+        );
+        // A slot but no insignia flag: Point.
+        assert_eq!(
+            corpse_cursor(CorpseFacts {
+                insignia: false,
+                ..insignia(HORDE, 1.0)
+            }),
+            None
+        );
+        // A spell with no row reads range 0: only the caster's own spot is in reach.
+        assert_eq!(
+            corpse_cursor(CorpseFacts {
+                insignia_range: Some(0.0),
+                ..insignia(HORDE, 0.01)
+            }),
+            Some((CursorKind::SkinAlliance, true))
+        );
+    }
+
+    /// The side digit (`0x6d6e90`) and the two tables, and the unit leg's player arm (`0x4f7e6f`).
+    #[test]
+    fn the_insignia_follows_the_players_own_side() {
+        assert_eq!(insignia_cursor(Some(0)), CursorKind::SkinAlliance);
+        assert_eq!(insignia_cursor(Some(1)), CursorKind::SkinHorde);
+        assert_eq!(insignia_cursor(None), CursorKind::Point);
+        assert!(in_skin_reach(5.0, 25.0));
+        assert!(!in_skin_reach(5.0, 25.01));
+        assert!(
+            in_skin_reach(f32::NAN, 25.0),
+            "unordered takes the in-reach arm"
+        );
+        // The side reads the player's race template's group mask, `& 4` first.
+        let fx_factions = crate::spell::targeting::corpse_fixture::factions();
+        let of_race = |race: u8| {
+            // `UNIT_FIELD_BYTES_0` (field 36) byte 0, the race.
+            let store = ObjectStore(benilla_protocol::ObjectFields::from_pairs(&[(
+                36,
+                u32::from(race),
+            )]));
+            pvp_faction_index(&store, Some(&fx_factions))
+        };
+        assert_eq!(of_race(1), Some(1), "a human is Alliance");
+        assert_eq!(of_race(2), Some(0), "an orc is Horde");
+        assert_eq!(of_race(9), None, "a race with no template row");
+        // The name table now names the insignia kinds, so a creature cursor name does too.
+        assert_eq!(cursor_from_name("SkinHorde"), CursorKind::SkinHorde);
+        assert_eq!(cursor_from_name("skinalliance"), CursorKind::SkinAlliance);
     }
 
     #[test]

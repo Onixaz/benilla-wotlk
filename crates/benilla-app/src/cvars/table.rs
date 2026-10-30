@@ -311,9 +311,11 @@ pub(crate) const REGISTERED_WOTLK: &[Registered] = &[
     // past 168 sets. The knob is `benilla_assets::TexFilterSetting`.
     same("textureFilteringMode", "1"),
     // `componentTextureLevel` (`0x401ff0`, "8"), read once: the composited body texture is
-    // `1 << level` px square, clamped to [7, 9]. The knob is
-    // `crate::entities::skin_composite::ComponentLevel`.
+    // `1 << level` px square, clamped to [7, 9]. `componentThread` and `componentCompress` (both
+    // "1") make it DXT1 on 2+ cores. The knob is `crate::video::ComponentTextureLevel`.
     same("componentTextureLevel", "8"),
+    same("componentThread", "1"),
+    same("componentCompress", "1"),
     // The sound system's rows: the chat-duck volumes and the listener seat.
     same("ChatMusicVolume", "0.3"),
     same("ChatSoundVolume", "0.4"),

@@ -1,8 +1,8 @@
-//! Composited body skins, one atlas per look, `1 << componentTextureLevel` px square: the overlays
-//! blit at every authored level of the 512² base skin, and the levels above the side are dropped,
-//! as the reference composites each section at its `>> (9 - level)` size (`0x4f1a20`). A level
-//! change re-composites every cached look into its own image, so standing bodies keep their
-//! materials. An arriving body's first composite runs off the main thread: the reference's world
+//! Composited body skins, one atlas per look, `1 << componentTextureLevel` px square: the base
+//! skin's levels above the side are dropped and each overlay pastes at its section's
+//! `>> (9 - level)` size (`0x4f1a20`), then the atlas encodes to DXT1 when the bake compresses
+//! ([`crate::video::component_bake`]). A setting change re-composites every cached look into its
+//! own image, so standing bodies keep their materials. An arriving body's first composite runs off the main thread: the reference's world
 //! composite is unforced, so its section loads poll and never block the frame, and it draws nothing
 //! of a unit whose first composite has not finished, its render gate answering the unforced
 //! composite's result. Only the forced callers wait on their loads: the glue model, the dressing
@@ -71,9 +71,9 @@ pub(super) struct SkinComposites {
     pub(super) done: SpatialCache<SkinKey, Option<Handle<Image>>>,
     /// Composites on the async compute pool, one per look however many bodies wait on it.
     running: HashMap<SkinKey, Task<Option<BlpMipChain>>>,
-    /// The atlas side, `1 << componentTextureLevel`.
-    side: u32,
-    /// Looks re-compositing at a new side, into the image their bodies already show.
+    /// The atlas's side and format.
+    bake: crate::video::ComponentBake,
+    /// Looks re-compositing at a new bake, into the image their bodies already show.
     restyle: HashMap<SkinKey, Handle<Image>>,
 }
 
@@ -82,7 +82,7 @@ impl Default for SkinComposites {
         Self {
             done: SpatialCache::default(),
             running: HashMap::new(),
-            side: 1 << crate::video::ComponentTextureLevel::default().0,
+            bake: crate::video::ComponentTextureLevel::default().bake(),
             restyle: HashMap::new(),
         }
     }
@@ -97,7 +97,10 @@ impl SkinComposites {
         sections: &SkinSections,
         plan: impl FnOnce() -> Option<CompositePlan>,
     ) -> BodyAtlas {
-        self.request_with(key, || plan().map(|p| work(p, sections.chain.clone())))
+        let bake = self.bake;
+        self.request_with(key, || {
+            plan().map(|p| work(p, sections.chain.clone(), bake))
+        })
     }
 
     /// [`Self::request`] over any work, so the lane is testable without the install.
@@ -130,9 +133,10 @@ impl SkinComposites {
         plan: impl FnOnce() -> Option<CompositePlan>,
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>> {
+        let bake = self.bake;
         self.force_with(
             key,
-            || plan().map(|p| work(p, sections.chain.clone())),
+            || plan().map(|p| work(p, sections.chain.clone(), bake)),
             images,
         )
     }
@@ -154,25 +158,25 @@ impl SkinComposites {
         self.install(key, atlas, images)
     }
 
-    /// Take a new atlas side: every finished look re-composites at it, off the main thread, into
+    /// Take a new atlas bake: every finished look re-composites at it, off the main thread, into
     /// the image it already has. `plan` names a look's work again.
-    pub(super) fn set_side(
+    pub(super) fn set_bake(
         &mut self,
-        side: u32,
+        bake: crate::video::ComponentBake,
         sections: &SkinSections,
         mut plan: impl FnMut(&SkinKey) -> Option<CompositePlan>,
     ) -> usize {
-        if side == self.side {
+        if bake == self.bake {
             return 0;
         }
-        self.side = side;
+        self.bake = bake;
         let looks: Vec<(SkinKey, Handle<Image>)> = self
             .done
             .iter()
             .filter_map(|(k, h)| h.clone().map(|h| (*k, h)))
             .collect();
         for (key, handle) in &looks {
-            let Some(work) = plan(key).map(|p| work(p, sections.chain.clone())) else {
+            let Some(work) = plan(key).map(|p| work(p, sections.chain.clone(), bake)) else {
                 continue;
             };
             self.restyle.insert(*key, handle.clone());
@@ -214,13 +218,10 @@ impl SkinComposites {
         atlas: Option<BlpMipChain>,
         images: &mut Assets<Image>,
     ) -> Option<Handle<Image>> {
-        // Through the upload gate like every texture: a no-op on this RGBA8 composite, but it
-        // keeps the format and the bytes in agreement.
-        let side = self.side;
-        let image = atlas.map(|mut a| {
-            a.trim_to(side);
-            repeat_texture_authored(benilla_assets::for_upload(a), (true, true))
-        });
+        // Through the upload gate like every texture: DXT1 blocks upload as they are, or decode
+        // where the device takes no BC.
+        let image =
+            atlas.map(|a| repeat_texture_authored(benilla_assets::for_upload(a), (true, true)));
         let handle = match (self.restyle.remove(&key), image) {
             // A re-composite lands in the image its bodies already show.
             (Some(handle), Some(image)) => {
@@ -247,12 +248,21 @@ impl SkinComposites {
     }
 }
 
-/// A plan's work over the shared chain, which each read locks for its archive lookup alone.
-fn work(plan: CompositePlan, chain: Arc<Mutex<Chain>>) -> Work {
+/// A plan's work over the shared chain, which each read locks for its archive lookup alone, at the
+/// bake's side and in its format.
+fn work(plan: CompositePlan, chain: Arc<Mutex<Chain>>, bake: crate::video::ComponentBake) -> Work {
     Box::new(move || {
-        plan.run(|path| read_texture(&chain, path))
+        let atlas = plan
+            .run(1 << bake.level, |path| read_texture(&chain, path))
             .inspect_err(|e| warn!("body skin composite failed: {e:#}"))
-            .ok()
+            .ok()?;
+        // Every paste writes alpha 0xFF (`0x4e89f0`), so the DXT1 bake is opaque; uncompressed it
+        // stays RGBA8, not the reference's RGB565, which only saves memory.
+        Some(if bake.compress {
+            atlas.into_bc1_opaque()
+        } else {
+            atlas
+        })
     })
 }
 
@@ -284,7 +294,7 @@ pub(super) fn land_skin_composites(
     }
 }
 
-/// `componentTextureLevel` into the atlas side; on a change every cached look re-composites.
+/// The component CVars into the atlas bake; on a change every cached look re-composites.
 pub(super) fn follow_component_level(
     level: Res<crate::video::ComponentTextureLevel>,
     sections: Option<Res<SkinSections>>,
@@ -297,14 +307,15 @@ pub(super) fn follow_component_level(
     let Some(sections) = sections else {
         return;
     };
-    let side = 1u32 << level.0;
-    let n = composites.set_side(side, &sections, |key| {
+    let bake = level.bake();
+    let n = composites.set_bake(bake, &sections, |key| {
         super::attach::composite_plan(key, &sections, displays.as_deref())
     });
     if n > 0 {
         info!(
-            "componentTextureLevel {}: {n} body skin(s) re-compositing at {side}²",
-            level.0
+            "component bake {}² (compressed {}): {n} body skin(s) re-compositing",
+            1u32 << bake.level,
+            bake.compress
         );
     }
 }

@@ -68,6 +68,29 @@ fn one_composite_costs() {
         median(geared).as_secs_f64() * 1e3
     );
 
+    // The geared look at the stock bake, 256 px square, and the DXT1 encode the bake adds after.
+    let plan = cs
+        .composite_plan(1, 0, 0, 0, 0, 0, 0, worn(&SETS[0]), None, false)
+        .expect("base row");
+    let (mut baked, mut encoded) = (Vec::new(), Vec::new());
+    for _ in 0..20 {
+        let t = Instant::now();
+        let atlas = plan
+            .run(256, |p| {
+                benilla_formats::read_texture_mip_chain(&mut chain, p)
+            })
+            .expect("composite");
+        baked.push(t.elapsed());
+        let t = Instant::now();
+        std::hint::black_box(atlas.into_bc1_opaque());
+        encoded.push(t.elapsed());
+    }
+    println!(
+        "COMPOSITE tier-2 at 256: median {:.2} ms, DXT1 encode median {:.2} ms",
+        median(baked).as_secs_f64() * 1e3,
+        median(encoded).as_secs_f64() * 1e3
+    );
+
     // A crowd of 40 distinct looks arriving together: eight races, both sexes, the nine sets.
     let races = [1u8, 2, 3, 4, 5, 6, 7, 8];
     let t = Instant::now();

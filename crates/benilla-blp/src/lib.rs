@@ -358,6 +358,18 @@ pub fn decode_level(texels: BlpTexels, width: u32, height: u32, bytes: &[u8]) ->
     out
 }
 
+/// Encode one RGBA8 level as BC1 blocks with the fast range fit; a partial edge block pads.
+pub fn encode_bc1_level(width: u32, height: u32, rgba: &[u8]) -> Vec<u8> {
+    let fmt = texpresso::Format::Bc1;
+    let mut out = vec![0u8; fmt.compressed_size(width as usize, height as usize)];
+    let params = texpresso::Params {
+        algorithm: texpresso::Algorithm::RangeFit,
+        ..Default::default()
+    };
+    fmt.compress(rgba, width as usize, height as usize, params, &mut out);
+    out
+}
+
 /// `data` zero-padded or truncated to exactly `need` bytes. A zero BC block is black at alpha 0,
 /// so a DXTC level is completed from the file first (`Header::dxt_level_span`).
 fn pad_to(data: &[u8], need: usize) -> Vec<u8> {
