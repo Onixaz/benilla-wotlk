@@ -9,7 +9,7 @@ use bevy::math::Rect;
 use bevy::prelude::*;
 
 use benilla_assets::coords::bevy_to_wow;
-use benilla_formats::{LockCatalog, ShapeshiftForm, LOCK_KEY_SKILL};
+use benilla_formats::{LockCatalog, ShapeshiftForm};
 use benilla_protocol::EntityKind;
 use benilla_ui::script::{TownKind, TownType};
 
@@ -32,8 +32,6 @@ const UNIT_DYNFLAG_TRACK_UNIT: u32 = 0x2;
 const TYPE_FLAG_INTERACT_WHILE_DEAD: u32 = 0x80;
 /// The profession-trainer `UNIT_NPC_FLAGS` bit: a town type tracking it adds the title line.
 const NPC_FLAG_PROFESSION_TRAINER: u32 = 0x40;
-/// `GAMEOBJECT_TYPE_FISHINGHOLE`, which the object tracking check admits without the use check.
-const GO_TYPE_FISHINGHOLE: i32 = 25;
 /// `PLAYER_FLAGS` ghost bit.
 const PLAYER_FLAGS_GHOST: u32 = 0x10;
 
@@ -314,35 +312,23 @@ impl BlipWorld<'_> {
         if let Some(b) = self.quest_blip(guid) {
             return Some(b.into());
         }
-        // The object tracking check (`0x6dca90`).
-        if self.self_dead() {
-            return None;
-        }
-        let usable = type_id == GO_TYPE_FISHINGHOLE
-            || crate::target::cursor_mode::go_can_use(
-                f.gameobject_flags(),
-                f.gameobject_dynamic_flags(),
-                reaction,
-            );
         let lock = self.templates.get(guid).map_or(0, |t| t.lock_id);
-        (usable && tracked_resource(self.tracking.resources, lock, self.locks?))
-            .then_some(Blip::Tracked.into())
+        crate::go_templates::can_track_object(
+            self.self_dead(),
+            type_id,
+            || {
+                crate::target::cursor_mode::go_can_use(
+                    f.gameobject_flags(),
+                    f.gameobject_dynamic_flags(),
+                    reaction,
+                )
+            },
+            self.tracking.resources,
+            lock,
+            self.locks,
+        )
+        .then_some(Blip::Tracked.into())
     }
-}
-
-/// Resource tracking: any skill-keyed `Lock.dbc` slot whose `LockType` `n` has bit `1 << (n − 1)`
-/// set in `PLAYER_TRACK_RESOURCES`.
-fn tracked_resource(mask: u32, lock_id: u32, locks: &LockCatalog) -> bool {
-    if mask == 0 || lock_id == 0 {
-        return false;
-    }
-    locks.slots(lock_id).is_some_and(|slots| {
-        slots.iter().any(|s| {
-            s.key_type == LOCK_KEY_SKILL
-                && (1..=32).contains(&s.index)
-                && mask & (1u32 << (s.index - 1)) != 0
-        })
-    })
 }
 
 /// The unit tracking check's tracking half: `UNIT_DYNFLAG_TRACK_UNIT`, or our track-stealthed bit
@@ -442,18 +428,22 @@ pub(in crate::minimap) fn emit_object_blips(
     counts
 }
 
-/// `PartyRaidBlips.blp`'s 8×4 cell for a class, the party half (`0x57ff70`: `class − 1`).
-fn party_cell(class: u8) -> Option<[f32; 4]> {
-    let i = u32::from(class).checked_sub(1)?;
+/// `PartyRaidBlips.blp`'s 8×4 cell for a class (`0x57ff70`): `class − 1` on the party's list,
+/// `class + 15` on the raid's.
+fn group_cell(class: u8, raid: bool) -> Option<[f32; 4]> {
+    let i = u32::from(class).checked_sub(1)? + if raid { 16 } else { 0 };
     let (c, r) = ((i & 7) as f32, (i >> 3) as f32);
-    (i < 16).then_some([c / 8.0, (c + 1.0) / 8.0, r / 4.0, (r + 1.0) / 4.0])
+    (i < 32).then_some([c / 8.0, (c + 1.0) / 8.0, r / 4.0, (r + 1.0) / 4.0])
 }
 
-/// The in-range party dots, class-coloured, drawn before the object blips (`0x57ff70`). A
-/// member's class is its descriptor's, else the name query's.
-pub(in crate::minimap) fn emit_party_dots(
+/// The in-range group dots, class-coloured, drawn before the object blips (`0x57ff70`): the raid's
+/// list, then the party's above it. A member's class is its descriptor's, else the name query's;
+/// a member a tracked vehicle stands for draws none.
+#[allow(clippy::too_many_arguments)]
+pub(in crate::minimap) fn emit_group_dots(
     ctx: &BlipCtx,
     group: &crate::ui_party::GroupState,
+    possessors: &[u64],
     guids: &GuidIndex,
     unit_pos: &Query<&GlobalTransform, With<NetEntity>>,
     class_of: impl Fn(u64) -> Option<u8>,
@@ -461,7 +451,13 @@ pub(in crate::minimap) fn emit_party_dots(
     blips: &Handle<Image>,
     quads: &mut UiQuads,
 ) {
-    for m in group.party_slots() {
+    let rows = super::raid_rows(group)
+        .map(|m| (m, true))
+        .chain(group.party_slots().map(|m| (m, false)));
+    for (m, raid) in rows {
+        if possessors.contains(&m.guid) {
+            continue;
+        }
         let Some((x, y)) = party_member_pos(m, group, guids, unit_pos) else {
             continue;
         };
@@ -470,7 +466,7 @@ pub(in crate::minimap) fn emit_party_dots(
             continue; // out of range: the arrow pass drew it
         }
         let class = class_of(m.guid).or_else(|| names.player_traits(m.guid).map(|t| t.1));
-        let Some(cell) = class.and_then(party_cell) else {
+        let Some(cell) = class.and_then(|c| group_cell(c, raid)) else {
             continue;
         };
         quads.overlays.push(UiQuad {

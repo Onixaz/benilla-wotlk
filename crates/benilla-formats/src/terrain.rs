@@ -31,6 +31,10 @@ pub const STORMWIND_XY: (f32, f32) = (-8840.56, 489.7);
 /// Ground-texture repeats per chunk, one per cell: the reference's fixed 8, not a setting.
 pub const TERRAIN_LAYER_TILES: f32 = 8.0;
 
+/// The vertex colour 12340 gives a chunk without MCCV on a vertex-colour map, `0xff7f7f7f`
+/// (`0x7c4620`): the shader's neutral, `127/255 × 2 ≈ 1`.
+pub const MCCV_NEUTRAL: [u8; 4] = [127, 127, 127, 255];
+
 /// One MCNK as an indexed triangle mesh in raw WoW coords, plus its texturing data.
 #[derive(Debug, Clone)]
 pub struct ChunkMesh {
@@ -40,6 +44,9 @@ pub struct ChunkMesh {
     pub normals: Vec<[f32; 3]>,
     /// Texture coords, 0..1 across the chunk; the layers scale them by [`TERRAIN_LAYER_TILES`].
     pub uvs: Vec<[f32; 2]>,
+    /// MCCV vertex colours as RGBA, one per vertex, on a map whose WDT sets MPHD bit 1; a chunk
+    /// there without MCCV is [`MCCV_NEUTRAL`] throughout. Empty on any other map.
+    pub vertex_colors: Vec<[u8; 4]>,
     /// Triangle-list indices: four fan triangles per cell, holed blocks omitted.
     pub indices: Vec<u32>,
     /// Low-res hole bitmap (`MCNK+0x3C`): bit `(cellY>>1)·4 + (cellX>>1)` drops that 2×2 block.
@@ -333,11 +340,13 @@ impl TerrainLiquid {
 
 /// Build per-chunk meshes from one monolithic ADT file's bytes on map `map_id`.
 /// `big_alpha` is the map WDT's [`WdtFile::big_alpha`]: uncompressed alpha layers are 8-bit.
+/// `vertex_colors` is its [`WdtFile::vertex_colors`]: the chunks carry their MCCV colours.
 pub fn adt_to_tile_mesh(
     adt_bytes: &[u8],
     liquid: &TerrainLiquid,
     map_id: u32,
     big_alpha: bool,
+    vertex_colors: bool,
 ) -> Result<TileMesh> {
     let mut cursor = Cursor::new(adt_bytes);
     let parsed = parse_adt(&mut cursor).map_err(|e| anyhow::anyhow!("parsing ADT: {e}"))?;
@@ -363,6 +372,14 @@ pub fn adt_to_tile_mesh(
         let mut positions = Vec::with_capacity(145);
         let mut normals = Vec::with_capacity(if mcnr.is_some() { 145 } else { 0 });
         let mut uvs = Vec::with_capacity(145);
+        // MCCV is in MCVT order, as the vertices are laid out here.
+        let vertex_colors: Vec<[u8; 4]> = match (vertex_colors, &mcnk.vertex_colors) {
+            (false, _) => Vec::new(),
+            (true, Some(mccv)) => (0..145)
+                .map(|i| mccv.rgba(i).unwrap_or(MCCV_NEUTRAL))
+                .collect(),
+            (true, None) => vec![MCCV_NEUTRAL; 145],
+        };
         for row in 0..9u32 {
             for col in 0..9u32 {
                 let idx = (row * 17 + col) as usize;
@@ -499,6 +516,7 @@ pub fn adt_to_tile_mesh(
             positions,
             normals,
             uvs,
+            vertex_colors,
             indices,
             holes,
             base_texture,
@@ -675,12 +693,18 @@ pub fn load_tile_mesh_with(
     tile_x: u32,
     tile_y: u32,
 ) -> Result<TileMesh> {
-    let big_alpha = read_wdt(chain, map)?.big_alpha();
+    let wdt = read_wdt(chain, map)?;
     let path = format!("World\\Maps\\{map}\\{map}_{tile_x}_{tile_y}.adt");
     let bytes = chain
         .read_file(&path)
         .with_context(|| format!("reading {path}"))?;
-    adt_to_tile_mesh(&bytes, liquid, liquid.map_id(map), big_alpha)
+    adt_to_tile_mesh(
+        &bytes,
+        liquid,
+        liquid.map_id(map),
+        wdt.big_alpha(),
+        wdt.vertex_colors(),
+    )
 }
 
 /// Load every existing ADT tile within `radius` tiles of the world (x, y) on `map`.
@@ -730,6 +754,7 @@ mod tests {
             positions,
             normals: Vec::new(),
             uvs: Vec::new(),
+            vertex_colors: Vec::new(),
             indices,
             holes: 0,
             base_texture: None,
@@ -819,6 +844,49 @@ mod tests {
         );
     }
 
+    /// Northrend's WDT sets MPHD bit 1 and the old continents' do not; its chunks hand their MCCV
+    /// through in MCVT order, and the same tile meshed as a colourless map carries none.
+    #[test]
+    fn northrend_chunks_carry_their_mccv() {
+        let data = crate::wow_data_or_skip!();
+        let mut chain = crate::open_chain(&data).expect("open chain");
+        assert!(read_wdt(&mut chain, "Northrend").unwrap().vertex_colors());
+        assert!(!read_wdt(&mut chain, "Azeroth").unwrap().vertex_colors());
+
+        let bytes = chain
+            .read_file("World\\Maps\\Northrend\\Northrend_34_20.adt")
+            .unwrap();
+        let ParsedAdt::Root(root) = parse_adt(&mut Cursor::new(&bytes[..])).unwrap();
+        let liquid = TerrainLiquid::load(&chain).unwrap();
+        let tile =
+            adt_to_tile_mesh(&bytes, &liquid, liquid.map_id("Northrend"), true, true).unwrap();
+        let mut darkened = 0;
+        for chunk in &tile.chunks {
+            assert_eq!(chunk.vertex_colors.len(), chunk.positions.len());
+            let mcnk = root
+                .mcnk_chunks
+                .iter()
+                .find(|c| (c.header.index_x, c.header.index_y) == (chunk.index_x, chunk.index_y))
+                .unwrap();
+            match &mcnk.vertex_colors {
+                Some(mccv) => {
+                    assert_eq!(
+                        chunk.vertex_colors[17],
+                        mccv.rgba(17).unwrap(),
+                        "MCVT order"
+                    );
+                    darkened += chunk.vertex_colors.iter().filter(|c| c[0] < 127).count();
+                }
+                None => assert!(chunk.vertex_colors.iter().all(|&c| c == MCCV_NEUTRAL)),
+            }
+        }
+        assert!(darkened > 0, "Garm's tile paints some ground below neutral");
+
+        let plain =
+            adt_to_tile_mesh(&bytes, &liquid, liquid.map_id("Northrend"), true, false).unwrap();
+        assert!(plain.chunks.iter().all(|c| c.vertex_colors.is_empty()));
+    }
+
     /// Northrend's WDT sets big alpha and the old continents' do not; there a raw layer is 64×64
     /// bytes, decoded verbatim with no last row and column fix-up, as its chunks set `0x8000`.
     #[test]
@@ -847,7 +915,8 @@ mod tests {
             })
             .expect("a raw 8-bit layer in Northrend_36_18");
         let liquid = TerrainLiquid::load(&chain).unwrap();
-        let tile = adt_to_tile_mesh(&bytes, &liquid, liquid.map_id("Northrend"), true).unwrap();
+        let tile =
+            adt_to_tile_mesh(&bytes, &liquid, liquid.map_id("Northrend"), true, true).unwrap();
         let chunk = tile
             .chunks
             .iter()

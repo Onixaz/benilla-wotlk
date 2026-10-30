@@ -229,6 +229,22 @@ pub(crate) fn area_down_ray(
         .and_then(|c| (!c.outdoor).then_some(c.group))
 }
 
+/// The group owning the nearest face under `eye` whatever its flags, terrain raced, in model space:
+/// the group a standing entity is linked into, whose flags and `WMOAreaTable` row the minimap reads
+/// (`0x7a17e0`). `None` over open ground.
+pub fn standing_group(model: &WmoModel, eye: [f32; 3], terrain_z: Option<f32>) -> Option<usize> {
+    down_ray_claim(
+        &model.group_collision_tris,
+        &model.group_collision_bounds,
+        &model.group_collision_grids,
+        &model.group_nav,
+        eye,
+        terrain_z,
+        0,
+    )
+    .map(|c| c.group)
+}
+
 /// [`area_down_ray`] for linking a world object to a group (the map's object link, `0x7c25d0`): an
 /// interior group takes part only when the object's own point `mid` lies in its authored box, so a
 /// cast through a hole in an exterior floor cannot claim a room beneath it.

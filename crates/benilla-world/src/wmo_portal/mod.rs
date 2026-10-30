@@ -40,7 +40,7 @@ use probe::TraceLog;
 pub use probe::WmoCullProbe;
 pub use room_vis::room_pvs_visible;
 use seed::dominant_axes;
-pub use seed::{down_ray_seeds, floor_z_at, DownRaySeeds};
+pub use seed::{down_ray_seeds, floor_z_at, standing_group, DownRaySeeds};
 
 use crate::terrain_stream::{terrain_height_under, TerrainStreamer};
 use crate::view::WorldCamera;
@@ -1452,6 +1452,7 @@ mod tests {
     fn portal_model() -> WmoModel {
         WmoModel {
             wmo_id: 0,
+            root_bbox: None,
             submeshes: Vec::new(),
             submesh_group: Vec::new(),
             portal_vertices: vec![

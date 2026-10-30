@@ -214,6 +214,26 @@ impl WorldPoint<'_, '_> {
         ))
     }
 
+    /// The `WMOAreaTable` flags of a WMO's whole-WMO row and of one group's row, by exact key, as
+    /// the minimap reads them (`0x7f5cd7`); `None` for a missing row or without client data.
+    pub fn wmo_area_flags(
+        &self,
+        wmo_id: u32,
+        name_set: u32,
+        group_area_id: u32,
+    ) -> (Option<u32>, Option<u32>) {
+        let Some(areas) = self.wmo_areas.as_ref() else {
+            return (None, None);
+        };
+        (
+            areas.0.default_row(wmo_id, name_set).map(|r| r.flags),
+            areas
+                .0
+                .group_row(wmo_id, name_set, group_area_id)
+                .map(|r| r.flags),
+        )
+    }
+
     /// The player's zone-text interior claim: indoors comes from a down-ray under the player alone,
     /// so a doorway portal under the eye does not count.
     pub fn area_interior(&self) -> Option<crate::wmo_portal::WmoInteriorKeys> {

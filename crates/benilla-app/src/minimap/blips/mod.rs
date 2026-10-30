@@ -27,8 +27,13 @@
 //! since the reference's tooltip builder gives only its content.
 
 mod dots;
+mod vehicles;
 
-pub(super) use dots::{emit_object_blips, emit_party_dots, BlipWorld, ClassMemo, SelfTracking};
+pub(super) use dots::{emit_group_dots, emit_object_blips, BlipWorld, ClassMemo, SelfTracking};
+pub(super) use vehicles::{
+    emit_vehicle_blips, select_vehicles, tracked_vehicles, TrackedVehicle, VehicleSelection,
+    RIDING_ARROW_ALPHA, VEHICLE_ICONS,
+};
 
 use bevy::ecs::system::NonSendMut;
 use bevy::math::Rect;
@@ -61,6 +66,12 @@ pub(crate) const PLAYER_ARROW_TEXTURE: &str = "Interface\\Minimap\\MinimapArrow"
 /// The rim arrow's quad: `Rotating-MinimapArrow.m2`'s 0.0500-unit full-texture quads at 768 px
 /// per model unit (modelScale 0.6 × 1280), so the sprite needs no uv crop.
 const ARROW_QUAD_PX: f32 = 38.4;
+/// A group member's rim arrow: `0x580ae0` and `0x580ec0` draw the flat group-arrow texture on a
+/// quad of `0.045` of the screen height × 1.6667 (`0x57ded7`), 57.6 px on the 140.8-px basis, its
+/// uv square turned about the centre with corners at radius 1, so the art fills `1/√2` of it.
+const GROUP_ARROW_PX: f32 = 57.6 * std::f32::consts::FRAC_1_SQRT_2;
+/// The raid roster's capacity (`0x7f4390`).
+const RAID_ROWS_MAX: usize = 40;
 
 /// Which rim-arrow art a blip source draws. The minimap's one arrow model,
 /// `Rotating-MinimapArrow.m2`, picks among four arrow layers by sequence: in each looping sequence
@@ -74,7 +85,8 @@ const ARROW_QUAD_PX: f32 = 38.4;
 pub(crate) enum RimArrow {
     /// An `AreaPOI.dbc` landmark: sequence `0xa6`, `+0x48 == -2`, the white one.
     Landmark,
-    /// A party or raid member, or your pet: sequence `0xa5`, armed once and never re-armed.
+    /// A party or raid member, or your pet: sequence `0xa5`; the group passes draw its texture
+    /// flat ([`GROUP_ARROW_PX`]).
     Group,
     /// Your own corpse: sequence `0xa7`, `+0x48 == 2`.
     Corpse,
@@ -127,8 +139,10 @@ impl RimArrowArt {
         self.0.iter().any(Option::is_some)
     }
 }
-/// An in-range POI icon's quad, 16 px (frozen by the constructor).
-const POI_ICON_PX: f32 = 16.0;
+/// An in-range POI icon's quad, 16 px (frozen by the constructor), the corpse's too (`0x5827e2`).
+pub(super) const POI_ICON_PX: f32 = 16.0;
+/// The corpse's static POI icon (`0x7f4990`).
+pub(super) const CORPSE_POI_ICON: u32 = 8;
 
 /// The blip under the cursor this frame, for [`drive_blip_tooltip`].
 #[derive(Resource, Default)]
@@ -178,6 +192,24 @@ pub(super) type BlipInputs<'w, 's> = (
     Option<Res<'w, crate::area_poi::AreaPoiRes>>,
     ResMut<'w, super::MinimapPing>,
     Option<NonSendMut<'w, UiScript>>,
+    VehicleInputs<'w, 's>,
+);
+
+/// The vehicle pass's inputs: the streamed vehicles, their tables, our own seat, and a scratch
+/// list kept across frames.
+pub(super) type VehicleInputs<'w, 's> = (
+    Query<
+        'w,
+        's,
+        (
+            &'static crate::vehicle::Vehicle,
+            &'static GlobalTransform,
+            &'static ObjectStore,
+        ),
+    >,
+    Res<'w, crate::vehicle::VehicleTables>,
+    Query<'w, 's, &'static crate::vehicle::Passenger, With<SelfPlayer>>,
+    Local<'s, Vec<TrackedVehicle>>,
 );
 
 /// Every streamed object the classifier considers; our own avatar is the arrow, never a dot.
@@ -276,13 +308,36 @@ pub(super) fn select_landmarks<'a>(
     LandmarkSelection { icons, arrows }
 }
 
-/// The `POIIcons.blp` 8×8-grid cell for an `Icon`, gated `Icon < 0x40`.
-fn poi_icon_cell(icon: u32) -> Option<[f32; 4]> {
-    if icon >= 64 {
+/// The `POIIcons.blp` atlas and its width in texels, which its cells are cut from.
+pub(super) struct PoiAtlas {
+    pub(super) tex: Handle<Image>,
+    pub(super) width: u32,
+}
+
+impl PoiAtlas {
+    /// `Icon`'s cell (`0x5832f0`): 196 cells, 14 a row, each 18 texels of the texture's width on
+    /// both axes with a one-texel inset; the draw gates `Icon < 196` (`0x5826b9`).
+    pub(super) fn cell(&self, icon: u32) -> Option<[f32; 4]> {
+        poi_icon_cell(icon, self.width)
+    }
+}
+
+/// The POI atlas's cell count, 14 × 14 (`0x5832f0`).
+const POI_CELLS: u32 = 196;
+/// The POI atlas's columns, `sqrt(196)`.
+const POI_COLUMNS: u32 = 14;
+/// A POI cell's pitch in texels.
+const POI_CELL_TEXELS: f32 = 18.0;
+
+fn poi_icon_cell(icon: u32, width: u32) -> Option<[f32; 4]> {
+    if icon >= POI_CELLS || width == 0 {
         return None;
     }
-    let (c, r) = ((icon % 8) as f32, (icon / 8) as f32);
-    Some([c / 8.0, (c + 1.0) / 8.0, r / 8.0, (r + 1.0) / 8.0])
+    let texel = 1.0 / width as f32;
+    let pitch = POI_CELL_TEXELS * texel;
+    let u0 = (icon % POI_COLUMNS) as f32 * pitch + texel;
+    let v0 = (icon / POI_COLUMNS) as f32 * pitch + texel;
+    Some([u0, u0 + pitch - texel, v0, v0 + pitch - texel])
 }
 
 /// Draw the in-range POI icons, then the rim arrows; the later-drawn hover hit wins.
@@ -292,7 +347,7 @@ pub(super) fn emit_landmarks(
     marker: Option<&AreaPoi>,
     map_id: u32,
     arrows: &RimArrowArt,
-    poi_icons: Option<&Handle<Image>>,
+    poi_icons: Option<&PoiAtlas>,
     quads: &mut UiQuads,
     hover: &mut MinimapBlipHover,
 ) {
@@ -304,9 +359,9 @@ pub(super) fn emit_landmarks(
         ctx.wy,
         ctx.radius_yd,
     );
-    if let Some(icons_tex) = poi_icons {
+    if let Some(atlas) = poi_icons {
         for poi in &sel.icons {
-            let Some(cell) = poi_icon_cell(poi.icon) else {
+            let Some(cell) = atlas.cell(poi.icon) else {
                 continue;
             };
             let rect = Rect::from_center_size(
@@ -316,7 +371,7 @@ pub(super) fn emit_landmarks(
             quads.overlays.push(UiQuad {
                 rect,
                 z_key: ctx.z,
-                texture: Some(icons_tex.clone()),
+                texture: Some(atlas.tex.clone()),
                 uv: UvRect::from_tex_coords(cell),
                 color: [1.0, 1.0, 1.0, ctx.alpha],
                 ..default()
@@ -332,7 +387,7 @@ pub(super) fn emit_landmarks(
         let Some(tex) = arrows.get(*art) else {
             continue;
         };
-        let rect = push_rim_arrow(ctx, poi.pos, tex, quads);
+        let rect = push_rim_arrow(ctx, poi.pos, tex, ARROW_QUAD_PX, quads);
         if let (Some(c), Some(ui)) = (ctx.cursor, ctx.cursor_ui) {
             if rect.contains(c) {
                 *hover = MinimapBlipHover::Landmark(poi.name.clone(), ui);
@@ -341,19 +396,20 @@ pub(super) fn emit_landmarks(
     }
 }
 
-/// One rim arrow on the 0.8 rim, pointing at its target, drawn in one pass as only one of the
-/// model's layers is ever opaque. Returns its rect for the hover test.
+/// One rim arrow of `px` on the 0.8 rim, pointing at its target, drawn in one pass as only one of
+/// the model's layers is ever opaque. Returns its rect for the hover test.
 fn push_rim_arrow(
     ctx: &BlipCtx,
     target: [f32; 3],
     tex: &Handle<Image>,
+    px: f32,
     quads: &mut UiQuads,
 ) -> Rect {
     let dir = ctx.offset(target).normalize_or_zero();
     let pos = ctx.center + dir * (ctx.side * 0.5 * BLIP_EDGE_RATIO);
     // Quad rotation is clockwise on a y-down screen and the art points up at zero.
     let rotation = dir.x.atan2(-dir.y);
-    let rect = Rect::from_center_size(pos, Vec2::splat(ctx.side * (ARROW_QUAD_PX / BLIP_BASIS_PX)));
+    let rect = Rect::from_center_size(pos, Vec2::splat(ctx.side * (px / BLIP_BASIS_PX)));
     quads.overlays.push(UiQuad {
         rect,
         z_key: ctx.z,
@@ -384,28 +440,49 @@ pub(crate) fn party_member_pos(
         .map(|(x, y)| (f32::from(x), f32::from(y)))
 }
 
-/// The party and corpse rim arrows, the out-of-range half of the party placement, drawn before the
-/// player arrow.
+/// The raid roster's rows the raid list draws (`0x7f4390`): those outside our own subgroup, whom
+/// the party slots do not carry.
+pub(super) fn raid_rows(
+    group: &crate::ui_party::GroupState,
+) -> impl Iterator<Item = &benilla_protocol::messages::GroupMemberEntry> {
+    use crate::ui_party::GROUP_MEMBER_SUBGROUP;
+    let own = group.own_flags & GROUP_MEMBER_SUBGROUP;
+    group
+        .members
+        .iter()
+        .filter(move |m| m.flags & GROUP_MEMBER_SUBGROUP != own)
+        .take(RAID_ROWS_MAX)
+}
+
+/// The party, corpse and raid rim arrows, the out-of-range half of the group placement, drawn
+/// before the player arrow. A member a tracked vehicle stands for draws none (`0x7f3f40`).
 ///
 /// This differs from the reference, not built yet: its slot 4 is the pet (`UNIT_FIELD_CHARM`, else
 /// `UNIT_FIELD_SUMMON`), and the corpse is static blip slot 2 on the POI path, at `Importance` -1
 /// and exempt from the 694.444-yd cut, taking one of the three rim slots. So there is no pet blip
 /// here, and four rim arrows can draw where the reference draws three.
-pub(super) fn emit_party_arrows(
+#[allow(clippy::too_many_arguments)]
+pub(super) fn emit_group_arrows(
     ctx: &BlipCtx,
     group: &crate::ui_party::GroupState,
+    possessors: &[u64],
     guids: &GuidIndex,
     unit_pos: &Query<&GlobalTransform, With<NetEntity>>,
     corpse: Option<[f32; 3]>,
     arrows: &RimArrowArt,
     quads: &mut UiQuads,
 ) {
-    let members = group
-        .party_slots()
-        .filter_map(|m| party_member_pos(m, group, guids, unit_pos))
-        .map(|p| (p, RimArrow::Group));
-    let corpse = corpse.map(|c| ((c[0], c[1]), RimArrow::Corpse));
-    for ((x, y), art) in members.chain(corpse) {
+    let member = |m: &benilla_protocol::messages::GroupMemberEntry| {
+        (!possessors.contains(&m.guid))
+            .then(|| party_member_pos(m, group, guids, unit_pos))
+            .flatten()
+            .map(|p| (p, RimArrow::Group, GROUP_ARROW_PX))
+    };
+    let party = group.party_slots().filter_map(member);
+    let corpse = corpse.map(|c| ((c[0], c[1]), RimArrow::Corpse, ARROW_QUAD_PX));
+    // The raid's arrows draw after the party's (`0x580ec0` after `0x580ae0`).
+    let raid = raid_rows(group).filter_map(member);
+    for ((x, y), art, px) in party.chain(corpse).chain(raid) {
         let d = ((x - ctx.wx).powi(2) + (y - ctx.wy).powi(2)).sqrt();
         if d / ctx.radius_yd <= BLIP_EDGE_RATIO {
             continue; // in range: the dot pass draws it
@@ -413,7 +490,7 @@ pub(super) fn emit_party_arrows(
         let Some(tex) = arrows.get(art) else {
             continue;
         };
-        push_rim_arrow(ctx, [x, y, 0.0], tex, quads);
+        push_rim_arrow(ctx, [x, y, 0.0], tex, px, quads);
     }
 }
 
@@ -484,6 +561,32 @@ fn object_tooltip_text(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The raid list is the roster outside our own subgroup; the party slots carry the rest.
+    #[test]
+    fn raid_rows_are_the_members_outside_our_subgroup() {
+        use benilla_protocol::messages::GroupMemberEntry;
+        let row = |guid: u64, flags: u8| GroupMemberEntry {
+            name: String::new(),
+            guid,
+            status: 1,
+            flags,
+            roles: 0,
+        };
+        let group = crate::ui_party::GroupState {
+            own_flags: 0x81, // subgroup 1, assistant
+            members: vec![row(2, 0x01), row(3, 0x00), row(4, 0x82), row(5, 0x81)],
+            ..Default::default()
+        };
+        let raid: Vec<u64> = raid_rows(&group).map(|m| m.guid).collect();
+        assert_eq!(
+            raid,
+            [3, 4],
+            "subgroup bits alone decide, the assistant bit ignored"
+        );
+        let party: Vec<u64> = group.party_slots().map(|m| m.guid).collect();
+        assert_eq!(party, [2, 5]);
+    }
 
     /// The call site gives only the sequence id; the model says what it draws.
     #[test]
@@ -590,11 +693,7 @@ mod tests {
         let sel = select_landmarks(std::iter::empty(), Some(&marker), 0, 0.0, 0.0, 133.0);
         assert!(sel.arrows.is_empty(), "in range — no rim arrow");
         assert_eq!(sel.icons.len(), 1);
-        assert_eq!(
-            poi_icon_cell(sel.icons[0].icon),
-            Some([0.75, 0.875, 0.0, 0.125]),
-            "icon 6 = ICON_POI_REDFLAG, col 6 row 0 of the 8x8 atlas"
-        );
+        assert_eq!(sel.icons[0].icon, 6);
     }
 
     /// The caller ([`crate::poi_marker::PoiMarker`]'s `on_map`) decides the marker's map.
@@ -609,17 +708,40 @@ mod tests {
     #[test]
     fn in_range_icons_gate_on_flag_bit1_and_the_atlas_bound() {
         let mut tower = poi(0, 0x87, 50.0, "Crown Guard Tower");
-        tower.icon = 9; // col 1, row 1
+        tower.icon = 9;
         let plain = poi(3, 0x5, 50.0, "Northshire Abbey");
         let rows = [tower, plain];
         let sel = select_landmarks(rows.iter(), None, 0, 0.0, 0.0, 133.0);
         assert_eq!(sel.arrows.len(), 0);
         assert_eq!(sel.icons.len(), 1, "only the Flags&2 tower draws in range");
+    }
+
+    /// 14 cells a row of 18 texels, inset one texel, rows cut from the width too.
+    #[test]
+    fn poi_cells_are_fourteen_a_row_of_eighteen_texels_inset_one() {
+        let w = 256.0;
         assert_eq!(
-            poi_icon_cell(9),
-            Some([0.125, 0.25, 0.125, 0.25]),
-            "icon 9 = col 1 row 1 of the 8x8 atlas"
+            poi_icon_cell(0, 256),
+            Some([1.0 / w, 18.0 / w, 1.0 / w, 18.0 / w])
         );
-        assert_eq!(poi_icon_cell(64), None, "the client gates Icon < 0x40");
+        // 15 = col 1 row 1.
+        assert_eq!(
+            poi_icon_cell(15, 256),
+            Some([19.0 / w, 36.0 / w, 19.0 / w, 36.0 / w])
+        );
+        // The corpse's icon 8 sits on row 0, not the 8x8 grid's row 1.
+        assert_eq!(
+            poi_icon_cell(8, 256),
+            Some([145.0 / w, 162.0 / w, 1.0 / w, 18.0 / w])
+        );
+        // The last cell, col 13 row 13, ends at texel 252.
+        let last = poi_icon_cell(195, 256).unwrap();
+        assert!((last[1] - 252.0 / w).abs() < 1e-6 && (last[3] - 252.0 / w).abs() < 1e-6);
+        assert_eq!(poi_icon_cell(196, 256), None, "the draw gates Icon < 196");
+        // A wider texture narrows the cells; rows follow the width, not the height.
+        assert_eq!(
+            poi_icon_cell(14, 512),
+            Some([1.0 / 512.0, 18.0 / 512.0, 19.0 / 512.0, 36.0 / 512.0])
+        );
     }
 }

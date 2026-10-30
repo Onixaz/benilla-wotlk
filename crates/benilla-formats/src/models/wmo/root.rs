@@ -354,6 +354,14 @@ pub fn wmo_root_id(root_bytes: &[u8]) -> u32 {
         .unwrap_or(0)
 }
 
+/// `MOHD`'s bounding box at `0x24`, `(min, max)` in model space, which 12340 cuts the whole-WMO
+/// minimap tiles from (`0x7afe70`); `None` for a short header.
+pub fn wmo_root_bbox(root_bytes: &[u8]) -> Option<([f32; 3], [f32; 3])> {
+    let mohd = find_wmo_chunk(root_bytes, b"DHOM").filter(|mohd| mohd.len() >= 0x3c)?;
+    let f = |o: usize| f32::from_le_bytes([mohd[o], mohd[o + 1], mohd[o + 2], mohd[o + 3]]);
+    Some(([f(0x24), f(0x28), f(0x2c)], [f(0x30), f(0x34), f(0x38)]))
+}
+
 /// Parse MODS (32 B: `name[20], start: u32, count: u32, pad`), MODN and MODD (40 B: `nameOff +
 /// flags: u32, pos: 3×f32, quat: 4×f32, scale: f32, color: 4×u8`) from the raw bytes: an MODD name
 /// is a byte offset into MODN, which `benilla-wmo`'s split `Vec<String>` loses.

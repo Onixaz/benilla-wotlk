@@ -45,6 +45,8 @@ pub struct WmoGroupNav {
 pub struct WmoModel {
     /// The `WMOAreaTable.WMOID` key (root `MOHD.wmoID`).
     pub wmo_id: u32,
+    /// The root `MOHD` bounding box `(min, max)` in model space: the whole-WMO minimap's grid.
+    pub root_bbox: Option<([f32; 3], [f32; 3])>,
     pub submeshes: Vec<ModelSubmesh>,
     /// The group of each entry in [`Self::submeshes`], so the portal cull can hide a whole group.
     pub submesh_group: Vec<u16>,
@@ -550,6 +552,7 @@ impl AssetLoader for WmoModelLoader {
         let group_footprint_grids = footprint_tri_grids(&group_footprints);
         Ok(WmoModel {
             wmo_id: benilla_formats::wmo_root_id(&bytes),
+            root_bbox: benilla_formats::wmo_root_bbox(&bytes),
             submeshes,
             submesh_group,
             portal_vertices: portals.vertices.clone(),

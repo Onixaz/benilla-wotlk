@@ -1,13 +1,58 @@
-//! The WMO-interior minimap's group selection (the portal flood-fill) and tile-name stem.
+//! The WMO minimap's tile-set choice, its group selection (the portal flood-fill) and tile-name
+//! stem.
 
 use bevy::math::{Affine3A, Vec3};
 
 use benilla_assets::coords::{bevy_to_wow, wow_to_bevy};
 use benilla_assets::WmoModel;
 
-/// MOGP flags: the flood skips `& 0x8` exterior groups, the emit skips `& 0x88`.
-const GROUP_EXTERIOR: u32 = 0x8;
+/// MOGP flags: `0x8` exterior, `0x40` exterior-lit; the emit skips `& 0x88`.
+pub(super) const GROUP_EXTERIOR: u32 = 0x8;
+const GROUP_EXTERIOR_LIT: u32 = 0x40;
 const GROUP_NO_EMIT: u32 = 0x88;
+
+/// `WMOAreaTable` flags the minimap reads: on the whole-WMO row `0x1` and `0x18` turn the WMO
+/// minimap on even outside, `0x18` choosing the whole-WMO set; on a group's row `0x20` keeps the
+/// terrain minimap.
+const AREA_OUTDOOR_MINIMAP: u32 = 0x1;
+const AREA_WHOLE_MINIMAP: u32 = 0x18;
+const AREA_TERRAIN_MINIMAP: u32 = 0x20;
+
+/// Which WMO tiles draw for the group the player stands in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum WmoMinimapMode {
+    /// The building's whole-WMO set, `<stem>_<groupCount>_<col>_<row>`, over its root box.
+    Whole,
+    /// The portal flood from the standing group.
+    Flood { inside: bool },
+}
+
+/// The WMO minimap's choice from the whole-WMO row's flags, the standing group's row's flags, its
+/// MOGP flags and whether it is inside, or `None` for the terrain minimap (`0x7f5cd7`): a group row
+/// with `0x20` keeps terrain; otherwise the WMO draws when the whole-WMO row sets `0x1` or `0x18`
+/// or the player is inside. The whole-WMO set holds while the row sets `0x18` and the group is
+/// `0x48` (`0x7a1860`, `0x7b00f7`); every other case floods.
+pub(super) fn wmo_minimap_mode(
+    root_row: u32,
+    group_row: u32,
+    group_flags: u32,
+    inside: bool,
+) -> Option<WmoMinimapMode> {
+    if group_row & AREA_TERRAIN_MINIMAP != 0 {
+        return None;
+    }
+    let whole = root_row & AREA_WHOLE_MINIMAP != 0;
+    if !(whole || root_row & AREA_OUTDOOR_MINIMAP != 0 || inside) {
+        return None;
+    }
+    Some(
+        if whole && group_flags & (GROUP_EXTERIOR | GROUP_EXTERIOR_LIT) != 0 {
+            WmoMinimapMode::Whole
+        } else {
+            WmoMinimapMode::Flood { inside }
+        },
+    )
+}
 
 /// The `md5translate.trs` key stem of a WMO's interior tiles: the model path without `World\` and
 /// `.wmo`, backslashed and lowercased, the trs lookup being case-insensitive. `None` if not a
@@ -19,7 +64,8 @@ pub(super) fn wmo_minimap_stem(wmo_path: &str) -> Option<String> {
 }
 
 /// Which groups' tiles draw, per absolute group index: the reference's portal flood-fill from the
-/// player's group inside a player-centred query box.
+/// player's group inside a player-centred query box. Inside, it enters a group whose `0x48` bits are
+/// the seed's `0x40` bit alone; outside, only exterior groups (`0x7b012e`).
 ///
 /// The box is XY `±2·radius` and Z `[z − 1.5·radius, z + radius]`, mostly below the player, so a
 /// stairwell reaches the storey below but not the whole tower. A group whose bbox misses the box in
@@ -33,12 +79,25 @@ pub(super) fn interior_group_selection(
     player_pos: Vec3,
     radius: f32,
     seed: usize,
+    inside: bool,
 ) -> Vec<bool> {
     let n = model.group_nav.len();
     let mut drawable = vec![false; n];
     if seed >= n {
         return drawable;
     }
+    let mask = if inside {
+        model.group_nav[seed].flags & GROUP_EXTERIOR_LIT
+    } else {
+        GROUP_EXTERIOR
+    };
+    let class = |flags: u32| {
+        if inside {
+            flags & (GROUP_EXTERIOR | GROUP_EXTERIOR_LIT)
+        } else {
+            flags & GROUP_EXTERIOR
+        }
+    };
     let pw = bevy_to_wow(player_pos);
     let c = radius;
     let box_min = [pw[0] - 2.0 * c, pw[1] - 2.0 * c, pw[2] - 1.5 * c];
@@ -88,8 +147,8 @@ pub(super) fn interior_group_selection(
         }
         visited[g] = true;
         let gn = &model.group_nav[g];
-        if gn.flags & GROUP_EXTERIOR != 0 {
-            continue; // an exterior group is not flooded
+        if class(gn.flags) != mask {
+            continue; // another class of group is not flooded
         }
         let (lo, hi) = world_aabb(gn.bbox_min, gn.bbox_max);
         // The XY gate blocks emit and recursion both; a stacked storey shares the XY footprint and
@@ -132,6 +191,43 @@ pub(super) fn interior_group_selection(
 
 #[cfg(test)]
 mod tests {
+    use super::{wmo_minimap_mode, WmoMinimapMode};
+
+    /// Stormwind's whole-WMO row sets `0x10`, so a street group (`0x8` or `0x40`) draws the city's
+    /// whole-WMO set, inside or out; a room without those bits floods.
+    #[test]
+    fn a_whole_minimap_row_draws_the_whole_wmo_from_a_street() {
+        assert_eq!(
+            wmo_minimap_mode(0x10, 0, 0x8, false),
+            Some(WmoMinimapMode::Whole)
+        );
+        assert_eq!(
+            wmo_minimap_mode(0x10, 0x4, 0x40, true),
+            Some(WmoMinimapMode::Whole)
+        );
+        assert_eq!(
+            wmo_minimap_mode(0x10, 0, 0x2000, true),
+            Some(WmoMinimapMode::Flood { inside: true })
+        );
+    }
+
+    #[test]
+    fn the_rows_gate_the_wmo_minimap() {
+        // Plain building: only inside.
+        assert_eq!(wmo_minimap_mode(0, 0, 0x8, false), None);
+        assert_eq!(
+            wmo_minimap_mode(0, 0, 0, true),
+            Some(WmoMinimapMode::Flood { inside: true })
+        );
+        // `0x1` turns it on outside, flooding the exterior groups.
+        assert_eq!(
+            wmo_minimap_mode(0x1, 0, 0x8, false),
+            Some(WmoMinimapMode::Flood { inside: false })
+        );
+        // A group row's `0x20` keeps terrain, even inside a whole-minimap WMO.
+        assert_eq!(wmo_minimap_mode(0x10, 0x20, 0x8, true), None);
+    }
+
     /// A 4-group building: g0 (the player's) and g1 (a cellar) join by a floor hole and both draw;
     /// g2 sits 1000 yd off in XY, reached but not drawn; g3 overlaps the box but is reachable only
     /// through g2, by a portal inside the box, so only g2's XY gate keeps it out.
@@ -176,6 +272,7 @@ mod tests {
         };
         let model = WmoModel {
             wmo_id: 1,
+            root_bbox: None,
             submeshes: Vec::new(),
             submesh_group: Vec::new(),
             portal_vertices,
@@ -220,7 +317,8 @@ mod tests {
             doodad_groups: Default::default(),
         };
 
-        let drawable = interior_group_selection(&model, &Affine3A::IDENTITY, Vec3::ZERO, 25.0, 0);
+        let drawable =
+            interior_group_selection(&model, &Affine3A::IDENTITY, Vec3::ZERO, 25.0, 0, true);
         assert!(drawable[0], "the player's own group draws");
         assert!(
             drawable[1],
@@ -257,6 +355,7 @@ mod tests {
         // The connecting portal sits at z ≈ -300, far below the box floor (player.z - 1.5·25).
         let model = WmoModel {
             wmo_id: 1,
+            root_bbox: None,
             submeshes: Vec::new(),
             submesh_group: Vec::new(),
             portal_vertices: vec![
@@ -308,7 +407,8 @@ mod tests {
             doodad_groups: Default::default(),
         };
 
-        let drawable = interior_group_selection(&model, &Affine3A::IDENTITY, Vec3::ZERO, 25.0, 0);
+        let drawable =
+            interior_group_selection(&model, &Affine3A::IDENTITY, Vec3::ZERO, 25.0, 0, true);
         assert!(drawable[0]);
         assert!(
             !drawable[1],

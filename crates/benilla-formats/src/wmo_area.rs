@@ -26,6 +26,9 @@ pub struct WmoArea {
     pub zone_music: u32,
     /// `ZoneIntroMusicTable.dbc` id, the entry fanfare.
     pub intro_sound: u32,
+    /// Column 9: the minimap reads `0x1` and `0x18` on the whole-WMO row and `0x20` on a group's
+    /// (`0x7f5cd7`).
+    pub flags: u32,
     /// The `AreaTable.dbc` area this group counts as (0 = none), read by the area resolver when the
     /// down-ray keeps the WMO over the terrain: Ironforge reports its own area.
     pub area_table_id: u32,
@@ -74,6 +77,7 @@ impl WmoAreaCatalog {
             ambience: 0,
             zone_music: 0,
             intro_sound: 0,
+            flags: 0,
             area_table_id: 0,
             name: String::new(),
         });
@@ -88,6 +92,7 @@ impl WmoAreaCatalog {
             ambience: nz(g.ambience, base.ambience),
             zone_music: nz(g.zone_music, base.zone_music),
             intro_sound: nz(g.intro_sound, base.intro_sound),
+            flags: g.flags,
             area_table_id: nz(g.area_table_id, base.area_table_id),
             name: if g.name.is_empty() {
                 base.name
@@ -148,6 +153,7 @@ pub fn load_wmo_area_catalog(chain: &mut Chain) -> Result<WmoAreaCatalog> {
             ambience: u32_at(r, 6).unwrap_or(0),
             zone_music: u32_at(r, 7).unwrap_or(0),
             intro_sound: u32_at(r, 8).unwrap_or(0),
+            flags: u32_at(r, 9).unwrap_or(0),
             area_table_id: u32_at(r, 10).unwrap_or(0),
             name: str_at(&rs, r, 11).unwrap_or_default(),
         };
